@@ -171,9 +171,18 @@ set:
 
 - `(deny default)` base + boilerplate any process needs (dyld, `/usr`,
   `/System`, `/dev/null`, sysctl-read, …)
-- `file-read*` on approved read paths (`subpath`), plus `cwd`
-- `file-write*` on approved write paths + a private scratch dir (`TMPDIR`/`HOME`
-  point there)
+- `file-read*` broadly: system dirs, the approved read paths, **and the whole
+  user `$HOME`** — so user-installed tools and their configs/libraries resolve
+  (`~/.local/bin`, `~/.config`, `~/.nvm`, …). Reads are the safe capability
+  here; network is off unless approved, so broad read doesn't enable
+  exfiltration. The command runs with the **real `$HOME`** and a `PATH` that
+  includes the user bin dirs; `TMPDIR` points at the disposable scratch dir.
+- `file-write*` stays scoped: the approved write paths + the scratch dir + a
+  small set of tool "housekeeping" dirs under home (`~/Library/Caches`,
+  `~/.cache`, `~/.config`, `~/.local/state`, `~/.npm`) so incidental cache/config
+  writes don't break tools. Writes to arbitrary or system locations are denied —
+  write confinement (plus network gating and per-command human approval) is the
+  enforced protection.
 - `network*` allowed only if declared and approved
 - children inherit the profile (`process-exec` allowed)
 

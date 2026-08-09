@@ -161,6 +161,16 @@ final class SandboxProfileTests: XCTestCase {
         XCTAssertFalse(profile.contains("(allow network*)"))
     }
 
+    func testProfileAllowsHomeReadAndHousekeepingWrites() {
+        let profile = SandboxProfile.generate(readPaths: [], writePaths: [], network: false,
+                                              scratch: "/private/tmp/s")
+        let home = PathUtil.canonicalize(NSHomeDirectory())
+        XCTAssertTrue(profile.contains("(allow file-read* (subpath \"\(home)\"))"),
+                      "home should be broadly readable so tools/configs load")
+        XCTAssertTrue(profile.contains("Library/Caches"),
+                      "tool housekeeping dirs should be writable")
+    }
+
     func testQuotingResistsProfileInjection() {
         let profile = SandboxProfile.generate(
             readPaths: ["/tmp/evil\") (allow file-write* (subpath \"/\")"],
@@ -185,6 +195,40 @@ final class ExecutorTests: XCTestCase {
         XCTAssertFalse(result.running)
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(String(data: result.output, encoding: .utf8), "hello sandbox\n")
+    }
+
+    func testCanReadUserHomeWithoutDeclaring() throws {
+        // Tools live under the real home (~/.local/bin, configs). The sandbox
+        // grants broad read of $HOME, so a command can read there even without
+        // declaring it as a read path.
+        let (executor, home) = makeExecutor()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let marker = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".domo-sandbox-test-\(UUID().uuidString.prefix(8)).txt")
+        try Data("home-visible".utf8).write(to: marker)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let result = try executor.run(argv: ["/bin/cat", marker.path], cwd: nil,
+                                      readPaths: [], writePaths: [], network: false, waitMs: 10000)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(String(data: result.output, encoding: .utf8), "home-visible")
+    }
+
+    func testRunsToolFromUserLocalBin() throws {
+        // A tool installed under ~/.local/bin should be found (PATH) and run
+        // (home is readable/executable) — the real-world case this fix targets.
+        let (executor, home) = makeExecutor()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let binDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/bin")
+        try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        let toolName = "domo-tooltest-\(UUID().uuidString.prefix(8))"
+        let tool = binDir.appendingPathComponent(toolName)
+        try "#!/bin/bash\necho tool-ran\n".write(to: tool, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        defer { try? FileManager.default.removeItem(at: tool) }
+        let result = try executor.run(argv: ["/bin/sh", "-c", toolName], cwd: nil,
+                                      readPaths: [], writePaths: [], network: false, waitMs: 10000)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(String(data: result.output, encoding: .utf8), "tool-ran\n")
     }
 
     func testWriteInsideApprovedPathSucceeds() throws {

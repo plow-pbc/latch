@@ -38,8 +38,18 @@ public enum SandboxProfile {
                    "(literal \"/dev/tty\")", "(subpath \"/dev/fd\")"]).joined(separator: " ") + ")",
             "(allow file-write-data (literal \"/dev/null\") (literal \"/dev/tty\") (subpath \"/dev/fd\"))",
         ]
-        // The scratch dir doubles as HOME and TMPDIR for the command.
-        let writable = ([scratch] + writePaths).map { PathUtil.canonicalize($0) }
+        let home = PathUtil.canonicalize(NSHomeDirectory())
+        // Broad READ of the user's home so tools installed under it and their
+        // configs/libraries resolve (e.g. ~/.local/bin, ~/.config, ~/.nvm).
+        // Writes stay scoped below — reads are the safe capability here, and
+        // network is off unless approved, so this doesn't enable exfiltration.
+        lines.append("(allow file-read* (subpath \(quote(home))))")
+        // Writable: the approved write paths + scratch (also TMPDIR) + the
+        // common tool "housekeeping" dirs under home, so a tool's incidental
+        // cache/config writes don't get denied and break it.
+        let housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]
+            .map { home + "/" + $0 }
+        let writable = ([scratch] + writePaths + housekeeping).map { PathUtil.canonicalize($0) }
         for path in writable {
             lines.append("(allow file-write* (subpath \(quote(path))))")
             lines.append("(allow file-read* (subpath \(quote(path))))")
@@ -149,9 +159,14 @@ public final class Executor {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
         process.arguments = ["-p", profile] + argv
         process.currentDirectoryURL = URL(fileURLWithPath: workingDir)
+        // Use the REAL home so tools and their configs resolve; TMPDIR stays in
+        // the (writable, disposable) scratch dir. PATH includes the user's bin
+        // dirs so tools under ~/.local/bin etc. are found.
+        let realHome = NSHomeDirectory()
         process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin",
-            "HOME": scratch.path,
+            "PATH": "\(realHome)/.local/bin:\(realHome)/bin:\(realHome)/.cargo/bin"
+                + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": realHome,
             "TMPDIR": scratch.path,
             "LANG": "en_US.UTF-8",
         ]
