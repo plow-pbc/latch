@@ -224,6 +224,18 @@ The transport is abstracted behind `Connection`/`ConnectionListener`/
 networked transport is a drop-in below `LineRPC`. The step-by-step plan to build
 the network and security layers is **`docs/network-security-runbook.md`**.
 
+**Status (remote milestone):** runbook Phases 1–6 are implemented and tested
+(`Tests/DomoNetworkTests`): WebSocket transport (`WebSocketConnection`), SPKI
+certificate pinning (self-signed, no public CA), enrollment + connect-time
+challenge/response, an end-to-end encrypted `E2EChannel` (X25519+Ed25519+HKDF+
+ChaCha20-Poly1305 — CryptoKit, no external dep) that makes the broker a blind
+relay, agent revocation (broker-refuses-routing + device-authoritative), and a
+hosted `wss://` deploy (`scripts/gen-broker-cert.sh`, `just broker-wss`). The one
+piece not yet flipped on in the *running daemon* is relocating intent
+construction/signing from the broker to the agent endpoint so the live channel is
+end-to-end (the `E2EChannel` and its enforcement are complete and tested; see the
+runbook's Phase 4 note). Phase 7 (iOS approval app) is out of scope for now.
+
 ## 9. On-disk layout
 
 ```

@@ -237,6 +237,20 @@ audit:
     @cat "{{home}}/dev/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — run 'just demo')"
 
 # ---------------------------------------------------------------------------
+# Networked / hosted broker (see docs/network-security-runbook.md)
+
+# Generate a self-signed broker cert + print its SPKI pin (Phase 2/6).
+gen-cert dir="./tls" cn="domo-broker" pass="domo":
+    @scripts/gen-broker-cert.sh "{{dir}}" "{{cn}}" "{{pass}}"
+
+# Run the broker over wss:// with enrollment required (Phase 6). Pass a p12 from
+# `just gen-cert`. Ports: agent 8443, device 8444.
+broker-wss p12 pass="domo" home=home: build
+    .build/debug/domo-broker --home "{{home}}" \
+        --agent-listen wss://0.0.0.0:8443/ --device-listen wss://0.0.0.0:8444/ \
+        --tls-p12 "{{p12}}" --tls-password "{{pass}}" --require-enrollment
+
+# ---------------------------------------------------------------------------
 
 # Stop the stack and delete the demo home.
 clean: down

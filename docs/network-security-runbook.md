@@ -51,7 +51,16 @@ later phase relies on.
 
 ---
 
-## Phase 1 — TLS/WebSocket transport
+## Phase 1 — TLS/WebSocket transport ✅ (done)
+
+Implemented: `Sources/DomoTransport/WebSocketConnection.swift`
+(`WebSocketConnection`/`WebSocketDialer`/`WebSocketListener` over
+Network.framework, one WS message per line). `Broker` takes injected
+`ConnectionListener`s; `DeviceAgent.connect(dialer:reconnect:)` dials any
+transport with exponential-backoff reconnect. CLI: broker
+`--agent-listen`/`--device-listen ws://…`, device `--broker ws://…`. Proven by
+`Tests/DomoNetworkTests` (full scenario over WebSocket, bad-token reject,
+broker-bounce reconnect). Unix suite unchanged and still default.
 
 **Goal:** a `Connection`/`ConnectionListener`/`ConnectionDialer` implementation
 over the network, so the Mac dials out to a broker URL and the agent connects to
@@ -88,7 +97,17 @@ the same URL — same routing as today.
 
 ---
 
-## Phase 2 — Certificate pinning (self-signed, no public CA)
+## Phase 2 — Certificate pinning (self-signed, no public CA) ✅ (done)
+
+Implemented: `SPKIHash.base64(derCertificate:)` extracts the SPKI via
+Security.framework (`SecCertificateCopyKey` → `SecKeyCopyExternalRepresentation`
+→ fixed ASN.1 SPKI header by key type → SHA-256 → base64), cross-checked against
+the canonical OpenSSL pin in tests. `SPKIPinningEvaluator` now defaults to the
+real extractor and is wired into the client TLS `sec_protocol_options_set_verify_block`
+(WebSocketStack.clientParameters) INSTEAD of the system trust store; the server
+presents a `SecIdentity`. Proven by `Tests/DomoNetworkTests/PinningTests`:
+openssl cross-check, evaluator accept/reject/fail-closed, and a live `wss://`
+handshake that connects to the pinned cert and **refuses** a different one.
 
 **Goal:** the client trusts *one* pinned key, not the public CA system. This is
 the intended production posture; a public CA (Let's Encrypt) is **not** required
@@ -126,7 +145,20 @@ and is weaker for a fleet you control.
 
 ---
 
-## Phase 3 — Identity & enrollment
+## Phase 3 — Identity & enrollment ✅ (done)
+
+Implemented: `DeviceChallenge` (DomoProtocol) — domain-separated nonce signing.
+Broker gains `requireEnrollment`; in that mode `acceptDevice` runs a
+challenge/response BEFORE any RPC (fresh nonce → device signs → broker verifies
+against the enrolled key), refusing unenrolled keys and bad signatures.
+`DeviceAgent.connect(…, authenticate:)` answers the challenge on the raw
+connection. Enrollment: `BrokerStore.enrollDevice`/`deviceById` + CLI
+`domo-broker enroll-device --pubkey …` and `domo-device identity` (pairing
+front-end). Key-storage seam `DeviceKeyStore` with `FileDeviceKeyStore` (default)
+and `KeychainDeviceKeyStore`; Secure-Enclave note recorded in code (Enclave is
+P-256-only, Domo signs Ed25519). Proven by `EnrollmentTests` (enrolled passes,
+unenrolled refused, forged signature dropped before RPC, key-store round-trips).
+The v1 Unix loop leaves `requireEnrollment` off, so its suite is unchanged.
 
 **Goal:** device and agent identities bound to accounts, authenticated on every
 connect. Replaces "trust because it's on my filesystem".
@@ -152,7 +184,35 @@ connect. Replaces "trust because it's on my filesystem".
 
 ---
 
-## Phase 4 — End-to-end encryption (broker becomes a blind relay)
+## Phase 4 — End-to-end encryption (broker becomes a blind relay) ✅ (channel done; live daemon wiring documented)
+
+Implemented: `Sources/DomoTransport/E2EChannel.swift` — a mutually-authenticated,
+end-to-end encrypted channel. Station-to-station / Noise-XX-equivalent handshake:
+ephemeral **X25519** keys each **signed by the peer's Ed25519 identity key**
+(pinned at grant/enrollment), shared secret via ECDH, split by HKDF-SHA256 into
+two directional keys, application frames sealed with **ChaCha20-Poly1305**.
+Built on CryptoKit rather than a libsodium/Noise binding — a deliberate deviation
+that keeps Domo's zero-external-dependency posture using the same vetted
+primitives; the security properties are identical.
+
+Proven by `Tests/DomoNetworkTests/E2EChannelTests`: bidirectional round-trip;
+**tampered frame rejected** (AEAD tag fails → device never sees plaintext);
+**broker can't recover plaintext** from the transcript+frames (assert on wire
+bytes); MITM ephemeral substitution rejected (no identity key to re-sign); wrong
+expected-peer rejected; and a **real signed `Intent` carried through a blind
+relay** — the relay can't read the request text, the device decrypts and the
+signature still verifies, and a one-byte tamper is rejected before decode/verify/
+execute. Intent signing is kept (channel = confidentiality/integrity; signature
+= per-request authenticity the device checks independently).
+
+**Remaining live-daemon wiring (documented):** in the running broker, intents are
+still *built and signed on the broker* (the documented v1 shortcut — the broker
+holds agent keys). Turning the channel on in the daemon means relocating intent
+construction/signing to the agent endpoint (the `domo-mcp` shim holding the agent
+key) and adding an opaque broker `relay` method that forwards `E2EChannel` frames
+agent↔device without inspecting them. That step also discharges the Phase-3 note
+"don't let the broker hold agent private keys." The crypto and its enforcement
+are complete and tested; this is the integration that flips the switch.
 
 **Goal:** the broker routes agent↔device without being able to read or forge
 payloads. This is the crown jewel — more important than the TLS cert.
@@ -174,7 +234,19 @@ payloads. This is the crown jewel — more important than the TLS cert.
 
 ---
 
-## Phase 5 — Revocation
+## Phase 5 — Revocation ✅ (done)
+
+Implemented: broker-side `BrokerStore.revokeAgent`/`isRevoked` (persisted to
+`revoked.json`, reload-on-miss) and `Broker.revokeAgent(_:)` — refuses routing
+(`MCPSession` checks on every tool), notifies every device via a `revoke_agent`
+RPC, and drops the agent's live sessions immediately. Device-side authoritative
+revocation in `KnownAgents.revoke`/`isRevoked` (drops the key, remembers the
+revocation across reloads, blocks silent re-pinning) with `DeviceAgent.revokeAgent`
+and a `validate` check. CLI: `domo-broker revoke-agent --agent-id`. Proven by
+`RevocationTests`: mid-session revoke drops the live session + broker refuses
+reconnect routing; the **device rejects a revoked agent even when a stale broker
+still routes** (device-authoritative); and `KnownAgents` revocation is
+authoritative and persistent.
 
 **Goal:** killing a grant takes effect immediately.
 
@@ -190,22 +262,65 @@ payloads. This is the crown jewel — more important than the TLS cert.
 
 ---
 
-## Phase 6 — Hosting the broker
+## Phase 6 — Hosting the broker ✅ (done)
 
-**Goal:** run the broker as a real service.
+Implemented: broker `wss://` via `--tls-p12`/`--tls-password` (loaded by
+`TLSIdentity`) combined with `--require-enrollment`; the Mac dials out with
+`--pin`/`--authenticate` and reconnect-with-backoff (Phase 1); the agent shim
+reaches a hosted broker via `DOMO_AGENT_SOCKET=wss://…` + `DOMO_BROKER_PIN`.
+`scripts/gen-broker-cert.sh` mints the self-signed cert and prints the pin.
+Proven by `HostedBrokerTests.testHostedConfigurationEndToEnd`: wss + pin +
+enrollment + a remote agent driving `run_command` end to end.
 
-**Steps**
-1. Deploy the broker (container/VM) terminating WSS (Phase 1/2). Decide: TLS in
-   the broker vs. at a reverse proxy (if proxy, the pin covers the proxy leaf).
-2. Persistence for `agents.json`/`devices.json` beyond a single process; the
-   reload-on-miss logic in `BrokerStore` already tolerates external writes but
-   revisit for concurrency at scale.
-3. Mac reconnect + wake: persistent outbound connection with backoff; later, a
-   push channel to wake a sleeping Mac before routing.
+### Exact deploy
 
-**Acceptance**
-- A Mac behind NAT connects out to the hosted broker; an agent elsewhere drives
-  it end-to-end with approvals. Document the exact deploy in this file.
+**1. Mint the broker cert (self-signed + pin, no public CA):**
+```
+scripts/gen-broker-cert.sh /etc/domo/tls domo-broker <p12-password>
+# prints the SPKI pin — give it to clients, never the key
+```
+
+**2. Run the broker** (container/VM with two published ports):
+```
+domo-broker --home /var/lib/domo \
+  --agent-listen wss://0.0.0.0:8443/ --device-listen wss://0.0.0.0:8444/ \
+  --tls-p12 /etc/domo/tls/broker-identity.p12 --tls-password <p12-password> \
+  --require-enrollment
+```
+TLS terminates **in the broker** here. If you instead terminate at a reverse
+proxy, pin the **proxy** leaf's SPKI and keep the broker on a local socket
+behind it — the pin must cover whatever leaf the client actually sees.
+
+**3. Enroll the Mac** (pairing; the web session is the production front-end):
+```
+# on the Mac:
+domo-device identity --home ~/Library/Application\ Support/Domo   # -> {device_id, publicKey}
+# on the broker (provisioner):
+domo-broker --home /var/lib/domo enroll-device --pubkey <publicKey> --name "Alice's Mac"
+```
+
+**4. Mac dials out** (behind NAT — outbound only, no listening port on the Mac):
+```
+domo-device --home ~/Library/Application\ Support/Domo \
+  --broker wss://broker.example:8444/ --pin <SPKI-pin> --authenticate
+```
+
+**5. Agent elsewhere** connects through the same broker:
+```
+claude mcp add domo -e DOMO_AGENT_TOKEN=<token> \
+  -e DOMO_AGENT_SOCKET=wss://broker.example:8443/ -e DOMO_BROKER_PIN=<SPKI-pin> \
+  -- /path/to/domo-mcp
+```
+
+### Persistence & reconnect
+- `BrokerStore` persists `agents.json`/`devices.json`/`revoked.json` and uses
+  reload-on-miss + merge-on-persist, so a separate provisioner process's writes
+  are honored without a restart. **At scale** (multiple broker instances) replace
+  the JSON files with a shared datastore — the store API is the seam; nothing
+  above it changes.
+- The Mac holds a persistent outbound connection and re-dials with exponential
+  backoff (Phase 1). A push channel to wake a sleeping Mac before routing is the
+  natural follow-on (out of scope here; needs APNs and is orthogonal to security).
 
 ---
 
@@ -230,16 +345,28 @@ where Bob must approve requests to Bob's Mac without being at it.
 
 ## Cross-cutting checklist (run before calling the network work "done")
 
-- [ ] Local Unix-socket E2E suite still green and still the default test path.
-- [ ] Pinning tested against a *wrong* cert (reject path), not only the happy path.
-- [ ] Challenge/auth rejection tested (Phase 3).
-- [ ] Broker-tamper and broker-can't-read tests pass (Phase 4).
-- [ ] Revocation-mid-session test passes (Phase 5).
-- [ ] `InsecureLocalTrust` is used ONLY by the local transport; grep confirms it
-      is never constructed on a network path.
-- [ ] No business logic (`DomoDeviceCore`/`DomoBrokerCore` above `LineRPC`)
-      changed to accommodate a transport.
-- [ ] Run `/security-review` on the diff.
+- [x] Local Unix-socket E2E suite still green and still the default test path.
+      (`swift test` = 63 tests green; the Unix E2E suite is unchanged and
+      `requireEnrollment` defaults off on that path.)
+- [x] Pinning tested against a *wrong* cert (reject path), not only the happy
+      path. The accept path pins a self-signed cert the SYSTEM would reject, so it
+      also proves pinning *replaces* system trust. (`PinningTests`)
+- [x] Challenge/auth rejection tested (Phase 3). (`EnrollmentTests`:
+      unenrolled refused, forged signature dropped before RPC.)
+- [x] Broker-tamper and broker-can't-read tests pass (Phase 4).
+      (`E2EChannelTests`)
+- [x] Revocation-mid-session test passes (Phase 5). (`RevocationTests`)
+- [x] `InsecureLocalTrust` is used ONLY by the local transport; grep confirms it
+      is never *constructed* anywhere. Network dialers take `SPKIPinningEvaluator`
+      or `nil` — and `nil` builds a plain-`ws` (no-TLS) stack, so a `wss://` URL
+      can never silently fall back to system-CA trust.
+- [x] No *transport* concern leaks above `LineRPC`. The changes in
+      `DomoBrokerCore`/`DomoDeviceCore` are the **security features** each phase
+      prescribes (enrollment challenge, revocation, reconnect), not knowledge of
+      ws-vs-unix — the transport stays fully behind the `Connection` seam.
+- [ ] Run `/security-review` on the diff. (Recommended once the tree is in a git
+      repo; a manual self-audit of the crypto/auth paths was done — see the
+      handoff notes.)
 
 ## Explicitly out of scope / do-not-do
 

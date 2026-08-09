@@ -8,8 +8,8 @@ import DomoTransport
 public final class Broker {
     public let home: URL
     public let store: BrokerStore
-    private let agentServer: SocketServer
-    private let deviceServer: SocketServer
+    private let agentListener: ConnectionListener
+    private let deviceListener: ConnectionListener
     private let lock = NSLock()
     private var deviceLinks: [String: DeviceLink] = [:]
     private var sessions: [ObjectIdentifier: MCPSession] = [:]
@@ -19,7 +19,16 @@ public final class Broker {
     private var deviceRPCs: [ObjectIdentifier: LineRPC] = [:]
     /// Path to the domo-mcp shim, advertised in spawn_agent responses.
     public var mcpShimPath: String?
-    public let agentSocketPath: String
+    /// The address agents dial to reach this broker — a Unix socket path for the
+    /// v1 loop, a `ws(s)://` URL once networked. Advertised in spawn_agent
+    /// responses so a spawned agent knows where to connect.
+    public let agentEndpoint: String
+    /// When true (networked/hosted broker), devices must pass a connect-time
+    /// challenge signed by an ENROLLED identity key before any RPC (runbook
+    /// Phase 3). The v1 local loop leaves this off — filesystem perms on the
+    /// 0700 run dir are the trust boundary there — so existing tests are
+    /// unchanged.
+    public let requireEnrollment: Bool
 
     struct DeviceLink {
         let rpc: LineRPC
@@ -27,30 +36,79 @@ public final class Broker {
         var blessedTools: JSONValue
     }
 
-    public init(home: URL, agentSocket: String, deviceSocket: String) throws {
+    /// Designated init: the transport is injected as two `ConnectionListener`s,
+    /// so the broker is identical whether it runs over Unix sockets (v1) or
+    /// WebSocket (networked milestone). `agentEndpoint` is the address agents
+    /// dial, advertised in spawn_agent responses.
+    public init(home: URL, agentListener: ConnectionListener,
+                deviceListener: ConnectionListener, agentEndpoint: String,
+                requireEnrollment: Bool = false) throws {
         self.home = home
-        self.agentSocketPath = agentSocket
+        self.agentEndpoint = agentEndpoint
+        self.requireEnrollment = requireEnrollment
         store = BrokerStore(home: home)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        agentServer = try SocketServer(path: agentSocket)
-        deviceServer = try SocketServer(path: deviceSocket)
-        agentServer.onConnection = { [weak self] conn in self?.acceptAgent(conn) }
-        deviceServer.onConnection = { [weak self] conn in self?.acceptDevice(conn) }
+        self.agentListener = agentListener
+        self.deviceListener = deviceListener
+        agentListener.onConnection = { [weak self] conn in self?.acceptAgent(conn) }
+        deviceListener.onConnection = { [weak self] conn in self?.acceptDevice(conn) }
+    }
+
+    /// v1 convenience: build the broker over local Unix domain sockets.
+    public convenience init(home: URL, agentSocket: String, deviceSocket: String) throws {
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let agentListener = try SocketServer(path: agentSocket)
+        let deviceListener = try SocketServer(path: deviceSocket)
+        try self.init(home: home, agentListener: agentListener,
+                      deviceListener: deviceListener, agentEndpoint: agentSocket)
     }
 
     public func start() {
-        agentServer.start()
-        deviceServer.start()
+        agentListener.start()
+        deviceListener.start()
     }
 
     public func stop() {
-        agentServer.stop()
-        deviceServer.stop()
+        agentListener.stop()
+        deviceListener.stop()
     }
 
     // MARK: - Device side
 
     private func acceptDevice(_ conn: Connection) {
+        guard requireEnrollment else { setupDeviceRPC(conn); return }
+        // Networked broker: authenticate the device BEFORE any RPC. Send a fresh
+        // nonce; accept only a response signed by an enrolled identity key.
+        let nonce = DeviceChallenge.newNonce()
+        conn.onLine = { [weak self, weak conn] line in
+            guard let self, let conn else { return }
+            func reject(_ reason: String) {
+                conn.sendLine(JSONValue.object(["type": "auth-error", "reason": .string(reason)]).encoded())
+                conn.close()
+            }
+            guard let msg = try? JSONValue.parse(line),
+                  msg["type"].str == "challenge-response",
+                  let deviceId = msg["deviceId"].str,
+                  let publicKey = msg["publicKey"].str,
+                  let signature = msg["signature"].str else {
+                reject("malformed challenge-response"); return
+            }
+            guard let enrolled = self.store.deviceById(deviceId),
+                  enrolled.publicKeyBase64 == publicKey else {
+                reject("device not enrolled"); return
+            }
+            guard DeviceChallenge.verify(nonce: nonce, signatureBase64: signature,
+                                         publicKeyBase64: publicKey) else {
+                reject("bad challenge signature"); return
+            }
+            conn.sendLine(JSONValue.object(["type": "auth-ok"]).encoded())
+            // Identity proven — hand the connection off to the normal RPC path.
+            self.setupDeviceRPC(conn)
+        }
+        conn.sendLine(JSONValue.object(["type": "challenge", "nonce": .string(nonce)]).encoded())
+    }
+
+    private func setupDeviceRPC(_ conn: Connection) {
         let rpc = LineRPC(connection: conn)
         lock.lock()
         deviceRPCs[ObjectIdentifier(conn)] = rpc
@@ -91,7 +149,7 @@ public final class Broker {
                 // spawn, so it is the approver) — the broker is not trusted to
                 // push pins.
                 "public_key": .string(record.publicKeyBase64),
-                "socket": .string(self.agentSocketPath),
+                "socket": .string(self.agentEndpoint),
             ]
             if let shim = self.mcpShimPath { response["mcp_command"] = .string(shim) }
             reply(.success(.object(response)))
@@ -150,5 +208,30 @@ public final class Broker {
         lock.lock()
         defer { lock.unlock() }
         return Set(deviceLinks.keys)
+    }
+
+    /// Public health/observability accessor: is a device currently linked?
+    /// Used by hosting/monitoring and by tests to observe (re)connection.
+    public func isDeviceOnline(_ deviceId: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return deviceLinks[deviceId] != nil
+    }
+
+    /// Provisioner action (runbook Phase 5): revoke an agent. Takes effect
+    /// immediately — the broker stops routing for it, notifies every device to
+    /// reject its intents (even in-flight), and drops its live sessions.
+    public func revokeAgent(_ agentId: String) {
+        store.revokeAgent(agentId: agentId)
+        lock.lock()
+        let links = Array(deviceLinks.values)
+        let liveSessions = Array(sessions.values)
+        lock.unlock()
+        for link in links {
+            link.rpc.callAsync("revoke_agent", ["agent": .string(agentId)]) { _ in }
+        }
+        for session in liveSessions where session.boundAgentId == agentId {
+            session.closeSession()
+        }
     }
 }

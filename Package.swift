@@ -16,5 +16,7 @@ let package = Package(
         .testTarget(name: "DomoProtocolTests", dependencies: ["DomoProtocol"]),
         .testTarget(name: "DomoDeviceCoreTests", dependencies: ["DomoDeviceCore"]),
         .testTarget(name: "DomoE2ETests", dependencies: ["DomoProtocol", "DomoTransport"]),
+        .testTarget(name: "DomoNetworkTests",
+                    dependencies: ["DomoProtocol", "DomoTransport", "DomoBrokerCore", "DomoDeviceCore"]),
     ]
 )

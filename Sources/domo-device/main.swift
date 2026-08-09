@@ -1,5 +1,6 @@
 import Foundation
 import DomoProtocol
+import DomoTransport
 import DomoDeviceCore
 
 // domo-device: headless device runner — the identical DomoDeviceCore the AppKit
@@ -26,7 +27,28 @@ func parseArgs(_ args: [String]) -> [String: String] {
     return result
 }
 
-let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
+let rawArguments = Array(CommandLine.arguments.dropFirst())
+
+if rawArguments.first == "identity" {
+    // Print this Mac's device identity so a provisioner can enroll it
+    // (runbook Phase 3): `domo-broker enroll-device --pubkey <publicKey>`.
+    let options = parseArgs(Array(rawArguments.dropFirst()))
+    let home = URL(fileURLWithPath: options["home"] ?? DomoPaths.defaultHome)
+    do {
+        let identity = try DeviceIdentity.loadOrCreate(
+            home: home, defaultName: options["name"] ?? (Host.current().localizedName ?? "Mac"))
+        let output: JSONValue = ["device_id": .string(identity.deviceId),
+                                 "name": .string(identity.name),
+                                 "publicKey": .string(identity.keyPair.publicKeyBase64)]
+        print(output.jsonString())
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("domo-device identity failed: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
+let options = parseArgs(rawArguments)
 let home = URL(fileURLWithPath: options["home"] ?? DomoPaths.defaultHome)
 let brokerSocket = options["broker"] ?? DomoPaths.deviceSocket(home: home.path)
 
@@ -46,7 +68,23 @@ do {
         FileHandle.standardError.write(Data("domo-device: broker connection closed\n".utf8))
         exit(1)
     }
-    try device.connect(brokerSocket: brokerSocket)
+    // A ws://host:port broker means the networked transport: dial out with
+    // reconnect (runbook Phase 1). A path means the v1 Unix socket.
+    if brokerSocket.hasPrefix("ws://") || brokerSocket.hasPrefix("wss://"),
+       let url = URL(string: brokerSocket) {
+        // `--authenticate` performs the enrollment challenge (needed against a
+        // broker started with --require-enrollment). `--pin <spki-base64>` pins
+        // the broker's self-signed cert instead of trusting the system CA store.
+        let authenticate = options["authenticate"] != nil
+        var trust: PeerTrustEvaluator?
+        if let pin = options["pin"] {
+            trust = SPKIPinningEvaluator(pins: [SPKIPin(sha256Base64: pin)])
+        }
+        try device.connect(dialer: WebSocketDialer(url: url, trust: trust),
+                           reconnect: true, authenticate: authenticate)
+    } else {
+        try device.connect(brokerSocket: brokerSocket)
+    }
 
     // Test/dev affordance: drive the Mac-initiated spawn flow at startup and
     // write the resulting agent token to a file (DESIGN.md §10).

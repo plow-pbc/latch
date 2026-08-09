@@ -19,6 +19,10 @@ final class MCPSession {
 
     private var agent: AgentRecord? { broker.store.agent(token: agentToken) }
 
+    /// The agent identity bound to this session, for revocation targeting.
+    var boundAgentId: String? { broker.store.agent(token: agentToken)?.agentId }
+    func closeSession() { conn.close() }
+
     func handleLine(_ line: Data) {
         guard let message = try? JSONValue.parse(line) else { return }
         let id = message["id"]
@@ -101,6 +105,9 @@ final class MCPSession {
 
     private func requireAgent() throws -> AgentRecord {
         guard let agent else { throw ToolError("agent identity revoked") }
+        if broker.store.isRevoked(agentId: agent.agentId) {
+            throw ToolError("agent access has been revoked")
+        }
         return agent
     }
 

@@ -38,14 +38,17 @@ public final class BrokerStore {
     private let lock = NSLock()
     private var agents: [String: AgentRecord] // token -> record
     private var devices: [String: DeviceRecord] // deviceId -> record
+    private var revoked: Set<String> // revoked agentIds
 
     private var agentsURL: URL { home.appendingPathComponent("broker/agents.json") }
     private var devicesURL: URL { home.appendingPathComponent("broker/devices.json") }
+    private var revokedURL: URL { home.appendingPathComponent("broker/revoked.json") }
 
     public init(home: URL) {
         self.home = home
         agents = [:]
         devices = [:]
+        revoked = []
         if let data = try? Data(contentsOf: agentsURL),
            let stored = try? JSONDecoder().decode([AgentRecord].self, from: data) {
             agents = Dictionary(uniqueKeysWithValues: stored.map { ($0.token, $0) })
@@ -54,6 +57,41 @@ public final class BrokerStore {
            let stored = try? JSONDecoder().decode([DeviceRecord].self, from: data) {
             devices = Dictionary(uniqueKeysWithValues: stored.map { ($0.deviceId, $0) })
         }
+        if let data = try? Data(contentsOf: revokedURL),
+           let stored = try? JSONDecoder().decode([String].self, from: data) {
+            revoked = Set(stored)
+        }
+    }
+
+    /// Provisioner action (runbook Phase 5): revoke an agent. The broker then
+    /// refuses to route for it; the device is notified so it rejects even a stale
+    /// broker's routing. Reloads from disk so a separate provisioner process's
+    /// revocation is honored without a broker restart.
+    public func revokeAgent(agentId: String) {
+        lock.lock()
+        revoked.insert(agentId)
+        let snapshot = Array(revoked)
+        lock.unlock()
+        try? FileManager.default.createDirectory(at: home.appendingPathComponent("broker"),
+                                                 withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try? encoder.encode(snapshot).write(to: revokedURL)
+    }
+
+    public func isRevoked(agentId: String) -> Bool {
+        lock.lock()
+        if revoked.contains(agentId) { lock.unlock(); return true }
+        lock.unlock()
+        if let data = try? Data(contentsOf: revokedURL),
+           let stored = try? JSONDecoder().decode([String].self, from: data) {
+            lock.lock()
+            revoked.formUnion(stored)
+            let hit = revoked.contains(agentId)
+            lock.unlock()
+            return hit
+        }
+        return false
     }
 
     public func agent(token: String) -> AgentRecord? {
@@ -120,6 +158,33 @@ public final class BrokerStore {
         devices[device.deviceId] = device
         lock.unlock()
         persist()
+    }
+
+    /// Provisioner action: authorize a device's identity key for this broker
+    /// (runbook Phase 3 enrollment). The production front-end is the signed-in
+    /// web session entering the Mac's pairing code (DESIGN.md §2); it lands here.
+    /// A device whose key is not enrolled cannot pass the connect challenge.
+    @discardableResult
+    public func enrollDevice(deviceId: String, name: String, publicKeyBase64: String) -> DeviceRecord {
+        let record = DeviceRecord(deviceId: deviceId, name: name, publicKeyBase64: publicKeyBase64)
+        upsertDevice(record)
+        return record
+    }
+
+    /// The enrolled record for a device id, reloading from disk on a miss so a
+    /// device enrolled by a separate provisioner process is visible without a
+    /// broker restart (mirrors the agent reload-on-miss).
+    public func deviceById(_ deviceId: String) -> DeviceRecord? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let record = devices[deviceId] { return record }
+        if let data = try? Data(contentsOf: devicesURL),
+           let stored = try? JSONDecoder().decode([DeviceRecord].self, from: data) {
+            for record in stored where devices[record.deviceId] == nil {
+                devices[record.deviceId] = record
+            }
+        }
+        return devices[deviceId]
     }
 
     public func allDevices() -> [DeviceRecord] {
