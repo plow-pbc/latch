@@ -173,7 +173,9 @@ final class GoalsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     /// The full local loop: mint a pre-approved agent identity at the broker,
-    /// write an MCP config, and launch Claude Code headlessly with the goal.
+    /// write an ephemeral MCP config, and open a real Terminal window running an
+    /// interactive Claude session seeded with the goal. The temp files clean
+    /// themselves up when the Terminal session ends.
     @objc private func startAgent() {
         let goal = goalText.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !goal.isEmpty else {
@@ -189,50 +191,70 @@ final class GoalsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             guard let self else { return }
             do {
                 let spawned = try device.requestSpawnAgent(goal: goal)
-                guard let token = spawned["token"].str,
-                      let socket = spawned["socket"].str,
-                      let shim = spawned["mcp_command"].str else {
+                guard let token = spawned["token"].str, let socket = spawned["socket"].str else {
                     throw RPCErrorText("broker returned incomplete spawn response")
                 }
-                let configURL = self.app.home.appendingPathComponent(
-                    "run/agent-\(spawned["agent_id"].str ?? "x").mcp.json")
+                let shim = spawned["mcp_command"].str ?? Bundle.main.executableURL!
+                    .resolvingSymlinksInPath().deletingLastPathComponent()
+                    .appendingPathComponent("domo-mcp").path
+                let claude = try self.findClaude()
+
+                // Per-session files under run/: the MCP config, the goal (passed
+                // via file so no shell quoting of the goal is needed), and the
+                // .command script Terminal will execute.
+                let runDir = self.app.home.appendingPathComponent("run")
+                try FileManager.default.createDirectory(at: runDir, withIntermediateDirectories: true)
+                let stamp = spawned["agent_id"].str ?? UUID().uuidString
+                let cfgURL = runDir.appendingPathComponent("agent-\(stamp).mcp.json")
+                let promptURL = runDir.appendingPathComponent("agent-\(stamp).prompt.txt")
+                let cmdURL = runDir.appendingPathComponent("agent-\(stamp).command")
+
                 let config: JSONValue = ["mcpServers": ["domo": [
+                    "type": "stdio",
                     "command": .string(shim),
                     "env": ["DOMO_AGENT_SOCKET": .string(socket),
                             "DOMO_AGENT_TOKEN": .string(token)],
                 ]]]
-                try config.encoded().write(to: configURL)
+                try config.encoded().write(to: cfgURL)
+                try Data(Self.briefing(goal: goal, deviceId: device.identity.deviceId).utf8).write(to: promptURL)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: cfgURL.path)
 
-                let claude = try self.findClaude()
-                self.appendOutput("Launching \(claude) …\n\n")
-                let process = Process()
-                // Invoke claude directly with an argument array — never via a
-                // shell string — so paths containing spaces (the default home
-                // is under "Application Support") are passed intact.
-                process.executableURL = URL(fileURLWithPath: claude)
-                process.arguments = ["-p", goal,
-                                     "--mcp-config", configURL.path,
-                                     "--allowedTools", "mcp__domo"]
-                // Launched from a bundle, we inherit launchd's minimal PATH;
-                // give claude a PATH that can find node and its own helpers.
-                var env = ProcessInfo.processInfo.environment
-                let extraPaths = ["/opt/homebrew/bin", "/usr/local/bin",
-                                  NSHomeDirectory() + "/.local/bin", "/usr/bin", "/bin"]
-                env["PATH"] = (extraPaths + [env["PATH"] ?? ""]).joined(separator: ":")
-                process.environment = env
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = pipe
-                pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                    let chunk = handle.availableData
-                    guard !chunk.isEmpty, let text = String(data: chunk, encoding: .utf8) else { return }
-                    self?.appendOutput(text)
+                // The script cleans up all three temp files (config carries the
+                // token) when the session exits, and seeds claude with a briefing
+                // that tells it to connect via the domo tools and run the goal.
+                // Interactive session with the briefing PRE-FILLED — the user
+                // presses Return to send it (interactive claude can't auto-submit
+                // a prompt, so pre-fill is the closest option). The prompt MUST
+                // come first: --mcp-config and --allowedTools are variadic and
+                // would otherwise swallow a trailing positional prompt. cd to
+                // $HOME so any folder-trust prompt is against an already-trusted dir.
+                let q = GoalsView.shQuote
+                let script = """
+                #!/bin/bash
+                CFG=\(q(cfgURL.path))
+                PROMPTFILE=\(q(promptURL.path))
+                SELF=\(q(cmdURL.path))
+                trap 'rm -f "$CFG" "$PROMPTFILE" "$SELF"' EXIT
+                PROMPT="$(cat "$PROMPTFILE")"
+                cd "$HOME"
+                \(q(claude)) "$PROMPT" --strict-mcp-config --mcp-config "$CFG" --allowedTools mcp__domo
+
+                """
+                try script.write(to: cmdURL, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cmdURL.path)
+
+                if ProcessInfo.processInfo.environment["DOMO_AGENT_DRYRUN"] != nil {
+                    // Test hook: write the launcher but don't open Terminal.
+                    self.appendOutput("[dry-run] wrote launcher: \(cmdURL.path)\n")
+                    return
                 }
-                process.terminationHandler = { [weak self] proc in
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    self?.appendOutput("\n[agent exited: \(proc.terminationStatus)]\n")
-                }
-                try process.run()
+                let open = Process()
+                open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                open.arguments = ["-a", "Terminal", cmdURL.path]
+                try open.run()
+                self.appendOutput("Opened an interactive agent in Terminal.\nGoal: \(goal)\n\n"
+                    + "The goal is pre-filled in Terminal — press Return there to start. "
+                    + "Approval requests appear here in the app.\n")
             } catch {
                 self.appendOutput("Failed: \(error)\n")
             }
@@ -243,6 +265,37 @@ final class GoalsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         let message: String
         init(_ message: String) { self.message = message }
         var description: String { message }
+    }
+
+    /// Wrap a string in single quotes for safe embedding in a shell script.
+    static func shQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// The prompt the Terminal agent is seeded with: operate the Mac through the
+    /// domo tools on the specific, already-granted device, then carry out the
+    /// goal — rather than sitting idle or using local tools.
+    static func briefing(goal: String, deviceId: String) -> String {
+        """
+        You are a Domo remote agent running in a terminal. The "domo" MCP tools are \
+        your ONLY way to act on the Mac — do not use local shell, file, or other \
+        built-in tools. They run on the target Mac with the owner's approval and \
+        sandboxing.
+
+        You already have access to the Mac with device id "\(deviceId)". Do NOT call \
+        request_device_access — access is already granted. (You may call list_devices \
+        to confirm it is online, or list_device_tools to see extra capabilities, but \
+        that is optional.)
+
+        Do this now, without waiting for further input: carry out the goal below using \
+        the domo tools with device "\(deviceId)" — run_command (pass the device id and \
+        declare read_paths / write_paths for every path you touch), read_file, \
+        write_file, or use_tool. The owner approves each operation on the Mac. When \
+        done, briefly report what you did.
+
+        Goal:
+        \(goal)
+        """
     }
 
     private func findClaude() throws -> String {
