@@ -157,7 +157,8 @@ ready payload that *contains* the job handle. Two hops.
 This Mac dials *out* — it is behind NAT and often asleep. `packages/relay-client`
 holds one WebSocket to the relay and serves what comes down it.
 
-- **The credential is a `relay:device` key pasted from the Plow portal.** It
+- **The credential is a `relay:device` key minted by first-run login** (below) —
+  nothing is pasted out of a browser. It
   travels in the post-challenge `auth` frame, as every plow channel client does
   — never an upgrade header, and **never in a URL**. That rule is absolute:
   credentials in URLs leaked into stored MCP registrations, terminal output,
@@ -191,6 +192,50 @@ plow's existing channel protocol, but the two request/response frame `type`
 strings and the client kind are *not* pinned by the design docs — the names
 there are our proposal. If the relay chooses differently, that file is the only
 thing that changes.
+
+## First-run login
+
+Download the app, enter your phone number, enter the code, done. Nothing is
+pasted out of a browser and the user never visits the portal.
+
+`src/onboarding.ts` is the whole flow as a state machine — testable without
+Electron, renderable offscreen for screenshots — and `src/plowApi.ts` is the
+only place that talks HTTP to Plow. The window (`renderer/onboarding.html`)
+draws whatever state the main process hands it and owns no copy of its own.
+
+- **Five calls:** `POST /v1/auth/otp/request` → `POST /v1/auth/otp/verify` →
+  `GET /v1/relay/info` → mint the device credential → open the socket. Then
+  "create an agent" is `POST /v1/relay/agents`, which the device credential may
+  call.
+- **The OTP session is thrown away the moment the device credential exists.** It
+  carries `keys:manage` and `relay:*` — it can mint *any* credential on the
+  account — so the app holds it for the seconds it needs and revokes it. It is
+  never written to disk. (The revoke is best-effort: `DELETE /v1/api-keys/{id}`
+  requires `keys:manage` and refuses self-revoke, so it cannot succeed against
+  the API as it stands today.)
+- **`/otp/request` answers `200 {"ok": true}` for an unknown number, an
+  unparseable number and a failed SMS send alike**, so it cannot be used to
+  probe whether an account exists. The app therefore cannot tell "sent" from
+  "silently didn't", and the copy never claims a code went out — it says to
+  check your phone, and offers a resend. The one distinguishable failure is
+  `503`. Codes are 8 digits with a 5-minute life; the screen counts down and
+  tells an expired code apart from a wrong one, which the server cannot.
+- **The API origin is baked into the build, not a setting.** A dev build points
+  at the local API, everything else at `https://api.plow.co`, with
+  `DOMO_API_BASE_URL` as a developer override. A credential is only valid
+  against the environment that minted it, so an editable origin could only ever
+  be wrong. The device socket derives from that base by swapping the scheme; the
+  **agent endpoint is not derived at all** — `GET /v1/relay/info` returns it and
+  the server stays authoritative.
+- **Agent credentials are shown exactly once**, as a ready-to-paste MCP config
+  with the token in an `Authorization` header — never in the URL.
+
+Evidence, both reproducible and both failing loudly rather than quietly:
+
+```
+just onboarding-screenshots   # all four screens, real window + real preload
+just first-run-transcript     # the flow end to end + the no-credential grep
+```
 
 ## Integration coverage
 

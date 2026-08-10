@@ -46,17 +46,26 @@ describe("settings storage", () => {
     expect(mode(file)).toBe(0o600);
   });
 
-  it("round-trips the relay URL and credential", () => {
+  it("round-trips the credential and what the server said about the account", () => {
     const home = tempHome();
     const settings = loadSettings(home);
-    expect(settings.relayUrl).toBe("");
     expect(settings.relayCredential).toBe("");
-    settings.relayUrl = "wss://api.plow.co/v1/relay/ws";
+    expect(settings.accountUid).toBe("");
+    expect(settings.mcpUrl).toBe("");
     settings.relayCredential = "plow_sk_secret";
+    settings.accountUid = "u_123";
+    settings.mcpUrl = "https://api.plow.co/v1/relay/devices/u_123/mcp";
     saveSettings(home, settings);
     const reloaded = loadSettings(home);
-    expect(reloaded.relayUrl).toBe("wss://api.plow.co/v1/relay/ws");
     expect(reloaded.relayCredential).toBe("plow_sk_secret");
+    expect(reloaded.accountUid).toBe("u_123");
+    expect(reloaded.mcpUrl).toBe("https://api.plow.co/v1/relay/devices/u_123/mcp");
+  });
+
+  it("holds no API URL at all — the origin is baked into the build", () => {
+    const settings = loadSettings(tempHome());
+    expect(settings).not.toHaveProperty("relayUrl");
+    expect(settings).not.toHaveProperty("apiBaseUrl");
   });
 
   it("no longer carries a connection string or a certificate pin", () => {

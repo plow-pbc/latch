@@ -20,9 +20,8 @@ contextBridge.exposeInMainWorld("domo", {
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),
-  relaySet: (url: string, credential: string) =>
-    ipcRenderer.invoke("settings:setRelay", url, credential),
-  relayClearCredential: () => ipcRenderer.invoke("settings:clearRelayCredential"),
+  relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
+  onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
   approvalModeGet: () => ipcRenderer.invoke("settings:getApprovalMode"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
@@ -33,6 +32,18 @@ contextBridge.exposeInMainWorld("domo", {
   statusGet: () => ipcRenderer.invoke("status:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
+
+  // First-run login window. Every call returns the whole state, so the screen
+  // renders from one shape and never has to reconcile two.
+  onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
+  onboardingRequestCode: (phone: string) => ipcRenderer.invoke("onboarding:requestCode", phone),
+  onboardingResendCode: () => ipcRenderer.invoke("onboarding:resendCode"),
+  onboardingEditPhone: () => ipcRenderer.invoke("onboarding:editPhone"),
+  onboardingSubmitCode: (code: string) => ipcRenderer.invoke("onboarding:submitCode", code),
+  onboardingCreateAgent: (name: string) => ipcRenderer.invoke("onboarding:createAgent", name),
+  onboardingDismissAgent: () => ipcRenderer.invoke("onboarding:dismissAgent"),
+  onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
+  onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
   // Approval window.
   approvalGet: () => ipcRenderer.invoke("approval:get"),

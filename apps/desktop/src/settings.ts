@@ -30,11 +30,21 @@ export interface WindowBounds {
 export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
 
 export interface Settings {
-  /** The relay's device endpoint, e.g. wss://api.plow.co/v1/relay/ws. */
-  relayUrl: string;
-  /** A `relay:device` key, pasted from the Plow portal. A SECRET: it is never
-   * sent to the renderer and never written to a log or an error string. */
+  /* There is deliberately NO API base URL here. It is baked into the build
+   * (`resolveApiBaseUrl`), because a credential is only valid against the
+   * environment that minted it — a user-editable origin would turn a stored
+   * token silently meaningless and produce an auth error nobody could explain.
+   * The old `relayUrl` WebSocket setting is gone with it; the socket is derived
+   * from the build's base URL by `relaySocketUrl`. */
+  /** A `relay:device` key, minted by first-run login and never seen by the
+   * user. A SECRET: it is never sent to the renderer and never written to a log
+   * or an error string. */
   relayCredential: string;
+  /** The account this Mac is signed into, and the endpoint agents POST to.
+   * Both come from `GET /v1/relay/info` — the server stays authoritative and
+   * the app never constructs the MCP URL itself. Cached only for display. */
+  accountUid: string;
+  mcpUrl: string;
   /** The last-selected main-window tab, restored across launches. */
   selectedTab: string;
   /** The main window's last size + position, restored across launches. */
@@ -53,8 +63,9 @@ function settingsPath(home: string): string {
 
 export function loadSettings(home: string): Settings {
   const defaults: Settings = {
-    relayUrl: "",
     relayCredential: "",
+    accountUid: "",
+    mcpUrl: "",
     selectedTab: "audit",
     approvalMode: "ask",
     showAgentSuggestions: true,

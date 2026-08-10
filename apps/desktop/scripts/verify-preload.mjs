@@ -4,6 +4,7 @@
 // windows, then reads back the DOM state.
 // Run: DOMO_HOME=/tmp/x npx electron apps/desktop/scripts/verify-preload.mjs
 import { app, BrowserWindow, ipcMain } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,10 +19,14 @@ ipcMain.handle("goals:list", async () => []);
 ipcMain.handle("rules:list", async () => []);
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
+// A signed-in Mac: the credential itself is deliberately absent from this
+// shape, because the main process never hands it to the renderer.
 ipcMain.handle("settings:getRelay", async () => ({
-  url: "wss://relay.example/v1/relay/ws",
+  apiBaseUrl: "https://api.plow.co",
+  accountUid: "u_probe",
+  mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   hasCredential: true,
-  connected: false,
+  connected: true,
 }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getShowSuggestions", async () => true);
@@ -79,18 +84,25 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  // The Settings tab is where the relay credential lives, so render it too and
-  // prove the key never reaches the renderer.
+  // Settings names the Plow account, so render it too and prove the credential
+  // never reaches the renderer. There is no key field and no URL field any more:
+  // the credential is minted by first-run login and the API origin is baked into
+  // the build.
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
   await new Promise((r) => setTimeout(r, 300));
   const settings = await win.webContents.executeJavaScript(`(${() => {
     const inputs = [...document.querySelectorAll("input")];
     return {
-      hasRelayUrl: document.body.innerText.includes("Relay connection"),
-      keyFieldIsPassword: inputs.some((i) => i.type === "password" && i.value === ""),
+      hasAccountGroup: document.body.innerText.includes("Plow account"),
+      // The only password field left is the Anthropic API key.
+      offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
     };
   }})()`);
+
+  // Settings changed with first-run login, and every UI change gets an image.
+  const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
+  fs.writeFileSync(settingsShot, (await win.webContents.capturePage()).toPNG());
 
   const approvalWin = offscreen();
   await approvalWin.loadFile(path.join(dist, "renderer/approval.html"));
@@ -106,14 +118,14 @@ app.whenReady().then(async () => {
   }})()`);
 
   const ok =
-    settings.hasRelayUrl &&
-    settings.keyFieldIsPassword &&
+    settings.hasAccountGroup &&
+    settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
     approval.buttons.length > 0 &&
     errors.length === 0;
-  console.log("PROBE:" + JSON.stringify({ main, settings, approval, consoleErrors: errors, ok }));
+  console.log("PROBE:" + JSON.stringify({ main, settings, settingsShot, approval, consoleErrors: errors, ok }));
   app.exit(ok ? 0 : 1);
 });

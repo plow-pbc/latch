@@ -27,6 +27,8 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
+import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
+import { Onboarding } from "./onboarding.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
@@ -38,6 +40,14 @@ const rendererDir = path.join(dirname, "renderer");
 
 const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
 
+/**
+ * Which Plow this build talks to. Baked in — an unpackaged run is a dev build
+ * and points at the local API; anything else points at production. There is no
+ * Settings field for it on purpose (a credential is only valid against the
+ * environment that minted it), just a developer env-var override.
+ */
+const apiBaseUrl = resolveApiBaseUrl({ isDevBuild: !app.isPackaged, env: process.env });
+
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
@@ -45,6 +55,8 @@ let goals: GoalsLibrary | null = null;
 let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
+let onboarding: Onboarding | null = null;
+let onboardingWindow: BrowserWindow | null = null;
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -287,33 +299,44 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   settings.selectedTab = tab;
   saveSettings(home, settings);
 });
-// The relay's URL is shown; the CREDENTIAL IS NEVER RETURNED — the renderer
-// only learns whether one is set. It is a secret with no reason to leave the
-// main process, and putting it in a sandboxed web view's memory is a way for it
-// to end up somewhere we did not choose.
+// The account this Mac is signed into. The CREDENTIAL IS NEVER RETURNED — the
+// renderer only learns whether one is set. It is a secret with no reason to
+// leave the main process, and putting it in a sandboxed web view's memory is a
+// way for it to end up somewhere we did not choose.
 ipcMain.handle("settings:getRelay", async () => {
   const settings = loadSettings(home);
   return {
-    url: settings.relayUrl ?? "",
+    apiBaseUrl,
+    accountUid: settings.accountUid ?? "",
+    mcpUrl: settings.mcpUrl ?? "",
     hasCredential: (settings.relayCredential ?? "").trim().length > 0,
     connected,
   };
 });
-ipcMain.handle("settings:setRelay", async (_e, url: string, credential: string) => {
+// Sign out: forget the device credential and drop the socket. The credential
+// itself is not revoked — that needs the account's own key list, which this Mac
+// deliberately cannot reach.
+ipcMain.handle("settings:signOut", async () => {
   const settings = loadSettings(home);
-  settings.relayUrl = (url || "").trim();
-  // An empty credential field means "leave it alone", so re-saving the URL
-  // does not silently wipe a credential the user cannot see to retype.
-  const pasted = (credential || "").trim();
-  if (pasted.length > 0) settings.relayCredential = pasted;
+  settings.relayCredential = "";
+  settings.accountUid = "";
+  settings.mcpUrl = "";
   saveSettings(home, settings);
   await startRelay();
 });
-ipcMain.handle("settings:clearRelayCredential", async () => {
-  const settings = loadSettings(home);
-  settings.relayCredential = "";
-  saveSettings(home, settings);
-  await startRelay();
+ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
+
+// MARK: IPC for the first-run login window
+
+ipcMain.handle("onboarding:get", async () => onboarding?.refresh() ?? null);
+ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding?.requestCode(phone));
+ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
+ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
+ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.submitCode(code));
+ipcMain.handle("onboarding:createAgent", async (_e, name: string) => onboarding?.createAgent(name));
+ipcMain.handle("onboarding:dismissAgent", async () => onboarding?.dismissAgent());
+ipcMain.handle("onboarding:finish", async () => {
+  onboardingWindow?.close();
 });
 ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
@@ -345,6 +368,37 @@ let connected = false;
 
 function notifyRenderer(channel: string): void {
   mainWindow?.webContents.send(channel);
+  if (channel === "status:changed") onboardingWindow?.webContents.send("onboarding:changed");
+}
+
+/**
+ * The first-run login window: phone → code → connected, and where "create an
+ * agent" lives afterwards. Opened automatically when this Mac holds no
+ * credential, and on demand from Settings.
+ */
+function openOnboardingWindow(): void {
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+    onboardingWindow.show();
+    return;
+  }
+  onboardingWindow = new BrowserWindow({
+    width: 460,
+    height: 560,
+    resizable: false,
+    fullscreenable: false,
+    title: "Domo — Set Up",
+    webPreferences: {
+      preload: path.join(dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  onboardingWindow.on("closed", () => {
+    onboardingWindow = null;
+    notifyRenderer("status:changed"); // Settings re-reads what changed
+  });
+  void onboardingWindow.loadFile(path.join(rendererDir, "onboarding.html"));
 }
 
 /**
@@ -358,13 +412,14 @@ async function startRelay(): Promise<void> {
   notifyRenderer("status:changed");
 
   const settings = loadSettings(home);
-  const url = (settings.relayUrl ?? "").trim();
   const credential = (settings.relayCredential ?? "").trim();
-  if (!url || !credential || !mcp) return;
+  if (!credential || !mcp) return;
 
   const server = mcp;
   relay = new RelayClient({
-    url,
+    // Derived from the build's API base URL: same origin, scheme swapped, the
+    // relay path appended. Two URL fields that must agree is a support burden.
+    url: relaySocketUrl(apiBaseUrl),
     credential,
     serve: (request, auth) => server.fetch(request, auth),
     onStatusChange: (isConnected) => {
@@ -392,8 +447,23 @@ app.whenReady().then(async () => {
   mcp = createDomoMcpServer(device);
   await startRelay();
 
+  onboarding = new Onboarding({
+    api: new PlowApi(apiBaseUrl),
+    home,
+    startRelay,
+    isConnected: () => connected,
+    deviceName: `Domo Desktop (${hostName()})`,
+    onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
+    // RelayClient's redaction is not in play here, so nothing secret is ever
+    // handed to this — see Onboarding's callers of `warn`.
+    warn: (message) => console.log(`[onboarding] ${message}`),
+  });
+
   createMainWindow();
   setupTray();
+  // A Mac with no credential cannot do anything until it has one, so first run
+  // opens straight into login rather than an empty audit log.
+  if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

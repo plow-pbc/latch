@@ -397,8 +397,7 @@ async function renderRules() {
 
 /** One honest line about the relay link, from what the main process reports. */
 function relayStatusText(relay) {
-  if (!relay.url) return "Not configured.";
-  if (!relay.hasCredential) return "No connect key stored.";
+  if (!relay.hasCredential) return "Not signed in.";
   return relay.connected ? "Connected." : "Not connected — retrying.";
 }
 
@@ -416,31 +415,32 @@ function capText(c) {
 // ---- Settings ----
 
 async function renderSettings() {
-  // Relay connection. The credential is write-only from here: the main process
-  // never hands it back, so the field shows whether one is stored, not what it
-  // is. Leaving it blank keeps the stored one.
+  // The Plow account. There is no credential field and no URL field here: the
+  // credential is minted by first-run login and never leaves the main process,
+  // and the API origin is baked into the build (a token is only valid against
+  // the environment that minted it, so an editable origin could only be wrong).
   const relay = await window.domo.relayGet();
-  const relayUrlInput = el("input", { class: "text", attrs: { placeholder: "wss://api.plow.co/v1/relay/ws" } });
-  relayUrlInput.value = relay.url || "";
-  const relayKeyInput = el("input", {
-    class: "text",
-    attrs: {
-      type: "password",
-      placeholder: relay.hasCredential ? "•••••••• (stored — leave blank to keep)" : "Paste the Mac key from the portal",
-    },
-  });
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
-  const relaySave = el("button", { class: "btn primary", text: "Save & Connect" });
-  relaySave.addEventListener("click", async () => {
-    relayNote.textContent = "Connecting…";
-    await window.domo.relaySet(relayUrlInput.value.trim(), relayKeyInput.value.trim());
+  const setUp = el("button", { class: "btn primary", text: relay.hasCredential ? "Create Agent" : "Sign In" });
+  setUp.addEventListener("click", () => window.domo.onboardingOpen());
+  const signOut = el("button", { class: "btn danger", text: "Sign Out" });
+  signOut.disabled = !relay.hasCredential;
+  signOut.addEventListener("click", async () => {
+    await window.domo.relaySignOut();
     renderSettings();
   });
-  const relayForget = el("button", { class: "btn danger", text: "Forget Key" });
-  relayForget.addEventListener("click", async () => {
-    await window.domo.relayClearCredential();
-    renderSettings();
-  });
+  const accountRows = relay.hasCredential
+    ? [
+        el("div", { class: "field" }, [
+          el("label", { text: "Agent endpoint" }),
+          el("div", { class: "mono faint", text: relay.mcpUrl || "—" }),
+        ]),
+        el("div", { class: "field" }, [
+          el("label", { text: "Account" }),
+          el("div", { class: "mono faint", text: relay.accountUid || "—" }),
+        ]),
+      ]
+    : [];
 
   const restoreNote = el("p", { class: "faint", text: "" });
   const restore = el("button", { class: "btn", text: "Restore Default Goals" });
@@ -524,10 +524,9 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Relay connection", "Where this Mac dials out so agents can reach it. Create a Mac key in the Plow portal, under Sessions → Relay.", [
-      el("div", { class: "field" }, [el("label", { text: "Relay URL" }), relayUrlInput]),
-      el("div", { class: "field" }, [el("label", { text: "Connect key" }), relayKeyInput]),
-      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), relayForget, relaySave]),
+    group("Plow account", "Sign in with your phone number to let agents reach this Mac.", [
+      ...accountRows,
+      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
     ]),
     group("Anthropic API key", "Required for the Adversarial Agent features. Stored locally.", [
       apiKeyInput,

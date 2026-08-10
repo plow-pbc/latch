@@ -59,6 +59,15 @@ verify-preload: build
 approval-screenshot: build
     DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/approval-screenshot.mjs
 
+# Screenshot every first-run login screen. Fails if a screen lost its content.
+onboarding-screenshots: build
+    DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/onboarding-screenshot.mjs
+
+# First-run login end to end from a clean home, with the no-credential-in-a-log
+# grep. Fails if any check fails.
+first-run-transcript: build
+    npx vite-node apps/desktop/scripts/first-run-transcript.mjs
+
 # The chunk-10 round trip with timings: slow approval, then a long command.
 slow-approval-transcript: build
     npx vite-node apps/desktop/scripts/slow-approval-transcript.mjs
