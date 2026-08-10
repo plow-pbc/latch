@@ -11,6 +11,9 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
     private let onConnect: (DomoConnection) -> String?
     /// Submit a pairing request for `code`; returns true if the broker ack'd.
     private let onPair: (DomoConnection, String) -> Bool
+    /// Forget the broker and return to the connect state (nil when unconfigured).
+    private let onDisconnect: (() -> Void)?
+    private let currentBrokerURL: String?
     private let deviceId: String
     private let publicKey: String
 
@@ -23,17 +26,20 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
     private var qrView: NSImageView!
     private var pairStatus: NSTextField!
 
-    init(deviceId: String, publicKey: String,
+    init(deviceId: String, publicKey: String, currentBrokerURL: String?,
          onConnect: @escaping (DomoConnection) -> String?,
-         onPair: @escaping (DomoConnection, String) -> Bool) {
+         onPair: @escaping (DomoConnection, String) -> Bool,
+         onDisconnect: (() -> Void)?) {
         self.onConnect = onConnect
         self.onPair = onPair
+        self.onDisconnect = onDisconnect
+        self.currentBrokerURL = currentBrokerURL
         self.deviceId = deviceId
         self.publicKey = publicKey
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 480),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
                               styleMask: [.titled, .closable, .miniaturizable],
                               backing: .buffered, defer: false)
-        window.title = "Connect Domo"
+        window.title = currentBrokerURL == nil ? "Connect Domo" : "Domo Settings"
         window.center()
         super.init(window: window)
         buildContent()
@@ -60,29 +66,32 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
 
-        let title = NSTextField(labelWithString: "Connect this Mac to your Domo broker")
+        let title = NSTextField(labelWithString:
+            currentBrokerURL == nil ? "Connect this Mac to your Domo broker" : "Broker settings")
         title.font = .systemFont(ofSize: 17, weight: .semibold)
         stack.addArrangedSubview(title)
 
         let subtitle = NSTextField(wrappingLabelWithString:
-            "Paste the connection string your broker gave you. It contains everything needed — the address and the security pin.")
+            currentBrokerURL == nil
+              ? "Paste the connection string your broker gave you (it has the address and the security pin), or type a broker URL."
+              : "Edit the broker address below — or paste a full connection string — then click Connect.")
         subtitle.textColor = .secondaryLabelColor
         subtitle.font = .systemFont(ofSize: 12)
         subtitle.preferredMaxLayoutWidth = 472
         stack.addArrangedSubview(subtitle)
 
-        // Paste field
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        let tv = NSTextView()
-        tv.isRichText = false
-        tv.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        let fieldLabel = NSTextField(labelWithString: "Broker URL or connection string")
+        fieldLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        fieldLabel.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(fieldLabel)
+
+        // Paste/edit field. Use the shared helper — a bare NSTextView as a
+        // scrollview's documentView never lays out its text container, so text is
+        // stored but not drawn (cursor moves, nothing shows). See CLAUDE.md.
+        let (scroll, tv) = makeScrollableTextView(editable: true, monospaced: true)
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.delegate = self
-        tv.textContainerInset = NSSize(width: 6, height: 6)
-        scroll.documentView = tv
+        tv.string = currentBrokerURL ?? ""   // pre-fill so the URL is editable in place
         inputView = tv
         stack.addArrangedSubview(scroll)
         NSLayoutConstraint.activate([
@@ -166,7 +175,26 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
         idRow.addArrangedSubview(copyBtn)
         stack.addArrangedSubview(idRow)
 
+        // Disconnect (only when currently connected) — forgets the broker.
+        if onDisconnect != nil {
+            let divider2 = NSBox()
+            divider2.boxType = .separator
+            divider2.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(divider2)
+            divider2.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48).isActive = true
+
+            let disconnect = NSButton(title: "Disconnect this Mac",
+                                      target: self, action: #selector(disconnectTapped))
+            disconnect.bezelStyle = .rounded
+            stack.addArrangedSubview(disconnect)
+        }
+
         window.contentView = content
+    }
+
+    @objc private func disconnectTapped() {
+        onDisconnect?()
+        close()
     }
 
     @objc private func connectTapped() {

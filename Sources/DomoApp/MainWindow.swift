@@ -90,9 +90,8 @@ final class StatusBarView: NSView {
     private let dot = NSView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
-    private let connectButton = NSButton()
-    private let pauseButton = NSButton()
     private let revokeButton = NSButton()
+    private let settingsButton = NSButton()
 
     init(app: AppDelegate) {
         self.app = app
@@ -119,21 +118,17 @@ final class StatusBarView: NSView {
         labels.translatesAutoresizingMaskIntoConstraints = false
         addSubview(labels)
 
-        connectButton.title = "Connect…"
-        connectButton.bezelStyle = .rounded
-        connectButton.target = app
-        connectButton.action = #selector(AppDelegate.openOnboarding)
-
-        pauseButton.bezelStyle = .rounded
-        pauseButton.target = app
-        pauseButton.action = #selector(AppDelegate.toggleLink)
-
         revokeButton.title = "Revoke access ▾"
         revokeButton.bezelStyle = .rounded
         revokeButton.target = self
         revokeButton.action = #selector(showRevokeMenu)
 
-        let buttons = NSStackView(views: [connectButton, pauseButton, revokeButton])
+        settingsButton.title = "Settings…"
+        settingsButton.bezelStyle = .rounded
+        settingsButton.target = app
+        settingsButton.action = #selector(AppDelegate.openSettings)
+
+        let buttons = NSStackView(views: [revokeButton, settingsButton])
         buttons.orientation = .horizontal
         buttons.spacing = 8
         buttons.translatesAutoresizingMaskIntoConstraints = false
@@ -170,13 +165,9 @@ final class StatusBarView: NSView {
         } else {
             detailLabel.stringValue = "Not set up"
         }
-        // Always reachable: opens the connect panel to (re)point at a broker.
-        connectButton.isHidden = false
-        connectButton.title = app.isConfigured ? "Change broker…" : "Connect…"
-        pauseButton.isHidden = !app.isConfigured
-        pauseButton.title = app.isPaused ? "Resume" : "Pause"
         revokeButton.isHidden = !app.isConfigured
         revokeButton.isEnabled = !agents.isEmpty
+        // Settings is always available (broker URL + change broker live there).
     }
 
     @objc private func showRevokeMenu() {

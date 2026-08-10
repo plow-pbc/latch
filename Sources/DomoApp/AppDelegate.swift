@@ -237,12 +237,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let controller = OnboardingWindowController(
             deviceId: identity?.deviceId ?? "?",
             publicKey: identity?.keyPair.publicKeyBase64 ?? "",
+            currentBrokerURL: connection?.url,
             onConnect: { [weak self] c in
                 self?.connectNetwork(c, persist: true)
                 return nil
             },
             onPair: { [weak self] c, code in
                 self?.submitPairing(c, code: code) ?? false
+            },
+            onDisconnect: connection == nil ? nil : { [weak self] in
+                self?.disconnectAndForget()
             })
         onboardingController = controller
         controller.present()
@@ -303,13 +307,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(NSMenuItem(title: "Open Domo", action: #selector(openMainWindow), keyEquivalent: "o"))
-        menu.addItem(NSMenuItem(title: device == nil ? "Connect…" : "Change broker…",
-                                action: #selector(openOnboarding), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ""))
 
         if device != nil {
-            let pauseTitle = (linkState == .paused) ? "Resume" : "Pause"
-            menu.addItem(NSMenuItem(title: pauseTitle, action: #selector(toggleLink), keyEquivalent: ""))
-
             let revoke = NSMenuItem(title: "Revoke access", action: nil, keyEquivalent: "")
             let sub = NSMenu()
             let agents = device?.knownAgentIds() ?? []
@@ -363,18 +363,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         onStateChange?()
     }
 
-    @objc func toggleLink() {
-        guard let device else { return }
-        if linkState == .paused {
-            device.resume(reconnect: networked)
-            linkState = networked ? .reconnecting : .connecting
-        } else {
-            device.pause()
-            linkState = .paused
-        }
-        refreshUI()
-    }
-
     @objc private func revokeAgent(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         confirmRevoke(agentId: id)
@@ -395,6 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func openOnboarding() { showOnboarding() }
+    @objc func openSettings() { showOnboarding() }
 
     /// Fully disconnect this Mac and forget the saved broker, returning to the
     /// connect panel. This is device-level (distinct from per-agent Revoke).
