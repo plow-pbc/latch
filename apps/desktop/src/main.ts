@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -326,9 +326,25 @@ ipcMain.handle("settings:signOut", async () => {
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
-// MARK: IPC for the first-run login window
+// MARK: IPC for the first-run setup window
 
 ipcMain.handle("onboarding:get", async () => onboarding?.refresh() ?? null);
+ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
+ipcMain.handle("onboarding:newCode", async () => onboarding?.newActivationCode());
+ipcMain.handle("onboarding:usePhoneCode", async () => onboarding?.usePhoneCode());
+ipcMain.handle("onboarding:useActivation", async () => onboarding?.useActivation());
+/**
+ * Open Messages with the activation text drafted.
+ *
+ * Main builds and opens the URL: the renderer is sandboxed and has no way to
+ * open one, and this keeps the only `openExternal` call in the app pinned to a
+ * `sms:` URL the app composed itself rather than anything a page handed it.
+ */
+ipcMain.handle("onboarding:openMessages", async () => {
+  const url = onboarding?.state().activation?.smsUrl;
+  if (url) await shell.openExternal(url);
+  return onboarding?.messagesOpened();
+});
 ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding?.requestCode(phone));
 ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
 ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
@@ -372,9 +388,9 @@ function notifyRenderer(channel: string): void {
 }
 
 /**
- * The first-run login window: phone → code → connected, and where "create an
- * agent" lives afterwards. Opened automatically when this Mac holds no
- * credential, and on demand from Settings.
+ * The first-run setup window: show a code → the user texts it → connected, and
+ * where "create an agent" lives afterwards. Opened automatically when this Mac
+ * holds no credential, and on demand from Settings.
  */
 function openOnboardingWindow(): void {
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {

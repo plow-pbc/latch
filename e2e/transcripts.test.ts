@@ -36,15 +36,22 @@ async function transcript(script: string): Promise<string> {
 
 describe("end-to-end transcripts", () => {
   it(
-    "first-run login, from a clean home over a real relay handshake",
+    "first-run setup, from a clean home over a real relay handshake",
     async () => {
       const output = await transcript("first-run-transcript.mjs");
       expect(output).toContain("every check passed");
-      // The OTP-revoke gap is a real hole in production, not a passing claim
-      // about it. If these lines ever vanish, the check silently starts reading
-      // as something it is not.
-      expect(output).toContain("CAVEAT");
-      expect(output).toMatch(/DELETE \/v1\/api-keys/);
+      // The four failure modes with no user-visible feedback are the reason
+      // this script exists; a run that stopped exercising them would still say
+      // "every check passed". So name them here.
+      expect(output).toContain("did not match the activation prefix");
+      expect(output).toContain("completion is terminal and outlives our five-minute watch");
+      expect(output).toContain("a second redeem is verified with NO token key at all");
+      expect(output).toContain("a 410 is an honest message offering a new code");
+      // Chunk 13's best-effort client-side revoke is gone: the mint retires the
+      // session server-side. If that flag ever stops being sent, the login
+      // session quietly outlives onboarding again.
+      expect(output).toContain("revoke_calling_session=true");
+      expect(output).not.toContain("CAVEAT");
     },
     180_000,
   );

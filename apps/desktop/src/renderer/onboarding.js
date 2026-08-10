@@ -1,6 +1,7 @@
-/* First-run login renderer — phone → code → connected, plus the create-agent
-   result. Sandboxed like every other window: no Node, no ipcRenderer, only the
-   narrow `window.domo` bridge, and every string inserted with textContent.
+/* First-run setup renderer — show a code → the user texts it → connected, plus
+   the create-agent result, and the phone-code fallback behind a quiet link.
+   Sandboxed like every other window: no Node, no ipcRenderer, only the narrow
+   `window.domo` bridge, and every string inserted with textContent.
 
    The main process owns the state machine; each call here returns the whole
    state and this file just draws it. There is no local copy to drift. */
@@ -51,6 +52,119 @@ async function apply(next) {
 
 // MARK: screens
 
+/** A quiet way out to the phone-code path, on both activation screens. It is
+    the fallback for a Mac with no Messages account signed in, and for signing
+    in as one specific account rather than as whoever texts. */
+function phoneCodeLink() {
+  return el("div", { class: "orow" }, [
+    button("Use a phone code instead", "linkbtn", async () =>
+      apply(await window.domo.onboardingUsePhoneCode()),
+    ),
+  ]);
+}
+
+/** The exact message body, and who to send it to. Shown on both activation
+    screens because a wrong prefix is answered with total silence on both
+    channels — the server returns 200, sends nothing, and leaves the code live.
+    So the user is given the text to copy, never a description of it. */
+function sendInstructions(activation) {
+  return [
+    el("div", { class: "field" }, [
+      el("label", { text: "Send this exact message" }),
+      copyRow(activation.smsBody, "Copy"),
+    ]),
+    el("div", { class: "field" }, [
+      el("label", { text: "To" }),
+      // Whatever /v1/auth/activate returned. Per-environment config, and it may
+      // be a pool line rather than the managed number — never hardcoded.
+      el("div", { class: "faint mono", text: activation.sendTo }),
+    ]),
+  ];
+}
+
+/** Minutes:seconds left of the window we watch for, or "" once it is up. */
+function countdown(node, until) {
+  const tick = () => {
+    const left = Math.max(0, until - Date.now());
+    const m = Math.floor(left / 60000);
+    const s = Math.floor((left % 60000) / 1000);
+    node.textContent = left > 0 ? `Listening for ${m}:${String(s).padStart(2, "0")}` : "";
+  };
+  tick();
+  clearInterval(window.__domoExpiryTimer);
+  window.__domoExpiryTimer = setInterval(tick, 1000);
+}
+
+function activateScreen() {
+  const activation = state.activation;
+  if (!activation) {
+    return [
+      el("h2", { text: "Connect this Mac" }),
+      el("p", { class: "faint lede", text: "Getting a code from Plow…" }),
+      note(state),
+    ];
+  }
+
+  return [
+    el("h2", { text: "Connect this Mac" }),
+    el("p", {
+      class: "faint lede",
+      text: "Text this code to Plow from the phone you want on the account. Plow creates the account from that text — there's nothing to type here.",
+    }),
+    el("div", { class: "bigcode mono", text: activation.displayCode }),
+    // Said in the same breath as showing it: whoever texts this code gets the
+    // account, and the server cannot tell them apart from the person holding
+    // this Mac.
+    el("p", {
+      class: "warn lede",
+      text: "This code is a credential. Anyone who texts it gets the account — don't share it or post a screenshot.",
+    }),
+    ...sendInstructions(activation),
+    el("div", { class: "oactions" }, [
+      button("Open Messages", "btn primary", async () =>
+        apply(await window.domo.onboardingOpenMessages()),
+      ),
+    ]),
+    phoneCodeLink(),
+    note(state),
+  ];
+}
+
+function waitingScreen() {
+  const activation = state.activation;
+  const clock = el("span", { class: "faint" });
+  if (activation && !state.activationStale) countdown(clock, activation.pollUntil);
+  else clearInterval(window.__domoExpiryTimer);
+
+  return [
+    el("div", { class: "orow" }, [
+      el("span", { class: `status-dot${state.activationStale ? "" : " on"}` }),
+      el("h2", { text: state.activationStale ? "Still nothing" : "Waiting for your text" }),
+    ]),
+    el("p", {
+      class: "faint lede",
+      text: state.activationStale
+        ? "Plow never got the message. It has to start with the words below — anything before them and Plow ignores it silently."
+        : "Send the message from Messages and this screen will move on by itself. Nothing to type.",
+    }),
+    el("div", { class: "bigcode mono", text: activation ? activation.displayCode : "—" }),
+    ...(activation ? sendInstructions(activation) : []),
+    el("div", { class: "orow" }, [clock]),
+    el("div", { class: "oactions" }, [
+      button("Open Messages", "btn", async () => apply(await window.domo.onboardingOpenMessages())),
+      el("div", { class: "spacer" }),
+      // Re-polls the old code first: the app stops watching at five minutes but
+      // the server honours it for thirty, so a text sent at minute six has
+      // already worked and this button signs them straight in.
+      button("Get a New Code", "btn primary", async () =>
+        apply(await window.domo.onboardingNewCode()),
+      ),
+    ]),
+    phoneCodeLink(),
+    note(state),
+  ];
+}
+
 function phoneScreen() {
   const input = el("input", { class: "text", attrs: { type: "tel", placeholder: "+1 555 123 4567", autofocus: "" } });
   input.value = state.phone || "";
@@ -62,6 +176,7 @@ function phoneScreen() {
     el("p", { class: "faint lede", text: "Enter the phone number on your Plow account. We'll text you a code." }),
     el("div", { class: "field" }, [el("label", { text: "Phone number" }), input]),
     el("div", { class: "oactions" }, [
+      button("Back", "btn small", async () => apply(await window.domo.onboardingUseActivation())),
       el("div", { class: "spacer" }),
       button("Send Code", "btn primary", submit),
     ]),
@@ -159,7 +274,9 @@ function agentScreen() {
 function render() {
   if (!state) return;
   const screen =
-    state.step === "phone" ? phoneScreen()
+    state.step === "activate" ? activateScreen()
+    : state.step === "waiting" ? waitingScreen()
+    : state.step === "phone" ? phoneScreen()
     : state.step === "code" ? codeScreen()
     : state.step === "agent" ? agentScreen()
     : connectedScreen();
@@ -171,4 +288,6 @@ function render() {
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));
 
-(async () => apply(await window.domo.onboardingGet()))();
+// `begin` mints the activation code on a first run and is a no-op otherwise, so
+// reopening this window never burns a second code.
+(async () => apply(await window.domo.onboardingBegin()))();

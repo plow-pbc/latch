@@ -1,24 +1,80 @@
 /**
- * First-run login: phone number → code → a connected Mac, with no token ever
- * copied out of a browser.
+ * First-run setup: a code on screen, a text from the user's phone, and a
+ * connected Mac — with nothing typed and no token copied out of a browser.
+ *
+ * Activation leads, because it is the only path that works for someone who does
+ * not have a Plow account yet: it goes *outbound*, so the account is created
+ * from the text the user sends. The phone-code (OTP) path is kept behind a quiet
+ * link for the two cases activation cannot cover — a Mac with no Messages
+ * account signed in, and signing in as one *specific* account rather than as
+ * whoever texts.
  *
  * This is the whole flow as a plain state machine so it can be tested without
- * Electron and rendered offscreen for screenshots. It holds the OTP session
- * token in a local variable for the seconds it is needed and never anywhere
- * else — see `completeLogin`.
+ * Electron and rendered offscreen for screenshots.
  *
  * **Nothing here puts a credential in a message.** `state()` is what the
- * sandboxed renderer sees; the only token it ever carries is a freshly minted
- * *agent* credential, which exists to be shown to the user exactly once.
+ * sandboxed renderer sees; the only secrets it ever carries are the two the user
+ * is meant to read — the activation display code, and a freshly minted *agent*
+ * credential shown exactly once. The activation *secret* and the device
+ * credential never appear in it at all.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
-export type OnboardingStep = "phone" | "code" | "connected" | "agent";
+export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected" | "agent";
 
 /** Codes are 8 digits with a 5-minute life (`api/plow/auth_routes/otp.py`). */
 export const CODE_LENGTH = 8;
 export const CODE_TTL_MS = 5 * 60_000;
+
+/**
+ * How long the app watches for the text.
+ *
+ * The server's code lives 30 minutes (`ACTIVATION_CODE_TTL` in
+ * `api/plow/auth_routes/router.py`), but a screen that says "waiting" for half
+ * an hour is a worse experience than one that gives up early and hands control
+ * back. So we stop at five and offer a fresh code — and because the server
+ * honours a completion that lands after we stopped looking, "get a new code"
+ * re-polls the old secret before minting anything.
+ */
+export const ACTIVATION_POLL_WINDOW_MS = 5 * 60_000;
+export const ACTIVATION_POLL_INTERVAL_MS = 3_000;
+
+/**
+ * The webhook matches `^Plow Activate:\s*(\S+)` case-insensitively
+ * (`api/plow/channels/linq/routes/webhook.py:65`). Leading whitespace and case
+ * are forgiven; a *prefix* is not — `Hi, Plow Activate: X` does not match, and
+ * the API answers 200, sends no SMS and leaves the code live, so the user gets
+ * silence on both channels. That is why the screen shows the exact body to send
+ * rather than describing it.
+ */
+export const ACTIVATION_SMS_PREFIX = "Plow Activate:";
+
+export function activationSmsBody(displayCode: string): string {
+  return `${ACTIVATION_SMS_PREFIX} ${displayCode}`;
+}
+
+/** The draft Messages opens with, in the form the shipping Plow app uses
+ * (`app/Phoenix/DaemonClient.swift`): `sms:<phone>?&body=<encoded>`. */
+export function activationSmsUrl(sendTo: string, displayCode: string): string {
+  return `sms:${sendTo}?&body=${encodeURIComponent(activationSmsBody(displayCode))}`;
+}
+
+export interface OnboardingActivation {
+  /** Shown large. A credential in its own right — whoever texts it gets the
+   * account, and the server cannot tell them apart. The screen says so. */
+  displayCode: string;
+  /** Whatever the API returned. Never a hardcoded number: it is per-environment
+   * config and may be a pool line rather than the managed phone. */
+  sendTo: string;
+  /** The exact message body, so the user can copy it rather than retype it. */
+  smsBody: string;
+  /** `sms:` URL for the "Open Messages" button. */
+  smsUrl: string;
+  /** Epoch ms we stop watching, so the screen can count down. Not the code's
+   * own deadline — the server keeps it live for 30 minutes after this. */
+  pollUntil: number;
+}
 
 export interface OnboardingAgent {
   name: string;
@@ -35,8 +91,12 @@ export interface OnboardingState {
    * spinner — every failure below produces text here. */
   message: string;
   busy: boolean;
-  /** Epoch ms the entered code stops working, so the screen can count down. */
+  /** Epoch ms the entered OTP code stops working. */
   codeExpiresAt: number | null;
+  activation: OnboardingActivation | null;
+  /** We have stopped watching this activation. The screen stops counting down
+   * and offers a fresh code. */
+  activationStale: boolean;
   accountUid: string;
   mcpUrl: string;
   connected: boolean;
@@ -49,27 +109,38 @@ export interface OnboardingDeps {
   /** (Re)start the relay from stored settings. */
   startRelay: () => Promise<void>;
   isConnected: () => boolean;
-  /** Names the device credential in the user's key list. */
+  /** Names this Mac, both in the activation and in the user's key list. */
   deviceName: string;
   onChange?: () => void;
   now?: () => number;
+  /** How the poll loop waits. Injectable so tests need no real timers. */
+  wait?: (ms: number) => Promise<void>;
   /** Diagnostics. Callers must assume anything passed here reaches a log, so
-   * nothing secret is ever passed. */
+   * nothing secret is ever passed — not the activation secret, and not the
+   * display code, which is a live credential until it is redeemed. */
   warn?: (message: string) => void;
 }
 
 export class Onboarding {
-  private step: OnboardingStep = "phone";
+  private step: OnboardingStep;
   private phone = "";
   private message = "";
   private busy = false;
   private codeExpiresAt: number | null = null;
+  private activation: OnboardingActivation | null = null;
+  private activationStale = false;
+  /** SECRET. Held here for the life of one activation and nowhere else — never
+   * in `state()`, never on disk, never in a log line. */
+  private activationSecret: string | null = null;
+  /** Bumped whenever an activation stops being the one we care about. A poll
+   * loop whose generation is stale returns instead of writing state. */
+  private pollGeneration = 0;
   private agent: OnboardingAgent | null = null;
 
   constructor(private readonly deps: OnboardingDeps) {
-    // A Mac that already holds a credential is past this; it opens on the
+    // A Mac that already holds a credential is past all of this; it opens on the
     // connected screen, which is also where "create an agent" lives.
-    if (this.settings().relayCredential.trim()) this.step = "connected";
+    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
   }
 
   state(): OnboardingState {
@@ -80,6 +151,8 @@ export class Onboarding {
       message: this.message,
       busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
+      activation: this.activation,
+      activationStale: this.activationStale,
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
@@ -87,8 +160,199 @@ export class Onboarding {
     };
   }
 
+  // MARK: activation — the path a brand-new user takes
+
   /**
-   * Ask Plow to text a code.
+   * Mint the code the user texts, and start polling immediately.
+   *
+   * Idempotent: opening the window twice must not burn a second code and leave
+   * two live activations on the account.
+   */
+  async begin(): Promise<OnboardingState> {
+    if (this.step !== "activate" || this.activation) return this.publish();
+    return this.newActivationCode();
+  }
+
+  /**
+   * A fresh code and a fresh clock — but only if the last one really did go
+   * unanswered.
+   *
+   * We stop watching at five minutes and the server keeps the code live for
+   * thirty, so a user who texted at minute six has *already succeeded* and is
+   * looking at a screen that says otherwise. One poll on the old secret turns a
+   * pointless second code into an instant sign-in.
+   */
+  async newActivationCode(): Promise<OnboardingState> {
+    const previous = this.activationSecret;
+    this.cancelPolling();
+    return this.run(async () => {
+      if (previous && (await this.tryFinish(previous))) return;
+      this.activation = null;
+      this.activationSecret = null;
+      this.activationStale = false;
+      this.step = "activate";
+      const created = await this.deps.api.createActivation(this.deps.deviceName);
+      this.activationSecret = created.activationSecret;
+      this.activation = {
+        displayCode: created.displayCode,
+        sendTo: created.sendTo,
+        smsBody: activationSmsBody(created.displayCode),
+        smsUrl: activationSmsUrl(created.sendTo, created.displayCode),
+        pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS,
+      };
+      // Polling starts here, not when the user taps the button: a user who
+      // types the message by hand never taps it, and must still get in.
+      this.startPolling(created.activationSecret);
+    });
+  }
+
+  /**
+   * One redeem. Returns true if it was terminal — signed in, or verified with
+   * no token to hand back — and false if there is still nothing to act on.
+   *
+   * A failed call is `false` rather than a throw: this runs where the fallback
+   * is "mint a fresh code", which will surface its own error honestly if the
+   * API is genuinely down.
+   */
+  private async tryFinish(secret: string): Promise<boolean> {
+    let result;
+    try {
+      result = await this.deps.api.redeemActivation(secret);
+    } catch {
+      return false;
+    }
+    if (result.status !== "verified") return false;
+    if (!result.token) {
+      // The token is handed to the first redeem that sees the completion and
+      // the key is omitted on every one after, so this means it was already
+      // read and lost. A new code is the only way forward.
+      this.activationStale = true;
+      this.message = "Plow verified this Mac but didn't hand back a login. Get a new code.";
+      return true;
+    }
+    await this.finishWithSession(result.token);
+    return true;
+  }
+
+  /**
+   * The user has gone to Messages. Nothing to do but wait — and say so, rather
+   * than leave them staring at a screen that still reads like a to-do.
+   */
+  messagesOpened(): OnboardingState {
+    if (this.step === "activate" && this.activation) this.step = "waiting";
+    return this.publish();
+  }
+
+  /** The quiet fallback: sign in with a phone code instead. */
+  usePhoneCode(): OnboardingState {
+    this.cancelPolling();
+    this.activation = null;
+    this.activationSecret = null;
+    this.activationStale = false;
+    this.step = "phone";
+    this.message = "";
+    return this.publish();
+  }
+
+  /** ...and back, so the fallback is not a one-way door. */
+  async useActivation(): Promise<OnboardingState> {
+    this.codeExpiresAt = null;
+    this.message = "";
+    this.step = "activate";
+    return this.begin();
+  }
+
+  /**
+   * Ask the server whether the text has arrived, until it has.
+   *
+   * Runs detached: every branch ends in `publish()`, so the screen follows
+   * along, and no caller awaits it.
+   */
+  private startPolling(secret: string): void {
+    this.pollGeneration += 1;
+    const generation = this.pollGeneration;
+    void this.pollActivation(secret, generation).catch((error) => {
+      // Nothing above throws by design; if something does, the screen must not
+      // be left on a countdown that no longer runs.
+      if (generation !== this.pollGeneration) return;
+      this.activationStale = true;
+      this.message = messageOf(error);
+      this.publish();
+    });
+  }
+
+  private cancelPolling(): void {
+    this.pollGeneration += 1;
+  }
+
+  private async pollActivation(secret: string, generation: number): Promise<void> {
+    while (generation === this.pollGeneration) {
+      await this.wait(ACTIVATION_POLL_INTERVAL_MS);
+      if (generation !== this.pollGeneration) return;
+
+      let result;
+      try {
+        result = await this.deps.api.redeemActivation(secret);
+      } catch (error) {
+        if (generation !== this.pollGeneration) return;
+        if (error instanceof PlowApiError && error.kind === "expired") {
+          // 410 only ever gates a code nobody completed — the server returns the
+          // token for one completed past the deadline — so this is authoritative.
+          this.giveUp("That code expired before your text arrived.");
+          return;
+        }
+        // A blip must not end the wait. Say what we saw and keep polling.
+        this.message = messageOf(error);
+        this.publish();
+        continue;
+      }
+      // A verified answer carries the ONLY copy of the session token — the
+      // server hands it to the first redeem that sees the completion and omits
+      // the key entirely ever after. So it is acted on even if this loop was
+      // cancelled while the call was in flight: dropping it on the floor would
+      // strand an activation the user actually completed, unrecoverably. The
+      // one thing that makes it moot is already holding a credential.
+      if (result.status === "verified" && result.token && !this.settings().relayCredential.trim()) {
+        this.cancelPolling();
+        await this.run(() => this.finishWithSession(result.token as string));
+        return;
+      }
+      if (generation !== this.pollGeneration) return;
+
+      if (result.status === "verified") {
+        this.cancelPolling();
+        this.activationStale = true;
+        this.message = "Plow verified this Mac but didn't hand back a login. Get a new code.";
+        this.publish();
+        return;
+      }
+
+      // Pending, and our five minutes are up. The poll that just answered
+      // happened *after* the deadline, so a text racing it has already been
+      // caught; what is left is a genuine no-answer.
+      if (this.activation && this.now() > this.activation.pollUntil) {
+        this.giveUp("We haven't heard from your phone.");
+        return;
+      }
+    }
+  }
+
+  /**
+   * Stop watching and hand control back. The code itself is still live for the
+   * rest of its 30 minutes, which is exactly why "Get a New Code" re-polls this
+   * secret before it mints anything.
+   */
+  private giveUp(reason: string): void {
+    this.cancelPolling();
+    this.activationStale = true;
+    this.message = `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or get a new code.`;
+    this.publish();
+  }
+
+  // MARK: the phone-code fallback
+
+  /**
+   * Ask Plow to text a login code.
    *
    * The API answers `200 {"ok": true}` for an unknown number, an unparseable
    * number and a failed send alike, so it cannot be used to probe whether an
@@ -139,12 +403,14 @@ export class Onboarding {
     if (this.codeExpiresAt !== null && this.now() > this.codeExpiresAt) {
       return this.fail("That code has expired. Send a new one.");
     }
-    return this.run(() => this.completeLogin(trimmed));
+    return this.run(() => this.completeOtpLogin(trimmed));
   }
 
+  // MARK: after either path
+
   /**
-   * Mint an agent credential with the *device* credential — the OTP session is
-   * long gone by now, and `relay:device` is allowed to do exactly this.
+   * Mint an agent credential with the *device* credential — the login session
+   * is long gone by now, and `relay:device` is allowed to do exactly this.
    */
   async createAgent(name: string): Promise<OnboardingState> {
     const trimmed = (name ?? "").trim();
@@ -175,15 +441,7 @@ export class Onboarding {
     return this.publish();
   }
 
-  /**
-   * Verify → learn the account → mint this Mac's credential → connect → throw
-   * the OTP session away.
-   *
-   * `otpToken` never leaves this function. It carries `keys:manage` and
-   * `relay:*` — it can mint *any* credential on the account — so the app holds
-   * it for the seconds it needs and not one call longer.
-   */
-  private async completeLogin(code: string): Promise<void> {
+  private async completeOtpLogin(code: string): Promise<void> {
     let otpToken: string;
     try {
       otpToken = await this.deps.api.verifyOtp(this.phone, code);
@@ -193,9 +451,21 @@ export class Onboarding {
       }
       throw error;
     }
+    await this.finishWithSession(otpToken);
+  }
 
-    const info = await this.deps.api.relayInfo(otpToken);
-    const minted = await this.deps.api.mintDeviceCredential(otpToken, this.deps.deviceName);
+  /**
+   * Learn the account → mint this Mac's credential → connect.
+   *
+   * `sessionToken` never leaves this function. It carries `keys:manage` and
+   * `relay:*` — it can mint *any* credential on the account — so the app holds
+   * it for the two calls it needs and not one longer. There is no client-side
+   * cleanup to get wrong: `mintDeviceCredential` retires the session
+   * server-side, in the same transaction as the mint.
+   */
+  private async finishWithSession(sessionToken: string): Promise<void> {
+    const info = await this.deps.api.relayInfo(sessionToken);
+    const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
 
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
@@ -206,38 +476,16 @@ export class Onboarding {
     this.save(settings);
 
     await this.deps.startRelay();
-    await this.discardOtpSession(otpToken, minted.keyPrefix);
 
+    // The activation is spent: drop the code and the secret rather than leave
+    // either sitting in memory or on a screen behind this one.
+    this.cancelPolling();
+    this.activation = null;
+    this.activationSecret = null;
+    this.activationStale = false;
     this.step = "connected";
     this.codeExpiresAt = null;
     this.message = "";
-  }
-
-  /**
-   * Revoke the session `verify` just created. Every verify mints a new row
-   * named "Account Portal" and nothing supersedes the previous one, so without
-   * this the user's key list grows one entry per login — each of them able to
-   * mint any credential on the account.
-   *
-   * Best effort by necessity: `DELETE /v1/api-keys/{id}` needs `keys:manage`,
-   * which the device credential deliberately does not hold, and refuses to
-   * revoke the caller's own session. See the report accompanying this chunk.
-   */
-  private async discardOtpSession(otpToken: string, deviceKeyPrefix: string): Promise<void> {
-    try {
-      const prefix = otpToken.slice(5, 13); // `plow_` + the 8 chars keys are indexed by
-      const keys = await this.deps.api.listKeys(otpToken);
-      const mine = keys.find((k) => k.keyPrefix === prefix && k.keyPrefix !== deviceKeyPrefix);
-      if (!mine) {
-        this.deps.warn?.("login session not found in the key list; leaving it alone");
-        return;
-      }
-      await this.deps.api.revokeKey(otpToken, mine.id);
-    } catch (error) {
-      // Never fatal: the Mac is connected and working, and the message carries
-      // no token — PlowApiError messages are written, not echoed.
-      this.deps.warn?.(`could not revoke the login session: ${messageOf(error)}`);
-    }
   }
 
   // MARK: plumbing
@@ -252,6 +500,11 @@ export class Onboarding {
 
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  private wait(ms: number): Promise<void> {
+    if (this.deps.wait) return this.deps.wait(ms);
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /** Run one step with a busy flag, turning any failure into readable text. */

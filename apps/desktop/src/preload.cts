@@ -33,9 +33,16 @@ contextBridge.exposeInMainWorld("domo", {
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
-  // First-run login window. Every call returns the whole state, so the screen
+  // First-run setup window. Every call returns the whole state, so the screen
   // renders from one shape and never has to reconcile two.
   onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
+  onboardingBegin: () => ipcRenderer.invoke("onboarding:begin"),
+  // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
+  // so the renderer never has to build it or be trusted with it.
+  onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
+  onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
+  onboardingUsePhoneCode: () => ipcRenderer.invoke("onboarding:usePhoneCode"),
+  onboardingUseActivation: () => ipcRenderer.invoke("onboarding:useActivation"),
   onboardingRequestCode: (phone: string) => ipcRenderer.invoke("onboarding:requestCode", phone),
   onboardingResendCode: () => ipcRenderer.invoke("onboarding:resendCode"),
   onboardingEditPhone: () => ipcRenderer.invoke("onboarding:editPhone"),

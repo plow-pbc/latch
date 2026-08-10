@@ -108,17 +108,77 @@ describe("PlowApi", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer plow_secret");
   });
 
-  it("asks for relay:device and nothing else when minting this Mac's credential", async () => {
+  it("mints this Mac's credential and retires the calling session in the same call", async () => {
     const { calls, fetchImpl } = recordingFetch([
       { status: 200, body: { token: "plow_devicetok", key_prefix: "devicet", name: "Domo Desktop" } },
     ]);
-    await new PlowApi("https://api.plow.co", fetchImpl).mintDeviceCredential("plow_otp", "Domo Desktop");
+    await new PlowApi("https://api.plow.co", fetchImpl).mintDeviceCredential("plow_session", "Domo Desktop");
 
-    expect(calls[0].url).toBe("https://api.plow.co/v1/api-keys");
+    expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices");
+    // The flag is the whole reason there is no client-side cleanup: the session
+    // that authorised this call can mint any credential on the account, and it
+    // is gone server-side before this returns.
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       name: "Domo Desktop",
-      scopes: ["relay:device"],
+      revoke_calling_session: true,
     });
+    expect(calls[0].url).not.toContain("plow_session");
+  });
+
+  it("starts an activation and hands back the code, the secret and where to text it", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      {
+        status: 200,
+        body: { display_code: "Z1SWY", activation_secret: "act_secret_xyz", send_to: "+15551230000" },
+      },
+    ]);
+    const activation = await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac");
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "This Mac" });
+    // Unauthenticated by design — this is how an account that does not exist yet
+    // gets created.
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
+    expect(activation).toEqual({
+      displayCode: "Z1SWY",
+      activationSecret: "act_secret_xyz",
+      sendTo: "+15551230000",
+    });
+  });
+
+  it("reads a redeem poll, including the verified answer that omits the token", async () => {
+    const api = (answers: Array<{ status: number; body?: unknown }>) =>
+      new PlowApi("https://api.plow.co", recordingFetch(answers).fetchImpl);
+
+    expect(await api([{ status: 200, body: { status: "pending" } }]).redeemActivation("s")).toEqual({
+      status: "pending",
+    });
+    expect(
+      await api([{ status: 200, body: { status: "verified", token: "plow_sess" } }]).redeemActivation("s"),
+    ).toEqual({ status: "verified", token: "plow_sess" });
+    // A second redeem after hand-off: `token` is absent, not null. Normalised
+    // to null here so callers have one shape to check.
+    expect(await api([{ status: 200, body: { status: "verified" } }]).redeemActivation("s")).toEqual({
+      status: "verified",
+      token: null,
+    });
+  });
+
+  it("gives an expired activation its own kind, so the app can offer a fresh code", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 410, body: { detail: "Activation expired" } }]);
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .redeemActivation("s")
+      .catch((e) => e);
+
+    expect((error as PlowApiError).kind).toBe("expired");
+  });
+
+  it("never puts the activation secret in a URL", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { status: "pending" } }]);
+    await new PlowApi("https://api.plow.co", fetchImpl).redeemActivation("act_secret_xyz");
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate/redeem");
+    expect(calls[0].url).not.toContain("act_secret_xyz");
   });
 
   it("mints an agent through the relay's own endpoint", async () => {

@@ -1,6 +1,7 @@
 /**
- * The Plow HTTP calls first-run login makes. Five of them, plus the two key
- * calls it needs to clean up after itself.
+ * The Plow HTTP calls first-run setup makes — the three activation calls the
+ * app leads with, the two OTP calls behind the "use a phone code instead"
+ * fallback, and the two the account itself needs.
  *
  * **No credential ever appears in a thrown message, a returned message, or a
  * URL.** Tokens travel in an `Authorization` header and nowhere else. Every
@@ -61,6 +62,7 @@ export type PlowApiErrorKind =
   | "unauthorized" // a wrong or expired code, or a revoked token
   | "provider_unavailable" // the SMS provider is down — the one honest OTP failure
   | "forbidden"
+  | "expired" // 410: an activation code nobody completed in time
   | "http"; // anything else, reported with its status
 
 export class PlowApiError extends Error {
@@ -87,11 +89,27 @@ export interface MintedCredential {
   name: string;
 }
 
-export interface KeyInfo {
-  id: number;
-  keyPrefix: string;
-  name: string | null;
+export interface Activation {
+  /** The five characters the user texts. Shown large on screen. */
+  displayCode: string;
+  /** A SECRET: it is the poll credential. Never rendered, never logged. */
+  activationSecret: string;
+  /** Per-environment config — the managed phone, or the assigned chat line.
+   * Render what the API returned; a hardcoded number is wrong somewhere. */
+  sendTo: string;
 }
+
+/**
+ * What a redeem poll found.
+ *
+ * `verified` is terminal and is read exactly once: the server hands the session
+ * token to the first redeem that sees the completion, and a second redeem
+ * returns `{"status":"verified"}` with the `token` key *omitted*. Re-reading can
+ * therefore only lose it.
+ */
+export type ActivationRedeem =
+  | { status: "pending" }
+  | { status: "verified"; token: string | null };
 
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -101,6 +119,39 @@ export class PlowApi {
     readonly baseUrl: ApiBaseUrl,
     private readonly fetchImpl: FetchLike = fetch,
   ) {}
+
+  /**
+   * Start an activation: the server mints a code, the user texts it, and the
+   * account is created from that text. Outbound, so it works for a phone number
+   * that has never touched Plow and cannot be used to probe who has an account.
+   */
+  async createActivation(name: string): Promise<Activation> {
+    const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
+      "POST",
+      "/v1/auth/activate",
+      { body: { name } },
+    );
+    return {
+      displayCode: data.display_code,
+      activationSecret: data.activation_secret,
+      sendTo: data.send_to,
+    };
+  }
+
+  /**
+   * Has the text arrived yet? `410` means the code expired *without* being
+   * completed — the server honours a completion that raced past the deadline,
+   * so a 410 is authoritative and a local clock is not.
+   */
+  async redeemActivation(activationSecret: string): Promise<ActivationRedeem> {
+    const data = await this.call<{ status: string; token?: string }>(
+      "POST",
+      "/v1/auth/activate/redeem",
+      { body: { activation_secret: activationSecret } },
+    );
+    if (data.status === "verified") return { status: "verified", token: data.token ?? null };
+    return { status: "pending" };
+  }
 
   /**
    * Ask for a login code.
@@ -140,9 +191,21 @@ export class PlowApi {
   /**
    * Mint this Mac's credential. `relay:device` and nothing else: it holds the
    * socket and may create agents, and can touch nothing else on the account.
+   *
+   * `revoke_calling_session` retires the session that authorised this call — the
+   * activation or OTP session — in the same transaction as the mint. That
+   * session carries `keys:manage` and `relay:*`, so it can mint *any* credential
+   * on the account; the app has no reason to hold it past this call, and one
+   * server-side revoke is the only way to be sure it is gone. It also cleans up
+   * the row the login just created, which nothing else supersedes.
    */
   async mintDeviceCredential(token: string, name: string): Promise<MintedCredential> {
-    return this.mintKey(token, name, ["relay:device"]);
+    const data = await this.call<{ token: string; key_prefix?: string; name?: string }>(
+      "POST",
+      "/v1/relay/devices",
+      { token, body: { name, revoke_calling_session: true } },
+    );
+    return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
   }
 
   /** Mint an agent credential through the relay's own API (`relay:call` only,
@@ -154,28 +217,6 @@ export class PlowApi {
       { token, body: { name } },
     );
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
-  }
-
-  async listKeys(token: string): Promise<KeyInfo[]> {
-    const data = await this.call<Array<{ id: number; key_prefix: string; name: string | null }>>(
-      "GET",
-      "/v1/api-keys",
-      { token },
-    );
-    return data.map((k) => ({ id: k.id, keyPrefix: k.key_prefix, name: k.name }));
-  }
-
-  async revokeKey(token: string, keyId: number): Promise<void> {
-    await this.call("DELETE", `/v1/api-keys/${keyId}`, { token });
-  }
-
-  private async mintKey(token: string, name: string, scopes: string[]): Promise<MintedCredential> {
-    const data = await this.call<{ token: string; key_prefix: string; name: string }>(
-      "POST",
-      "/v1/api-keys",
-      { token, body: { name, scopes } },
-    );
-    return { token: data.token, keyPrefix: data.key_prefix, name: data.name ?? name };
   }
 
   private async call<T>(
@@ -221,6 +262,9 @@ export class PlowApi {
     }
     if (response.status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", 401);
     if (response.status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", 403);
+    if (response.status === 410) {
+      return new PlowApiError("expired", detail || "That code has expired.", 410);
+    }
     if (response.status === 503) {
       return new PlowApiError(
         "provider_unavailable",

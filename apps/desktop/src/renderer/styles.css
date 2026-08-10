@@ -487,3 +487,19 @@ textarea.text { min-height: 70px; resize: vertical; }
   font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
   max-height: 300px; overflow: auto; user-select: text;
 }
+
+/* The activation code, the one thing on its screen the user has to read off
+   accurately and type or check against Messages. Large, spaced, selectable. */
+.onboard .bigcode {
+  font-size: 34px; font-weight: 600; letter-spacing: 6px; text-align: center;
+  padding: 14px 10px; margin: 0 0 14px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); user-select: text;
+}
+/* A quiet secondary route — present, but never competing with the primary
+   action next to it. */
+.onboard .linkbtn {
+  background: none; border: none; padding: 0; margin: 8px 0 0;
+  color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
+}
+.onboard .linkbtn:hover { color: var(--fg); }
