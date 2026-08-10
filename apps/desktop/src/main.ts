@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DomoConnection, Intent, jv, parseConnection } from "@domo/protocol";
+import { compactString, DomoConnection, Intent, jv, parseConnection } from "@domo/protocol";
 import {
   PeerTrustEvaluator,
   SPKIPinningEvaluator,
@@ -300,13 +300,29 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   settings.selectedTab = tab;
   saveSettings(home, settings);
 });
-ipcMain.handle("settings:get", async () => loadSettings(home));
-ipcMain.handle("settings:set", async (_e, brokerConnection: string) => {
+// Broker settings are shown as their decoded parts — a WebSocket URL and an
+// optional cert pin — rather than the opaque connection string. Under the hood
+// the app still connects via URL+pin (stored as a connection string).
+ipcMain.handle("settings:getBroker", async () => {
+  const conn = parseConnection(loadSettings(home).brokerConnection || "");
+  return {
+    url: conn?.url ?? "",
+    pin: conn?.pin ?? "",
+    authenticate: conn?.authenticate ?? false,
+  };
+});
+ipcMain.handle("settings:setBroker", async (_e, urlOrConn: string, pin: string) => {
+  const text = (urlOrConn || "").trim();
+  const pinText = (pin || "").trim();
+  // Accept a pasted connection string (domo1.…/domo://) too, decoding it.
+  const parsed = parseConnection(text);
+  const conn: DomoConnection = parsed
+    ? { url: parsed.url, pin: parsed.pin ?? (pinText || undefined), name: "Domo broker", authenticate: parsed.authenticate }
+    : { url: text, pin: pinText || undefined, name: "Domo broker", authenticate: false };
   const settings = loadSettings(home);
-  settings.brokerConnection = brokerConnection;
+  settings.brokerConnection = compactString(conn);
   saveSettings(home, settings);
   await connectDevice();
-  return settings;
 });
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",

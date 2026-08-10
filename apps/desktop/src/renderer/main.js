@@ -329,13 +329,16 @@ function capText(c) {
 // ---- Settings ----
 
 async function renderSettings() {
-  const settings = await window.domo.settingsGet();
-  const input = el("input", { class: "text", attrs: { placeholder: "domo1.… or wss://broker:port/" } });
-  input.value = settings.brokerConnection || "";
+  const broker = await window.domo.settingsGetBroker();
+  const urlInput = el("input", { class: "text", attrs: { placeholder: "wss://broker.example:8444/" } });
+  urlInput.value = broker.url || "";
+  const pinInput = el("input", { class: "text", attrs: { placeholder: "base64 SPKI pin (leave blank for a CA-signed cert)" } });
+  pinInput.value = broker.pin || "";
   const save = el("button", { class: "btn primary", text: "Save & reconnect" });
   const note = el("p", { class: "faint", text: "" });
   save.addEventListener("click", async () => {
-    await window.domo.settingsSet(input.value.trim());
+    // The URL field also accepts a pasted domo1.… string, decoded server-side.
+    await window.domo.settingsSetBroker(urlInput.value.trim(), pinInput.value.trim());
     note.textContent = "Saved. Reconnecting…";
     refreshStatus();
   });
@@ -349,8 +352,12 @@ async function renderSettings() {
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "item" }, [
       el("div", { class: "field" }, [
-        el("label", { text: "Broker connection string" }),
-        input,
+        el("label", { text: "Broker URL" }),
+        urlInput,
+      ]),
+      el("div", { class: "field" }, [
+        el("label", { text: "Certificate pin" }),
+        pinInput,
       ]),
       el("div", { class: "row" }, [note, el("div", { class: "spacer" }), save]),
     ]),
