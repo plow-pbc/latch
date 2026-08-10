@@ -15,8 +15,8 @@ the architecture and [README-ts.md](README-ts.md) for the package/app layout.
 > MCP server running in this app. That MCP server and the outbound relay client
 > are the next pieces of work. What is here now — the policy engine, the
 > capability-derived sandbox, file operations, the audit log, the approval UI and
-> the adversarial reviewer — builds, runs and is tested, but has no transport in
-> front of it.
+> the adversarial reviewer — builds, runs and is covered by the test suite, but
+> has no transport in front of it.
 
 ## Quickstart with `just`
 
