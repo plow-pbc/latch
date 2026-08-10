@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("domo", {
   goalsAdd: (title: string, text: string) => ipcRenderer.invoke("goals:add", title, text),
   goalsRemove: (id: string) => ipcRenderer.invoke("goals:remove", id),
   goalsStartAgent: (goal: string) => ipcRenderer.invoke("goals:startAgent", goal),
+  goalsRestoreDefaults: () => ipcRenderer.invoke("goals:restoreDefaults"),
   rulesList: () => ipcRenderer.invoke("rules:list"),
   rulesRemove: (key: string) => ipcRenderer.invoke("rules:remove", key),
   agentsList: () => ipcRenderer.invoke("agents:list"),

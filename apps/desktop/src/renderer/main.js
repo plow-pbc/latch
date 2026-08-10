@@ -44,6 +44,12 @@ function badge(tone, text) {
   return el("span", { class: `badge b-${tone}` }, [el("span", { class: "dot" }), el("span", { text })]);
 }
 
+// Close any open "⋯" overflow menu when clicking elsewhere.
+function closeAllMenus() {
+  for (const m of document.querySelectorAll(".menu")) m.classList.add("hidden");
+}
+document.addEventListener("click", closeAllMenus);
+
 async function refreshStatus() {
   const status = await window.domo.statusGet();
   statusDot.className = "status-dot" + (status.connected ? " on" : "");
@@ -152,18 +158,29 @@ async function renderGoals() {
     await window.domo.goalsAdd(titleInput.value.trim(), textInput.value.trim());
     renderGoals();
   });
-  const startNew = el("button", { class: "btn primary", text: "Start agent ▸" });
+  const startNew = el("button", { class: "btn primary", text: "Start Agent" });
   startNew.addEventListener("click", () => startAgentFor(textInput.value));
 
   const items = goals.map((g) => {
-    const start = el("button", { class: "btn primary", text: "Start agent ▸" });
+    const start = el("button", { class: "btn primary", text: "Start Agent" });
     start.addEventListener("click", () => startAgentFor(g.text));
-    const remove = el("button", { class: "btn danger", text: "Remove" });
-    remove.addEventListener("click", async () => { await window.domo.goalsRemove(g.id); renderGoals(); });
+
+    // "⋯" overflow menu with a Remove item.
+    const removeItem = el("button", { class: "menu-item", text: "Remove" });
+    removeItem.addEventListener("click", async () => { await window.domo.goalsRemove(g.id); renderGoals(); });
+    const menu = el("div", { class: "menu hidden" }, [removeItem]);
+    const menuBtn = el("button", { class: "iconbtn", text: "⋯", attrs: { title: "More" } });
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasHidden = menu.classList.contains("hidden");
+      closeAllMenus();
+      if (wasHidden) menu.classList.remove("hidden");
+    });
+
     const header = el("div", { class: "row" }, [
       el("h4", { text: g.title }),
       el("div", { class: "spacer" }),
-      g.premade ? badge("zinc", "Built-in") : remove,
+      el("div", { class: "menu-wrap" }, [menuBtn, menu]),
     ]);
     const actions = el("div", { class: "row" }, [el("div", { class: "spacer" }), start]);
     return el("div", { class: "item" }, [header, el("p", { text: g.text }), actions]);
@@ -243,6 +260,13 @@ async function renderSettings() {
     note.textContent = "Saved. Reconnecting…";
     refreshStatus();
   });
+  const restoreNote = el("p", { class: "faint", text: "" });
+  const restore = el("button", { class: "btn", text: "Restore default goals" });
+  restore.addEventListener("click", async () => {
+    await window.domo.goalsRestoreDefaults();
+    restoreNote.textContent = "Default goals restored.";
+  });
+
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "item" }, [
       el("div", { class: "field" }, [
@@ -250,6 +274,13 @@ async function renderSettings() {
         input,
       ]),
       el("div", { class: "row" }, [note, el("div", { class: "spacer" }), save]),
+    ]),
+    el("div", { class: "item" }, [
+      el("div", { class: "field" }, [
+        el("label", { text: "Goals" }),
+        el("p", { class: "faint", text: "Re-add any default goals you've removed." }),
+      ]),
+      el("div", { class: "row" }, [restoreNote, el("div", { class: "spacer" }), restore]),
     ]),
   ]));
 }

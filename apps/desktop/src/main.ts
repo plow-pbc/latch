@@ -167,6 +167,7 @@ ipcMain.handle("goals:remove", async (_e, id: string) => {
   goals?.remove(id);
   return goals?.all() ?? [];
 });
+ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? []);
 // The Mac-initiated spin-up (DESIGN.md §2): mint a pre-approved agent, write an
 // ephemeral MCP config + prompt + launcher, and open Terminal running an
 // interactive Claude seeded with the goal. Returns a human status string.
