@@ -1,0 +1,35 @@
+# Packaging config for `just package` — signed + notarized Domo Desktop.app + DMG.
+# Signing identity is pinned to the Plow Developer ID; notarization credentials
+# come from the keychain profile named by APPLE_KEYCHAIN_PROFILE (see justfile).
+appId: com.plowcollective.domo-desktop
+productName: Domo Desktop
+
+directories:
+  output: release
+  buildResources: build
+
+# dist/ is the tsc output plus renderer assets; node_modules is collected
+# automatically from the workspace root by electron-builder.
+files:
+  - dist/**/*
+  - "!dist/**/*.d.ts"
+  - "!dist/**/*.d.cts"
+  - "!dist/**/*.map"
+
+mac:
+  icon: ../../artwork/domo-icon.png
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: universal
+  identity: "The Plow Collective, Inc (3559PD337Z)"
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
+
+dmg:
+  artifactName: ${productName}-${version}.${ext}
+
+npmRebuild: false

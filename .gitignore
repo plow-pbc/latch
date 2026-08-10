@@ -5,3 +5,6 @@ node_modules/
 packages/*/dist/
 apps/*/dist/
 *.tsbuildinfo
+
+# electron-builder output (signed app + DMG)
+apps/desktop/release/

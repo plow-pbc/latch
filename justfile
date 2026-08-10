@@ -46,6 +46,16 @@ test:
 test-vectors:
     npx vitest run packages/protocol packages/transport
 
+# Package the desktop app: signed + notarized "Domo Desktop.app" + DMG, in
+# apps/desktop/release/. Signs with the Plow Developer ID (must be in the
+# keychain). One-time setup for notarization — store credentials under a
+# keychain profile (default name "domo-notary"):
+#   xcrun notarytool store-credentials domo-notary \
+#       --apple-id <apple-id-email> --team-id 3559PD337Z \
+#       --password <app-specific-password>
+package profile="domo-notary": build
+    cd "{{root}}/apps/desktop" && APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac
+
 # ---------------------------------------------------------------------------
 # Networked flow (DEFAULT) — broker + app + agent, all over wss:// + pin
 # ---------------------------------------------------------------------------
