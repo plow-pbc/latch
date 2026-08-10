@@ -5,6 +5,7 @@
     { "path": "packages/transport" },
     { "path": "packages/device-core" },
     { "path": "packages/mcp-server" },
+    { "path": "packages/relay-client" },
     { "path": "apps/desktop" }
   ]
 }

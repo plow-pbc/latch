@@ -1,5 +1,11 @@
 /**
  * App settings persisted under DOMO_HOME.
+ *
+ * This file holds secrets — the Plow relay credential and an Anthropic API key
+ * — so it is written **owner-only**. It used to be written with no mode at all,
+ * which on a shared or backed-up Mac is a plaintext credential anyone could
+ * read. There is still no Keychain or `safeStorage` here; 0600 is the floor,
+ * not the destination.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -24,6 +30,11 @@ export interface WindowBounds {
 export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
 
 export interface Settings {
+  /** The relay's device endpoint, e.g. wss://api.plow.co/v1/relay/ws. */
+  relayUrl: string;
+  /** A `relay:connect` key, pasted from the Plow portal. A SECRET: it is never
+   * sent to the renderer and never written to a log or an error string. */
+  relayCredential: string;
   /** The last-selected main-window tab, restored across launches. */
   selectedTab: string;
   /** The main window's last size + position, restored across launches. */
@@ -42,6 +53,8 @@ function settingsPath(home: string): string {
 
 export function loadSettings(home: string): Settings {
   const defaults: Settings = {
+    relayUrl: "",
+    relayCredential: "",
     selectedTab: "audit",
     approvalMode: "ask",
     showAgentSuggestions: true,
@@ -56,6 +69,10 @@ export function loadSettings(home: string): Settings {
 
 export function saveSettings(home: string, settings: Settings): void {
   const file = settingsPath(home);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  // mode on writeFileSync only applies when the file is created, so chmod
+  // unconditionally — otherwise a file that predates this change keeps its
+  // old permissions forever.
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
 }

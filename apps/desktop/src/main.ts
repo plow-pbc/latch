@@ -22,6 +22,8 @@ import {
   GoalsLibrary,
   PolicyDelegate,
 } from "@domo/device-core";
+import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
+import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
@@ -39,6 +41,8 @@ let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
 let goals: GoalsLibrary | null = null;
+let mcp: DomoMcpServer | null = null;
+let relay: RelayClient | null = null;
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -278,6 +282,34 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   settings.selectedTab = tab;
   saveSettings(home, settings);
 });
+// The relay's URL is shown; the CREDENTIAL IS NEVER RETURNED — the renderer
+// only learns whether one is set. It is a secret with no reason to leave the
+// main process, and putting it in a sandboxed web view's memory is a way for it
+// to end up somewhere we did not choose.
+ipcMain.handle("settings:getRelay", async () => {
+  const settings = loadSettings(home);
+  return {
+    url: settings.relayUrl ?? "",
+    hasCredential: (settings.relayCredential ?? "").trim().length > 0,
+    connected,
+  };
+});
+ipcMain.handle("settings:setRelay", async (_e, url: string, credential: string) => {
+  const settings = loadSettings(home);
+  settings.relayUrl = (url || "").trim();
+  // An empty credential field means "leave it alone", so re-saving the URL
+  // does not silently wipe a credential the user cannot see to retype.
+  const pasted = (credential || "").trim();
+  if (pasted.length > 0) settings.relayCredential = pasted;
+  saveSettings(home, settings);
+  await startRelay();
+});
+ipcMain.handle("settings:clearRelayCredential", async () => {
+  const settings = loadSettings(home);
+  settings.relayCredential = "";
+  saveSettings(home, settings);
+  await startRelay();
+});
 ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
   const allowed = ["approve", "adversarial", "ask", "deny"];
@@ -304,12 +336,41 @@ ipcMain.handle("status:get", async () => ({
   connected: connected,
 }));
 
-// No transport yet: the outbound relay client is the next piece of work, so
-// the status pill honestly reads "Not connected" until it lands.
-const connected = false;
+let connected = false;
 
 function notifyRenderer(channel: string): void {
   mainWindow?.webContents.send(channel);
+}
+
+/**
+ * (Re)start the outbound relay connection from saved settings. Stopping first
+ * is what makes this safe to call on every settings change.
+ */
+async function startRelay(): Promise<void> {
+  await relay?.stop();
+  relay = null;
+  connected = false;
+  notifyRenderer("status:changed");
+
+  const settings = loadSettings(home);
+  const url = (settings.relayUrl ?? "").trim();
+  const credential = (settings.relayCredential ?? "").trim();
+  if (!url || !credential || !mcp) return;
+
+  const server = mcp;
+  relay = new RelayClient({
+    url,
+    credential,
+    serve: (request, auth) => server.fetch(request, auth),
+    onStatusChange: (isConnected) => {
+      connected = isConnected;
+      notifyRenderer("status:changed");
+    },
+    // RelayClient redacts the credential from everything it emits; this is the
+    // only place its diagnostics reach a log at all.
+    log: (message) => console.log(`[relay] ${message}`),
+  });
+  await relay.start();
 }
 
 app.whenReady().then(async () => {
@@ -318,6 +379,8 @@ app.whenReady().then(async () => {
 
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
+  mcp = createDomoMcpServer(device);
+  await startRelay();
 
   createMainWindow();
   setupTray();
@@ -325,6 +388,10 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+});
+
+app.on("before-quit", () => {
+  void relay?.stop();
 });
 
 app.on("window-all-closed", () => {

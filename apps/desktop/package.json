@@ -14,7 +14,9 @@
     "@domo/app-mcp": "*",
     "@domo/broker-core": "*",
     "@domo/device-core": "*",
-    "@domo/protocol": "*"
+    "@domo/mcp-server": "*",
+    "@domo/protocol": "*",
+    "@domo/relay-client": "*"
   },
   "devDependencies": {
     "electron": "33.4.11",

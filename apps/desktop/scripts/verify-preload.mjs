@@ -18,6 +18,15 @@ ipcMain.handle("goals:list", async () => []);
 ipcMain.handle("rules:list", async () => []);
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
+ipcMain.handle("settings:getRelay", async () => ({
+  url: "wss://relay.example/v1/relay/ws",
+  hasCredential: true,
+  connected: false,
+}));
+ipcMain.handle("settings:getApprovalMode", async () => "ask");
+ipcMain.handle("settings:getShowSuggestions", async () => true);
+ipcMain.handle("settings:getApiKey", async () => "");
+ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 
 // The approval window pulls one view model — the same shape approvalViewModel()
 // produces from an intent.
@@ -70,6 +79,19 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
+  // The Settings tab is where the relay credential lives, so render it too and
+  // prove the key never reaches the renderer.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
+  await new Promise((r) => setTimeout(r, 300));
+  const settings = await win.webContents.executeJavaScript(`(${() => {
+    const inputs = [...document.querySelectorAll("input")];
+    return {
+      hasRelayUrl: document.body.innerText.includes("Relay connection"),
+      keyFieldIsPassword: inputs.some((i) => i.type === "password" && i.value === ""),
+      bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
+    };
+  }})()`);
+
   const approvalWin = offscreen();
   await approvalWin.loadFile(path.join(dist, "renderer/approval.html"));
   await new Promise((r) => setTimeout(r, 400));
@@ -84,11 +106,14 @@ app.whenReady().then(async () => {
   }})()`);
 
   const ok =
+    settings.hasRelayUrl &&
+    settings.keyFieldIsPassword &&
+    !settings.bodyLeaksKey &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
     approval.buttons.length > 0 &&
     errors.length === 0;
-  console.log("PROBE:" + JSON.stringify({ main, approval, consoleErrors: errors, ok }));
+  console.log("PROBE:" + JSON.stringify({ main, settings, approval, consoleErrors: errors, ok }));
   app.exit(ok ? 0 : 1);
 });

@@ -22,16 +22,23 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   (revision 2026-07-28): the reduced tool surface, capability construction from
   tool arguments, and the deferred-result contract. Binds no port; takes a
   `Request`, returns a `Response`.
+- `packages/relay-client` (`@domo/relay-client`) — dials the Plow relay, speaks
+  plow's channel handshake, and serves the HTTP exchanges it tunnels. `wire.ts`
+  is the cross-repo interface.
 - `apps/desktop` — the Electron app. Main process runs `device-core`; the
   renderer is sandboxed (see the security rule below).
 
 **Being rebuilt.** The broker (its rendezvous service, MCP subset, stdio shim,
-connection-string/pinning concepts and pairing flow) has been removed. A Mac will
-dial *out* to the Plow relay, which authenticates the calling agent and forwards
-MCP to `@domo/mcp-server`. That server exists; **the relay client that feeds it
-tunnelled requests does not**, so nothing here has a transport in front of it
-today and there is no end-to-end coverage (the `e2e/` suite went with the
-broker).
+connection-string/pinning concepts and pairing flow) has been removed. A Mac
+dials *out* to the Plow relay, which authenticates the calling agent and forwards
+MCP to `@domo/mcp-server`. Both halves of this side exist. **The relay itself
+does not** — different repository, not built — so everything here is verified
+against a stand-in speaking the same wire contract, and has never run against
+the real thing.
+
+- **A credential never goes in a URL, a log line, or an error string.** It rides
+  in the post-challenge `auth` frame and nowhere else. `settings.json` holds it
+  and is written `0600`; the renderer is never given it.
 
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`

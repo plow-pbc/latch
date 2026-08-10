@@ -395,6 +395,13 @@ async function renderRules() {
   ]));
 }
 
+/** One honest line about the relay link, from what the main process reports. */
+function relayStatusText(relay) {
+  if (!relay.url) return "Not configured.";
+  if (!relay.hasCredential) return "No connect key stored.";
+  return relay.connected ? "Connected." : "Not connected — retrying.";
+}
+
 function capText(c) {
   switch (c.kind) {
     case "fs.read": return "read: " + (c.paths || []).join(", ");
@@ -409,6 +416,32 @@ function capText(c) {
 // ---- Settings ----
 
 async function renderSettings() {
+  // Relay connection. The credential is write-only from here: the main process
+  // never hands it back, so the field shows whether one is stored, not what it
+  // is. Leaving it blank keeps the stored one.
+  const relay = await window.domo.relayGet();
+  const relayUrlInput = el("input", { class: "text", attrs: { placeholder: "wss://api.plow.co/v1/relay/ws" } });
+  relayUrlInput.value = relay.url || "";
+  const relayKeyInput = el("input", {
+    class: "text",
+    attrs: {
+      type: "password",
+      placeholder: relay.hasCredential ? "•••••••• (stored — leave blank to keep)" : "Paste a relay:connect key",
+    },
+  });
+  const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
+  const relaySave = el("button", { class: "btn primary", text: "Save & Connect" });
+  relaySave.addEventListener("click", async () => {
+    relayNote.textContent = "Connecting…";
+    await window.domo.relaySet(relayUrlInput.value.trim(), relayKeyInput.value.trim());
+    renderSettings();
+  });
+  const relayForget = el("button", { class: "btn danger", text: "Forget Key" });
+  relayForget.addEventListener("click", async () => {
+    await window.domo.relayClearCredential();
+    renderSettings();
+  });
+
   const restoreNote = el("p", { class: "faint", text: "" });
   const restore = el("button", { class: "btn", text: "Restore Default Goals" });
   restore.addEventListener("click", async () => {
@@ -491,6 +524,11 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
+    group("Relay connection", "Where this Mac dials out so agents can reach it. Get a relay:connect key from the Plow portal.", [
+      el("div", { class: "field" }, [el("label", { text: "Relay URL" }), relayUrlInput]),
+      el("div", { class: "field" }, [el("label", { text: "Connect key" }), relayKeyInput]),
+      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), relayForget, relaySave]),
+    ]),
     group("Anthropic API key", "Required for the Adversarial Agent features. Stored locally.", [
       apiKeyInput,
       el("p", { class: "faint reviewer-note", text: `Reviewer: ${reviewerInfo}` }),
@@ -518,6 +556,9 @@ function selectTab(tab) {
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
+
+// Let the headless preload probe drive the tabs without synthesising clicks.
+window.__domoSelectTab = selectTab;
 
 seg.addEventListener("mousedown", (e) => {
   const btn = e.target.closest("button");

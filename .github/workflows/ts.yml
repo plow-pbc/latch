@@ -27,7 +27,7 @@ jobs:
       # Protocol + transport are platform-independent (golden vectors, crypto,
       # the WebSocket client) and run everywhere.
       - run: npx vitest run packages/protocol packages/transport
-      # The device sandbox needs macOS seatbelt (sandbox-exec), and mcp-server's
-      # end-to-end cases run real sandboxed commands through it.
+      # The device sandbox needs macOS seatbelt (sandbox-exec); mcp-server's and
+      # relay-client's end-to-end cases run real sandboxed commands through it.
       - if: runner.os == 'macOS'
-        run: npx vitest run packages/device-core packages/mcp-server apps/desktop
+        run: npx vitest run packages/device-core packages/mcp-server packages/relay-client apps/desktop

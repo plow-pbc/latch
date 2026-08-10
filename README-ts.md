@@ -4,13 +4,14 @@ The TypeScript + Electron implementation of Domo (see [DESIGN.md](DESIGN.md) for
 the architecture and the reasoning behind each decision).
 
 > **Being rebuilt.** The in-repo broker — the rendezvous service, its MCP subset,
-> the stdio shim, the connection-string/certificate-pinning concepts and the
-> pairing flow — has been removed. A Mac now reaches agents by dialing *out* to
-> the Plow relay, which authenticates the agent and forwards MCP to the MCP
-> server in `packages/mcp-server`. That server exists and is tested in process;
-> the outbound relay client that feeds it tunnelled requests is the next piece of
-> work, so until it lands nothing here has a transport and the app's status pill
-> reads "Not connected".
+> the connection-string/certificate-pinning concepts and the pairing flow — has
+> been removed. A Mac now reaches agents by dialing *out* to the Plow relay,
+> which authenticates the agent and forwards MCP to the MCP server in
+> `packages/mcp-server`. Both halves exist here: the server, and the outbound
+> client in `packages/relay-client` that dials the relay and serves what it
+> tunnels. **The relay itself does not exist yet** — it is a different repository
+> and is not built, so this side is verified against a stand-in that speaks the
+> same wire contract.
 
 ## Layout
 
@@ -23,6 +24,8 @@ packages/
                                      BlessedTools, GoalsLibrary, identity/key store  (twin of DomoDeviceCore)
   mcp-server/    @domo/mcp-server    the MCP server on this Mac (revision 2026-07-28): the reduced
                                      tool surface, capability construction, and deferred results
+  relay-client/  @domo/relay-client  dials the Plow relay, speaks plow's channel handshake, and
+                                     serves the HTTP exchanges the relay tunnels down the socket
 apps/
   desktop/       Electron app: device-core in the main process; tray, approval windows,
                  Goals/Rules/Audit/Settings UI (visual direction from docs/mockups/audit-mockups.html)
@@ -128,11 +131,46 @@ timer starts before approval and the executor's wait starts after it, so the
 budget always expires first. The call defers, and `get_result` later returns a
 ready payload that *contains* the job handle. Two hops.
 
+## The relay client
+
+This Mac dials *out* — it is behind NAT and often asleep. `packages/relay-client`
+holds one WebSocket to the relay and serves what comes down it.
+
+- **The credential is a `relay:connect` key pasted from the Plow portal.** It
+  travels in the post-challenge `auth` frame, as every plow channel client does
+  — never an upgrade header, and **never in a URL**. That rule is absolute:
+  credentials in URLs leaked into stored MCP registrations, terminal output,
+  logs and shell history in the prototype. `RelayClient` also redacts the
+  credential from everything it emits, because an error string from a dependency
+  is not ours to audit.
+- **Stored owner-only.** `app/settings.json` is written `0600` and chmod'd on
+  every save, so a file predating that change is repaired. There is still no
+  Keychain or `safeStorage`; 0600 is the floor. The credential is never sent to
+  the renderer — Settings shows only whether one is stored.
+- Heartbeat at or under 15s (the relay's staleness gate is twice that), and a
+  server advertising a slower cadence cannot push us past it.
+- Reconnect with **full-jitter** exponential backoff: the delay is uniform in
+  `[0, ceiling)` and the ceiling doubles to 30s. The jitter is the point —
+  without it every Mac that dropped when the relay restarted comes back at the
+  same instant.
+- The receive loop **never awaits** a request. Serving can take the whole call
+  budget, and blocking there would stall the heartbeat into staleness.
+
+**`src/wire.ts` is the interface.** The handshake and heartbeat are fixed by
+plow's existing channel protocol, but the two request/response frame `type`
+strings and the client kind are *not* pinned by the design docs — the names
+there are our proposal. If the relay chooses differently, that file is the only
+thing that changes.
+
 ## Integration coverage
 
 The `e2e/` suite booted real broker + device processes and was removed with the
-broker. **There is currently no end-to-end coverage**; replacing it against the
-relay is planned work, not an oversight.
+broker. `packages/relay-client/test` now covers the full path in process — an
+agent's MCP request in at the relay's agent leg, down a real WebSocket, through
+the MCP server, the policy engine and the sandbox, and back — against a stand-in
+relay built to the wire contract. **It has never been run against the real
+relay**, which does not exist yet. A harness that boots both for real is still
+outstanding.
 
 ## Running the desktop app
 

@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld("domo", {
   rulesRemove: (key: string) => ipcRenderer.invoke("rules:remove", key),
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
+  relayGet: () => ipcRenderer.invoke("settings:getRelay"),
+  relaySet: (url: string, credential: string) =>
+    ipcRenderer.invoke("settings:setRelay", url, credential),
+  relayClearCredential: () => ipcRenderer.invoke("settings:clearRelayCredential"),
   approvalModeGet: () => ipcRenderer.invoke("settings:getApprovalMode"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
