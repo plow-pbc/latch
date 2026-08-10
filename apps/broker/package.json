@@ -1,0 +1,14 @@
+{
+  "name": "@domo/app-broker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "domo-broker": "./dist/main.js"
+  },
+  "dependencies": {
+    "@domo/broker-core": "*",
+    "@domo/protocol": "*",
+    "@domo/transport": "*"
+  }
+}

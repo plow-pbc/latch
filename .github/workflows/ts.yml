@@ -1,0 +1,32 @@
+name: TypeScript
+
+# The port ships with CI on macOS AND Linux from day one (DESIGN.md §13 Phase
+# T0), so the broker's Linux target never rots. Sandbox/E2E tests that spawn
+# sandbox-exec are macOS-only and skipped on Linux via the runner guard below.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -b
+      # Protocol + transport are platform-independent (golden vectors, crypto,
+      # WebSocket pinning) and run everywhere.
+      - run: npx vitest run packages/protocol packages/transport
+      # Device sandbox + full E2E need macOS seatbelt (sandbox-exec).
+      - if: runner.os == 'macOS'
+        run: npx vitest run packages/device-core apps/desktop e2e

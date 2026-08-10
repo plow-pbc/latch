@@ -1,0 +1,63 @@
+{
+  "cases" : [
+    {
+      "agentId" : "agent-1",
+      "capabilitiesA" : [
+        {
+          "kind" : "fs.read",
+          "paths" : [
+            "\/domo-fixture-nonexistent\/b",
+            "\/domo-fixture-nonexistent\/a"
+          ],
+          "reason" : "will be stripped"
+        },
+        {
+          "argv" : [
+            "git",
+            "status"
+          ],
+          "cwd" : "\/domo-fixture-nonexistent\/repo",
+          "kind" : "process.exec"
+        }
+      ],
+      "capabilitiesB" : [
+        {
+          "argv" : [
+            "git",
+            "status"
+          ],
+          "cwd" : "\/domo-fixture-nonexistent\/x\/..\/repo",
+          "kind" : "process.exec",
+          "reason" : "different display text"
+        },
+        {
+          "kind" : "fs.read",
+          "paths" : [
+            "\/domo-fixture-nonexistent\/a\/",
+            "\/domo-fixture-nonexistent\/b"
+          ]
+        }
+      ],
+      "deviceId" : "device-1",
+      "name" : "order-and-reason-invariant",
+      "ruleKey" : "29a69f165ad9a9eced8a5a5fbb327fa73c4e319186ddb62c956f935a01de4fa2",
+      "sameKey" : true
+    },
+    {
+      "agentId" : "agent-2",
+      "capabilitiesA" : [
+        {
+          "allowed" : true,
+          "kind" : "network"
+        },
+        {
+          "kind" : "tool",
+          "tool" : "mac_info"
+        }
+      ],
+      "deviceId" : "device-2",
+      "name" : "network-and-tool",
+      "ruleKey" : "f9e5fcb4209b8d0253c3bdb67ff1a62f014222f0b863115be916fc83d80ac354"
+    }
+  ]
+}

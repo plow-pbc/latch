@@ -12,6 +12,9 @@ let package = Package(
         .executableTarget(name: "domo-broker", dependencies: ["DomoBrokerCore"]),
         .executableTarget(name: "domo-device", dependencies: ["DomoDeviceCore"]),
         .executableTarget(name: "domo-mcp", dependencies: ["DomoTransport"]),
+        // Golden-vector generator for the TypeScript port (DESIGN.md §13 Phase T1).
+        // Swift is the generator of truth until it is decommissioned.
+        .executableTarget(name: "domo-vectors", dependencies: ["DomoProtocol", "DomoTransport", "DomoDeviceCore"]),
         .executableTarget(name: "DomoApp", dependencies: ["DomoProtocol", "DomoTransport", "DomoDeviceCore"],
                           swiftSettings: [.define("DOMO_RELEASE", .when(configuration: .release))]),
         .testTarget(name: "DomoProtocolTests", dependencies: ["DomoProtocol"]),

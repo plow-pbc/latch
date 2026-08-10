@@ -1,0 +1,33 @@
+{
+  "cases" : [
+    {
+      "canonical" : "\/domo-fixture-nonexistent\/a\/c",
+      "input" : "\/domo-fixture-nonexistent\/a\/b\/..\/c"
+    },
+    {
+      "canonical" : "\/domo-fixture-nonexistent\/x\/y",
+      "input" : "\/domo-fixture-nonexistent\/.\/x\/.\/y"
+    },
+    {
+      "canonical" : "\/escape",
+      "input" : "\/domo-fixture-nonexistent\/..\/escape"
+    },
+    {
+      "canonical" : "\/private\/tmp\/domo-fixture\/file.txt",
+      "input" : "\/tmp\/domo-fixture\/file.txt"
+    },
+    {
+      "canonical" : "\/private\/var\/domo-fixture",
+      "input" : "\/var\/domo-fixture"
+    },
+    {
+      "canonical" : "\/private\/etc\/hosts",
+      "input" : "\/etc\/hosts"
+    },
+    {
+      "canonical" : "\/Users\/deutschj\/Projects\/domo-desktop\/relative\/path\/file",
+      "input" : "relative\/path\/file"
+    }
+  ],
+  "cwdAtGeneration" : "\/Users\/deutschj\/Projects\/domo-desktop"
+}

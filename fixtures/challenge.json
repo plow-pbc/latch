@@ -1,0 +1,6 @@
+{
+  "context" : "domo-device-challenge:v1:",
+  "nonce" : "fixture-challenge-nonce-0001",
+  "signatureA" : "mzAfi6lkMqbWaxmXAkK7CzJAwf+Lgd0xgksTXcKJaOv9E44+9AnAIeGmKzteSSfAK3krsHPgIJ9Oq2VILMWCDQ==",
+  "signingDataBase64" : "ZG9tby1kZXZpY2UtY2hhbGxlbmdlOnYxOmZpeHR1cmUtY2hhbGxlbmdlLW5vbmNlLTAwMDE="
+}

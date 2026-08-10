@@ -3,3 +3,9 @@
 DerivedData/
 *.xcodeproj
 .DS_Store
+
+# TypeScript stack build artifacts
+node_modules/
+packages/*/dist/
+apps/*/dist/
+*.tsbuildinfo

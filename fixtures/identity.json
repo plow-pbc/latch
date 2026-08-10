@@ -1,0 +1,20 @@
+{
+  "keys" : [
+    {
+      "fingerprint" : "ff73a0647bbc29aa",
+      "name" : "A",
+      "publicKeyBase64" : "A6EHv\/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+      "seedBase64" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    },
+    {
+      "fingerprint" : "e64f81b2413017de",
+      "name" : "B",
+      "publicKeyBase64" : "Kay64UG8yvCyLhqU000LxzYeUm0L\/hLIl5S8kyKWbdc=",
+      "seedBase64" : "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8="
+    }
+  ],
+  "message" : "domo golden vector message: signatures are deterministic (RFC 8032)",
+  "sha256HexOfMessage" : "1c20f302aa9f52685dc35d51c91c1cf26eef4f6fc105e40dfff32ad558d8ce1e",
+  "signatureA" : "cA8N8uXFvD6Qu0+hsFQIF5lCvOGB6XGV3jK5BKVkndz95BgZsR7Q9cczzgdNvqIAlW67MTwRC\/R6IKL\/Bfv8CA==",
+  "signatureB" : "LtZS+bqZoGbjljwGn\/oCFFJgn640e0xLETIJjTpg1gT9ckel\/sXWiOeizUVovn9S\/8BBBFQLxF4NvY3tZmwFBg=="
+}

@@ -1,0 +1,23 @@
+{
+  "aead" : {
+    "combinedBase64" : "AAAAAAAAAAAAAAABe\/xltL3he2X35ySDPs3ac+9LsEbtjAJSXU1iBlvlJq7st+nzb5ORUHRR+w7tPAQllKA=",
+    "keyBase64" : "ldsgXG2Yg0SZVwwOZ9L9J0OrL6\/QBSazbd2VKn3KrME=",
+    "nonceBase64" : "AAAAAAAAAAAAAAAB",
+    "plaintextBase64" : "aGVsbG8gdGhyb3VnaCB0aGUgYmxpbmQgcmVsYXkg8J+Zgg=="
+  },
+  "hkdfInfoI2R" : "domo-e2e:i2r",
+  "hkdfInfoR2I" : "domo-e2e:r2i",
+  "i2rKeyBase64" : "ldsgXG2Yg0SZVwwOZ9L9J0OrL6\/QBSazbd2VKn3KrME=",
+  "initContext" : "domo-e2e-init:v1:",
+  "initiatorEphemeralPublicBase64" : "eaYx7t4b+cmPEgMs3q3Q56B5OY\/HhriMyEbsia+FpRo=",
+  "initiatorEphemeralSeedBase64" : "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
+  "initiatorIdentitySeedBase64" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "msg1SignatureBase64" : "PjRKPRxx+GAsSvFvbIbe1RSh05YPOorXpbD1PFEN019BO0kbaDAmjhy99\/C1Q6UJrQY1a5lp+SwgS3wPBdH\/Cw==",
+  "msg2SignatureBase64" : "TEO1F8pzs\/eybW30vbAEY\/UL5W4199NwZxCSGIPg96nWaw3s9kXXwvMoTvZpgYhkRguK3Lib2LpziJJJnzbkCA==",
+  "r2iKeyBase64" : "++o5tI5niUQo9ifDWRRJ9puJjrRlXHqRqG4zNdBWMus=",
+  "respContext" : "domo-e2e-resp:v1:",
+  "responderEphemeralPublicBase64" : "Z13VdO13iTELPS52gfN5C0ZsdzsVIf7PNld5WDcepS8=",
+  "responderEphemeralSeedBase64" : "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8=",
+  "responderIdentitySeedBase64" : "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "sharedSecretBase64" : "1vuTlRGyOBvIWZtLjtxZaIKUUN\/XqHrr54pwPNBM1U4="
+}

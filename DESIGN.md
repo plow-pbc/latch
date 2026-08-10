@@ -304,3 +304,173 @@ repo can prove they broke nothing.
 4. **Multi-user:** spaces, capability ceilings, cross-owner approvals.
 5. **Adversarial reviewer:** an agent consuming the same intent + audit stream,
    sitting between policy and prompt as an additional gate.
+
+The remote milestone is where the **TypeScript re-platform (§13)** lands: the
+hosted broker ships as the first TS component, and the rest of the system
+follows behind the same wire contract.
+
+## 13. Re-platform: TypeScript + Electron (migration plan)
+
+**Status:** plan recorded 2026-08-09; **initial port landed 2026-08-09** — the
+full TypeScript stack (protocol, transport, broker, device core, headless
+runner, and an Electron app) is implemented and tested alongside Swift. See
+`README-ts.md` for the TS layout and commands. Phases T0–T6 are all exercised
+by `npx vitest run` (105 tests); the Swift code remains authoritative in
+production until it is formally decommissioned, and the CLAUDE.md rules
+(including "AppKit only") continue to apply to the Swift `DomoApp`.
+
+**What landed:**
+- `packages/{protocol,transport,broker-core,device-core}` + `apps/{broker,mcp,device,desktop}`.
+- A Swift golden-vector generator (`swift run domo-vectors`, target
+  `Sources/domo-vectors`) emitting `fixtures/*.json`; the TS suite asserts them
+  byte-for-byte (canonical JSON, intent/grant signing bytes, rule keys, E2E key
+  schedule + AEAD frame, connection strings, path canonicalization, SBPL).
+- Mixed-stack E2E: every scenario runs TS/TS, TS-broker+Swift-device, and
+  Swift-broker+TS-device (the last two when `.build/debug` exists) — the wire
+  contract is proven across implementations.
+- CI on macOS **and** Linux (`.github/workflows/ts.yml`); sandbox/E2E tests are
+  macOS-guarded (seatbelt), protocol/transport run everywhere.
+
+**Findings worth carrying forward:**
+- **CryptoKit Ed25519 signatures are randomized** (Apple adds entropy), so
+  signature *bytes* are not reproducible across runs/languages. Signature
+  conformance is therefore cross-*verification*, not byte-equality; the *signed
+  bytes* (canonical JSON) are the byte-identical artifact. Node's `crypto.sign`
+  is deterministic (RFC 8032) — both verify each other's signatures.
+- Node's `fs.realpathSync` is `realpath(3)` and preserves `/private`, so the
+  `PathUtil` invariant ported without the Swift `resolvingSymlinksInPath`
+  footgun.
+- `DomoConnection` compact strings escape `/` in the payload JSON (the Swift
+  encoder omits `.withoutEscapingSlashes` there), unlike canonical signing
+  JSON which does not — the TS twin matches each context exactly.
+
+### 13.1 Why
+
+- **The broker's future is a Linux service** (§1 "cloud service run by the
+  provisioner") with a web front-end for pairing. Swift-on-Linux is possible
+  but means porting the transport off Apple's Network/Security frameworks and
+  running a web stack beside a Swift daemon; TypeScript is the native language
+  of both the deployment target and the front-end.
+- **MCP's official SDK is TypeScript-first.** `MCPSession` and `domo-mcp`
+  hand-roll the protocol today; the rewrite deletes protocol code.
+- **One language restores single-source invariants.** The device stays on
+  macOS forever, so a TS broker with a Swift device would mean two
+  implementations of the signature-critical canonical-JSON/crypto layer.
+  Migrating the device too collapses the system back to one implementation —
+  the property this design was built around.
+- **Electron over Tauri/webview shells:** Domo's device app is ~90% privileged
+  daemon (spawn `sandbox-exec`, stream stdio, WebSocket client, crypto, audit
+  log) and ~10% UI. Electron is the only option where that daemon is plain
+  Node in the main process — no second systems language, no IPC seam to a
+  sidecar. The accepted costs: bundle size, and owning the Chromium update
+  cadence via autoupdate.
+
+### 13.2 What does NOT change
+
+The re-platform is a change of implementation language, not of design.
+Invariants carried over verbatim:
+
+- The **wire protocol** (intents, capabilities, canonical JSON, Ed25519,
+  E2E channel) and the **on-disk layout** (§9) are frozen across the
+  migration — they are the seam that makes mixed Swift/TS stacks testable.
+- **Enforcement derives from approved capabilities, never goal text** (§5).
+- **Canonicalization returns true physical paths.** Node's `fs.realpath` is
+  `realpath(3)` and preserves `/private`; the Swift-Foundation
+  `resolvingSymlinksInPath` footgun does not exist in Node, but the invariant
+  and its tests carry over.
+- **Sandboxing mechanism unchanged:** spawn `/usr/bin/sandbox-exec` with an
+  SBPL profile mechanically derived from the capability set (§6). Profile
+  generation is pure string-building and must produce **byte-identical SBPL**
+  to the Swift generator (golden-tested).
+- **Everything honors `DOMO_HOME`; audit log stays append-only NDJSON and
+  stays the test oracle** (§10).
+- Consent-UI rule, restated for a web renderer: the approval window renders
+  **only** from the verified canonical intent — never remote content, never
+  agent-controlled markup. `contextIsolation` on, `nodeIntegration` off,
+  renderer sandbox on.
+
+### 13.3 Target shape
+
+Monorepo mirroring the current module seams one-to-one:
+
+| Package | Replaces | Notes |
+|---|---|---|
+| `@domo/protocol` | `DomoProtocol` | canonical JSON, identities, Capability/Intent/Grant, rule keys |
+| `@domo/transport` | `DomoTransport` | NDJSON framing, LineRPC, UDS, WebSocket (`ws`), E2EChannel |
+| `@domo/broker-core` | `DomoBrokerCore` | Broker, BrokerStore, MCP surface via `@modelcontextprotocol/sdk` |
+| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, BlessedTools, GoalsLibrary |
+| `apps/broker` | `domo-broker` | Linux deploy target; TLS in-process or behind a reverse proxy per the runbook |
+| `apps/mcp` | `domo-mcp` | stdio shim on the official SDK |
+| `apps/desktop` | `DomoApp` | Electron: device-core in the main process; tray, approval windows, Goals/Rules/Audit |
+
+Runtime decisions: **Node LTS everywhere** — Electron's main process is Node,
+so standardizing on it keeps one runtime; Bun may be used as a dev-time runner
+but CI proves Node. Crypto via `node:crypto` (Ed25519, X25519, HKDF-SHA256,
+ChaCha20-Poly1305 — the full existing suite), with audited `@noble/*`
+fallbacks only if a gap is found. Key storage starts file-backed (today's
+tested default); Electron `safeStorage` is the Keychain-hardening milestone.
+
+### 13.4 Phases
+
+Strangler pattern: the wire protocol is the seam; every phase ends with the
+mixed stack passing the full E2E suite against the audit-log oracle.
+
+**Phase T0 — scaffold.** Monorepo, TypeScript strict config, CI on macOS
+*and* Linux from day one. No behavior.
+
+**Phase T1 — protocol + golden vectors.** Port `@domo/protocol`. The first
+deliverable is a **conformance fixture set generated by the Swift code**:
+(JSON value → canonical bytes), (intent → signing bytes → signature →
+verify), rule-key normalization cases, E2EChannel transcripts, and generated
+SBPL profiles. Both test suites assert the same fixtures; the Swift side keeps
+generating them until it is deleted, after which the fixtures are frozen as
+the protocol's specification artifact. Byte-level risks to pin down here:
+JSON number formatting (JS doubles vs Swift), Unicode escaping, key ordering,
+ISO-8601 rendering. *Acceptance: every fixture passes in both languages; a
+fuzzer round-trips values through both encoders with identical bytes.*
+
+**Phase T2 — transport interop.** NDJSON framing, LineRPC, UDS, WebSocket,
+E2EChannel in TS. *Acceptance: four-way interop tests — TS↔TS, Swift↔Swift,
+TS client↔Swift server, Swift client↔TS server — including a full E2E-channel
+handshake and tamper rejection.*
+
+**Phase T3 — broker + mcp ship first.** `@domo/broker-core` + `apps/broker` +
+`apps/mcp`, MCP via the official SDK. This supersedes the Swift/Linux port and
+completes the hosted-broker story (§8) on standard infra. *Acceptance: the
+existing E2E scenarios pass with **TS broker + Swift device**; hosted-wss
+deploy recipe from the runbook reproduced on a Linux host.* The TS broker
+becomes the deployed broker at this point; Swift broker enters maintenance.
+
+**Phase T4 — device core, headless first.** Port `@domo/device-core` and a
+headless `domo-device` with the same `--policy` scripting. The sandbox tests
+are the bar: write-outside-scope blocked, network-deny blocks a local fetch
+that succeeds when approved, symlink/traversal bounds, SBPL byte-parity.
+*Acceptance: full E2E suite green with TS broker + **TS device**; audit
+streams from Swift and TS devices are event-for-event comparable.*
+
+**Phase T5 — Electron app.** `apps/desktop`: device-core in the main process;
+tray, approval flow, onboarding/TOFU, Goals/Rules/Audit windows; signing +
+notarization + hardened runtime (spawning `sandbox-exec` verified under it);
+autoupdate wired so Chromium patches ship on cadence. UI smoke follows the
+existing philosophy — real input events, not synthetic accessibility calls —
+via Playwright's Electron driver plus the CGEvent click harness. *Acceptance:
+`ui_smoke` parity with today's checks (first-mouse row selection, agent
+spin-up with spaces in paths).*
+
+**Phase T6 — decommission Swift.** After the TS stack has run the full suite
+and real sessions for a stable period, delete the Swift targets; freeze the
+golden vectors in-repo as the protocol spec; update CLAUDE.md (build/test
+commands, layout, the AppKit rule) in the same change. Keep the option of
+tiny native helper binaries for future blessed tools that need
+AppleEvents/XPC — none are needed today.
+
+### 13.5 Risks
+
+| Risk | Mitigation |
+|---|---|
+| Canonical-JSON drift between languages during T1–T5 | Golden vectors as first deliverable; fuzzing both encoders; Swift stays the generator of truth until deleted |
+| JS has only doubles | Canonical encoder pins integer/float rendering rules; vectors cover the edges; protocol avoids non-integer numbers where possible |
+| Consent UI is a web renderer | §13.2 hygiene rules; approval window is a spoofing target and gets its own tests |
+| Chromium CVE cadence becomes ours | Autoupdate is wired in T5, not later; releases track Electron stable |
+| `sandbox-exec` deprecation | Unchanged from §6 — same risk in both languages, same VM upgrade path |
+| Node single-threaded event loop vs concurrent sessions | Broker is I/O-bound routing; long work (exec streaming) is child-process-bound; no shared-memory concurrency exists today to lose |

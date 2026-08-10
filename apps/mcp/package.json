@@ -1,0 +1,13 @@
+{
+  "name": "@domo/app-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "domo-mcp": "./dist/main.js"
+  },
+  "dependencies": {
+    "@domo/protocol": "*",
+    "@domo/transport": "*"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@domo/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -b && node scripts/copy-renderer.mjs",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@domo/device-core": "*",
+    "@domo/protocol": "*",
+    "@domo/transport": "*"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

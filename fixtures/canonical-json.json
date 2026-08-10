@@ -1,0 +1,128 @@
+{
+  "cases" : [
+    {
+      "canonical" : "{}",
+      "name" : "empty-object",
+      "value" : {
+
+      }
+    },
+    {
+      "canonical" : "[]",
+      "name" : "empty-array",
+      "value" : [
+
+      ]
+    },
+    {
+      "canonical" : "null",
+      "name" : "null",
+      "value" : null
+    },
+    {
+      "canonical" : "[true,false]",
+      "name" : "bools",
+      "value" : [
+        true,
+        false
+      ]
+    },
+    {
+      "canonical" : "{\"0num\":4,\"Zebra\":3,\"_under\":6,\"alpha\":2,\"zeta\":1,\"~tilde\":5}",
+      "name" : "key-sorting",
+      "value" : {
+        "_under" : 6,
+        "~tilde" : 5,
+        "0num" : 4,
+        "alpha" : 2,
+        "Zebra" : 3,
+        "zeta" : 1
+      }
+    },
+    {
+      "canonical" : "{\"a\":\"v\",\"b\":{\"c\":{\"x\":null},\"d\":[1,2,3]}}",
+      "name" : "nested",
+      "value" : {
+        "a" : "v",
+        "b" : {
+          "c" : {
+            "x" : null
+          },
+          "d" : [
+            1,
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "canonical" : "{\"backslash\":\"a\\\\b\",\"cr\":\"a\\rb\",\"ctrl\":\"a\\u0001b\",\"del\":\"ab\",\"newline\":\"l1\\nl2\",\"quote\":\"say \\\"hi\\\"\",\"tab\":\"a\\tb\"}",
+      "name" : "string-escapes",
+      "value" : {
+        "backslash" : "a\\b",
+        "cr" : "a\rb",
+        "ctrl" : "a\u0001b",
+        "del" : "ab",
+        "newline" : "l1\nl2",
+        "quote" : "say \"hi\"",
+        "tab" : "a\tb"
+      }
+    },
+    {
+      "canonical" : "{\"url\":\"wss:\/\/broker.example:8444\/path\"}",
+      "name" : "slashes-not-escaped",
+      "value" : {
+        "url" : "wss:\/\/broker.example:8444\/path"
+      }
+    },
+    {
+      "canonical" : "{\"accents\":\"café\",\"cjk\":\"日本語\",\"emoji\":\"🙂\"}",
+      "name" : "unicode-raw",
+      "value" : {
+        "accents" : "café",
+        "cjk" : "日本語",
+        "emoji" : "🙂"
+      }
+    },
+    {
+      "canonical" : "[0,1,-1,42,1000000,9007199254740992]",
+      "name" : "numbers-integral",
+      "value" : [
+        0,
+        1,
+        -1,
+        42,
+        1000000,
+        9007199254740992
+      ]
+    },
+    {
+      "canonical" : "[1.5,-0.5,0.1,3.14159,0.001]",
+      "name" : "numbers-fractional",
+      "value" : [
+        1.5,
+        -0.5,
+        0.10000000000000001,
+        3.1415899999999999,
+        0.001
+      ]
+    },
+    {
+      "canonical" : "{\"list\":[1,\"two\",true,null,{\"k\":\"v\"}],\"n\":2.5}",
+      "name" : "mixed",
+      "value" : {
+        "list" : [
+          1,
+          "two",
+          true,
+          null,
+          {
+            "k" : "v"
+          }
+        ],
+        "n" : 2.5
+      }
+    }
+  ]
+}
