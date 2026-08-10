@@ -2,6 +2,13 @@
  * WebSocket transport (client half) — built on `ws`. One WebSocket message ==
  * one logical frame (WS already delimits messages; nothing above needs more).
  *
+ * Frames are sent as **text**. This is not cosmetic: plow's channel protocol is
+ * text end to end — the server reads every frame with starlette's
+ * `receive_text()`, which raises on a binary frame and drops the socket before
+ * the handshake completes. We sent binary here and the Mac could not connect to
+ * the real relay at all, while every local test passed because the stand-in
+ * decoded the bytes either way.
+ *
  * TLS is the ordinary system CA store: this Mac dials a public relay endpoint
  * with a real certificate. The SPKI-pinning seam went with the self-signed
  * broker it existed for.
@@ -41,7 +48,9 @@ export class WebSocketConnection implements Connection {
 
   sendLine(data: Buffer): void {
     if (this.closed) return;
-    this.ws.send(data, { binary: true });
+    // TEXT, not binary — see the header comment. `ws` encodes the buffer as a
+    // text frame when `binary` is false.
+    this.ws.send(data, { binary: false });
   }
 
   close(): void {

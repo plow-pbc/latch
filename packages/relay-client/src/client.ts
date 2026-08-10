@@ -80,13 +80,26 @@ export class RelayClient {
     this.options.log?.(this.redact(message));
   }
 
+  /**
+   * Why a dial failed. Without this, a Mac that can never connect logs only
+   * "reconnecting in 121ms" forever and whoever debugs it has nothing to go on.
+   * Redacted like everything else — a failure string is exactly where a
+   * credential must not appear.
+   */
+  private sayFailure(error: unknown): void {
+    this.say(`connect failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   /** Start dialling. Returns once the first attempt has been made; the client
    * keeps reconnecting on its own after that. */
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
     this.attempt = 0;
-    await this.connectOnce().catch(() => this.scheduleReconnect());
+    await this.connectOnce().catch((error: unknown) => {
+      this.sayFailure(error);
+      this.scheduleReconnect();
+    });
   }
 
   /** Stop reconnecting and drop the socket. Waits for in-flight requests so a
@@ -153,7 +166,9 @@ export class RelayClient {
         return;
 
       case "auth.ok": {
-        this.send(conn, { type: "ready" });
+        // No `ready` frame. Plow's agent-runtime client sends one for its own
+        // channel's reasons; our wire contract has no such frame and the relay
+        // logs it as an unknown type. Least code: do not send what nobody reads.
         this.attempt = 0;
         // Honour the server's cadence, but never drift above ours: the relay's
         // staleness gate is twice the interval, so a slower heartbeat makes
@@ -280,7 +295,10 @@ export class RelayClient {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.running) return;
-      void this.connectOnce().catch(() => this.scheduleReconnect());
+      void this.connectOnce().catch((error: unknown) => {
+        this.sayFailure(error);
+        this.scheduleReconnect();
+      });
     }, delay);
     this.reconnectTimer.unref?.();
   }

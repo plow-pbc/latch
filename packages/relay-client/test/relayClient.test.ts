@@ -22,10 +22,24 @@ import {
   RelayClient,
   stripHopByHop,
 } from "@domo/relay-client";
+import { WebSocket } from "ws";
 import { FakeRelay } from "./fakeRelay.js";
 
 const CREDENTIAL = "plow_sk_relay_connect_SECRET_VALUE";
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One", scopes: ["relay:call"], user_uid: "u-1" };
+
+/**
+ * The relay considers the device online when it sends auth.ok; the client marks
+ * itself connected when it *receives* it. Tests that assert client state must
+ * wait for the client, not for the relay.
+ */
+async function waitConnected(client: RelayClient, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!client.isConnected && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  if (!client.isConnected) throw new Error("client never reported connected");
+}
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -313,14 +327,18 @@ describe("a slow approval over the tunnel (§4.3, D3)", () => {
 });
 
 describe("the handshake", () => {
-  it("completes plow's challenge → auth → auth.ok → ready, under a constant client kind", async () => {
+  it("completes plow's challenge → auth → auth.ok, under a constant client kind", async () => {
     const { relay, client } = await stack();
     await client.start();
     await relay.waitForDevice();
+    await waitConnected(client);
 
     const types = relay.received.map((f) => f.type);
     expect(types[0]).toBe("auth");
-    expect(types).toContain("ready");
+    // No `ready`: our wire contract has no such frame, and the relay logs one
+    // as an unknown type. We do not send what nobody reads.
+    expect(types).not.toContain("ready");
+    expect(relay.unknownFrameTypes).toEqual([]);
     expect(relay.clientKind).toBe(RELAY_CLIENT_KIND);
     // The kind is constant: the uid is the other half of the registry key.
     expect(RELAY_CLIENT_KIND).not.toMatch(/u-1|uid/);
@@ -372,8 +390,7 @@ describe("the handshake", () => {
     const { relay, client } = await stack({ pingIntervalMs: 600_000 });
     await client.start();
     await relay.waitForDevice();
-    // Nothing to wait for — assert the clamp directly through behaviour: a
-    // 600s cadence would send no ping at all in this window if it were honoured.
+    await waitConnected(client);
     expect(client.isConnected).toBe(true);
   });
 });
@@ -383,6 +400,7 @@ describe("reconnection", () => {
     const { relay, client, statuses } = await stack();
     await client.start();
     await relay.waitForDevice();
+    await waitConnected(client);
     expect(client.isConnected).toBe(true);
 
     relay.dropDevice();
@@ -398,6 +416,7 @@ describe("reconnection", () => {
     // online → offline → online, in that order.
     expect(statuses).toEqual([true, false, true]);
     await relay.waitForDevice(10_000);
+    await waitConnected(client);
     expect(client.isConnected).toBe(true);
 
     const dir = tempDir();
@@ -480,6 +499,51 @@ describe("the stand-in relay is an independent implementation", () => {
     expect(source).toContain(`const WIRE_FRAME_REQUEST = "${FRAME_REQUEST}"`);
     expect(source).toContain(`const WIRE_FRAME_RESPONSE = "${FRAME_RESPONSE}"`);
     expect(source).toContain(`const WIRE_CLIENT_KIND = "${RELAY_CLIENT_KIND}"`);
+  });
+
+  it("REJECTS a binary frame, as starlette's receive_text does", async () => {
+    // The bug this stand-in failed to catch: we sent binary frames, the real
+    // relay could not read them at all, and every test here passed because this
+    // file decoded the bytes regardless of opcode.
+    const relay = await FakeRelay.start({ expectCredential: CREDENTIAL });
+    cleanups.push(() => relay.stop());
+    const ws = new WebSocket(relay.url);
+    cleanups.push(() => ws.terminate());
+    const closed = new Promise<void>((resolve) => ws.on("close", () => resolve()));
+    ws.on("message", (data: Buffer) => {
+      if (JSON.parse(data.toString("utf8")).type !== "auth.challenge") return;
+      // A perfectly valid auth frame — sent as BINARY.
+      ws.send(
+        Buffer.from(
+          JSON.stringify({ type: "auth", token: CREDENTIAL, client_kind: RELAY_CLIENT_KIND }),
+          "utf8",
+        ),
+        { binary: true },
+      );
+    });
+    await closed;
+    expect(relay.binaryFramesSeen).toBeGreaterThan(0);
+    expect(relay.deviceOnline).toBe(false);
+  });
+
+  it("refuses a first frame that is not auth, unparseable JSON, and a non-object", async () => {
+    for (const [label, payload] of [
+      ["not auth", JSON.stringify({ type: "hello" })],
+      ["not JSON", "{{{"],
+      ["not an object", JSON.stringify(["auth"])],
+    ] as [string, string][]) {
+      const relay = await FakeRelay.start({ expectCredential: CREDENTIAL });
+      const ws = new WebSocket(relay.url);
+      const closed = new Promise<void>((resolve) => ws.on("close", () => resolve()));
+      ws.on("message", (data: Buffer) => {
+        if (JSON.parse(data.toString("utf8")).type !== "auth.challenge") return;
+        ws.send(payload);
+      });
+      await closed;
+      expect(relay.deviceOnline, label).toBe(false);
+      expect(relay.lastRejection, label).toBeTypeOf("string");
+      await relay.stop();
+    }
   });
 
   it("notices a device registering under an unexpected client kind", async () => {

@@ -12,6 +12,15 @@
  * The `agentCall` method is the agent-facing half: it takes the HTTP request an
  * MCP client would POST to `/v1/relay/devices/{uid}/mcp` and returns what that
  * client would get back.
+ *
+ * **It must be as STRICT as the real server, not merely as capable.** An
+ * earlier version decoded every frame with `toString("utf8")` regardless of
+ * opcode, so it happily accepted the binary frames we were sending — while the
+ * real relay reads with starlette's `receive_text()` and dropped the socket
+ * before the handshake finished. Every test here passed and the Mac could not
+ * connect to anything. Tolerance in a stand-in is not neutral; it manufactures
+ * false confidence. The strictness below mirrors
+ * `api/plow/relay/ws.py` `_authenticate` and its receive loop.
  */
 import { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
@@ -96,6 +105,14 @@ export class FakeRelay {
   /** Set when the device registered under a kind this relay does not expect. */
   unexpectedClientKind: string | null = null;
   authFailures = 0;
+  /** Why the last handshake was refused. */
+  lastRejection: string | null = null;
+  /** Binary frames received — the real server cannot read these at all. */
+  binaryFramesSeen = 0;
+  /** Frame types seen after auth that this relay has no use for. */
+  readonly unknownFrameTypes: string[] = [];
+  /** The account uid announced in auth.ok. */
+  readonly accountUid = "0876d2e6-a3b0-4c1d-9ab9-0673d17d73d9";
 
   private constructor(
     wss: WebSocketServer,
@@ -124,42 +141,70 @@ export class FakeRelay {
     return `127.0.0.1:${this.port}`;
   }
 
+  /** Mirrors `_reject`: auth.error then close 4001, never echoing the token. */
+  private reject(ws: WebSocket, reason: string): void {
+    this.authFailures += 1;
+    this.lastRejection = reason;
+    ws.send(JSON.stringify({ type: "auth.error", reason }));
+    ws.close(4001, "auth_failed");
+  }
+
   private handleDevice(ws: WebSocket): void {
     let authed = false;
     // Plow opens with the challenge; the credential is never on the upgrade.
     ws.send(JSON.stringify({ type: "auth.challenge" }));
 
-    ws.on("message", (data: Buffer) => {
+    ws.on("message", (data: Buffer, isBinary: boolean) => {
+      // STRICTNESS 1: text frames only. starlette's receive_text() raises on a
+      // binary frame and the socket dies mid-handshake — which is exactly what
+      // the real relay did to us while this file was decoding bytes blindly.
+      if (isBinary) {
+        this.binaryFramesSeen += 1;
+        ws.terminate();
+        return;
+      }
+
       let msg: Record<string, unknown>;
       try {
         msg = JSON.parse(data.toString("utf8")) as Record<string, unknown>;
       } catch {
+        // STRICTNESS 2: unparseable auth frame is fatal, not ignored.
+        if (!authed) this.reject(ws, "Invalid JSON");
         return;
       }
       this.received.push(msg);
 
+      // STRICTNESS 3: a non-object payload is refused.
+      if (!authed && (typeof msg !== "object" || msg === null || Array.isArray(msg))) {
+        this.reject(ws, "Invalid auth payload");
+        return;
+      }
+      // STRICTNESS 4: the FIRST frame must be `auth`; anything else is fatal
+      // rather than silently skipped until an auth frame turns up.
+      if (!authed && msg.type !== "auth") {
+        this.reject(ws, "Expected auth message");
+        return;
+      }
+
       if (msg.type === "auth") {
         if (msg.token !== this.options.expectCredential) {
-          this.authFailures += 1;
-          ws.send(JSON.stringify({ type: "auth.error", reason: "Invalid credential" }));
-          ws.close(4001, "auth_failed");
+          this.reject(ws, "Invalid credential");
           return;
         }
         this.clientKind = typeof msg.client_kind === "string" ? msg.client_kind : null;
         if (this.clientKind !== WIRE_CLIENT_KIND) this.unexpectedClientKind = this.clientKind;
         authed = true;
+        // The real auth.ok carries the account uid.
         ws.send(
           JSON.stringify({
             type: "auth.ok",
+            account_id: this.accountUid,
             ping_interval_ms: this.options.pingIntervalMs ?? 15_000,
           }),
         );
-        return;
-      }
-
-      if (!authed) return;
-
-      if (msg.type === "ready") {
+        // The device is registered at auth.ok — the real relay registers here,
+        // not on any follow-up frame. An earlier version waited for a `ready`
+        // frame, which our wire contract does not have.
         this.device = ws;
         this.deviceOnline = true;
         for (const r of this.onlineResolvers.splice(0)) r();
@@ -186,7 +231,13 @@ export class FakeRelay {
           headers: frame.headers ?? {},
           body: frame.body ?? "",
         });
+        return;
       }
+
+      // Tolerated by the real relay, but recorded: it logs these as
+      // relay_ws_unknown_frame_type, and a frame nobody reads is noise on the
+      // wire that one side is wrong about.
+      if (msg.type !== "ping") this.unknownFrameTypes.push(String(msg.type));
     });
 
     ws.on("close", () => {
