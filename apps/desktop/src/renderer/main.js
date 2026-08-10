@@ -378,7 +378,7 @@ function selectTab(tab) {
   render();
 }
 
-seg.addEventListener("click", (e) => {
+seg.addEventListener("mousedown", (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
   selectTab(btn.dataset.tab);

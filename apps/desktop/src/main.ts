@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +31,7 @@ import {
   PolicyDelegate,
 } from "@domo/device-core";
 import { approvalViewModel, auditActivities } from "./viewModel.js";
-import { loadSettings, saveSettings } from "./settings.js";
+import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { planAgentLaunch } from "./spawnAgent.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -134,9 +134,12 @@ function createMainWindow(): void {
     mainWindow.show();
     return;
   }
+  const bounds = restorableBounds(loadSettings(home).windowBounds);
   mainWindow = new BrowserWindow({
-    width: 940,
-    height: 620,
+    width: bounds?.width ?? 940,
+    height: bounds?.height ?? 620,
+    x: bounds?.x,
+    y: bounds?.y,
     title: "Domo",
     titleBarStyle: "hiddenInset",
     webPreferences: {
@@ -147,9 +150,38 @@ function createMainWindow(): void {
     },
   });
   void mainWindow.loadFile(path.join(rendererDir, "index.html"));
+  // Persist size + position so relaunches match. 'resized'/'moved' fire once
+  // after the gesture ends, so no debounce is needed.
+  const persist = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const b = mainWindow.getBounds();
+    const settings = loadSettings(home);
+    settings.windowBounds = b;
+    saveSettings(home, settings);
+  };
+  mainWindow.on("resized", persist);
+  mainWindow.on("moved", persist);
+  mainWindow.on("close", persist);
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+/** Restore saved bounds only if they still land on a connected display, so a
+ * window saved on a now-disconnected monitor doesn't open off-screen. */
+function restorableBounds(saved: WindowBounds | undefined): WindowBounds | null {
+  if (!saved) return null;
+  const onScreen = screen.getAllDisplays().some((d) => {
+    const w = d.workArea;
+    // Require the window's top-left to sit within a display's work area.
+    return (
+      saved.x >= w.x &&
+      saved.y >= w.y &&
+      saved.x < w.x + w.width &&
+      saved.y < w.y + w.height
+    );
+  });
+  return onScreen ? saved : null;
 }
 
 // MARK: IPC for the main window (audit / goals / rules / settings / status)

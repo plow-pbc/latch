@@ -5,10 +5,19 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface Settings {
   brokerConnection: string;
   /** The last-selected main-window tab, restored across launches. */
   selectedTab: string;
+  /** The main window's last size + position, restored across launches. */
+  windowBounds?: WindowBounds;
 }
 
 function settingsPath(home: string): string {

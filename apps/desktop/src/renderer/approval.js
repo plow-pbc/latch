@@ -48,6 +48,9 @@ async function render() {
   if (v.writesFiles) warnings.push("writes files");
   if (v.needsNetwork) warnings.push("uses the network");
 
+  // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
+  // is the more permissive option and sits in the middle.
+  const allowOnce = button("Allow Once", "btn primary", () => decide(v.intentId, "allow_once"));
   root.replaceChildren(
     el("div", { class: "who" }, [
       el("span", { class: "name", text: v.agentDisplay }),
@@ -66,10 +69,11 @@ async function render() {
     ]),
     el("div", { class: "actions" }, [
       button("Deny", "btn danger", () => decide(v.intentId, "deny")),
-      button("Allow once", "btn", () => decide(v.intentId, "allow_once")),
-      button("Always allow", "btn primary", () => decide(v.intentId, "always_allow")),
+      button("Always Allow", "btn", () => decide(v.intentId, "always_allow")),
+      allowOnce,
     ]),
   );
+  allowOnce.focus(); // keyboard default: Return activates Allow Once
 }
 
 function button(label, cls, onClick) {
