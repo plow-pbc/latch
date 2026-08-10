@@ -12,7 +12,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { canonicalize, isWithinRoots } from "@domo/protocol";
+import { canonicalizeAsync, isWithinRootsAsync } from "@domo/protocol";
 
 /**
  * Largest file these operations will read or write in one call.
@@ -40,10 +40,14 @@ export class FileOpsError extends Error {
  * canonicalized when the human approved it (see the MCP tool layer), so this
  * resolution is normally a no-op — it stays because this is trusted code and
  * must not depend on its caller having done the right thing.
+ *
+ * Async for the same reason the reads are: resolution is filesystem I/O, and a
+ * synchronous one here would block the call budget's timer just as effectively
+ * as a synchronous read would, only after the human had already approved.
  */
-function resolveInScope(filePath: string, allowedRoots: string[]): string {
-  const canonical = canonicalize(filePath);
-  if (!isWithinRoots(canonical, allowedRoots)) {
+async function resolveInScope(filePath: string, allowedRoots: string[]): Promise<string> {
+  const canonical = await canonicalizeAsync(filePath);
+  if (!(await isWithinRootsAsync(canonical, allowedRoots))) {
     throw new FileOpsError(`path outside approved scope: ${filePath}`, true);
   }
   return canonical;
@@ -51,7 +55,7 @@ function resolveInScope(filePath: string, allowedRoots: string[]): string {
 
 export const FileOps = {
   async read(filePath: string, allowedRoots: string[]): Promise<Buffer> {
-    const canonical = resolveInScope(filePath, allowedRoots);
+    const canonical = await resolveInScope(filePath, allowedRoots);
     let size: number;
     try {
       const info = await fs.stat(canonical);
@@ -79,7 +83,7 @@ export const FileOps = {
         `content is ${data.length} bytes, over the ${MAX_FILE_BYTES}-byte single-call limit`,
       );
     }
-    const canonical = resolveInScope(filePath, allowedRoots);
+    const canonical = await resolveInScope(filePath, allowedRoots);
     try {
       await fs.mkdir(path.dirname(canonical), { recursive: true });
       await fs.writeFile(canonical, data);

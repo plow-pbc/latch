@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -16,6 +17,9 @@ import {
   RuleKey,
   canonicalJSON,
   canonicalize,
+  canonicalizeAsync,
+  isWithinRoots,
+  isWithinRootsAsync,
   grantSigningData,
   intentRuleKey,
   signGrant,
@@ -124,17 +128,82 @@ describe("rule keys", () => {
 
 describe("path canonicalization", () => {
   const f = fixture("pathutil.json");
+  const skip = (c: any) =>
+    (!c.input.startsWith("/") && process.cwd() !== f.cwdAtGeneration) ||
+    (process.platform !== "darwin" && c.canonical.startsWith("/private/"));
+
   for (const c of f.cases) {
     it(c.input, () => {
-      if (!c.input.startsWith("/") && process.cwd() !== f.cwdAtGeneration) {
-        // Relative-path case is only meaningful from the generator's cwd.
-        return;
-      }
-      if (process.platform !== "darwin" && c.canonical.startsWith("/private/")) {
-        // These cases encode macOS's /tmp|/var|/etc → /private symlinks.
-        return;
-      }
+      // Relative-path cases are only meaningful from the generator's cwd, and
+      // /private cases encode macOS's /tmp|/var|/etc symlinks.
+      if (skip(c)) return;
       expect(canonicalize(c.input)).toBe(c.canonical);
     });
   }
+
+  // The async variant exists so a call running under a time budget does not
+  // block the event loop resolving a path. It is only safe to use in place of
+  // the synchronous one if it produces the SAME BYTES — canonical paths are
+  // what the sandbox and the rule keys are computed from.
+  describe("the async variant is byte-identical", () => {
+    for (const c of f.cases) {
+      it(c.input, async () => {
+        if (skip(c)) return;
+        expect(await canonicalizeAsync(c.input)).toBe(c.canonical);
+        expect(await canonicalizeAsync(c.input)).toBe(canonicalize(c.input));
+      });
+    }
+
+    it("agrees on paths that do not exist yet, at every depth", async () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), "domo-canon-"));
+      try {
+        for (const suffix of ["new.txt", "a/b/c.txt", "a/../new.txt", "./x", "sub/"]) {
+          const input = path.join(base, suffix);
+          expect(await canonicalizeAsync(input)).toBe(canonicalize(input));
+        }
+        // …and on a symlink, which is the case that actually matters.
+        const target = path.join(base, "real.txt");
+        fs.writeFileSync(target, "x");
+        const link = path.join(base, "link.txt");
+        fs.symlinkSync(target, link);
+        expect(await canonicalizeAsync(link)).toBe(canonicalize(link));
+        expect(await canonicalizeAsync(link)).toBe(canonicalize(target));
+      } finally {
+        fs.rmSync(base, { recursive: true, force: true });
+      }
+    });
+
+    it("agrees on ~ expansion and a bare relative path", async () => {
+      for (const input of ["~", "~/Documents/../Documents", "."]) {
+        expect(await canonicalizeAsync(input)).toBe(canonicalize(input));
+      }
+    });
+
+    it("the async scope check agrees with the synchronous one", async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "domo-scope-"));
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), "domo-scope-"));
+      try {
+        fs.mkdirSync(path.join(root, "sub"));
+        fs.writeFileSync(path.join(outside, "target.txt"), "leak");
+        fs.symlinkSync(path.join(outside, "target.txt"), path.join(root, "link.txt"));
+        const cases = [
+          path.join(root, "sub"),
+          path.join(root, "sub/new.txt"),
+          path.join(root, "sub/../escape.txt"),
+          path.join(root, "link.txt"), // resolves outside — must be refused
+          path.join(outside, "target.txt"),
+          root,
+          "/etc/hosts",
+        ];
+        for (const c of cases) {
+          expect(await isWithinRootsAsync(c, [root])).toBe(isWithinRoots(c, [root]));
+        }
+        // And the one that matters is actually refused, not merely agreed on.
+        expect(await isWithinRootsAsync(path.join(root, "link.txt"), [root])).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
+  });
 });

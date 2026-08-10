@@ -100,6 +100,17 @@ export class DeferredResults {
       },
     };
 
+    // Arm the budget BEFORE the work is invoked. Nothing here needs to know
+    // anything about the work, so this is a pure reorder — and it removes the
+    // window in which the work's synchronous prologue ran with no timer
+    // scheduled at all.
+    let fireBudget!: () => void;
+    const budgetExpired = new Promise<"budget">((resolve) => {
+      fireBudget = () => resolve("budget");
+    });
+    const timer = setTimeout(() => fireBudget(), this.budgetMs);
+    timer.unref?.();
+
     const started = work(progress);
     // Attach the terminal recorders NOW, before any await: if the work rejects
     // after we have already returned a pending envelope, nothing else is
@@ -129,16 +140,11 @@ export class DeferredResults {
       },
     );
 
-    const raced = await Promise.race([
-      done,
-      new Promise<"budget">((resolve) => {
-        const timer = setTimeout(() => resolve("budget"), this.budgetMs);
-        timer.unref?.();
-        // Stop the timer as soon as the work lands, so a fast call does not
-        // leave a pending timer behind.
-        void done.then(() => clearTimeout(timer));
-      }),
-    ]);
+    // Stop the timer as soon as the work lands, so a fast call does not leave a
+    // pending timer behind.
+    void done.then(() => clearTimeout(timer));
+
+    const raced = await Promise.race([done, budgetExpired]);
 
     if (raced !== "budget") {
       if (raced.ok) return raced.result;

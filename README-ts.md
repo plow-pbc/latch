@@ -98,10 +98,21 @@ or the file at the resolved path can still be replaced between the decision and
 the open. Closing that needs descriptor-based access, which is a larger change
 and is not done here.
 
-**File operations are async and size-capped** (`MAX_FILE_BYTES`, 8 MiB). Not for
-wire reasons — a synchronous read blocks the event loop, so the call budget's
-timer could never fire and the call would return *after* the relay had already
-told the agent it failed.
+**Everything on the budget path is async and size-capped** (`MAX_FILE_BYTES`,
+8 MiB). Not for wire reasons — synchronous filesystem work blocks the event
+loop, so the call budget's timer could never fire and the call would return
+*after* the relay had already told the agent it failed. That covers path
+resolution as well as the read itself: `canonicalizeAsync` / `isWithinRootsAsync`
+produce byte-identical results to their synchronous twins (asserted against the
+same golden vectors) and are what the tool layer and `FileOps` use. The budget's
+timer is armed before the work is invoked, so no prologue ever runs unbounded.
+
+Still synchronous, and knowingly: `normalizedCapability` — and therefore
+`RuleKey.compute` — resolves paths with the synchronous `canonicalize` inside
+`policy.decide`. Those paths are already resolved by the time they get there, so
+it re-resolves a physical path, but it is still a blocking filesystem call on
+the budget path. Making it async means changing signature-critical protocol
+code whose vectors are frozen, so it is recorded rather than done here.
 
 **Two kinds of handle, and they are not interchangeable.** `run_command` returns
 a *job* handle for `get_output` when a command outlives its wait. Any tool that

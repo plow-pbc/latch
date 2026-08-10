@@ -14,7 +14,7 @@
  * takes a `device` argument.
  */
 import {
-  canonicalize,
+  canonicalizeAsync,
   Capability,
   canonicalJSON,
   Intent,
@@ -74,8 +74,16 @@ const strings = (value: JSONValue[] | null): string[] =>
  * the human sees `~/.ssh/id_rsa`, the rule key is computed over it, and
  * execution targets that resolved path rather than re-following the symlink
  * afterwards — which also closes the swap window on the path itself.
+ *
+ * ASYNC on purpose. Resolution is filesystem I/O, and a tool runs under a call
+ * budget whose timer lives on the event loop: resolving synchronously on a slow
+ * or unresponsive mounted volume would block the loop and stop the budget from
+ * ever firing, exactly as a synchronous read would.
  */
-const resolved = (p: string): string => canonicalize(p);
+const resolved = (p: string): Promise<string> => canonicalizeAsync(p);
+
+/** Resolve a list of supplied paths concurrently. */
+const resolveAll = (paths: string[]): Promise<string[]> => Promise.all(paths.map(resolved));
 
 /**
  * Build an intent from an already-constructed capability set and run it through
@@ -133,7 +141,7 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const raw = a.get("path").str;
       if (raw === null) throw new ToolError("missing 'path'");
-      const path = resolved(raw);
+      const path = await resolved(raw);
       const response = await decideAndRun(
         ctx,
         progress,
@@ -165,7 +173,7 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const raw = a.get("path").str;
       if (raw === null) throw new ToolError("missing 'path'");
-      const path = resolved(raw);
+      const path = await resolved(raw);
       const content = a.get("content").str;
       if (content === null) throw new ToolError("missing 'content'");
       // Refuse before encoding: the point of the ceiling is to bound the work,
@@ -239,11 +247,11 @@ export const TOOLS: ToolSpec[] = [
 
       // Resolve every declared path before it becomes the bound the human
       // approves and the sandbox enforces.
-      const readPaths = strings(a.get("read_paths").arr).map(resolved);
-      const writePaths = strings(a.get("write_paths").arr).map(resolved);
+      const readPaths = await resolveAll(strings(a.get("read_paths").arr));
+      const writePaths = await resolveAll(strings(a.get("write_paths").arr));
       const rawCwd = a.get("cwd").str;
       const capabilities: Capability[] = [
-        { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : resolved(rawCwd) },
+        { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : await resolved(rawCwd) },
         { kind: "network", allowed: a.get("network").bool ?? false },
       ];
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });
