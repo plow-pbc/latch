@@ -132,7 +132,7 @@ and what the kernel then allows, is entirely your layer.
 
 ## 4. Also handed over
 
-Three further items in the same area, all yours:
+Four further items in the same area, all yours:
 
 ### 4.1 `fixtures/sbpl.json` is inert on every machine but the generator's
 
@@ -174,13 +174,48 @@ the moment they decide:
 - `apps/desktop/src/viewModel.ts:20` — `/** The enforceable capability set — the source of the
   sandbox bound. */`
 
-For `fs.write` and `process.exec` the list is a fair description of what was granted. For reads it is
-not: per §1 the profile permits the whole home directory regardless. A human reading "enforced" next
-to `Read: ~/Documents/report` is being told something that is not true of the running command.
+How fair the list is depends on which capability, and it is only fully fair for one of them:
+
+| Shown | Actually enforced? |
+|---|---|
+| `Read: …` (any) | **No.** Per §1 the profile permits the whole home directory regardless of what was declared. |
+| `Write: …` on a **`write_file`** call | **Yes.** `FileOps.write` canonicalises and scope-checks against the approved paths, and refuses outside them. |
+| `Write: …` on a **`run_command`** call | **No.** `executor.ts:77-85` additionally grants writes to `Library/Caches`, `.cache`, `.config`, `.local/state` and `.npm` under home, on every invocation, whatever `write_paths` says. |
+| `Run: …` | Yes, in that the argv shown is the argv executed. |
+| `Network: denied` | Yes — `executor.ts:90-95`. |
+
+So a human approving only `Write: /tmp/report` on a command is not being shown the full writable set
+either, and a human approving any `Read:` is being shown something that is not the bound at all.
 
 We corrected the equivalent wording in our own tool descriptions and docs (§5). We have not touched
 this copy, because the approval surface is yours and the right wording depends on what you decide to
 do about §1.
+
+### 4.4 The same claim reaches the automated reviewer, which can approve without a human
+
+This one is worse than the dialog, because there is no person in the loop to apply judgement.
+
+The adversarial reviewer is told the same untrue thing, twice:
+
+- `apps/desktop/src/adversarialAgent.ts:34` — the system prompt instructs it to *"judge by the
+  concrete command and the requested capability bounds **(which is what the sandbox will actually
+  enforce)**"*
+- `apps/desktop/src/adversarialAgent.ts:78` — each request is labelled *"Requested capability bounds
+  **(what the sandbox will enforce if allowed)**"*
+
+And in adversarial approval mode, its verdict is acted on directly:
+
+- `apps/desktop/src/main.ts:86-88` — `if (verdict === "allow") return { decision: "allow_once",
+  source: "adversarial" }`. No dialog is opened. No human sees it.
+
+So a model is being asked to reason about risk from a description of the enforced bound that is not
+the enforced bound, and its answer can approve the operation outright. A reviewer told that
+`Read: ~/Documents/report` is what the sandbox will enforce has no way to know the command can also
+read `~/.ssh` — and it is precisely the reads it is being asked to judge (its own prompt names
+`~/.ssh`, `.env` files and credential stores as deny-worthy).
+
+The remedy is yours: it depends on what you decide about §1, and on whether the prompt should
+describe the declared set or the enforced one. We are not proposing either.
 
 ## 5. What we changed on our side
 
