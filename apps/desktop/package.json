@@ -11,8 +11,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
-    "@domo/app-mcp": "*",
-    "@domo/broker-core": "*",
     "@domo/device-core": "*",
     "@domo/mcp-server": "*",
     "@domo/protocol": "*",
