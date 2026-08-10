@@ -31,3 +31,19 @@ jobs:
       # relay-client's end-to-end cases run real sandboxed commands through it.
       - if: runner.os == 'macOS'
         run: npx vitest run packages/device-core packages/mcp-server packages/relay-client apps/desktop
+      # The end-to-end transcripts. They are what caught the binary-framing bug
+      # that every unit test missed, so CI runs them rather than trusting that
+      # somebody remembered to.
+      - if: runner.os == 'macOS'
+        run: npx vitest run e2e
+      # The Electron-hosted evidence: the preload bridge, the approval dialog,
+      # and every first-run screen. Offscreen, but they still need a windowing
+      # environment, so macOS only.
+      - if: runner.os == 'macOS'
+        run: |
+          node apps/desktop/scripts/copy-renderer.mjs
+          npx electron apps/desktop/scripts/verify-preload.mjs
+          npx electron apps/desktop/scripts/approval-screenshot.mjs
+          npx electron apps/desktop/scripts/onboarding-screenshot.mjs
+        env:
+          DOMO_HOME: ${{ runner.temp }}/domo-ci
