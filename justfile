@@ -54,11 +54,13 @@ vectors:
 # ---------------------------------------------------------------------------
 
 # Terminal 1: run the broker (wss + auto self-signed cert). Ctrl-C to stop.
-broker: build
+# For another machine to connect, pass this broker's reachable address:
+#   just broker 192.168.1.50   (else the printed URL is 127.0.0.1, local-only)
+broker host=publichost: build
     node "{{brokerjs}}" --home "{{nethome}}" \
         --agent-listen wss://0.0.0.0:{{agentport}}/ \
         --device-listen wss://0.0.0.0:{{deviceport}}/ \
-        --public-host "{{publichost}}"
+        --public-host "{{host}}"
 
 # Terminal 2: launch the desktop app, auto-wired to the broker.
 # (Ensures a broker is up, seeds the app's saved broker, then opens Electron.)

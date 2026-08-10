@@ -221,8 +221,11 @@ if (sub === "connect-string") {
     url: ep.deviceURL, pin: ep.pin, name: "Domo broker", authenticate: ep.authenticate,
   };
   process.stdout.write(
-    `Device connection string (paste into the Domo app):\n\n  ${compactString(conn)}\n\n` +
-      `Or open on the Mac:  ${deepLink(conn)}\n`,
+    `Connect the Domo app — enter these in Settings:\n` +
+      `  Broker URL:       ${ep.deviceURL}\n` +
+      `  Certificate pin:  ${ep.pin ?? "(none — CA-signed cert)"}\n\n` +
+      `(Or paste this one connection string instead — it bundles both:)\n  ${compactString(conn)}\n\n` +
+      `Deep link (open on the Mac):  ${deepLink(conn)}\n`,
   );
   process.exit(0);
 }
@@ -297,6 +300,9 @@ function listenPort(urlString: string): number | null {
 async function main(): Promise<void> {
   let broker: Broker;
   let startupConnectString: string | null = null;
+  let deviceURLOut: string | null = null;
+  let pinOut: string | undefined;
+  let publicHostOut = "";
 
   const agentListen = options.get("agent-listen");
   const deviceListen = options.get("device-listen");
@@ -341,6 +347,9 @@ async function main(): Promise<void> {
     startupConnectString = compactString({
       url: deviceURL, pin, name: "Domo broker", authenticate: requireEnrollment,
     });
+    deviceURLOut = deviceURL;
+    pinOut = pin;
+    publicHostOut = publicHost;
   } else {
     broker = Broker.overUnixSockets(home, agentSocket, deviceSocket);
   }
@@ -356,9 +365,17 @@ async function main(): Promise<void> {
   const deviceAddr = options.get("device-listen") ?? deviceSocket;
   process.stdout.write(`domo-broker listening agent=${agentAddr} device=${deviceAddr}\n`);
   if (startupConnectString) {
+    const localHost = publicHostOut === "127.0.0.1" || publicHostOut === "localhost";
     process.stdout.write(
-      `\nDevice connection string (paste into the Domo app):\n  ${startupConnectString}\n` +
-        `Issue an agent:  domo-broker issue-agent --home ${home} --name <name>\n\n`,
+      `\nConnect the Domo app — enter these in Settings:\n` +
+        `  Broker URL:       ${deviceURLOut}\n` +
+        `  Certificate pin:  ${pinOut ?? "(none — CA-signed cert)"}\n` +
+        (localHost
+          ? `\n⚠ public-host is ${publicHostOut} (local only). For another machine, restart with\n` +
+            `  --public-host <this broker's reachable IP or hostname> so the URL resolves there.\n`
+          : "") +
+        `\n(Or paste this one connection string instead — it bundles both:)\n  ${startupConnectString}\n` +
+        `\nIssue an agent:  domo-broker issue-agent --home ${home} --name <name>\n\n`,
     );
   }
 }

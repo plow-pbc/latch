@@ -34,6 +34,10 @@ import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { planAgentLaunch } from "./spawnAgent.js";
 
+// Set the app name before the app is ready so the macOS app menu, About/Hide/
+// Quit items, and dock title read "Domo Desktop" instead of "Electron".
+app.setName("Domo Desktop");
+
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
 

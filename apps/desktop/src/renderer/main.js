@@ -49,12 +49,15 @@ function closeAllMenus() {
 }
 document.addEventListener("click", closeAllMenus);
 
+// The settings page's live status line, when that tab is mounted.
+let settingsStatusNote = null;
+
 async function refreshStatus() {
   const status = await window.domo.statusGet();
   statusDot.className = "status-dot" + (status.connected ? " on" : "");
-  statusText.textContent = status.connected
-    ? `Connected · ${status.name}`
-    : "Not connected";
+  const text = status.connected ? `Connected · ${status.name}` : "Not connected";
+  statusText.textContent = text;
+  if (settingsStatusNote) settingsStatusNote.textContent = text;
 }
 
 // ---- Audit (master–detail, mockup Alternative 1) ----
@@ -335,11 +338,15 @@ async function renderSettings() {
   const pinInput = el("input", { class: "text", attrs: { placeholder: "base64 SPKI pin (leave blank for a CA-signed cert)" } });
   pinInput.value = broker.pin || "";
   const save = el("button", { class: "btn primary", text: "Save & reconnect" });
+  // Live connection status — updated by refreshStatus() on every status change.
   const note = el("p", { class: "faint", text: "" });
+  settingsStatusNote = note;
   save.addEventListener("click", async () => {
     // The URL field also accepts a pasted domo1.… string, decoded server-side.
     await window.domo.settingsSetBroker(urlInput.value.trim(), pinInput.value.trim());
-    note.textContent = "Saved. Reconnecting…";
+    // Re-render so the field shows the decoded wss:// URL + pin (confirming the
+    // paste parsed), and the note reflects the live connection status.
+    renderSettings();
     refreshStatus();
   });
   const restoreNote = el("p", { class: "faint", text: "" });
@@ -369,6 +376,7 @@ async function renderSettings() {
       el("div", { class: "row" }, [restoreNote, el("div", { class: "spacer" }), restore]),
     ]),
   ]));
+  refreshStatus(); // populate the live status note immediately
 }
 
 function render() {
@@ -381,6 +389,7 @@ function render() {
 function selectTab(tab) {
   currentTab = tab;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
+  if (tab !== "settings") settingsStatusNote = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
