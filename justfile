@@ -5,12 +5,13 @@
 # shape a hosted broker uses. Three commands get you running:
 #
 #     just broker      # terminal 1: the broker (wss, auto self-signed cert)
-#     just app         # terminal 2: the desktop app, auto-wired to the broker
+#     just app         # terminal 2: the desktop app (connect via its Settings)
 #     just agent "…"   # terminal 3: a Claude session that can drive the Mac
 #
 # Everything shares one home dir ({{nethome}}): the broker keeps its state +
-# TLS cert there, and the app is pointed at the broker by seeding its settings
-# from that home. Defunct Swift recipes are prefixed `swift-`.
+# TLS cert there. The app connects per its own saved settings — paste the
+# broker's connect string into Settings once, or use the app's Local mode
+# (no broker process needed at all).
 
 root    := justfile_directory()
 # Shared home for the networked broker + the app's device identity/settings.
@@ -69,23 +70,10 @@ broker host=publichost: build
         --device-listen wss://0.0.0.0:{{deviceport}}/ \
         --public-host "{{host}}"
 
-# Terminal 2: launch the desktop app, auto-wired to the broker.
-# (Ensures a broker is up, seeds the app's saved broker, then opens Electron.)
+# Terminal 2: launch the desktop app. It connects per its own saved settings —
+# run `just broker` first and paste its connect string into Settings (once), or
+# pick "Local (This Mac Only)" in Settings to skip the broker entirely.
 app: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just --justfile "{{justfile()}}" _ensure-broker
-    cs="$(node "{{brokerjs}}" connect-string --home "{{nethome}}" | grep -o 'domo1\.[A-Za-z0-9_-]*' | head -1)"
-    if [ -z "$cs" ]; then
-        echo "Could not get a broker connection string. Is a stale broker holding the port?" >&2
-        echo "Try: just down && just clean, then re-run. Broker log: just logs" >&2
-        exit 1
-    fi
-    mkdir -p "{{nethome}}/app"
-    # Merge, don't clobber — preserve other settings (e.g. the saved tab).
-    node -e 'const fs=require("fs"),p=process.argv[1];let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}s.brokerConnection=process.argv[2];fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")' \
-        "{{nethome}}/app/settings.json" "$cs"
-    echo "App pointed at wss://{{publichost}}:{{deviceport}}/  (home={{nethome}})"
     DOMO_HOME="{{nethome}}" npx electron "{{root}}/apps/desktop"
 
 # Terminal 3: open a trace-free Claude session that can drive the Mac.
