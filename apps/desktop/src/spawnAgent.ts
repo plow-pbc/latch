@@ -57,6 +57,12 @@ export function planAgentLaunch(args: {
   brokerPin?: string;
   /** Path to the domo-mcp shim JS. */
   shimPath: string;
+  /**
+   * Node-capable binary that runs the shim. The app passes its own
+   * process.execPath (Electron IS Node) so the flow works on Macs with no
+   * system node — e.g. Claude Code's native install, which bundles its runtime.
+   */
+  nodePath: string;
   /** Absolute path to Claude Code CLI (from the launcher's environment). */
   claudePath: string;
   /** Directory for the per-session temp files (home/run). */
@@ -76,9 +82,11 @@ export function planAgentLaunch(args: {
     mcpServers: {
       domo: {
         type: "stdio",
-        command: "node",
+        command: args.nodePath,
         args: [args.shimPath],
-        env: { DOMO_CONNECTION: connectionString },
+        // ELECTRON_RUN_AS_NODE makes an Electron binary act as plain node;
+        // a real node binary ignores it.
+        env: { DOMO_CONNECTION: connectionString, ELECTRON_RUN_AS_NODE: "1" },
       },
     },
   };

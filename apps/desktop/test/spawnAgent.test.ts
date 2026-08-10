@@ -15,6 +15,7 @@ function plan(overrides: Partial<Parameters<typeof planAgentLaunch>[0]> = {}) {
     agentSocket: "wss://127.0.0.1:8443/",
     brokerPin: "PIN=",
     shimPath: "/repo/apps/mcp/dist/main.js",
+    nodePath: "/Applications/Domo Desktop.app/Contents/MacOS/Domo Desktop",
     claudePath: "/opt/homebrew/bin/claude",
     runDir: "/home/run",
     stamp: "agent-xyz",
@@ -35,11 +36,13 @@ describe("planAgentLaunch", () => {
     });
   });
 
-  it("builds an MCP config that runs the shim via node with DOMO_CONNECTION", () => {
+  it("builds an MCP config that runs the shim via the given node binary with DOMO_CONNECTION", () => {
     const p = plan() as { config: any };
     const domo = p.config.mcpServers.domo;
-    expect(domo.command).toBe("node");
+    // The app's own Electron binary in node-mode — works with no system node.
+    expect(domo.command).toBe("/Applications/Domo Desktop.app/Contents/MacOS/Domo Desktop");
     expect(domo.args).toEqual(["/repo/apps/mcp/dist/main.js"]);
+    expect(domo.env.ELECTRON_RUN_AS_NODE).toBe("1");
     expect(domo.env.DOMO_CONNECTION).toBe((plan() as any).connectionString);
   });
 

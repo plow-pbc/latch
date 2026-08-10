@@ -342,6 +342,7 @@ async function startAgent(goalText: string): Promise<{ ok: boolean; message: str
     // In local mode the agent dials a Unix socket — no TLS, no pin.
     brokerPin: localBroker ? undefined : parseBrokerConnection()?.pin,
     shimPath: shim,
+    nodePath: process.execPath,
     claudePath: claude ?? "claude",
     runDir,
     stamp: spawned.get("agent_id").str ?? String(Date.now()),
@@ -389,10 +390,24 @@ function findClaude(): string | null {
     const out = execFileSync("/bin/zsh", ["-lc", "command -v claude"], {
       encoding: "utf8",
     }).trim();
-    return out.length > 0 ? out : null;
+    if (out.length > 0) return out;
   } catch {
-    return null;
+    // fall through to the well-known locations
   }
+  // A Finder-launched app inherits launchd's minimal environment, and the
+  // login-shell probe above misses PATH entries added in ~/.zshrc (sourced by
+  // interactive shells only) — so check the standard install locations too.
+  const userHome = os.homedir();
+  const candidates = [
+    path.join(userHome, ".local/bin/claude"), // native installer
+    path.join(userHome, ".claude/local/claude"), // `claude migrate-installer`
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
 ipcMain.handle("rules:remove", async (_e, key: string) => {
