@@ -163,16 +163,23 @@ describe("a tool call end to end, in process", () => {
     expect(fs.readFileSync(file, "utf8")).toBe("wrote");
   });
 
-  it("the sandbox bound comes from the declared capabilities, never the goal text", async () => {
+  it("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
     const { server } = makeServer();
     const allowed = tempDir();
     const offLimits = tempDir();
     fs.writeFileSync(path.join(allowed, "ok.txt"), "readable");
     fs.writeFileSync(path.join(offLimits, "secret.txt"), "s3cret");
 
-    // The goal text asks for the second directory in as many words. Only the
-    // declared read_paths reach the seatbelt profile, so the sandbox must block
-    // it — goal text neither widens nor narrows the bound.
+    // What this proves, precisely: the goal text asks for the second directory
+    // in as many words, and the command is still blocked. Goal text does not
+    // reach the profile.
+    //
+    // What it does NOT prove: that declaring read_paths is what bounds reads.
+    // It does not — the profile permits reads across $HOME regardless (see
+    // docs/SANDBOX-BOUNDARY.md). These directories are under os.tmpdir(), i.e.
+    // outside the permitted region, which is why the block happens at all. An
+    // earlier version of this test claimed the stronger property and passed
+    // only by that accident.
     const { payload } = await callTool(
       server,
       "run_command",

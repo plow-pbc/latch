@@ -198,8 +198,10 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "run_command",
     description:
-      "Run a CLI command on this Mac inside a sandbox limited to the paths you declare here. " +
-      "Declare every path you need up front; undeclared paths are blocked by the sandbox. " +
+      "Run a CLI command on this Mac inside a seatbelt sandbox. Declare every path you need: " +
+      "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
+      "write access is granted from them. They are NOT the full extent of what the command can " +
+      "read — the sandbox profile permits reads more broadly than the paths declared here. " +
       "If the command is still running when the wait elapses you get a job handle for get_output. " +
       "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
       "get_result, and the ready payload is the run_command result — including its job handle.",
@@ -216,7 +218,9 @@ export const TOOLS: ToolSpec[] = [
         read_paths: {
           type: "array",
           items: { type: "string" },
-          description: "Directories/files the command may read",
+          description:
+            "Directories/files the command needs to read. Shown to the approver and recorded; " +
+            "not a complete bound on reads.",
         },
         write_paths: {
           type: "array",

@@ -4,7 +4,10 @@ Lets a remote AI agent (Claude Code or any MCP client) use a Mac — read/write
 files, run CLI commands with streaming output, and invoke "blessed" tools —
 through an **intent-based approval system**. Every operation becomes a
 structured intent that a human approves before it runs inside an on-the-fly
-seatbelt sandbox scoped to exactly the approved capabilities.
+seatbelt sandbox derived from the approved capabilities. Note what that does and
+does not mean: the profile is *built from* those capabilities, but it is not a
+tight fit around them — reads in particular are permitted more broadly. See
+[docs/SANDBOX-BOUNDARY.md](docs/SANDBOX-BOUNDARY.md).
 
 Implemented in **TypeScript** (Node + Electron). See [DESIGN.md](DESIGN.md) for
 the architecture and [README-ts.md](README-ts.md) for the package/app layout.
@@ -44,7 +47,9 @@ just app         # launch the desktop app
 Intents carry a nonce and an expiry and are decided against stored always-allow
 rules keyed on the exact normalized capability set — never on goal text.
 Commands are sandboxed with per-invocation seatbelt profiles derived from the
-approved capabilities. The audit log is append-only. See DESIGN.md §8.
+approved capabilities — *derived from*, not tightly fitted to; see
+[docs/SANDBOX-BOUNDARY.md](docs/SANDBOX-BOUNDARY.md) for what the profile
+actually permits. The audit log is append-only. See DESIGN.md §8.
 
 Agent identity used to be an agent-held Ed25519 key pinned at access-grant time;
 it will instead be asserted by the relay, which authenticates the agent before
