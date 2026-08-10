@@ -13,7 +13,14 @@ import os from "node:os";
 import path from "node:path";
 import { DeviceAgent, HeadlessPolicy, PolicyDelegate } from "@domo/device-core";
 import { createDomoMcpServer, PROTOCOL_REVISION } from "@domo/mcp-server";
-import { RELAY_CLIENT_KIND, RelayClient, stripHopByHop } from "@domo/relay-client";
+import {
+  FRAME_REQUEST,
+  FRAME_RESPONSE,
+  HOP_BY_HOP,
+  RELAY_CLIENT_KIND,
+  RelayClient,
+  stripHopByHop,
+} from "@domo/relay-client";
 import { FakeRelay } from "./fakeRelay.js";
 
 const CREDENTIAL = "plow_sk_relay_connect_SECRET_VALUE";
@@ -362,6 +369,38 @@ describe("reconnection", () => {
   });
 });
 
+describe("the stand-in relay is an independent implementation", () => {
+  // It must be a second reading of the contract, not a mirror of ours. If it
+  // imported our constants, a client that renamed a frame would drag it along
+  // and every integration test would stay green.
+  it("does not import the client's wire module", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "fakeRelay.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("@domo/relay-client");
+    expect(source).not.toContain("stripHopByHop");
+  });
+
+  it("its literals agree with ours — and that agreement is the assertion", () => {
+    const source = fs.readFileSync(path.join(__dirname, "fakeRelay.ts"), "utf8");
+    // Transcribed independently there; compared here. A rename on either side
+    // that is not matched on the other fails this.
+    expect(source).toContain(`const WIRE_FRAME_REQUEST = "${FRAME_REQUEST}"`);
+    expect(source).toContain(`const WIRE_FRAME_RESPONSE = "${FRAME_RESPONSE}"`);
+    expect(source).toContain(`const WIRE_CLIENT_KIND = "${RELAY_CLIENT_KIND}"`);
+  });
+
+  it("notices a device registering under an unexpected client kind", async () => {
+    const { relay, client } = await stack();
+    await client.start();
+    await relay.waitForDevice();
+    // The relay judges the kind against its OWN literal, not ours.
+    expect(relay.unexpectedClientKind).toBeNull();
+    expect(relay.clientKind).toBe(RELAY_CLIENT_KIND);
+  });
+});
+
 describe("frame handling", () => {
   it("answers the rid even when serving throws, rather than stranding the agent", async () => {
     const relay = await FakeRelay.start({ expectCredential: CREDENTIAL });
@@ -407,18 +446,51 @@ describe("frame handling", () => {
     expect((await call).status).toBe(200);
   });
 
-  it("strips hop-by-hop headers in both directions", () => {
+  it("strips hop-by-hop headers in both directions, but keeps Host", () => {
     const stripped = stripHopByHop({
       "content-type": "application/json",
       "Content-Length": "12",
       connection: "keep-alive",
       "transfer-encoding": "chunked",
+      Host: "api.plow.co",
       "mcp-method": "tools/list",
     });
     expect(stripped).toEqual({
       "content-type": "application/json",
+      // Host is END-TO-END: it names the authority the agent addressed, and
+      // dropping it would leave this Mac validating a fabricated one.
+      Host: "api.plow.co",
       "mcp-method": "tools/list",
     });
+    expect(HOP_BY_HOP.has("host")).toBe(false);
+  });
+
+  it("serves the request under the authority that actually arrived", async () => {
+    // Not a placeholder that would always pass whatever we validate later.
+    let seenUrl = "";
+    let seenHost: string | null = null;
+    const relay = await FakeRelay.start({ expectCredential: CREDENTIAL });
+    cleanups.push(() => relay.stop());
+    const client = new RelayClient({
+      url: relay.url,
+      credential: CREDENTIAL,
+      serve: async (request) => {
+        seenUrl = request.url;
+        seenHost = request.headers.get("host");
+        return new Response("{}", { status: 200 });
+      },
+    });
+    cleanups.push(() => client.stop());
+    await client.start();
+    await relay.waitForDevice();
+
+    await relay.agentCall({ path: "/v1/relay/devices/u-1/mcp?trace=abc" }, AGENT);
+    expect(seenHost).toBe(relay.authority);
+    expect(new URL(seenUrl).host).toBe(relay.authority);
+    expect(seenUrl).not.toContain("//mac/");
+    // Path and query still arrive as sent.
+    expect(new URL(seenUrl).pathname).toBe("/v1/relay/devices/u-1/mcp");
+    expect(new URL(seenUrl).search).toBe("?trace=abc");
   });
 
   it("ignores a malformed frame instead of dying on it", async () => {

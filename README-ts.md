@@ -161,6 +161,15 @@ holds one WebSocket to the relay and serves what comes down it.
   `[0, ceiling)` and the ceiling doubles to 30s. The jitter is the point —
   without it every Mac that dropped when the relay restarted comes back at the
   same instant.
+- **`Host` is forwarded, not stripped.** It is end-to-end, and it names the
+  authority the agent actually addressed — the relay's. The tunnelled request is
+  served under that authority rather than a fabricated one, so anything that
+  validates it sees what really arrived.
+- **DNS-rebinding validation is deliberately off.** The SDK's `validateHostHeader`
+  / `validateOriginHeader` are opt-in and `createMcpHandler` applies neither.
+  This server binds no port — it is reachable only through a socket the Mac
+  dialled out on — so there is no local origin for a browser to be rebound onto,
+  and switching it on would mean hardcoding the relay's authority here.
 - The receive loop **never awaits** a request. Serving can take the whole call
   budget, and blocking there would stall the heartbeat into staleness.
 

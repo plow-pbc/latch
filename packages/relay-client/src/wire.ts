@@ -33,10 +33,16 @@ export const FRAME_RESPONSE = "relay.response";
 export const HEARTBEAT_INTERVAL_MS = 15_000;
 
 /**
- * Hop-by-hop headers, which are per-connection and must never be tunnelled in
- * either direction. Replaying `content-length` or `transfer-encoding` from one
- * hop into another invites a mismatch between the body we actually send and
- * what the header claims.
+ * Headers that must not be tunnelled in either direction.
+ *
+ * The first eight are the RFC 9110 hop-by-hop set: per-connection, meaningless
+ * on the next hop. `content-length` is NOT hop-by-hop, but is dropped anyway
+ * because each hop re-frames the body — replaying a length measured on another
+ * hop invites a mismatch with what we actually send.
+ *
+ * `Host` is deliberately NOT in this set. It is end-to-end, it names the
+ * authority the agent actually addressed, and dropping it would leave this Mac
+ * validating a fabricated one. See `stripHopByHop` callers.
  */
 export const HOP_BY_HOP = new Set([
   "connection",
@@ -47,7 +53,6 @@ export const HOP_BY_HOP = new Set([
   "trailer",
   "transfer-encoding",
   "upgrade",
-  "host",
   "content-length",
 ]);
 

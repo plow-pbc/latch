@@ -206,9 +206,20 @@ export class RelayClient {
       for (const [key, value] of Object.entries(stripHopByHop(frame.headers ?? {}))) {
         headers.set(key, value);
       }
+      // The authority the agent actually addressed — the relay's — forwarded
+      // through, not invented. `Host` is end-to-end, and anything on this side
+      // that validates it (now or later) must see what really arrived rather
+      // than a placeholder that would always pass. Falls back only when the
+      // relay sent no Host at all.
+      const authority = headers.get("host") || "mac.local";
       // The path and query the agent actually sent, served as sent — the
       // prototype rewrote the path to /mcp and dropped the query.
-      const request = new Request(`http://mac${frame.path || "/"}`, {
+      //
+      // The scheme is `http` because this hop is not itself TLS: the relay
+      // terminated the agent's HTTPS and forwarded the exchange down the
+      // WebSocket. Nothing here switches on the scheme; the authority is the
+      // part that carries meaning.
+      const request = new Request(`http://${authority}${frame.path || "/"}`, {
         method: frame.method || "POST",
         headers,
         body: frame.body ?? undefined,

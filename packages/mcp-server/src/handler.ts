@@ -189,6 +189,22 @@ export function createDomoMcpServer(
       return server;
     },
     {
+      // DNS-rebinding validation is DELIBERATELY NOT CONFIGURED.
+      //
+      // The SDK offers `validateHostHeader` / `validateOriginHeader` and their
+      // response helpers, and `createMcpHandler` applies neither on its own —
+      // verified, not assumed. We leave them off because the threat they answer
+      // does not exist here: this server binds no port. It is reachable only
+      // through a WebSocket the Mac dialled out on, so there is no local origin
+      // for a browser to be rebound onto. Enabling them would also mean
+      // hardcoding the relay's authority, coupling this app to a deployment
+      // detail it does not own.
+      //
+      // The `Host` that arrives is nonetheless forwarded through unmodified
+      // (see relay-client's wire.ts), so if this ever binds a port or the
+      // authority starts carrying meaning, the value to validate is real rather
+      // than a placeholder that would always pass.
+      //
       // Nothing is deployed against this, so there is no 2025-era traffic to
       // serve. A client that cannot negotiate the modern revision should fail
       // loudly rather than fall into a legacy lane.

@@ -15,13 +15,54 @@
  */
 import { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
-import {
-  FRAME_REQUEST,
-  FRAME_RESPONSE,
-  RelayFrameAuth,
-  RelayResponseFrame,
-  stripHopByHop,
-} from "@domo/relay-client";
+
+/**
+ * INDEPENDENT IMPLEMENTATION — deliberately duplicated, never imported.
+ *
+ * This file must be a second reading of the wire contract, not a mirror of the
+ * client's. If it imported the client's constants and header logic, then a
+ * client that renamed a frame type or broke its header handling would drag the
+ * fake along with it and every integration test would stay green: it would be
+ * testing that the client agrees with itself.
+ *
+ * So the three strings below are literals, transcribed from the design's wire
+ * contract, and the header handling below is written from RFC 9110 rather than
+ * borrowed. If these ever disagree with `src/wire.ts`, that disagreement IS the
+ * test result.
+ */
+const WIRE_FRAME_REQUEST = "relay.request";
+const WIRE_FRAME_RESPONSE = "relay.response";
+const WIRE_CLIENT_KIND = "relay-device";
+
+/** RFC 9110 hop-by-hop, plus content-length because each hop re-frames the
+ * body. `Host` is end-to-end and is forwarded, not stripped. */
+const WIRE_NOT_FORWARDED = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "content-length",
+];
+
+function relayStripHeaders(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(headers ?? {})) {
+    if (!WIRE_NOT_FORWARDED.includes(key.toLowerCase())) out[key] = headers[key];
+  }
+  return out;
+}
+
+/** The agent identity the relay asserts. Never carries the credential. */
+export interface RelayFrameAuth {
+  agent_id: string;
+  agent_name?: string;
+  scopes?: string[];
+  user_uid?: string;
+}
 
 export interface TunnelledResponse {
   status: number;
@@ -52,6 +93,8 @@ export class FakeRelay {
   deviceOnline = false;
   /** The client kind the device registered under. */
   clientKind: string | null = null;
+  /** Set when the device registered under a kind this relay does not expect. */
+  unexpectedClientKind: string | null = null;
   authFailures = 0;
 
   private constructor(
@@ -69,7 +112,16 @@ export class FakeRelay {
   }
 
   get url(): string {
-    return `ws://127.0.0.1:${(this.wss.address() as AddressInfo).port}/v1/relay/ws`;
+    return `ws://127.0.0.1:${this.port}/v1/relay/ws`;
+  }
+
+  private get port(): number {
+    return (this.wss.address() as AddressInfo).port;
+  }
+
+  /** What an agent addressed to reach this relay — forwarded as `Host`. */
+  get authority(): string {
+    return `127.0.0.1:${this.port}`;
   }
 
   private handleDevice(ws: WebSocket): void {
@@ -94,6 +146,7 @@ export class FakeRelay {
           return;
         }
         this.clientKind = typeof msg.client_kind === "string" ? msg.client_kind : null;
+        if (this.clientKind !== WIRE_CLIENT_KIND) this.unexpectedClientKind = this.clientKind;
         authed = true;
         ws.send(
           JSON.stringify({
@@ -118,8 +171,13 @@ export class FakeRelay {
         return;
       }
 
-      if (msg.type === FRAME_RESPONSE) {
-        const frame = msg as unknown as RelayResponseFrame;
+      if (msg.type === WIRE_FRAME_RESPONSE) {
+        const frame = msg as unknown as {
+          rid: string;
+          status: number;
+          headers: Record<string, string>;
+          body: string;
+        };
         const waiter = this.pending.get(frame.rid);
         if (!waiter) return; // an unknown rid is never answered on faith
         this.pending.delete(frame.rid);
@@ -170,9 +228,12 @@ export class FakeRelay {
     const device = this.device;
     if (!device) return Promise.reject(new Error("device offline"));
     const rid = `rid-${this.nextRid++}`;
-    const headers = stripHopByHop(request.headers ?? {});
+    const headers = relayStripHeaders(request.headers ?? {});
+    // The relay strips the agent's credential; the Mac must never see it.
     delete headers.authorization;
     delete headers.Authorization;
+    // …and forwards the authority the agent addressed, which is the relay's.
+    headers.host = this.authority;
 
     return new Promise<TunnelledResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -189,7 +250,7 @@ export class FakeRelay {
       });
       device.send(
         JSON.stringify({
-          type: FRAME_REQUEST,
+          type: WIRE_FRAME_REQUEST,
           rid,
           method: request.method ?? "POST",
           path: request.path,
