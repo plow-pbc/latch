@@ -57,10 +57,150 @@ final class MainWindowController: NSWindowController {
         auditTab.view = AuditView(app: app)
         tabView.addTabViewItem(auditTab)
 
-        window.contentView = tabView
+        // In-app status bar with all connection controls — so the app never
+        // depends on the macOS menu bar.
+        let statusBar = StatusBarView(app: app)
+        let container = NSView()
+        for v in [statusBar, tabView] { v.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(v) }
+        NSLayoutConstraint.activate([
+            statusBar.topAnchor.constraint(equalTo: container.topAnchor),
+            statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            statusBar.heightAnchor.constraint(equalToConstant: 44),
+            tabView.topAnchor.constraint(equalTo: statusBar.bottomAnchor),
+            tabView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tabView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tabView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        window.contentView = container
+        self.statusBar = statusBar
+        app.onStateChange = { [weak statusBar] in statusBar?.refresh() }
+        statusBar.refresh()
+    }
+
+    private var statusBar: StatusBarView?
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+}
+
+/// A persistent bar across the top of the window: connection status plus every
+/// control (Connect / Pause-Resume / Revoke) so the menu bar is optional.
+final class StatusBarView: NSView {
+    private unowned let app: AppDelegate
+    private let dot = NSView()
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
+    private let connectButton = NSButton()
+    private let pauseButton = NSButton()
+    private let revokeButton = NSButton()
+
+    init(app: AppDelegate) {
+        self.app = app
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        let divider = NSBox(); divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(divider)
+
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 5
+        addSubview(dot)
+
+        statusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        let labels = NSStackView(views: [statusLabel, detailLabel])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 1
+        labels.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(labels)
+
+        connectButton.title = "Connect…"
+        connectButton.bezelStyle = .rounded
+        connectButton.target = app
+        connectButton.action = #selector(AppDelegate.openOnboarding)
+
+        pauseButton.bezelStyle = .rounded
+        pauseButton.target = app
+        pauseButton.action = #selector(AppDelegate.toggleLink)
+
+        revokeButton.title = "Revoke access ▾"
+        revokeButton.bezelStyle = .rounded
+        revokeButton.target = self
+        revokeButton.action = #selector(showRevokeMenu)
+
+        let buttons = NSStackView(views: [connectButton, pauseButton, revokeButton])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(buttons)
+
+        NSLayoutConstraint.activate([
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 10),
+            dot.heightAnchor.constraint(equalToConstant: 10),
+            labels.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 10),
+            labels.centerYAnchor.constraint(equalTo: centerYAnchor),
+            buttons.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            buttons.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    /// Refresh from the app's current link state. Safe to call on the main thread.
+    func refresh() {
+        dot.layer?.backgroundColor = app.statusColor.cgColor
+        statusLabel.stringValue = app.statusDescription
+        let agents = app.agentsWithAccess()
+        if app.isConnected {
+            detailLabel.stringValue = agents.isEmpty ? "No agents have access"
+                : "\(agents.count) agent\(agents.count == 1 ? "" : "s") with access"
+        } else if let url = app.brokerURL {
+            // Surfaces a stale/mismatched target instead of a silent spinner.
+            detailLabel.stringValue = "→ \(url)"
+        } else {
+            detailLabel.stringValue = "Not set up"
+        }
+        // Always reachable: opens the connect panel to (re)point at a broker.
+        connectButton.isHidden = false
+        connectButton.title = app.isConfigured ? "Change broker…" : "Connect…"
+        pauseButton.isHidden = !app.isConfigured
+        pauseButton.title = app.isPaused ? "Resume" : "Pause"
+        revokeButton.isHidden = !app.isConfigured
+        revokeButton.isEnabled = !agents.isEmpty
+    }
+
+    @objc private func showRevokeMenu() {
+        let menu = NSMenu()
+        for id in app.agentsWithAccess() {
+            let item = NSMenuItem(title: "Revoke \(id)", action: #selector(revokePicked(_:)), keyEquivalent: "")
+            item.representedObject = id
+            item.target = self
+            menu.addItem(item)
+        }
+        if menu.items.isEmpty {
+            let none = NSMenuItem(title: "No agents have access", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        let origin = NSPoint(x: 0, y: revokeButton.bounds.height + 4)
+        menu.popUp(positioning: nil, at: origin, in: revokeButton)
+    }
+
+    @objc private func revokePicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        app.confirmRevoke(agentId: id)
+        refresh()
+    }
 }
 
 // MARK: - Goals
@@ -209,11 +349,14 @@ final class GoalsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 let promptURL = runDir.appendingPathComponent("agent-\(stamp).prompt.txt")
                 let cmdURL = runDir.appendingPathComponent("agent-\(stamp).command")
 
+                // One connection string carries the broker URL, the pin (so a
+                // wss broker works), and the token — no separate env vars.
+                let agentConn = DomoConnection(url: socket, pin: self.app.connection?.pin,
+                                               token: token, name: "Goal agent")
                 let config: JSONValue = ["mcpServers": ["domo": [
                     "type": "stdio",
                     "command": .string(shim),
-                    "env": ["DOMO_AGENT_SOCKET": .string(socket),
-                            "DOMO_AGENT_TOKEN": .string(token)],
+                    "env": ["DOMO_CONNECTION": .string(agentConn.compactString())],
                 ]]]
                 try config.encoded().write(to: cfgURL)
                 try Data(Self.briefing(goal: goal, deviceId: device.identity.deviceId).utf8).write(to: promptURL)
@@ -252,9 +395,23 @@ final class GoalsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
                 open.arguments = ["-a", "Terminal", cmdURL.path]
                 try open.run()
+                // Also hand over a ready ephemeral one-liner for running the agent
+                // elsewhere (copied to the clipboard) — nothing persists in Claude.
+                let ephemeralConfig: JSONValue = ["mcpServers": ["domo": [
+                    "type": "stdio",
+                    "command": .string(shim),
+                    "env": ["DOMO_CONNECTION": .string(agentConn.compactString())],
+                ]]]
+                let oneLiner = "claude --strict-mcp-config --mcp-config '\(ephemeralConfig.jsonString())' --allowedTools mcp__domo"
+                DispatchQueue.main.async {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(oneLiner, forType: .string)
+                }
                 self.appendOutput("Opened an interactive agent in Terminal.\nGoal: \(goal)\n\n"
                     + "The goal is pre-filled in Terminal — press Return there to start. "
-                    + "Approval requests appear here in the app.\n")
+                    + "Approval requests appear here in the app.\n\n"
+                    + "To run this agent elsewhere instead (copied to your clipboard):\n"
+                    + oneLiner + "\n")
             } catch {
                 self.appendOutput("Failed: \(error)\n")
             }

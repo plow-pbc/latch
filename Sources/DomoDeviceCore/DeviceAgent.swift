@@ -31,6 +31,9 @@ public final class DeviceAgent {
     /// Invoked after each successful (re)connection + registration. Lets the app
     /// reflect link state; not used by the headless runner.
     public var onConnected: (() -> Void)?
+    /// Invoked whenever the link drops, before any reconnect is scheduled — so a
+    /// UI can show "Reconnecting…" even on the auto-reconnecting network path.
+    public var onLinkDown: (() -> Void)?
 
     public init(home: URL, name: String, delegate: PolicyDelegate,
                 blessedTools: BlessedToolRegistry = .standard(),
@@ -64,7 +67,14 @@ public final class DeviceAgent {
         self.dialer = dialer
         self.shouldReconnect = reconnect
         self.authenticate = authenticate
-        try establish()
+        if reconnect {
+            // Networked: never hard-fail the first dial — a broker that's down
+            // or a Mac that's offline should keep retrying, not error out.
+            do { try establish() } catch { scheduleReconnect() }
+        } else {
+            // Local socket: fail fast so the runner/app can surface it.
+            try establish()
+        }
     }
 
     private func establish() throws {
@@ -152,8 +162,60 @@ public final class DeviceAgent {
     }
 
     private func handleDisconnect() {
+        onLinkDown?()
         guard shouldReconnect else { onConnectionClosed?(); return }
         scheduleReconnect()
+    }
+
+    /// Pause the link: stop reconnecting and drop the current connection. The
+    /// app's "kill switch" — nothing reaches this Mac until resumed.
+    public func pause() {
+        shouldReconnect = false
+        rpc?.close()
+    }
+
+    /// Resume after a pause, re-dialing the stored broker. `reconnect` should
+    /// match how the link was first established (true for the network path).
+    public func resume(reconnect: Bool) {
+        shouldReconnect = reconnect
+        backoff = 0.5
+        do {
+            try establish()
+        } catch {
+            if reconnect { scheduleReconnect() } else { onConnectionClosed?() }
+        }
+    }
+
+    /// Agent ids currently trusted on this device (pinned, not revoked). Backs
+    /// the app's per-agent Revoke menu.
+    public func knownAgentIds() -> [String] {
+        knownAgents.pinnedAgentIds()
+    }
+
+    /// Submit a pairing request to an enrollment broker: send this Mac's identity
+    /// with a short `code` the user reads off the screen. The provisioner approves
+    /// that code (verifying it matches), which enrolls this device. One-shot
+    /// connection; returns true once the broker acknowledges the request.
+    public func pair(dialer: ConnectionDialer, code: String, timeout: TimeInterval = 15) throws -> Bool {
+        let conn = try dialer.connect()
+        let semaphore = DispatchSemaphore(value: 0)
+        var acknowledged = false
+        conn.onLine = { line in
+            guard let msg = try? JSONValue.parse(line), let type = msg["type"].str else { return }
+            if type == "pair-pending" { acknowledged = true; semaphore.signal() }
+        }
+        conn.startReading()
+        conn.sendLine(JSONValue.object([
+            "type": "pair",
+            "code": .string(code),
+            "deviceId": .string(identity.deviceId),
+            "publicKey": .string(identity.keyPair.publicKeyBase64),
+            "name": .string(identity.name),
+        ]).encoded())
+        _ = semaphore.wait(timeout: .now() + timeout)
+        conn.close()
+        audit.record("pairing_requested", ["device": .string(identity.deviceId), "code": .string(code)])
+        return acknowledged
     }
 
     private func scheduleReconnect() {

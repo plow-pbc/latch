@@ -32,6 +32,47 @@ final class EnrollmentTests: XCTestCase {
         client.close()
     }
 
+    func testPairByCodeThenConnect() throws {
+        let env = try EnrollmentBroker(requireEnrollment: true)
+        defer { env.shutdown() }
+
+        let policy = HeadlessPolicy(config: .init(access: "allow", intent: "allow_once"))
+        let device = try DeviceAgent(home: env.home.appendingPathComponent("pairme"),
+                                     name: "PairMe", delegate: policy)
+        defer { device.disconnect() }
+
+        // 1) Device submits a pairing request with a code shown on its screen.
+        let code = "PAIR42"
+        XCTAssertTrue(try device.pair(dialer: env.deviceDialer(), code: code),
+                      "broker should acknowledge the pairing request")
+
+        // 2) It shows up as pending, bound to this device's key.
+        let pending = env.broker.store.pendingPairings()
+        XCTAssertEqual(pending.first?.code, code)
+        XCTAssertEqual(pending.first?.deviceId, device.identity.deviceId)
+
+        // Before approval, the device still can't connect.
+        XCTAssertThrowsError(try device.connect(dialer: env.deviceDialer(), authenticate: true))
+        device.disconnect()
+
+        // 3) Provisioner approves that code → device is enrolled.
+        let record = env.broker.store.approvePairing(code: code)
+        XCTAssertEqual(record?.deviceId, device.identity.deviceId)
+        XCTAssertTrue(env.broker.store.pendingPairings().isEmpty)
+
+        // 4) Now the same device connects and registers.
+        let online = try DeviceAgent(home: env.home.appendingPathComponent("pairme"),
+                                     name: "PairMe", delegate: policy)
+        defer { online.disconnect() }
+        try online.connect(dialer: env.deviceDialer(), authenticate: true)
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline && !env.broker.isDeviceOnline(online.identity.deviceId) {
+            Thread.sleep(forTimeInterval: 0.03)
+        }
+        XCTAssertTrue(env.broker.isDeviceOnline(online.identity.deviceId),
+                      "an approved device should connect")
+    }
+
     func testUnenrolledDeviceRefused() throws {
         let env = try EnrollmentBroker(requireEnrollment: true)
         defer { env.shutdown() }

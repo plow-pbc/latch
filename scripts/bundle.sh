@@ -34,6 +34,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>NSPrincipalClass</key>        <string>NSApplication</string>
     <key>NSHighResolutionCapable</key> <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>    <string>com.tumult.domo.connect</string>
+            <key>CFBundleURLSchemes</key> <array><string>domo</string></array>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST

@@ -171,6 +171,61 @@ public final class BrokerStore {
         return record
     }
 
+    // MARK: - Pairing by code (runbook Phase 3 pairing UX)
+
+    /// A device's request to be enrolled, awaiting provisioner approval. The
+    /// human verifies the code shown on the Mac before approving, which binds the
+    /// approval to that specific device's key.
+    public struct PendingPairing: Codable {
+        public var code: String
+        public var deviceId: String
+        public var name: String
+        public var publicKeyBase64: String
+    }
+
+    private var pendingURL: URL { home.appendingPathComponent("broker/pending.json") }
+
+    private func loadPendingLocked() -> [String: PendingPairing] {
+        guard let data = try? Data(contentsOf: pendingURL),
+              let stored = try? JSONDecoder().decode([PendingPairing].self, from: data) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: stored.map { ($0.code, $0) })
+    }
+
+    private func savePendingLocked(_ map: [String: PendingPairing]) {
+        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try? FileManager.default.createDirectory(at: home.appendingPathComponent("broker"),
+                                                 withIntermediateDirectories: true)
+        try? enc.encode(Array(map.values)).write(to: pendingURL)
+    }
+
+    /// Record a device's pairing request (from the connect-time `pair` message).
+    public func addPendingPairing(code: String, deviceId: String, name: String, publicKeyBase64: String) {
+        lock.lock()
+        var map = loadPendingLocked()
+        map[code] = PendingPairing(code: code, deviceId: deviceId, name: name, publicKeyBase64: publicKeyBase64)
+        savePendingLocked(map)
+        lock.unlock()
+    }
+
+    public func pendingPairings() -> [PendingPairing] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(loadPendingLocked().values).sorted { $0.deviceId < $1.deviceId }
+    }
+
+    /// Approve a pending pairing by its code: enroll the device and clear the
+    /// request. Returns the enrolled record, or nil if the code isn't pending.
+    @discardableResult
+    public func approvePairing(code: String) -> DeviceRecord? {
+        lock.lock()
+        var map = loadPendingLocked()
+        guard let pending = map[code] else { lock.unlock(); return nil }
+        map.removeValue(forKey: code)
+        savePendingLocked(map)
+        lock.unlock()
+        return enrollDevice(deviceId: pending.deviceId, name: pending.name,
+                            publicKeyBase64: pending.publicKeyBase64)
+    }
+
     /// The enrolled record for a device id, reloading from disk on a miss so a
     /// device enrolled by a separate provisioner process is visible without a
     /// broker restart (mirrors the agent reload-on-miss).

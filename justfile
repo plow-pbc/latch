@@ -5,6 +5,8 @@ bin  := justfile_directory() / ".build/debug"
 # Throwaway home for the local demo stack. Kept under /tmp so Unix socket
 # paths stay under the ~104-char limit.
 home := "/tmp/domo-demo"
+# Home for the networked/hosted flow (broker state + app device identity).
+nethome := "/tmp/domo-net"
 
 _default:
     @just --list
@@ -237,16 +239,70 @@ audit:
     @cat "{{home}}/dev/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — run 'just demo')"
 
 # ---------------------------------------------------------------------------
-# Networked / hosted broker (see docs/network-security-runbook.md)
+# Networked / hosted flow (see docs/network-security-runbook.md)
+#   1) just host          # terminal 1: hosted broker (auto-TLS + enrollment)
+#   2) just desktop        # terminal 2: launch the app → click "Pair this Mac"
+#   3) just pair-approve   # approve the Mac
+#   4) just issue-agent    # print an agent string → paste into `claude mcp add`
+# ---------------------------------------------------------------------------
 
-# Generate a self-signed broker cert + print its SPKI pin (Phase 2/6).
+# 1. Run the hosted broker (foreground): wss:// with an auto-generated cert +
+#    enrollment. Prints the device connection string. Ports: agent 8443, dev 8444.
+host public="127.0.0.1": build
+    {{bin}}/domo-broker --home "{{nethome}}" \
+        --agent-listen wss://0.0.0.0:8443/ --device-listen wss://0.0.0.0:8444/ \
+        --public-host "{{public}}" --require-enrollment
+
+# A plain dev broker (ws, no enrollment) matching the app's debug default
+# (ws://127.0.0.1:8444/). Launch this, then `just desktop` auto-connects.
+dev-broker: build
+    {{bin}}/domo-broker --home "{{nethome}}" \
+        --agent-listen ws://0.0.0.0:8443/ --device-listen ws://0.0.0.0:8444/
+
+# 2. Launch the Domo app. In debug it auto-connects to the local broker
+#    (trust-on-first-use). For a hosted broker, use "Change broker…" in the app.
+desktop: bundle
+    #!/usr/bin/env bash
+    pkill -f "Domo.app/Contents/MacOS/DomoApp" 2>/dev/null || true
+    open -n "{{justfile_directory()}}/.build/Domo.app" --args --home "{{nethome}}"
+    echo "Launched Domo (home={{nethome}}). Click 'Pair this Mac', then run 'just pair-approve'."
+
+# 3. Approve the Mac's pending pairing (auto-picks the single pending code).
+pair-approve: build
+    #!/usr/bin/env bash
+    code=$(python3 -c "import json,sys; p=json.load(open('{{nethome}}/broker/pending.json')); print(p[0]['code'] if p else '')" 2>/dev/null)
+    if [ -z "$code" ]; then echo "No pending pairing. Click 'Pair this Mac' in the app first."; exit 1; fi
+    {{bin}}/domo-broker approve-pairing --home "{{nethome}}" --code "$code"
+
+# 4. Issue an agent connection string (paste into `claude mcp add`).
+issue-agent name="Claude": build
+    @{{bin}}/domo-broker issue-agent --home "{{nethome}}" --name "{{name}}"
+
+# Reprint the device connection string (to paste into the app).
+connect-string: build
+    @{{bin}}/domo-broker connect-string --home "{{nethome}}"
+
+# Clear only the app's saved broker (connection + pinned certs), leaving broker
+# state intact — fixes a stale connection.json overriding the build default.
+reset-app:
+    pkill -f "Domo.app/Contents/MacOS/DomoApp" 2>/dev/null || true
+    rm -f "{{nethome}}/device/connection.json" "{{nethome}}/device/known_brokers.json"
+    @echo "Cleared the app's saved broker for {{nethome}}. Next 'just desktop' uses the build default."
+
+# Wipe the entire networked home (broker + app) to start the flow fresh.
+reset-net:
+    pkill -f "domo-broker --home {{nethome}}" 2>/dev/null || true
+    pkill -f "Domo.app/Contents/MacOS/DomoApp" 2>/dev/null || true
+    rm -rf "{{nethome}}"
+
+# --- advanced ---
+# Generate a self-signed broker cert + print its SPKI pin (bring your own cert).
 gen-cert dir="./tls" cn="domo-broker" pass="domo":
     @scripts/gen-broker-cert.sh "{{dir}}" "{{cn}}" "{{pass}}"
 
-# Run the broker over wss:// with enrollment required (Phase 6). Pass a p12 from
-# `just gen-cert`. Ports: agent 8443, device 8444.
-broker-wss p12 pass="domo" home=home: build
-    .build/debug/domo-broker --home "{{home}}" \
+# Run the hosted broker with your own cert instead of the auto one.
+broker-wss p12 pass="domo": build
+    {{bin}}/domo-broker --home "{{nethome}}" \
         --agent-listen wss://0.0.0.0:8443/ --device-listen wss://0.0.0.0:8444/ \
         --tls-p12 "{{p12}}" --tls-password "{{pass}}" --require-enrollment
 

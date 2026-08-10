@@ -3,35 +3,51 @@ import DomoProtocol
 import DomoTransport
 
 // domo-mcp: stdio↔broker shim so MCP clients (Claude Code) can talk to the
-// broker. Sends the auth line from env, then pipes bidirectionally.
+// broker. Resolves how to connect, sends the auth line, then pipes both ways.
 //
-//   env DOMO_AGENT_TOKEN=<token> domo-mcp
+// The easy path — ONE value that bundles URL + pin + token:
+//   claude mcp add domo -e DOMO_CONNECTION='domo1.…' -- <path>/domo-mcp
+// or drop it in ~/.domo/agent.json as {"connection":"domo1.…"} and just run the
+// shim. `domo-broker issue-agent` prints this string.
 //
-// DOMO_AGENT_SOCKET is optional: if unset it defaults to the standard local
-// broker for this machine (DomoPaths.agentSocket, honoring DOMO_HOME). It may
-// also be a ws(s):// URL to reach a networked/hosted broker (runbook Phase 6);
-// for wss, set DOMO_BROKER_PIN=<spki-base64> to pin the broker cert. Only the
-// token is required, since it's the per-agent credential.
-//
-// Claude Code config (local socket omitted -> standard local broker):
-//   claude mcp add domo -e DOMO_AGENT_TOKEN=... -- <path>/domo-mcp
-// Hosted broker:
-//   claude mcp add domo -e DOMO_AGENT_TOKEN=... \
-//     -e DOMO_AGENT_SOCKET=wss://broker.example:8443/ -e DOMO_BROKER_PIN=... -- <path>/domo-mcp
+// The explicit path (still supported): DOMO_AGENT_TOKEN (required) plus optional
+// DOMO_AGENT_SOCKET (a socket path or ws(s):// URL; defaults to the local broker)
+// and DOMO_BROKER_PIN for wss.
 
 let env = ProcessInfo.processInfo.environment
-let endpoint = env["DOMO_AGENT_SOCKET"] ?? DomoPaths.agentSocket()
-guard let token = env["DOMO_AGENT_TOKEN"] else {
-    FileHandle.standardError.write(Data("domo-mcp: set DOMO_AGENT_TOKEN (DOMO_AGENT_SOCKET optional; defaults to \(endpoint))\n".utf8))
+
+/// ~/.domo/agent.json → {"connection":"domo1.…"} (a no-env-vars fallback).
+func agentFileConnection() -> String? {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".domo/agent.json")
+    guard let data = try? Data(contentsOf: url),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    return obj["connection"] as? String
+}
+
+// Resolve endpoint / token / pin. A connection string (env or file) wins; the
+// individual env vars fill anything it doesn't carry.
+var endpoint: String
+var token: String?
+var pin: String?
+if let cs = env["DOMO_CONNECTION"] ?? agentFileConnection(), let conn = DomoConnection.parse(cs) {
+    endpoint = conn.url
+    token = conn.token
+    pin = conn.pin
+} else {
+    endpoint = env["DOMO_AGENT_SOCKET"] ?? DomoPaths.agentSocket()
+    pin = env["DOMO_BROKER_PIN"]
+}
+token = token ?? env["DOMO_AGENT_TOKEN"]
+
+guard let token else {
+    FileHandle.standardError.write(Data("domo-mcp: set DOMO_CONNECTION (from `domo-broker issue-agent`) or DOMO_AGENT_TOKEN.\n".utf8))
     exit(2)
 }
 
 func dialBroker() throws -> Connection {
     if endpoint.hasPrefix("ws://") || endpoint.hasPrefix("wss://"), let url = URL(string: endpoint) {
-        var trust: PeerTrustEvaluator?
-        if let pin = env["DOMO_BROKER_PIN"] {
-            trust = SPKIPinningEvaluator(pins: [SPKIPin(sha256Base64: pin)])
-        }
+        let trust = pin.map { SPKIPinningEvaluator(pins: [SPKIPin(sha256Base64: $0)]) }
         return try WebSocketDialer(url: url, trust: trust).connect()
     }
     return try SocketClient.connect(path: endpoint)

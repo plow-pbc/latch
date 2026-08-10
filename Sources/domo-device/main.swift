@@ -48,6 +48,43 @@ if rawArguments.first == "identity" {
     }
 }
 
+if rawArguments.first == "pair" {
+    // Submit this Mac for pairing: show a code, send our identity, and let the
+    // provisioner approve that code (no pubkey copy-paste).
+    let options = parseArgs(Array(rawArguments.dropFirst()))
+    let home = URL(fileURLWithPath: options["home"] ?? DomoPaths.defaultHome)
+    guard let brokerArg = options["broker"], brokerArg.hasPrefix("ws"), let url = URL(string: brokerArg) else {
+        FileHandle.standardError.write(Data("pair: --broker wss://host:port/ required\n".utf8))
+        exit(2)
+    }
+    // A short, readable code (avoids ambiguous chars).
+    let code = options["code"] ?? String((0..<6).map { _ in "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".randomElement()! })
+    do {
+        let policy = HeadlessPolicy(config: .init(access: "deny", intent: "deny"))
+        let device = try DeviceAgent(home: home,
+                                     name: options["name"] ?? (Host.current().localizedName ?? "Mac"),
+                                     delegate: policy)
+        let trust = options["pin"].map { SPKIPinningEvaluator(pins: [SPKIPin(sha256Base64: $0)]) }
+        FileHandle.standardOutput.write(Data("Pairing code: \(code)\n".utf8))
+        let ok = try device.pair(dialer: WebSocketDialer(url: url, trust: trust), code: code)
+        if ok {
+            FileHandle.standardOutput.write(Data("""
+            Submitted. On the broker, approve it:
+              domo-broker approve-pairing --code \(code)
+            Then start the device normally with --authenticate.
+
+            """.utf8))
+            exit(0)
+        } else {
+            FileHandle.standardError.write(Data("pair: broker did not acknowledge the request\n".utf8))
+            exit(1)
+        }
+    } catch {
+        FileHandle.standardError.write(Data("pair failed: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 let options = parseArgs(rawArguments)
 let home = URL(fileURLWithPath: options["home"] ?? DomoPaths.defaultHome)
 let brokerSocket = options["broker"] ?? DomoPaths.deviceSocket(home: home.path)

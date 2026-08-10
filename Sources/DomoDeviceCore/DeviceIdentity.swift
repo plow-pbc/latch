@@ -131,6 +131,13 @@ public final class KnownAgents {
         return keys[agentId]
     }
 
+    /// Currently-pinned (non-revoked) agent ids, for display/management UI.
+    public func pinnedAgentIds() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return keys.keys.sorted()
+    }
+
     private func persist() {
         lock.lock()
         let snapshot = Stored(keys: keys, revoked: Array(revoked))

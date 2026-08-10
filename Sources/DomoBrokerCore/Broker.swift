@@ -86,8 +86,24 @@ public final class Broker {
                 conn.sendLine(JSONValue.object(["type": "auth-error", "reason": .string(reason)]).encoded())
                 conn.close()
             }
-            guard let msg = try? JSONValue.parse(line),
-                  msg["type"].str == "challenge-response",
+            guard let msg = try? JSONValue.parse(line), let type = msg["type"].str else {
+                reject("malformed message"); return
+            }
+            // Pairing request: record it for provisioner approval (the human
+            // verifies the code shown on the Mac), then close. The device
+            // reconnects and passes the challenge once approved.
+            if type == "pair" {
+                guard let code = msg["code"].str, let publicKey = msg["publicKey"].str else {
+                    reject("malformed pair request"); return
+                }
+                let deviceId = msg["deviceId"].str ?? KeyPair.fingerprint(ofPublicKeyBase64: publicKey)
+                self.store.addPendingPairing(code: code, deviceId: deviceId,
+                                             name: msg["name"].str ?? "Mac", publicKeyBase64: publicKey)
+                conn.sendLine(JSONValue.object(["type": "pair-pending"]).encoded())
+                conn.close()
+                return
+            }
+            guard type == "challenge-response",
                   let deviceId = msg["deviceId"].str,
                   let publicKey = msg["publicKey"].str,
                   let signature = msg["signature"].str else {
