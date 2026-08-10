@@ -157,7 +157,7 @@ ready payload that *contains* the job handle. Two hops.
 This Mac dials *out* — it is behind NAT and often asleep. `packages/relay-client`
 holds one WebSocket to the relay and serves what comes down it.
 
-- **The credential is a `relay:connect` key pasted from the Plow portal.** It
+- **The credential is a `relay:device` key pasted from the Plow portal.** It
   travels in the post-challenge `auth` frame, as every plow channel client does
   — never an upgrade header, and **never in a URL**. That rule is absolute:
   credentials in URLs leaked into stored MCP registrations, terminal output,

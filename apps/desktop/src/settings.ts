@@ -32,7 +32,7 @@ export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
 export interface Settings {
   /** The relay's device endpoint, e.g. wss://api.plow.co/v1/relay/ws. */
   relayUrl: string;
-  /** A `relay:connect` key, pasted from the Plow portal. A SECRET: it is never
+  /** A `relay:device` key, pasted from the Plow portal. A SECRET: it is never
    * sent to the renderer and never written to a log or an error string. */
   relayCredential: string;
   /** The last-selected main-window tab, restored across launches. */

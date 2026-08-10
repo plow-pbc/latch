@@ -31,7 +31,7 @@ export type ServeRequest = (request: Request, auth?: RelayAuth) => Promise<Respo
 export interface RelayClientOptions {
   /** The relay's device endpoint, e.g. `wss://api.plow.co/v1/relay/ws`. */
   url: string;
-  /** A `relay:connect` key. Sent only in the auth frame; never logged. */
+  /** A `relay:device` key. Sent only in the auth frame; never logged. */
   credential: string;
   /** Where a tunnelled request goes. */
   serve: ServeRequest;

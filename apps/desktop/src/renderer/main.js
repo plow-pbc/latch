@@ -426,7 +426,7 @@ async function renderSettings() {
     class: "text",
     attrs: {
       type: "password",
-      placeholder: relay.hasCredential ? "•••••••• (stored — leave blank to keep)" : "Paste a relay:connect key",
+      placeholder: relay.hasCredential ? "•••••••• (stored — leave blank to keep)" : "Paste the Mac key from the portal",
     },
   });
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
@@ -524,7 +524,7 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Relay connection", "Where this Mac dials out so agents can reach it. Get a relay:connect key from the Plow portal.", [
+    group("Relay connection", "Where this Mac dials out so agents can reach it. Create a Mac key in the Plow portal, under Sessions → Relay.", [
       el("div", { class: "field" }, [el("label", { text: "Relay URL" }), relayUrlInput]),
       el("div", { class: "field" }, [el("label", { text: "Connect key" }), relayKeyInput]),
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), relayForget, relaySave]),
