@@ -59,6 +59,25 @@ describe("GoalsLibrary", () => {
     expect(lib.all().length).toBe(before);
   });
 
+  it("allows adding a goal without a title, deriving one from the text", () => {
+    const lib = new GoalsLibrary(tempFile());
+    const g = lib.add({ title: "  ", text: "Clean up my Downloads folder\nand more" });
+    expect(g.title).toBe("Clean up my Downloads folder");
+    expect(g.text).toContain("Clean up my Downloads folder");
+  });
+
+  it("falls back to 'Untitled goal' when both title and text are empty", () => {
+    const lib = new GoalsLibrary(tempFile());
+    expect(lib.add({ title: "", text: "" }).title).toBe("Untitled goal");
+  });
+
+  it("truncates a long derived title", () => {
+    const lib = new GoalsLibrary(tempFile());
+    const g = lib.add({ title: "", text: "x".repeat(100) });
+    expect(g.title.length).toBeLessThanOrEqual(60);
+    expect(g.title.endsWith("…")).toBe(true);
+  });
+
   it("keeps user-added goals when restoring defaults", () => {
     const file = tempFile();
     const lib = new GoalsLibrary(file);

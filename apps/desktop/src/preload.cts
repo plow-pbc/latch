@@ -8,7 +8,7 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("domo", {
   // Main window data.
   auditList: () => ipcRenderer.invoke("audit:list"),
-  auditRows: () => ipcRenderer.invoke("audit:rows"),
+  auditActivities: () => ipcRenderer.invoke("audit:activities"),
   goalsList: () => ipcRenderer.invoke("goals:list"),
   goalsAdd: (title: string, text: string) => ipcRenderer.invoke("goals:add", title, text),
   goalsRemove: (id: string) => ipcRenderer.invoke("goals:remove", id),

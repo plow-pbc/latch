@@ -11,7 +11,7 @@ const dist = path.join(dir, "../dist");
 
 // Stub the IPC handlers the renderer calls on load, so this probe needs no
 // broker/device — we're testing the bridge + render path, not the data.
-ipcMain.handle("audit:rows", async () => []);
+ipcMain.handle("audit:activities", async () => []);
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
 ipcMain.handle("goals:list", async () => []);
 ipcMain.handle("rules:list", async () => []);

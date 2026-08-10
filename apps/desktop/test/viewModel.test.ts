@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
-import { approvalViewModel, auditRows } from "../src/viewModel.js";
+import { activityMatches, approvalViewModel, auditActivities } from "../src/viewModel.js";
 
 function intentOf(overrides: Partial<Intent> = {}): Intent {
   return {
@@ -60,37 +60,78 @@ describe("approvalViewModel", () => {
   });
 });
 
-describe("auditRows", () => {
-  const events: JSONValue[] = [
-    { event: "device_started", device: "d", ts: "2026-08-09T12:00:00Z" },
-    { event: "access_request", agent: "a", display: "Family Coordinator", goals: "help", ts: "2026-08-09T12:00:10Z" },
-    { event: "access_decision", agent: "a", approved: true, ts: "2026-08-09T12:00:12Z" },
-    { event: "intent_received", intentId: "i1", request: "run: df -h", goal: "disk", agent: "a", ts: "2026-08-09T12:00:20Z" },
+describe("auditActivities (grouping)", () => {
+  // A full command lifecycle for one intent: received → decided → ran → finished.
+  const commandRun: JSONValue[] = [
+    { event: "intent_received", intentId: "i1", request: "run: df -h", goal: "disk", agent: "agentA", capabilities: ["Run: df -h", "Network: denied"], ts: "2026-08-09T12:00:20Z" },
     { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:21Z" },
+    { event: "exec_start", intentId: "i1", argv: ["/bin/sh", "-c", "df -h"], ts: "2026-08-09T12:00:21Z" },
     { event: "exec_end", intentId: "i1", exit_code: 0, ts: "2026-08-09T12:00:23Z" },
-    { event: "intent_rejected", intentId: "i2", reason: "bad signature", ts: "2026-08-09T12:00:30Z" },
-    { event: "denied_operation", intentId: "i3", path: "/etc/passwd", ts: "2026-08-09T12:00:40Z" },
   ];
 
-  it("maps events to human status rows, newest first", () => {
-    const rows = auditRows(events);
-    // Newest first: denied_operation is last in, first out.
-    expect(rows[0].status).toBe("Blocked");
-    expect(rows[0].kind).toBe("file");
-    const started = rows.find((r) => r.activity === "Device started");
-    expect(started?.tone).toBe("zinc");
+  it("collapses all events of one intent into a single activity with a full timeline", () => {
+    const acts = auditActivities(commandRun);
+    expect(acts).toHaveLength(1);
+    const a = acts[0]!;
+    expect(a.title).toBe("run: df -h");
+    expect(a.status).toBe("Allowed once · finished");
+    expect(a.tone).toBe("green");
+    expect(a.command).toBe("/bin/sh -c df -h");
+    expect(a.exitCode).toBe(0);
+    expect(a.capabilities).toEqual(["Run: df -h", "Network: denied"]);
+    // Timeline is every underlying event, oldest first, with per-step state.
+    expect(a.timeline.map((s) => s.text)).toEqual([
+      "Request: run: df -h",
+      "Decision: allow_once (prompt)",
+      "Run started: /bin/sh -c df -h",
+      "Run finished (exit 0)",
+    ]);
+    expect(a.timeline.find((s) => s.text.startsWith("Run finished"))!.state).toBe("ok");
   });
 
-  it("tones map to the mockup vocabulary", () => {
-    const rows = auditRows(events);
-    expect(rows.find((r) => r.status === "Granted")?.tone).toBe("green");
-    expect(rows.find((r) => r.status === "Blocked" && r.activity.includes("bad signature"))?.tone).toBe("red");
-    expect(rows.find((r) => r.status === "Finished · exit 0")?.tone).toBe("green");
+  it("pairs an access request with its decision into one activity", () => {
+    const acts = auditActivities([
+      { event: "access_request", agent: "agentA", display: "Family Coordinator", goals: "help", ts: "2026-08-09T12:00:10Z" },
+      { event: "access_decision", agent: "agentA", approved: true, ts: "2026-08-09T12:00:12Z" },
+    ]);
+    expect(acts).toHaveLength(1);
+    expect(acts[0]!.title).toBe("Access — Family Coordinator");
+    expect(acts[0]!.status).toBe("Granted");
+    expect(acts[0]!.kind).toBe("access");
+    expect(acts[0]!.timeline).toHaveLength(2);
+  });
+
+  it("separates distinct operations and orders newest first", () => {
+    const acts = auditActivities([
+      { event: "device_started", ts: "2026-08-09T12:00:00Z" },
+      ...commandRun,
+      { event: "intent_rejected", intentId: "i2", reason: "bad signature", ts: "2026-08-09T12:00:40Z" },
+    ]);
+    expect(acts.map((a) => a.status)).toEqual(["Rejected", "Allowed once · finished", "Info"]);
+    expect(acts[0]!.category).toBe("denied");
+  });
+
+  it("blocked/error outcomes fold into the decision status", () => {
+    const blocked = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: rm -rf /x", ts: "2026-08-09T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:01Z" },
+      { event: "denied_operation", intentId: "i1", path: "/x", error: "outside scope", ts: "2026-08-09T12:00:02Z" },
+    ]);
+    expect(blocked[0]!.status).toBe("Allowed once · blocked");
+    expect(blocked[0]!.category).toBe("blocked");
+  });
+
+  it("search matches across title, command, agent, and goal", () => {
+    const a = auditActivities(commandRun)[0]!;
+    expect(activityMatches(a, "df")).toBe(true);
+    expect(activityMatches(a, "disk")).toBe(true);
+    expect(activityMatches(a, "agentA")).toBe(true);
+    expect(activityMatches(a, "nonexistent")).toBe(false);
   });
 
   it("survives unknown event types", () => {
-    const rows = auditRows([{ event: "future_event", ts: "2026-08-09T12:00:00Z" }]);
-    expect(rows[0].status).toBe("Info");
-    expect(rows[0].activity).toBe("future_event");
+    const acts = auditActivities([{ event: "future_event", ts: "2026-08-09T12:00:00Z" }]);
+    expect(acts[0]!.status).toBe("Pending");
+    expect(acts[0]!.title).toBe("future_event");
   });
 });

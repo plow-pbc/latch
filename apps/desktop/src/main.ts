@@ -30,7 +30,7 @@ import {
   GoalsLibrary,
   PolicyDelegate,
 } from "@domo/device-core";
-import { approvalViewModel, auditRows } from "./viewModel.js";
+import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import { planAgentLaunch } from "./spawnAgent.js";
 
@@ -155,9 +155,9 @@ function createMainWindow(): void {
 // MARK: IPC for the main window (audit / goals / rules / settings / status)
 
 ipcMain.handle("audit:list", async () => device?.audit.entries() ?? []);
-// Fold events into human "activity" rows in the main process, so the sandboxed
+// Group events into logical activities in the main process, so the sandboxed
 // renderer receives plain view models (never agent-controlled markup).
-ipcMain.handle("audit:rows", async () => auditRows(device?.audit.entries() ?? []));
+ipcMain.handle("audit:activities", async () => auditActivities(device?.audit.entries() ?? []));
 ipcMain.handle("goals:list", async () => goals?.all() ?? []);
 ipcMain.handle("goals:add", async (_e, title: string, text: string) => {
   goals?.add({ title, text });

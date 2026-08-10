@@ -192,8 +192,35 @@ dl.meta dd { margin: 0; }
 }
 .empty { color: var(--faint); padding: 40px; text-align: center; }
 
-/* Goals / Rules / Settings panels */
-.panel { padding: 16px; overflow: auto; height: calc(100vh - 44px - 57px); }
+/* Detail-pane timeline: one row per underlying raw event. */
+.timeline { display: flex; flex-direction: column; gap: 2px; }
+.tl {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0 6px 16px;
+  position: relative;
+  border-left: 2px solid var(--border);
+}
+.tl::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  border: 2px solid var(--card);
+}
+.tl.ok::before { background: var(--green-fg); }
+.tl.bad::before { background: var(--red-fg); }
+.tl .tt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tl .tm { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Goals / Rules / Settings panels. Only the titlebar (44px) sits above these
+   — the 57px toolbar is Audit-only, so it must NOT be subtracted here. */
+.panel { padding: 16px; overflow: auto; height: calc(100vh - 44px); }
 .item {
   background: var(--card);
   border: 1px solid var(--border);
@@ -227,19 +254,35 @@ input.text, textarea.text {
 textarea.text { min-height: 70px; resize: vertical; }
 .field { margin-bottom: 10px; }
 .field label { display: block; color: var(--muted); margin-bottom: 4px; }
-.row .btn + .btn { margin-left: 8px; }
 
-/* "⋯" overflow menu */
+/* Goal item: title + description on the left, action column on the right that
+   the description can never flow under (separate flex columns). */
+.goal-item { display: flex; align-items: center; gap: 12px; }
+.goal-main { flex: 1 1 auto; min-width: 0; }
+.goal-main h4 { margin: 0 0 4px; }
+.goal-main p { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.goal-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+/* Buttons in an action column share one height. */
+.goal-actions .btn, .goal-actions .iconbtn { height: 28px; }
+
+/* "⋯" overflow menu — a white button matching the Start Agent height, revealed
+   only when the goal group is hovered. */
 .iconbtn {
-  border: 1px solid transparent;
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  background: var(--card);
   color: var(--muted);
-  border-radius: 7px;
-  padding: 2px 8px;
-  font-size: 16px;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
+.goal-item:hover .iconbtn { opacity: 1; }
 .iconbtn:hover { background: var(--hover); color: var(--fg); }
 .menu-wrap { position: relative; }
 .menu {

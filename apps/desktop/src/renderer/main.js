@@ -9,7 +9,6 @@ const statusText = document.getElementById("statusText");
 
 let currentTab = "audit";
 let filter = "all";
-let selectedIndex = 0;
 
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
@@ -59,39 +58,58 @@ async function refreshStatus() {
 }
 
 // ---- Audit (master–detail, mockup Alternative 1) ----
+// Rows are grouped ACTIVITIES (one logical operation), each with a per-event
+// timeline in the detail pane — matching the Swift app's fine-grained view.
+
+let selectedId = null;
+let auditSearch = "";
 
 async function renderAudit() {
-  const rows = await window.domo.auditRows();
-  const shown = rows.filter((r) => {
-    if (filter === "all") return true;
-    if (filter === "approved") return r.tone === "green";
-    if (filter === "denied") return r.tone === "red" && r.status.includes("Denied");
-    if (filter === "blocked") return r.status === "Blocked";
-    return true;
+  const activities = await window.domo.auditActivities();
+  const q = auditSearch.trim().toLowerCase();
+  const shown = activities.filter((a) => {
+    const inCat = filter === "all" || a.category === filter;
+    const inSearch =
+      !q ||
+      [a.title, a.command || "", a.agentDisplay || "", a.agentId || "", a.goal || ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    return inCat && inSearch;
   });
-  if (selectedIndex >= shown.length) selectedIndex = 0;
+  // Keep the selection stable across refreshes; default to the newest.
+  let selected = shown.find((a) => a.id === selectedId) || shown[0] || null;
+  selectedId = selected ? selected.id : null;
+
+  const search = el("div", { class: "search" }, [
+    el("input", { attrs: { placeholder: "Search activity, path, agent…" } }),
+  ]);
+  const searchInput = search.querySelector("input");
+  searchInput.value = auditSearch;
+  searchInput.addEventListener("input", () => { auditSearch = searchInput.value; renderAudit(); });
 
   const toolbar = el("div", { class: "toolbar" }, [
+    search,
     el("div", { class: "chips" }, ["all", "approved", "denied", "blocked"].map((f) => {
       const chip = el("span", { class: "chip" + (filter === f ? " active" : ""), text: f[0].toUpperCase() + f.slice(1) });
-      chip.addEventListener("click", () => { filter = f; selectedIndex = 0; renderAudit(); });
+      chip.addEventListener("click", () => { filter = f; renderAudit(); });
       return chip;
     })),
     el("div", { class: "spacer" }),
-    el("span", { class: "count", text: `${shown.length} activities` }),
+    el("span", { class: "count", text: `${shown.length} ${shown.length === 1 ? "activity" : "activities"}` }),
   ]);
 
   const tbody = el("tbody");
-  shown.forEach((r, i) => {
-    const tr = el("tr", { class: i === selectedIndex ? "sel" : "" }, [
-      el("td", { class: "t-time", text: r.time }),
-      el("td", {}, [badge(r.tone, r.status)]),
+  shown.forEach((a) => {
+    const tr = el("tr", { class: a.id === selectedId ? "sel" : "" }, [
+      el("td", { class: "t-time", text: a.time }),
+      el("td", {}, [badge(a.tone, a.status)]),
       el("td", {}, [el("div", { class: "t-act" }, [
-        el("span", { class: "ic-wrap" }, [icon(r.kind)]),
-        el("span", { class: r.kind === "command" || r.kind === "file" ? "mono" : "", text: r.activity }),
+        el("span", { class: "ic-wrap" }, [icon(a.kind)]),
+        el("span", { class: a.kind === "command" || a.kind === "file" ? "mono" : "", text: a.title }),
       ])]),
     ]);
-    tr.addEventListener("click", () => { selectedIndex = i; renderAudit(); });
+    tr.addEventListener("click", () => { selectedId = a.id; renderAudit(); });
     tbody.appendChild(tr);
   });
 
@@ -101,37 +119,47 @@ async function renderAudit() {
     ])]),
     tbody,
   ]);
-  const list = el("div", { class: "list" }, [shown.length ? table : el("div", { class: "empty", text: "No activity yet." })]);
+  const list = el("div", { class: "list" }, [
+    shown.length ? table : el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }),
+  ]);
 
-  const detail = el("aside", { class: "detail" }, [detailFor(shown[selectedIndex])]);
+  const detail = el("aside", { class: "detail" }, [detailFor(selected)]);
   view.replaceChildren(toolbar, el("div", { class: "a1" }, [list, detail]));
 }
 
-function detailFor(row) {
-  if (!row) return el("div", { class: "empty", text: "Select an activity." });
-  const raw = row.raw || {};
+function detailFor(a) {
+  if (!a) return el("div", { class: "empty", text: "Select an activity." });
+
   const meta = el("dl", { class: "meta" });
   const addMeta = (k, v, mono) => {
+    if (v === null || v === undefined || v === "") return;
     meta.appendChild(el("dt", { text: k }));
-    meta.appendChild(el("dd", { class: mono ? "mono faint" : "", text: v }));
+    meta.appendChild(el("dd", { class: mono ? "mono faint" : "", text: String(v) }));
   };
-  if (raw.agent) addMeta("Agent", String(raw.agent), true);
-  if (raw.intentId) addMeta("Intent", String(raw.intentId), true);
-  if (raw.goal) addMeta("Goal", String(raw.goal));
-  if (raw.exit_code !== undefined) addMeta("Exit", String(raw.exit_code));
-  if (raw.reason) addMeta("Reason", String(raw.reason));
-  if (raw.path) addMeta("Path", String(raw.path), true);
+  addMeta("Agent", a.agentDisplay ? `${a.agentDisplay}  ${a.agentId || ""}`.trim() : a.agentId, !a.agentDisplay);
+  addMeta("Goal", a.goal);
+  addMeta("Intent", a.intentId, true);
+  if (a.exitCode !== null && a.exitCode !== undefined) addMeta("Exit", a.exitCode);
 
   const children = [
-    el("h3", {}, [badge(row.tone, row.status)]),
-    el("div", { class: "cmd", text: row.activity }),
+    el("h3", {}, [badge(a.tone, a.status)]),
+    a.command ? el("div", { class: "cmd", text: a.command }) : null,
     meta,
   ];
-  if (Array.isArray(raw.capabilities)) {
+  if (a.capabilities && a.capabilities.length) {
     children.push(el("div", { class: "section-label", text: "Approved capability bounds" }));
-    children.push(el("div", { class: "capchips" }, raw.capabilities.map((c) => el("span", { class: "cap", text: String(c) }))));
+    children.push(el("div", { class: "capchips" }, a.capabilities.map((c) => el("span", { class: "cap", text: String(c) }))));
   }
-  return el("div", {}, children);
+  if (a.timeline && a.timeline.length) {
+    children.push(el("div", { class: "section-label", text: "Timeline" }));
+    children.push(el("div", { class: "timeline" }, a.timeline.map((s) =>
+      el("div", { class: "tl" + (s.state === "ok" ? " ok" : s.state === "bad" ? " bad" : "") }, [
+        el("div", { class: "tt", text: s.text }),
+        el("div", { class: "tm", text: s.time }),
+      ]),
+    )));
+  }
+  return el("div", {}, children.filter(Boolean));
 }
 
 // ---- Goals ----
@@ -152,14 +180,18 @@ async function renderGoals() {
   const goals = await window.domo.goalsList();
   const titleInput = el("input", { class: "text", attrs: { placeholder: "Goal title" } });
   const textInput = el("textarea", { class: "text", attrs: { placeholder: "What should the agent do?" } });
-  const addBtn = el("button", { class: "btn", text: "Add goal" });
+  const addBtn = el("button", { class: "btn", text: "Add Goal" });
   addBtn.addEventListener("click", async () => {
-    if (!titleInput.value.trim()) return;
+    // A title is optional — the library derives one from the text if omitted.
+    // Only skip a completely empty entry.
+    if (!titleInput.value.trim() && !textInput.value.trim()) return;
     await window.domo.goalsAdd(titleInput.value.trim(), textInput.value.trim());
     renderGoals();
   });
   const startNew = el("button", { class: "btn primary", text: "Start Agent" });
   startNew.addEventListener("click", () => startAgentFor(textInput.value));
+  // Same 8px spacing as a goal item's action column.
+  const composeActions = el("div", { class: "goal-actions" }, [addBtn, startNew]);
 
   const items = goals.map((g) => {
     const start = el("button", { class: "btn primary", text: "Start Agent" });
@@ -177,20 +209,24 @@ async function renderGoals() {
       if (wasHidden) menu.classList.remove("hidden");
     });
 
-    const header = el("div", { class: "row" }, [
+    // Left column: title + description (kept clear of the action column).
+    const main = el("div", { class: "goal-main" }, [
       el("h4", { text: g.title }),
-      el("div", { class: "spacer" }),
-      el("div", { class: "menu-wrap" }, [menuBtn, menu]),
+      el("p", { text: g.text }),
     ]);
-    const actions = el("div", { class: "row" }, [el("div", { class: "spacer" }), start]);
-    return el("div", { class: "item" }, [header, el("p", { text: g.text }), actions]);
+    // Right column, top-aligned: "⋯" menu then Start Agent in the top corner.
+    const actions = el("div", { class: "goal-actions" }, [
+      el("div", { class: "menu-wrap" }, [menuBtn, menu]),
+      start,
+    ]);
+    return el("div", { class: "item goal-item" }, [main, actions]);
   });
 
   const children = [
     el("div", { class: "item" }, [
       el("div", { class: "field" }, [el("label", { text: "New goal" }), titleInput]),
       el("div", { class: "field" }, [textInput]),
-      el("div", { class: "row" }, [el("div", { class: "spacer" }), addBtn, startNew]),
+      el("div", { class: "row" }, [el("div", { class: "spacer" }), composeActions]),
     ]),
   ];
   if (goalsError) {

@@ -35,6 +35,14 @@ function withId(g: { title: string; text: string }): Goal {
   return { id: crypto.randomUUID().toUpperCase(), title: g.title, text: g.text };
 }
 
+/** A title is optional; derive one from the text (first line, trimmed) so the
+ * goal item is never blank. */
+function deriveTitle(text: string): string {
+  const firstLine = text.split("\n")[0]?.trim() ?? "";
+  if (!firstLine) return "Untitled goal";
+  return firstLine.length > 60 ? firstLine.slice(0, 57).trimEnd() + "…" : firstLine;
+}
+
 export class GoalsLibrary {
   private goals: Goal[];
 
@@ -64,7 +72,8 @@ export class GoalsLibrary {
   }
 
   add(goal: { title: string; text: string }): Goal {
-    const g = withId(goal);
+    const title = goal.title.trim() || deriveTitle(goal.text);
+    const g = withId({ title, text: goal.text });
     this.goals.push(g);
     this.persist();
     return g;
