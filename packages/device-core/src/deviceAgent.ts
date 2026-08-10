@@ -42,8 +42,17 @@ export class DeviceAgent {
   /**
    * Run one intent: validate, decide (rules → delegate), execute. The single
    * entry point into the Mac's decision path.
+   *
+   * `onDecided` fires the moment the decision lands, before execution starts.
+   * A caller running against a call budget needs it to tell "still waiting on a
+   * human" from "approved and now running" — the two are different answers to
+   * an agent polling a deferred handle.
    */
-  async handleIntent(intent: Intent, payload: JSONValue = null): Promise<JSONValue> {
+  async handleIntent(
+    intent: Intent,
+    payload: JSONValue = null,
+    onDecided?: () => void,
+  ): Promise<JSONValue> {
     const failure = this.validate(intent);
     if (failure !== null) {
       this.audit.record("intent_rejected", { intentId: intent.intentId, reason: failure });
@@ -59,6 +68,7 @@ export class DeviceAgent {
     });
 
     const grant = await this.policy.decide(intent, this.delegate);
+    onDecided?.();
     this.audit.record("intent_decision", {
       intentId: intent.intentId,
       decision: grant.decision,

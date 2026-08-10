@@ -10,6 +10,7 @@ export default defineConfig({
       "@domo/protocol": p("packages/protocol/src/index.ts"),
       "@domo/transport": p("packages/transport/src/index.ts"),
       "@domo/device-core": p("packages/device-core/src/index.ts"),
+      "@domo/mcp-server": p("packages/mcp-server/src/index.ts"),
     },
   },
   test: {

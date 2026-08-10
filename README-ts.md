@@ -6,10 +6,11 @@ the architecture and the reasoning behind each decision).
 > **Being rebuilt.** The in-repo broker — the rendezvous service, its MCP subset,
 > the stdio shim, the connection-string/certificate-pinning concepts and the
 > pairing flow — has been removed. A Mac now reaches agents by dialing *out* to
-> the Plow relay, which authenticates the agent and forwards MCP to an MCP server
-> running here. The MCP server and the outbound relay client are the next pieces
-> of work; until they land there is no transport in this repo and the app's
-> status pill reads "Not connected".
+> the Plow relay, which authenticates the agent and forwards MCP to the MCP
+> server in `packages/mcp-server`. That server exists and is tested in process;
+> the outbound relay client that feeds it tunnelled requests is the next piece of
+> work, so until it lands nothing here has a transport and the app's status pill
+> reads "Not connected".
 
 ## Layout
 
@@ -20,6 +21,8 @@ packages/
   transport/     @domo/transport     the Connection seam and the WebSocket (ws) client half
   device-core/   @domo/device-core   DeviceAgent, PolicyEngine, FileOps, Executor + SBPL, AuditLog,
                                      BlessedTools, GoalsLibrary, identity/key store  (twin of DomoDeviceCore)
+  mcp-server/    @domo/mcp-server    the MCP server on this Mac (revision 2026-07-28): the reduced
+                                     tool surface, capability construction, and deferred results
 apps/
   desktop/       Electron app: device-core in the main process; tray, approval windows,
                  Goals/Rules/Audit/Settings UI (visual direction from docs/mockups/audit-mockups.html)
@@ -57,6 +60,33 @@ its public key) rather than byte-equality; the *signed bytes* (canonical JSON)
 are asserted identical. The `sbpl.json` fixture embeds `$HOME`, so its
 byte-parity assertions only run on the machine that generated it (they skip
 elsewhere).
+
+## The MCP server
+
+`packages/mcp-server` binds no port. It takes a web-standard `Request` and
+returns a `Response`, because the relay tunnels a whole HTTP exchange over the
+device WebSocket. Modern MCP (revision **2026-07-28**) is per-request and
+POST-only, so there is no session lifecycle and no GET/SSE requirement:
+
+- `legacy: "reject"` — a 2025-era client is refused, never served a legacy lane.
+- `responseMode: "json"` — one body per exchange; nothing streams.
+- `tools.listChanged: false` — so no client opens a subscription stream this
+  transport cannot carry.
+- **`GET` is answered `405` with `{"jsonrpc":"2.0","error":{"code":-32000,
+  "message":"Method not allowed."},"id":null}`.** That is the SDK's modern
+  behaviour and it is deliberate: there is nothing for a GET to do here.
+
+The tool surface is one Mac's, not a fleet's: `read_file`, `write_file`,
+`run_command`, `get_output`, `list_tools`, `use_tool`, `get_result`. No tool
+takes a `device` argument.
+
+**Two kinds of handle, and they are not interchangeable.** `run_command` returns
+a *job* handle for `get_output` when a command outlives its wait. Any tool that
+outlives the **call budget** — a human who has not answered yet, or slow work —
+returns a *deferred* handle for `get_result`, which answers `pending` / `ready` /
+`denied` / `failed` / `expired` / `unknown`. A deferred handle belongs to the
+agent that created it; another agent presenting it gets `unknown`, which is
+indistinguishable from a handle that never existed.
 
 ## Integration coverage
 

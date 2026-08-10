@@ -18,15 +18,29 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
   `FileOps`, `Executor` (+ generated seatbelt profile), `BlessedToolRegistry`,
   `AuditLog`, `GoalsLibrary`, identity/key store.
+- `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
+  (revision 2026-07-28): the reduced tool surface, capability construction from
+  tool arguments, and the deferred-result contract. Binds no port; takes a
+  `Request`, returns a `Response`.
 - `apps/desktop` — the Electron app. Main process runs `device-core`; the
   renderer is sandboxed (see the security rule below).
 
 **Being rebuilt.** The broker (its rendezvous service, MCP subset, stdio shim,
 connection-string/pinning concepts and pairing flow) has been removed. A Mac will
 dial *out* to the Plow relay, which authenticates the calling agent and forwards
-MCP to an MCP server running in this app. Neither that MCP server nor the relay
-client exists yet, so **nothing here has a transport in front of it today** and
-there is no end-to-end coverage (the `e2e/` suite went with the broker).
+MCP to `@domo/mcp-server`. That server exists; **the relay client that feeds it
+tunnelled requests does not**, so nothing here has a transport in front of it
+today and there is no end-to-end coverage (the `e2e/` suite went with the
+broker).
+
+- **Capabilities are built on this Mac, from tool arguments.** An agent never
+  sends a capability set or an intent — it calls a tool, and `mcp-server`
+  derives the capabilities the policy engine and the sandbox will enforce. Goal
+  text rides along for the human to read and never influences the bound.
+- **Nothing may block past the call budget.** A tunnelled call has a hard
+  ceiling well below 30s. Any tool that cannot answer in time returns a deferred
+  handle and keeps working; `get_result` retrieves it. A handle belongs to the
+  `agent_id` that created it.
 
 ## Rules of the road
 

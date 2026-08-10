@@ -4,6 +4,7 @@
     { "path": "packages/protocol" },
     { "path": "packages/transport" },
     { "path": "packages/device-core" },
+    { "path": "packages/mcp-server" },
     { "path": "apps/desktop" }
   ]
 }
