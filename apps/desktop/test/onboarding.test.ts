@@ -149,6 +149,27 @@ describe("first-run login", () => {
     expect(warnings.join(" ")).not.toContain(OTP_TOKEN);
   });
 
+
+  it("writes settings owner-only", async () => {
+    // The spec names this hazard by name: settings.json holds the device
+    // credential, and it used to be written with no mode at all. The
+    // first-run transcript checks the mode too, but a permission bit on a
+    // file holding a credential is worth pinning in CI in its own right.
+    const onboarding = build();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+
+    const mode = fs.statSync(path.join(home, "app/settings.json")).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it("opens on the connected screen when this Mac already holds a credential", async () => {
+    const first = build();
+    await first.requestCode("+15551110000");
+    await first.submitCode("12345678");
+
+    expect(build().state().step).toBe("connected");
+  });
 });
 
 describe("honest messages instead of a spinner", () => {
