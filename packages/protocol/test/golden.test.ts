@@ -197,6 +197,10 @@ describe("path canonicalization", () => {
         // Relative-path case is only meaningful from the generator's cwd.
         return;
       }
+      if (process.platform !== "darwin" && c.canonical.startsWith("/private/")) {
+        // These cases encode macOS's /tmp|/var|/etc → /private symlinks.
+        return;
+      }
       expect(canonicalize(c.input)).toBe(c.canonical);
     });
   }
