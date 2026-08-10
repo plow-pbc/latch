@@ -22,7 +22,8 @@ contextBridge.exposeInMainWorld("domo", {
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   settingsGetBroker: () => ipcRenderer.invoke("settings:getBroker"),
-  settingsSetBroker: (url: string, pin: string) => ipcRenderer.invoke("settings:setBroker", url, pin),
+  settingsSetBroker: (url: string, pin: string, mode: string) =>
+    ipcRenderer.invoke("settings:setBroker", url, pin, mode),
   approvalModeGet: () => ipcRenderer.invoke("settings:getApprovalMode"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),

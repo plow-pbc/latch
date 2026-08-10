@@ -31,6 +31,7 @@ import {
   PolicyDelegate,
 } from "@domo/device-core";
 import { approvalViewModel, auditActivities } from "./viewModel.js";
+import { LocalBrokerHandle, startLocalBroker } from "./localBroker.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { planAgentLaunch } from "./spawnAgent.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
@@ -48,6 +49,24 @@ let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
 let goals: GoalsLibrary | null = null;
+/** The in-process broker when "local mode" is selected; null in broker mode. */
+let localBroker: LocalBrokerHandle | null = null;
+
+/**
+ * The domo-mcp shim that wires a Claude session to the broker. In development
+ * it's the sibling workspace app; in the packaged app it's the asar-unpacked
+ * copy of @domo/app-mcp (unpacked so a plain `node` can execute it).
+ */
+function resolveShimPath(): string | null {
+  const packagedShim = path
+    .resolve(dirname, "../node_modules/@domo/app-mcp/dist/main.js")
+    .replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+  const devShim = path.resolve(dirname, "../../mcp/dist/main.js");
+  for (const candidate of [packagedShim, devShim]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -309,7 +328,8 @@ async function startAgent(goalText: string): Promise<{ ok: boolean; message: str
   const socket = spawned.get("socket").str;
   if (!token || !socket) return { ok: false, message: "Broker returned an incomplete spawn response." };
 
-  const shim = path.resolve(dirname, "../../mcp/dist/main.js");
+  const shim = resolveShimPath();
+  if (!shim) return { ok: false, message: "The domo-mcp shim is missing from this install." };
   const claude = findClaude();
 
   const runDir = path.join(home, "run");
@@ -319,7 +339,8 @@ async function startAgent(goalText: string): Promise<{ ok: boolean; message: str
     deviceId: device.identity.deviceId,
     agentToken: token,
     agentSocket: socket,
-    brokerPin: parseBrokerConnection()?.pin,
+    // In local mode the agent dials a Unix socket — no TLS, no pin.
+    brokerPin: localBroker ? undefined : parseBrokerConnection()?.pin,
     shimPath: shim,
     claudePath: claude ?? "claude",
     runDir,
@@ -393,23 +414,30 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
 // optional cert pin — rather than the opaque connection string. Under the hood
 // the app still connects via URL+pin (stored as a connection string).
 ipcMain.handle("settings:getBroker", async () => {
-  const conn = parseConnection(loadSettings(home).brokerConnection || "");
+  const settings = loadSettings(home);
+  const conn = parseConnection(settings.brokerConnection || "");
   return {
     url: conn?.url ?? "",
     pin: conn?.pin ?? "",
     authenticate: conn?.authenticate ?? false,
+    mode: settings.connectionMode ?? "broker",
   };
 });
-ipcMain.handle("settings:setBroker", async (_e, urlOrConn: string, pin: string) => {
+ipcMain.handle("settings:setBroker", async (_e, urlOrConn: string, pin: string, mode: string) => {
   const text = (urlOrConn || "").trim();
   const pinText = (pin || "").trim();
-  // Accept a pasted connection string (domo1.…/domo://) too, decoding it.
-  const parsed = parseConnection(text);
-  const conn: DomoConnection = parsed
-    ? { url: parsed.url, pin: parsed.pin ?? (pinText || undefined), name: "Domo broker", authenticate: parsed.authenticate }
-    : { url: text, pin: pinText || undefined, name: "Domo broker", authenticate: false };
   const settings = loadSettings(home);
-  settings.brokerConnection = compactString(conn);
+  settings.connectionMode = mode === "local" ? "local" : "broker";
+  // Keep the broker connection string updated even when local mode is chosen,
+  // so switching back restores the last-entered broker without retyping.
+  if (text) {
+    // Accept a pasted connection string (domo1.…/domo://) too, decoding it.
+    const parsed = parseConnection(text);
+    const conn: DomoConnection = parsed
+      ? { url: parsed.url, pin: parsed.pin ?? (pinText || undefined), name: "Domo broker", authenticate: parsed.authenticate }
+      : { url: text, pin: pinText || undefined, name: "Domo broker", authenticate: false };
+    settings.brokerConnection = compactString(conn);
+  }
   saveSettings(home, settings);
   await connectDevice();
 });
@@ -462,8 +490,17 @@ async function connectDevice(): Promise<void> {
     notifyRenderer("status:changed");
   };
 
+  // Leaving local mode: shut the in-process broker down before dialing out.
+  if (settings.connectionMode !== "local" && localBroker) {
+    localBroker.stop();
+    localBroker = null;
+  }
+
   try {
-    if (conn && (conn.url.startsWith("ws://") || conn.url.startsWith("wss://"))) {
+    if (settings.connectionMode === "local") {
+      if (!localBroker) localBroker = await startLocalBroker(home, resolveShimPath());
+      await device.connect(new UnixSocketDialer(localBroker.deviceSocket), true, false);
+    } else if (conn && (conn.url.startsWith("ws://") || conn.url.startsWith("wss://"))) {
       const trust: PeerTrustEvaluator | null = conn.pin
         ? new SPKIPinningEvaluator([{ sha256Base64: conn.pin }])
         : null;
@@ -496,6 +533,16 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   // Stay resident in the tray — Domo is a menu-bar agent, not a document app.
+});
+
+// Tear down the local broker on quit: close both listeners, drop live
+// connections, unlink the socket files. It runs in-process, so nothing can
+// outlive the app; connected MCP shims exit on their own when the socket
+// closes. (A stale socket after a crash is unlinked on the next start.)
+app.on("will-quit", () => {
+  device?.disconnect();
+  localBroker?.stop();
+  localBroker = null;
 });
 
 // Block any attempt to navigate to remote content or open external windows —

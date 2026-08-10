@@ -10,6 +10,7 @@
   "references": [
     { "path": "../../packages/protocol" },
     { "path": "../../packages/transport" },
+    { "path": "../../packages/broker-core" },
     { "path": "../../packages/device-core" }
   ]
 }

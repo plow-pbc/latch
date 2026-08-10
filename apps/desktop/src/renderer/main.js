@@ -449,17 +449,53 @@ function capText(c) {
 
 async function renderSettings() {
   const broker = await window.domo.settingsGetBroker();
+  let connMode = broker.mode === "local" ? "local" : "broker";
   const urlInput = el("input", { class: "text", attrs: { placeholder: "wss://broker.example:8444/" } });
   urlInput.value = broker.url || "";
   const pinInput = el("input", { class: "text", attrs: { placeholder: "base64 SPKI pin (leave blank for a CA-signed cert)" } });
   pinInput.value = broker.pin || "";
+  const urlField = el("div", { class: "field" }, [el("label", { text: "Broker URL" }), urlInput]);
+  const pinField = el("div", { class: "field" }, [el("label", { text: "Certificate pin" }), pinInput]);
+  const localNote = el("p", {
+    class: "faint conn-note",
+    text:
+      "Runs a private broker inside the app. Agents connect over a Unix socket " +
+      "on this Mac only — nothing listens on the network, and it shuts down with the app.",
+  });
   const save = el("button", { class: "btn primary", text: "Save & Reconnect" });
   // Live connection status — updated by refreshStatus() on every status change.
   const note = el("p", { class: "faint", text: "" });
   settingsStatusNote = note;
+
+  // Broker (network) vs Local (in-app, Unix socket) — switching applies
+  // immediately; the URL/pin fields only make sense in broker mode.
+  const connSeg = el("div", { class: "seg conn-seg" });
+  const CONN_MODES = [
+    ["broker", "Remote Broker"],
+    ["local", "Local (This Mac Only)"],
+  ];
+  const renderConnMode = () => {
+    connSeg.replaceChildren(...CONN_MODES.map(([value, label]) => {
+      const button = el("button", { class: connMode === value ? "active" : "", text: label });
+      button.addEventListener("click", async () => {
+        if (connMode === value) return;
+        connMode = value;
+        renderConnMode();
+        await window.domo.settingsSetBroker(urlInput.value.trim(), pinInput.value.trim(), connMode);
+        refreshStatus();
+      });
+      return button;
+    }));
+    urlField.style.display = connMode === "broker" ? "" : "none";
+    pinField.style.display = connMode === "broker" ? "" : "none";
+    localNote.style.display = connMode === "local" ? "" : "none";
+    save.style.display = connMode === "broker" ? "" : "none";
+  };
+  renderConnMode();
+
   save.addEventListener("click", async () => {
     // The URL field also accepts a pasted domo1.… string, decoded server-side.
-    await window.domo.settingsSetBroker(urlInput.value.trim(), pinInput.value.trim());
+    await window.domo.settingsSetBroker(urlInput.value.trim(), pinInput.value.trim(), connMode);
     // Re-render so the field shows the decoded wss:// URL + pin (confirming the
     // paste parsed), and the note reflects the live connection status.
     renderSettings();
@@ -547,9 +583,11 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Broker connection", "Where this Mac connects to receive agent requests.", [
-      el("div", { class: "field" }, [el("label", { text: "Broker URL" }), urlInput]),
-      el("div", { class: "field" }, [el("label", { text: "Certificate pin" }), pinInput]),
+    group("Connection", "Where this Mac connects to receive agent requests.", [
+      connSeg,
+      urlField,
+      pinField,
+      localNote,
       el("div", { class: "row" }, [note, el("div", { class: "spacer" }), save]),
     ]),
     group("Anthropic API key", "Required for the Adversarial Agent features. Stored locally.", [

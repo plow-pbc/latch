@@ -311,7 +311,12 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .item .group-desc { margin: -4px 0 14px; }
 .settings .chips { flex-wrap: wrap; }
-.reviewer-note { margin-top: 14px; }
+/* Connection mode segmented control — .seg is styled for the titlebar
+   (margin-left: auto); inside settings it sits flush left, with air below it
+   and below the local-mode description so the status line doesn't crowd. */
+.conn-seg { margin-left: 0; margin-bottom: 16px; align-self: flex-start; }
+.item p.conn-note { margin-bottom: 16px; }
+.item p.reviewer-note { margin-top: 14px; }
 
 /* Goal item: title + description on the left, action column on the right that
    the description can never flow under (separate flex columns). */
