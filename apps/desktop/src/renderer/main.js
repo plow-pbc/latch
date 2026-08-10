@@ -184,6 +184,7 @@ function detailFor(a) {
   };
   addMeta("Agent", a.agentDisplay ? `${a.agentDisplay}  ${a.agentId || ""}`.trim() : a.agentId, !a.agentDisplay);
   addMeta("Goal", a.goal);
+  addMeta("Decided by", a.decidedBy);
   addMeta("Intent", a.intentId, true);
   if (a.exitCode !== null && a.exitCode !== undefined) addMeta("Exit", a.exitCode);
 
@@ -356,6 +357,45 @@ async function renderSettings() {
     restoreNote.textContent = "Default goals restored.";
   });
 
+  // Approval mode for operations (device pairing is always asked).
+  const mode = await window.domo.approvalModeGet();
+  const showSuggestions = await window.domo.showSuggestionsGet();
+  const modeChips = el("div", { class: "chips" });
+  const MODES = [
+    ["approve", "Approve"],
+    ["adversarial", "Adversarial Agent"],
+    ["ask", "Ask"],
+    ["deny", "Deny"],
+  ];
+
+  // Checkbox: only meaningful (enabled) in Ask mode.
+  const suggestCheck = el("input", { attrs: { type: "checkbox" } });
+  suggestCheck.checked = showSuggestions;
+  const suggestLabel = el("label", { class: "check" }, [
+    suggestCheck,
+    el("span", { text: "Show Adversarial Agent suggestions in Ask mode" }),
+  ]);
+  suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
+  const setCheckEnabled = (active) => {
+    const on = active === "ask";
+    suggestCheck.disabled = !on;
+    suggestLabel.classList.toggle("disabled", !on);
+  };
+
+  const renderModeChips = (active) => {
+    modeChips.replaceChildren(...MODES.map(([value, label]) => {
+      const chip = el("span", { class: "chip" + (active === value ? " active" : ""), text: label });
+      chip.addEventListener("click", async () => {
+        await window.domo.approvalModeSet(value);
+        renderModeChips(value);
+        setCheckEnabled(value);
+      });
+      return chip;
+    }));
+  };
+  renderModeChips(mode);
+  setCheckEnabled(mode);
+
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "item" }, [
       el("div", { class: "field" }, [
@@ -367,6 +407,14 @@ async function renderSettings() {
         pinInput,
       ]),
       el("div", { class: "row" }, [note, el("div", { class: "spacer" }), save]),
+    ]),
+    el("div", { class: "item" }, [
+      el("div", { class: "field" }, [
+        el("label", { text: "Approval mode" }),
+        el("p", { class: "faint", text: "How operations are decided. Device pairing is always asked, separately." }),
+      ]),
+      modeChips,
+      suggestLabel,
     ]),
     el("div", { class: "item" }, [
       el("div", { class: "field" }, [

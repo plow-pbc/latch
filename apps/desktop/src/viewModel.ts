@@ -73,7 +73,23 @@ export interface AuditActivity {
   intentId: string | null;
   exitCode: number | null;
   capabilities: string[];
+  /** Human label for how the decision was made (auto-approve, adversarial,
+   * you/asked, policy deny, always-allow rule), or null for non-decisions. */
+  decidedBy: string | null;
   timeline: AuditStep[];
+}
+
+/** Friendly label for an intent_decision / grant `source`. */
+export function decidedByLabel(source: string | null): string | null {
+  switch (source) {
+    case "approve": return "Auto-approved";
+    case "adversarial": return "Adversarial Agent";
+    case "rule": return "Always-allow rule";
+    case "policy": return "Policy (deny mode)";
+    case "ask":
+    case "prompt": return "You (asked)";
+    default: return source;
+  }
 }
 
 /**
@@ -163,6 +179,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     capabilities: (jv(entry("intent_received") ?? null).get("capabilities").arr ?? []).filter(
       (c): c is string => typeof c === "string",
     ),
+    decidedBy: decidedByLabel(value("intent_decision", "source")),
     timeline: events.map(describeStep),
   };
 }
@@ -299,7 +316,7 @@ function describeStep(e: JSONValue): AuditStep {
     case "agent_spawned": text = `Agent spawned — ${ev.get("goal").str ?? ""}`; break;
     case "intent_received": text = `Request: ${ev.get("request").str ?? ""}`; break;
     case "intent_decision":
-      text = `Decision: ${ev.get("decision").str ?? ""} (${ev.get("source").str ?? "?"})`;
+      text = `Decision: ${ev.get("decision").str ?? ""} — ${decidedByLabel(ev.get("source").str) ?? "?"}`;
       state = ev.get("decision").str === "deny" ? "bad" : "ok";
       break;
     case "intent_rejected": text = `Rejected: ${ev.get("reason").str ?? ""}`; state = "bad"; break;

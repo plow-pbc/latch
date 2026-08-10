@@ -15,10 +15,20 @@ import {
   makeGrant,
 } from "@domo/protocol";
 
+/**
+ * A delegate's intent decision. It may return a bare Decision (source defaults
+ * to "prompt") or annotate HOW it decided — so the audit log can distinguish
+ * e.g. an auto-approve from a human answer from a policy deny. Known sources:
+ * "prompt" (generic), "ask" (human dialog), "approve" (auto-approve),
+ * "adversarial" (adversarial-agent review), "policy" (auto-deny). Rule matches
+ * are labeled "rule" by the engine itself.
+ */
+export type IntentDecision = Decision | { decision: Decision; source?: string };
+
 /** Whoever answers approval questions: app UI, headless script, iOS relay… */
 export interface PolicyDelegate {
   decideAccess(agentId: string, agentDisplay: string, goals: string): Promise<boolean>;
-  decideIntent(intent: Intent): Promise<Decision>;
+  decideIntent(intent: Intent): Promise<IntentDecision>;
 }
 
 export class PolicyEngine {
@@ -57,12 +67,14 @@ export class PolicyEngine {
     if (this.rules.has(key)) {
       return makeGrant(intent, "always_allow", "rule");
     }
-    const decision = await delegate.decideIntent(intent);
+    const result = await delegate.decideIntent(intent);
+    const decision = typeof result === "string" ? result : result.decision;
+    const source = typeof result === "string" ? "prompt" : (result.source ?? "prompt");
     if (decision === "always_allow") {
       this.rules.set(key, makeAlwaysAllowRule(intent));
       this.persist();
     }
-    return makeGrant(intent, decision, "prompt");
+    return makeGrant(intent, decision, source);
   }
 }
 

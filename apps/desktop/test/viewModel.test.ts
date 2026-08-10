@@ -83,11 +83,25 @@ describe("auditActivities (grouping)", () => {
     // Timeline is every underlying event, oldest first, with per-step state.
     expect(a.timeline.map((s) => s.text)).toEqual([
       "Request: run: df -h",
-      "Decision: allow_once (prompt)",
+      "Decision: allow_once — You (asked)",
       "Run started: /bin/sh -c df -h",
       "Run finished (exit 0)",
     ]);
     expect(a.timeline.find((s) => s.text.startsWith("Run finished"))!.state).toBe("ok");
+  });
+
+  it("records how each intent was decided (decidedBy from source)", () => {
+    const mk = (source: string, decision = "allow_once") =>
+      auditActivities([
+        { event: "intent_received", intentId: "i", request: "run: x", ts: "2026-08-09T12:00:00Z" },
+        { event: "intent_decision", intentId: "i", decision, source, ts: "2026-08-09T12:00:01Z" },
+      ])[0]!;
+    expect(mk("approve").decidedBy).toBe("Auto-approved");
+    expect(mk("adversarial").decidedBy).toBe("Adversarial Agent");
+    expect(mk("ask").decidedBy).toBe("You (asked)");
+    expect(mk("policy", "deny").decidedBy).toBe("Policy (deny mode)");
+    // A rule-matched decision (source set by the engine) reads as the rule.
+    expect(mk("rule").decidedBy).toBe("Always-allow rule");
   });
 
   it("pairs an access request with its decision into one activity", () => {

@@ -50,7 +50,16 @@ async function render() {
 
   // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
   // is the more permissive option and sits in the middle.
+  const deny = button("Deny", "btn danger", () => decide(v.intentId, "deny"));
+  const alwaysAllow = button("Always Allow", "btn", () => decide(v.intentId, "always_allow"));
   const allowOnce = button("Allow Once", "btn primary", () => decide(v.intentId, "allow_once"));
+  // Each button lives in a slot; the agent-suggestion glow goes on the slot
+  // (behind the button) so its blur isn't clipped.
+  const denySlot = el("div", { class: "action-slot" }, [deny]);
+  const alwaysSlot = el("div", { class: "action-slot" }, [alwaysAllow]);
+  const allowSlot = el("div", { class: "action-slot" }, [allowOnce]);
+  const slotByDecision = { deny: denySlot, always_allow: alwaysSlot, allow_once: allowSlot };
+
   root.replaceChildren(
     el("div", { class: "who" }, [
       el("span", { class: "name", text: v.agentDisplay }),
@@ -67,13 +76,16 @@ async function render() {
       v.planContext ? el("div", { class: "lbl", text: "Session context" }) : null,
       v.planContext ? el("div", { class: "faint", text: v.planContext }) : null,
     ]),
-    el("div", { class: "actions" }, [
-      button("Deny", "btn danger", () => decide(v.intentId, "deny")),
-      button("Always Allow", "btn", () => decide(v.intentId, "always_allow")),
-      allowOnce,
-    ]),
+    el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
   );
   allowOnce.focus(); // keyboard default: Return activates Allow Once
+
+  // When the adversarial agent responds, highlight the button it suggests.
+  window.domo.onApprovalSuggestion((data) => {
+    if (data.id !== v.intentId) return;
+    const target = slotByDecision[data.decision];
+    if (target) target.classList.add("suggested");
+  });
 }
 
 function button(label, cls, onClick) {

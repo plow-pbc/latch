@@ -128,6 +128,26 @@ describe("PolicyEngine", () => {
     );
     expect(grant.decision).toBe("deny");
   });
+
+  it("a delegate's source flows into the grant; a bare Decision defaults to prompt", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    // Delegate returning {decision, source} — the source is recorded.
+    const annotated = {
+      decideAccess: async () => true,
+      decideIntent: async () => ({ decision: "allow_once" as const, source: "approve" }),
+    };
+    const g1 = await engine.decide(intentWith([{ kind: "network", allowed: true }]), annotated);
+    expect(g1.decision).toBe("allow_once");
+    expect(g1.source).toBe("approve");
+
+    // Back-compat: a delegate returning a bare Decision is sourced "prompt".
+    const bare = {
+      decideAccess: async () => true,
+      decideIntent: async () => "deny" as const,
+    };
+    const g2 = await engine.decide(intentWith([{ kind: "network", allowed: false }]), bare);
+    expect(g2.source).toBe("prompt");
+  });
 });
 
 describe("AuditLog", () => {

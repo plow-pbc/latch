@@ -366,5 +366,42 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
 .approve .actions { display: flex; gap: 8px; }
+.approve .actions .action-slot { flex: 1; position: relative; display: flex; }
 .approve .actions .btn { flex: 1; justify-content: center; padding: 9px; }
 .warn { color: var(--amber-fg); }
+
+/* Checkbox row (settings) */
+.check { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer; }
+.check.disabled { opacity: 0.45; cursor: default; }
+.check input { margin: 0; }
+
+/* Adversarial-agent suggestion: a color-wheel glow BEHIND the suggested button.
+   It lives on the slot (a layer behind the button, not the button itself), so
+   the button's opaque face covers the center and only a soft blurred halo shows
+   around the edges — and the blur is never clipped. The gradient ANGLE animates
+   (via @property) so the box stays put while the colors rotate. */
+@property --suggest-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.action-slot.suggested::before {
+  content: "";
+  position: absolute;
+  inset: -6px;               /* a few pixels bigger than the button */
+  border-radius: 12px;
+  z-index: -1;               /* behind the button (which has an opaque face) */
+  background: conic-gradient(
+    from var(--suggest-angle),
+    #ff0000, #ff8000, #ffff00, #80ff00, #00ff00, #00ff80,
+    #00ffff, #0080ff, #0000ff, #8000ff, #ff00ff, #ff0080, #ff0000
+  );
+  filter: blur(5px);         /* soft, unclipped glow */
+  opacity: 0.5;
+  pointer-events: none;
+  animation: suggest-spin 2.5s linear infinite;
+}
+@keyframes suggest-spin { to { --suggest-angle: 360deg; } }
+@media (prefers-reduced-motion: reduce) {
+  .action-slot.suggested::before { animation: none; }
+}

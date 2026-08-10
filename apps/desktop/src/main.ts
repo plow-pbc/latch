@@ -54,6 +54,7 @@ let goals: GoalsLibrary | null = null;
  * human's click. Access requests reuse the same window with a simpler model.
  */
 class ElectronPolicy implements PolicyDelegate {
+  // Device pairing/access is ALWAYS asked — the approval mode never applies here.
   async decideAccess(agentId: string, agentDisplay: string, goals: string): Promise<boolean> {
     const decision = await openApprovalWindow({
       kind: "access",
@@ -64,12 +65,31 @@ class ElectronPolicy implements PolicyDelegate {
     return decision === "allow_once" || decision === "always_allow";
   }
 
-  async decideIntent(intent: Intent): Promise<"allow_once" | "always_allow" | "deny"> {
-    const decision = await openApprovalWindow({
-      kind: "intent",
-      view: approvalViewModel(intent),
-    });
-    return decision;
+  // Operations honor the configurable approval mode (settings.approvalMode).
+  // The returned `source` records HOW it was decided, for the audit log.
+  async decideIntent(intent: Intent): Promise<{ decision: "allow_once" | "always_allow" | "deny"; source: string }> {
+    const mode = loadSettings(home).approvalMode ?? "ask";
+    switch (mode) {
+      case "approve":
+        return { decision: "allow_once", source: "approve" };
+      case "deny":
+        return { decision: "deny", source: "policy" };
+      case "adversarial":
+        return { decision: await adversarialSuggestion(intent), source: "adversarial" };
+      case "ask":
+      default: {
+        // In Ask mode, optionally run the adversarial agent alongside the
+        // dialog and highlight the button it suggests.
+        const suggestion = loadSettings(home).showAgentSuggestions
+          ? adversarialSuggestion(intent)
+          : null;
+        const decision = await openApprovalWindow(
+          { kind: "intent", view: approvalViewModel(intent) },
+          suggestion,
+        );
+        return { decision, source: "ask" };
+      }
+    }
   }
 }
 
@@ -79,10 +99,22 @@ type ApprovalRequest =
 
 type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
+/**
+ * The adversarial-agent review. Placeholder for now — a short pause, then a
+ * suggested "allow once". Will be replaced by a real reviewing agent.
+ */
+async function adversarialSuggestion(_intent: Intent): Promise<ApprovalDecision> {
+  await new Promise((r) => setTimeout(r, 2000));
+  return "allow_once";
+}
+
 /** Serialize approval windows so two prompts never overlap. */
 let approvalChain: Promise<unknown> = Promise.resolve();
 
-function openApprovalWindow(request: ApprovalRequest): Promise<ApprovalDecision> {
+function openApprovalWindow(
+  request: ApprovalRequest,
+  suggestion: Promise<ApprovalDecision> | null = null,
+): Promise<ApprovalDecision> {
   const run = () =>
     new Promise<ApprovalDecision>((resolve) => {
       const win = new BrowserWindow({
@@ -114,6 +146,15 @@ function openApprovalWindow(request: ApprovalRequest): Promise<ApprovalDecision>
         finish(decision);
       };
       ipcMain.on("approval:decide", onDecision);
+      // When the adversarial agent responds, tell the window which button to
+      // highlight (only meaningful while it's still open and unanswered).
+      if (suggestion) {
+        void suggestion.then((decision) => {
+          if (!settled && !win.isDestroyed()) {
+            win.webContents.send("approval:suggestion", { id: approvalId(request), decision });
+          }
+        });
+      }
       // Closing the window without a choice is a denial (fail safe).
       win.on("closed", () => {
         ipcMain.removeListener("approval:decide", onDecision);
@@ -327,6 +368,19 @@ ipcMain.handle("settings:setBroker", async (_e, urlOrConn: string, pin: string) 
   settings.brokerConnection = compactString(conn);
   saveSettings(home, settings);
   await connectDevice();
+});
+ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
+ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
+  const allowed = ["approve", "adversarial", "ask", "deny"];
+  const settings = loadSettings(home);
+  settings.approvalMode = (allowed.includes(mode) ? mode : "ask") as typeof settings.approvalMode;
+  saveSettings(home, settings);
+});
+ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).showAgentSuggestions ?? true);
+ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
+  const settings = loadSettings(home);
+  settings.showAgentSuggestions = !!on;
+  saveSettings(home, settings);
 });
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",

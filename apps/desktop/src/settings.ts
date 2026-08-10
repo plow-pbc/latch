@@ -12,12 +12,27 @@ export interface WindowBounds {
   height: number;
 }
 
+/**
+ * How operation intents (NOT device pairing/access — those are always asked)
+ * are decided:
+ *   - approve:     auto "allow once", no dialog
+ *   - adversarial: (placeholder) an adversarial-agent review; for now waits
+ *                  briefly, then "allow once"
+ *   - ask:         always show the approval dialog (default)
+ *   - deny:        auto-deny, no dialog
+ */
+export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
+
 export interface Settings {
   brokerConnection: string;
   /** The last-selected main-window tab, restored across launches. */
   selectedTab: string;
   /** The main window's last size + position, restored across launches. */
   windowBounds?: WindowBounds;
+  /** How operation intents are decided (device pairing is always asked). */
+  approvalMode: ApprovalMode;
+  /** In Ask mode, highlight the button the adversarial agent suggests. */
+  showAgentSuggestions: boolean;
 }
 
 function settingsPath(home: string): string {
@@ -25,7 +40,12 @@ function settingsPath(home: string): string {
 }
 
 export function loadSettings(home: string): Settings {
-  const defaults: Settings = { brokerConnection: "", selectedTab: "audit" };
+  const defaults: Settings = {
+    brokerConnection: "",
+    selectedTab: "audit",
+    approvalMode: "ask",
+    showAgentSuggestions: true,
+  };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
   } catch {
