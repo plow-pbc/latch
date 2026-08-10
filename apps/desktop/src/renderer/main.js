@@ -82,7 +82,14 @@ async function renderAudit() {
 
   const chipsBox = el("div", { class: "chips" });
   const count = el("span", { class: "count" });
-  const toolbar = el("div", { class: "toolbar" }, [search, chipsBox, el("div", { class: "spacer" }), count]);
+  const clearBtn = el("button", { class: "btn small", text: "Clear log" });
+  clearBtn.addEventListener("click", async () => {
+    const cleared = await window.domo.auditClear();
+    if (cleared) { selectedId = null; refreshAudit(); }
+  });
+  const toolbar = el("div", { class: "toolbar" }, [
+    search, chipsBox, el("div", { class: "spacer" }), count, clearBtn,
+  ]);
 
   const listBox = el("div", { class: "list" });
   const detailBox = el("aside", { class: "detail" });
@@ -91,7 +98,7 @@ async function renderAudit() {
   wireSplitter(splitter, detailBox);
   view.replaceChildren(toolbar, el("div", { class: "a1" }, [listBox, splitter, detailBox]));
 
-  auditMounted = { listBox, detailBox, count, chipsBox };
+  auditMounted = { listBox, detailBox, count, chipsBox, clearBtn };
   await refreshAudit();
   searchInput.focus();
   const len = searchInput.value.length;
@@ -123,8 +130,9 @@ function wireSplitter(splitter, detailBox) {
 // Refresh just the data-bound parts — leaves the search input untouched.
 async function refreshAudit() {
   if (!auditMounted) return;
-  const { listBox, detailBox, count, chipsBox } = auditMounted;
+  const { listBox, detailBox, count, chipsBox, clearBtn } = auditMounted;
   const activities = await window.domo.auditActivities();
+  clearBtn.disabled = activities.length === 0;
   const q = auditSearch.trim().toLowerCase();
   const shown = activities.filter((a) => {
     const inCat = filter === "all" || a.category === filter;
@@ -422,39 +430,30 @@ async function renderSettings() {
   renderModeChips();
   updateSuggestEnabled();
 
-  view.replaceChildren(el("div", { class: "panel" }, [
+  // Build one settings group: a prominent title, an optional description, then
+  // the group's body nodes.
+  const group = (title, desc, body) =>
     el("div", { class: "item" }, [
-      el("div", { class: "field" }, [
-        el("label", { text: "Broker URL" }),
-        urlInput,
-      ]),
-      el("div", { class: "field" }, [
-        el("label", { text: "Certificate pin" }),
-        pinInput,
-      ]),
+      el("div", { class: "group-title", text: title }),
+      desc ? el("p", { class: "faint group-desc", text: desc }) : null,
+      ...body,
+    ]);
+
+  view.replaceChildren(el("div", { class: "panel settings" }, [
+    group("Broker connection", "Where this Mac connects to receive agent requests.", [
+      el("div", { class: "field" }, [el("label", { text: "Broker URL" }), urlInput]),
+      el("div", { class: "field" }, [el("label", { text: "Certificate pin" }), pinInput]),
       el("div", { class: "row" }, [note, el("div", { class: "spacer" }), save]),
     ]),
-    el("div", { class: "item" }, [
-      el("div", { class: "field" }, [
-        el("label", { text: "Anthropic API key" }),
-        el("p", { class: "faint", text: "Required for the Adversarial Agent features. Stored locally." }),
-        apiKeyInput,
-        el("p", { class: "faint", text: `Reviewer: ${reviewerInfo}` }),
-      ]),
+    group("Anthropic API key", "Required for the Adversarial Agent features. Stored locally.", [
+      apiKeyInput,
+      el("p", { class: "faint reviewer-note", text: `Reviewer: ${reviewerInfo}` }),
     ]),
-    el("div", { class: "item" }, [
-      el("div", { class: "field" }, [
-        el("label", { text: "Approval mode" }),
-        el("p", { class: "faint", text: "How operations are decided. Device pairing is always asked, separately." }),
-      ]),
+    group("Approval mode", "How operations are decided. Device pairing is always asked, separately.", [
       modeChips,
       suggestLabel,
     ]),
-    el("div", { class: "item" }, [
-      el("div", { class: "field" }, [
-        el("label", { text: "Goals" }),
-        el("p", { class: "faint", text: "Re-add any default goals you've removed." }),
-      ]),
+    group("Goals", "Re-add any default goals you've removed.", [
       el("div", { class: "row" }, [restoreNote, el("div", { class: "spacer" }), restore]),
     ]),
   ]));

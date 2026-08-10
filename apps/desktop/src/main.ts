@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -213,7 +213,7 @@ function createMainWindow(): void {
     height: bounds?.height ?? 620,
     x: bounds?.x,
     y: bounds?.y,
-    title: "Domo",
+    title: "Domo Desktop",
     titleBarStyle: "hiddenInset",
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
@@ -263,6 +263,22 @@ ipcMain.handle("audit:list", async () => device?.audit.entries() ?? []);
 // Group events into logical activities in the main process, so the sandboxed
 // renderer receives plain view models (never agent-controlled markup).
 ipcMain.handle("audit:activities", async () => auditActivities(device?.audit.entries() ?? []));
+// Clear the audit log after a native confirmation (it's a destructive, local
+// action). Returns whether the log was actually cleared.
+ipcMain.handle("audit:clear", async () => {
+  if (!device) return false;
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Cancel", "Clear log"],
+    defaultId: 0,
+    cancelId: 0,
+    message: "Clear the audit log?",
+    detail: "This permanently deletes all recorded activity on this device. This can't be undone.",
+  });
+  if (response !== 1) return false;
+  device.audit.clear();
+  return true;
+});
 ipcMain.handle("goals:list", async () => goals?.all() ?? []);
 ipcMain.handle("goals:add", async (_e, title: string, text: string) => {
   goals?.add({ title, text });

@@ -290,6 +290,26 @@ textarea.text { min-height: 70px; resize: vertical; }
 .field { margin-bottom: 10px; }
 .field label { display: block; color: var(--muted); margin-bottom: 4px; }
 
+.btn.small { padding: 3px 10px; font-size: 12px; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn:disabled:hover { background: var(--card); }
+
+/* Settings groups: more air between groups, a prominent group heading with a
+   divider, and a settled-in description under it. */
+.settings .item { padding: 16px 18px; margin-bottom: 16px; }
+.settings .item:last-child { margin-bottom: 0; }
+.group-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0 0 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.item .group-desc { margin: -4px 0 14px; }
+.settings .chips { flex-wrap: wrap; }
+.reviewer-note { margin-top: 8px; }
+
 /* Goal item: title + description on the left, action column on the right that
    the description can never flow under (separate flex columns). */
 .goal-item { display: flex; align-items: center; gap: 12px; }

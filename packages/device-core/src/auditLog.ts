@@ -24,6 +24,12 @@ export class AuditLog {
     this.events.emit("change");
   }
 
+  /** Erase the log (truncate the file). Emits "change" so UIs refresh. */
+  clear(): void {
+    fs.writeFileSync(this.file, "");
+    this.events.emit("change");
+  }
+
   /** All events, oldest first. Used by tests and the audit UI. */
   entries(): JSONValue[] {
     let data: string;
