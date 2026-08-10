@@ -26,7 +26,7 @@ asarUnpack:
   - node_modules/ws/**
 
 mac:
-  icon: ../../artwork/domo-icon.png
+  icon: ../../artwork/domo-desktop-icon.png
   category: public.app-category.developer-tools
   target:
     - target: dmg
@@ -40,5 +40,22 @@ mac:
 
 dmg:
   artifactName: ${productName}-${version}.${ext}
+  # Explicit Finder-window geometry: the defaults sit the icons low enough
+  # that the window shows a scrollbar. Icons up at mid-height, roomier window.
+  # The window ALWAYS matches the background image's size (window.width/height
+  # are ignored otherwise), so a 540×420 background is what sets the height.
+  background: build/dmg-background.tiff
+  iconSize: 80
+  window:
+    width: 540
+    height: 420
+  contents:
+    - x: 140
+      y: 180
+      type: file
+    - x: 400
+      y: 180
+      type: link
+      path: /Applications
 
 npmRebuild: false
