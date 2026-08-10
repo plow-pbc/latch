@@ -6,60 +6,50 @@ through an **intent-based approval system**. Every operation becomes a
 structured, signed intent that a human approves before it runs inside an
 on-the-fly seatbelt sandbox scoped to exactly the approved capabilities.
 
-See [DESIGN.md](DESIGN.md) for the full architecture and the reasoning behind
-each decision. This is the v1 local loop: everything runs on one Mac, but every
-flow uses the same protocol a remote deployment will.
+Implemented in **TypeScript** (Node + Electron). See [DESIGN.md](DESIGN.md) for
+the architecture and the reasoning behind each decision, and
+[README-ts.md](README-ts.md) for the package/app layout.
 
 ## Quickstart with `just`
 
-The `justfile` wraps every workflow — build, test, and a full local stack —
-behind named recipes. Run `just` with no arguments to list them.
+The `justfile` wraps every workflow behind named recipes; the default flow is
+networked (wss:// + certificate pin). Run `just` with no arguments to list them.
+Requires Node LTS and [`just`](https://github.com/casey/just) (`brew install just`).
 
 ```sh
-just            # list all recipes
-just test       # full test suite (unit + full-stack E2E), ~5s
-just demo       # build, start a local stack, and run one end-to-end session
-just run /bin/echo hi     # run any command on the device through the full stack
-just claude-add # register the running stack with Claude Code
-just app        # launch the AppKit app (real approval dialogs)
-just down       # stop the local stack;  just clean  also deletes its home
+just install     # install workspace deps (first time)
+just test        # full test suite (unit + golden vectors + full-stack E2E)
+
+just broker      # terminal 1: the broker (wss, auto self-signed cert)
+just app         # terminal 2: the desktop app, auto-wired to the broker
+just agent "…"   # terminal 3: a Claude session that can drive the Mac
 ```
 
-`just demo` is the fastest way to *see* the system work: it stands up a broker
-and an auto-approving headless device, mints an agent, grants access, runs a
-sandboxed command, and prints the audit trail — all in a couple of seconds.
-
-Requires Swift 5.10+ / macOS 13+ and [`just`](https://github.com/casey/just)
-(`brew install just`). A `Makefile` mirrors the core build/test targets if you
-prefer `make`.
+`just broker` prints the Broker URL + certificate pin (enter these in the app's
+Settings) and a bundled connection string. For another machine to connect, pass
+the broker's reachable address: `just broker 192.168.1.50`.
 
 ## Components
 
-| Binary | Role |
+| Binary / app | Role |
 |---|---|
-| `domo-broker` | Local rendezvous service: device registry, agent identities/grants, message routing, MCP endpoint. Stands in for the future cloud broker. |
-| `domo-device` | Headless device runner — same core as the app, with a scripted policy instead of dialogs. Used for automated testing. |
-| `domo-mcp` | stdio↔socket MCP shim so Claude Code can connect. |
-| `DomoApp` | AppKit menu-bar app: approval dialogs, Goals Library + agent spin-up, rules manager, audit log viewer. |
+| `apps/broker` (`domo-broker`) | Rendezvous service: device registry, agent identities/grants, message routing, MCP endpoint. The Linux hosting target. |
+| `apps/device` (`domo-device`) | Headless device runner — same core as the app, with a scripted policy instead of dialogs. Used for automated testing. |
+| `apps/mcp` (`domo-mcp`) | stdio↔broker MCP shim so Claude Code can connect. |
+| `apps/desktop` (Domo Desktop) | Electron app: runs the device core in its main process; approval windows, Goals Library + agent spin-up, rules manager, audit viewer. |
+| `packages/{protocol,transport,broker-core,device-core}` | Shared libraries: canonical JSON + Ed25519 + intents, the transport/E2E channel, and the broker/device cores. |
 
 ## Try it with Claude Code
 
 ```sh
-just claude-add     # starts the stack (if needed) and registers MCP server "domo"
+just claude-add     # starts a broker (if needed) and registers MCP server "domo"
+# or, throwaway session:  just agent "check my disk space"
 ```
 
 Then in a Claude Code session, ask it to `list_devices`,
-`request_device_access`, and go from there. `just claude-add` prints the exact
-`claude mcp add` command it ran in case you want to inspect or repeat it.
-
-In real use the device is `DomoApp`, which prompts a human for every intent
-(Allow Once / Always Allow / Deny). Launch it with `just app`, which starts the
-broker as a **separate** process and points the app at it via `--broker-socket`
-(the app connects to a broker but never launches one). Run a broker yourself
-with `just broker`; stop the app + its broker with `just app-down`.
-
-For the underlying binaries and flags (if you want to run without `just`), see
-the recipe bodies in the `justfile`.
+`request_device_access`, and go from there. In real use the device is the
+Electron app, which prompts a human for every intent (Allow Once / Always Allow
+/ Deny).
 
 ## Agent tool surface (MCP)
 
@@ -68,10 +58,9 @@ the recipe bodies in the `justfile`.
 device-addressed, so one agent connection reaches every Mac it holds a grant
 for. See DESIGN.md §3.
 
-## Security posture (v1)
+## Security posture
 
 Ed25519-signed intents with nonce + expiry; agent keys pinned at access-grant
 time; commands sandboxed with per-invocation seatbelt profiles derived from the
-approved capabilities; append-only audit log. Deliberate v1 gaps (loopback
-without channel encryption, TOFU key pinning, broker-held agent keys) and their
-remote-milestone fixes are documented in DESIGN.md §8.
+approved capabilities; append-only audit log; wss:// with SPKI certificate
+pinning and an end-to-end encrypted agent↔device channel. See DESIGN.md §8.

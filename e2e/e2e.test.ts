@@ -1,29 +1,17 @@
 /**
- * Full-stack scenarios — the TypeScript twin of Tests/DomoE2ETests/E2ETests.swift:
- * real broker process, real headless device process, real MCP traffic. Each
- * test boots a fresh stack in a throwaway DOMO_HOME.
+ * Full-stack scenarios: real broker process, real headless device process, real
+ * MCP traffic. Each test boots a fresh stack in a throwaway DOMO_HOME and
+ * asserts on the audit log.
  *
- * The suite runs as a MATRIX (DESIGN.md §13 Phase T3/T5):
- *   - TS broker  + TS device      (always)
- *   - TS broker  + Swift device   (when the Swift stack is built)
- *   - Swift broker + TS device    (when the Swift stack is built)
- * Mixed configurations are the proof that the wire contract is honored
- * byte-for-byte across the two implementations.
+ * (During the Swift→TS migration this ran as a cross-implementation matrix;
+ * with Swift removed it's TS broker + TS device. The `matrix`/`config` shape is
+ * kept so alternate binary configurations can be re-added trivially.)
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { JSONValue, jv } from "@domo/protocol";
-import {
-  BinaryConfig,
-  MCPTestClient,
-  SWIFT_BROKER,
-  SWIFT_DEVICE,
-  TestStack,
-  TS_BROKER,
-  TS_DEVICE,
-  swiftBuilt,
-} from "./stack.js";
+import { BinaryConfig, MCPTestClient, TestStack, TS_BROKER, TS_DEVICE } from "./stack.js";
 
 interface Matrix {
   name: string;
@@ -31,10 +19,6 @@ interface Matrix {
 }
 
 const matrix: Matrix[] = [{ name: "TS broker + TS device", bin: { broker: TS_BROKER, device: TS_DEVICE } }];
-if (swiftBuilt()) {
-  matrix.push({ name: "TS broker + Swift device", bin: { broker: TS_BROKER, device: SWIFT_DEVICE } });
-  matrix.push({ name: "Swift broker + TS device", bin: { broker: SWIFT_BROKER, device: TS_DEVICE } });
-}
 
 for (const config of matrix) {
   describe(`E2E — ${config.name}`, () => {

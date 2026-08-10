@@ -390,7 +390,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  // Stay resident in the tray (menu-bar agent), like the AppKit app.
+  // Stay resident in the tray — Domo is a menu-bar agent, not a document app.
 });
 
 // Block any attempt to navigate to remote content or open external windows —

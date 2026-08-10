@@ -1,12 +1,9 @@
 /**
- * E2E harness — the TypeScript twin of Tests/DomoE2ETests/TestStack.swift.
- * Boots a real broker process + real headless device process in a throwaway
- * DOMO_HOME, and provides an MCP client speaking JSON-RPC over the agent
- * socket, exactly the way the domo-mcp shim + Claude Code would.
- *
- * The broker and device binaries are selectable so the same scenarios run in
- * three configurations (DESIGN.md §13 Phase T3/T5): TS/TS, TS-broker +
- * Swift-device, Swift-broker + TS-device.
+ * E2E harness. Boots a real broker process + real headless device process in a
+ * throwaway DOMO_HOME, and provides an MCP client speaking JSON-RPC over the
+ * agent socket, exactly the way the domo-mcp shim + Claude Code would. The
+ * broker/device binaries are selectable (BinaryConfig) so alternate
+ * configurations can be added without changing the scenarios.
  */
 import { ChildProcess, spawn } from "node:child_process";
 import crypto from "node:crypto";
@@ -33,17 +30,6 @@ export interface BinaryConfig {
 
 export const TS_BROKER = ["node", path.join(repoRoot, "apps/broker/dist/main.js")];
 export const TS_DEVICE = ["node", path.join(repoRoot, "apps/device/dist/main.js")];
-
-/** Swift build products dir (…/.build/debug), if the Swift stack is built. */
-export function swiftProductsDir(): string {
-  return path.join(repoRoot, ".build/debug");
-}
-export const SWIFT_BROKER = [path.join(swiftProductsDir(), "domo-broker")];
-export const SWIFT_DEVICE = [path.join(swiftProductsDir(), "domo-device")];
-
-export function swiftBuilt(): boolean {
-  return fs.existsSync(SWIFT_BROKER[0]!) && fs.existsSync(SWIFT_DEVICE[0]!);
-}
 
 function waitForSocket(sockPath: string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

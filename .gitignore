@@ -1,7 +1,3 @@
-.build/
-.swiftpm/
-DerivedData/
-*.xcodeproj
 .DS_Store
 
 # TypeScript stack build artifacts
