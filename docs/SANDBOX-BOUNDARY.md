@@ -132,7 +132,7 @@ and what the kernel then allows, is entirely your layer.
 
 ## 4. Also handed over
 
-Two further items, already recorded, in the same area and also yours:
+Three further items in the same area, all yours:
 
 ### 4.1 `fixtures/sbpl.json` is inert on every machine but the generator's
 
@@ -162,6 +162,26 @@ the operation against that descriptor, rather than re-opening by path. That is a
 `FileOps` and `Executor` acquire their targets, which is your layer, and it is why we stopped where
 we did rather than attempting it.
 
+### 4.3 The approval dialog claims the capability list is enforced
+
+This is the same overstatement as §1, in the place where it matters most — what the human reads at
+the moment they decide:
+
+- `apps/desktop/src/renderer/approval.js:78` — the label above the capability list reads
+  **"This will be allowed to (enforced)"**
+- `apps/desktop/src/renderer/approval.js:4` — the file's own note that the *"enforceable 'fine
+  print' is the capability set (what the sandbox is built from)"*
+- `apps/desktop/src/viewModel.ts:20` — `/** The enforceable capability set — the source of the
+  sandbox bound. */`
+
+For `fs.write` and `process.exec` the list is a fair description of what was granted. For reads it is
+not: per §1 the profile permits the whole home directory regardless. A human reading "enforced" next
+to `Read: ~/Documents/report` is being told something that is not true of the running command.
+
+We corrected the equivalent wording in our own tool descriptions and docs (§5). We have not touched
+this copy, because the approval surface is yours and the right wording depends on what you decide to
+do about §1.
+
 ## 5. What we changed on our side
 
 We corrected our own overstatements only. We did not touch profile generation.
@@ -178,14 +198,5 @@ We corrected our own overstatements only. We did not touch profile generation.
 
 ### Copy we did not change, because it is yours
 
-The approval dialog tells the human, above the capability list:
-
-- `apps/desktop/src/renderer/approval.js:78` — **"This will be allowed to (enforced)"**
-- `apps/desktop/src/renderer/approval.js:4` — the file's own note that the *"enforceable 'fine
-  print' is the capability set (what the sandbox is built from)"*
-- `apps/desktop/src/viewModel.ts:20` — `/** The enforceable capability set — the source of the
-  sandbox bound. */`
-
-The word **enforced**, next to a list that is not the enforced bound for reads, is the same
-overstatement in the place where it matters most — it is what the human reads at the moment they
-decide. We are flagging it rather than editing it, because the approval surface is yours.
+The approval dialog's own "enforced" label — see §4.3, where it is handed over alongside the other
+items in this area.
