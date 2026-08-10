@@ -10,12 +10,4 @@ export const DomoPaths = {
     if (env && env.length > 0) return env;
     return os.homedir() + "/Library/Application Support/Domo";
   },
-
-  agentSocket(home?: string): string {
-    return (home ?? this.defaultHome) + "/run/agent.sock";
-  },
-
-  deviceSocket(home?: string): string {
-    return (home ?? this.defaultHome) + "/run/device.sock";
-  },
 };

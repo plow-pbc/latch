@@ -14,8 +14,7 @@
     "@domo/app-mcp": "*",
     "@domo/broker-core": "*",
     "@domo/device-core": "*",
-    "@domo/protocol": "*",
-    "@domo/transport": "*"
+    "@domo/protocol": "*"
   },
   "devDependencies": {
     "electron": "33.4.11",

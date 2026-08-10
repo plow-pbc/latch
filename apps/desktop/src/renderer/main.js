@@ -49,15 +49,10 @@ function closeAllMenus() {
 }
 document.addEventListener("click", closeAllMenus);
 
-// The settings page's live status line, when that tab is mounted.
-let settingsStatusNote = null;
-
 async function refreshStatus() {
   const status = await window.domo.statusGet();
   statusDot.className = "status-dot" + (status.connected ? " on" : "");
-  const text = status.connected ? `Connected · ${status.name}` : "Not connected";
-  statusText.textContent = text;
-  if (settingsStatusNote) settingsStatusNote.textContent = text;
+  statusText.textContent = status.connected ? `Connected · ${status.name}` : "Not connected";
 }
 
 // ---- Audit (master–detail, mockup Alternative 1) ----
@@ -326,18 +321,6 @@ function detailFor(a) {
 
 // ---- Goals ----
 
-// Only shown on FAILURE — a successful Start agent opens a Terminal, which is
-// where all interaction and status happen, so there's nothing to report here.
-let goalsError = "";
-
-async function startAgentFor(goalText) {
-  if (!goalText.trim()) { goalsError = "Type or pick a goal first."; renderGoals(); return; }
-  goalsError = "";
-  const result = await window.domo.goalsStartAgent(goalText);
-  goalsError = result.ok ? "" : result.message;
-  renderGoals();
-}
-
 async function renderGoals() {
   const goals = await window.domo.goalsList();
   const titleInput = el("input", { class: "text", attrs: { placeholder: "Goal title" } });
@@ -350,15 +333,10 @@ async function renderGoals() {
     await window.domo.goalsAdd(titleInput.value.trim(), textInput.value.trim());
     renderGoals();
   });
-  const startNew = el("button", { class: "btn primary", text: "Start Agent" });
-  startNew.addEventListener("click", () => startAgentFor(textInput.value));
   // Same 8px spacing as a goal item's action column.
-  const composeActions = el("div", { class: "goal-actions" }, [addBtn, startNew]);
+  const composeActions = el("div", { class: "goal-actions" }, [addBtn]);
 
   const items = goals.map((g) => {
-    const start = el("button", { class: "btn primary", text: "Start Agent" });
-    start.addEventListener("click", () => startAgentFor(g.text));
-
     // "⋯" overflow menu with a Remove item.
     const removeItem = el("button", { class: "menu-item", text: "Remove" });
     removeItem.addEventListener("click", async () => { await window.domo.goalsRemove(g.id); renderGoals(); });
@@ -376,10 +354,9 @@ async function renderGoals() {
       el("h4", { text: g.title }),
       el("p", { text: g.text }),
     ]);
-    // Right column, top-aligned: "⋯" menu then Start Agent in the top corner.
+    // Right column, top-aligned: the "⋯" menu in the top corner.
     const actions = el("div", { class: "goal-actions" }, [
       el("div", { class: "menu-wrap" }, [menuBtn, menu]),
-      start,
     ]);
     return el("div", { class: "item goal-item" }, [main, actions]);
   });
@@ -391,18 +368,14 @@ async function renderGoals() {
       el("div", { class: "row" }, [el("div", { class: "spacer" }), composeActions]),
     ]),
   ];
-  if (goalsError) {
-    children.push(el("div", { class: "item" }, [el("pre", { class: "agent-status", text: goalsError })]));
-  }
   children.push(...items);
   view.replaceChildren(el("div", { class: "panel" }, children));
 }
 
-// ---- Rules + pinned agents ----
+// ---- Rules ----
 
 async function renderRules() {
   const rules = await window.domo.rulesList();
-  const agents = await window.domo.agentsList();
 
   const ruleItems = rules.length
     ? rules.map((r) => {
@@ -416,21 +389,9 @@ async function renderRules() {
       })
     : [el("div", { class: "empty", text: "No always-allow rules." })];
 
-  const agentItems = agents.length
-    ? agents.map((id) => {
-        const revoke = el("button", { class: "btn danger", text: "Revoke Agent" });
-        revoke.addEventListener("click", async () => { await window.domo.agentsRevoke(id); renderRules(); });
-        return el("div", { class: "item" }, [el("div", { class: "row" }, [
-          el("span", { class: "mono", text: id }), el("div", { class: "spacer" }), revoke,
-        ])]);
-      })
-    : [el("div", { class: "empty", text: "No agents pinned." })];
-
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "section-label", text: "Always-allow rules" }),
     ...ruleItems,
-    el("div", { class: "section-label", text: "Trusted agents" }),
-    ...agentItems,
   ]));
 }
 
@@ -448,59 +409,6 @@ function capText(c) {
 // ---- Settings ----
 
 async function renderSettings() {
-  const broker = await window.domo.settingsGetBroker();
-  let connMode = broker.mode === "local" ? "local" : "broker";
-  const urlInput = el("input", { class: "text", attrs: { placeholder: "wss://broker.example:8444/" } });
-  urlInput.value = broker.url || "";
-  const pinInput = el("input", { class: "text", attrs: { placeholder: "base64 SPKI pin (leave blank for a CA-signed cert)" } });
-  pinInput.value = broker.pin || "";
-  const urlField = el("div", { class: "field" }, [el("label", { text: "Broker URL" }), urlInput]);
-  const pinField = el("div", { class: "field" }, [el("label", { text: "Certificate pin" }), pinInput]);
-  const localNote = el("p", {
-    class: "faint conn-note",
-    text:
-      "Runs a private broker inside the app. Agents connect over a Unix socket " +
-      "on this Mac only — nothing listens on the network, and it shuts down with the app.",
-  });
-  const save = el("button", { class: "btn primary", text: "Save & Reconnect" });
-  // Live connection status — updated by refreshStatus() on every status change.
-  const note = el("p", { class: "faint", text: "" });
-  settingsStatusNote = note;
-
-  // Broker (network) vs Local (in-app, Unix socket) — switching applies
-  // immediately; the URL/pin fields only make sense in broker mode.
-  const connSeg = el("div", { class: "seg conn-seg" });
-  const CONN_MODES = [
-    ["broker", "Remote Broker"],
-    ["local", "Local (This Mac Only)"],
-  ];
-  const renderConnMode = () => {
-    connSeg.replaceChildren(...CONN_MODES.map(([value, label]) => {
-      const button = el("button", { class: connMode === value ? "active" : "", text: label });
-      button.addEventListener("click", async () => {
-        if (connMode === value) return;
-        connMode = value;
-        renderConnMode();
-        await window.domo.settingsSetBroker(urlInput.value.trim(), pinInput.value.trim(), connMode);
-        refreshStatus();
-      });
-      return button;
-    }));
-    urlField.style.display = connMode === "broker" ? "" : "none";
-    pinField.style.display = connMode === "broker" ? "" : "none";
-    localNote.style.display = connMode === "local" ? "" : "none";
-    save.style.display = connMode === "broker" ? "" : "none";
-  };
-  renderConnMode();
-
-  save.addEventListener("click", async () => {
-    // The URL field also accepts a pasted domo1.… string, decoded server-side.
-    await window.domo.settingsSetBroker(urlInput.value.trim(), pinInput.value.trim(), connMode);
-    // Re-render so the field shows the decoded wss:// URL + pin (confirming the
-    // paste parsed), and the note reflects the live connection status.
-    renderSettings();
-    refreshStatus();
-  });
   const restoreNote = el("p", { class: "faint", text: "" });
   const restore = el("button", { class: "btn", text: "Restore Default Goals" });
   restore.addEventListener("click", async () => {
@@ -513,7 +421,7 @@ async function renderSettings() {
   apiKeyInput.value = await window.domo.apiKeyGet();
   const reviewerInfo = await window.domo.reviewerInfoGet();
 
-  // Approval mode for operations (device pairing is always asked).
+  // Approval mode for operations.
   let currentMode = await window.domo.approvalModeGet();
   const showSuggestions = await window.domo.showSuggestionsGet();
   let hasKey = !!apiKeyInput.value.trim();
@@ -583,18 +491,11 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Connection", "Where this Mac connects to receive agent requests.", [
-      connSeg,
-      urlField,
-      pinField,
-      localNote,
-      el("div", { class: "row" }, [note, el("div", { class: "spacer" }), save]),
-    ]),
     group("Anthropic API key", "Required for the Adversarial Agent features. Stored locally.", [
       apiKeyInput,
       el("p", { class: "faint reviewer-note", text: `Reviewer: ${reviewerInfo}` }),
     ]),
-    group("Approval mode", "How operations are decided. Device pairing is always asked, separately.", [
+    group("Approval mode", "How operations are decided.", [
       modeChips,
       suggestLabel,
     ]),
@@ -602,7 +503,6 @@ async function renderSettings() {
       el("div", { class: "row" }, [restore, restoreNote]),
     ]),
   ]));
-  refreshStatus(); // populate the live status note immediately
 }
 
 function render() {
@@ -615,7 +515,6 @@ function render() {
 function selectTab(tab) {
   currentTab = tab;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
-  if (tab !== "settings") settingsStatusNote = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }

@@ -45,7 +45,6 @@
   "intent" : {
     "agentDisplay" : "Golden Agent",
     "agentId" : "ff73a0647bbc29aa",
-    "agentPublicKey" : "A6EHv\/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
     "capabilities" : [
       {
         "argv" : [
@@ -85,8 +84,7 @@
     "nonce" : "fixture-nonce-0001",
     "planContext" : "session plan context",
     "request" : "run: sips -Z 1600 \/domo-fixture-nonexistent\/in\/..\/photos",
-    "sessionId" : "fixture-session-0001",
-    "signature" : "68i85uvo3G0o+\/m0cUDhaiZRQvbi\/gTIFDra8wV8HRX0wQxIb1taASg0bQ1W9k+XeYiCGPHtzkMluQyYPBnVCA=="
+    "sessionId" : "fixture-session-0001"
   },
   "rule" : {
     "agentDisplay" : "Golden Agent",
@@ -124,7 +122,5 @@
     "deviceId" : "e64f81b2413017de",
     "ruleKey" : "43783b60c2521a64f0db55018bc7ae6847016a17e1be1b2007e422a2669024dd"
   },
-  "ruleKey" : "43783b60c2521a64f0db55018bc7ae6847016a17e1be1b2007e422a2669024dd",
-  "signature" : "68i85uvo3G0o+\/m0cUDhaiZRQvbi\/gTIFDra8wV8HRX0wQxIb1taASg0bQ1W9k+XeYiCGPHtzkMluQyYPBnVCA==",
-  "signingData" : "{\"agentDisplay\":\"Golden Agent\",\"agentId\":\"ff73a0647bbc29aa\",\"agentPublicKey\":\"A6EHv\/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=\",\"capabilities\":[{\"argv\":[\"sips\",\"-Z\",\"1600\",\"photos\"],\"cwd\":\"\/domo-fixture-nonexistent\/work\/.\/dir\",\"kind\":\"process.exec\"},{\"allowed\":false,\"kind\":\"network\"},{\"kind\":\"fs.write\",\"paths\":[\"\/domo-fixture-nonexistent\/out\"],\"reason\":\"output dir\"},{\"kind\":\"fs.read\",\"paths\":[\"\/domo-fixture-nonexistent\/b\",\"\/domo-fixture-nonexistent\/a\/sub\/..\"],\"reason\":\"inputs\"}],\"createdAt\":\"2026-08-09T12:00:00Z\",\"deviceId\":\"e64f81b2413017de\",\"expiresAt\":\"2026-08-09T12:02:00Z\",\"goal\":\"resize the café photos 🙂 (see wss:\/\/broker\/path)\",\"intentId\":\"fixture-intent-0001\",\"nonce\":\"fixture-nonce-0001\",\"planContext\":\"session plan context\",\"request\":\"run: sips -Z 1600 \/domo-fixture-nonexistent\/in\/..\/photos\",\"sessionId\":\"fixture-session-0001\"}"
+  "ruleKey" : "43783b60c2521a64f0db55018bc7ae6847016a17e1be1b2007e422a2669024dd"
 }

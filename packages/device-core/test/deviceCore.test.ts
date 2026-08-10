@@ -12,7 +12,6 @@ import {
   Intent,
   KeyPair,
   makeIntent,
-  signIntent,
 } from "@domo/protocol";
 import {
   AuditLog,
@@ -73,22 +72,19 @@ describe("PolicyEngine", () => {
   // across intents requires the same agent, as it would be in a real session.
   const agentKey = new KeyPair();
   function intentWith(caps: Capability[]): Intent {
-    const intent = makeIntent({
+    return makeIntent({
       agentId: agentKey.fingerprint,
       agentDisplay: "Agent",
-      agentPublicKey: agentKey.publicKeyBase64,
       deviceId: "device-1",
       request: "test",
       capabilities: caps,
       sessionId: "s1",
     });
-    signIntent(intent, agentKey);
-    return intent;
   }
 
   it("always_allow stores a rule reused on the next matching intent", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
-    const always = new HeadlessPolicy({ access: "allow", intent: "always_allow" });
+    const always = new HeadlessPolicy({ intent: "always_allow" });
     const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
 
     const first = await engine.decide(intentWith(caps), always);
@@ -98,7 +94,7 @@ describe("PolicyEngine", () => {
 
     // A fresh intent with the same capabilities matches the stored rule —
     // even though the delegate would now deny.
-    const denyAll = new HeadlessPolicy({ access: "allow", intent: "deny" });
+    const denyAll = new HeadlessPolicy({ intent: "deny" });
     const second = await engine.decide(intentWith(caps), denyAll);
     expect(second.decision).toBe("always_allow");
     expect(second.source).toBe("rule");
@@ -106,7 +102,7 @@ describe("PolicyEngine", () => {
 
   it("deny is never stored as a rule", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
-    const deny = new HeadlessPolicy({ access: "allow", intent: "deny" });
+    const deny = new HeadlessPolicy({ intent: "deny" });
     const grant = await engine.decide(
       intentWith([{ kind: "network", allowed: true }]),
       deny,
@@ -118,7 +114,6 @@ describe("PolicyEngine", () => {
   it("denyKinds forces a deny for matching capabilities", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const policy = new HeadlessPolicy({
-      access: "allow",
       intent: "allow_once",
       denyKinds: ["process.exec"],
     });
@@ -133,7 +128,6 @@ describe("PolicyEngine", () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     // Delegate returning {decision, source} — the source is recorded.
     const annotated = {
-      decideAccess: async () => true,
       decideIntent: async () => ({ decision: "allow_once" as const, source: "approve" }),
     };
     const g1 = await engine.decide(intentWith([{ kind: "network", allowed: true }]), annotated);
@@ -142,7 +136,6 @@ describe("PolicyEngine", () => {
 
     // Back-compat: a delegate returning a bare Decision is sourced "prompt".
     const bare = {
-      decideAccess: async () => true,
       decideIntent: async () => "deny" as const,
     };
     const g2 = await engine.decide(intentWith([{ kind: "network", allowed: false }]), bare);

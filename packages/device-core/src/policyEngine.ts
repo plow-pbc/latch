@@ -25,9 +25,8 @@ import {
  */
 export type IntentDecision = Decision | { decision: Decision; source?: string };
 
-/** Whoever answers approval questions: app UI, headless script, iOS relay… */
+/** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
-  decideAccess(agentId: string, agentDisplay: string, goals: string): Promise<boolean>;
   decideIntent(intent: Intent): Promise<IntentDecision>;
 }
 
@@ -78,24 +77,14 @@ export class PolicyEngine {
   }
 }
 
-/** Scripted decisions for the headless runner — what makes full-stack
- * automated E2E testing possible without a UI (DESIGN.md §10). */
+/** Scripted decisions — what makes automated testing possible without a UI. */
 export interface HeadlessPolicyConfig {
-  access: "allow" | "deny";
   intent: "allow_once" | "always_allow" | "deny";
   denyKinds?: string[];
 }
 
 export class HeadlessPolicy implements PolicyDelegate {
   constructor(public readonly config: HeadlessPolicyConfig) {}
-
-  static fromFile(configPath: string): HeadlessPolicy {
-    return new HeadlessPolicy(JSON.parse(fs.readFileSync(configPath, "utf8")));
-  }
-
-  async decideAccess(): Promise<boolean> {
-    return this.config.access === "allow";
-  }
 
   async decideIntent(intent: Intent): Promise<Decision> {
     if (this.config.denyKinds?.some((kind) => intent.capabilities.some((c) => c.kind === kind))) {

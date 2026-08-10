@@ -3,11 +3,7 @@
   "references": [
     { "path": "packages/protocol" },
     { "path": "packages/transport" },
-    { "path": "packages/broker-core" },
     { "path": "packages/device-core" },
-    { "path": "apps/broker" },
-    { "path": "apps/mcp" },
-    { "path": "apps/device" },
     { "path": "apps/desktop" }
   ]
 }

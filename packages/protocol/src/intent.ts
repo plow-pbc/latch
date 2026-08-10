@@ -2,6 +2,12 @@
  * Intent / Decision / Grant / AlwaysAllowRule — twin of DomoProtocol/Intent.swift.
  * Dates are ISO-8601 strings (seconds precision) at rest and on the wire, so
  * canonical encoding never touches floating point.
+ *
+ * An Intent is now a MAC-INTERNAL construct: it is built on this Mac from an
+ * authenticated agent's tool call, never received over the wire, so it carries
+ * no agent public key and no agent signature (there is nothing to verify — the
+ * bytes never left this process). The DEVICE signature over a Grant stays: that
+ * one is the Mac attesting to its own decision.
  */
 import crypto from "node:crypto";
 import { Capability, normalizedCapability, RuleKey } from "./capability.js";
@@ -12,7 +18,6 @@ export interface Intent {
   intentId: string;
   agentId: string;
   agentDisplay: string;
-  agentPublicKey: string;
   deviceId: string;
   goal?: string;
   planContext?: string;
@@ -22,13 +27,11 @@ export interface Intent {
   expiresAt: string;
   sessionId: string;
   nonce: string;
-  signature?: string;
 }
 
 export function makeIntent(args: {
   agentId: string;
   agentDisplay: string;
-  agentPublicKey: string;
   deviceId: string;
   goal?: string;
   planContext?: string;
@@ -41,7 +44,6 @@ export function makeIntent(args: {
     intentId: crypto.randomUUID().toUpperCase(),
     agentId: args.agentId,
     agentDisplay: args.agentDisplay,
-    agentPublicKey: args.agentPublicKey,
     deviceId: args.deviceId,
     goal: args.goal,
     planContext: args.planContext,
@@ -52,28 +54,6 @@ export function makeIntent(args: {
     sessionId: args.sessionId,
     nonce: crypto.randomUUID().toUpperCase(),
   };
-}
-
-/** Canonical bytes covered by the signature: the intent minus `signature`. */
-export function intentSigningData(intent: Intent): Buffer {
-  const unsigned = { ...intent };
-  delete unsigned.signature;
-  return canonicalBytes(unsigned as unknown as JSONValue);
-}
-
-export function signIntent(intent: Intent, keyPair: KeyPair): void {
-  intent.signature = keyPair.sign(intentSigningData(intent)).toString("base64");
-}
-
-/**
- * Verifies the embedded signature against the embedded public key. Callers
- * must additionally check the public key is the one pinned for this agent at
- * access-grant time (DeviceAgent does).
- */
-export function verifyIntentSignature(intent: Intent): boolean {
-  if (!intent.signature) return false;
-  const sig = Buffer.from(intent.signature, "base64");
-  return KeyPair.verify(sig, intentSigningData(intent), intent.agentPublicKey);
 }
 
 export function intentIsExpired(intent: Intent, now = new Date()): boolean {

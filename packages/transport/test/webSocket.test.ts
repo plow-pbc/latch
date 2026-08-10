@@ -1,27 +1,25 @@
 /**
- * WebSocket transport: ws:// loopback, wss:// with a self-signed cert +
- * SPKI pinning (good pin connects, bad pin fails closed, no-trust fails
- * against the CA store) — mirroring the Swift PinningTests posture.
+ * WebSocket transport (client half): ws:// loopback round-trip, the
+ * buffer-until-startReading contract, close propagation, and the TLS posture
+ * that replaced SPKI pinning — a self-signed peer is refused by the system CA
+ * store, so a relay endpoint must present a real certificate.
+ *
+ * The test server is a bare `ws` server: the listener half of the transport
+ * seam went with the broker, so nothing in the package can serve any more.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
-import { jv } from "@domo/protocol";
-import {
-  Connection,
-  LineRPC,
-  SPKIPinningEvaluator,
-  WebSocketDialer,
-  WebSocketListener,
-  spkiPinOfDerCertificate,
-} from "@domo/transport";
+import { AddressInfo } from "node:net";
+import { WebSocketServer } from "ws";
+import { Connection, WebSocketDialer } from "@domo/transport";
 
 let dir: string;
 let certPath: string;
 let keyPath: string;
-let pin: string;
 
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-ws-"));
@@ -31,94 +29,100 @@ beforeAll(() => {
     `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 ` +
       `-keyout ${keyPath} -out ${certPath} -days 2 -nodes -subj /CN=127.0.0.1 2>/dev/null`,
   );
-  // Pin via the canonical OpenSSL recipe — proves our extractor matches the
-  // interoperable definition (the same one the Swift SPKIHash implements).
-  pin = execSync(
-    `openssl x509 -in ${certPath} -pubkey -noout | openssl pkey -pubin -outform der | ` +
-      `openssl dgst -sha256 -binary | openssl base64`,
-  )
-    .toString()
-    .trim();
 });
 
 afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function echoListener(listener: WebSocketListener): void {
-  listener.onConnection = (conn: Connection) => {
-    const rpc = new LineRPC(conn);
-    rpc.register("echo", async (params) => params);
+/** A bare echo server; returns its port and a stop(). */
+async function echoServer(tls = false): Promise<{ port: number; stop: () => void }> {
+  const server = tls
+    ? https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) })
+    : undefined;
+  const wss = server ? new WebSocketServer({ server }) : new WebSocketServer({ port: 0 });
+  wss.on("connection", (ws) => ws.on("message", (data: Buffer) => ws.send(data)));
+  const port = await new Promise<number>((resolve) => {
+    if (server) server.listen(0, () => resolve((server.address() as AddressInfo).port));
+    else wss.on("listening", () => resolve((wss.address() as AddressInfo).port));
+  });
+  return {
+    port,
+    stop: () => {
+      // wss.close() only stops accepting — drop live clients too, so a stop()
+      // is what a peer going away actually looks like.
+      for (const client of wss.clients) client.terminate();
+      wss.close();
+      server?.close();
+    },
   };
 }
 
+function nextLine(conn: Connection): Promise<Buffer> {
+  return new Promise((resolve) => {
+    conn.onLine = (line) => resolve(line);
+  });
+}
+
 describe("WebSocket transport", () => {
-  it("SPKI extractor matches the OpenSSL recipe", () => {
-    expect(spkiPinOfDerCertificate(fs.readFileSync(certPath))).toBe(pin);
-  });
-
   it("plain ws:// loopback round-trip", async () => {
-    const listener = new WebSocketListener(0);
-    echoListener(listener);
-    await listener.start();
+    const { port, stop } = await echoServer();
     try {
-      const conn = await new WebSocketDialer(`ws://127.0.0.1:${listener.actualPort}/`).connect();
-      const rpc = new LineRPC(conn);
-      rpc.start();
-      const result = await rpc.call("echo", { hello: "ws" });
-      expect(jv(result).get("hello").str).toBe("ws");
-      rpc.close();
+      const conn = await new WebSocketDialer(`ws://127.0.0.1:${port}/`).connect();
+      const line = nextLine(conn);
+      conn.startReading();
+      conn.sendLine(Buffer.from(JSON.stringify({ hello: "ws" }), "utf8"));
+      expect((await line).toString("utf8")).toBe('{"hello":"ws"}');
+      conn.close();
     } finally {
-      listener.stop();
+      stop();
     }
   });
 
-  it("wss:// with the correct SPKI pin connects", async () => {
-    const listener = new WebSocketListener(0, { certPath, keyPath });
-    echoListener(listener);
-    await listener.start();
+  it("buffers inbound frames until startReading, then delivers them in order", async () => {
+    const { port, stop } = await echoServer();
     try {
-      const trust = new SPKIPinningEvaluator([{ sha256Base64: pin }]);
-      const conn = await new WebSocketDialer(
-        `wss://127.0.0.1:${listener.actualPort}/`,
-        trust,
-      ).connect();
-      const rpc = new LineRPC(conn);
-      rpc.start();
-      const result = await rpc.call("echo", { secure: true });
-      expect(jv(result).get("secure").bool).toBe(true);
-      rpc.close();
+      const conn = await new WebSocketDialer(`ws://127.0.0.1:${port}/`).connect();
+      // Send before ever calling startReading — the echoes must be held, not lost.
+      conn.sendLine(Buffer.from("one", "utf8"));
+      conn.sendLine(Buffer.from("two", "utf8"));
+      await new Promise((r) => setTimeout(r, 100));
+      const seen: string[] = [];
+      conn.onLine = (line) => seen.push(line.toString("utf8"));
+      conn.startReading();
+      expect(seen).toEqual(["one", "two"]);
+      conn.close();
     } finally {
-      listener.stop();
+      stop();
     }
   });
 
-  it("wss:// with a wrong pin fails closed", async () => {
-    const listener = new WebSocketListener(0, { certPath, keyPath });
-    echoListener(listener);
-    await listener.start();
+  it("reports the peer going away", async () => {
+    const { port, stop } = await echoServer();
+    const conn = await new WebSocketDialer(`ws://127.0.0.1:${port}/`).connect();
+    const closed = new Promise<void>((resolve) => {
+      conn.onClose = () => resolve();
+    });
+    conn.startReading();
+    stop();
+    await expect(closed).resolves.toBeUndefined();
+  });
+
+  it("wss:// self-signed is refused by the CA store", async () => {
+    const { port, stop } = await echoServer(true);
     try {
-      const trust = new SPKIPinningEvaluator([
-        { sha256Base64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
-      ]);
-      await expect(
-        new WebSocketDialer(`wss://127.0.0.1:${listener.actualPort}/`, trust, 5).connect(),
-      ).rejects.toThrow(/pin mismatch|websocket connect failed/);
+      await expect(new WebSocketDialer(`wss://127.0.0.1:${port}/`, 5).connect()).rejects.toThrow(
+        /websocket connect failed/,
+      );
     } finally {
-      listener.stop();
+      stop();
     }
   });
 
-  it("wss:// self-signed without a pin fails CA validation", async () => {
-    const listener = new WebSocketListener(0, { certPath, keyPath });
-    echoListener(listener);
-    await listener.start();
-    try {
-      await expect(
-        new WebSocketDialer(`wss://127.0.0.1:${listener.actualPort}/`, null, 5).connect(),
-      ).rejects.toThrow(/websocket connect failed/);
-    } finally {
-      listener.stop();
-    }
+  it("a dial to nothing fails rather than hanging", async () => {
+    // Port 1 is reserved and never listening on a normal host.
+    await expect(new WebSocketDialer("ws://127.0.0.1:1/", 5).connect()).rejects.toThrow(
+      /websocket connect failed/,
+    );
   });
 });

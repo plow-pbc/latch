@@ -1,6 +1,5 @@
 /**
- * App settings persisted under DOMO_HOME. The editable broker connection
- * string is the only thing here today (mirrors the Swift settings window).
+ * App settings persisted under DOMO_HOME.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -13,8 +12,7 @@ export interface WindowBounds {
 }
 
 /**
- * How operation intents (NOT device pairing/access — those are always asked)
- * are decided:
+ * How operation intents are decided:
  *   - approve:     auto "allow once", no dialog
  *   - adversarial: (placeholder) an adversarial-agent review; for now waits
  *                  briefly, then "allow once"
@@ -23,23 +21,12 @@ export interface WindowBounds {
  */
 export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
 
-/**
- * How the app reaches a broker:
- *   - broker: dial the configured broker connection (wss:// URL + pin) — default
- *   - local:  run the broker in-process and talk to it over Unix sockets;
- *             nothing listens on the network and it dies with the app
- */
-export type ConnectionMode = "broker" | "local";
-
 export interface Settings {
-  brokerConnection: string;
-  /** Where agent requests come from (network broker vs in-app local broker). */
-  connectionMode: ConnectionMode;
   /** The last-selected main-window tab, restored across launches. */
   selectedTab: string;
   /** The main window's last size + position, restored across launches. */
   windowBounds?: WindowBounds;
-  /** How operation intents are decided (device pairing is always asked). */
+  /** How operation intents are decided. */
   approvalMode: ApprovalMode;
   /** In Ask mode, highlight the button the adversarial agent suggests. */
   showAgentSuggestions: boolean;
@@ -53,8 +40,6 @@ function settingsPath(home: string): string {
 
 export function loadSettings(home: string): Settings {
   const defaults: Settings = {
-    brokerConnection: "",
-    connectionMode: "broker",
     selectedTab: "audit",
     approvalMode: "ask",
     showAgentSuggestions: true,

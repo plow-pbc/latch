@@ -1,7 +1,8 @@
 /**
- * Device identity + pinned agent keys — twin of DeviceIdentity.swift,
- * DeviceKeyStore.swift (file store), and KnownAgents. Same on-disk layout, so
- * a TS device reuses an identity created by the Swift device and vice versa.
+ * Device identity — twin of DeviceIdentity.swift and DeviceKeyStore.swift
+ * (file store). Agent public keys are no longer pinned here: with no
+ * agent-held signing key there is nothing to pin, and an agent credential is
+ * now issued and revoked by the relay.
  * (The Keychain-backed store is the Electron app's `safeStorage` milestone.)
  */
 import fs from "node:fs";
@@ -75,66 +76,4 @@ export function loadOrCreateIdentity(home: string, defaultName: string): DeviceI
   );
   fs.chmodSync(file, 0o600);
   return identity;
-}
-
-/**
- * Agent public keys pinned at access-grant time. Revocation is authoritative
- * on the DEVICE: a revoked agent's key is dropped AND remembered, so a stale
- * or hostile broker can neither route nor silently re-pin it.
- */
-export class KnownAgents {
-  private keys: { [agentId: string]: string } = {};
-  private revoked = new Set<string>();
-
-  constructor(public readonly file: string) {
-    try {
-      const stored = JSON.parse(fs.readFileSync(file, "utf8")) as
-        | { keys?: { [k: string]: string }; revoked?: string[] }
-        | { [k: string]: string };
-      if (typeof stored === "object" && stored !== null && "keys" in stored) {
-        const s = stored as { keys?: { [k: string]: string }; revoked?: string[] };
-        this.keys = s.keys ?? {};
-        this.revoked = new Set(s.revoked ?? []);
-      } else {
-        // Back-compat with the pre-revocation on-disk format (a bare map).
-        this.keys = stored as { [k: string]: string };
-      }
-    } catch {
-      /* empty */
-    }
-  }
-
-  pin(agentId: string, publicKey: string): void {
-    // A revoked agent can never be silently re-pinned by the broker.
-    if (this.revoked.has(agentId)) return;
-    this.keys[agentId] = publicKey;
-    this.persist();
-  }
-
-  revoke(agentId: string): void {
-    delete this.keys[agentId];
-    this.revoked.add(agentId);
-    this.persist();
-  }
-
-  isRevoked(agentId: string): boolean {
-    return this.revoked.has(agentId);
-  }
-
-  publicKeyFor(agentId: string): string | null {
-    if (this.revoked.has(agentId)) return null;
-    return this.keys[agentId] ?? null;
-  }
-
-  pinnedAgentIds(): string[] {
-    return Object.keys(this.keys).sort();
-  }
-
-  private persist(): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    fs.writeFileSync(
-      this.file,
-      JSON.stringify({ keys: this.keys, revoked: [...this.revoked] }, null, 2) + "\n",
-    );
-  }
 }

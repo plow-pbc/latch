@@ -13,7 +13,6 @@ function intentOf(overrides: Partial<Intent> = {}): Intent {
     ...makeIntent({
       agentId: "agent-1",
       agentDisplay: "Family Coordinator",
-      agentPublicKey: "pk",
       deviceId: "device-1",
       goal: "Check how much disk space I have",
       planContext: "session plan",

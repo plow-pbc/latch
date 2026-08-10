@@ -1,25 +1,12 @@
 # Domo — task runner (TypeScript stack).
 # Run `just` with no arguments to list everything.
 #
-# The default flow is NETWORKED (wss:// + SPKI pin), not Unix sockets — the same
-# shape a hosted broker uses. Three commands get you running:
-#
-#     just broker      # terminal 1: the broker (wss, auto self-signed cert)
-#     just app         # terminal 2: the desktop app, auto-wired to the broker
-#     just agent "…"   # terminal 3: a Claude session that can drive the Mac
-#
-# Everything shares one home dir ({{nethome}}): the broker keeps its state +
-# TLS cert there, and the app is pointed at the broker by seeding its settings
-# from that home. Defunct Swift recipes are prefixed `swift-`.
+# The broker is gone: this Mac no longer runs or dials a relay of its own. The
+# outbound client that dials the Plow relay is the next piece of work, so what
+# is left here is build, test, and running the app against its local state.
 
 root    := justfile_directory()
-# Shared home for the networked broker + the app's device identity/settings.
 nethome := env_var('HOME') / ".domo"
-mcp     := root / "apps/mcp/dist/main.js"
-brokerjs := root / "apps/broker/dist/main.js"
-agentport := "8443"
-deviceport := "8444"
-publichost := "127.0.0.1"
 
 _default:
     @just --list
@@ -37,7 +24,7 @@ build:
     npx tsc -b
     node apps/desktop/scripts/copy-renderer.mjs
 
-# Run the full test suite (unit + golden vectors + full-stack E2E).
+# Run the full test suite.
 test:
     npx vitest run
 
@@ -57,184 +44,26 @@ package profile="domo-notary": build
     cd "{{root}}/apps/desktop" && APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac
 
 # ---------------------------------------------------------------------------
-# Networked flow (DEFAULT) — broker + app + agent, all over wss:// + pin
+# Running the app
 # ---------------------------------------------------------------------------
 
-# Terminal 1: run the broker (wss + auto self-signed cert). Ctrl-C to stop.
-# For another machine to connect, pass this broker's reachable address:
-#   just broker 192.168.1.50   (else the printed URL is 127.0.0.1, local-only)
-broker host=publichost: build
-    node "{{brokerjs}}" --home "{{nethome}}" \
-        --agent-listen wss://0.0.0.0:{{agentport}}/ \
-        --device-listen wss://0.0.0.0:{{deviceport}}/ \
-        --public-host "{{host}}"
-
-# Terminal 2: launch the desktop app, auto-wired to the broker.
-# (Ensures a broker is up, seeds the app's saved broker, then opens Electron.)
+# Launch the desktop app against {{nethome}}.
 app: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just --justfile "{{justfile()}}" _ensure-broker
-    cs="$(node "{{brokerjs}}" connect-string --home "{{nethome}}" | grep -o 'domo1\.[A-Za-z0-9_-]*' | head -1)"
-    if [ -z "$cs" ]; then
-        echo "Could not get a broker connection string. Is a stale broker holding the port?" >&2
-        echo "Try: just down && just clean, then re-run. Broker log: just logs" >&2
-        exit 1
-    fi
-    mkdir -p "{{nethome}}/app"
-    # Merge, don't clobber — preserve other settings (e.g. the saved tab).
-    node -e 'const fs=require("fs"),p=process.argv[1];let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}s.brokerConnection=process.argv[2];fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")' \
-        "{{nethome}}/app/settings.json" "$cs"
-    echo "App pointed at wss://{{publichost}}:{{deviceport}}/  (home={{nethome}})"
     DOMO_HOME="{{nethome}}" npx electron "{{root}}/apps/desktop"
 
-# Terminal 3: open a trace-free Claude session that can drive the Mac.
-# Mints an ephemeral agent (nothing persists). Optional:  just agent "check disk space"
-agent prompt="": build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just --justfile "{{justfile()}}" _ensure-broker
-    if ! command -v claude >/dev/null 2>&1; then
-        echo "Claude Code CLI (claude) not found on PATH." >&2; exit 1
-    fi
-    cs="$(node "{{brokerjs}}" issue-agent --home "{{nethome}}" --name "Ephemeral agent" \
-        | grep -o 'domo1\.[A-Za-z0-9_-]*' | head -1)"
-    cfgbase="$(mktemp -t domo-mcp)"; cfg="$cfgbase.json"; mv "$cfgbase" "$cfg"; chmod 600 "$cfg"
-    trap 'rm -f "$cfg"' EXIT
-    # Passed as a FILE so the token never appears in `ps`.
-    node -e 'const fs=require("fs");fs.writeFileSync(process.argv[1],JSON.stringify({mcpServers:{domo:{type:"stdio",command:"node",args:[process.argv[2]],env:{DOMO_CONNECTION:process.argv[3]}}}}))' \
-        "$cfg" "{{mcp}}" "$cs"
-    if [ -n "{{prompt}}" ]; then
-        claude --strict-mcp-config --mcp-config "$cfg" --allowedTools mcp__domo -p "{{prompt}}"
-    else
-        claude --strict-mcp-config --mcp-config "$cfg" --allowedTools mcp__domo
-    fi
-
-# Register the broker with Claude Code PERSISTENTLY (use `just agent` for throwaway).
-claude-add: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just --justfile "{{justfile()}}" _ensure-broker
-    cs="$(node "{{brokerjs}}" issue-agent --home "{{nethome}}" --name "Claude" \
-        | grep -o 'domo1\.[A-Za-z0-9_-]*' | head -1)"
-    if command -v claude >/dev/null 2>&1; then
-        claude mcp add domo -e "DOMO_CONNECTION=$cs" -- node "{{mcp}}"
-        echo "Added MCP server 'domo'. In Claude Code, ask it to list_devices."
-    else
-        echo "Claude Code CLI not found. Run this manually:"
-        echo "  claude mcp add domo -e DOMO_CONNECTION=$cs -- node {{mcp}}"
-    fi
-
-# Run the broker in the BACKGROUND (one-terminal workflow). Stop with `just down`.
-up: build
-    @just --justfile "{{justfile()}}" _ensure-broker
-    @echo "broker up in background (home={{nethome}}). Logs: just logs   Stop: just down"
-
-# Stop the background broker started by `just up`/`just app`.
-down:
-    #!/usr/bin/env bash
-    if [ -f "{{nethome}}/broker.pid" ]; then
-        kill "$(cat "{{nethome}}/broker.pid")" 2>/dev/null || true
-        rm -f "{{nethome}}/broker.pid"
-        echo "broker stopped"
-    else
-        echo "no background broker (a foreground 'just broker' is stopped with Ctrl-C)"
-    fi
-
-# Show whether a background broker is running + this Mac's device id.
-status:
-    #!/usr/bin/env bash
-    if [ -f "{{nethome}}/broker.pid" ] && kill -0 "$(cat "{{nethome}}/broker.pid")" 2>/dev/null; then
-        echo "broker: up (pid $(cat "{{nethome}}/broker.pid"))"
-    else
-        echo "broker: down (or running in the foreground)"
-    fi
-    just --justfile "{{justfile()}}" device-id
-
-# Tail the background broker's log.
-logs:
-    tail -n +1 -F "{{nethome}}/broker.log"
+# Headless check that the sandboxed preload bridge and the renderer still work.
+verify-preload: build
+    DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/verify-preload.mjs
 
 # Print this Mac's device id (once the app has created its identity).
 device-id:
     @node -e 'try{console.log(JSON.parse(require("fs").readFileSync("{{nethome}}/device/identity.json")).deviceId)}catch{console.log("(no device identity yet — launch the app once: just app)")}'
 
-# Reprint the device connection string (to paste into another app instance).
-connect-string: build
-    @node "{{brokerjs}}" connect-string --home "{{nethome}}"
-
-# Mint an agent connection string (paste into `claude mcp add` or another host).
-issue-agent name="Claude": build
-    @node "{{brokerjs}}" issue-agent --home "{{nethome}}" --name "{{name}}"
-
 # Show the device's audit log (the record of everything that happened).
 audit:
     @cat "{{nethome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
 
-# Stop the broker and wipe the entire networked home (broker + app + identity).
-clean: down
+# Wipe the entire app home (identity, rules, audit log, settings).
+clean:
     rm -rf "{{nethome}}"
     @echo "wiped {{nethome}}"
-
-# Internal: ensure a broker is listening; reuse one, else start in background.
-_ensure-broker: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if node -e 'const n=require("net").connect({{deviceport}},"{{publichost}}");n.on("connect",()=>{n.destroy();process.exit(0)});n.on("error",()=>process.exit(1))' 2>/dev/null; then
-        exit 0
-    fi
-    mkdir -p "{{nethome}}"
-    ( nohup node "{{brokerjs}}" --home "{{nethome}}" \
-        --agent-listen wss://0.0.0.0:{{agentport}}/ \
-        --device-listen wss://0.0.0.0:{{deviceport}}/ \
-        --public-host "{{publichost}}" >"{{nethome}}/broker.log" 2>&1 & echo $! > "{{nethome}}/broker.pid" )
-    # Wait for endpoints.json (what `app`/`agent` need), not just the open port.
-    for _ in $(seq 1 50); do
-        [ -f "{{nethome}}/broker/endpoints.json" ] && break
-        sleep 0.1
-    done
-    echo "Started broker in background (pid $(cat "{{nethome}}/broker.pid"), log: {{nethome}}/broker.log)"
-
-# ---------------------------------------------------------------------------
-# Advanced networked options
-# ---------------------------------------------------------------------------
-
-# Hosted broker WITH enrollment/pairing (pair from app, then `just pair-approve`).
-broker-enroll public=publichost: build
-    node "{{brokerjs}}" --home "{{nethome}}" \
-        --agent-listen wss://0.0.0.0:{{agentport}}/ \
-        --device-listen wss://0.0.0.0:{{deviceport}}/ \
-        --public-host "{{public}}" --require-enrollment
-
-# Approve the Mac's pending pairing (auto-picks the single pending code).
-pair-approve: build
-    #!/usr/bin/env bash
-    code=$(node -e 'try{const p=JSON.parse(require("fs").readFileSync("{{nethome}}/broker/pending.json"));process.stdout.write(p[0]?.code||"")}catch{}' 2>/dev/null)
-    if [ -z "$code" ]; then echo "No pending pairing. Pair from the app first."; exit 1; fi
-    node "{{brokerjs}}" approve-pairing --home "{{nethome}}" --code "$code"
-
-# Run the broker with YOUR OWN cert (PKCS#12) instead of the auto self-signed one.
-broker-p12 p12 pass="domo": build
-    node "{{brokerjs}}" --home "{{nethome}}" \
-        --agent-listen wss://0.0.0.0:{{agentport}}/ \
-        --device-listen wss://0.0.0.0:{{deviceport}}/ \
-        --tls-p12 "{{p12}}" --tls-password "{{pass}}" --require-enrollment
-
-# ---------------------------------------------------------------------------
-# Local Unix-socket loop (dev-only; the network flow above is preferred)
-# ---------------------------------------------------------------------------
-
-localhome := "/tmp/domo-local"
-
-# Broker over local Unix sockets (no TLS). Foreground; Ctrl-C to stop.
-local-broker: build
-    node "{{brokerjs}}" --home "{{localhome}}"
-
-# Headless auto-approving device over the local socket (for scripted tests).
-local-device: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p "{{localhome}}"
-    echo '{"access":"allow","intent":"allow_once"}' > "{{localhome}}/policy.json"
-    node "{{root}}/apps/device/dist/main.js" --home "{{localhome}}/dev" \
-        --broker "{{localhome}}/run/device.sock" --policy "{{localhome}}/policy.json"

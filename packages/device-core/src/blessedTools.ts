@@ -24,7 +24,7 @@ export class BlessedToolRegistry {
     return this.tools.get(name) ?? null;
   }
 
-  /** Manifest sent to the broker at registration. */
+  /** Manifest of the tools this device offers. */
   manifest(): JSONValue {
     return [...this.tools.values()]
       .sort((a, b) => a.name.localeCompare(b.name))
