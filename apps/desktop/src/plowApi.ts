@@ -22,6 +22,19 @@ export const DEVELOPMENT_API_BASE_URL = "http://localhost:18804";
 export const API_BASE_URL_ENV = "DOMO_API_BASE_URL";
 
 /**
+ * How long any one request may take before it is a failure.
+ *
+ * Every call here runs inside `Onboarding.run`, which holds a `busy` flag that
+ * the screen turns into "Talking to Plow…" and a disabled button on every
+ * control. A request that is accepted and then never answered — a wedged proxy,
+ * a half-open socket, an endpoint that does not exist behind something that
+ * still completes the TCP handshake — leaves that flag set forever, and the
+ * whole window goes dead with a spinner on it. `fetch` has no default timeout,
+ * so it has to be this one.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
  * Which Plow this build talks to. **Baked in, never a setting.**
  *
  * A credential is only valid against the environment that minted it, so a
@@ -87,6 +100,13 @@ export interface MintedCredential {
   token: string;
   keyPrefix: string;
   name: string;
+}
+
+/** `AbortSignal.timeout` aborts with a `TimeoutError`; some runtimes surface it
+ * as a plain `AbortError`, so both count. */
+function isTimeout(error: unknown): boolean {
+  const name = (error as { name?: unknown })?.name;
+  return name === "TimeoutError" || name === "AbortError";
 }
 
 export interface Activation {
@@ -234,10 +254,21 @@ export class PlowApi {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        // No caller may wait forever. See REQUEST_TIMEOUT_MS.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-    } catch {
+    } catch (error) {
       // The cause carries a hostname at most, but it is not ours to vouch for,
       // so the message is written here rather than forwarded.
+      //
+      // A timeout is told apart from an unreachable host because they mean
+      // different things to the person reading it: one is "this address is
+      // wrong or you are offline", the other is "Plow took the request and went
+      // quiet". Telling someone their network is down when the server is simply
+      // not answering sends them to fix the wrong thing.
+      if (isTimeout(error)) {
+        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
+      }
       throw new PlowApiError("network", `Couldn't reach Plow at ${this.baseUrl}.`);
     }
 

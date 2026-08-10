@@ -201,6 +201,51 @@ describe("activation — the path a brand-new user takes", () => {
     expect(waits.length).toBe(after);
   });
 
+  it("never strands the user on a screen with no way to re-check", async () => {
+    // Reported from a live run: the user read the code off the screen and typed
+    // it into Messages themselves, so they never tapped "Open Messages" and
+    // never left the "Connect this Mac" screen. That screen has no "Get a New
+    // Code" button — it is the one you are on before anything has gone wrong.
+    // Giving up there set the message "or get a new code" beside no such
+    // control, and their activation (which completed server-side just after the
+    // loop stopped) could never be re-checked. Dead end.
+    const onboarding = build();
+    await onboarding.begin();
+    expect(onboarding.state().step).toBe("activate"); // never tapped Open Messages
+    await settle();
+
+    const state = onboarding.state();
+    expect(state.activationStale).toBe(true);
+    // "waiting" is the screen that carries the control. The invariant that
+    // matters is that giving up never leaves them anywhere else.
+    expect(state.step).toBe("waiting");
+
+    // And the control does what the message promises: the text landed after we
+    // stopped watching, so one poll on the old secret signs them straight in.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    expect((await onboarding.newActivationCode()).step).toBe("connected");
+    expect(plow.activations).toHaveLength(1);
+  });
+
+  it("puts every give-up on the screen that can act on it", async () => {
+    // One invariant covering all four ways polling can stop, so a new one
+    // cannot quietly reintroduce the dead end above.
+    for (const redeems of [
+      [new PlowApiError("expired", "Activation expired", 410)],
+      [{ status: "verified", token: null } as const],
+      [{ status: "pending" } as const], // runs out the five-minute window
+    ]) {
+      plow = new FakePlow();
+      plow.redeems = [...redeems];
+      const onboarding = build();
+      await onboarding.begin();
+      await settle();
+
+      expect(onboarding.state().activationStale).toBe(true);
+      expect(onboarding.state().step).toBe("waiting");
+    }
+  });
+
   it("polls the old code before minting a new one, because completion beats expiry", async () => {
     const onboarding = build();
     await onboarding.begin();

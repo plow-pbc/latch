@@ -4,6 +4,7 @@ import {
   DEVELOPMENT_API_BASE_URL,
   PRODUCTION_API_BASE_URL,
   PlowApi,
+  REQUEST_TIMEOUT_MS,
   PlowApiError,
   relaySocketUrl,
   resolveApiBaseUrl,
@@ -65,6 +66,53 @@ describe("PlowApi", () => {
 
     expect(error).toBeInstanceOf(PlowApiError);
     expect((error as PlowApiError).kind).toBe("provider_unavailable");
+  });
+
+  it("gives up on a request that is accepted and never answered", async () => {
+    // Reported from a live run as "nothing in the window is interactive". The
+    // request was taken and never answered; `fetch` has no default timeout, so
+    // `Onboarding.run` held `busy` forever and the renderer's one-line
+    // `disabled = !!state.busy` killed every button on the screen at once. The
+    // fix has to be here — a call that cannot end is the root cause, and every
+    // caller inherits it.
+    let aborted = false;
+    const fetchImpl = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(init.signal!.reason);
+        });
+      });
+
+    const started = Date.now();
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .createAgent("plow_device", "Claude Code")
+      .catch((e) => e);
+
+    expect(aborted).toBe(true);
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect((error as PlowApiError).kind).toBe("network");
+    // Honest about which failure it was: "didn't answer" sends you somewhere
+    // different from "couldn't reach".
+    expect((error as PlowApiError).message).toBe("Plow didn't answer in time. Try again.");
+    expect(Date.now() - started).toBeLessThan(REQUEST_TIMEOUT_MS + 5_000);
+  }, 30_000);
+
+  it("passes a timeout signal on every request, not just the ones we remembered", async () => {
+    const seen: Array<string | undefined> = [];
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      seen.push(init?.signal ? "signal" : undefined);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+    await api.requestOtp("+1");
+    await api.createActivation("Mac");
+    await api.redeemActivation("s").catch(() => {});
+    await api.relayInfo("t");
+    await api.mintDeviceCredential("t", "Mac");
+    await api.createAgent("t", "a");
+
+    expect(seen).toEqual(Array(6).fill("signal"));
   });
 
   it("turns an unreachable API into a readable message, not a stack", async () => {

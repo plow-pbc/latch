@@ -27,7 +27,11 @@ function button(text, cls, onClick) {
     endpoint leaves this window. */
 function copyRow(value, label) {
   const box = el("div", { class: "copybox mono", text: value });
-  const copy = button(label ?? "Copy", "btn small", async () => {
+  // `local`: this button touches the clipboard and nothing else, so it is not
+  // disabled while a request is in flight. Copying your own endpoint has no
+  // bearing on a call to Plow, and a request that stalls should never take the
+  // whole window with it.
+  const copy = button(label ?? "Copy", "btn small local", async () => {
     await navigator.clipboard.writeText(value);
     copy.textContent = "Copied";
     setTimeout(() => { copy.textContent = label ?? "Copy"; }, 1200);
@@ -283,8 +287,20 @@ function render() {
   root.replaceChildren(...screen.filter(Boolean));
   const focus = root.querySelector("input[autofocus]");
   if (focus && !state.busy) focus.focus();
-  for (const b of root.querySelectorAll("button")) b.disabled = !!state.busy;
+  for (const b of root.querySelectorAll("button:not(.local)")) b.disabled = !!state.busy;
 }
+
+/* Every click here is `apply(await window.domo.something())`. If that invoke
+   rejects — a handler that threw in main, or one that was never registered —
+   the rejection is unhandled and the click silently does nothing, which is
+   indistinguishable from a dead window. Surface it instead: the whole point of
+   this screen is that a failure produces a sentence, never a spinner. */
+window.addEventListener("unhandledrejection", (event) => {
+  if (!state) return;
+  event.preventDefault();
+  state = { ...state, busy: false, message: "Something went wrong talking to the app. Try again." };
+  render();
+});
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));
 

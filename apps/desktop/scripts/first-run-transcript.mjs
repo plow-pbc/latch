@@ -266,9 +266,13 @@ check("and a Messages draft to open", state.activation?.smsUrl.startsWith(`sms:$
 check("nothing was texted to the user — this path goes outbound", smsSent === 0);
 
 const firstCode = state.activation.displayCode;
-state = onboarding.messagesOpened();
-show("waiting", state);
-check("the waiting screen asks for nothing to be typed", state.step === "waiting");
+
+// The head chef's path, from the live run that found the dead end: he read the
+// code off the screen and typed it into Messages himself, so he never tapped
+// "Open Messages" and never left "Connect this Mac" — the one screen with no
+// "Get a New Code" button on it.
+say("user", "reads the code and types it into Messages by hand — never taps Open Messages");
+check("still on the first screen", onboarding.state().step === "activate");
 
 // FAILURE 1 — a wrong prefix. 200, no SMS, code left live, silence everywhere.
 say("user", `texts "Hi, Plow Activate: ${firstCode}" — the prefix is not at the start`);
@@ -279,6 +283,9 @@ show("gave up", state);
 check("the app stops watching rather than spinning forever", state.activationStale === true);
 check("and says the one thing that could be wrong", state.message.includes("Plow Activate:"));
 check("no spinner is left running", state.busy === false);
+// The bug: the message offered a new code, and the screen they were on had no
+// button to ask for one.
+check("and it moved them to the screen that HAS the Get a New Code button", state.step === "waiting");
 
 // The re-poll before minting: the old code is still live server-side.
 say("user", "taps Get a New Code");
@@ -288,7 +295,8 @@ check("a fresh code was minted once the old one really was unanswered", state.ac
 check("the old code was polled once first, not abandoned", pairings.size === 2);
 
 const secondCode = state.activation.displayCode;
-onboarding.messagesOpened();
+state = onboarding.messagesOpened();
+check("tapping Open Messages moves to the waiting screen", state.step === "waiting");
 check("the app gives up on the second code too", await settleUntil(gaveUp(onboarding)));
 
 // FAILURE 2 — completion beats expiry. They texted after we stopped looking.

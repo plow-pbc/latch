@@ -226,8 +226,7 @@ export class Onboarding {
       // The token is handed to the first redeem that sees the completion and
       // the key is omitted on every one after, so this means it was already
       // read and lost. A new code is the only way forward.
-      this.activationStale = true;
-      this.message = "Plow verified this Mac but didn't hand back a login. Get a new code.";
+      this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
       return true;
     }
     await this.finishWithSession(result.token);
@@ -275,8 +274,7 @@ export class Onboarding {
       // Nothing above throws by design; if something does, the screen must not
       // be left on a countdown that no longer runs.
       if (generation !== this.pollGeneration) return;
-      this.activationStale = true;
-      this.message = messageOf(error);
+      this.stall(messageOf(error));
       this.publish();
     });
   }
@@ -321,8 +319,7 @@ export class Onboarding {
 
       if (result.status === "verified") {
         this.cancelPolling();
-        this.activationStale = true;
-        this.message = "Plow verified this Mac but didn't hand back a login. Get a new code.";
+        this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
         this.publish();
         return;
       }
@@ -344,9 +341,29 @@ export class Onboarding {
    */
   private giveUp(reason: string): void {
     this.cancelPolling();
-    this.activationStale = true;
-    this.message = `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or get a new code.`;
+    this.stall(
+      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or get a new code.`,
+    );
     this.publish();
+  }
+
+  /**
+   * Mark this activation as no longer being watched, and put the user on the
+   * screen that can do something about it.
+   *
+   * The step move is the whole point. "Connect this Mac" has no "Get a New
+   * Code" button — it is the screen you are on *before* anything has gone
+   * wrong — and a user who reads the code off the screen and types it into
+   * Messages themselves never taps "Open Messages", so they never leave it. Set
+   * `activationStale` without moving them and the message says "or get a new
+   * code" next to no such control: a dead end, and precisely the one this
+   * screen exists to prevent. Every path that stops polling comes through here
+   * so that cannot drift apart again.
+   */
+  private stall(message?: string): void {
+    if (this.step === "activate" || this.step === "waiting") this.step = "waiting";
+    this.activationStale = true;
+    if (message !== undefined) this.message = message;
   }
 
   // MARK: the phone-code fallback
