@@ -65,6 +65,7 @@ async function refreshStatus() {
 // timeline in the detail pane — matching the Swift app's fine-grained view.
 
 let selectedId = null;
+let auditTopId = null; // id of the top (newest) row at the last refresh
 let auditSearch = "";
 let detailWidth = 340; // resizable detail pane width (px), kept across refreshes
 // References to the mounted audit chrome, so typing in the search box refreshes
@@ -98,7 +99,18 @@ async function renderAudit() {
   wireSplitter(splitter, detailBox);
   view.replaceChildren(toolbar, el("div", { class: "a1" }, [listBox, splitter, detailBox]));
 
-  auditMounted = { listBox, detailBox, count, chipsBox, clearBtn };
+  // The table (and its tbody) persist across refreshes so row nodes are reused,
+  // not rebuilt — that keeps an in-progress insert animation alive and lets a
+  // burst of streamed events update a row in place instead of recreating it.
+  const tbody = el("tbody");
+  const table = el("table", {}, [
+    el("thead", {}, [el("tr", {}, [
+      el("th", { text: "Time" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
+    ])]),
+    tbody,
+  ]);
+
+  auditMounted = { listBox, detailBox, count, chipsBox, clearBtn, table, tbody, rows: new Map() };
   await refreshAudit();
   searchInput.focus();
   const len = searchInput.value.length;
@@ -128,9 +140,11 @@ function wireSplitter(splitter, detailBox) {
 }
 
 // Refresh just the data-bound parts — leaves the search input untouched.
-async function refreshAudit() {
+// `opts.followTop` (set on live data changes) moves the selection to the new
+// newest row when it was pinned to the top, so streaming activity stays in view.
+async function refreshAudit(opts = {}) {
   if (!auditMounted) return;
-  const { listBox, detailBox, count, chipsBox, clearBtn } = auditMounted;
+  const { listBox, detailBox, count, chipsBox, clearBtn, table, tbody, rows } = auditMounted;
   const activities = await window.domo.auditActivities();
   clearBtn.disabled = activities.length === 0;
   const q = auditSearch.trim().toLowerCase();
@@ -144,9 +158,17 @@ async function refreshAudit() {
         .includes(q);
     return inCat && inSearch;
   });
-  // Keep the selection stable across refreshes; default to the newest.
-  const selected = shown.find((a) => a.id === selectedId) || shown[0] || null;
-  selectedId = selected ? selected.id : null;
+  // Selection: on a live data change, if the selection was pinned to the top
+  // (newest) row, follow the new newest row so it keeps streaming into view.
+  // Otherwise keep the same item, falling back to the newest if it's gone.
+  const newTopId = shown[0] ? shown[0].id : null;
+  if (opts.followTop && selectedId !== null && selectedId === auditTopId) {
+    selectedId = newTopId;
+  } else {
+    selectedId = shown.some((a) => a.id === selectedId) ? selectedId : newTopId;
+  }
+  auditTopId = newTopId;
+  const selected = shown.find((a) => a.id === selectedId) || null;
 
   chipsBox.replaceChildren(...["all", "approved", "denied", "failed", "other"].map((f) => {
     const chip = el("span", { class: "chip" + (filter === f ? " active" : ""), text: f[0].toUpperCase() + f.slice(1) });
@@ -155,30 +177,115 @@ async function refreshAudit() {
   }));
   count.textContent = `${shown.length} ${shown.length === 1 ? "activity" : "activities"}`;
 
-  const tbody = el("tbody");
+  // Empty state — no rows to reconcile; drop any cached row nodes.
+  if (!shown.length) {
+    rows.clear();
+    tbody.replaceChildren();
+    listBox.replaceChildren(el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }));
+    detailBox.replaceChildren(detailFor(selected));
+    return;
+  }
+  if (listBox.firstChild !== table) listBox.replaceChildren(table);
+
+  // Only animate genuinely new rows arriving on a live data change (not on first
+  // mount, tab switch, search, or filter — those would animate the whole list).
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const animateNew = !!opts.followTop && !reduceMotion;
+  const enterRows = [];
+
+  // Drop rows that are no longer shown.
+  const wantedIds = new Set(shown.map((a) => a.id));
+  for (const [id, r] of rows) {
+    if (!wantedIds.has(id)) { r.tr.remove(); rows.delete(id); }
+  }
+
+  // Create/update each row, reusing existing nodes so animations survive.
   shown.forEach((a) => {
-    const tr = el("tr", { class: a.id === selectedId ? "sel" : "" }, [
-      el("td", { class: "t-time", text: a.time }),
-      el("td", {}, [badge(a.tone, a.status)]),
-      el("td", {}, [el("div", { class: "t-act" }, [
-        el("span", { class: "ic-wrap" }, [icon(a.kind)]),
-        el("span", { text: a.title }),
-      ])]),
-    ]);
-    // Select on mouse down (feels immediate, before the click completes).
-    tr.addEventListener("mousedown", () => { selectedId = a.id; refreshAudit(); });
-    tbody.appendChild(tr);
+    let r = rows.get(a.id);
+    if (!r) {
+      r = createAuditRow(a.id);
+      rows.set(a.id, r);
+      if (animateNew) enterRows.push(r.tr);
+    }
+    updateAuditRow(r, a);
+    r.tr.classList.toggle("sel", a.id === selectedId);
   });
-  const table = el("table", {}, [
-    el("thead", {}, [el("tr", {}, [
-      el("th", { text: "Time" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
-    ])]),
-    tbody,
-  ]);
-  listBox.replaceChildren(
-    shown.length ? table : el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }),
-  );
+
+  // Put the rows in the desired (newest-first) order with minimal DOM moves, so
+  // nodes that don't move keep their running animations undisturbed.
+  let expected = tbody.firstChild;
+  for (const a of shown) {
+    const node = rows.get(a.id).tr;
+    if (node === expected) expected = node.nextSibling;
+    else tbody.insertBefore(node, expected);
+  }
+
   detailBox.replaceChildren(detailFor(selected));
+
+  // Rows are in the DOM now (natural size measurable) — play the insert
+  // animation for any freshly arrived rows.
+  enterRows.forEach(animateRowEnter);
+}
+
+// Build a reusable audit row. Cell content is wrapped in a `.cw` so a new row
+// can collapse to zero (a real table row won't shrink below its content) and
+// grow to push the rows below it down. Content is later updated IN PLACE so a
+// burst of streamed events never recreates (and thus never interrupts) the row.
+function createAuditRow(id) {
+  const timeCw = el("div", { class: "cw" });
+  const badgeCw = el("div", { class: "cw" });
+  const iconWrap = el("span", { class: "ic-wrap" });
+  const titleSpan = el("span");
+  const actCw = el("div", { class: "cw" }, [el("div", { class: "t-act" }, [iconWrap, titleSpan])]);
+  const tr = el("tr", {}, [
+    el("td", { class: "t-time" }, [timeCw]),
+    el("td", {}, [badgeCw]),
+    el("td", {}, [actCw]),
+  ]);
+  // Select on mouse down (feels immediate, before the click completes).
+  tr.addEventListener("mousedown", () => { selectedId = id; refreshAudit(); });
+  return { tr, timeCw, badgeCw, iconWrap, titleSpan, time: null, tone: null, status: null, title: null, kind: null };
+}
+
+// Update a row's content in place, touching only what changed.
+function updateAuditRow(r, a) {
+  if (r.time !== a.time) { r.timeCw.textContent = a.time; r.time = a.time; }
+  if (r.tone !== a.tone || r.status !== a.status) {
+    r.badgeCw.replaceChildren(badge(a.tone, a.status));
+    r.tone = a.tone; r.status = a.status;
+  }
+  if (r.kind !== a.kind) { r.iconWrap.replaceChildren(icon(a.kind)); r.kind = a.kind; }
+  if (r.title !== a.title) { r.titleSpan.textContent = a.title; r.title = a.title; }
+}
+
+// Insert animation: the row collapses to zero and grows (pushing the rows below
+// it down), then its content fades in once the push has mostly settled.
+function animateRowEnter(tr) {
+  const push = 260;
+  const ease = "cubic-bezier(0.22, 1, 0.36, 1)";
+  for (const td of tr.children) {
+    const cs = getComputedStyle(td);
+    const pt = cs.paddingTop;
+    const pb = cs.paddingBottom;
+    td.animate(
+      [{ paddingTop: "0px", paddingBottom: "0px" }, { paddingTop: pt, paddingBottom: pb }],
+      { duration: push, easing: ease },
+    );
+    const cw = td.firstElementChild;
+    if (!cw) continue;
+    const h = cw.offsetHeight;
+    cw.style.overflow = "hidden";
+    const grow = cw.animate(
+      [{ height: "0px" }, { height: h + "px" }],
+      { duration: push, easing: ease },
+    );
+    grow.onfinish = () => { cw.style.overflow = ""; };
+    // Fade the content in after the push is ~70% done.
+    cw.animate(
+      [{ opacity: 0 }, { opacity: 1 }],
+      { duration: 200, delay: push * 0.7, easing: "ease-out", fill: "backwards" },
+    );
+  }
 }
 
 function detailFor(a) {
@@ -482,7 +589,7 @@ seg.addEventListener("mousedown", (e) => {
   window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
-window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit(); });
+window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
 window.domo.onStatusChanged(() => refreshStatus());
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).

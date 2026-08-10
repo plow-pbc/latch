@@ -192,6 +192,9 @@ tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; }
 tbody tr:nth-child(even) { background: color-mix(in srgb, var(--fg) 3%, transparent); }
 tbody tr.sel { background: var(--sel); }
 td { padding: 9px 12px; vertical-align: middle; }
+/* Per-cell wrapper: lets a newly inserted row collapse to zero and grow (the
+   clip happens here, since a table row won't shrink below its content). */
+.cw { display: block; }
 .t-time { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .t-act { display: flex; align-items: center; gap: 8px; }
 .ic-wrap {
