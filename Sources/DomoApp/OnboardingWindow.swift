@@ -8,7 +8,8 @@ import DomoProtocol
 /// code (and QR) to approve on the broker — no pubkey copy-paste.
 final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
     /// Returns an error message to show, or nil on success (window then closes).
-    private let onConnect: (DomoConnection) -> String?
+    /// The Bool is whether to trust a self-signed cert (TOFU) for this broker.
+    private let onConnect: (DomoConnection, Bool) -> String?
     /// Submit a pairing request for `code`; returns true if the broker ack'd.
     private let onPair: (DomoConnection, String) -> Bool
     /// Forget the broker and return to the connect state (nil when unconfigured).
@@ -19,6 +20,7 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
 
     private var inputView: NSTextView!
     private var errorLabel: NSTextField!
+    private var selfSignedCheck: NSButton!
     private var connectButton: NSButton!
     private var pairButton: NSButton!
     private var pairingBox: NSStackView!
@@ -27,7 +29,7 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
     private var pairStatus: NSTextField!
 
     init(deviceId: String, publicKey: String, currentBrokerURL: String?,
-         onConnect: @escaping (DomoConnection) -> String?,
+         onConnect: @escaping (DomoConnection, Bool) -> String?,
          onPair: @escaping (DomoConnection, String) -> Bool,
          onDisconnect: (() -> Void)?) {
         self.onConnect = onConnect
@@ -98,6 +100,14 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48),
             scroll.heightAnchor.constraint(equalToConstant: 78),
         ])
+
+        // For a wss broker WITHOUT a public-CA cert (self-signed on an IP/LAN),
+        // check this to trust it on first use. Leave off for a Let's Encrypt /
+        // CA-signed broker, which validates against the system trust store.
+        selfSignedCheck = NSButton(checkboxWithTitle:
+            "Broker uses a self-signed certificate (trust on first use)", target: nil, action: nil)
+        selfSignedCheck.state = .off
+        stack.addArrangedSubview(selfSignedCheck)
 
         errorLabel = NSTextField(wrappingLabelWithString: "")
         errorLabel.textColor = .systemRed
@@ -207,7 +217,7 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
             showError("The connection string has an invalid broker address.")
             return
         }
-        if let error = onConnect(connection) {
+        if let error = onConnect(connection, selfSignedCheck.state == .on) {
             showError(error)
         } else {
             close()

@@ -101,6 +101,23 @@ Agent: `-e DOMO_CONNECTION=ws://HOST:8443/` won't carry a token, so use
 
 ---
 
+## Broker TLS: CA-signed vs self-signed
+
+A `wss://` broker can be trusted two ways:
+
+- **CA-signed (e.g. Let's Encrypt) on a public domain** — the simplest hosted
+  setup. Point the app at `wss://broker.yourdomain.com/` (just the URL, no pin);
+  it validates against the system trust store like any HTTPS site, and cert
+  renewals are transparent. No connection string needed.
+- **Self-signed (any IP/LAN/NAT, no domain)** — the app must trust the specific
+  key: either paste the **connection string** (it carries the pin — the strong,
+  verified option), or, when typing a bare URL, tick **"Broker uses a self-signed
+  certificate"** in Settings to trust-on-first-use.
+
+Pinning a self-signed key is actually *stronger* than CA trust (only your one key
+is trusted, not the whole CA system), but CA-signed is easier to operate if you
+have a public domain.
+
 ## Manual escape hatches (still supported)
 
 - Bring your own cert: `--tls-p12 <file> --tls-password <pw>` instead of auto-TLS.
@@ -113,5 +130,7 @@ Agent: `-e DOMO_CONNECTION=ws://HOST:8443/` won't carry a token, so use
 ## Gotchas
 
 - Agent URL and device URL are **different ports** (8443 agent, 8444 device).
-- On a `wss://` URL a missing pin **fails closed** — no silent CA fallback.
+- A `wss://` URL with no pin validates against the **system CA** (good for
+  Let's Encrypt). For a **self-signed** broker, pass the pin (connection string)
+  or opt into self-signed trust — otherwise the CA check rejects it.
 - The agent connection string holds a secret token; treat it like a password.

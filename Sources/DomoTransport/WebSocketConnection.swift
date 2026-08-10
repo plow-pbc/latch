@@ -157,23 +157,29 @@ public final class WebSocketConnection: Connection {
     }
 }
 
-/// Builds the shared TLS + WebSocket protocol stack. Trust is decided by the
-/// injected `PeerTrustEvaluator` (Phase 2 pinning) INSTEAD of the system CA
-/// store — that is what makes self-signed + pinning the intended posture. Pass
-/// `trust == nil` for a plain `ws://` stack (Phase-1 loopback tests only).
+/// Builds the client TLS + WebSocket protocol stack. Three cases:
+///   - `secure == false`               → plain `ws://`, no TLS.
+///   - `secure == true, trust == nil`  → `wss://` validated against the SYSTEM CA
+///     store (+ hostname), the standard path for a CA-signed cert (Let's Encrypt).
+///   - `secure == true, trust != nil`  → `wss://` validated by the evaluator
+///     INSTEAD of the CA store — self-signed + pin / TOFU.
 enum WebSocketStack {
-    static func clientParameters(trust: PeerTrustEvaluator?, verifyQueue: DispatchQueue) -> NWParameters {
+    static func clientParameters(secure: Bool, trust: PeerTrustEvaluator?,
+                                 verifyQueue: DispatchQueue) -> NWParameters {
         let params: NWParameters
-        if let trust {
-            let tlsOptions = NWProtocolTLS.Options()
-            sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
-                                                  { _, sec_trust, complete in
-                let secTrust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
-                complete(trust.evaluate(derChain: derChain(of: secTrust)))
-            }, verifyQueue)
-            params = NWParameters(tls: tlsOptions)
-        } else {
+        if !secure {
             params = NWParameters(tls: nil)
+        } else {
+            let tlsOptions = NWProtocolTLS.Options()
+            if let trust {
+                sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
+                                                      { _, sec_trust, complete in
+                    let secTrust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
+                    complete(trust.evaluate(derChain: derChain(of: secTrust)))
+                }, verifyQueue)
+            }
+            // No evaluator ⇒ default system trust evaluation (CA store + hostname).
+            params = NWParameters(tls: tlsOptions)
         }
         let wsOptions = NWProtocolWebSocket.Options()
         wsOptions.autoReplyPing = true
@@ -216,9 +222,10 @@ enum WebSocketStack {
     }
 }
 
-/// Outbound dialer: the Mac (and the agent) dial the broker URL. Carries the
-/// `PeerTrustEvaluator` used to pin the broker's certificate (Phase 2). For a
-/// plain-`ws://` URL, pass `trust == nil`.
+/// Outbound dialer: the Mac (and the agent) dial the broker URL. TLS is decided
+/// by the URL scheme: `ws://` is plain; `wss://` is TLS, validated by `trust`
+/// (self-signed + pin / TOFU) if provided, otherwise against the system CA store
+/// (CA-signed, e.g. Let's Encrypt).
 public struct WebSocketDialer: ConnectionDialer {
     public let url: URL
     public let trust: PeerTrustEvaluator?
@@ -232,7 +239,8 @@ public struct WebSocketDialer: ConnectionDialer {
 
     public func connect() throws -> Connection {
         let queue = DispatchQueue(label: "domo.ws.client")
-        let params = WebSocketStack.clientParameters(trust: trust, verifyQueue: queue)
+        let secure = (url.scheme?.lowercased() == "wss")
+        let params = WebSocketStack.clientParameters(secure: secure, trust: trust, verifyQueue: queue)
         let nw = NWConnection(to: .url(url), using: params)
         let conn = WebSocketConnection(connection: nw, queue: queue)
         try conn.waitUntilReady(timeout: timeout)

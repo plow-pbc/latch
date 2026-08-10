@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // 3) A previously-saved connection.
         if let saved = loadSavedConnection() {
-            connectNetwork(saved, persist: false); return
+            connectNetwork(saved.connection, persist: false, trustSelfSigned: saved.trustSelfSigned); return
         }
         // 4) The build default — connect on our own (trust-on-first-use). No
         // manual step in the common case.
@@ -143,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Connecting
 
-    private func connectNetwork(_ c: DomoConnection, persist: Bool) {
+    private func connectNetwork(_ c: DomoConnection, persist: Bool, trustSelfSigned: Bool = false) {
         guard let url = URL(string: c.url) else {
             presentError("Invalid broker address", c.url)
             showOnboarding()
@@ -153,12 +153,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do {
             let device = try makeDevice()
             wire(device, networked: true)
-            // Explicit pin (from a pasted string) wins; otherwise trust-on-first-use
-            // for wss; plain ws needs no cert trust.
+            // Trust selection for wss:
+            //  - explicit pin (from a pasted connection string) → pin it;
+            //  - self-signed opt-in → trust-on-first-use;
+            //  - otherwise → validate against the system CA store (Let's Encrypt).
+            // Plain ws needs no cert trust.
             let trust: PeerTrustEvaluator?
             if let pin = c.pin {
                 trust = SPKIPinningEvaluator(pins: [SPKIPin(sha256Base64: pin)])
-            } else if c.isSecure {
+            } else if c.isSecure && trustSelfSigned {
                 trust = TOFUTrust(brokerURL: c.url, store: knownBrokers)
             } else {
                 trust = nil
@@ -169,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.device = device
             self.connection = c
             self.networked = true
-            if persist { saveConnection(c) }
+            if persist { saveConnection(c, trustSelfSigned: trustSelfSigned) }
         } catch {
             // The reconnecting path shouldn't throw; this is belt-and-suspenders.
             linkState = .reconnecting
@@ -238,8 +241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             deviceId: identity?.deviceId ?? "?",
             publicKey: identity?.keyPair.publicKeyBase64 ?? "",
             currentBrokerURL: connection?.url,
-            onConnect: { [weak self] c in
-                self?.connectNetwork(c, persist: true)
+            onConnect: { [weak self] c, trustSelfSigned in
+                self?.connectNetwork(c, persist: true, trustSelfSigned: trustSelfSigned)
                 return nil
             },
             onPair: { [weak self] c, code in
@@ -269,19 +272,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var connectionFileURL: URL { home.appendingPathComponent("device/connection.json") }
 
-    private func saveConnection(_ c: DomoConnection) {
-        let payload: [String: String] = ["connection": c.compactString()]
+    private func saveConnection(_ c: DomoConnection, trustSelfSigned: Bool) {
+        let payload: [String: Any] = ["connection": c.compactString(), "tofu": trustSelfSigned]
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
         try? FileManager.default.createDirectory(at: connectionFileURL.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         try? data.write(to: connectionFileURL)
     }
 
-    private func loadSavedConnection() -> DomoConnection? {
+    private func loadSavedConnection() -> (connection: DomoConnection, trustSelfSigned: Bool)? {
         guard let data = try? Data(contentsOf: connectionFileURL),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-              let raw = obj["connection"] else { return nil }
-        return DomoConnection.parse(raw)
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let raw = obj["connection"] as? String,
+              let c = DomoConnection.parse(raw) else { return nil }
+        return (c, obj["tofu"] as? Bool ?? false)
     }
 
     // MARK: - Menu bar
