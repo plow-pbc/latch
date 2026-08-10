@@ -83,7 +83,7 @@ async function renderAudit() {
 
   const chipsBox = el("div", { class: "chips" });
   const count = el("span", { class: "count" });
-  const clearBtn = el("button", { class: "btn small", text: "Clear log" });
+  const clearBtn = el("button", { class: "btn small", text: "Clear Log" });
   clearBtn.addEventListener("click", async () => {
     const cleared = await window.domo.auditClear();
     if (cleared) { selectedId = null; refreshAudit(); }
@@ -406,7 +406,7 @@ async function renderRules() {
 
   const ruleItems = rules.length
     ? rules.map((r) => {
-        const remove = el("button", { class: "btn danger", text: "Revoke rule" });
+        const remove = el("button", { class: "btn danger", text: "Revoke Rule" });
         remove.addEventListener("click", async () => { await window.domo.rulesRemove(r.ruleKey); renderRules(); });
         const caps = (r.capabilities || []).map((c) => el("span", { class: "cap", text: capText(c) }));
         return el("div", { class: "item" }, [
@@ -418,7 +418,7 @@ async function renderRules() {
 
   const agentItems = agents.length
     ? agents.map((id) => {
-        const revoke = el("button", { class: "btn danger", text: "Revoke agent" });
+        const revoke = el("button", { class: "btn danger", text: "Revoke Agent" });
         revoke.addEventListener("click", async () => { await window.domo.agentsRevoke(id); renderRules(); });
         return el("div", { class: "item" }, [el("div", { class: "row" }, [
           el("span", { class: "mono", text: id }), el("div", { class: "spacer" }), revoke,
@@ -453,7 +453,7 @@ async function renderSettings() {
   urlInput.value = broker.url || "";
   const pinInput = el("input", { class: "text", attrs: { placeholder: "base64 SPKI pin (leave blank for a CA-signed cert)" } });
   pinInput.value = broker.pin || "";
-  const save = el("button", { class: "btn primary", text: "Save & reconnect" });
+  const save = el("button", { class: "btn primary", text: "Save & Reconnect" });
   // Live connection status — updated by refreshStatus() on every status change.
   const note = el("p", { class: "faint", text: "" });
   settingsStatusNote = note;
@@ -466,7 +466,7 @@ async function renderSettings() {
     refreshStatus();
   });
   const restoreNote = el("p", { class: "faint", text: "" });
-  const restore = el("button", { class: "btn", text: "Restore default goals" });
+  const restore = el("button", { class: "btn", text: "Restore Default Goals" });
   restore.addEventListener("click", async () => {
     await window.domo.goalsRestoreDefaults();
     restoreNote.textContent = "Default goals restored.";
@@ -561,7 +561,7 @@ async function renderSettings() {
       suggestLabel,
     ]),
     group("Goals", "Re-add any default goals you've removed.", [
-      el("div", { class: "row" }, [restoreNote, el("div", { class: "spacer" }), restore]),
+      el("div", { class: "row" }, [restore, restoreNote]),
     ]),
   ]));
   refreshStatus(); // populate the live status note immediately

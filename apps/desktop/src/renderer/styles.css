@@ -311,7 +311,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .item .group-desc { margin: -4px 0 14px; }
 .settings .chips { flex-wrap: wrap; }
-.reviewer-note { margin-top: 8px; }
+.reviewer-note { margin-top: 14px; }
 
 /* Goal item: title + description on the left, action column on the right that
    the description can never flow under (separate flex columns). */
