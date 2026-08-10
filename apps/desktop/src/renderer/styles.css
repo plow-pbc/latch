@@ -44,6 +44,17 @@ body {
   color: var(--fg);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
+  /* Fill the window exactly: titlebar + content, no leftover strip. */
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .titlebar {
@@ -55,6 +66,7 @@ body {
   -webkit-app-region: drag;
   border-bottom: 1px solid var(--border);
   background: var(--card);
+  flex: none;
 }
 .wtitle { font-weight: 600; }
 .seg {
@@ -84,6 +96,7 @@ body {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--card);
+  flex: none;
 }
 .search {
   flex: 1;
@@ -136,8 +149,28 @@ body {
 .faint { color: var(--faint); }
 
 /* Master–detail audit layout */
-.a1 { display: grid; grid-template-columns: 1fr 340px; height: calc(100vh - 44px - 57px); }
-.list { overflow: auto; border-right: 1px solid var(--border); }
+.a1 { display: flex; flex: 1 1 auto; min-height: 0; background: var(--card); }
+.list { flex: 1 1 auto; min-width: 0; overflow: auto; }
+/* A crisp 1px divider flush against the table. The grab area is a wider
+   invisible overlay (::before) that doesn't affect layout, so dragging stays
+   easy without adding any visual padding. */
+.splitter {
+  flex: none;
+  width: 1px;
+  background: var(--border);
+  position: relative;
+  cursor: col-resize;
+}
+.splitter::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -5px;
+  cursor: col-resize;
+}
+.splitter:hover { background: var(--border-strong); }
 table { width: 100%; border-collapse: collapse; }
 thead th {
   position: sticky;
@@ -153,7 +186,9 @@ thead th {
   border-bottom: 1px solid var(--border);
 }
 tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; }
-tbody tr:hover { background: var(--hover); }
+/* Subtle zebra striping (theme-aware). Selection overrides it below. No hover
+   color change — the row is clickable but shouldn't flicker on mouseover. */
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--fg) 3%, transparent); }
 tbody tr.sel { background: var(--sel); }
 td { padding: 9px 12px; vertical-align: middle; }
 .t-time { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -165,7 +200,7 @@ td { padding: 9px 12px; vertical-align: middle; }
 }
 .ico { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-.detail { overflow: auto; padding: 16px; }
+.detail { flex: none; overflow: auto; padding: 16px; }
 .detail h3 { margin: 0 0 10px; }
 .cmd {
   font-family: var(--mono);
@@ -218,9 +253,8 @@ dl.meta dd { margin: 0; }
 .tl .tt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .tl .tm { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* Goals / Rules / Settings panels. Only the titlebar (44px) sits above these
-   — the 57px toolbar is Audit-only, so it must NOT be subtracted here. */
-.panel { padding: 16px; overflow: auto; height: calc(100vh - 44px); }
+/* Goals / Rules / Settings panels — fill the content area below the titlebar. */
+.panel { padding: 16px; overflow: auto; flex: 1 1 auto; min-height: 0; }
 .item {
   background: var(--card);
   border: 1px solid var(--border);

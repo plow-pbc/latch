@@ -74,7 +74,8 @@ describe("auditActivities (grouping)", () => {
     expect(acts).toHaveLength(1);
     const a = acts[0]!;
     expect(a.title).toBe("run: df -h");
-    expect(a.status).toBe("Allowed once · finished");
+    // A clean success shows just the base — no "· finished"/"· done".
+    expect(a.status).toBe("Allowed once");
     expect(a.tone).toBe("green");
     expect(a.command).toBe("/bin/sh -c df -h");
     expect(a.exitCode).toBe(0);
@@ -101,24 +102,40 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.timeline).toHaveLength(2);
   });
 
-  it("separates distinct operations and orders newest first", () => {
+  it("separates distinct operations, drops device_started, orders newest first", () => {
     const acts = auditActivities([
-      { event: "device_started", ts: "2026-08-09T12:00:00Z" },
+      { event: "device_started", ts: "2026-08-09T12:00:00Z" }, // never surfaced
       ...commandRun,
       { event: "intent_rejected", intentId: "i2", reason: "bad signature", ts: "2026-08-09T12:00:40Z" },
     ]);
-    expect(acts.map((a) => a.status)).toEqual(["Rejected", "Allowed once · finished", "Info"]);
+    // device_started is dropped; a clean success is just "Allowed once".
+    expect(acts.map((a) => a.status)).toEqual(["Rejected", "Allowed once"]);
     expect(acts[0]!.category).toBe("denied");
   });
 
-  it("blocked/error outcomes fold into the decision status", () => {
+  it("keeps failure/blocked suffixes but not success ones", () => {
+    const failed = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: false", ts: "2026-08-09T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "always_allow", source: "prompt", ts: "2026-08-09T12:00:01Z" },
+      { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-09T12:00:02Z" },
+    ]);
+    expect(failed[0]!.status).toBe("Always allowed · failed (exit 1)");
+    expect(failed[0]!.category).toBe("failed");
+  });
+
+  it("a clean success categorizes as approved, not failed", () => {
+    const acts = auditActivities(commandRun);
+    expect(acts[0]!.category).toBe("approved");
+  });
+
+  it("sandbox-block keeps its status label but categorizes as failed", () => {
     const blocked = auditActivities([
       { event: "intent_received", intentId: "i1", request: "run: rm -rf /x", ts: "2026-08-09T12:00:00Z" },
       { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:01Z" },
       { event: "denied_operation", intentId: "i1", path: "/x", error: "outside scope", ts: "2026-08-09T12:00:02Z" },
     ]);
     expect(blocked[0]!.status).toBe("Allowed once · blocked");
-    expect(blocked[0]!.category).toBe("blocked");
+    expect(blocked[0]!.category).toBe("failed");
   });
 
   it("search matches across title, command, agent, and goal", () => {

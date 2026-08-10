@@ -63,8 +63,64 @@ async function refreshStatus() {
 
 let selectedId = null;
 let auditSearch = "";
+let detailWidth = 340; // resizable detail pane width (px), kept across refreshes
+// References to the mounted audit chrome, so typing in the search box refreshes
+// only the list/detail (not the input itself → no focus loss).
+let auditMounted = null;
 
+// Mount the audit chrome once (search input, chips, list + detail containers).
 async function renderAudit() {
+  const search = el("div", { class: "search" }, [
+    el("input", { attrs: { placeholder: "Search activity, path, agent…" } }),
+  ]);
+  const searchInput = search.querySelector("input");
+  searchInput.value = auditSearch;
+  searchInput.addEventListener("input", () => { auditSearch = searchInput.value; refreshAudit(); });
+
+  const chipsBox = el("div", { class: "chips" });
+  const count = el("span", { class: "count" });
+  const toolbar = el("div", { class: "toolbar" }, [search, chipsBox, el("div", { class: "spacer" }), count]);
+
+  const listBox = el("div", { class: "list" });
+  const detailBox = el("aside", { class: "detail" });
+  detailBox.style.width = detailWidth + "px";
+  const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
+  wireSplitter(splitter, detailBox);
+  view.replaceChildren(toolbar, el("div", { class: "a1" }, [listBox, splitter, detailBox]));
+
+  auditMounted = { listBox, detailBox, count, chipsBox };
+  await refreshAudit();
+  searchInput.focus();
+  const len = searchInput.value.length;
+  searchInput.setSelectionRange(len, len);
+}
+
+// Drag the splitter to resize the detail pane (dragging left widens it).
+function wireSplitter(splitter, detailBox) {
+  splitter.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = detailWidth;
+    const onMove = (ev) => {
+      const w = startW + (startX - ev.clientX);
+      detailWidth = Math.max(240, Math.min(w, window.innerWidth - 360));
+      detailBox.style.width = detailWidth + "px";
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+  });
+}
+
+// Refresh just the data-bound parts — leaves the search input untouched.
+async function refreshAudit() {
+  if (!auditMounted) return;
+  const { listBox, detailBox, count, chipsBox } = auditMounted;
   const activities = await window.domo.auditActivities();
   const q = auditSearch.trim().toLowerCase();
   const shown = activities.filter((a) => {
@@ -78,26 +134,15 @@ async function renderAudit() {
     return inCat && inSearch;
   });
   // Keep the selection stable across refreshes; default to the newest.
-  let selected = shown.find((a) => a.id === selectedId) || shown[0] || null;
+  const selected = shown.find((a) => a.id === selectedId) || shown[0] || null;
   selectedId = selected ? selected.id : null;
 
-  const search = el("div", { class: "search" }, [
-    el("input", { attrs: { placeholder: "Search activity, path, agent…" } }),
-  ]);
-  const searchInput = search.querySelector("input");
-  searchInput.value = auditSearch;
-  searchInput.addEventListener("input", () => { auditSearch = searchInput.value; renderAudit(); });
-
-  const toolbar = el("div", { class: "toolbar" }, [
-    search,
-    el("div", { class: "chips" }, ["all", "approved", "denied", "blocked"].map((f) => {
-      const chip = el("span", { class: "chip" + (filter === f ? " active" : ""), text: f[0].toUpperCase() + f.slice(1) });
-      chip.addEventListener("click", () => { filter = f; renderAudit(); });
-      return chip;
-    })),
-    el("div", { class: "spacer" }),
-    el("span", { class: "count", text: `${shown.length} ${shown.length === 1 ? "activity" : "activities"}` }),
-  ]);
+  chipsBox.replaceChildren(...["all", "approved", "denied", "failed", "other"].map((f) => {
+    const chip = el("span", { class: "chip" + (filter === f ? " active" : ""), text: f[0].toUpperCase() + f.slice(1) });
+    chip.addEventListener("click", () => { filter = f; refreshAudit(); });
+    return chip;
+  }));
+  count.textContent = `${shown.length} ${shown.length === 1 ? "activity" : "activities"}`;
 
   const tbody = el("tbody");
   shown.forEach((a) => {
@@ -106,25 +151,23 @@ async function renderAudit() {
       el("td", {}, [badge(a.tone, a.status)]),
       el("td", {}, [el("div", { class: "t-act" }, [
         el("span", { class: "ic-wrap" }, [icon(a.kind)]),
-        el("span", { class: a.kind === "command" || a.kind === "file" ? "mono" : "", text: a.title }),
+        el("span", { text: a.title }),
       ])]),
     ]);
-    tr.addEventListener("click", () => { selectedId = a.id; renderAudit(); });
+    // Select on mouse down (feels immediate, before the click completes).
+    tr.addEventListener("mousedown", () => { selectedId = a.id; refreshAudit(); });
     tbody.appendChild(tr);
   });
-
   const table = el("table", {}, [
     el("thead", {}, [el("tr", {}, [
       el("th", { text: "Time" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
     ])]),
     tbody,
   ]);
-  const list = el("div", { class: "list" }, [
+  listBox.replaceChildren(
     shown.length ? table : el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }),
-  ]);
-
-  const detail = el("aside", { class: "detail" }, [detailFor(selected)]);
-  view.replaceChildren(toolbar, el("div", { class: "a1" }, [list, detail]));
+  );
+  detailBox.replaceChildren(detailFor(selected));
 }
 
 function detailFor(a) {
@@ -330,6 +373,7 @@ function render() {
 
 function selectTab(tab) {
   currentTab = tab;
+  if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
@@ -341,7 +385,7 @@ seg.addEventListener("click", (e) => {
   window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
-window.domo.onAuditChanged(() => { if (currentTab === "audit") renderAudit(); });
+window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit(); });
 window.domo.onStatusChanged(() => refreshStatus());
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).

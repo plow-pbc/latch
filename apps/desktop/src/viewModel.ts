@@ -98,6 +98,8 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
   for (const e of events) {
     const ev = jv(e);
     const event = ev.get("event").str ?? "";
+    // "Device started" is noise — never surface it as an activity.
+    if (event === "device_started") continue;
     const intentId = ev.get("intentId").str;
     if (intentId !== null) {
       push(`intent:${intentId}`, e);
@@ -144,7 +146,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     status,
     title,
     kind: activityKind(events, has, value),
-    category: activityCategory(status),
+    category: activityCategory(has, entry),
     command: activityCommand(entry, value),
     agentId:
       value("intent_received", "agent") ??
@@ -202,17 +204,14 @@ function activityStatus(
     const decision = jv(dec).get("decision").str ?? "";
     if (decision === "deny") return { status: "Denied", tone: "red" };
     const base = decision === "always_allow" ? "Always allowed" : "Allowed once";
+    // Failures/blocks keep their suffix; plain successes show just the base
+    // (no "· done"/"· finished").
     if (entry("denied_operation")) return { status: `${base} · blocked`, tone: "red" };
     if (has("exec_error") || has("tool_error")) return { status: `${base} · error`, tone: "red" };
     const ee = entry("exec_end");
     if (ee) {
       const code = jv(ee).get("exit_code").int ?? -1;
-      return code === 0
-        ? { status: `${base} · finished`, tone: "green" }
-        : { status: `${base} · failed (exit ${code})`, tone: "amber" };
-    }
-    if (has("file_write") || has("file_read") || has("tool_invoked")) {
-      return { status: `${base} · done`, tone: "green" };
+      if (code !== 0) return { status: `${base} · failed (exit ${code})`, tone: "amber" };
     }
     return { status: base, tone: "green" };
   }
@@ -241,13 +240,34 @@ function activityKind(
   return "command";
 }
 
-function activityCategory(status: string): string {
-  const t = status.toLowerCase();
-  if (t.includes("denied") || t.includes("rejected")) return "denied";
-  if (t.includes("blocked")) return "blocked";
-  if (t.includes("granted") || t.includes("allowed") || t.includes("finished") || t.includes("done")) {
+/**
+ * Coarse filter bucket, derived from the events (not the status string):
+ *   - denied:   refused at the approval gate (a person/device said no)
+ *   - failed:   ran but didn't cleanly succeed — sandbox-blocked, errored, or a
+ *               non-zero exit (this absorbs the old "blocked" bucket)
+ *   - approved: permitted and completed cleanly
+ *   - other:    pending / spawned / uncategorized
+ */
+function activityCategory(
+  has: (e: string) => boolean,
+  entry: (e: string) => JSONValue | null,
+): string {
+  if (entry("intent_rejected")) return "denied";
+  if (has("access_request") || has("access_decision")) {
+    const d = entry("access_decision");
+    if (d) return jv(d).get("approved").bool ? "approved" : "denied";
+    return "other"; // pending
+  }
+  const dec = entry("intent_decision");
+  if (dec) {
+    if (jv(dec).get("decision").str === "deny") return "denied";
+    if (entry("denied_operation")) return "failed"; // sandbox/scope block
+    if (has("exec_error") || has("tool_error")) return "failed";
+    const ee = entry("exec_end");
+    if (ee && (jv(ee).get("exit_code").int ?? 0) !== 0) return "failed";
     return "approved";
   }
+  if (entry("denied_operation")) return "failed";
   return "other";
 }
 
