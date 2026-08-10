@@ -885,3 +885,166 @@ describe("review findings", () => {
     });
   });
 });
+
+// §4.4: jobs, handles, approvals and output cursors are scoped to agent_id —
+// never to the name, which is nullable and not unique. The identical-name case
+// is the one that catches a system that drifted to keying on the wrong field.
+describe("per-agent isolation (§4.4)", () => {
+  const ALICE: RelayAuth = { agent_id: "sess_alice", agent_name: "Claude Code" };
+  // Same display name, different credential. Two people can name their agents
+  // the same thing, and Session.name is not unique.
+  const MALLORY: RelayAuth = { agent_id: "sess_mallory", agent_name: "Claude Code" };
+
+  async function startJob(server: DomoMcpServer, auth: RelayAuth, marker: string) {
+    const { payload } = await callTool(
+      server,
+      "run_command",
+      { argv: ["/bin/sh", "-c", `echo ${marker}; sleep 0.6; echo ${marker}-done`], wait_ms: 100 },
+      auth,
+    );
+    expect(payload.status).toBe("running");
+    return payload.handle as string;
+  }
+
+  it("one agent cannot read another's job output — even sharing a name", async () => {
+    const { server } = makeServer();
+    const handle = await startJob(server, ALICE, "alice-secret");
+
+    const stolen = await callTool(server, "get_output", { handle }, MALLORY);
+    expect(stolen.isError).toBe(true);
+    expect(JSON.stringify(stolen.payload)).not.toContain("alice-secret");
+
+    // Indistinguishable from a handle that never existed.
+    const invented = await callTool(server, "get_output", { handle: "NO-SUCH-HANDLE" }, MALLORY);
+    expect(JSON.stringify(stolen.payload)).toBe(
+      JSON.stringify(invented.payload).replace("NO-SUCH-HANDLE", handle),
+    );
+
+    // The owner still reads it — nothing was consumed or broken.
+    const owner = await callTool(server, "get_output", { handle }, ALICE);
+    expect(owner.isError).toBe(false);
+    expect(owner.payload.output).toContain("alice-secret");
+  });
+
+  it("one agent's read cannot advance another's cursor", async () => {
+    const { server } = makeServer();
+    const aliceHandle = await startJob(server, ALICE, "alice");
+    const malloryHandle = await startJob(server, MALLORY, "mallory");
+    expect(aliceHandle).not.toBe(malloryHandle);
+
+    /** Poll a job to completion — sandbox-exec startup is not instant. */
+    const drain = async (handle: string, auth: RelayAuth) => {
+      let out = { status: "running", output: "" } as any;
+      for (let i = 0; i < 80 && out.status === "running"; i++) {
+        await new Promise((r) => setTimeout(r, 25));
+        out = (await callTool(server, "get_output", { handle, since: 0 }, auth)).payload;
+      }
+      return out;
+    };
+
+    // Alice reads her stream to the end. Repeatedly, from byte 0.
+    const aliceOut = await drain(aliceHandle, ALICE);
+    expect(aliceOut.status).toBe("completed");
+    expect(aliceOut.output).toContain("alice");
+    expect(aliceOut.output).not.toContain("mallory");
+
+    // Mallory's stream is untouched by any of that: still readable from 0, in
+    // full. Nothing Alice did consumed or advanced it.
+    const malloryOut = await drain(malloryHandle, MALLORY);
+    expect(malloryOut.status).toBe("completed");
+    expect(malloryOut.output).toContain("mallory");
+    expect(malloryOut.output).toContain("mallory-done");
+    expect(malloryOut.output).not.toContain("alice");
+
+    // And re-reading Alice's from 0 still yields everything — the cursor is the
+    // caller's `since`, not shared state one agent can move for another.
+    const aliceAgain = await callTool(
+      server,
+      "get_output",
+      { handle: aliceHandle, since: 0 },
+      ALICE,
+    );
+    expect(aliceAgain.payload.output).toBe(aliceOut.output);
+  });
+
+  it("a deferred handle is not shared by two agents with the same name", async () => {
+    const { server } = makeServer(new ScriptedPolicy("allow_once", 200), 40);
+    const dir = tempDir();
+    const file = path.join(dir, "alice.txt");
+    fs.writeFileSync(file, "alice's file");
+    const first = await callTool(server, "read_file", { path: file }, ALICE);
+    expect(first.payload.status).toBe("pending");
+
+    const stolen = await callTool(
+      server,
+      "get_result",
+      { handle: first.payload.handle },
+      MALLORY,
+    );
+    expect(stolen.payload).toEqual({ status: "unknown", handle: first.payload.handle });
+  });
+
+  it("an always-allow rule from one agent does not approve another's identical request", async () => {
+    // Rule keys are (agent, device, capabilities). Two agents sharing a NAME
+    // must not share a rule.
+    const asked: string[] = [];
+    const { server } = makeServer({
+      async decideIntent(intent) {
+        asked.push(intent.agentId);
+        return { decision: "always_allow" as const, source: "ask" };
+      },
+    });
+    const dir = tempDir();
+    const file = path.join(dir, "shared.txt");
+    fs.writeFileSync(file, "contents");
+
+    await callTool(server, "read_file", { path: file }, ALICE);
+    expect(asked).toEqual(["sess_alice"]);
+
+    // Alice's second identical call is served by her stored rule — not asked.
+    await callTool(server, "read_file", { path: file }, ALICE);
+    expect(asked).toEqual(["sess_alice"]);
+
+    // Mallory's identical call, same name, must still be asked.
+    await callTool(server, "read_file", { path: file }, MALLORY);
+    expect(asked).toEqual(["sess_alice", "sess_mallory"]);
+  });
+
+  it("the audit trail names the agent and keys on the id", async () => {
+    const { server, device } = makeServer();
+    const dir = tempDir();
+    const file = path.join(dir, "a.txt");
+    fs.writeFileSync(file, "x");
+    await callTool(server, "read_file", { path: file }, ALICE);
+    await callTool(server, "read_file", { path: file }, MALLORY);
+
+    const received = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "intent_received")
+      .map((e) => ({
+        agent: jv(e as JSONValue).get("agent").str,
+        name: jv(e as JSONValue).get("agent_name").str,
+      }));
+    expect(received).toEqual([
+      { agent: "sess_alice", name: "Claude Code" },
+      { agent: "sess_mallory", name: "Claude Code" },
+    ]);
+    // The name alone could not tell these two apart; the id does.
+    expect(new Set(received.map((r) => r.name)).size).toBe(1);
+    expect(new Set(received.map((r) => r.agent)).size).toBe(2);
+  });
+
+  it("the approval dialog's view model carries the name and the id", async () => {
+    let seen: { agentDisplay: string; agentId: string } | null = null;
+    const { server } = makeServer({
+      async decideIntent(intent) {
+        seen = { agentDisplay: intent.agentDisplay, agentId: intent.agentId };
+        return "allow_once" as const;
+      },
+    });
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "a.txt"), "x");
+    await callTool(server, "read_file", { path: path.join(dir, "a.txt") }, ALICE);
+    expect(seen).toEqual({ agentDisplay: "Claude Code", agentId: "sess_alice" });
+  });
+});

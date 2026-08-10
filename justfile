@@ -55,6 +55,10 @@ app: build
 verify-preload: build
     DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/verify-preload.mjs
 
+# Screenshot the approval dialog (evidence that it names the calling agent).
+approval-screenshot: build
+    DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/approval-screenshot.mjs
+
 # Print this Mac's device id (once the app has created its identity).
 device-id:
     @node -e 'try{console.log(JSON.parse(require("fs").readFileSync("{{nethome}}/device/identity.json")).deviceId)}catch{console.log("(no device identity yet — launch the app once: just app)")}'

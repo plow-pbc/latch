@@ -101,6 +101,25 @@ describe("adversarialReview — clean verdicts flow through", () => {
     expect(prompt).toContain("UNVERIFIED");
   });
 
+  it("receives the calling agent's name AND its id", async () => {
+    // §4.2: the authenticated agent is available to the reviewer. The name is
+    // what a human recognises; the id is what actually identifies the caller,
+    // and a reviewer weighing an agent's history needs the one that is unique.
+    let prompt = "";
+    createImpl = async (params) => {
+      const p = params as { messages: { content: string }[] };
+      prompt = p.messages[0].content;
+      return verdictResponse("allow");
+    };
+    await adversarialReview({
+      intent: intent({ agentId: "sess_alice", agentDisplay: "Claude Code" }),
+      history: [],
+      apiKey: "sk-test",
+    });
+    expect(prompt).toContain("Claude Code");
+    expect(prompt).toContain("sess_alice");
+  });
+
   it("does not retry, and bounds the client's own timeout", async () => {
     await review();
     expect(clientOptions).toMatchObject({ maxRetries: 0, timeout: REVIEWER_TIMEOUT_MS });

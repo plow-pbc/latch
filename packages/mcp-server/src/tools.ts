@@ -24,6 +24,7 @@ import {
 } from "@domo/protocol";
 import { DeviceAgent, MAX_FILE_BYTES } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
+import { JobOwners } from "./jobs.js";
 
 /** A tool argument was missing or unusable — the agent's problem, not ours. */
 export class ToolError extends Error {}
@@ -39,6 +40,8 @@ export interface AgentIdentity {
 export interface ToolContext {
   device: DeviceAgent;
   deferred: DeferredResults;
+  /** Which agent started which command job (§4.4). */
+  jobs: JobOwners;
   agent: AgentIdentity;
   /** Stable for the life of this Mac process; intents carry it for grouping. */
   sessionId: string;
@@ -270,7 +273,7 @@ export const TOOLS: ToolSpec[] = [
       // directly; the call defers, and `get_result` later returns a ready
       // payload that CONTAINS the job handle. Two hops, not one.
       const waitMs = Math.min(a.get("wait_ms").int ?? 10_000, ctx.commandWaitCapMs);
-      return decideAndRun(
+      const result = await decideAndRun(
         ctx,
         progress,
         `run: ${argv.join(" ")}`,
@@ -278,6 +281,11 @@ export const TOOLS: ToolSpec[] = [
         capabilities,
         { wait_ms: waitMs },
       );
+      // The job is this agent's. Claimed here rather than in the executor,
+      // which has one registry for the whole process and no idea who called.
+      const handle = jv(result).get("handle").str;
+      if (handle !== null) ctx.jobs.claim(ctx.agent.agentId, handle);
+      return result;
     },
   },
   {
@@ -298,6 +306,8 @@ export const TOOLS: ToolSpec[] = [
     async run(args, ctx) {
       const handle = jv(args).get("handle").str;
       if (handle === null) throw new ToolError("missing 'handle'");
+      // Another agent's job is indistinguishable from one that never existed.
+      ctx.jobs.assertOwner(ctx.agent.agentId, handle);
       return ctx.device.getOutput(handle, jv(args).get("since").int ?? 0);
     },
   },

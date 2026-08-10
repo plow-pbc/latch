@@ -117,6 +117,14 @@ it re-resolves a physical path, but it is still a blocking filesystem call on
 the budget path. Making it async means changing signature-critical protocol
 code whose vectors are frozen, so it is recorded rather than done here.
 
+**Everything an agent can hold is scoped to its `agent_id`** (§4.4) — deferred
+handles, command job handles, and always-allow rules, whose keys are
+`(agent, device, capabilities)`. Never to `agent_name`: `Session.name` is
+nullable and not unique, so two credentials can carry the same one. Presenting
+another agent's handle returns exactly what a handle that never existed returns.
+The name is carried for a human to read — in the approval dialog, in the audit
+record, and in the adversarial reviewer's prompt — and for nothing else.
+
 **Two kinds of handle, and they are not interchangeable.** `run_command` returns
 a *job* handle for `get_output` when a command outlives its wait. Any tool that
 outlives the **call budget** — a human who has not answered yet, or slow work —

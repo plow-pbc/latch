@@ -62,6 +62,10 @@ export class DeviceAgent {
     this.audit.record("intent_received", {
       intentId: intent.intentId,
       agent: intent.agentId,
+      // The name is for a human to read here and in the approval dialog. It is
+      // never an identity: Session.name is nullable and not unique, so two
+      // credentials can produce the same one. `agent` above is the identity.
+      agent_name: intent.agentDisplay,
       request: intent.request,
       goal: intent.goal ?? "",
       capabilities: intent.capabilities.map(capabilityDisplay),

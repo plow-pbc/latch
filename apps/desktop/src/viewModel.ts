@@ -169,7 +169,10 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
       value("access_request", "agent") ??
       value("access_decision", "agent") ??
       value("agent_spawned", "agent"),
-    agentDisplay: value("access_request", "display"),
+    // Newer entries carry the relay-asserted name; `access_request.display` is
+    // the pre-relay shape, kept because the audit log is append-only and old
+    // entries are still on disk.
+    agentDisplay: value("intent_received", "agent_name") ?? value("access_request", "display"),
     goal:
       value("intent_received", "goal") ??
       value("access_request", "goals") ??

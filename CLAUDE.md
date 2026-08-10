@@ -50,6 +50,9 @@ the real thing.
   retrieves it. A handle belongs to the `agent_id` that created it. This is why
   file operations are async and size-capped: synchronous work blocks the event
   loop and the budget timer never fires.
+- **`agent_id` is the isolation key; `agent_name` is display-only.** Jobs,
+  deferred handles and always-allow rules key on the id. The name is nullable
+  and not unique — two credentials can share one — so it identifies nothing.
 - **Resolve a path before the human sees it.** The approval dialog's whole value
   is that the human sees what will actually happen, so a supplied path is
   canonicalised before it becomes a capability — never after.

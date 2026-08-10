@@ -22,6 +22,7 @@ import {
 import { JSONValue } from "@domo/protocol";
 import { DeviceAgent } from "@domo/device-core";
 import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
+import { JobOwners } from "./jobs.js";
 import { AgentIdentity, TOOLS, ToolContext, toolContent } from "./tools.js";
 
 /** The MCP revision this server speaks, and the only one it will speak. */
@@ -117,6 +118,7 @@ export function createDomoMcpServer(
 ): DomoMcpServer {
   const budgetMs = options.budgetMs ?? CALL_BUDGET_MS;
   const deferred = new DeferredResults(budgetMs);
+  const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
 
   const handler = createMcpHandler(
@@ -156,6 +158,7 @@ export function createDomoMcpServer(
             const toolCtx: ToolContext = {
               device,
               deferred,
+              jobs,
               agent,
               sessionId,
               commandWaitCapMs: budgetMs,
