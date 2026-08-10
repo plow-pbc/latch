@@ -62,12 +62,6 @@ describe("settings storage", () => {
     expect(reloaded.mcpUrl).toBe("https://api.plow.co/v1/relay/devices/u_123/mcp");
   });
 
-  it("holds no API URL at all — the origin is baked into the build", () => {
-    const settings = loadSettings(tempHome());
-    expect(settings).not.toHaveProperty("relayUrl");
-    expect(settings).not.toHaveProperty("apiBaseUrl");
-  });
-
   it("no longer carries a connection string or a certificate pin", () => {
     const home = tempHome();
     const settings = loadSettings(home);

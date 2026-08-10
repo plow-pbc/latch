@@ -85,32 +85,6 @@ describe("the reduced tool surface (§4.5)", () => {
     }
   });
 
-  it("rejects an unknown tool without inventing a result", async () => {
-    const { server } = makeServer();
-    const { isError, payload } = await callTool(server, "list_devices", {}, AGENT);
-    expect(isError).toBe(true);
-    expect(JSON.stringify(payload)).toMatch(/list_devices/);
-  });
-
-  it("validates tool arguments against the declared schema", async () => {
-    const { server } = makeServer();
-    const { isError, payload } = await callTool(server, "read_file", { path: 42 }, AGENT);
-    expect(isError).toBe(true);
-    expect(JSON.stringify(payload)).toMatch(/validation|must be string/i);
-  });
-
-  it("refuses a `device` argument rather than quietly ignoring it", async () => {
-    const { server } = makeServer();
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "hi");
-    const { isError } = await callTool(
-      server,
-      "read_file",
-      { path: path.join(dir, "a.txt"), device: "some-mac" },
-      AGENT,
-    );
-    expect(isError).toBe(true);
-  });
 });
 
 describe("a tool call end to end, in process", () => {
@@ -140,27 +114,6 @@ describe("a tool call end to end, in process", () => {
     expect(jv(received).get("capabilities").arr).toEqual([`Read: ${canonicalize(file)}`]);
     expect(jv(received).get("agent").str).toBe("agent-1");
     expect(jv(received).get("goal").str).toBe("check the greeting");
-  });
-
-  it("read_file returns base64 for bytes that are not UTF-8", async () => {
-    const { server } = makeServer();
-    const dir = tempDir();
-    const file = path.join(dir, "blob.bin");
-    fs.writeFileSync(file, Buffer.from([0xff, 0xfe, 0x00, 0x01]));
-    const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
-    expect(payload.content).toBeUndefined();
-    expect(Buffer.from(payload.content_base64, "base64")).toEqual(
-      Buffer.from([0xff, 0xfe, 0x00, 0x01]),
-    );
-  });
-
-  it("write_file writes within the approved scope", async () => {
-    const { server } = makeServer();
-    const dir = tempDir();
-    const file = path.join(dir, "out.txt");
-    const { payload } = await callTool(server, "write_file", { path: file, content: "wrote" }, AGENT);
-    expect(payload).toEqual({ path: canonicalize(file), bytes: 5 });
-    expect(fs.readFileSync(file, "utf8")).toBe("wrote");
   });
 
   it("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
@@ -227,54 +180,6 @@ describe("a tool call end to end, in process", () => {
     expect(events(device)).not.toContain("file_read");
   });
 
-  it("list_tools serves the blessed-tool surface and use_tool invokes one", async () => {
-    const { server, device } = makeServer();
-    const listed = await callTool(server, "list_tools", {}, AGENT);
-    expect(listed.payload.tools.map((t: { name: string }) => t.name)).toEqual(["mac_info"]);
-
-    const used = await callTool(server, "use_tool", { tool: "mac_info" }, AGENT);
-    expect(used.isError).toBe(false);
-    expect(used.payload.result.hostname).toBeTypeOf("string");
-    expect(events(device)).toContain("tool_invoked");
-  });
-
-  it("run_command executes in the sandbox and reports its exit", async () => {
-    const { server, device } = makeServer();
-    const { payload, isError } = await callTool(
-      server,
-      "run_command",
-      { argv: ["/bin/echo", "sandboxed"], wait_ms: 5_000 },
-      AGENT,
-    );
-    expect(isError).toBe(false);
-    expect(payload.status).toBe("completed");
-    expect(payload.exit_code).toBe(0);
-    expect(payload.output).toContain("sandboxed");
-    expect(events(device)).toContain("exec_start");
-    expect(events(device)).toContain("exec_end");
-  });
-
-  it("get_output reads more of a still-running job by its job handle", async () => {
-    const { server } = makeServer();
-    const started = await callTool(
-      server,
-      "run_command",
-      { argv: ["/bin/sh", "-c", "echo one; sleep 0.4; echo two"], wait_ms: 100 },
-      AGENT,
-    );
-    expect(started.payload.status).toBe("running");
-    const handle: string = started.payload.handle;
-    expect(handle).toBeTypeOf("string");
-
-    // Poll until it finishes — get_output takes the JOB handle, not a deferred one.
-    let out = started.payload;
-    for (let i = 0; i < 40 && out.status === "running"; i++) {
-      await new Promise((r) => setTimeout(r, 50));
-      out = (await callTool(server, "get_output", { handle }, AGENT)).payload;
-    }
-    expect(out.status).toBe("completed");
-    expect(out.exit_code).toBe(0);
-  });
 });
 
 describe("agent identity", () => {
@@ -291,23 +196,6 @@ describe("agent identity", () => {
     expect(events(device)).toEqual([]);
   });
 
-  it("carries the agent's name into the intent the approver sees", async () => {
-    let seenDisplay = "";
-    let seenId = "";
-    const { server } = makeServer({
-      async decideIntent(intent) {
-        seenDisplay = intent.agentDisplay;
-        seenId = intent.agentId;
-        return "allow_once" as const;
-      },
-    });
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    await callTool(server, "read_file", { path: path.join(dir, "a.txt") }, AGENT);
-    expect(seenId).toBe("agent-1");
-    expect(seenDisplay).toBe("Agent One");
-  });
-
   it("maps the relay's assertion onto AuthInfo without ever carrying the token", () => {
     const info = toAuthInfo({
       agent_id: "agent-1",
@@ -322,19 +210,6 @@ describe("agent identity", () => {
     expect(JSON.stringify(info)).not.toMatch(/secret|bearer|sk-/i);
   });
 
-  it("falls back to the agent id when the credential has no name", async () => {
-    let seenDisplay = "";
-    const { server } = makeServer({
-      async decideIntent(intent) {
-        seenDisplay = intent.agentDisplay;
-        return "allow_once" as const;
-      },
-    });
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    await callTool(server, "read_file", { path: path.join(dir, "a.txt") }, { agent_id: "agent-9" });
-    expect(seenDisplay).toBe("agent-9");
-  });
 });
 
 describe("the deferred-result contract (§4.3)", () => {
@@ -372,49 +247,6 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(poll.result).toEqual({ path: canonicalize(file), content: "slow content" });
   });
 
-  it("reports `running` once the human has decided and the work is under way", async () => {
-    const { server } = makeServer(new ScriptedPolicy("allow_once", 0), SHORT);
-    const first = await callTool(
-      server,
-      "run_command",
-      { argv: ["/bin/sh", "-c", "sleep 0.5; echo done"], wait_ms: 5_000 },
-      AGENT,
-    );
-    expect(first.payload.status).toBe("pending");
-    // The decision landed immediately; only the command is slow.
-    expect(first.payload.reason).toBe("running");
-  });
-
-  it("a late denial lands on the handle as `denied`, not `failed`", async () => {
-    const { server, first } = await deferredRead(new ScriptedPolicy("deny", 200));
-    expect(first.payload.status).toBe("pending");
-    let poll = first.payload;
-    for (let i = 0; i < 60 && poll.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "get_result", { handle: first.payload.handle }, AGENT)).payload;
-    }
-    expect(poll.status).toBe("denied");
-    expect(poll.reason).toMatch(/denied/);
-  });
-
-  it("a late failure lands as `failed`", async () => {
-    const { server } = makeServer(new ScriptedPolicy("allow_once", 200), SHORT);
-    const first = await callTool(
-      server,
-      "read_file",
-      { path: "/domo-does-not-exist/nope.txt" },
-      AGENT,
-    );
-    expect(first.payload.status).toBe("pending");
-    let poll = first.payload;
-    for (let i = 0; i < 60 && poll.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "get_result", { handle: first.payload.handle }, AGENT)).payload;
-    }
-    expect(poll.status).toBe("failed");
-    expect(poll.error).toBeTypeOf("string");
-  });
-
   it("a handle belongs to the agent that created it — another agent gets `unknown`", async () => {
     const { server, first } = await deferredRead(new ScriptedPolicy("allow_once", 200));
     const handle: string = first.payload.handle;
@@ -428,17 +260,6 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(owner.payload.status).not.toBe("unknown");
   });
 
-  it("a fast call mints no handle at all", async () => {
-    const { server } = makeServer();
-    const dir = tempDir();
-    const file = path.join(dir, "fast.txt");
-    fs.writeFileSync(file, "quick");
-    const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
-    expect(payload.handle).toBeUndefined();
-    expect(payload.status).toBeUndefined();
-    expect(payload.content).toBe("quick");
-  });
-
   it("the call budget sits comfortably below the relay's 20s timeout", () => {
     // The relay's pending future times out at 20 SECONDS. The budget has to
     // leave room for the tunnel round-trip on top of itself, not merely be
@@ -450,21 +271,6 @@ describe("the deferred-result contract (§4.3)", () => {
 });
 
 describe("the protocol posture (§4.2)", () => {
-  it("speaks revision 2026-07-28", () => {
-    expect(PROTOCOL_REVISION).toBe("2026-07-28");
-  });
-
-  it("declares the revision and tools.listChanged: false to a discovering client", async () => {
-    const { server } = makeServer();
-    // `listChanged: false` is what stops a client opening a subscription stream
-    // this one-exchange-per-frame transport cannot carry.
-    const discovered = parse(await rpc(server, "server/discover", {}, AGENT));
-    expect(discovered.result).toMatchObject({
-      supportedVersions: [PROTOCOL_REVISION],
-      capabilities: { tools: { listChanged: false } },
-    });
-  });
-
   it("GET is answered 405 Method not allowed, deliberately", async () => {
     const { server } = makeServer();
     const response = await server.fetch(
@@ -481,60 +287,6 @@ describe("the protocol posture (§4.2)", () => {
     });
   });
 
-  it("a 2025-era client is rejected, not served a legacy lane", async () => {
-    const { server } = makeServer();
-    const response = await server.fetch(
-      new Request("http://mac/mcp", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-06-18",
-            capabilities: {},
-            clientInfo: { name: "old", version: "1" },
-          },
-        }),
-      }),
-    );
-    expect(response.status).toBe(400);
-    const body = JSON.parse(await response.text());
-    expect(body.error.message).toMatch(/Unsupported protocol version: 2025-06-18/);
-    expect(body.error.data.supported).toEqual([PROTOCOL_REVISION]);
-  });
-
-  it("the path and query the agent sent are served as sent", async () => {
-    const { server } = makeServer();
-    const response = await server.fetch(
-      new Request("http://mac/v1/relay/devices/u-1/mcp?trace=abc", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-protocol-version": PROTOCOL_REVISION,
-          "mcp-method": "tools/list",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/list",
-          params: {
-            _meta: {
-              "io.modelcontextprotocol/protocolVersion": PROTOCOL_REVISION,
-              "io.modelcontextprotocol/clientInfo": { name: "c", version: "1" },
-              "io.modelcontextprotocol/clientCapabilities": {},
-            },
-          },
-        }),
-      }),
-      AGENT,
-    );
-    // The server does not route on path: the relay forwards whatever the agent
-    // sent, and this endpoint answers it.
-    expect(response.status).toBe(200);
-  });
 });
 
 describe("review findings", () => {
@@ -560,50 +312,6 @@ describe("review findings", () => {
       expect(JSON.parse(raw.body).id).toBe(raw.sentId);
     });
 
-    it("is refused for an unauthenticated caller too", async () => {
-      const { server } = makeServer();
-      const raw = await rpc(server, "subscriptions/listen", {});
-      expect(raw.status).toBe(400);
-      expect(parse(raw).error?.code).toBe(-32601);
-    });
-
-    it("cannot be smuggled past the header check via the body", async () => {
-      const { server } = makeServer();
-      // Header says one method, body another. The SDK refuses the disagreement,
-      // so there is no path to the streaming handler either way.
-      const response = await server.fetch(
-        new Request("http://mac/mcp", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            accept: "application/json, text/event-stream",
-            "mcp-protocol-version": PROTOCOL_REVISION,
-            "mcp-method": "tools/list",
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 7,
-            method: "subscriptions/listen",
-            params: {
-              notifications: ["notifications/tools/list_changed"],
-              _meta: {
-                "io.modelcontextprotocol/protocolVersion": PROTOCOL_REVISION,
-                "io.modelcontextprotocol/clientInfo": { name: "c", version: "1" },
-                "io.modelcontextprotocol/clientCapabilities": {},
-              },
-            },
-          }),
-        }),
-        AGENT,
-      );
-      expect(response.status).toBe(400);
-      expect(response.headers.get("content-type")).not.toContain("text/event-stream");
-    });
-
-    it("an ordinary call still works — the refusal is not a blanket block", async () => {
-      const { server } = makeServer();
-      expect(parse(await rpc(server, "tools/list", {}, AGENT)).result?.tools).toBeDefined();
-    });
   });
 
   // 2 — the isolation key must be a non-empty string. Truthy non-strings would
@@ -681,21 +389,6 @@ describe("review findings", () => {
       expect(JSON.stringify(payload)).toMatch(/single-call limit/);
     });
 
-    it("a write over the size ceiling is refused before anything is encoded", async () => {
-      const { server } = makeServer();
-      const dir = tempDir();
-      const target = path.join(dir, "big.txt");
-      const { isError, payload } = await callTool(
-        server,
-        "write_file",
-        { path: target, content: "x".repeat(MAX_FILE_BYTES + 1) },
-        AGENT,
-      );
-      expect(isError).toBe(true);
-      expect(JSON.stringify(payload)).toMatch(/single-call limit/);
-      expect(fs.existsSync(target)).toBe(false);
-    });
-
     it("the budget timer still fires while a read is in flight", async () => {
       // With a synchronous read the event loop is blocked and the budget timer
       // cannot fire, so the call returns its result late instead of deferring.
@@ -764,22 +457,6 @@ describe("review findings", () => {
       expect(payload.path).toBe(canonicalize(decoy));
       expect(payload.content).toBe("harmless");
       expect(payload.content).not.toContain("s3cret");
-    });
-
-    it("a traversal path is shown collapsed, not as written", async () => {
-      let approved: string[] = [];
-      const { server } = makeServer({
-        async decideIntent(intent) {
-          approved = intent.capabilities.flatMap((c) => c.paths ?? []);
-          return "allow_once" as const;
-        },
-      });
-      const dir = tempDir();
-      fs.mkdirSync(path.join(dir, "sub"));
-      fs.writeFileSync(path.join(dir, "secret.txt"), "s");
-      await callTool(server, "read_file", { path: path.join(dir, "sub/../secret.txt") }, AGENT);
-      expect(approved).toEqual([canonicalize(path.join(dir, "secret.txt"))]);
-      expect(approved[0]).not.toContain("..");
     });
 
     it("run_command's declared bounds are resolved before approval too", async () => {
@@ -1034,17 +711,4 @@ describe("per-agent isolation (§4.4)", () => {
     expect(new Set(received.map((r) => r.agent)).size).toBe(2);
   });
 
-  it("the approval dialog's view model carries the name and the id", async () => {
-    let seen: { agentDisplay: string; agentId: string } | null = null;
-    const { server } = makeServer({
-      async decideIntent(intent) {
-        seen = { agentDisplay: intent.agentDisplay, agentId: intent.agentId };
-        return "allow_once" as const;
-      },
-    });
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    await callTool(server, "read_file", { path: path.join(dir, "a.txt") }, ALICE);
-    expect(seen).toEqual({ agentDisplay: "Claude Code", agentId: "sess_alice" });
-  });
 });

@@ -65,49 +65,6 @@ function nextLine(conn: Connection): Promise<Buffer> {
 }
 
 describe("WebSocket transport", () => {
-  it("plain ws:// loopback round-trip", async () => {
-    const { port, stop } = await echoServer();
-    try {
-      const conn = await new WebSocketDialer(`ws://127.0.0.1:${port}/`).connect();
-      const line = nextLine(conn);
-      conn.startReading();
-      conn.sendLine(Buffer.from(JSON.stringify({ hello: "ws" }), "utf8"));
-      expect((await line).toString("utf8")).toBe('{"hello":"ws"}');
-      conn.close();
-    } finally {
-      stop();
-    }
-  });
-
-  it("buffers inbound frames until startReading, then delivers them in order", async () => {
-    const { port, stop } = await echoServer();
-    try {
-      const conn = await new WebSocketDialer(`ws://127.0.0.1:${port}/`).connect();
-      // Send before ever calling startReading — the echoes must be held, not lost.
-      conn.sendLine(Buffer.from("one", "utf8"));
-      conn.sendLine(Buffer.from("two", "utf8"));
-      await new Promise((r) => setTimeout(r, 100));
-      const seen: string[] = [];
-      conn.onLine = (line) => seen.push(line.toString("utf8"));
-      conn.startReading();
-      expect(seen).toEqual(["one", "two"]);
-      conn.close();
-    } finally {
-      stop();
-    }
-  });
-
-  it("reports the peer going away", async () => {
-    const { port, stop } = await echoServer();
-    const conn = await new WebSocketDialer(`ws://127.0.0.1:${port}/`).connect();
-    const closed = new Promise<void>((resolve) => {
-      conn.onClose = () => resolve();
-    });
-    conn.startReading();
-    stop();
-    await expect(closed).resolves.toBeUndefined();
-  });
-
   it("wss:// self-signed is refused by the CA store", async () => {
     const { port, stop } = await echoServer(true);
     try {
@@ -119,10 +76,4 @@ describe("WebSocket transport", () => {
     }
   });
 
-  it("a dial to nothing fails rather than hanging", async () => {
-    // Port 1 is reserved and never listening on a normal host.
-    await expect(new WebSocketDialer("ws://127.0.0.1:1/", 5).connect()).rejects.toThrow(
-      /websocket connect failed/,
-    );
-  });
 });

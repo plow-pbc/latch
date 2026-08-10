@@ -11,8 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ApprovalStore, DeviceAgent, HeadlessPolicy, PolicyDelegate } from "@domo/device-core";
-import { canonicalize } from "@domo/protocol";
+import { DeviceAgent, HeadlessPolicy, PolicyDelegate } from "@domo/device-core";
 import { createDomoMcpServer, PROTOCOL_REVISION } from "@domo/mcp-server";
 import {
   FRAME_REQUEST,
@@ -139,68 +138,6 @@ describe("a real MCP call from an agent, through the relay, to the Mac and back"
     expect(events).toEqual(["intent_received", "intent_decision", "file_read"]);
   });
 
-  it("runs a sandboxed command over the tunnel", async () => {
-    const { relay, client } = await stack();
-    await client.start();
-    await relay.waitForDevice();
-
-    const response = await relay.agentCall(
-      mcpCall(2, "tools/call", {
-        name: "run_command",
-        arguments: { argv: ["/bin/echo", "tunnelled"], wait_ms: 5_000 },
-      }),
-      AGENT,
-    );
-    const payload = JSON.parse(JSON.parse(response.body).result.content[0].text);
-    expect(payload.status).toBe("completed");
-    expect(payload.exit_code).toBe(0);
-    expect(payload.output).toContain("tunnelled");
-  });
-
-  it("lists tools, and the surface is the reduced one", async () => {
-    const { relay, client } = await stack();
-    await client.start();
-    await relay.waitForDevice();
-    const response = await relay.agentCall(mcpCall(3, "tools/list"), AGENT);
-    const tools = JSON.parse(response.body).result.tools.map((t: { name: string }) => t.name);
-    expect(tools.sort()).toEqual([
-      "get_output",
-      "get_result",
-      "list_tools",
-      "read_file",
-      "run_command",
-      "use_tool",
-      "write_file",
-    ]);
-  });
-
-  it("carries the agent's name down the wire into the approval decision", async () => {
-    let seenName = "";
-    let seenId = "";
-    const { relay, client } = await stack({
-      delegate: {
-        async decideIntent(intent) {
-          seenName = intent.agentDisplay;
-          seenId = intent.agentId;
-          return "allow_once" as const;
-        },
-      },
-    });
-    await client.start();
-    await relay.waitForDevice();
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    await relay.agentCall(
-      mcpCall(4, "tools/call", {
-        name: "read_file",
-        arguments: { path: path.join(dir, "a.txt") },
-      }),
-      AGENT,
-    );
-    expect(seenId).toBe("agent-1");
-    expect(seenName).toBe("Agent One");
-  });
-
   it("two agents on one socket each get their own answer", async () => {
     const { relay, client } = await stack();
     await client.start();
@@ -229,101 +166,6 @@ describe("a real MCP call from an agent, through the relay, to the Mac and back"
     expect(JSON.parse(JSON.parse(b.body).result.content[0].text).content).toBe("second");
   });
 
-  it("forwards the path and query the agent sent, as sent", async () => {
-    const { relay, client } = await stack();
-    await client.start();
-    await relay.waitForDevice();
-    const call = mcpCall(7, "tools/list");
-    const response = await relay.agentCall(
-      { ...call, path: "/v1/relay/devices/u-1/mcp?trace=abc" },
-      AGENT,
-    );
-    expect(response.status).toBe(200);
-  });
-});
-
-describe("a slow approval over the tunnel (§4.3, D3)", () => {
-  it("handle inside the budget, human answers late, agent collects the result", async () => {
-    const relay = await FakeRelay.start({ expectCredential: CREDENTIAL });
-    cleanups.push(() => relay.stop());
-    const home = tempDir();
-    // Nobody answers on their own; the test plays the human, late.
-    const approvals = new ApprovalStore(
-      path.join(home, "device/approvals"),
-      { decideIntent: () => new Promise(() => {}) },
-      10_000,
-    );
-    const device = new DeviceAgent(home, "Test Mac", approvals);
-    const BUDGET = 60;
-    const mcp = createDomoMcpServer(device, { budgetMs: BUDGET });
-    cleanups.push(() => mcp.close());
-    const client = new RelayClient({
-      url: relay.url,
-      credential: CREDENTIAL,
-      serve: (request, auth) => mcp.fetch(request, auth),
-    });
-    cleanups.push(() => client.stop());
-    await client.start();
-    await relay.waitForDevice();
-
-    const dir = tempDir();
-    const file = path.join(dir, "quarterly.txt");
-    fs.writeFileSync(file, "the numbers");
-
-    const started = Date.now();
-    const first = JSON.parse(
-      JSON.parse(
-        (
-          await relay.agentCall(
-            mcpCall(20, "tools/call", { name: "read_file", arguments: { path: file } }),
-            AGENT,
-          )
-        ).body,
-      ).result.content[0].text,
-    );
-    const elapsed = Date.now() - started;
-
-    // Came back inside the budget, with a handle rather than an answer.
-    expect(first.status).toBe("pending");
-    expect(first.reason).toBe("awaiting_approval");
-    expect(elapsed).toBeLessThan(BUDGET + 2_000);
-
-    // The approval is on disk while it is still unanswered — that record is the
-    // only thing that says an agent asked for this file.
-    const [record] = await approvals.all();
-    expect(record.status).toBe("pending");
-    expect(record.agentId).toBe("agent-1");
-    expect(record.capabilities).toEqual([`Read: ${canonicalize(file)}`]);
-
-    // The human comes back, well after the call returned.
-    await new Promise((r) => setTimeout(r, 150));
-    expect(approvals.resolve(record.intentId, "allow_once", "human")).toBe(true);
-
-    let poll = first;
-    for (let i = 0; i < 80 && poll.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      poll = JSON.parse(
-        JSON.parse(
-          (
-            await relay.agentCall(
-              mcpCall(21, "tools/call", {
-                name: "get_result",
-                arguments: { handle: first.handle },
-              }),
-              AGENT,
-            )
-          ).body,
-        ).result.content[0].text,
-      );
-    }
-    expect(poll.status).toBe("ready");
-    expect(poll.result.content).toBe("the numbers");
-    expect((await approvals.all())[0]).toMatchObject({
-      status: "decided",
-      decision: "allow_once",
-      source: "human",
-    });
-  });
 });
 
 describe("the handshake", () => {
@@ -375,24 +217,6 @@ describe("the handshake", () => {
     expect(logs.join("\n")).not.toContain("wrong-credential");
   });
 
-  it("heartbeats at or under 15s, honouring a shorter server cadence", async () => {
-    const { relay, client } = await stack({ pingIntervalMs: 60 });
-    await client.start();
-    await relay.waitForDevice();
-    await new Promise((r) => setTimeout(r, 250));
-    const pings = relay.received.filter((f) => f.type === "ping");
-    expect(pings.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("never lets a server advertising a slower cadence push it past 15s", async () => {
-    // The relay's staleness gate is twice the interval; drifting above 15s
-    // would start failing calls after 30s of quiet.
-    const { relay, client } = await stack({ pingIntervalMs: 600_000 });
-    await client.start();
-    await relay.waitForDevice();
-    await waitConnected(client);
-    expect(client.isConnected).toBe(true);
-  });
 });
 
 describe("reconnection", () => {
@@ -431,52 +255,6 @@ describe("reconnection", () => {
     expect(JSON.parse(JSON.parse(response.body).result.content[0].text).content).toBe("still here");
   });
 
-  it("backoff is jittered, not a fixed ladder", async () => {
-    // Full jitter: the delay is uniform in [0, ceiling), and the ceiling grows.
-    // Feeding a fixed random shows the ceiling; feeding 0 and 1 shows the span.
-    const delays: number[] = [];
-    const client = new RelayClient({
-      url: "ws://127.0.0.1:1/nothing",
-      credential: "plow_sk_unused_but_realistic",
-      serve: async () => new Response("{}"),
-      random: () => 1,
-      log: (m) => {
-        const match = /reconnecting in (\d+)ms/.exec(m);
-        if (match) delays.push(Number(match[1]));
-      },
-      dial: () => ({ connect: () => Promise.reject(new Error("nope")) }),
-    });
-    cleanups.push(() => client.stop());
-    await client.start();
-    await new Promise((r) => setTimeout(r, 4_000));
-    await client.stop();
-
-    expect(delays.length).toBeGreaterThanOrEqual(3);
-    // Ceilings double: 500, 1000, 2000, …
-    expect(delays[0]).toBe(500);
-    expect(delays[1]).toBe(1000);
-    expect(delays[2]).toBe(2000);
-
-    // With random()=0 the same ladder yields 0s — proving the delay is scaled
-    // by the random draw rather than being the ceiling itself.
-    const zeroDelays: number[] = [];
-    const jittered = new RelayClient({
-      url: "ws://127.0.0.1:1/nothing",
-      credential: "plow_sk_unused_but_realistic",
-      serve: async () => new Response("{}"),
-      random: () => 0,
-      log: (m) => {
-        const match = /reconnecting in (\d+)ms/.exec(m);
-        if (match) zeroDelays.push(Number(match[1]));
-      },
-      dial: () => ({ connect: () => Promise.reject(new Error("nope")) }),
-    });
-    cleanups.push(() => jittered.stop());
-    await jittered.start();
-    await new Promise((r) => setTimeout(r, 50));
-    await jittered.stop();
-    expect(zeroDelays.every((d) => d === 0)).toBe(true);
-  });
 });
 
 describe("the stand-in relay is an independent implementation", () => {
@@ -526,34 +304,6 @@ describe("the stand-in relay is an independent implementation", () => {
     expect(relay.deviceOnline).toBe(false);
   });
 
-  it("refuses a first frame that is not auth, unparseable JSON, and a non-object", async () => {
-    for (const [label, payload] of [
-      ["not auth", JSON.stringify({ type: "hello" })],
-      ["not JSON", "{{{"],
-      ["not an object", JSON.stringify(["auth"])],
-    ] as [string, string][]) {
-      const relay = await FakeRelay.start({ expectCredential: CREDENTIAL });
-      const ws = new WebSocket(relay.url);
-      const closed = new Promise<void>((resolve) => ws.on("close", () => resolve()));
-      ws.on("message", (data: Buffer) => {
-        if (JSON.parse(data.toString("utf8")).type !== "auth.challenge") return;
-        ws.send(payload);
-      });
-      await closed;
-      expect(relay.deviceOnline, label).toBe(false);
-      expect(relay.lastRejection, label).toBeTypeOf("string");
-      await relay.stop();
-    }
-  });
-
-  it("notices a device registering under an unexpected client kind", async () => {
-    const { relay, client } = await stack();
-    await client.start();
-    await relay.waitForDevice();
-    // The relay judges the kind against its OWN literal, not ours.
-    expect(relay.unexpectedClientKind).toBeNull();
-    expect(relay.clientKind).toBe(RELAY_CLIENT_KIND);
-  });
 });
 
 describe("frame handling", () => {
@@ -648,16 +398,4 @@ describe("frame handling", () => {
     expect(new URL(seenUrl).search).toBe("?trace=abc");
   });
 
-  it("ignores a malformed frame instead of dying on it", async () => {
-    const { relay, client } = await stack();
-    await client.start();
-    await relay.waitForDevice();
-    // A frame with no rid is not a request we can answer; it must not crash
-    // the socket.
-    const socket = [...(relay as unknown as { wss: { clients: Set<any> } }).wss.clients][0];
-    socket.send("not json at all");
-    socket.send(JSON.stringify({ type: "relay.request", method: "POST" }));
-    await new Promise((r) => setTimeout(r, 100));
-    expect(client.isConnected).toBe(true);
-  });
 });

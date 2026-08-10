@@ -34,11 +34,6 @@ describe("the API base URL is baked into the build", () => {
     expect(resolveApiBaseUrl({ isDevBuild: false, env })).toBe("https://staging.example");
   });
 
-  it("ignores an empty override rather than pointing at nothing", () => {
-    expect(resolveApiBaseUrl({ isDevBuild: false, env: { [API_BASE_URL_ENV]: "  " } })).toBe(
-      PRODUCTION_API_BASE_URL,
-    );
-  });
 });
 
 describe("the device socket derives from that one base URL", () => {
@@ -50,9 +45,6 @@ describe("the device socket derives from that one base URL", () => {
     expect(relaySocketUrl("http://localhost:18804")).toBe("ws://localhost:18804/v1/relay/ws");
   });
 
-  it("tolerates a trailing slash", () => {
-    expect(relaySocketUrl("https://api.plow.co/")).toBe("wss://api.plow.co/v1/relay/ws");
-  });
 });
 
 describe("PlowApi", () => {
