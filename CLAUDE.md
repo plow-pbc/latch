@@ -37,10 +37,17 @@ broker).
   sends a capability set or an intent — it calls a tool, and `mcp-server`
   derives the capabilities the policy engine and the sandbox will enforce. Goal
   text rides along for the human to read and never influences the bound.
-- **Nothing may block past the call budget.** A tunnelled call has a hard
-  ceiling well below 30s. Any tool that cannot answer in time returns a deferred
-  handle and keeps working; `get_result` retrieves it. A handle belongs to the
-  `agent_id` that created it.
+- **Nothing may block past the call budget.** The relay's pending future times
+  out at **20 seconds**, so a tunnelled call has to answer well inside that. Any
+  tool that cannot returns a deferred handle and keeps working; `get_result`
+  retrieves it. A handle belongs to the `agent_id` that created it. This is why
+  file operations are async and size-capped: synchronous work blocks the event
+  loop and the budget timer never fires.
+- **Resolve a path before the human sees it.** The approval dialog's whole value
+  is that the human sees what will actually happen, so a supplied path is
+  canonicalised before it becomes a capability — never after.
+- **No SSE on either leg.** `subscriptions/listen` is refused outright; the
+  relay buffers one HTTP exchange per frame and cannot carry a stream.
 
 ## Rules of the road
 

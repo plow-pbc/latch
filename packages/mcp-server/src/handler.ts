@@ -52,11 +52,45 @@ export function toAuthInfo(auth: RelayAuth): AuthInfo {
   };
 }
 
+/**
+ * The agent id is the isolation key: every handle, always-allow rule and audit
+ * entry is keyed on it. So it must be a non-empty STRING and nothing else — an
+ * array or an object is truthy, and would otherwise sail through as a client id
+ * and reach policy and execution as a key that cannot be compared.
+ */
 function agentFrom(authInfo: AuthInfo | undefined): AgentIdentity | null {
-  const agentId = authInfo?.clientId;
-  if (!agentId) return null;
+  const agentId: unknown = authInfo?.clientId;
+  if (typeof agentId !== "string" || agentId.trim().length === 0) return null;
   const name = authInfo?.extra?.agent_name;
   return { agentId, agentName: typeof name === "string" ? name : undefined };
+}
+
+/**
+ * Methods this server refuses outright, whatever the SDK would otherwise do.
+ *
+ * `subscriptions/listen` is always served over SSE — `responseMode: "json"`
+ * does not disable it, and `tools.listChanged: false` only discourages a client
+ * from asking. A long-lived stream is exactly what a relay that buffers one
+ * HTTP exchange per WebSocket frame cannot carry, and an accepted one would sit
+ * open on this Mac indefinitely. Refusing is the only thing that actually
+ * closes it.
+ */
+const REFUSED_METHODS = new Set(["subscriptions/listen"]);
+
+function refusal(id: unknown, method: string): Response {
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: id ?? null,
+      error: {
+        code: -32601,
+        message:
+          `${method} is not supported: this server is reachable only through a relay ` +
+          `that buffers one HTTP exchange per frame and cannot carry a stream.`,
+      },
+    }),
+    { status: 400, headers: { "content-type": "application/json" } },
+  );
 }
 
 export interface McpServerOptions {
@@ -105,6 +139,14 @@ export function createDomoMcpServer(
           async (args: unknown) => {
             // No asserted agent means nobody authorised this call. Fail closed:
             // every handle, rule and audit entry is keyed on the agent id.
+            //
+            // The guard is here, on the tool callback, and DELIBERATELY not on
+            // `tools/list` or `server/discover`. Those two return a static
+            // manifest that is identical for every agent and says nothing about
+            // this Mac — no state, no user data, no side effect — and the relay
+            // refuses an unauthenticated caller before anything reaches us.
+            // Everything that touches this Mac or does work is a tool, and
+            // every tool goes through here, `list_tools` included.
             if (!agent) {
               return {
                 content: [toolContent({ error: "no authenticated agent on this request" })],
@@ -155,8 +197,23 @@ export function createDomoMcpServer(
 
   return {
     toolNames: TOOLS.map((t) => t.name),
-    fetch: (request, auth) =>
-      handler.fetch(request, auth ? { authInfo: toAuthInfo(auth) } : undefined),
+    async fetch(request, auth) {
+      // Modern MCP requires Mcp-Method, and the SDK rejects a request whose
+      // header and body disagree — so the header is a sound place to refuse
+      // from, and costs nothing on the path every real call takes.
+      const method = request.headers.get("mcp-method");
+      if (method !== null && REFUSED_METHODS.has(method)) {
+        // Only now pay for the body, so the refusal can echo the caller's id.
+        let id: unknown = null;
+        try {
+          id = ((await request.clone().json()) as { id?: unknown }).id ?? null;
+        } catch {
+          /* an unparseable body still gets a refusal, just without an id */
+        }
+        return refusal(id, method);
+      }
+      return handler.fetch(request, auth ? { authInfo: toAuthInfo(auth) } : undefined);
+    },
     close: () => handler.close(),
   };
 }

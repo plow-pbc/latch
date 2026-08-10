@@ -19,6 +19,8 @@ export interface RawResponse {
   status: number;
   headers: Record<string, string>;
   body: string;
+  /** The JSON-RPC id this request was sent with, so a test can check the echo. */
+  sentId: number;
 }
 
 let nextId = 1;
@@ -61,6 +63,7 @@ export async function rpc(
     status: response.status,
     headers: Object.fromEntries(response.headers),
     body: await response.text(),
+    sentId: id,
   };
 }
 

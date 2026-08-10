@@ -18,6 +18,7 @@ import {
   FileOps,
   FileOpsError,
   HeadlessPolicy,
+  MAX_FILE_BYTES,
   PolicyEngine,
 } from "@domo/device-core";
 
@@ -32,38 +33,74 @@ function tempDir(): string {
 }
 
 describe("FileOps bounds", () => {
-  it("reads within scope, rejects outside", () => {
+  it("reads within scope, rejects outside", async () => {
     const dir = tempDir();
     const inside = path.join(dir, "a.txt");
     fs.writeFileSync(inside, "data");
-    expect(FileOps.read(inside, [dir]).toString()).toBe("data");
-    expect(() => FileOps.read("/etc/hosts", [dir])).toThrow(FileOpsError);
+    expect((await FileOps.read(inside, [dir])).toString()).toBe("data");
+    await expect(FileOps.read("/etc/hosts", [dir])).rejects.toThrow(FileOpsError);
   });
 
-  it("rejects ../ traversal escaping the root", () => {
+  it("rejects ../ traversal escaping the root", async () => {
     const dir = tempDir();
     const sub = path.join(dir, "sub");
     fs.mkdirSync(sub);
     fs.writeFileSync(path.join(dir, "secret.txt"), "s");
     // sub/../secret.txt canonicalizes to dir/secret.txt — outside [sub].
-    expect(() => FileOps.read(path.join(sub, "../secret.txt"), [sub])).toThrow(/approved scope/);
+    await expect(FileOps.read(path.join(sub, "../secret.txt"), [sub])).rejects.toThrow(
+      /approved scope/,
+    );
   });
 
-  it("rejects a symlink escaping the root", () => {
+  it("rejects a symlink escaping the root", async () => {
     const root = tempDir();
     const outside = tempDir();
     fs.writeFileSync(path.join(outside, "target.txt"), "leak");
     const link = path.join(root, "link.txt");
     fs.symlinkSync(path.join(outside, "target.txt"), link);
     // The symlink resolves outside root, so canonicalization catches it.
-    expect(() => FileOps.read(link, [root])).toThrow(/approved scope/);
+    await expect(FileOps.read(link, [root])).rejects.toThrow(/approved scope/);
   });
 
-  it("writes within scope and creates parent dirs", () => {
+  it("writes within scope and creates parent dirs", async () => {
     const dir = tempDir();
     const target = path.join(dir, "nested/deep/out.txt");
-    FileOps.write(target, Buffer.from("hi"), [dir]);
+    await FileOps.write(target, Buffer.from("hi"), [dir]);
     expect(fs.readFileSync(target, "utf8")).toBe("hi");
+  });
+
+  it("refuses a read over the single-call size ceiling", async () => {
+    const dir = tempDir();
+    const big = path.join(dir, "big.bin");
+    // Sparse file: the ceiling is checked from stat, so no bytes are written.
+    const fd = fs.openSync(big, "w");
+    fs.ftruncateSync(fd, MAX_FILE_BYTES + 1);
+    fs.closeSync(fd);
+    await expect(FileOps.read(big, [dir])).rejects.toThrow(/single-call limit/);
+  });
+
+  it("refuses a write over the single-call size ceiling", async () => {
+    const dir = tempDir();
+    await expect(
+      FileOps.write(path.join(dir, "big.bin"), Buffer.alloc(MAX_FILE_BYTES + 1), [dir]),
+    ).rejects.toThrow(/single-call limit/);
+    expect(fs.existsSync(path.join(dir, "big.bin"))).toBe(false);
+  });
+
+  it("does not block the event loop while reading", async () => {
+    const dir = tempDir();
+    const file = path.join(dir, "a.txt");
+    fs.writeFileSync(file, "data");
+    // A timer armed just before the read must still fire: that is the whole
+    // point of the async conversion — a synchronous read would starve it.
+    let ticked = false;
+    const timer = setTimeout(() => {
+      ticked = true;
+    }, 0);
+    await FileOps.read(file, [dir]);
+    clearTimeout(timer);
+    await new Promise((r) => setImmediate(r));
+    expect(ticked).toBe(true);
   });
 });
 

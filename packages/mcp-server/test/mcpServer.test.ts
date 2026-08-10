@@ -8,11 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { JSONValue, jv } from "@domo/protocol";
-import { DeviceAgent, HeadlessPolicy, PolicyDelegate } from "@domo/device-core";
+import { canonicalize, JSONValue, jv } from "@domo/protocol";
+import { DeviceAgent, HeadlessPolicy, MAX_FILE_BYTES, PolicyDelegate } from "@domo/device-core";
 import {
   CALL_BUDGET_MS,
   createDomoMcpServer,
+  DeferredResults,
   DomoMcpServer,
   HANDLE_TTL_MS,
   PROTOCOL_REVISION,
@@ -127,7 +128,7 @@ describe("a tool call end to end, in process", () => {
     );
     expect(status).toBe(200);
     expect(isError).toBe(false);
-    expect(payload).toEqual({ path: file, content: "hello mac" });
+    expect(payload).toEqual({ path: canonicalize(file), content: "hello mac" });
 
     expect(events(device)).toEqual([
       "intent_received",
@@ -136,7 +137,7 @@ describe("a tool call end to end, in process", () => {
     ]);
     const received = device.audit.entries()[0] as JSONValue;
     // The capability set — not the goal text — is what the decision was made on.
-    expect(jv(received).get("capabilities").arr).toEqual([`Read: ${file}`]);
+    expect(jv(received).get("capabilities").arr).toEqual([`Read: ${canonicalize(file)}`]);
     expect(jv(received).get("agent").str).toBe("agent-1");
     expect(jv(received).get("goal").str).toBe("check the greeting");
   });
@@ -158,7 +159,7 @@ describe("a tool call end to end, in process", () => {
     const dir = tempDir();
     const file = path.join(dir, "out.txt");
     const { payload } = await callTool(server, "write_file", { path: file, content: "wrote" }, AGENT);
-    expect(payload).toEqual({ path: file, bytes: 5 });
+    expect(payload).toEqual({ path: canonicalize(file), bytes: 5 });
     expect(fs.readFileSync(file, "utf8")).toBe("wrote");
   });
 
@@ -361,7 +362,7 @@ describe("the deferred-result contract (§4.3)", () => {
     }
     expect(poll.status).toBe("ready");
     // Byte-for-byte what the original call would have returned.
-    expect(poll.result).toEqual({ path: file, content: "slow content" });
+    expect(poll.result).toEqual({ path: canonicalize(file), content: "slow content" });
   });
 
   it("reports `running` once the human has decided and the work is under way", async () => {
@@ -431,8 +432,12 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(payload.content).toBe("quick");
   });
 
-  it("the call budget sits comfortably below the relay's 30s ceiling", () => {
-    expect(CALL_BUDGET_MS).toBeLessThan(30_000 / 2);
+  it("the call budget sits comfortably below the relay's 20s timeout", () => {
+    // The relay's pending future times out at 20 SECONDS. The budget has to
+    // leave room for the tunnel round-trip on top of itself, not merely be
+    // smaller than the ceiling — so: at most half of it.
+    const RELAY_TIMEOUT_MS = 20_000;
+    expect(CALL_BUDGET_MS).toBeLessThanOrEqual(RELAY_TIMEOUT_MS / 2);
     expect(HANDLE_TTL_MS).toBe(15 * 60_000);
   });
 });
@@ -522,5 +527,354 @@ describe("the protocol posture (§4.2)", () => {
     // The server does not route on path: the relay forwards whatever the agent
     // sent, and this endpoint answers it.
     expect(response.status).toBe(200);
+  });
+});
+
+describe("review findings", () => {
+  // 1 — subscriptions/listen opens an SSE stream the tunnel cannot carry, and
+  // responseMode:"json" does not disable it. Refusal is the only thing that does.
+  describe("subscriptions/listen is refused outright", () => {
+    it("is refused, with the caller's id, and never streams", async () => {
+      const { server } = makeServer();
+      const raw = await rpc(
+        server,
+        "subscriptions/listen",
+        { notifications: ["notifications/tools/list_changed"] },
+        AGENT,
+      );
+      expect(raw.status).toBe(400);
+      // Not an SSE stream: a single JSON body.
+      expect(raw.headers["content-type"]).toContain("application/json");
+      expect(raw.headers["content-type"]).not.toContain("text/event-stream");
+      const parsed = parse(raw);
+      expect(parsed.error?.code).toBe(-32601);
+      expect(parsed.error?.message).toMatch(/not supported/i);
+      // The refusal echoes the caller's id rather than inventing one.
+      expect(JSON.parse(raw.body).id).toBe(raw.sentId);
+    });
+
+    it("is refused for an unauthenticated caller too", async () => {
+      const { server } = makeServer();
+      const raw = await rpc(server, "subscriptions/listen", {});
+      expect(raw.status).toBe(400);
+      expect(parse(raw).error?.code).toBe(-32601);
+    });
+
+    it("cannot be smuggled past the header check via the body", async () => {
+      const { server } = makeServer();
+      // Header says one method, body another. The SDK refuses the disagreement,
+      // so there is no path to the streaming handler either way.
+      const response = await server.fetch(
+        new Request("http://mac/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "mcp-protocol-version": PROTOCOL_REVISION,
+            "mcp-method": "tools/list",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 7,
+            method: "subscriptions/listen",
+            params: {
+              notifications: ["notifications/tools/list_changed"],
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": PROTOCOL_REVISION,
+                "io.modelcontextprotocol/clientInfo": { name: "c", version: "1" },
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            },
+          }),
+        }),
+        AGENT,
+      );
+      expect(response.status).toBe(400);
+      expect(response.headers.get("content-type")).not.toContain("text/event-stream");
+    });
+
+    it("an ordinary call still works — the refusal is not a blanket block", async () => {
+      const { server } = makeServer();
+      expect(parse(await rpc(server, "tools/list", {}, AGENT)).result?.tools).toBeDefined();
+    });
+  });
+
+  // 2 — the isolation key must be a non-empty string. Truthy non-strings would
+  // otherwise reach policy and execution as a key that cannot be compared.
+  describe("the identity guard requires a non-empty string id", () => {
+    const malformed: [string, unknown][] = [
+      ["an array", []],
+      ["a non-empty array", ["agent-1"]],
+      ["an object", {}],
+      ["a number", 42],
+      ["zero", 0],
+      ["a boolean", true],
+      ["null", null],
+      ["an empty string", ""],
+      ["whitespace only", "   "],
+    ];
+    for (const [label, agent_id] of malformed) {
+      it(`rejects ${label}`, async () => {
+        const { server, device } = makeServer();
+        const dir = tempDir();
+        fs.writeFileSync(path.join(dir, "a.txt"), "x");
+        const { isError, payload } = await callTool(
+          server,
+          "read_file",
+          { path: path.join(dir, "a.txt") },
+          { agent_id } as unknown as RelayAuth,
+        );
+        expect(isError).toBe(true);
+        expect(payload.error).toMatch(/no authenticated agent/);
+        // Nothing was decided and nothing ran.
+        expect(events(device)).toEqual([]);
+      });
+    }
+
+    it("a non-string agent name is dropped rather than carried into the dialog", async () => {
+      let seenDisplay = "";
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          seenDisplay = intent.agentDisplay;
+          return "allow_once" as const;
+        },
+      });
+      const dir = tempDir();
+      fs.writeFileSync(path.join(dir, "a.txt"), "x");
+      await callTool(server, "read_file", { path: path.join(dir, "a.txt") }, {
+        agent_id: "agent-7",
+        agent_name: { evil: true },
+      } as unknown as RelayAuth);
+      expect(seenDisplay).toBe("agent-7");
+    });
+
+    // Deliberate: the static manifest carries nothing about this Mac, and the
+    // relay refuses an unauthenticated caller before it reaches us.
+    it("tools/list and server/discover are served without identity, deliberately", async () => {
+      const { server } = makeServer();
+      const anonymous = parse(await rpc(server, "tools/list", {}));
+      const identified = parse(await rpc(server, "tools/list", {}, AGENT));
+      expect(anonymous.result?.tools).toEqual(identified.result?.tools);
+      expect(parse(await rpc(server, "server/discover", {})).result).toBeDefined();
+    });
+  });
+
+  // 3 — synchronous filesystem work would starve the budget timer, so the call
+  // returns late, after the relay has already given up.
+  describe("the call budget can actually bound filesystem work", () => {
+    it("a read over the size ceiling is refused rather than blocking", async () => {
+      const { server } = makeServer();
+      const dir = tempDir();
+      const big = path.join(dir, "big.bin");
+      const fd = fs.openSync(big, "w");
+      fs.ftruncateSync(fd, MAX_FILE_BYTES + 1);
+      fs.closeSync(fd);
+      const { isError, payload } = await callTool(server, "read_file", { path: big }, AGENT);
+      expect(isError).toBe(true);
+      expect(JSON.stringify(payload)).toMatch(/single-call limit/);
+    });
+
+    it("a write over the size ceiling is refused before anything is encoded", async () => {
+      const { server } = makeServer();
+      const dir = tempDir();
+      const target = path.join(dir, "big.txt");
+      const { isError, payload } = await callTool(
+        server,
+        "write_file",
+        { path: target, content: "x".repeat(MAX_FILE_BYTES + 1) },
+        AGENT,
+      );
+      expect(isError).toBe(true);
+      expect(JSON.stringify(payload)).toMatch(/single-call limit/);
+      expect(fs.existsSync(target)).toBe(false);
+    });
+
+    it("the budget timer still fires while a read is in flight", async () => {
+      // With a synchronous read the event loop is blocked and the budget timer
+      // cannot fire, so the call returns its result late instead of deferring.
+      // Async filesystem work lets the budget win, which is the whole point.
+      const { server } = makeServer(new ScriptedPolicy("allow_once", 60), 20);
+      const dir = tempDir();
+      const file = path.join(dir, "a.txt");
+      fs.writeFileSync(file, "content");
+      const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
+      expect(payload.status).toBe("pending");
+    });
+  });
+
+  // 4 — the approval dialog's whole value is that the human sees what will
+  // actually happen.
+  describe("the human approves the path that actually executes", () => {
+    it("a symlink is resolved before the approver sees it", async () => {
+      let approved: string[] = [];
+      const { server, device } = makeServer({
+        async decideIntent(intent) {
+          approved = intent.capabilities.flatMap((c) => c.paths ?? []);
+          return "allow_once" as const;
+        },
+      });
+      const realDir = tempDir();
+      const linkDir = tempDir();
+      const target = path.join(realDir, "id_rsa");
+      fs.writeFileSync(target, "PRIVATE KEY");
+      const innocuous = path.join(linkDir, "report.txt");
+      fs.symlinkSync(target, innocuous);
+
+      const { payload } = await callTool(server, "read_file", { path: innocuous }, AGENT);
+
+      // The approver saw the real target, not the innocuous name.
+      expect(approved).toEqual([canonicalize(target)]);
+      expect(approved[0]).not.toBe(innocuous);
+      // The audit record says the same thing.
+      const received = device.audit.entries()[0] as JSONValue;
+      expect(jv(received).get("capabilities").arr).toEqual([`Read: ${canonicalize(target)}`]);
+      // And the result names the resolved path too.
+      expect(payload.path).toBe(canonicalize(target));
+    });
+
+    it("swapping the symlink after approval cannot redirect the read", async () => {
+      const realDir = tempDir();
+      const decoy = path.join(realDir, "harmless.txt");
+      const secret = path.join(realDir, "secret.txt");
+      fs.writeFileSync(decoy, "harmless");
+      fs.writeFileSync(secret, "s3cret");
+      const linkDir = tempDir();
+      const link = path.join(linkDir, "report.txt");
+      fs.symlinkSync(decoy, link);
+
+      // Re-point the symlink at the secret the instant the decision lands.
+      const { server } = makeServer({
+        async decideIntent() {
+          fs.unlinkSync(link);
+          fs.symlinkSync(secret, link);
+          return "allow_once" as const;
+        },
+      });
+
+      const { payload } = await callTool(server, "read_file", { path: link }, AGENT);
+      // The capability froze the resolved path, so execution never re-follows
+      // the link: the swap is inert.
+      expect(payload.path).toBe(canonicalize(decoy));
+      expect(payload.content).toBe("harmless");
+      expect(payload.content).not.toContain("s3cret");
+    });
+
+    it("a traversal path is shown collapsed, not as written", async () => {
+      let approved: string[] = [];
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          approved = intent.capabilities.flatMap((c) => c.paths ?? []);
+          return "allow_once" as const;
+        },
+      });
+      const dir = tempDir();
+      fs.mkdirSync(path.join(dir, "sub"));
+      fs.writeFileSync(path.join(dir, "secret.txt"), "s");
+      await callTool(server, "read_file", { path: path.join(dir, "sub/../secret.txt") }, AGENT);
+      expect(approved).toEqual([canonicalize(path.join(dir, "secret.txt"))]);
+      expect(approved[0]).not.toContain("..");
+    });
+
+    it("run_command's declared bounds are resolved before approval too", async () => {
+      let approved: string[] = [];
+      let cwd: string | undefined;
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          approved = intent.capabilities.flatMap((c) => c.paths ?? []);
+          cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
+          return "allow_once" as const;
+        },
+      });
+      const realDir = tempDir();
+      const linkDir = tempDir();
+      const link = path.join(linkDir, "work");
+      fs.symlinkSync(realDir, link);
+      await callTool(
+        server,
+        "run_command",
+        { argv: ["/bin/echo", "x"], read_paths: [link], cwd: link, wait_ms: 3_000 },
+        AGENT,
+      );
+      expect(approved).toEqual([canonicalize(realDir)]);
+      expect(cwd).toBe(canonicalize(realDir));
+    });
+  });
+
+  // 5 — the wait_ms cap does not produce a direct job handle. Pin what really
+  // happens so the claim cannot drift back to the wrong one.
+  describe("a command outrunning the budget defers, then yields its job handle", () => {
+    it("takes two hops: pending handle, then a ready payload containing the job handle", async () => {
+      const { server } = makeServer(new ScriptedPolicy("allow_once", 0), 30);
+      const first = await callTool(
+        server,
+        "run_command",
+        { argv: ["/bin/sh", "-c", "sleep 0.4; echo done"], wait_ms: 60_000 },
+        AGENT,
+      );
+      // Hop one: NOT a job handle — a deferred one.
+      expect(first.payload.status).toBe("pending");
+      expect(first.payload.reason).toBe("running");
+      expect(first.payload.retry_after_ms).toBeTypeOf("number");
+      const deferredHandle: string = first.payload.handle;
+
+      // Hop two: the ready payload is the run_command result, and the job
+      // handle is inside it.
+      let poll = first.payload;
+      for (let i = 0; i < 80 && poll.status === "pending"; i++) {
+        await new Promise((r) => setTimeout(r, 25));
+        poll = (await callTool(server, "get_result", { handle: deferredHandle }, AGENT)).payload;
+      }
+      expect(poll.status).toBe("ready");
+      // The ready payload is the run_command result. Because wait_ms is capped
+      // at the budget, that result is itself the "still running, here is a job
+      // handle" answer — so the agent ends up with TWO handles for one command.
+      expect(poll.result.status).toBe("running");
+      expect(poll.result.handle).toBeTypeOf("string");
+      expect(poll.result.handle).not.toBe(deferredHandle);
+
+      // Hop three, in practice: the inner handle is the JOB handle get_output
+      // takes, and that is where the output actually arrives.
+      let out = poll.result;
+      for (let i = 0; i < 80 && out.status === "running"; i++) {
+        await new Promise((r) => setTimeout(r, 25));
+        out = (await callTool(server, "get_output", { handle: poll.result.handle }, AGENT)).payload;
+      }
+      expect(out.status).toBe("completed");
+      expect(out.exit_code).toBe(0);
+      expect(out.output).toContain("done");
+    });
+  });
+
+  // 6 — an agent that discards its handles never calls get(), so without a
+  // sweep on insert the terminal payloads accumulate forever.
+  describe("deferred entries are swept on insert as well as on read", () => {
+    it("drops long-expired entries when a new handle is registered", async () => {
+      let now = 1_000_000;
+      const store = new DeferredResults(10, HANDLE_TTL_MS, () => now);
+      const slow = () => new Promise<JSONValue>((r) => setTimeout(() => r({ ok: true }), 40));
+
+      const first = (await store.run("agent-1", slow)) as { handle: string };
+      expect(first.handle).toBeTypeOf("string");
+      await new Promise((r) => setTimeout(r, 60));
+      // Still retrievable inside the TTL.
+      expect((store.get("agent-1", first.handle) as { status: string }).status).toBe("ready");
+
+      expect(store.size).toBe(1);
+
+      // Walk past expiry + the tombstone window, then register a new handle
+      // WITHOUT ever reading the old one — an agent that discards its handles
+      // never calls get(), which is the whole point of the finding.
+      now += HANDLE_TTL_MS * 2 + 1;
+      const second = (await store.run("agent-1", slow)) as { handle: string };
+      // Checked before any get(), because get() sweeps too and would prove
+      // nothing about the insert path.
+      expect(store.size).toBe(1);
+      await new Promise((r) => setTimeout(r, 60));
+      expect(store.get("agent-1", first.handle)).toEqual({
+        status: "unknown",
+        handle: first.handle,
+      });
+      expect((store.get("agent-1", second.handle) as { status: string }).status).toBe("ready");
+    });
   });
 });

@@ -70,15 +70,38 @@ POST-only, so there is no session lifecycle and no GET/SSE requirement:
 
 - `legacy: "reject"` — a 2025-era client is refused, never served a legacy lane.
 - `responseMode: "json"` — one body per exchange; nothing streams.
-- `tools.listChanged: false` — so no client opens a subscription stream this
-  transport cannot carry.
+- `tools.listChanged: false` — discourages a client from asking for a
+  subscription stream this transport cannot carry.
+- **`subscriptions/listen` is refused outright**, with `-32601`. Neither
+  `responseMode: "json"` nor `listChanged: false` actually prevents it: the SDK
+  special-cases that method and always answers it with a long-lived SSE stream.
+  Refusing is the only thing that closes it, so we refuse rather than configure.
 - **`GET` is answered `405` with `{"jsonrpc":"2.0","error":{"code":-32000,
   "message":"Method not allowed."},"id":null}`.** That is the SDK's modern
   behaviour and it is deliberate: there is nothing for a GET to do here.
+- `tools/list` and `server/discover` are served **without** an asserted agent,
+  deliberately: both return a static manifest identical for every agent, and the
+  relay refuses an unauthenticated caller before it reaches us. Everything that
+  touches this Mac or does work is a tool, and every tool requires identity.
 
 The tool surface is one Mac's, not a fleet's: `read_file`, `write_file`,
 `run_command`, `get_output`, `list_tools`, `use_tool`, `get_result`. No tool
 takes a `device` argument.
+
+**Paths are resolved before the human sees them.** Every path an agent supplies
+is canonicalised *before* it becomes a capability, so the approval dialog and the
+audit record show the real target — approving `/tmp/report` when that is a
+symlink to `~/.ssh/id_rsa` shows the key, not the report. Execution then targets
+the resolved path rather than re-following the link, so swapping the symlink
+after approval is inert. What that does **not** close: an intermediate directory
+or the file at the resolved path can still be replaced between the decision and
+the open. Closing that needs descriptor-based access, which is a larger change
+and is not done here.
+
+**File operations are async and size-capped** (`MAX_FILE_BYTES`, 8 MiB). Not for
+wire reasons — a synchronous read blocks the event loop, so the call budget's
+timer could never fire and the call would return *after* the relay had already
+told the agent it failed.
 
 **Two kinds of handle, and they are not interchangeable.** `run_command` returns
 a *job* handle for `get_output` when a command outlives its wait. Any tool that
@@ -87,6 +110,12 @@ returns a *deferred* handle for `get_result`, which answers `pending` / `ready` 
 `denied` / `failed` / `expired` / `unknown`. A deferred handle belongs to the
 agent that created it; another agent presenting it gets `unknown`, which is
 indistinguishable from a handle that never existed.
+
+Note how those two compose, because it is not what you would guess: a command
+that outruns the budget does **not** hand back a job handle directly. The budget
+timer starts before approval and the executor's wait starts after it, so the
+budget always expires first. The call defers, and `get_result` later returns a
+ready payload that *contains* the job handle. Two hops.
 
 ## Integration coverage
 

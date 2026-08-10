@@ -1,9 +1,9 @@
 /**
  * The deferred-result contract (design §4.3).
  *
- * A tunnelled call has a hard ceiling: the relay's pending future times out
- * comfortably below 30s, so nothing on this Mac may block past its call budget
- * — not a human who has walked away from an approval, not a slow command. Any
+ * A tunnelled call has a hard ceiling: the relay's pending future times out at
+ * 20 seconds, so nothing on this Mac may block past its call budget — not a
+ * human who has walked away from an approval, not a slow command. Any
  * tool that cannot finish inside the budget returns a handle instead, keeps the
  * work running, and the agent retrieves the outcome later with `get_result`.
  *
@@ -24,9 +24,10 @@ import { JSONValue } from "@domo/protocol";
 /**
  * How long a tool may block before it must hand back a handle.
  *
- * The relay's pending future sits comfortably below 30s and the MCP client
- * abandons at ~30s, so this has to leave room for both the tunnel round-trip
- * and the relay's own timeout — not merely be smaller than them.
+ * The relay's pending future times out at 20 seconds and the MCP client
+ * abandons at ~30s. This has to leave room for the tunnel round-trip on top of
+ * itself, not merely be smaller than the relay's timeout — hence well under
+ * half of it.
  */
 export const CALL_BUDGET_MS = 8_000;
 
@@ -150,6 +151,11 @@ export class DeferredResults {
       if (landed.ok) return landed.result;
       throw landed.error;
     }
+    // Sweep on insert as well as on read. An agent that starts slow work and
+    // then discards every handle never calls `get`, so without this the
+    // terminal payloads would accumulate for the life of the process despite
+    // the documented TTL.
+    this.sweep();
     this.entries.set(handle, {
       agentId,
       reason,
@@ -176,6 +182,15 @@ export class DeferredResults {
       reason: entry.reason,
       retry_after_ms: RETRY_AFTER_MS,
     };
+  }
+
+  /**
+   * How many handles are held. Exists so a test can see that sweeping on
+   * insert actually happens — reading through `get` would sweep too, and prove
+   * nothing about the insert path.
+   */
+  get size(): number {
+    return this.entries.size;
   }
 
   /**

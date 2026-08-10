@@ -102,11 +102,11 @@ export class DeviceAgent {
     return { status: "error", error: "no executable capability in intent" };
   }
 
-  private executeRead(intent: Intent, cap: { paths?: string[] }): JSONValue {
+  private async executeRead(intent: Intent, cap: { paths?: string[] }): Promise<JSONValue> {
     const p = cap.paths?.[0];
     if (p === undefined) return { status: "error", error: "missing path" };
     try {
-      const data = FileOps.read(p, cap.paths ?? []);
+      const data = await FileOps.read(p, cap.paths ?? []);
       this.audit.record("file_read", {
         intentId: intent.intentId,
         path: p,
@@ -124,14 +124,18 @@ export class DeviceAgent {
     }
   }
 
-  private executeWrite(intent: Intent, cap: { paths?: string[] }, payload: JSONValue): JSONValue {
+  private async executeWrite(
+    intent: Intent,
+    cap: { paths?: string[] },
+    payload: JSONValue,
+  ): Promise<JSONValue> {
     const p = cap.paths?.[0];
     if (p === undefined) return { status: "error", error: "missing path" };
     const contentBase64 = jv(payload).get("content_base64").str;
     if (contentBase64 === null) return { status: "error", error: "missing content" };
     const data = Buffer.from(contentBase64, "base64");
     try {
-      FileOps.write(p, data, cap.paths ?? []);
+      await FileOps.write(p, data, cap.paths ?? []);
       this.audit.record("file_write", {
         intentId: intent.intentId,
         path: p,

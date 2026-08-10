@@ -14,6 +14,7 @@
  * takes a `device` argument.
  */
 import {
+  canonicalize,
   Capability,
   canonicalJSON,
   Intent,
@@ -21,7 +22,7 @@ import {
   jv,
   makeIntent,
 } from "@domo/protocol";
-import { DeviceAgent } from "@domo/device-core";
+import { DeviceAgent, MAX_FILE_BYTES } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 
 /** A tool argument was missing or unusable — the agent's problem, not ours. */
@@ -61,6 +62,20 @@ export interface ToolSpec {
 
 const strings = (value: JSONValue[] | null): string[] =>
   (value ?? []).filter((v): v is string => typeof v === "string");
+
+/**
+ * Resolve a path the agent supplied to the real path the kernel will see,
+ * BEFORE it becomes a capability.
+ *
+ * The approval dialog's entire value is that the human sees what will actually
+ * happen. A raw `~/x`, `a/../b`, or a symlink shown verbatim would let an
+ * innocuous-looking bound stand in for somewhere else entirely — approving
+ * `/tmp/report` when that is a symlink to `~/.ssh/id_rsa`. Resolving here means
+ * the human sees `~/.ssh/id_rsa`, the rule key is computed over it, and
+ * execution targets that resolved path rather than re-following the symlink
+ * afterwards — which also closes the swap window on the path itself.
+ */
+const resolved = (p: string): string => canonicalize(p);
 
 /**
  * Build an intent from an already-constructed capability set and run it through
@@ -116,8 +131,9 @@ export const TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
-      const path = a.get("path").str;
-      if (path === null) throw new ToolError("missing 'path'");
+      const raw = a.get("path").str;
+      if (raw === null) throw new ToolError("missing 'path'");
+      const path = resolved(raw);
       const response = await decideAndRun(
         ctx,
         progress,
@@ -147,10 +163,18 @@ export const TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
-      const path = a.get("path").str;
-      if (path === null) throw new ToolError("missing 'path'");
+      const raw = a.get("path").str;
+      if (raw === null) throw new ToolError("missing 'path'");
+      const path = resolved(raw);
       const content = a.get("content").str;
       if (content === null) throw new ToolError("missing 'content'");
+      // Refuse before encoding: the point of the ceiling is to bound the work,
+      // and encoding an oversized string is the work.
+      if (content.length > MAX_FILE_BYTES) {
+        throw new ToolError(
+          `content is ${content.length} bytes, over the ${MAX_FILE_BYTES}-byte single-call limit`,
+        );
+      }
       const data = Buffer.from(content, "utf8");
       const response = await decideAndRun(
         ctx,
@@ -168,7 +192,9 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Run a CLI command on this Mac inside a sandbox limited to the paths you declare here. " +
       "Declare every path you need up front; undeclared paths are blocked by the sandbox. " +
-      "If the command is still running when the wait elapses you get a job handle for get_output.",
+      "If the command is still running when the wait elapses you get a job handle for get_output. " +
+      "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
+      "get_result, and the ready payload is the run_command result — including its job handle.",
     inputSchema: {
       type: "object",
       required: ["argv"],
@@ -197,7 +223,7 @@ export const TOOLS: ToolSpec[] = [
           type: "integer",
           description:
             "How long to wait for completion before returning a job handle (default 10000). " +
-            "Capped by this Mac's call budget.",
+            "Capped at this Mac's call budget, beyond which the call defers instead.",
         },
         goal: GOAL,
       },
@@ -211,18 +237,26 @@ export const TOOLS: ToolSpec[] = [
       const argv = strings(argvValues);
       if (argv.length !== argvValues.length) throw new ToolError("argv must be strings");
 
-      const readPaths = strings(a.get("read_paths").arr);
-      const writePaths = strings(a.get("write_paths").arr);
+      // Resolve every declared path before it becomes the bound the human
+      // approves and the sandbox enforces.
+      const readPaths = strings(a.get("read_paths").arr).map(resolved);
+      const writePaths = strings(a.get("write_paths").arr).map(resolved);
+      const rawCwd = a.get("cwd").str;
       const capabilities: Capability[] = [
-        { kind: "process.exec", argv, cwd: a.get("cwd").str ?? undefined },
+        { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : resolved(rawCwd) },
         { kind: "network", allowed: a.get("network").bool ?? false },
       ];
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });
       if (writePaths.length > 0) capabilities.push({ kind: "fs.write", paths: writePaths });
 
-      // Waiting longer than the call budget would only convert a job handle
-      // (which the agent can poll cheaply) into a deferred handle (which it
-      // also has to poll). Cap it and let the executor hand back the job.
+      // Capped at the call budget because a longer wait can never produce an
+      // answer: the budget timer starts before approval and the executor's wait
+      // starts after it, so the budget always expires first.
+      //
+      // Note what this does NOT do — an earlier comment here claimed it. A
+      // command that outruns the budget does not hand back a job handle
+      // directly; the call defers, and `get_result` later returns a ready
+      // payload that CONTAINS the job handle. Two hops, not one.
       const waitMs = Math.min(a.get("wait_ms").int ?? 10_000, ctx.commandWaitCapMs);
       return decideAndRun(
         ctx,
