@@ -301,13 +301,19 @@ describe("reconnection", () => {
     expect(client.isConnected).toBe(true);
 
     relay.dropDevice();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(client.isConnected).toBe(false);
 
+    // Do NOT assert "disconnected" in a timing window: backoff is full jitter,
+    // so the first retry can land in a couple of milliseconds and the client is
+    // legitimately back before any sleep would observe the gap. Wait for the
+    // transition sequence instead — that is the property, and it is racing
+    // nothing.
+    for (let i = 0; i < 200 && statuses.length < 3; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    // online → offline → online, in that order.
+    expect(statuses).toEqual([true, false, true]);
     await relay.waitForDevice(10_000);
     expect(client.isConnected).toBe(true);
-    // online → offline → online
-    expect(statuses).toEqual([true, false, true]);
 
     const dir = tempDir();
     fs.writeFileSync(path.join(dir, "after.txt"), "still here");
