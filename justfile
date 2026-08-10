@@ -59,6 +59,10 @@ verify-preload: build
 approval-screenshot: build
     DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/approval-screenshot.mjs
 
+# The chunk-10 round trip with timings: slow approval, then a long command.
+slow-approval-transcript: build
+    npx vite-node apps/desktop/scripts/slow-approval-transcript.mjs
+
 # Print this Mac's device id (once the app has created its identity).
 device-id:
     @node -e 'try{console.log(JSON.parse(require("fs").readFileSync("{{nethome}}/device/identity.json")).deviceId)}catch{console.log("(no device identity yet — launch the app once: just app)")}'

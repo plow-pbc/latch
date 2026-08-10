@@ -1,3 +1,4 @@
+export * from "./approvalStore.js";
 export * from "./auditLog.js";
 export * from "./blessedTools.js";
 export * from "./deviceAgent.js";

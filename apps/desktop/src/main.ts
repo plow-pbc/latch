@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Intent } from "@domo/protocol";
 import {
+  ApprovalStore,
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
@@ -42,6 +43,7 @@ let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
 let goals: GoalsLibrary | null = null;
 let mcp: DomoMcpServer | null = null;
+let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 
 /**
@@ -271,6 +273,9 @@ ipcMain.handle("goals:remove", async (_e, id: string) => {
   return goals?.all() ?? [];
 });
 ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? []);
+// Approvals still awaiting an answer, so the UI can show what is outstanding
+// rather than relying on a window that may have been closed.
+ipcMain.handle("approvals:pending", async () => approvals?.pending() ?? []);
 ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
 ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
@@ -374,7 +379,12 @@ async function startRelay(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  device = new DeviceAgent(home, hostName(), new ElectronPolicy());
+  // The dialog answers; the store writes down what was asked before it is
+  // asked, so a pending approval is a record on disk rather than only a promise
+  // in memory. It also bounds the wait: an approval nobody answers expires and
+  // fails closed instead of pending forever.
+  approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
+  device = new DeviceAgent(home, hostName(), approvals);
   goals = new GoalsLibrary(path.join(home, "device/goals.json"));
 
   // Live-refresh the audit view whenever a new event is recorded.

@@ -133,6 +133,19 @@ returns a *deferred* handle for `get_result`, which answers `pending` / `ready` 
 agent that created it; another agent presenting it gets `unknown`, which is
 indistinguishable from a handle that never existed.
 
+**An approval outlives the call that needed it.** A tunnelled call cannot wait
+for a human, so the call returns a handle and the human answers whenever they
+get back. In between, the only thing that says an agent asked to read your SSH
+key would be a promise in memory — so `ApprovalStore` writes the pending
+approval to disk (owner-only) *before* the human is asked, and writes the
+outcome next to it. It also bounds the wait: an approval nobody answers expires
+after the same fifteen minutes and **fails closed**. A record still marked
+pending when the app next starts is marked `abandoned` — the call it belonged to
+died with the process, so nothing can answer it, and the directory should not
+claim otherwise.
+
+`just slow-approval-transcript` prints the whole round trip with timings.
+
 Note how those two compose, because it is not what you would guess: a command
 that outruns the budget does **not** hand back a job handle directly. The budget
 timer starts before approval and the executor's wait starts after it, so the

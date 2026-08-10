@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DeviceAgent, HeadlessPolicy, PolicyDelegate } from "@domo/device-core";
+import { ApprovalStore, DeviceAgent, HeadlessPolicy, PolicyDelegate } from "@domo/device-core";
+import { canonicalize } from "@domo/protocol";
 import { createDomoMcpServer, PROTOCOL_REVISION } from "@domo/mcp-server";
 import {
   FRAME_REQUEST,
@@ -224,6 +225,90 @@ describe("a real MCP call from an agent, through the relay, to the Mac and back"
       AGENT,
     );
     expect(response.status).toBe(200);
+  });
+});
+
+describe("a slow approval over the tunnel (§4.3, D3)", () => {
+  it("handle inside the budget, human answers late, agent collects the result", async () => {
+    const relay = await FakeRelay.start({ expectCredential: CREDENTIAL });
+    cleanups.push(() => relay.stop());
+    const home = tempDir();
+    // Nobody answers on their own; the test plays the human, late.
+    const approvals = new ApprovalStore(
+      path.join(home, "device/approvals"),
+      { decideIntent: () => new Promise(() => {}) },
+      10_000,
+    );
+    const device = new DeviceAgent(home, "Test Mac", approvals);
+    const BUDGET = 60;
+    const mcp = createDomoMcpServer(device, { budgetMs: BUDGET });
+    cleanups.push(() => mcp.close());
+    const client = new RelayClient({
+      url: relay.url,
+      credential: CREDENTIAL,
+      serve: (request, auth) => mcp.fetch(request, auth),
+    });
+    cleanups.push(() => client.stop());
+    await client.start();
+    await relay.waitForDevice();
+
+    const dir = tempDir();
+    const file = path.join(dir, "quarterly.txt");
+    fs.writeFileSync(file, "the numbers");
+
+    const started = Date.now();
+    const first = JSON.parse(
+      JSON.parse(
+        (
+          await relay.agentCall(
+            mcpCall(20, "tools/call", { name: "read_file", arguments: { path: file } }),
+            AGENT,
+          )
+        ).body,
+      ).result.content[0].text,
+    );
+    const elapsed = Date.now() - started;
+
+    // Came back inside the budget, with a handle rather than an answer.
+    expect(first.status).toBe("pending");
+    expect(first.reason).toBe("awaiting_approval");
+    expect(elapsed).toBeLessThan(BUDGET + 2_000);
+
+    // The approval is on disk while it is still unanswered — that record is the
+    // only thing that says an agent asked for this file.
+    const [record] = approvals.all();
+    expect(record.status).toBe("pending");
+    expect(record.agentId).toBe("agent-1");
+    expect(record.capabilities).toEqual([`Read: ${canonicalize(file)}`]);
+
+    // The human comes back, well after the call returned.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(approvals.resolve(record.intentId, "allow_once", "human")).toBe(true);
+
+    let poll = first;
+    for (let i = 0; i < 80 && poll.status === "pending"; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      poll = JSON.parse(
+        JSON.parse(
+          (
+            await relay.agentCall(
+              mcpCall(21, "tools/call", {
+                name: "get_result",
+                arguments: { handle: first.handle },
+              }),
+              AGENT,
+            )
+          ).body,
+        ).result.content[0].text,
+      );
+    }
+    expect(poll.status).toBe("ready");
+    expect(poll.result.content).toBe("the numbers");
+    expect(approvals.all()[0]).toMatchObject({
+      status: "decided",
+      decision: "allow_once",
+      source: "human",
+    });
   });
 });
 
