@@ -60,7 +60,7 @@ say("agent", "calls read_file (needs approval)");
 const first = await call("read_file", "read_file", { path: secret, goal: "summarise the quarter" });
 say("agent", `got ${JSON.stringify(first)}`);
 
-const [record] = approvals.all();
+const [record] = await approvals.all();
 say("disk", `${record.status} approval on disk: ${record.agentName} — ${record.request}`);
 say("disk", `  expires ${record.expiresAt} (capabilities: ${record.capabilities.join(", ")})`);
 
@@ -79,14 +79,15 @@ while (poll.status === "pending") {
   poll = await call(`get_result #${polls}`, "get_result", { handle: first.handle });
 }
 say("agent", `result after ${polls} polls, ${Date.now() - pollStart}ms of waiting: ${JSON.stringify(poll).slice(0, 120)}`);
-say("disk", `approval now: ${approvals.all()[0].status} / ${approvals.all()[0].decision} (by ${approvals.all()[0].source})`);
+const decided = (await approvals.all())[0];
+say("disk", `approval now: ${decided.status} / ${decided.decision} (by ${decided.source})`);
 
 // ---- 2. a command that outruns the budget -----------------------------------
 say("agent", "calls run_command (sleeps 12s — outruns the budget)");
 const auto = new Promise((r) => setTimeout(r, 300));
 const cmdCall = call("run_command", "run_command", { argv: ["/bin/sh", "-c", "echo starting; sleep 12; echo finished"], wait_ms: 60_000 });
 await auto;
-const cmdRecord = approvals.all().find((r) => r.status === "pending");
+const cmdRecord = (await approvals.all()).find((r) => r.status === "pending");
 if (cmdRecord) { say("human", "approves the command immediately"); approvals.resolve(cmdRecord.intentId, "allow_once", "human"); }
 const cmd = await cmdCall;
 say("agent", `deferred handle, reason=${cmd.reason}`);

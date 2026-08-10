@@ -87,21 +87,10 @@ describe("FileOps bounds", () => {
     expect(fs.existsSync(path.join(dir, "big.bin"))).toBe(false);
   });
 
-  it("does not block the event loop while reading", async () => {
-    const dir = tempDir();
-    const file = path.join(dir, "a.txt");
-    fs.writeFileSync(file, "data");
-    // A timer armed just before the read must still fire: that is the whole
-    // point of the async conversion — a synchronous read would starve it.
-    let ticked = false;
-    const timer = setTimeout(() => {
-      ticked = true;
-    }, 0);
-    await FileOps.read(file, [dir]);
-    clearTimeout(timer);
-    await new Promise((r) => setImmediate(r));
-    expect(ticked).toBe(true);
-  });
+  // "does not block the event loop" is asserted in fileOpsAsync.test.ts, which
+  // gates the read by hand. The version that used to live here armed a 0ms
+  // timer, awaited the read, then CLEARED the timer before asserting it had
+  // fired — so it was racing the loop and passing by luck. It flaked.
 });
 
 describe("PolicyEngine", () => {

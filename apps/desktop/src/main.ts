@@ -275,7 +275,7 @@ ipcMain.handle("goals:remove", async (_e, id: string) => {
 ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? []);
 // Approvals still awaiting an answer, so the UI can show what is outstanding
 // rather than relying on a window that may have been closed.
-ipcMain.handle("approvals:pending", async () => approvals?.pending() ?? []);
+ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
 ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
 ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);

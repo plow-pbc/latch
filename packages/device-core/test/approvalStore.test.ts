@@ -47,9 +47,9 @@ describe("the record exists before the answer does", () => {
     const store = new ApprovalStore(dir, silent);
     const intent = intentFor();
     void store.decideIntent(intent);
-    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setTimeout(r, 30));
 
-    const [record] = store.all();
+    const [record] = await store.all();
     expect(record.status).toBe("pending");
     expect(record.intentId).toBe(intent.intentId);
     expect(record.agentId).toBe("sess_alice");
@@ -68,7 +68,7 @@ describe("the record exists before the answer does", () => {
     const store = new ApprovalStore(dir, silent);
     const intent = intentFor();
     void store.decideIntent(intent);
-    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setTimeout(r, 30));
     const file = path.join(dir, `${intent.intentId}.json`);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
@@ -81,7 +81,7 @@ describe("the record exists before the answer does", () => {
     const decision = await store.decideIntent(intent);
     expect(decision).toEqual({ decision: "allow_once", source: "ask" });
 
-    const [record] = store.all();
+    const [record] = await store.all();
     expect(record.status).toBe("decided");
     expect(record.decision).toBe("allow_once");
     expect(record.source).toBe("dialog");
@@ -97,7 +97,7 @@ describe("the wait is bounded", () => {
     const decision = await store.decideIntent(intentFor());
     expect(decision).toEqual({ decision: "deny", source: "expired" });
 
-    const [record] = store.all();
+    const [record] = await store.all();
     expect(record.status).toBe("expired");
     expect(record.decision).toBe("deny");
   });
@@ -118,7 +118,7 @@ describe("the wait is bounded", () => {
     const store = new ApprovalStore(dir, answersIn(10), 5_000);
     const decision = await store.decideIntent(intentFor());
     expect(typeof decision === "string" ? decision : decision.decision).toBe("allow_once");
-    expect(store.all()[0].status).toBe("decided");
+    expect((await store.all())[0].status).toBe("decided");
   });
 });
 
@@ -128,14 +128,14 @@ describe("an answer can arrive from somewhere other than the dialog", () => {
     const store = new ApprovalStore(dir, silent, 5_000);
     const intent = intentFor();
     const pending = store.decideIntent(intent);
-    await new Promise((r) => setImmediate(r));
-    expect(store.pending()).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(await store.pending()).toHaveLength(1);
 
     expect(store.resolve(intent.intentId, "always_allow", "operator")).toBe(true);
     const decision = await pending;
     expect(typeof decision === "string" ? decision : decision.decision).toBe("always_allow");
 
-    const [record] = store.all();
+    const [record] = await store.all();
     expect(record.status).toBe("decided");
     expect(record.source).toBe("operator");
   });
@@ -158,17 +158,18 @@ describe("across a restart", () => {
     const first = new ApprovalStore(dir, silent, 5_000);
     const intent = intentFor();
     void first.decideIntent(intent);
-    await new Promise((r) => setImmediate(r));
-    expect(first.all()[0].status).toBe("pending");
+    await new Promise((r) => setTimeout(r, 30));
+    expect((await first.all())[0].status).toBe("pending");
 
     // A new process opens the same directory. The call that was waiting is gone
     // with the process; nothing can answer that record any more.
     const second = new ApprovalStore(dir, silent, 5_000);
-    const [record] = second.all();
+    await second.ready;
+    const [record] = await second.all();
     expect(record.status).toBe("abandoned");
     expect(record.decidedAt).toBeTypeOf("string");
     // And it is no longer offered as something answerable.
-    expect(second.pending()).toHaveLength(0);
+    expect(await second.pending()).toHaveLength(0);
     expect(second.resolve(intent.intentId, "allow_once")).toBe(false);
   });
 
@@ -177,7 +178,58 @@ describe("across a restart", () => {
     const first = new ApprovalStore(dir, answersIn(5));
     await first.decideIntent(intentFor());
     const second = new ApprovalStore(dir, silent);
-    expect(second.all()).toHaveLength(1);
-    expect(second.all()[0].status).toBe("decided");
+    await second.ready;
+    expect(await second.all()).toHaveLength(1);
+    expect((await second.all())[0].status).toBe("decided");
+  });
+});
+
+describe("failing closed does not depend on the timer (review finding 2)", () => {
+  it("an answer arriving after the deadline is denied, even though the timer has not run", async () => {
+    // A long real TTL, so the setTimeout genuinely has not fired. The clock,
+    // which is what the store checks, is moved past the deadline — this is what
+    // a loop blocked past the deadline looks like from the store's point of
+    // view.
+    let clock = 1_000_000;
+    const store = new ApprovalStore(tempDir(), silent, 60_000, () => clock);
+    await store.ready;
+    const intent = intentFor();
+    const pending = store.decideIntent(intent);
+    await new Promise((r) => setTimeout(r, 30));
+
+    clock += 60_001; // past the deadline; the 60s timer has not fired
+
+    // Somebody clicks Allow. It must not be honoured.
+    expect(store.resolve(intent.intentId, "allow_once", "human")).toBe(true);
+    const decision = await pending;
+    expect(decision).toEqual({ decision: "deny", source: "expired" });
+
+    const [record] = await store.all();
+    expect(record.status).toBe("expired");
+    expect(record.decision).toBe("deny");
+  });
+
+  it("the dialog's own late answer is denied on the same check", async () => {
+    let clock = 1_000_000;
+    // The delegate answers "allow" after a real 40ms, by which time the clock
+    // has moved past a deadline the timer will not reach for a minute.
+    const store = new ApprovalStore(tempDir(), answersIn(40, "allow_once"), 60_000, () => clock);
+    await store.ready;
+    const pending = store.decideIntent(intentFor());
+    await new Promise((r) => setTimeout(r, 10));
+    clock += 60_001;
+    expect(await pending).toEqual({ decision: "deny", source: "expired" });
+  });
+
+  it("an answer inside the deadline is still honoured", async () => {
+    let clock = 1_000_000;
+    const store = new ApprovalStore(tempDir(), silent, 60_000, () => clock);
+    await store.ready;
+    const intent = intentFor();
+    const pending = store.decideIntent(intent);
+    await new Promise((r) => setTimeout(r, 30));
+    clock += 59_000; // still inside
+    expect(store.resolve(intent.intentId, "allow_once", "human")).toBe(true);
+    expect(await pending).toEqual({ decision: "allow_once", source: "human" });
   });
 });

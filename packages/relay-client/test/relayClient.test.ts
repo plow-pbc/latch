@@ -276,7 +276,7 @@ describe("a slow approval over the tunnel (§4.3, D3)", () => {
 
     // The approval is on disk while it is still unanswered — that record is the
     // only thing that says an agent asked for this file.
-    const [record] = approvals.all();
+    const [record] = await approvals.all();
     expect(record.status).toBe("pending");
     expect(record.agentId).toBe("agent-1");
     expect(record.capabilities).toEqual([`Read: ${canonicalize(file)}`]);
@@ -304,7 +304,7 @@ describe("a slow approval over the tunnel (§4.3, D3)", () => {
     }
     expect(poll.status).toBe("ready");
     expect(poll.result.content).toBe("the numbers");
-    expect(approvals.all()[0]).toMatchObject({
+    expect((await approvals.all())[0]).toMatchObject({
       status: "decided",
       decision: "allow_once",
       source: "human",
