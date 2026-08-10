@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld("domo", {
   rulesRemove: (key: string) => ipcRenderer.invoke("rules:remove", key),
   agentsList: () => ipcRenderer.invoke("agents:list"),
   agentsRevoke: (agentId: string) => ipcRenderer.invoke("agents:revoke", agentId),
+  uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
+  uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   settingsGet: () => ipcRenderer.invoke("settings:get"),
   settingsSet: (brokerConnection: string) => ipcRenderer.invoke("settings:set", brokerConnection),
   statusGet: () => ipcRenderer.invoke("status:get"),

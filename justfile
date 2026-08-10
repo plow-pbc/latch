@@ -73,7 +73,8 @@ app: build
         exit 1
     fi
     mkdir -p "{{nethome}}/app"
-    node -e 'const fs=require("fs");fs.writeFileSync(process.argv[1],JSON.stringify({brokerConnection:process.argv[2]},null,2)+"\n")' \
+    # Merge, don't clobber — preserve other settings (e.g. the saved tab).
+    node -e 'const fs=require("fs"),p=process.argv[1];let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}s.brokerConnection=process.argv[2];fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")' \
         "{{nethome}}/app/settings.json" "$cs"
     echo "App pointed at wss://{{publichost}}:{{deviceport}}/  (home={{nethome}})"
     DOMO_HOME="{{nethome}}" npx electron "{{root}}/apps/desktop"

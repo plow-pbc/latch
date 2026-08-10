@@ -7,6 +7,8 @@ import path from "node:path";
 
 export interface Settings {
   brokerConnection: string;
+  /** The last-selected main-window tab, restored across launches. */
+  selectedTab: string;
 }
 
 function settingsPath(home: string): string {
@@ -14,10 +16,11 @@ function settingsPath(home: string): string {
 }
 
 export function loadSettings(home: string): Settings {
+  const defaults: Settings = { brokerConnection: "", selectedTab: "audit" };
   try {
-    return { brokerConnection: "", ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
+    return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
   } catch {
-    return { brokerConnection: "" };
+    return defaults;
   }
 }
 

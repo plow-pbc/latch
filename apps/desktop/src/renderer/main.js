@@ -328,16 +328,27 @@ function render() {
   else if (currentTab === "settings") renderSettings();
 }
 
+function selectTab(tab) {
+  currentTab = tab;
+  for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
+  render();
+}
+
 seg.addEventListener("click", (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
-  currentTab = btn.dataset.tab;
-  for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b === btn);
-  render();
+  selectTab(btn.dataset.tab);
+  window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") renderAudit(); });
 window.domo.onStatusChanged(() => refreshStatus());
 
-refreshStatus();
-render();
+// Restore the last-selected tab (falls back to the HTML default on any miss).
+async function boot() {
+  refreshStatus();
+  const saved = await window.domo.uiGetTab();
+  const known = ["goals", "audit", "rules", "settings"];
+  selectTab(known.includes(saved) ? saved : "audit");
+}
+boot();

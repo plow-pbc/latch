@@ -262,6 +262,12 @@ ipcMain.handle("agents:revoke", async (_e, agentId: string) => {
   device?.revokeAgent(agentId);
   return device?.knownAgentIds() ?? [];
 });
+ipcMain.handle("ui:getTab", async () => loadSettings(home).selectedTab);
+ipcMain.handle("ui:setTab", async (_e, tab: string) => {
+  const settings = loadSettings(home);
+  settings.selectedTab = tab;
+  saveSettings(home, settings);
+});
 ipcMain.handle("settings:get", async () => loadSettings(home));
 ipcMain.handle("settings:set", async (_e, brokerConnection: string) => {
   const settings = loadSettings(home);
