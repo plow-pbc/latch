@@ -33,6 +33,8 @@ export interface Settings {
   approvalMode: ApprovalMode;
   /** In Ask mode, highlight the button the adversarial agent suggests. */
   showAgentSuggestions: boolean;
+  /** Anthropic API key — required for the adversarial agent features. */
+  anthropicApiKey: string;
 }
 
 function settingsPath(home: string): string {
@@ -45,6 +47,7 @@ export function loadSettings(home: string): Settings {
     selectedTab: "audit",
     approvalMode: "ask",
     showAgentSuggestions: true,
+    anthropicApiKey: "",
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };

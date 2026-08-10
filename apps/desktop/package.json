@@ -10,6 +10,7 @@
     "start": "electron ."
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
     "@domo/device-core": "*",
     "@domo/protocol": "*",
     "@domo/transport": "*"

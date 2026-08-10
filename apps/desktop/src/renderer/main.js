@@ -357,9 +357,15 @@ async function renderSettings() {
     restoreNote.textContent = "Default goals restored.";
   });
 
+  // Anthropic API key — gates the adversarial-agent features.
+  const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
+  apiKeyInput.value = await window.domo.apiKeyGet();
+  const reviewerInfo = await window.domo.reviewerInfoGet();
+
   // Approval mode for operations (device pairing is always asked).
-  const mode = await window.domo.approvalModeGet();
+  let currentMode = await window.domo.approvalModeGet();
   const showSuggestions = await window.domo.showSuggestionsGet();
+  let hasKey = !!apiKeyInput.value.trim();
   const modeChips = el("div", { class: "chips" });
   const MODES = [
     ["approve", "Approve"],
@@ -368,7 +374,6 @@ async function renderSettings() {
     ["deny", "Deny"],
   ];
 
-  // Checkbox: only meaningful (enabled) in Ask mode.
   const suggestCheck = el("input", { attrs: { type: "checkbox" } });
   suggestCheck.checked = showSuggestions;
   const suggestLabel = el("label", { class: "check" }, [
@@ -376,25 +381,46 @@ async function renderSettings() {
     el("span", { text: "Show Adversarial Agent suggestions in Ask mode" }),
   ]);
   suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
-  const setCheckEnabled = (active) => {
-    const on = active === "ask";
+
+  // Adversarial Agent needs an API key; the suggestions checkbox needs Ask mode
+  // AND a key. Re-render whenever the mode or key presence changes.
+  const renderModeChips = () => {
+    modeChips.replaceChildren(...MODES.map(([value, label]) => {
+      const disabled = value === "adversarial" && !hasKey;
+      const chip = el("span", {
+        class: "chip" + (currentMode === value ? " active" : "") + (disabled ? " disabled" : ""),
+      }, [el("span", { text: label })]);
+      if (!disabled) {
+        chip.addEventListener("click", async () => {
+          currentMode = value;
+          await window.domo.approvalModeSet(value);
+          renderModeChips();
+          updateSuggestEnabled();
+        });
+      }
+      return chip;
+    }));
+  };
+  const updateSuggestEnabled = () => {
+    const on = currentMode === "ask" && hasKey;
     suggestCheck.disabled = !on;
     suggestLabel.classList.toggle("disabled", !on);
   };
 
-  const renderModeChips = (active) => {
-    modeChips.replaceChildren(...MODES.map(([value, label]) => {
-      const chip = el("span", { class: "chip" + (active === value ? " active" : ""), text: label });
-      chip.addEventListener("click", async () => {
-        await window.domo.approvalModeSet(value);
-        renderModeChips(value);
-        setCheckEnabled(value);
-      });
-      return chip;
-    }));
-  };
-  renderModeChips(mode);
-  setCheckEnabled(mode);
+  apiKeyInput.addEventListener("input", async () => {
+    hasKey = !!apiKeyInput.value.trim();
+    // If the key is removed while Adversarial mode is active, fall back to Ask.
+    if (!hasKey && currentMode === "adversarial") {
+      currentMode = "ask";
+      await window.domo.approvalModeSet("ask");
+    }
+    renderModeChips();
+    updateSuggestEnabled();
+  });
+  apiKeyInput.addEventListener("change", () => window.domo.apiKeySet(apiKeyInput.value.trim()));
+
+  renderModeChips();
+  updateSuggestEnabled();
 
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "item" }, [
@@ -407,6 +433,14 @@ async function renderSettings() {
         pinInput,
       ]),
       el("div", { class: "row" }, [note, el("div", { class: "spacer" }), save]),
+    ]),
+    el("div", { class: "item" }, [
+      el("div", { class: "field" }, [
+        el("label", { text: "Anthropic API key" }),
+        el("p", { class: "faint", text: "Required for the Adversarial Agent features. Stored locally." }),
+        apiKeyInput,
+        el("p", { class: "faint", text: `Reviewer: ${reviewerInfo}` }),
+      ]),
     ]),
     el("div", { class: "item" }, [
       el("div", { class: "field" }, [

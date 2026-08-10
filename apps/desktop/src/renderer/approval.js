@@ -60,6 +60,13 @@ async function render() {
   const allowSlot = el("div", { class: "action-slot" }, [allowOnce]);
   const slotByDecision = { deny: denySlot, always_allow: alwaysSlot, allow_once: allowSlot };
 
+  // A tiny rainbow spinner pinned to the window's bottom-right corner, shown
+  // while an adversarial review is in flight (Ask mode + suggestions on).
+  // Cleared when the verdict lands.
+  const reviewing = req.suggesting
+    ? el("div", { class: "reviewing-spinner" })
+    : null;
+
   root.replaceChildren(
     el("div", { class: "who" }, [
       el("span", { class: "name", text: v.agentDisplay }),
@@ -78,12 +85,16 @@ async function render() {
     ]),
     el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
   );
+  if (reviewing) document.body.appendChild(reviewing);
   allowOnce.focus(); // keyboard default: Return activates Allow Once
 
-  // When the adversarial agent responds, highlight the button it suggests.
+  // When the adversarial agent responds, clear the indicator and (if it made a
+  // recommendation) highlight the button it suggests. A null decision means it
+  // deferred to you — indicator clears, nothing highlighted.
   window.domo.onApprovalSuggestion((data) => {
     if (data.id !== v.intentId) return;
-    const target = slotByDecision[data.decision];
+    if (reviewing) reviewing.remove();
+    const target = data.decision ? slotByDecision[data.decision] : null;
     if (target) target.classList.add("suggested");
   });
 }

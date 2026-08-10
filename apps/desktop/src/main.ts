@@ -33,6 +33,7 @@ import {
 import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { planAgentLaunch } from "./spawnAgent.js";
+import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
 // Quit items, and dock title read "Domo Desktop" instead of "Electron".
@@ -67,29 +68,59 @@ class ElectronPolicy implements PolicyDelegate {
 
   // Operations honor the configurable approval mode (settings.approvalMode).
   // The returned `source` records HOW it was decided, for the audit log.
+  // The adversarial-agent features require an Anthropic API key; without one,
+  // adversarial mode falls back to Ask and suggestions are skipped.
   async decideIntent(intent: Intent): Promise<{ decision: "allow_once" | "always_allow" | "deny"; source: string }> {
-    const mode = loadSettings(home).approvalMode ?? "ask";
-    switch (mode) {
-      case "approve":
-        return { decision: "allow_once", source: "approve" };
-      case "deny":
-        return { decision: "deny", source: "policy" };
-      case "adversarial":
-        return { decision: await adversarialSuggestion(intent), source: "adversarial" };
-      case "ask":
-      default: {
-        // In Ask mode, optionally run the adversarial agent alongside the
-        // dialog and highlight the button it suggests.
-        const suggestion = loadSettings(home).showAgentSuggestions
-          ? adversarialSuggestion(intent)
-          : null;
-        const decision = await openApprovalWindow(
-          { kind: "intent", view: approvalViewModel(intent) },
-          suggestion,
-        );
-        return { decision, source: "ask" };
-      }
+    const settings = loadSettings(home);
+    const mode = settings.approvalMode ?? "ask";
+    const hasKey = !!(settings.anthropicApiKey ?? "").trim();
+
+    if (mode === "approve") return { decision: "allow_once", source: "approve" };
+    if (mode === "deny") return { decision: "deny", source: "policy" };
+
+    const key = (settings.anthropicApiKey ?? "").trim();
+    const audit = device?.audit;
+    // Run one review, recording its start and outcome onto the intent's audit
+    // timeline so the app shows "adversarial agent started" + its verdict
+    // between the request and the final decision.
+    const review = async () => {
+      const history = agentHistory(audit?.entries() ?? [], intent.agentId);
+      audit?.record("adversarial_review_started", {
+        intentId: intent.intentId,
+        agent: intent.agentId,
+        model: REVIEWER_MODEL,
+      });
+      const r = await adversarialReview({ intent, history, apiKey: key });
+      audit?.record("adversarial_review_result", {
+        intentId: intent.intentId,
+        verdict: r.verdict,
+        reason: r.reason,
+      });
+      return r;
+    };
+
+    if (mode === "adversarial" && hasKey) {
+      const { verdict } = await review();
+      if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
+      if (verdict === "deny") return { decision: "deny", source: "adversarial" };
+      // "ask" — the agent couldn't decide; hand it to the human (no suggestion).
+      const decision = await openApprovalWindow({ kind: "intent", view: approvalViewModel(intent) });
+      return { decision, source: "ask" };
     }
+
+    // Ask mode (or adversarial with no key): show the dialog, optionally with a
+    // suggestion when both the toggle and a key are present.
+    const suggestion =
+      settings.showAgentSuggestions && hasKey
+        ? review().then((r) =>
+            r.verdict === "allow" ? "allow_once" : r.verdict === "deny" ? "deny" : null,
+          )
+        : null;
+    const decision = await openApprovalWindow(
+      { kind: "intent", view: approvalViewModel(intent) },
+      suggestion,
+    );
+    return { decision, source: "ask" };
   }
 }
 
@@ -99,21 +130,13 @@ type ApprovalRequest =
 
 type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
-/**
- * The adversarial-agent review. Placeholder for now — a short pause, then a
- * suggested "allow once". Will be replaced by a real reviewing agent.
- */
-async function adversarialSuggestion(_intent: Intent): Promise<ApprovalDecision> {
-  await new Promise((r) => setTimeout(r, 2000));
-  return "allow_once";
-}
-
 /** Serialize approval windows so two prompts never overlap. */
 let approvalChain: Promise<unknown> = Promise.resolve();
 
 function openApprovalWindow(
   request: ApprovalRequest,
-  suggestion: Promise<ApprovalDecision> | null = null,
+  // Resolves to the button the adversarial agent suggests, or null for no hint.
+  suggestion: Promise<ApprovalDecision | null> | null = null,
 ): Promise<ApprovalDecision> {
   const run = () =>
     new Promise<ApprovalDecision>((resolve) => {
@@ -139,7 +162,9 @@ function openApprovalWindow(
         resolve(decision);
       };
       // The renderer pulls its model (never pushed with executable content).
-      ipcMain.handleOnce("approval:get", async () => request);
+      // `suggesting` tells it whether an adversarial review is in flight, so it
+      // can show an indeterminate "reviewing…" indicator until the hint lands.
+      ipcMain.handleOnce("approval:get", async () => ({ ...request, suggesting: !!suggestion }));
       const onDecision = (_e: unknown, id: string, decision: ApprovalDecision) => {
         if (id !== approvalId(request)) return;
         ipcMain.removeListener("approval:decide", onDecision);
@@ -147,13 +172,16 @@ function openApprovalWindow(
       };
       ipcMain.on("approval:decide", onDecision);
       // When the adversarial agent responds, tell the window which button to
-      // highlight (only meaningful while it's still open and unanswered).
+      // highlight (or that there's no hint) so it can clear the "reviewing…"
+      // indicator. Only meaningful while the window is still open and unanswered.
       if (suggestion) {
-        void suggestion.then((decision) => {
-          if (!settled && !win.isDestroyed()) {
-            win.webContents.send("approval:suggestion", { id: approvalId(request), decision });
-          }
-        });
+        void suggestion
+          .catch(() => null)
+          .then((decision) => {
+            if (!settled && !win.isDestroyed()) {
+              win.webContents.send("approval:suggestion", { id: approvalId(request), decision });
+            }
+          });
       }
       // Closing the window without a choice is a denial (fail safe).
       win.on("closed", () => {
@@ -380,6 +408,13 @@ ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).sho
 ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   const settings = loadSettings(home);
   settings.showAgentSuggestions = !!on;
+  saveSettings(home, settings);
+});
+ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
+ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
+ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
+  const settings = loadSettings(home);
+  settings.anthropicApiKey = (key || "").trim();
   saveSettings(home, settings);
 });
 ipcMain.handle("status:get", async () => ({

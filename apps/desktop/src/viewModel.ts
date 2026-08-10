@@ -315,6 +315,15 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     case "agent_spawned": text = `Agent spawned — ${ev.get("goal").str ?? ""}`; break;
     case "intent_received": text = `Request: ${ev.get("request").str ?? ""}`; break;
+    case "adversarial_review_started": text = "Adversarial agent started reviewing…"; break;
+    case "adversarial_review_result": {
+      const verdict = ev.get("verdict").str ?? "";
+      const reason = ev.get("reason").str ?? "";
+      const label = verdict === "allow" ? "allow" : verdict === "deny" ? "deny" : "defer to you";
+      text = `Adversarial agent: ${label}${reason ? ` — ${reason}` : ""}`;
+      state = verdict === "deny" ? "bad" : verdict === "allow" ? "ok" : "neutral";
+      break;
+    }
     case "intent_decision":
       text = `Decision: ${ev.get("decision").str ?? ""} — ${decidedByLabel(ev.get("source").str) ?? "?"}`;
       state = ev.get("decision").str === "deny" ? "bad" : "ok";

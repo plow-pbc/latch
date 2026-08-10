@@ -120,6 +120,7 @@ body {
   user-select: none;
 }
 .chip.active { background: var(--sel); color: var(--blue-fg); border-color: var(--blue-bd); }
+.chip.disabled { opacity: 0.4; cursor: default; }
 .spacer { flex: 1; }
 .count { color: var(--faint); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
@@ -370,6 +371,32 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve .actions .btn { flex: 1; justify-content: center; padding: 9px; }
 .warn { color: var(--amber-fg); }
 
+/* A tiny rainbow spinner pinned to the window's bottom-right corner, shown while
+   an adversarial review is in flight (Ask mode + suggestions on). It's a small
+   conic-gradient ring (masked hollow center) that rotates. Cleared when the
+   verdict lands (whether it recommends a button or defers to you). */
+.reviewing-spinner {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 0.5;
+  background: conic-gradient(
+    #ff0000, #ff8000, #ffff00, #80ff00, #00ff00, #00ff80,
+    #00ffff, #0080ff, #0000ff, #8000ff, #ff00ff, #ff0080, #ff0000
+  );
+  -webkit-mask: radial-gradient(closest-side, transparent 40%, #000 42%);
+  mask: radial-gradient(closest-side, transparent 40%, #000 42%);
+  animation: reviewing-spin 0.8s linear infinite;
+  pointer-events: none;
+}
+@keyframes reviewing-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .reviewing-spinner { animation: none; }
+}
+
 /* Checkbox row (settings) */
 .check { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer; }
 .check.disabled { opacity: 0.45; cursor: default; }
@@ -396,7 +423,7 @@ textarea.text { min-height: 70px; resize: vertical; }
     #ff0000, #ff8000, #ffff00, #80ff00, #00ff00, #00ff80,
     #00ffff, #0080ff, #0000ff, #8000ff, #ff00ff, #ff0080, #ff0000
   );
-  filter: blur(5px);         /* soft, unclipped glow */
+  filter: blur(4px);         /* soft, unclipped glow */
   opacity: 0.5;
   pointer-events: none;
   animation: suggest-spin 2.5s linear infinite;

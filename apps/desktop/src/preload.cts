@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld("domo", {
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
+  apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
+  apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
+  reviewerInfoGet: () => ipcRenderer.invoke("settings:getReviewerInfo"),
   statusGet: () => ipcRenderer.invoke("status:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
@@ -34,6 +37,6 @@ contextBridge.exposeInMainWorld("domo", {
   approvalGet: () => ipcRenderer.invoke("approval:get"),
   approvalDecide: (id: string, decision: string) =>
     ipcRenderer.send("approval:decide", id, decision),
-  onApprovalSuggestion: (cb: (data: { id: string; decision: string }) => void) =>
+  onApprovalSuggestion: (cb: (data: { id: string; decision: string | null }) => void) =>
     ipcRenderer.on("approval:suggestion", (_e, data) => cb(data)),
 });
