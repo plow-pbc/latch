@@ -67,6 +67,8 @@ describe("recall", () => {
     ["not JSON at all", "Traceback (most recent call last):"],
     ["valid JSON that is not an array", '{"facts": []}'],
     ["an array of things that are not fact objects", '["hello"]'],
+    ["an array of nested arrays", "[[1,2]]"],
+    ["fact objects with no statement", "[{}]"],
   ])("rejects when ltmm emits %s", async (_label, stdout) => {
     process.env.DOMO_LTMM_BIN = stubLtmm(stdout);
     await expect(recall("anything")).rejects.toThrow(/JSON/i);
@@ -165,19 +167,28 @@ describe("the recall blessed tool", () => {
   });
 
   it.each([
-    ["no query at all", {}],
-    ["a whitespace-only query", { query: "   " }],
-  ])("rejects %s rather than recalling everything", async (_label, args) => {
+    ["no query at all", {}, /query/i],
+    ["a whitespace-only query", { query: "   " }, /query/i],
+    // The tool used to swap any non-number for DEFAULT_LIMIT, turning an agent's
+    // malformed call into a silently different one.
+    ["a non-numeric limit", { query: "abby", limit: "3" }, /limit/i],
+    ["a limit past the advertised maximum", { query: "abby", limit: 500 }, /limit/i],
+  ])("rejects %s rather than recalling something else", async (_label, args, expected) => {
     const tool = BlessedToolRegistry.standard().tool("recall");
-    await expect(tool!.invoke(args)).rejects.toThrow(/query/i);
+    await expect(tool!.invoke(args)).rejects.toThrow(expected);
   });
 
-  it("hands a bad limit to recall to reject, rather than swallowing it", async () => {
-    // The tool used to swap any non-number for DEFAULT_LIMIT, which turned an
-    // agent's malformed call into a silently different one. One rule, in
-    // recall(), so this tool and the future ambient caller cannot drift.
+  it("advertises the bounds recall actually enforces", () => {
+    // The schema is the only contract the agent sees, and use_tool does not
+    // validate against it — an agent that obeys it and is still rejected has
+    // been misled by this file.
     const tool = BlessedToolRegistry.standard().tool("recall");
-    await expect(tool!.invoke({ query: "abby", limit: "3" })).rejects.toThrow(/limit/i);
+    const schema = tool!.inputSchema as {
+      properties: { limit: { type: string; minimum: number; maximum: number } };
+    };
+    expect(schema.properties.limit.type).toBe("integer");
+    expect(schema.properties.limit.minimum).toBe(1);
+    expect(schema.properties.limit.maximum).toBe(MAX_LIMIT);
   });
 
   it("is wired into a DeviceAgent's default tool set", () => {

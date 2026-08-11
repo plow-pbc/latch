@@ -57,12 +57,19 @@ export const MAX_LIMIT = 100;
 export const RECALL_TIMEOUT_MS = 60_000;
 
 /**
- * `limit` is typed `number` but validated anyway: this is a trust boundary, and
- * the blessed tool hands through whatever the agent sent. Coercing instead would
- * put `--limit NaN` in front of argparse and return its usage error, which reads
- * exactly like a genuine store failure.
+ * Both arguments are typed but validated anyway: this is the trust boundary, and
+ * the blessed tool hands through whatever the agent sent. Coercing `limit`
+ * instead would put `--limit NaN` in front of argparse and return its usage
+ * error, which reads exactly like a genuine store failure.
+ *
+ * Both rules live here rather than in the tool because the ambient enricher will
+ * be a second caller of this same function; a rule kept in one wrapper is a rule
+ * the other caller silently does not have.
  */
 export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fact[]> {
+  if (query.trim().length === 0) {
+    return Promise.reject(new Error("ltmm recall needs a non-empty query"));
+  }
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
     return Promise.reject(
       new Error(`ltmm recall needs an integer limit in 1..${MAX_LIMIT}, got ${limit}`),
@@ -99,10 +106,14 @@ export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fa
         reject(new Error(`ltmm returned invalid JSON: ${stdout.slice(0, 200)}`));
         return;
       }
-      // Rows are checked for object-ness, not asserted into shape: `["hello"]`
-      // parses fine and would otherwise surface as `undefined` fields at a
-      // consumer far from this seam.
-      if (!Array.isArray(parsed) || parsed.some((row) => typeof row !== "object" || row === null)) {
+      // Probing `statement` rather than object-ness catches every shape that
+      // parses but is not a fact -- `["hello"]`, `[[]]`, `[{}]`, `[null]` all
+      // reach here otherwise and surface as `undefined` fields at a consumer far
+      // from this seam. Optional chaining because `null.statement` throws.
+      if (
+        !Array.isArray(parsed) ||
+        parsed.some((row) => typeof (row as Fact | null | undefined)?.statement !== "string")
+      ) {
         reject(new Error("ltmm returned invalid JSON: expected an array of fact objects"));
         return;
       }

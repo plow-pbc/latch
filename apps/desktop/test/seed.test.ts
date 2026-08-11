@@ -40,16 +40,6 @@ describe("seedIfMissing", () => {
     expect(spawned).toHaveLength(0);
   });
 
-  it("reports rather than throws when ltmm is not installed", () => {
-    // A missing ltmm must not take the app down on launch.
-    const { deps: d } = deps({
-      spawn: () => {
-        throw new Error("spawn ENOENT");
-      },
-    });
-    expect(seedIfMissing(d)).toBe("unavailable");
-  });
-
   it("survives a missing ltmm instead of taking the app down", async () => {
     // Drives the REAL liveDeps.spawn, because an injected stub cannot reproduce
     // this: spawn reports a missing binary asynchronously on the child's `error`
