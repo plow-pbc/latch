@@ -58,6 +58,7 @@ async function stack(
     credential?: string;
     log?: (m: string) => void;
     pingIntervalMs?: number;
+    onAuthFailed?: (reason: string) => void;
   } = {},
 ) {
   const relay = await FakeRelay.start({
@@ -81,6 +82,7 @@ async function stack(
     credential: options.credential ?? CREDENTIAL,
     serve: (request, auth) => mcp.fetch(request, auth),
     onStatusChange: (c) => statuses.push(c),
+    onAuthFailed: options.onAuthFailed,
     log: options.log,
   });
   cleanups.push(() => client.stop());
@@ -398,4 +400,34 @@ describe("frame handling", () => {
     expect(new URL(seenUrl).search).toBe("?trace=abc");
   });
 
+});
+
+describe("a credential the relay refuses", () => {
+  it("stops instead of reconnecting forever, and says so once", async () => {
+    // Reported live: the owner revoked this Mac's key in the Plow console. The
+    // client treated 4001/auth_failed as just another dropped socket and
+    // reconnected on backoff for as long as the app was open, hammering the
+    // relay with a token it had already refused and telling the user nothing.
+    // A refused credential cannot become valid by waiting, so it is terminal.
+    const rejected: string[] = [];
+    const lines: string[] = [];
+    const { relay, client } = await stack({
+      credential: "plow_a_credential_the_relay_will_refuse",
+      onAuthFailed: (reason) => rejected.push(reason),
+      log: (m) => lines.push(m),
+    });
+
+    await client.start();
+    // Long enough that a backoff reconnect (base 500ms) would have fired.
+    await new Promise((r) => setTimeout(r, 1_500));
+
+    expect(rejected).toHaveLength(1);
+    expect(relay.authFailures).toBe(1);
+    expect(client.isConnected).toBe(false);
+    // The proof it is not looping: one dial, and no reconnect was scheduled.
+    expect(lines.filter((l) => l.startsWith("connecting to"))).toHaveLength(1);
+    expect(lines.some((l) => l.includes("reconnecting in"))).toBe(false);
+    // And nothing anywhere echoes the credential.
+    expect(lines.join(" ")).not.toContain("plow_a_credential_the_relay_will_refuse");
+  });
 });

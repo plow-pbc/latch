@@ -345,12 +345,31 @@ ipcMain.handle("settings:getRelay", async () => {
 // Sign out: forget the device credential and drop the socket. The credential
 // itself is not revoked — that needs the account's own key list, which this Mac
 // deliberately cannot reach.
-ipcMain.handle("settings:signOut", async () => {
+
+/**
+ * Forget this Mac's credential and put the user back at the start.
+ *
+ * Blanking the settings is only half of it: `Onboarding` decides its step in
+ * its constructor, so without the reset the window sits on the connected
+ * screen against empty settings — "Signed in — connecting…" with a blank
+ * endpoint and no way forward but quitting the app.
+ */
+function signOut(): void {
   const settings = loadSettings(home);
   settings.relayCredential = "";
   settings.accountUid = "";
   settings.mcpUrl = "";
   saveSettings(home, settings);
+  onboarding?.reset();
+  // Opening it boots the renderer, which calls `begin` and mints the code the
+  // activation screen needs. `begin` covers the already-open case; it is
+  // idempotent, so between them exactly one code is minted.
+  openOnboardingWindow();
+  void onboarding?.begin();
+}
+
+ipcMain.handle("settings:signOut", async () => {
+  signOut();
   await startRelay();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
@@ -472,6 +491,15 @@ async function startRelay(): Promise<void> {
     serve: (request, auth) => server.fetch(request, auth),
     onStatusChange: (isConnected) => {
       connected = isConnected;
+      notifyRenderer("status:changed");
+    },
+    // The relay refused the credential — revoked in the console, or minted
+    // against a different environment. It will never work again, so the app
+    // signs itself out rather than reconnecting forever with a dead token.
+    onAuthFailed: (reason) => {
+      console.log(`[relay] credential rejected (${reason}); signing out`);
+      connected = false;
+      signOut();
       notifyRenderer("status:changed");
     },
     // RelayClient redacts the credential from everything it emits; this is the
