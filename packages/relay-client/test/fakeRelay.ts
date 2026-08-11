@@ -22,6 +22,7 @@
  * false confidence. The strictness below mirrors
  * `api/plow/relay/ws.py` `_authenticate` and its receive loop.
  */
+import { Server as HttpServer } from "node:http";
 import { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -84,6 +85,14 @@ export interface FakeRelayOptions {
   expectCredential: string;
   /** Advertised heartbeat cadence, as plow's `auth.ok` does. */
   pingIntervalMs?: number;
+  /**
+   * Attach to an existing HTTP server instead of taking a port of its own.
+   *
+   * Against real Plow the socket and the HTTP API share one origin — which is
+   * what `relaySocketUrl` expresses — so anything driving the whole app has to
+   * serve both from one port or the app will dial somewhere the stub is not.
+   */
+  server?: HttpServer;
 }
 
 export class FakeRelay {
@@ -123,6 +132,10 @@ export class FakeRelay {
   }
 
   static async start(options: FakeRelayOptions): Promise<FakeRelay> {
+    if (options.server) {
+      // Already listening; `listening` will never fire again for us.
+      return new FakeRelay(new WebSocketServer({ server: options.server }), options);
+    }
     const wss = new WebSocketServer({ port: 0 });
     await new Promise<void>((resolve) => wss.on("listening", () => resolve()));
     return new FakeRelay(wss, options);
@@ -133,7 +146,8 @@ export class FakeRelay {
   }
 
   private get port(): number {
-    return (this.wss.address() as AddressInfo).port;
+    const address = this.options.server ? this.options.server.address() : this.wss.address();
+    return (address as AddressInfo).port;
   }
 
   /** What an agent addressed to reach this relay — forwarded as `Host`. */

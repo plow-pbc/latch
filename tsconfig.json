@@ -6,6 +6,7 @@
     { "path": "packages/device-core" },
     { "path": "packages/mcp-server" },
     { "path": "packages/relay-client" },
+    { "path": "packages/relay-client/tsconfig.test.json" },
     { "path": "apps/desktop" }
   ]
 }

@@ -45,5 +45,9 @@ jobs:
           npx electron apps/desktop/scripts/verify-preload.mjs
           npx electron apps/desktop/scripts/approval-screenshot.mjs
           npx electron apps/desktop/scripts/onboarding-screenshot.mjs
+          # The real-input harness: drives the whole first run with synthesized
+          # key and mouse events. This is the one that can catch a panel that
+          # renders perfectly and accepts nothing.
+          npx electron apps/desktop/scripts/first-run-drive.mjs
         env:
           DOMO_HOME: ${{ runner.temp }}/domo-ci

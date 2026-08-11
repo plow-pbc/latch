@@ -84,3 +84,8 @@ audit:
 clean:
     rm -rf "{{nethome}}"
     @echo "wiped {{nethome}}"
+
+# Drive the REAL app through the whole first run with REAL key and mouse
+# events. The harness that catches a panel nobody can type in.
+first-run-drive: build
+    OUT_DIR="${OUT_DIR:-/tmp}" npx electron apps/desktop/scripts/first-run-drive.mjs

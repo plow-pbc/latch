@@ -453,10 +453,23 @@ export class Onboarding {
     return this.publish();
   }
 
-  /** Re-read connection state, for the screen's status line. */
-  refresh(): OnboardingState {
-    return this.publish();
-  }
+  /*
+   * There is deliberately no `refresh()` here.
+   *
+   * It used to exist, be wired to the `onboarding:get` IPC, and call
+   * `publish()` — so *reading* the state notified the renderer that the state
+   * had changed, and the renderer's change handler read the state again. That
+   * closed a loop with nothing to damp it: the window re-rendered about 5,000
+   * times a second, and since `render()` rebuilds the DOM with
+   * `replaceChildren`, every input and button was destroyed and recreated
+   * between one frame and the next. The screen looked perfect and was
+   * completely inert — focus could not survive, and a click needs mousedown and
+   * mouseup to land on the same element.
+   *
+   * `state()` is a pure read and is what the getter uses. It already re-reads
+   * settings and the live connection flag, which is all `refresh()` was
+   * documented to do. Publishing belongs to the methods that change something.
+   */
 
   private async completeOtpLogin(code: string): Promise<void> {
     let otpToken: string;

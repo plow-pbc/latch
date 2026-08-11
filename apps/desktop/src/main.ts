@@ -328,7 +328,10 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
 // MARK: IPC for the first-run setup window
 
-ipcMain.handle("onboarding:get", async () => onboarding?.refresh() ?? null);
+// A pure read. It must NOT publish: the renderer re-reads on every change
+// notification, so a getter that notifies is an unbroken re-render loop that
+// leaves the window rendered but inert. See the note in onboarding.ts.
+ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
 ipcMain.handle("onboarding:newCode", async () => onboarding?.newActivationCode());
 ipcMain.handle("onboarding:usePhoneCode", async () => onboarding?.usePhoneCode());

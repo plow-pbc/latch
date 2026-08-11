@@ -1,0 +1,241 @@
+# Testing the app for real
+
+How to drive this Electron app the way a person does — real key events, real clicks — and assert on
+what the app actually did.
+
+The *why* is in `/Users/plucas/.claude-kitchen/projects/plow/wiki/ui-verification.md`. Read it once.
+This file is the *how*, and it must run start to finish for someone who has never opened this repo.
+
+---
+
+## Why you cannot just check the DOM
+
+This app shipped three times with a panel that rendered perfectly and accepted no click and no
+keystroke. Every check passed, because every check reached into the page — set `.value`, called
+`.click()` — which is the layer *below* the one that was broken.
+
+The actual bug: an IPC getter that notified. `onboarding:get` called a `refresh()` that published a
+change; the renderer re-reads on every change; so reading caused a change caused a read. About
+5,000 re-renders a second, and `render()` rebuilds the tree with `replaceChildren`, so every input
+and button was destroyed and recreated between frames. Focus could not survive it, and a click needs
+mousedown and mouseup on the *same* element.
+
+Nothing that manipulates the DOM directly can see that. Only real input can.
+
+**Banned as evidence:** setting `.value`, `element.click()`, `.focus()`, dispatching a synthetic
+`Event`, calling a handler directly, or a screenshot on its own. They may appear while you debug.
+None may appear in a Done-when.
+
+---
+
+## Run the harness
+
+```bash
+cd /Users/plucas/plow-pbc/domo-desktop
+npm install
+just first-run-drive
+```
+
+Exit code 0 and `every check passed` on the last line. Screenshots land in `/tmp/drive-*.png`
+(`OUT_DIR=/somewhere just first-run-drive` to move them).
+
+It drives the **whole first run**: activation code on screen → the text arrives → device credential
+minted → socket connected → click the agent-name field → type a name → click Create Agent → the
+config comes back. Then it sweeps the main window's tab bar the same way.
+
+Drive the whole flow, not one screen. Every bug of the last two days lived in a seam between
+screens: a `busy` flag never cleared, a request with no deadline, a getter that notified.
+
+### Prove your check can fail
+
+**A check that has never failed is indistinguishable from a check that asserts nothing.** Before you
+trust a new one, run it against the commit that has the bug:
+
+```bash
+git stash                                    # park your fix
+git checkout <broken-sha> -- apps/desktop/src   # or just the files the fix touches
+npx tsc -b && node apps/desktop/scripts/copy-renderer.mjs
+npx electron apps/desktop/scripts/first-run-drive.mjs   # expect CHECK FAIL
+git checkout HEAD -- apps/desktop/src && git stash pop
+npx tsc -b && node apps/desktop/scripts/copy-renderer.mjs
+npx electron apps/desktop/scripts/first-run-drive.mjs   # expect every check passed
+```
+
+Both transcripts go in your report. This is not optional and it costs you five minutes.
+
+---
+
+## Writing your own
+
+Copy `apps/desktop/scripts/first-run-drive.mjs`. The shape:
+
+**1. Stand up a fake Plow on ONE origin.** The app derives its socket URL from its API base by
+swapping the scheme, so HTTP and the WebSocket must share a port or the app dials somewhere you are
+not:
+
+```js
+const api = http.createServer(/* … */);
+await new Promise((r) => api.listen(0, "127.0.0.1", r));
+const API_BASE = `http://127.0.0.1:${api.address().port}`;
+const { FakeRelay } = await import("../../../packages/relay-client/dist-test/fakeRelay.js");
+const relay = await FakeRelay.start({ expectCredential: DEVICE_TOKEN, server: api });
+```
+
+**2. Point the real app at it and boot it.** Both env vars must be set *before* the import:
+
+```js
+process.env.DOMO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "drive-"));  // clean = first run
+process.env.DOMO_API_BASE_URL = API_BASE;
+await import("../dist/main.js");   // the app's OWN main process
+```
+
+Import the real `main.js`. Do **not** re-register your own `ipcMain` handlers — the bug above lived
+in a handler, and every harness that stubbed them was green while the app was dead.
+
+**3. Get a window handle** by title, once it has stopped loading:
+
+```js
+const win = BrowserWindow.getAllWindows().find((w) => w.getTitle().includes("Set Up"));
+```
+
+**4. Make the app frontmost.** macOS gives key focus only to the frontmost app, and an unfocused
+window swallows `sendInputEvent` exactly as it would swallow a real keyboard. Skip this and you get
+a red run that is your fault:
+
+```js
+app.focus({ steal: true });
+win.show(); win.focus(); win.webContents.focus();
+```
+
+**5. Hit-test, then click at real coordinates.** If the click does not land on the element you
+meant, *that is the finding* — do not route around it with `.click()`:
+
+```js
+const { x, y, reachable } = await win.webContents.executeJavaScript(`
+  (() => { const el = document.querySelector('input[placeholder="Claude Code"]');
+           const r = el.getBoundingClientRect();
+           const x = Math.round(r.x + r.width/2), y = Math.round(r.y + r.height/2);
+           const top = document.elementFromPoint(x, y);
+           return { x, y, reachable: top === el || el.contains(top) }; })()`);
+
+win.webContents.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
+win.webContents.sendInputEvent({ type: "mouseUp",   x, y, button: "left", clickCount: 1 });
+```
+
+**6. Type with the full triple**, one per character. `char` alone does not always land:
+
+```js
+for (const ch of "Claude Code") {
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: ch });
+  win.webContents.sendInputEvent({ type: "char",    keyCode: ch });
+  win.webContents.sendInputEvent({ type: "keyUp",   keyCode: ch });
+}
+```
+
+**7. Assert on what the APP did** — the request that reached your fake server, the state it now
+holds, the file it wrote. Never on the value you just typed:
+
+```js
+check("the request reached Plow", seen.agents === 1);
+check("carrying the name that was typed", agentsBody.name === "Claude Code");
+```
+
+**8. Screenshot as the second artifact**, never the only one:
+
+```js
+fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
+```
+
+### Two checks worth copying into any UI harness
+
+```js
+// The DOM must hold still. A tree being rebuilt cannot be typed into.
+await js(`window.__churn = 0;
+  new MutationObserver(() => window.__churn++)
+    .observe(document.getElementById("root"), { childList: true, subtree: true });`);
+await sleep(1500);
+check("the DOM is not rebuilding itself while idle", (await js("window.__churn")) === 0);
+```
+
+```js
+// Nothing interactive inside -webkit-app-region: drag — those elements are
+// inert in Electron. NOTE: the property is not inherited, so the NEAREST
+// ancestor that declares one wins; a no-drag closer to the element re-enables
+// it. The main window's tabs sit in a drag titlebar and work for exactly that
+// reason, so a naive "any drag ancestor" walk reports a false positive.
+```
+
+---
+
+## Things you cannot guess
+
+**Point a build at a local API.** Baked in, deliberately — there is no Settings field, because a
+credential is only valid against the environment that minted it. The developer override:
+
+```bash
+DOMO_API_BASE_URL=http://localhost:18804 just app
+```
+
+An unpackaged run already defaults to `http://localhost:18804`; a packaged one to
+`https://api.plow.co`.
+
+**Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
+Set Up window when `app/settings.json` holds no `relayCredential`:
+
+```bash
+DOMO_HOME=$(mktemp -d) just app          # a clean first run, your real state untouched
+rm ~/.domo/app/settings.json             # or reset the real one
+```
+
+`just` recipes default `DOMO_HOME` to `~/.domo` — your *real* one. Always pass a throwaway to
+anything that writes state.
+
+**See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
+terminal you launched from. Renderer console does not — subscribe to it:
+
+```js
+win.webContents.on("console-message", (_e, level, message) => console.log(`RENDERER[${level}] ${message}`));
+```
+
+To attach DevTools to a running app: `npx electron --remote-debugging-port=9222 apps/desktop`, then
+open `http://localhost:9222`. A normally-launched app has no debugging port — you cannot attach
+after the fact, so start it that way if you might need it.
+
+**No top-level `await` in a harness entry file.** Electron does not emit `ready` until the entry
+module finishes evaluating, and the app hangs its whole startup off `app.whenReady()`. A top-level
+await means the app under test never boots and you get "the window never appeared". Wrap everything
+in an async `main()` and call it.
+
+**Electron cannot import `.ts`.** The `just` transcripts run under `vite-node` and can; anything run
+under `npx electron` cannot. `FakeRelay` is compiled to
+`packages/relay-client/dist-test/fakeRelay.js` by `npx tsc -b` for exactly this reason.
+
+**Build before you run.** Every script loads from `dist/`, not `src/`:
+
+```bash
+npx tsc -b && node apps/desktop/scripts/copy-renderer.mjs   # or: just build
+```
+
+---
+
+## What a UI ticket owes
+
+1. **A real-input transcript** — what was typed and clicked, and what the app did in response.
+2. **A reproducible screenshot** per screen changed, from a script that fails if the screen lost its
+   content — not a hand-captured PNG.
+3. **Red-then-green**, when the change fixes a defect: the same check failing on the broken build and
+   passing on the fix, both outputs verbatim.
+
+If your flow spans screens, drive the whole flow. A per-screen recipe would have caught none of the
+bugs this document exists because of.
+
+## The scripts
+
+| Command | What it proves |
+|---|---|
+| `just first-run-drive` | The whole first run works under real keys and clicks. **Start here.** |
+| `just first-run-transcript` | The state machine and its failure paths, headless, including a no-credential-in-a-log grep. |
+| `just onboarding-screenshots` | Every Set Up screen renders its required content; fails if any is missing. |
+| `just approval-screenshot` | The approval dialog names the calling agent. |
+| `just verify-preload` | The sandboxed preload bridge and renderer still work. |
+| `npx vitest run` | Units and the headless end-to-end transcripts. |

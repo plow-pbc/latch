@@ -499,6 +499,43 @@ describe("creating an agent", () => {
   });
 });
 
+describe("reading the state is a read", () => {
+  it("never notifies, because the renderer re-reads on every notification", async () => {
+    // The bug this pins: `onboarding:get` was wired to a `refresh()` that
+    // called `publish()`. The renderer's change handler calls `get`. So a read
+    // triggered a change, which triggered a read — about 5,000 re-renders a
+    // second, each one rebuilding the DOM with `replaceChildren`. The window
+    // rendered perfectly and accepted no click and no keystroke, because focus
+    // could not survive and mousedown/mouseup never landed on the same node.
+    //
+    // Asserting on renders-per-second would be a timing test. The invariant is
+    // simpler and exact: reading must not notify.
+    let notifications = 0;
+    const onboarding = new Onboarding({
+      api: plow.api(),
+      home,
+      startRelay: async () => {},
+      isConnected: () => false,
+      deviceName: "Domo Desktop (test)",
+      now: () => clock,
+      wait: async (ms) => {
+        clock += ms;
+      },
+      onChange: () => {
+        notifications += 1;
+      },
+    });
+
+    for (let i = 0; i < 5; i += 1) onboarding.state();
+    expect(notifications).toBe(0);
+
+    // And the methods that DO change something still notify — the fix must not
+    // be "stop publishing everywhere".
+    await onboarding.begin();
+    expect(notifications).toBeGreaterThan(0);
+  });
+});
+
 describe("what the renderer is allowed to see", () => {
   it("never carries the device credential in the state", async () => {
     const onboarding = buildOnPhonePath();
