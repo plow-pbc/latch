@@ -75,10 +75,20 @@ describe("seedIfMissing", () => {
     // Electron main process. Without the listener this test file fails on that
     // uncaught exception rather than on an assertion.
     process.env.DOMO_LTMM_BIN = path.join(os.tmpdir(), "domo-no-such-ltmm");
-    withHome((home) => {
-      expect(seedIfMissing(liveDeps(home))).toBe("started");
-    });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-seed-"));
+    try {
+      const live = liveDeps(home);
+      expect(seedIfMissing(live)).toBe("started");
+
+      // And the launch that could not start a build must try again next time:
+      // the marker is written before the async failure arrives, so the `error`
+      // handler has to take it back. Without that, a Mac where ltmm is off the
+      // launchd PATH reports `already-seeded` forever and never seeds at all.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(live.alreadySeeded()).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("treats an empty DOMO_LTMM_BIN as unset rather than spawning nothing", () => {

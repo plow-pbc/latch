@@ -46,16 +46,25 @@ export const seedMarkerPath = (home: string): string => path.join(home, "device/
 export const liveDeps = (home: string): SeedDeps => ({
   alreadySeeded: () => fs.existsSync(seedMarkerPath(home)),
   startBuild: (bin, args) => {
+    const marker = seedMarkerPath(home);
     const child = spawn(bin, args, { detached: true, stdio: "ignore" });
     // Required, not optional: spawn delivers a missing binary as an async
     // `error` event, and an EventEmitter with no `error` listener re-throws it
     // as an uncaught exception -- which in the Electron main process takes the
     // whole app down on any Mac that has no ltmm installed.
-    child.on("error", (e) => console.log(`[seed] ltmm unavailable: ${e.message}`));
+    //
+    // It also undoes the record below, which spawn returning was never evidence
+    // for. Without that, a Mac where ltmm is not on the launchd PATH writes the
+    // marker, fails a moment later, and reports `already-seeded` forever after
+    // -- including once the user installs ltmm -- with no path that ever clears
+    // it. The failure we can already detect has to reopen the door.
+    child.on("error", (e) => {
+      console.log(`[seed] ltmm unavailable: ${e.message}`);
+      fs.rmSync(marker, { force: true });
+    });
     // Let the build outlive this process: it takes hours, and quitting the app
     // would otherwise throw away everything built so far.
     child.unref();
-    const marker = seedMarkerPath(home);
     fs.mkdirSync(path.dirname(marker), { recursive: true });
     fs.writeFileSync(marker, `${new Date().toISOString()}\n`);
   },
