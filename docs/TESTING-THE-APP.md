@@ -283,14 +283,24 @@ suspecting the app.
 ## Things you cannot guess
 
 **Point a build at a local API.** Baked in, deliberately — there is no Settings field, because a
-credential is only valid against the environment that minted it. The developer override:
+credential is only valid against the environment that minted it. **Every build defaults to
+production** (`https://api.plow.co`), including a run from source, so targeting a local relay is a
+deliberate act:
+
+```bash
+just dev-local                                   # http://localhost:18804, in ~/.domo-local
+just dev-local http://localhost:19264            # another local stack
+just dev-local http://localhost:19264 ~/.domo-x  # ...and its own home
+```
+
+The recipe just sets the developer override, so any script can do the same thing directly:
 
 ```bash
 DOMO_API_BASE_URL=http://localhost:18804 just app
 ```
 
-An unpackaged run already defaults to `http://localhost:18804`; a packaged one to
-`https://api.plow.co`.
+`dev-local` uses its own `DOMO_HOME` on purpose: a local credential is meaningless against
+production, so the two must never share a settings file.
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
 Set Up window when `app/settings.json` holds no `relayCredential`:

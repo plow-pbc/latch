@@ -7,6 +7,11 @@
 
 root    := justfile_directory()
 nethome := env_var('HOME') / ".domo"
+# Where `just dev-local` points and what it stores. A separate home on purpose:
+# a credential is only valid against the environment that minted it, so local
+# and production credentials must never share a settings file.
+localapi  := "http://localhost:18804"      # DEVELOPMENT_API_BASE_URL in plowApi.ts
+localhome := env_var('HOME') / ".domo-local"
 
 _default:
     @just --list
@@ -47,9 +52,23 @@ package profile="domo-notary": build
 # Running the app
 # ---------------------------------------------------------------------------
 
-# Launch the desktop app against {{nethome}}.
+# Every build talks to production now, including a run from source. Use
+# `just dev-local` to point at a local relay instead.
+
+# Launch the desktop app against production, using {{nethome}}.
 app: build
     DOMO_HOME="{{nethome}}" npx electron "{{root}}/apps/desktop"
+
+# Its own home on purpose: a credential is only valid against the environment
+# that minted it, so a local one must never land in the production install's
+# settings file.
+#   just dev-local                                   # {{localapi}}, {{localhome}}
+#   just dev-local http://localhost:19264            # another local stack
+#   just dev-local http://localhost:19264 ~/.domo-x  # ...and its own home
+
+# Launch against a LOCAL relay instead of production.
+dev-local url=localapi home=localhome: build
+    DOMO_HOME="{{home}}" DOMO_API_BASE_URL="{{url}}" npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build
