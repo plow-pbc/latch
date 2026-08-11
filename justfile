@@ -95,3 +95,15 @@ first-run-drive: build
 #   PLOW_API_BASE=http://127.0.0.1:19264 PLOW_DEVICE_TOKEN=plow_… just approve-drive
 approve-drive: build
     npx electron apps/desktop/scripts/approve-drive.mjs
+
+# ---------------------------------------------------------------------------
+# The relay + MCP end-to-end gate
+# ---------------------------------------------------------------------------
+
+# One command, pass/fail: OTP through the twin, device + agent credentials
+# minted live, the headless device on the socket, and a real MCP call tunnelled
+# to it — plus every negative. Needs a Plow variant stack up (`just up` in the
+# plow worktree's api/), which is the API and the dtu-linq twin. Override the
+# endpoints with RELAY_GATE_API / RELAY_GATE_TWIN.
+relay-gate:
+    npx vite-node e2e/relay-gate/gate.ts

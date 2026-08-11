@@ -259,6 +259,25 @@ button was not reachable at its own coordinates. It never prints the credential.
 With `relayCredential` present at launch the app skips onboarding entirely and dials at boot — no UI
 login, nothing typed.
 
+**Run against a stack nobody else is editing.** The dev API runs `fastapi dev`, which reloads on
+every file change in the worktree it is mounted from. A colleague saving `ws.py` mid-run drops the
+device socket and stalls requests for tens of seconds, and what you see is a call that should have
+failed in 50 ms taking 25 s, or a tunnelled call timing out client-side — symptoms indistinguishable
+from a product bug, and they cost an evening once. So give the run its own stack, pinned to a commit:
+
+```bash
+git -C <plow-worktree> worktree add -b my-stack /Users/…/plow/my-stack <sha>
+echo PLOW_VARIANT=my-stack > /Users/…/plow/my-stack/.env.local
+cd /Users/…/plow/my-stack/api && ../app/scripts/plow-dev-env --output ../.plow-dev-env --variant my-stack
+cd .. && docker compose --env-file .plow-dev-env -f compose.yaml up -d api dtu-linq dtu-google-oauth dtu-gmail db
+```
+
+The variant picks its own ports (`grep PORT ../.plow-dev-env`) and its own compose project, so it
+does not collide with anyone else's. Copy a working `api/.env` and fix the ports in it — in
+particular `OAUTH_REDIRECT_BASE_URL`, which is the origin `mcp_config` hands to the agent. If the
+API 503s or a call times out mid-run, check `docker logs <project>-api-1 | grep -i reload` before
+suspecting the app.
+
 ---
 
 ## Things you cannot guess
