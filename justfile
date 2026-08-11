@@ -65,7 +65,7 @@ package profile="domo-notary": build
 # the production install's:
 #
 #   just app                                            # production, {{nethome}}
-#   DOMO_API_BASE_URL=http://localhost:18804 just app   # that relay, {{localhome}}
+#   DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, {{localhome}}
 #   DOMO_HOME=~/.domo-x just app                        # an explicit home wins
 
 # Launch the desktop app.

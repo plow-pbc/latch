@@ -43,8 +43,8 @@ describe("the API base URL is baked into the build", () => {
   it("still reaches a local relay through that override", () => {
     // There is no local default any more; a developer who wants one exports it.
     // This is the whole mechanism, so it is worth pinning on a real local URL.
-    const env = { [API_BASE_URL_ENV]: "http://localhost:18804" };
-    expect(resolveApiBaseUrl({ env })).toBe("http://localhost:18804");
+    const env = { [API_BASE_URL_ENV]: "http://localhost:4242" };
+    expect(resolveApiBaseUrl({ env })).toBe("http://localhost:4242");
   });
 
   it("ignores an override that is only whitespace", () => {
@@ -58,7 +58,7 @@ describe("the device socket derives from that one base URL", () => {
   });
 
   it("swaps http for ws, keeping the port a local API runs on", () => {
-    expect(relaySocketUrl("http://localhost:18804")).toBe("ws://localhost:18804/v1/relay/ws");
+    expect(relaySocketUrl("http://localhost:4242")).toBe("ws://localhost:4242/v1/relay/ws");
   });
 
 });
@@ -134,12 +134,12 @@ describe("PlowApi", () => {
     const fetchImpl = async () => {
       throw new TypeError("fetch failed");
     };
-    const error = await new PlowApi("http://localhost:18804", fetchImpl)
+    const error = await new PlowApi("http://localhost:4242", fetchImpl)
       .requestOtp("+15551110000")
       .catch((e) => e);
 
     expect((error as PlowApiError).kind).toBe("network");
-    expect((error as PlowApiError).message).toBe("Couldn't reach Plow at http://localhost:18804.");
+    expect((error as PlowApiError).message).toBe("Couldn't reach Plow at http://localhost:4242.");
   });
 
   it("returns the token from verify and flags a bad code as unauthorized", async () => {

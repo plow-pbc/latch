@@ -289,7 +289,7 @@ deliberate act:
 
 ```bash
 just app                                            # production, ~/.domo
-DOMO_API_BASE_URL=http://localhost:18804 just app   # that relay, ~/.domo-local
+DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, ~/.domo-local
 DOMO_HOME=~/.domo-x just app                        # an explicit home always wins
 ```
 
@@ -304,7 +304,7 @@ Outside `just`, nothing moves the home for you. Set both, or you are running a l
 production state:
 
 ```bash
-DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:18804 npx electron apps/desktop
+DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
 ```
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
