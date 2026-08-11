@@ -89,3 +89,9 @@ clean:
 # events. The harness that catches a panel nobody can type in.
 first-run-drive: build
     OUT_DIR="${OUT_DIR:-/tmp}" npx electron apps/desktop/scripts/first-run-drive.mjs
+
+# The app half of the acceptance run: launch already signed in against a stack
+# someone else is driving, wait for the socket, and click approvals for real.
+#   PLOW_API_BASE=http://127.0.0.1:19264 PLOW_DEVICE_TOKEN=plow_… just approve-drive
+approve-drive: build
+    npx electron apps/desktop/scripts/approve-drive.mjs

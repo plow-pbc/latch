@@ -196,18 +196,68 @@ SHA-256 over { agent: agentId, device: deviceId, caps: normalized(capabilities).
 
 (`packages/protocol/src/capability.ts:58`). Goal text is excluded — wording is free. Everything else
 is not, so an unattended run needs **the same agent credential, the same device, and the same exact
-capability shape** every time. Two traps:
+capability shape** every time. Three traps, all confirmed the hard way:
 
-- A chain that mints a **fresh agent credential per run** gets a different key every run and prompts
-  every run.
-- Paths are canonicalized to *physical* paths (realpath — `/private/var/...`, not `/var/...`), so a
-  call built from a per-run temp directory produces a different key each time. Use a fixed path if
-  you want the rule to stick.
-- Wiping `DOMO_HOME` between runs wipes the rule with it.
+- **`agentId` is the agent credential's session id.** A chain that mints a fresh agent credential
+  per run — which is the whole point of a live-credential gate — gets a different key every run.
+  Always Allow then persists **within** a run and never across them. Expect exactly **one prompt per
+  run**, and never write a harness that waits for the second call to be silent: it will wait forever.
+- **`argv` survives into the key verbatim.** A nonce in the command line changes the shape every
+  time. Keep argv constant and put the varying part somewhere else — a file's contents, read back.
+- **Paths are canonicalized to *physical* paths** (realpath — `/private/var/...`, not `/var/...`), so
+  a call built from a per-run temp directory produces a different key each time.
+
+And wiping `DOMO_HOME` between runs wipes the rule with it.
 
 `just first-run-drive` does all of this at the end of its run: a real `read_file` through the relay
 into the app, the dialog answered by a real click, a per-run nonce proving the call executed on this
 machine, then the same call again with no dialog.
+
+### Driving the app as one half of a bigger run
+
+When someone else owns the chain — they mint the account, the `relay:device` credential and the
+agent credential, and they fire the tool call — the app side is `just approve-drive`. It brings no
+server of its own: it seeds the credential, launches the real app, waits for the socket, and then
+answers approval dialogs with real clicks until told to stop.
+
+```bash
+PLOW_API_BASE=http://127.0.0.1:19264 \
+PLOW_DEVICE_TOKEN=plow_… \
+DOMO_HOME=/tmp/acceptance-home \
+just approve-drive
+```
+
+| Env | |
+|---|---|
+| `PLOW_API_BASE` | **required.** The API origin. The socket is derived from it — they must share an origin. |
+| `PLOW_DEVICE_TOKEN` | Optional. A `relay:device` credential to seed. **Omit it** when whoever minted it has already written it into `DOMO_HOME` — the script then touches no settings at all. |
+| `DOMO_HOME` | Defaults to a fresh temp dir. The always-allow rule lives here — **reuse the same home** across runs or every run prompts. |
+| `PLOW_DECISION` | `always_allow` (default) or `allow_once`. |
+| `PLOW_RUN_MINUTES` | How long to keep answering. Default 30. |
+| `PLOW_EXIT_AFTER` | Exit 0 after this many approvals. **Set it to `1`** for a run that expects one prompt. |
+| `PLOW_FORCE_SEED` | Required to overwrite a *different* credential already in `DOMO_HOME`. |
+
+**It owns the app instance** — it launches the app itself and cannot attach to one already running.
+Stop any existing instance against that `DOMO_HOME` first; two devices on one credential is not
+something the relay expects. And **always use a dedicated `DOMO_HOME`**: the script refuses to
+overwrite a different credential without `PLOW_FORCE_SEED`, because pointing it at somebody's live
+install would cost them a re-onboarding.
+
+It prints `READY: device_socket_connected=true` once the app's own status line says connected —
+that is the app's half of the handshake. The authority is still the relay's
+`GET /v1/relay/info` → `device_connected: true`, checked by whoever owns the chain. Each click logs
+`APPROVAL: clicked "Always Allow" (#n)`, and the run exits non-zero if it answered nothing or if a
+button was not reachable at its own coordinates. It never prints the credential.
+
+**Where the app reads its two values** — the answer to the question every integration asks:
+
+| | |
+|---|---|
+| Relay socket URL | **Not configurable.** Derived from `DOMO_API_BASE_URL`: same origin, `http`→`ws`, path `/v1/relay/ws`. |
+| Device credential | `${DOMO_HOME}/app/settings.json`, key `relayCredential`, mode 0600. |
+
+With `relayCredential` present at launch the app skips onboarding entirely and dials at boot — no UI
+login, nothing typed.
 
 ---
 
@@ -278,6 +328,7 @@ bugs this document exists because of.
 | Command | What it proves |
 |---|---|
 | `just first-run-drive` | The whole first run works under real keys and clicks. **Start here.** |
+| `just approve-drive` | The app as one half of a bigger acceptance run: seeded credential, real socket, approvals answered by real clicks. |
 | `just first-run-transcript` | The state machine and its failure paths, headless, including a no-credential-in-a-log grep. |
 | `just onboarding-screenshots` | Every Set Up screen renders its required content; fails if any is missing. |
 | `just approval-screenshot` | The approval dialog names the calling agent. |

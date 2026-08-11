@@ -41,13 +41,51 @@ const answersIn = (ms: number, decision: IntentDecision = "allow_once"): PolicyD
   decideIntent: () => new Promise((r) => setTimeout(() => r(decision), ms)),
 });
 
+/**
+ * Wait for the pending record to actually be on disk.
+ *
+ * These tests used a fixed 30ms sleep, which is a race rather than a wait:
+ * `decideIntent` writes the record asynchronously, and on a loaded machine that
+ * write can take longer than the guess. `all()` then returns [] and the
+ * assertion dies on `undefined.status` — reproduced once in four full-suite
+ * runs while an Electron harness was running alongside. Wait for the thing we
+ * are actually waiting for.
+ */
+async function pendingRecord(store: ApprovalStore, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const [record] = await store.all();
+    if (record) return record;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error("no approval record reached disk within the timeout");
+}
+
+/**
+ * Wait until the store will actually accept an answer for it.
+ *
+ * `pendingRecord` is NOT enough for a test that then calls `resolve()`: the
+ * record reaches disk before the in-memory waiter is registered, and `resolve`
+ * refuses an intent nobody is waiting on. Polling for the record alone made
+ * these two tests fail 8 times in 40 runs under load. `pending()` filters on
+ * exactly the map `resolve` consults, so it is the honest signal.
+ */
+async function answerable(store: ApprovalStore, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await store.pending()).length > 0) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error("the approval never became answerable within the timeout");
+}
+
 describe("the record exists before the answer does", () => {
   it("writes a pending record before the human is asked", async () => {
     const dir = tempDir();
     const store = new ApprovalStore(dir, silent);
     const intent = intentFor();
     void store.decideIntent(intent);
-    await new Promise((r) => setTimeout(r, 30));
+    await pendingRecord(store);
 
     const [record] = await store.all();
     expect(record.status).toBe("pending");
@@ -68,7 +106,7 @@ describe("the record exists before the answer does", () => {
     const store = new ApprovalStore(dir, silent);
     const intent = intentFor();
     void store.decideIntent(intent);
-    await new Promise((r) => setTimeout(r, 30));
+    await pendingRecord(store);
     const file = path.join(dir, `${intent.intentId}.json`);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
@@ -128,7 +166,7 @@ describe("an answer can arrive from somewhere other than the dialog", () => {
     const store = new ApprovalStore(dir, silent, 5_000);
     const intent = intentFor();
     const pending = store.decideIntent(intent);
-    await new Promise((r) => setTimeout(r, 30));
+    await answerable(store);
     expect(await store.pending()).toHaveLength(1);
 
     expect(store.resolve(intent.intentId, "always_allow", "operator")).toBe(true);
@@ -158,7 +196,7 @@ describe("across a restart", () => {
     const first = new ApprovalStore(dir, silent, 5_000);
     const intent = intentFor();
     void first.decideIntent(intent);
-    await new Promise((r) => setTimeout(r, 30));
+    await pendingRecord(first);
     expect((await first.all())[0].status).toBe("pending");
 
     // A new process opens the same directory. The call that was waiting is gone
@@ -195,7 +233,7 @@ describe("failing closed does not depend on the timer (review finding 2)", () =>
     await store.ready;
     const intent = intentFor();
     const pending = store.decideIntent(intent);
-    await new Promise((r) => setTimeout(r, 30));
+    await answerable(store);
 
     clock += 60_001; // past the deadline; the 60s timer has not fired
 
@@ -211,13 +249,23 @@ describe("failing closed does not depend on the timer (review finding 2)", () =>
 
   it("the dialog's own late answer is denied on the same check", async () => {
     let clock = 1_000_000;
-    // The delegate answers "allow" after a real 40ms, by which time the clock
+    // The delegate answers "allow" only when this test says so, AFTER the clock
     // has moved past a deadline the timer will not reach for a minute.
-    const store = new ApprovalStore(tempDir(), answersIn(40, "allow_once"), 60_000, () => clock);
+    //
+    // It used to answer on a real 40ms timer while the test waited a real 10ms
+    // and hoped to win — which lost 1 run in 40 under load, letting the allow
+    // land before the deadline and turning a deny into an allow. A test about
+    // an answer arriving late must control when the answer arrives.
+    let answer: (decision: IntentDecision) => void = () => {};
+    const delegate: PolicyDelegate = {
+      decideIntent: () => new Promise<IntentDecision>((resolve) => (answer = resolve)),
+    };
+    const store = new ApprovalStore(tempDir(), delegate, 60_000, () => clock);
     await store.ready;
     const pending = store.decideIntent(intentFor());
-    await new Promise((r) => setTimeout(r, 10));
+    await answerable(store);
     clock += 60_001;
+    answer("allow_once");
     expect(await pending).toEqual({ decision: "deny", source: "expired" });
   });
 
@@ -227,7 +275,7 @@ describe("failing closed does not depend on the timer (review finding 2)", () =>
     await store.ready;
     const intent = intentFor();
     const pending = store.decideIntent(intent);
-    await new Promise((r) => setTimeout(r, 30));
+    await answerable(store);
     clock += 59_000; // still inside
     expect(store.resolve(intent.intentId, "allow_once", "human")).toBe(true);
     expect(await pending).toEqual({ decision: "allow_once", source: "human" });
