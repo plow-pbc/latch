@@ -7,15 +7,19 @@
 
 root    := justfile_directory()
 nethome := env_var('HOME') / ".domo"
-# Where `just app <url>` keeps state when you do not name a home yourself. A
-# credential is only valid against the environment that minted it, so pointing
-# at another relay must never write into the production install's settings file.
+# Where `just app` keeps state when DOMO_API_BASE_URL points somewhere other
+# than production. A credential is only valid against the environment that
+# minted it, so `export DOMO_API_BASE_URL=…; just app` must never write a local
+# credential into the production install's settings file. An explicit DOMO_HOME
+# still wins.
 localhome := env_var('HOME') / ".domo-local"
-# An override inherited from the shell points somewhere other than production
-# just as surely as one passed as an argument, so it has to move the home too —
-# otherwise `export DOMO_API_BASE_URL=…; just app` quietly writes a local
-# credential into the production install's settings file.
-inherited := env_var_or_default("DOMO_API_BASE_URL", "")
+apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
+    env_var_or_default("DOMO_HOME", "")
+  } else if env_var_or_default("DOMO_API_BASE_URL", "") != "" {
+    localhome
+  } else {
+    nethome
+  }
 
 _default:
     @just --list
@@ -56,21 +60,17 @@ package profile="domo-notary": build
 # Running the app
 # ---------------------------------------------------------------------------
 
-# Every build talks to production, including this one — pass a url to point
-# somewhere else. `url` sets DOMO_API_BASE_URL; leaving it empty sets nothing,
-# so the default stays whatever the app resolves on its own.
+# Every build talks to production. To point somewhere else, export the override
+# yourself — and the home moves with it so a local credential never overwrites
+# the production install's:
 #
-#   just app                                        # production, {{nethome}}
-#   just app http://localhost:18804                 # a local relay, {{localhome}}
-#   just app http://localhost:18804 ~/.domo-x       # ...and a home you name
-#
-# Passing a url switches the home too, unless you name one. A credential is
-# only valid against the environment that minted it, so a local one must never
-# land in the production install's settings file and overwrite it.
+#   just app                                            # production, {{nethome}}
+#   DOMO_API_BASE_URL=http://localhost:18804 just app   # that relay, {{localhome}}
+#   DOMO_HOME=~/.domo-x just app                        # an explicit home wins
 
-# Launch the desktop app. Optional: a relay url, and a home to keep it in.
-app url="" home=(if url != "" { localhome } else { if inherited != "" { localhome } else { nethome } }): build
-    DOMO_HOME="{{home}}" {{ if url == "" { "" } else { 'DOMO_API_BASE_URL="' + url + '"' } }} npx electron "{{root}}/apps/desktop"
+# Launch the desktop app.
+app: build
+    DOMO_HOME="{{apphome}}" npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build

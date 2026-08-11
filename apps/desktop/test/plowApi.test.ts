@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   API_BASE_URL_ENV,
-  DEVELOPMENT_API_BASE_URL,
   PRODUCTION_API_BASE_URL,
   PlowApi,
   REQUEST_TIMEOUT_MS,
@@ -41,11 +40,10 @@ describe("the API base URL is baked into the build", () => {
     expect(resolveApiBaseUrl({ env })).toBe("https://staging.example");
   });
 
-  it("still reaches a local relay through that override — what `just app <url>` does", () => {
-    // `just app <url>` sets DOMO_API_BASE_URL, so targeting localhost stays one
-    // command away now that it is no longer a default.
-    const env = { [API_BASE_URL_ENV]: DEVELOPMENT_API_BASE_URL };
-    expect(resolveApiBaseUrl({ env })).toBe(DEVELOPMENT_API_BASE_URL);
+  it("still reaches a local relay through that override", () => {
+    // There is no local default any more; a developer who wants one exports it.
+    // This is the whole mechanism, so it is worth pinning on a real local URL.
+    const env = { [API_BASE_URL_ENV]: "http://localhost:18804" };
     expect(resolveApiBaseUrl({ env })).toBe("http://localhost:18804");
   });
 

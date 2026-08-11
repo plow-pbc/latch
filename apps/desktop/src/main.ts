@@ -44,7 +44,7 @@ const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
  * Which Plow this build talks to. Baked in — every build points at production,
  * including a run from source. There is no Settings field for it on purpose (a
  * credential is only valid against the environment that minted it), just a
- * developer env-var override, which is what `just app <url>` sets.
+ * developer env-var override a developer exports when they want another relay.
  */
 const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
 
