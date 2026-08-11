@@ -167,6 +167,50 @@ check("the DOM is not rebuilding itself while idle", (await js("window.__churn")
 
 ---
 
+## Answering an approval dialog
+
+A tool call through the real app **prompts a human**. There is no auto-allow for read-only:
+`PolicyEngine.decide` (`packages/device-core/src/policyEngine.ts:64`) has no capability-kind fast
+path — it goes straight to the delegate, which in this app is the dialog. **Do not add a bypass
+flag**, and do not use `HeadlessPolicy` for a run that is supposed to prove the app works; both are
+false greens by construction.
+
+The product's own escape hatch is the answer. The dialog is its own `BrowserWindow`, title
+`Domo — Approve`, buttons `["Deny", "Always Allow", "Allow Once"]`. Click **Always Allow** once, with
+real events, and later identical calls need nobody:
+
+```js
+const call = relay.agentCall(/* … */);          // do NOT await — it blocks on the human
+const approval = await waitForWindow("Approve");
+approval.show(); approval.focus(); approval.webContents.focus();
+// hit-test "Always Allow", then mouseDown/mouseUp at those coordinates
+const result = await call;
+```
+
+**What makes the rule carry forward.** `always_allow` persists to `${DOMO_HOME}/device/rules.json`
+under a key that is
+
+```
+SHA-256 over { agent: agentId, device: deviceId, caps: normalized(capabilities).sorted() }
+```
+
+(`packages/protocol/src/capability.ts:58`). Goal text is excluded — wording is free. Everything else
+is not, so an unattended run needs **the same agent credential, the same device, and the same exact
+capability shape** every time. Two traps:
+
+- A chain that mints a **fresh agent credential per run** gets a different key every run and prompts
+  every run.
+- Paths are canonicalized to *physical* paths (realpath — `/private/var/...`, not `/var/...`), so a
+  call built from a per-run temp directory produces a different key each time. Use a fixed path if
+  you want the rule to stick.
+- Wiping `DOMO_HOME` between runs wipes the rule with it.
+
+`just first-run-drive` does all of this at the end of its run: a real `read_file` through the relay
+into the app, the dialog answered by a real click, a per-run nonce proving the call executed on this
+machine, then the same call again with no dialog.
+
+---
+
 ## Things you cannot guess
 
 **Point a build at a local API.** Baked in, deliberately — there is no Settings field, because a

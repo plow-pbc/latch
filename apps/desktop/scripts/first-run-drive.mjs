@@ -40,6 +40,9 @@ const SESSION_TOKEN = "plow_SESSION_from_activation";
 const DEVICE_TOKEN = "plow_DEVICEcredential_from_login";
 const AGENT_TOKEN = "plow_AGENTcredential_shown_once";
 const AGENT_NAME = "Claude Code";
+/** `PROTOCOL_REVISION` from @domo/mcp-server — the server rejects a call that
+ *  does not name one, so the harness must speak it like any real client. */
+const MCP_PROTOCOL = "2026-07-28";
 
 let failures = 0;
 const check = (what, ok, detail) => {
@@ -111,6 +114,16 @@ let relay = null;
 let win = null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Wait for a window by title fragment — approval dialogs open on demand. */
+async function waitForWindow(fragment, ms = 20_000) {
+  for (let i = 0; i < ms / 100; i += 1) {
+    const found = BrowserWindow.getAllWindows().find((w) => w.getTitle().includes(fragment));
+    if (found && !found.webContents.isLoading()) return found;
+    await sleep(100);
+  }
+  return null;
+}
 
 /** The Set Up window, found the way anything outside the app would find it. */
 async function setupWindow() {
@@ -338,6 +351,105 @@ async function main() {
       const stored = JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).selectedTab;
       check("clicking it actually switches tabs", stored === "goals", `selectedTab=${stored}`);
     }
+
+    // 7. A REAL agent call, through the relay, into the app that is hosting the
+    //    MCP server — and the approval dialog answered by a real click.
+    //
+    //    Read-only does NOT auto-allow: `PolicyEngine.decide`
+    //    (packages/device-core/src/policyEngine.ts:64) has no capability-kind
+    //    fast path, it goes straight to the delegate, which in this app is the
+    //    human dialog. So the click is genuinely required, and no bypass flag
+    //    exists or should. `always_allow` is the product's own escape hatch: it
+    //    persists a rule and later identical calls need nobody.
+    say("an agent calls read_file through the relay — the app must ask a human");
+    const nonce = `nonce-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+    const proofFile = path.join(home, "proof.txt");
+    fs.writeFileSync(proofFile, nonce);
+
+    const AGENT = { agent_id: "agent-drive", agent_name: "Drive Harness" };
+    const call = () =>
+      relay.agentCall(
+        {
+          method: "POST",
+          path: "/v1/relay/devices/u_drive/mcp",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "mcp-method": "tools/call",
+            "mcp-name": "read_file",
+            "mcp-protocol-version": MCP_PROTOCOL,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "read_file",
+              arguments: { path: proofFile },
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL,
+                "io.modelcontextprotocol/clientInfo": { name: "drive-harness", version: "1" },
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            },
+          }),
+        },
+        AGENT,
+        60_000,
+      );
+
+    const first = call();
+    // The dialog is its own window. Wait for it, hit-test it, click it for real.
+    const approval = await waitForWindow("Approve");
+    check("the app opened an approval dialog rather than auto-allowing", !!approval);
+    if (approval) {
+      approval.show();
+      approval.focus();
+      approval.webContents.focus();
+      await sleep(500);
+      fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(outDir, "drive-4-approval.png"),
+        (await approval.webContents.capturePage()).toPNG(),
+      );
+      const btn = await approval.webContents.executeJavaScript(`
+        (() => {
+          const el = [...document.querySelectorAll("button")]
+            .find((b) => /Always Allow/i.test(b.textContent));
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+          const top = document.elementFromPoint(x, y);
+          return { x, y, reachable: top === el || el.contains(top) };
+        })()
+      `);
+      check("the Always Allow button is reachable at its own coordinates", btn?.reachable === true);
+      approval.webContents.sendInputEvent({ type: "mouseDown", x: btn.x, y: btn.y, button: "left", clickCount: 1 });
+      await sleep(40);
+      approval.webContents.sendInputEvent({ type: "mouseUp", x: btn.x, y: btn.y, button: "left", clickCount: 1 });
+    }
+
+    const firstResult = await first;
+    const firstPayload = JSON.parse(JSON.parse(firstResult.body).result.content[0].text);
+    // The nonce is the proof: it exists only in a file this run wrote on THIS
+    // machine, so a reply carrying it cannot have come from anywhere else.
+    check("the call really executed on this Mac", firstPayload.content === nonce, firstPayload.content);
+
+    // The click persisted a rule, so an identical call is now unattended. This
+    // is what makes a 3am run possible without a bypass.
+    say("the same agent makes the same call again");
+    const before = BrowserWindow.getAllWindows().length;
+    const secondResult = await call();
+    const secondPayload = JSON.parse(JSON.parse(secondResult.body).result.content[0].text);
+    check("it went through with the same result", secondPayload.content === nonce);
+    check("with no dialog this time", BrowserWindow.getAllWindows().length === before);
+
+    const rules = JSON.parse(fs.readFileSync(path.join(home, "device/rules.json"), "utf8"));
+    check("and a rule was persisted for later runs", rules.length === 1, `${rules.length} rule(s)`);
+    // The seam e2egate needs: this key is SHA-256 over agent + device +
+    // normalized capabilities (packages/protocol/src/capability.ts:58). Same
+    // agent, same device, same exact capability shape, or it prompts again.
+    say(`rule key (stable only for this agent + device + capability shape): ${rules[0]?.ruleKey}`);
 } catch (error) {
     check(`the run completed without throwing`, false, String(error));
 }
