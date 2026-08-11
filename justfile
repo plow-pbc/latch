@@ -107,3 +107,17 @@ approve-drive: build
 # endpoints with RELAY_GATE_API / RELAY_GATE_TWIN.
 relay-gate:
     npx vite-node e2e/relay-gate/gate.ts
+
+# ---------------------------------------------------------------------------
+# The relay realism smoke test — a real model as the MCP client
+# ---------------------------------------------------------------------------
+
+# NOT A GATE. `just relay-gate` is the gate. This runs a real model against the
+# same local stack, hands it the relay's own mcp_config, and asserts it chooses
+# to call a tool and gets a per-run nonce back from the device. A model
+# declining to call a tool is not a relay defect — report this separately.
+# Read-only: the model is offered read_file and nothing else. Needs the same
+# stack as relay-gate plus an Anthropic key (ANTHROPIC_API_KEY, else
+# PLOW_BUNDLED_ANTHROPIC_API_KEY from ~/plow-pbc/plow/relay/.env).
+relay-domo:
+    npx vite-node e2e/relay-domo/smoke.ts
