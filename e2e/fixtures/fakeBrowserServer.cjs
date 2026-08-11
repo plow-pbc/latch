@@ -94,7 +94,8 @@ function handle(cmd) {
     }
     return { frame: 0, frame_url: current().url };
   }
-  if (a === "scroll" || a === "wait") return { ok: true };
+  if (a === "scroll") return { ok: true };
+  if (a === "wait") return { ok: true, seconds: cmd.seconds }; // echo so tests can see clamping
   if (a === "url") return {};
   if (a === "title") return { title: current().title };
   if (a === "links") return { links: [] };
@@ -132,6 +133,9 @@ function main() {
     if (process.env.CRASH_AFTER && state.commands > Number(process.env.CRASH_AFTER)) {
       process.exit(9);
     }
+    // HANG_ACTION=<name>: never answer that action, to exercise the host's
+    // per-action timeout backstop.
+    if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
     try {
       respond({ id: cmd.id, result: envelope(handle(cmd)) });
     } catch (e) {

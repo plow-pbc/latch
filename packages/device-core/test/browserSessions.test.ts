@@ -126,6 +126,23 @@ describe("session lifecycle", () => {
     expect(r.get("status").str).toBe("error");
     expect(r.get("error").str).toContain("in use");
   });
+
+  it("open warms the browser up front (so no later action pays the cold start)", async () => {
+    // The fake server's ready line audits browser_started; it must land at open,
+    // before any browser command runs.
+    await openSession(["pizza.example"]);
+    expect(eventNames()).toContain("browser_started");
+    expect(eventNames()).not.toContain("browser_command");
+  });
+
+  it("clamps an over-long wait so one exchange can't outrun the relay ceiling", async () => {
+    const s = await openSession(["pizza.example"]);
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "wait", seconds: 45 }));
+    expect(r.get("status").str).toBe("completed");
+    expect(r.get("seconds").num).toBe(12); // MAX_WAIT_SECONDS
+    const ok = jv(await ctx.sessions.command(AGENT, s, { action: "wait", seconds: 3 }));
+    expect(ok.get("seconds").num).toBe(3); // a reasonable wait passes through
+  });
 });
 
 describe("origin scope", () => {

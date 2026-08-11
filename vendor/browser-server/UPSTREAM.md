@@ -15,8 +15,12 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
 - **`server.py`** — rewritten from the socket server embedded in upstream's
   `scripts/camoufox_cli.py` (`cmd_open`). Behavior kept: the action set
   (frames-aware `click`/`fill`, `forms` with labels, `links`, `tables`,
-  `pages`/`use_page`, honest `back` reporting `moved`), timeouts, and the
+  `pages`/`use_page`, honest `back` reporting `moved`) and the
   field/links/tables JS extractors. Changed:
+  - `goto`/`back` page-load timeout cut from 30 s to 12 s (+1 s settle) so a
+    single action answers inside Domo's 15 s host cap and the relay's ~20 s
+    per-exchange ceiling; a genuinely slower page fails cleanly and the agent
+    retries rather than parking a torn 504.
   - Started directly by the Domo device supervisor — no CLI, no `os.fork`, no
     fixed 4 s sleep, no `.state.json`, no Unix socket.
   - JSON lines over **stdio** with request ids; original stdout is dup'ed as

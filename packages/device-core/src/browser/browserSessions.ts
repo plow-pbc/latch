@@ -56,6 +56,15 @@ function hostOf(url: string): string | null {
 
 const DEFAULT_IDLE_MS = 15 * 60_000;
 
+/**
+ * Longest a single `wait` action may park an exchange. The relay abandons a
+ * tunnelled call at ~20s and `browser` is non-deferrable, so every action must
+ * answer well inside that; `wait` and `goto` are the only ones that can run
+ * long by design and are bounded (here and in server.py / BrowserHost). A
+ * longer pause is expressed as several waits.
+ */
+const MAX_WAIT_SECONDS = 12;
+
 export class BrowserSessions {
   private session: Session | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -87,6 +96,19 @@ export class BrowserSessions {
       return { status: "error", error: "browser is in use by another agent" };
     }
     if (this.session) await this.close(this.session.handle, "reopened");
+
+    // Warm the browser now. browser_open is deferrable, so a cold Camoufox
+    // start (~30s) absorbs into the deferred handle; every later `browser`
+    // action is non-deferrable and must answer well inside the relay's ~20s
+    // per-exchange ceiling, which it can only do against an already-running
+    // browser. Failing here (no runtime, crash-looped) is an honest open error.
+    try {
+      await this.host.ensureReady();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "error", error: `browser failed to start: ${message}` };
+    }
+
     const session: Session = {
       handle: crypto.randomUUID(),
       agentId,
@@ -245,6 +267,12 @@ export class BrowserSessions {
           for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
             const v = p.get(key).value;
             if (v !== null && v !== undefined) forwarded[key] = v;
+          }
+          // `wait` is agent-controlled; clamp it so a single exchange can't be
+          // parked past the relay's ceiling. A longer pause is several waits.
+          if (action === "wait") {
+            const secs = p.get("seconds").num ?? 1;
+            forwarded.seconds = Math.min(Math.max(secs, 0), MAX_WAIT_SECONDS);
           }
           return await this.serverAction(s, forwarded);
         }

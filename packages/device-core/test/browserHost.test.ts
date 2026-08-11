@@ -18,7 +18,10 @@ afterEach(async () => {
   while (hosts.length) await hosts.pop()!.shutdown();
 });
 
-function makeHost(env: Record<string, string> = {}, extra: Partial<{ startTimeoutMs: number }> = {}): {
+function makeHost(
+  env: Record<string, string> = {},
+  extra: Partial<{ startTimeoutMs: number; actionTimeoutMs: number }> = {},
+): {
   host: BrowserHost;
   events: string[];
 } {
@@ -72,6 +75,24 @@ describe("BrowserHost", () => {
       await expect(host.sendAction({ action: "url" })).rejects.toThrow();
     }
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(/giving up/);
+  });
+
+  it("bounds a hung action by actionTimeoutMs instead of blocking forever", async () => {
+    const { host } = makeHost({ HANG_ACTION: "eval" }, { actionTimeoutMs: 300 });
+    const started = Date.now();
+    await expect(host.sendAction({ action: "eval", expression: "while(true){}" })).rejects.toThrow(
+      /timed out/,
+    );
+    expect(Date.now() - started).toBeLessThan(3000);
+    // A non-hung action on the same live browser still answers.
+    expect((await host.sendAction({ action: "url" })).url).toBe("about:blank");
+  });
+
+  it("ensureReady starts the browser up front (warm before the first action)", async () => {
+    const { host, events } = makeHost();
+    await host.ensureReady();
+    expect(host.running).toBe(true);
+    expect(events).toContain("browser_started");
   });
 
   it("fails fast when the server never becomes ready", async () => {

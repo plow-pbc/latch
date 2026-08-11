@@ -109,8 +109,11 @@ class Session:
         action = cmd.get("action", "")
 
         if action == "goto":
-            self.page.goto(cmd["url"], timeout=30000, wait_until="domcontentloaded")
-            self.page.wait_for_timeout(2000)
+            # 12s + 1s settle keeps the whole action under the device's 15s host
+            # cap and the relay's ~20s exchange ceiling; a genuinely slower page
+            # fails cleanly (the agent retries) rather than parking a torn 504.
+            self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
+            self.page.wait_for_timeout(1000)
             return {"title": self.page.title()}
 
         if action == "pages":
@@ -134,7 +137,7 @@ class Session:
             # Neither history.back() nor page.go_back() actually moves a tab
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
-            self.page.go_back(timeout=30000, wait_until="domcontentloaded")
+            self.page.go_back(timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title(), "moved": self.page.url != was}
 

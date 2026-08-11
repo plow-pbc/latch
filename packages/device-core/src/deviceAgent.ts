@@ -65,6 +65,12 @@ export class DeviceAgent {
         profileDir: path.join(browserDir, "profile"),
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
+        // Every `browser` action is non-deferrable and must answer inside the
+        // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
+        // a hung page/eval returns an error in time instead of a torn 504. The
+        // cold start is separate (startTimeoutMs) and paid by the deferrable
+        // browser_open, so it does not need to fit this bound.
+        actionTimeoutMs: 15_000,
         audit: auditFn,
       });
       const credentials = new CredentialBroker({
