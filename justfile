@@ -7,6 +7,10 @@
 
 root    := justfile_directory()
 nethome := env_var('HOME') / ".domo"
+# Where `just app <url>` keeps state when you do not name a home yourself. A
+# credential is only valid against the environment that minted it, so pointing
+# at another relay must never write into the production install's settings file.
+localhome := env_var('HOME') / ".domo-local"
 
 _default:
     @just --list
@@ -51,16 +55,16 @@ package profile="domo-notary": build
 # somewhere else. `url` sets DOMO_API_BASE_URL; leaving it empty sets nothing,
 # so the default stays whatever the app resolves on its own.
 #
-#   just app                                              # production, {{nethome}}
-#   just app http://localhost:18804                       # a local relay
-#   just app http://localhost:18804 ~/.domo-local         # ...and its own home
+#   just app                                        # production, {{nethome}}
+#   just app http://localhost:18804                 # a local relay, {{localhome}}
+#   just app http://localhost:18804 ~/.domo-x       # ...and a home you name
 #
-# A credential is only valid against the environment that minted it, so pass a
-# separate home whenever you point at a different relay — otherwise the local
-# credential lands in the production install's settings file and overwrites it.
+# Passing a url switches the home too, unless you name one. A credential is
+# only valid against the environment that minted it, so a local one must never
+# land in the production install's settings file and overwrite it.
 
 # Launch the desktop app. Optional: a relay url, and a home to keep it in.
-app url="" home=nethome: build
+app url="" home=(if url == "" { nethome } else { localhome }): build
     DOMO_HOME="{{home}}" {{ if url == "" { "" } else { 'DOMO_API_BASE_URL="' + url + '"' } }} npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.

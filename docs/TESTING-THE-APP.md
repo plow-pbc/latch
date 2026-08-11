@@ -288,9 +288,9 @@ production** (`https://api.plow.co`), including a run from source, so targeting 
 deliberate act:
 
 ```bash
-just app                                        # production, ~/.domo
-just app http://localhost:18804                 # a local relay
-just app http://localhost:18804 ~/.domo-local   # ...and its own home
+just app                                     # production, ~/.domo
+just app http://localhost:18804              # a local relay, ~/.domo-local
+just app http://localhost:18804 ~/.domo-x    # ...and a home you name
 ```
 
 `just app <url>` only sets the developer override, so any script can do the same thing directly:
@@ -299,9 +299,10 @@ just app http://localhost:18804 ~/.domo-local   # ...and its own home
 DOMO_API_BASE_URL=http://localhost:18804 just app
 ```
 
-**Pass a separate home whenever you pass a url.** A credential is only valid against the environment
-that minted it, so a local one landing in `~/.domo` overwrites the production install's and costs you
-a re-onboarding. The recipe will not do it for you — the second argument is how you say it.
+**Passing a url switches the home too**, to `~/.domo-local`, unless you name one yourself. A
+credential is only valid against the environment that minted it, so a local one landing in `~/.domo`
+would overwrite the production install's and cost you a re-onboarding. Plain `just app` is untouched
+and still uses `~/.domo`.
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
 Set Up window when `app/settings.json` holds no `relayCredential`:
