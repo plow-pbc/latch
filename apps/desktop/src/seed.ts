@@ -60,7 +60,15 @@ export const liveDeps = (home: string): SeedDeps => ({
     // it. The failure we can already detect has to reopen the door.
     child.on("error", (e) => {
       console.log(`[seed] ltmm unavailable: ${e.message}`);
-      fs.rmSync(marker, { force: true });
+      try {
+        fs.rmSync(marker, { force: true });
+      } catch (unlinkFailed) {
+        // This handler exists to keep a failure out of the main process's
+        // uncaught path; it must not become one itself. `force` already absorbs
+        // a missing file, so anything reaching here is a real filesystem
+        // problem, and the cost is only that seeding is not retried.
+        console.log(`[seed] could not clear ${marker}: ${String(unlinkFailed)}`);
+      }
     });
     // Let the build outlive this process: it takes hours, and quitting the app
     // would otherwise throw away everything built so far.
