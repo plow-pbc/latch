@@ -76,7 +76,9 @@ export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fa
     );
   }
 
-  const bin = process.env.DOMO_LTMM_BIN ?? "ltmm";
+  // `||`, not `??`: an empty override is an unset one. `??` would keep "" and
+  // hand execFile a file name it rejects.
+  const bin = process.env.DOMO_LTMM_BIN?.trim() || "ltmm";
   // `--` terminates option parsing, so a query that opens with a dash stays a
   // query. Without it an agent deliberately denied `process.exec` could still
   // steer this trusted subprocess's flags: `ltmm query` inherits `--store` and
@@ -106,10 +108,12 @@ export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fa
         reject(new Error(`ltmm returned invalid JSON: ${stdout.slice(0, 200)}`));
         return;
       }
-      // Probing `statement` rather than object-ness catches every shape that
-      // parses but is not a fact -- `["hello"]`, `[[]]`, `[{}]`, `[null]` all
-      // reach here otherwise and surface as `undefined` fields at a consumer far
-      // from this seam. Optional chaining because `null.statement` throws.
+      // Probes `statement`, the field every consumer reads, rather than mere
+      // object-ness: `["hello"]`, `[[]]`, `[{}]` and `[null]` all pass an
+      // object-ness check and then surface as `undefined` far from this seam.
+      // It is a probe, not a schema -- a row carrying `statement` and nothing
+      // else still gets through. Optional chaining because `null.statement`
+      // throws.
       if (
         !Array.isArray(parsed) ||
         parsed.some((row) => typeof (row as Fact | null | undefined)?.statement !== "string")

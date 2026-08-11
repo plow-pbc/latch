@@ -50,4 +50,14 @@ describe("seedIfMissing", () => {
     expect(seedIfMissing({ ...liveDeps, storeExists: () => false })).toBe("started");
     await new Promise((resolve) => setTimeout(resolve, 100));
   });
+
+  it("treats an empty DOMO_LTMM_BIN as unset rather than spawning nothing", () => {
+    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets exactly this.
+    // spawn("") throws ERR_INVALID_ARG_VALUE synchronously — before any child
+    // exists to emit `error` — and would escape the app-ready handler.
+    process.env.DOMO_LTMM_BIN = "";
+    const { spawned, deps: d } = deps();
+    expect(seedIfMissing(d)).toBe("started");
+    expect(spawned[0].bin).toBe("ltmm");
+  });
 });

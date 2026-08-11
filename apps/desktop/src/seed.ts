@@ -39,7 +39,7 @@ export interface SeedDeps {
  * completion signal `ltmm` does not currently expose.
  */
 export const storePath = (): string =>
-  process.env.DOMO_LTMM_STORE ?? path.join(os.homedir(), ".msgvault", "ltmm", "facts.db");
+  process.env.DOMO_LTMM_STORE?.trim() || path.join(os.homedir(), ".msgvault", "ltmm", "facts.db");
 
 export const liveDeps: SeedDeps = {
   storeExists: () => fs.existsSync(storePath()),
@@ -58,9 +58,12 @@ export const liveDeps: SeedDeps = {
 
 export function seedIfMissing(deps: SeedDeps = liveDeps): SeedOutcome {
   if (deps.storeExists()) return "already-seeded";
-  // Deliberately unguarded. The argv is a constant, so there is no synchronous
-  // failure to catch, and the async one -- a missing ltmm -- is already handled
-  // where it actually arrives, on the child's `error` event.
-  deps.spawn(process.env.DOMO_LTMM_BIN ?? "ltmm", ["run"]);
+  // Deliberately unguarded, and that rests on the binary name being non-empty
+  // rather than on the argv being constant: `spawn("")` throws
+  // ERR_INVALID_ARG_VALUE *synchronously*, before any child exists to emit
+  // `error`, and it would escape this unguarded app-ready handler. `||` rather
+  // than `??` is what makes that unreachable -- `??` keeps an empty string, and
+  // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac with no ltmm sets exactly that.
+  deps.spawn(process.env.DOMO_LTMM_BIN?.trim() || "ltmm", ["run"]);
   return "started";
 }

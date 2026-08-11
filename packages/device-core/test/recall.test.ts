@@ -20,6 +20,14 @@ function stubLtmm(stdout: string, code = 0, stderr = ""): string {
   return bin;
 }
 
+/** An `ltmm` that reports its own argv back as the single "fact" it found. */
+function echoArgs(): string {
+  const bin = path.join(dir, "echo-args");
+  fs.writeFileSync(bin, `#!/bin/sh\nprintf '[{"statement":"%s"}]' "$*"\n`);
+  fs.chmodSync(bin, 0o755);
+  return bin;
+}
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-recall-"));
 });
@@ -78,14 +86,6 @@ describe("recall", () => {
     process.env.DOMO_LTMM_BIN = path.join(dir, "does-not-exist");
     await expect(recall("anything")).rejects.toThrow();
   });
-
-  /** An `ltmm` that reports its own argv back as the single "fact" it found. */
-  function echoArgs(): string {
-    const bin = path.join(dir, "echo-args");
-    fs.writeFileSync(bin, `#!/bin/sh\nprintf '[{"statement":"%s"}]' "$*"\n`);
-    fs.chmodSync(bin, 0o755);
-    return bin;
-  }
 
   it("passes the query and limit through to the CLI", async () => {
     process.env.DOMO_LTMM_BIN = echoArgs();
@@ -176,6 +176,21 @@ describe("the recall blessed tool", () => {
   ])("rejects %s rather than recalling something else", async (_label, args, expected) => {
     const tool = BlessedToolRegistry.standard().tool("recall");
     await expect(tool!.invoke(args)).rejects.toThrow(expected);
+  });
+
+  it("hands an in-range limit through to the CLI unchanged", () => {
+    // The accepting half of the relocated rules, and the inclusive upper bound
+    // the schema advertises — covered only by rejections otherwise.
+    process.env.DOMO_LTMM_BIN = echoArgs();
+
+    const tool = BlessedToolRegistry.standard().tool("recall");
+    return expect(
+      tool!.invoke({ query: "abby", limit: MAX_LIMIT }) as Promise<{
+        facts: Array<{ statement: string }>;
+      }>,
+    ).resolves.toMatchObject({
+      facts: [{ statement: expect.stringContaining(`--limit ${MAX_LIMIT}`) }],
+    });
   });
 
   it("advertises the bounds recall actually enforces", () => {
