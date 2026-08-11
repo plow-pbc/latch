@@ -52,9 +52,14 @@ describe("seedIfMissing", () => {
   });
 
   it("treats an empty DOMO_LTMM_BIN as unset rather than spawning nothing", () => {
-    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets exactly this.
-    // spawn("") throws ERR_INVALID_ARG_VALUE synchronously — before any child
-    // exists to emit `error` — and would escape the app-ready handler.
+    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets exactly this,
+    // and spawn("") throws ERR_INVALID_ARG_VALUE synchronously — before any
+    // child exists to emit `error` — straight out of the app-ready handler.
+    //
+    // Asserted through the stub rather than liveDeps, unlike the test above:
+    // once the fallback works, real liveDeps spawns a real `ltmm run`, which on
+    // a machine that HAS ltmm starts a multi-hour build over the owner's
+    // messages. The resolution rule is the fix, and it is what this pins.
     process.env.DOMO_LTMM_BIN = "";
     const { spawned, deps: d } = deps();
     expect(seedIfMissing(d)).toBe("started");

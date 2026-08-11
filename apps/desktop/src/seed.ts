@@ -28,21 +28,27 @@ export interface SeedDeps {
 }
 
 /**
- * Where `ltmm` puts its store by default — beside msgvault's own artifacts.
- * `DOMO_LTMM_STORE` overrides it, mirroring `DOMO_LTMM_BIN`, because a store
- * configured elsewhere would otherwise never be found and every launch would
- * start a duplicate build.
+ * Where `ltmm` puts its store — beside msgvault's own artifacts.
  *
- * Known limitation: this is a presence probe, not a completion probe, so it
- * cannot tell a finished store from one an interrupted run left behind — a
- * partial store reads as done and is never resumed. Distinguishing them needs a
- * completion signal `ltmm` does not currently expose.
+ * Deliberately a constant with no env override. An override here would steer
+ * only this probe: `seedIfMissing` spawns `ltmm run` and `recall()` runs
+ * `ltmm query`, and neither is told the path, so pointing the probe elsewhere
+ * would skip seeding forever while recall answered from the default store.
+ * The path is one fact, and it belongs to `ltmm`; if it needs to move, it moves
+ * for the builder and the reader too, not just for the probe.
+ *
+ * Two known limitations, both waiting on `ltmm`:
+ *  - This is a presence probe, not a completion probe, so it cannot tell a
+ *    finished store from one an interrupted run left behind — a partial store
+ *    reads as done and is never resumed.
+ *  - The path itself is the plan's assumption. `ltmm`'s own DEFAULT_STORE is
+ *    currently the relative `facts.db`; this is expected to become the absolute
+ *    path below in the same change that adds `ltmm query --json`.
  */
-export const storePath = (): string =>
-  process.env.DOMO_LTMM_STORE?.trim() || path.join(os.homedir(), ".msgvault", "ltmm", "facts.db");
+export const STORE_PATH = path.join(os.homedir(), ".msgvault", "ltmm", "facts.db");
 
 export const liveDeps: SeedDeps = {
-  storeExists: () => fs.existsSync(storePath()),
+  storeExists: () => fs.existsSync(STORE_PATH),
   spawn: (bin, args) => {
     const child = spawn(bin, args, { detached: true, stdio: "ignore" });
     // Required, not optional: spawn delivers a missing binary as an async
