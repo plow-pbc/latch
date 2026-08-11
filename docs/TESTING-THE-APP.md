@@ -288,19 +288,20 @@ production** (`https://api.plow.co`), including a run from source, so targeting 
 deliberate act:
 
 ```bash
-just dev-local                                   # http://localhost:18804, in ~/.domo-local
-just dev-local http://localhost:19264            # another local stack
-just dev-local http://localhost:19264 ~/.domo-x  # ...and its own home
+just app                                        # production, ~/.domo
+just app http://localhost:18804                 # a local relay
+just app http://localhost:18804 ~/.domo-local   # ...and its own home
 ```
 
-The recipe just sets the developer override, so any script can do the same thing directly:
+`just app <url>` only sets the developer override, so any script can do the same thing directly:
 
 ```bash
 DOMO_API_BASE_URL=http://localhost:18804 just app
 ```
 
-`dev-local` uses its own `DOMO_HOME` on purpose: a local credential is meaningless against
-production, so the two must never share a settings file.
+**Pass a separate home whenever you pass a url.** A credential is only valid against the environment
+that minted it, so a local one landing in `~/.domo` overwrites the production install's and costs you
+a re-onboarding. The recipe will not do it for you — the second argument is how you say it.
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
 Set Up window when `app/settings.json` holds no `relayCredential`:

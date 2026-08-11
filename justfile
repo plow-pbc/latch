@@ -7,11 +7,6 @@
 
 root    := justfile_directory()
 nethome := env_var('HOME') / ".domo"
-# Where `just dev-local` points and what it stores. A separate home on purpose:
-# a credential is only valid against the environment that minted it, so local
-# and production credentials must never share a settings file.
-localapi  := "http://localhost:18804"      # DEVELOPMENT_API_BASE_URL in plowApi.ts
-localhome := env_var('HOME') / ".domo-local"
 
 _default:
     @just --list
@@ -52,23 +47,21 @@ package profile="domo-notary": build
 # Running the app
 # ---------------------------------------------------------------------------
 
-# Every build talks to production now, including a run from source. Use
-# `just dev-local` to point at a local relay instead.
+# Every build talks to production, including this one — pass a url to point
+# somewhere else. `url` sets DOMO_API_BASE_URL; leaving it empty sets nothing,
+# so the default stays whatever the app resolves on its own.
+#
+#   just app                                              # production, {{nethome}}
+#   just app http://localhost:18804                       # a local relay
+#   just app http://localhost:18804 ~/.domo-local         # ...and its own home
+#
+# A credential is only valid against the environment that minted it, so pass a
+# separate home whenever you point at a different relay — otherwise the local
+# credential lands in the production install's settings file and overwrites it.
 
-# Launch the desktop app against production, using {{nethome}}.
-app: build
-    DOMO_HOME="{{nethome}}" npx electron "{{root}}/apps/desktop"
-
-# Its own home on purpose: a credential is only valid against the environment
-# that minted it, so a local one must never land in the production install's
-# settings file.
-#   just dev-local                                   # {{localapi}}, {{localhome}}
-#   just dev-local http://localhost:19264            # another local stack
-#   just dev-local http://localhost:19264 ~/.domo-x  # ...and its own home
-
-# Launch against a LOCAL relay instead of production.
-dev-local url=localapi home=localhome: build
-    DOMO_HOME="{{home}}" DOMO_API_BASE_URL="{{url}}" npx electron "{{root}}/apps/desktop"
+# Launch the desktop app. Optional: a relay url, and a home to keep it in.
+app url="" home=nethome: build
+    DOMO_HOME="{{home}}" {{ if url == "" { "" } else { 'DOMO_API_BASE_URL="' + url + '"' } }} npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build

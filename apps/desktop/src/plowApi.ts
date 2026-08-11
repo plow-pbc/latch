@@ -18,9 +18,9 @@ export const PRODUCTION_API_BASE_URL = "https://api.plow.co";
 /**
  * `compose.yaml` publishes the local API on `${PLOW_API_PORT:-18804}`.
  *
- * Not a default any more — nothing resolves to this on its own. It is the value
- * `just dev-local` puts in `DOMO_API_BASE_URL`, kept here so the recipe and the
- * app name the same port in one place.
+ * Not a default any more — nothing resolves to this on its own. It is kept as
+ * the one place naming the port a local relay runs on: the value you hand to
+ * `just app <url>`, and what the tests assert the override still reaches.
  */
 export const DEVELOPMENT_API_BASE_URL = "http://localhost:18804";
 
@@ -52,7 +52,7 @@ export const REQUEST_TIMEOUT_MS = 15_000;
  * live, so pointing at it is the useful default and the one that matches what a
  * user gets; a build that quietly talked to localhost was a standing way to
  * "test" against nothing. Targeting a local relay is now the deliberate act —
- * `just dev-local`, which sets the override below.
+ * `just app <url>`, which sets the override below.
  */
 export function resolveApiBaseUrl(opts: {
   env?: Record<string, string | undefined>;
