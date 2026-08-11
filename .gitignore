@@ -10,4 +10,5 @@ apps/*/dist/
 apps/desktop/release/
 vendor/python-runtime/
 vendor/camoufox-browser/
+vendor/apw-runtime/
 vendor/downloads/

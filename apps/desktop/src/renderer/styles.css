@@ -503,3 +503,6 @@ textarea.text { min-height: 70px; resize: vertical; }
   color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
 }
 .onboard .linkbtn:hover { color: var(--fg); }
+
+/* Apple Passwords pairing: a compact PIN field next to its buttons. */
+input.text.pin { width: 9em; flex: none; letter-spacing: 0.2em; }

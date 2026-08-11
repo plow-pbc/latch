@@ -94,8 +94,9 @@ test-browser: build
 #   xcrun notarytool store-credentials domo-notary \
 #       --apple-id <apple-id-email> --team-id 3559PD337Z \
 #       --password <app-specific-password>
-# The browser stack ships inside the DMG: the universal Python runtime and
-# BOTH Camoufox arches are built/fetched, then Developer-ID signed by the
+# The browser stack ships inside the DMG: the universal Python runtime, BOTH
+# Camoufox arches, and BOTH apw (Apple Passwords) arches are built/fetched,
+# then Developer-ID signed by the
 # afterPack hook AFTER electron-builder's universal merge (which rewrites nested
 # Info.plists and would break any earlier signature). CODESIGN_IDENTITY is
 # passed to electron-builder so the hook can sign; the build step itself leaves

@@ -294,7 +294,7 @@ repo can prove they broke nothing.
 | `domo-mcp` | exec | stdio↔socket MCP shim for Claude Code |
 | `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Goals/Rules/Audit window, agent spin-up |
 
-## 11a. Local browsing (Camoufox + 1Password)
+## 11a. Local browsing (Camoufox + 1Password / Apple Passwords)
 
 The device can host a real anti-detection Firefox (Camoufox, driven by
 Playwright through a vendored Python server — `vendor/browser-server/`,
@@ -340,6 +340,30 @@ traverse MCP, never appear in results, and never appear in either audit log.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
+**Apple Passwords (alternative credential source).** A Settings toggle (off by
+default) swaps the backend behind the same `CredentialSource` surface from
+1Password to Apple Passwords / iCloud Keychain, via the bundled `apw` CLI
+(GPL-3, pinned per-arch deno binaries — provenance in `vendor/apw/UPSTREAM.md`).
+apw runs a foreground daemon that drives Apple's own iCloud Passwords browser
+extension in a headless Chromium (the user must have a Chromium-family browser
++ that extension installed; macOS 14+ provides the native-messaging helper).
+**Pairing is per-launch and human-only:** the daemon pairs with the macOS
+Passwords helper over an SRP handshake confirmed by a PIN macOS shows in a
+native dialog; the user types it into Domo's Settings, and the pairing lives
+exactly as long as the daemon — which Domo keeps as a child process and kills
+on quit or when the setting is turned off, so quitting IS unpairing. Contained
+property: once paired, apw answers any local process with no per-item consent
+(unlike `op`'s vault scoping), so the fill gate's origin/item enforcement in
+`BrowserSessions` carries all per-request control; Apple's helper still binds
+every release to the queried page URL's domain, mirroring seed-op-broker's
+item-origin check. Apple Passwords has no stable item ids, so the item id IS
+the account username; items expose exactly `username`/`password`/`otp` (the
+`otp` field fills live one-time codes — something the 1Password path doesn't
+do). Enabling flips the audited `credential_source_changed` switch immediately
+— an unpaired daemon yields honest typed errors, never a silent fallback to
+the manager the user opted out of. The fake apw fixture keeps the whole flow
+CI-testable with no deno, Chromium, or iCloud.
+
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`) in their register manifest; agents discover them via
 `list_device_tools` and read them with `read_skill`. The built-in
@@ -352,7 +376,10 @@ site-packages + both Camoufox arches, built deterministically by
 `vendor/browser-server/runtime.lock.json` (version coupling
 camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
 payload is byte-identical in both electron-builder arch passes so the
-universal merge copies it through. The Camoufox payload is a complete
+universal merge copies it through. The apw binaries ship the same way (thin
+per-arch under `browser-runtime/apw/`, excluded from the lipo merge, signed
+with the Python runtime's JIT entitlements — deno embeds V8). The Camoufox
+payload is a complete
 `camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
 app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
 user's shared cache is never touched and no fetch happens at launch. Audit

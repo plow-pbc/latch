@@ -35,7 +35,89 @@ export interface CredentialItemSummary {
   matchesThisPage: boolean;
 }
 
-export class CredentialBroker {
+export interface CredentialItemDescription {
+  id: string;
+  title: string;
+  category: string;
+  fields: string[];
+}
+
+/**
+ * What BrowserSessions and the approval UI need from a credential backend.
+ * Implemented by CredentialBroker (1Password via seed-op-broker) and
+ * ApwCredentialBroker (Apple Passwords via the bundled apw CLI).
+ */
+export interface CredentialSource {
+  /** Metadata only. Never a secret value. */
+  whatsHere(url: string): Promise<CredentialItemSummary[]>;
+  /** One item's field labels — never values. */
+  describeItem(itemId: string): Promise<CredentialItemDescription>;
+  /** One field of one item, bound to the device-observed page URL. The
+   * returned secret must go straight into a fill and be dropped. */
+  getField(itemId: string, field: string, pageUrl: string): Promise<string>;
+}
+
+/**
+ * The active credential backend, swappable at runtime: the desktop app points
+ * it at Apple Passwords when that setting is enabled and back at the default
+ * (1Password) when it is not. BrowserSessions and the approval UI hold this
+ * one object for the app's lifetime, so a toggle needs no rebuild of the
+ * session layer — and every switch is audited (never silently).
+ */
+export class CredentialSourceSwitch implements CredentialSource {
+  private backend: CredentialSource | null;
+  private backendName: string;
+
+  constructor(
+    private readonly defaultBackend: CredentialSource | null,
+    private readonly defaultName: string,
+    private readonly onSwitch?: (source: string) => void,
+  ) {
+    this.backend = defaultBackend;
+    this.backendName = defaultName;
+  }
+
+  /** The name of the active backend ("1password", "apple-passwords"). */
+  get active(): string {
+    return this.backendName;
+  }
+
+  set(backend: CredentialSource, name: string): void {
+    if (this.backend === backend) return;
+    this.backend = backend;
+    this.backendName = name;
+    this.onSwitch?.(name);
+  }
+
+  /** Restore the backend the switch was constructed with. */
+  reset(): void {
+    if (this.backend === this.defaultBackend) return;
+    this.backend = this.defaultBackend;
+    this.backendName = this.defaultName;
+    this.onSwitch?.(this.defaultName);
+  }
+
+  private required(): CredentialSource {
+    if (!this.backend) {
+      throw new CredentialError("NoCredentialSource", "no credential source is available");
+    }
+    return this.backend;
+  }
+
+  whatsHere(url: string): Promise<CredentialItemSummary[]> {
+    return this.required().whatsHere(url);
+  }
+
+  describeItem(itemId: string): Promise<CredentialItemDescription> {
+    return this.required().describeItem(itemId);
+  }
+
+  getField(itemId: string, field: string, pageUrl: string): Promise<string> {
+    return this.required().getField(itemId, field, pageUrl);
+  }
+}
+
+export class CredentialBroker implements CredentialSource {
   constructor(private readonly cfg: CredentialBrokerConfig) {}
 
   private run(args: string[]): Promise<string> {

@@ -10,9 +10,9 @@ export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
-    "owner's local credentials (1Password) without ever seeing the secret values. Use for " +
-    "any task that requires visiting, reading, or acting on real websites: finding " +
-    "information, comparing prices, filling forms, logging in, buying things.",
+    "owner's local credentials (their password manager) without ever seeing the secret " +
+    "values. Use for any task that requires visiting, reading, or acting on real websites: " +
+    "finding information, comparing prices, filling forms, logging in, buying things.",
   body: `# Browsing on this Mac
 
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:
@@ -56,15 +56,18 @@ url, title, links, forms, tables, pages, credentials, describe_item.
 ## Credentials (logins, cards) — values never reach you
 
 1. Open the session with \`credentials_metadata: true\` (or add it later via browser_request).
-2. On a login/checkout page: \`browser {action: "credentials"}\` lists the owner's 1Password
-   items — titles, usernames, URLs, and whether each matches the current page. Metadata only.
-3. Pick the right item by reading the page. \`describe_item\` shows its field LABELS.
+2. On a login/checkout page: \`browser {action: "credentials"}\` lists the owner's
+   password-manager items (1Password or Apple Passwords, whichever the owner uses) —
+   titles, usernames, URLs, and whether each matches the current page. Metadata only.
+3. Pick the right item by reading the page. \`describe_item\` shows its field LABELS
+   (Apple Passwords logins always expose username/password/otp; \`otp\` fills the
+   current one-time code on 2FA prompts).
 4. Ask for fill rights: \`browser_request {session, credential_items: ["<item-id>"]}\` —
    the owner approves the named items.
 5. \`browser {action: "fill_secret", selector: "#password", item: "<item-id>", field: "password"}\`
    types the value on the Mac. You get \`{ok: true}\` — never the value. Works for card
-   number/expiry/CVC fields too (cards may fill on any approved origin; logins only on
-   their own site).
+   number/expiry/CVC fields too (1Password only; cards may fill on any approved origin,
+   logins only on their own site).
 6. Non-secret fields (username, email you can see in metadata) use plain \`fill\`.
 
 ## Order of operations for a purchase

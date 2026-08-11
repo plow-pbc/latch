@@ -30,6 +30,7 @@ import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
+import { ApplePasswords } from "./applePasswords.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
@@ -99,6 +100,7 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let onboardingWindow: BrowserWindow | null = null;
+let applePasswords: ApplePasswords | null = null;
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -466,6 +468,26 @@ ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
   settings.anthropicApiKey = (key || "").trim();
   saveSettings(home, settings);
 });
+// MARK: Apple Passwords (credential source + pairing)
+
+// View model only — never the PIN, never a secret. The PIN travels one way
+// (renderer → main → apw) and is never stored or echoed back.
+ipcMain.handle("applePasswords:get", async () => applePasswords?.view() ?? null);
+ipcMain.handle("applePasswords:setEnabled", async (_e, on: boolean) => {
+  if (!applePasswords) return null;
+  if (on) await applePasswords.enable();
+  else await applePasswords.disable();
+  return applePasswords.view();
+});
+ipcMain.handle("applePasswords:requestPin", async () => {
+  await applePasswords?.requestPin();
+  return applePasswords?.view() ?? null;
+});
+ipcMain.handle("applePasswords:submitPin", async (_e, pin: string) => {
+  const ok = (await applePasswords?.submitPin(String(pin))) ?? false;
+  return { ok, view: applePasswords?.view() ?? null };
+});
+
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
   name: device?.identity.name ?? "",
@@ -558,14 +580,31 @@ app.whenReady().then(async () => {
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
-  device = new DeviceAgent(
-    home,
-    hostName(),
-    approvals,
-    undefined,
-    resolveBrowserRuntime(process.resourcesPath),
-  );
+  const browserRuntime = resolveBrowserRuntime(process.resourcesPath);
+  device = new DeviceAgent(home, hostName(), approvals, undefined, browserRuntime);
   goals = new GoalsLibrary(path.join(home, "device/goals.json"));
+
+  applePasswords = new ApplePasswords({
+    apwCommand: browserRuntime?.apwCommand ?? null,
+    credentials: device.credentialBroker,
+    isEnabled: () => loadSettings(home).applePasswordsEnabled,
+    setEnabled: (on) => {
+      const settings = loadSettings(home);
+      settings.applePasswordsEnabled = on;
+      saveSettings(home, settings);
+    },
+    audit: (event, fields) => device?.audit.record(event, fields),
+    onChange: () => {
+      notifyRenderer("applePasswords:changed");
+      // Whenever a PIN is being waited on — launch pairing or a mid-session
+      // re-pair after the helper dropped the session — surface the place to
+      // type it (macOS is showing its dialog right now).
+      if (applePasswords?.view().state === "awaiting-pin") {
+        mainWindow?.show();
+        mainWindow?.webContents.send("ui:showSettings");
+      }
+    },
+  });
 
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
@@ -599,6 +638,10 @@ app.whenReady().then(async () => {
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
 
+  // Pair Apple Passwords once per launch when the setting is on. The onChange
+  // handler above steers the window to Settings when the PIN flow starts.
+  void applePasswords.startIfEnabled();
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
@@ -608,6 +651,8 @@ app.on("before-quit", () => {
   void relay?.stop();
   // Kill any live Camoufox session/process group so Firefox children don't outlive us.
   void device?.shutdown();
+  // Kill the apw daemon so the Apple Passwords pairing dies with the app.
+  void applePasswords?.shutdown();
 });
 
 app.on("window-all-closed", () => {

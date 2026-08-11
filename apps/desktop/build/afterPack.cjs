@@ -113,6 +113,18 @@ module.exports = async function afterPack(context) {
     }
   }
 
+  // 4b) apw — one loose deno-compiled binary per arch. Deno embeds a V8 JIT,
+  // so it takes the same JIT entitlements as the Python runtime.
+  const apw = path.join(runtime, "apw");
+  let apwBins = 0;
+  if (fs.existsSync(apw)) {
+    for (const f of walk(apw)) {
+      if (!isMachO(f)) continue;
+      signFile(f, HELPER_ENTITLEMENTS);
+      apwBins++;
+    }
+  }
+
   // 5) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a
   // secure timestamp — the three things notarization checks. Fails the build in
   // seconds instead of after a ~15-minute notarization round-trip.
@@ -138,7 +150,7 @@ module.exports = async function afterPack(context) {
 
   console.log(
     `[afterPack] re-signed browser-runtime: Python.framework + site-packages, ` +
-      `${apps} Camoufox.app, dropped ${dropped} non-signable files; ` +
+      `${apps} Camoufox.app, ${apwBins} apw, dropped ${dropped} non-signable files; ` +
       `verified ${verified} Mach-O (Developer ID + hardened runtime + timestamp)`,
   );
 };

@@ -27,6 +27,7 @@ const serverDir = path.join(vendorDir, "browser-server");
 const runtimeDir = path.join(vendorDir, "python-runtime");
 const downloadsDir = path.join(vendorDir, "downloads");
 const browserDir = path.join(vendorDir, "camoufox-browser");
+const apwDir = path.join(vendorDir, "apw-runtime");
 
 const lock = JSON.parse(fs.readFileSync(path.join(serverDir, "runtime.lock.json"), "utf8"));
 const requirementsPath = path.join(serverDir, "requirements.txt");
@@ -105,9 +106,11 @@ function adhocSign(file) {
 // Stamp: skip everything when the pins haven't changed.
 // ---------------------------------------------------------------------------
 const stampPath = path.join(runtimeDir, ".stamp");
+// Hash only the pins this runtime build consumes (python + wheels), so bumping
+// the camoufox or apw pins doesn't force a pointless Python rebuild.
 const stamp = crypto
   .createHash("sha256")
-  .update(fs.readFileSync(path.join(serverDir, "runtime.lock.json")))
+  .update(JSON.stringify(lock.python))
   .update(fs.readFileSync(requirementsPath))
   .digest("hex");
 
@@ -444,6 +447,46 @@ function fetchBrowser(arch) {
   log(`camoufox ${arch} install ready at ${installRoot}`);
 }
 
+// ---------------------------------------------------------------------------
+// apw (Apple Passwords CLI) payload — a single deno-compiled binary per arch,
+// pinned in runtime.lock.json (provenance + GPL-3 notice: vendor/apw/).
+// ---------------------------------------------------------------------------
+function fetchApw(arch) {
+  const asset = lock.apw.assets[arch === "arm64" ? "arm64" : "x64"];
+  const dir = path.join(apwDir, arch);
+  const bin = path.join(dir, "apw");
+  const marker = path.join(dir, ".sha256");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256 && fs.existsSync(bin)) {
+    log(`apw ${arch} up to date`);
+    return;
+  }
+  const dest = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
+  download(asset.url, asset.sha256, dest);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(dest, bin);
+  fs.chmodSync(bin, 0o755);
+  // Smoke-run the host-arch binary (the other arch would need Rosetta).
+  if ((arch === "arm64") === (process.arch === "arm64")) {
+    log(`apw ${arch}: ${capture(bin, ["--version"]).trim()}`);
+  }
+  fs.writeFileSync(marker, asset.sha256);
+}
+
+/** Developer-ID sign the apw binary. Deno embeds a V8 JIT, so it takes the
+ * same JIT entitlements as the Python runtime. Own pass (cache-independent). */
+function signApw(arch, identity) {
+  const bin = path.join(apwDir, arch, "apw");
+  if (!fs.existsSync(bin)) return;
+  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
+  run(
+    "codesign",
+    ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, bin],
+    { quiet: true },
+  );
+  log(`signed apw (${arch}) with Developer ID`);
+}
+
 /**
  * Re-sign a Camoufox install dir with the Developer ID + Mozilla's entitlement
  * set. Own pass (cache-independent). Inside-out: the nested helper .apps
@@ -494,15 +537,18 @@ function signCamoufox(arch, identity) {
 // ---------------------------------------------------------------------------
 try {
   const builtArches = [];
+  const hostArch = process.arch === "arm64" ? "arm64" : "x86_64";
   buildRuntime(); // stamp-cached: fast no-op once built
   if (wantBrowser) {
-    const hostArch = process.arch === "arm64" ? "arm64" : "x86_64";
     const arches = wantBoth ? ["arm64", "x86_64"] : [hostArch];
     for (const a of arches) {
       fetchBrowser(a);
       builtArches.push(a);
     }
   }
+  // apw ships whenever the runtime does: host arch for dev, both for the DMG.
+  const apwArches = wantBoth ? ["arm64", "x86_64"] : [hostArch];
+  for (const a of apwArches) fetchApw(a);
 
   // Signing is its own pass, cache-independent: a `just package` on an already
   // built tree must still produce Developer ID signatures, or notarization
@@ -511,6 +557,7 @@ try {
   if (identity) {
     signRuntime(identity);
     for (const a of builtArches) signCamoufox(a, identity);
+    for (const a of apwArches) signApw(a, identity);
   } else {
     log("CODESIGN_IDENTITY not set — keeping existing/ad-hoc signatures (dev mode)");
   }

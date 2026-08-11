@@ -55,6 +55,9 @@ export interface Settings {
   showAgentSuggestions: boolean;
   /** Anthropic API key — required for the adversarial agent features. */
   anthropicApiKey: string;
+  /** Use Apple Passwords (via the bundled apw daemon, paired at each launch)
+   * instead of 1Password as the browser credential source. Off by default. */
+  applePasswordsEnabled: boolean;
 }
 
 function settingsPath(home: string): string {
@@ -70,6 +73,7 @@ export function loadSettings(home: string): Settings {
     approvalMode: "ask",
     showAgentSuggestions: true,
     anthropicApiKey: "",
+    applePasswordsEnabled: false,
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };

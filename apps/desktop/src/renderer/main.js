@@ -542,11 +542,88 @@ async function renderSettings() {
       modeChips,
       suggestLabel,
     ]),
+    group(
+      "Apple Passwords",
+      "Use Apple Passwords (iCloud Keychain) instead of 1Password for browser " +
+        "credential fills. Pairing with macOS happens once per launch.",
+      [await applePasswordsGroup()],
+    ),
     group("Goals", "Re-add any default goals you've removed.", [
       el("div", { class: "row" }, [restore, restoreNote]),
     ]),
   ]));
 }
+
+// The Apple Passwords group body: enable toggle + pairing status + PIN entry.
+// Re-rendered in place on every applePasswords:changed push (never touches the
+// rest of the settings tab, so other inputs keep focus).
+async function applePasswordsGroup() {
+  const box = el("div", { class: "field" });
+
+  const render = async () => {
+    // Null before the main process finishes booting (or in the headless probe).
+    const ap = await window.domo.applePasswordsGet().catch(() => null);
+    if (!ap) return;
+
+    const check = el("input", { attrs: { type: "checkbox" } });
+    check.checked = ap.enabled;
+    check.disabled = !ap.available;
+    const label = el("label", { class: "check" + (ap.available ? "" : " disabled") }, [
+      check,
+      el("span", { text: "Use Apple Passwords for credential fills" }),
+    ]);
+    check.addEventListener("change", async () => {
+      check.disabled = true;
+      await window.domo.applePasswordsSetEnabled(check.checked);
+      render();
+    });
+
+    const rows = [label];
+    if (!ap.available) {
+      rows.push(el("p", { class: "faint", text: "Not available: this build has no bundled apw helper." }));
+    } else if (ap.enabled) {
+      if (ap.state === "starting") {
+        rows.push(el("p", { class: "faint", text: "Starting the Apple Passwords helper…" }));
+      } else if (ap.state === "awaiting-pin") {
+        // macOS is showing its pairing dialog; the user copies the PIN here.
+        const pinInput = el("input", {
+          class: "text pin",
+          attrs: { placeholder: "6-digit PIN", inputmode: "numeric", maxlength: "6", autocomplete: "off" },
+        });
+        const pairBtn = el("button", { class: "btn primary", text: "Pair" });
+        const newPinBtn = el("button", { class: "btn", text: "New PIN" });
+        const note = el("p", { class: "faint", text: ap.detail || "Enter the PIN shown by macOS." });
+        const submit = async () => {
+          pairBtn.disabled = true;
+          const { ok } = await window.domo.applePasswordsSubmitPin(pinInput.value.trim());
+          if (!ok) render(); // detail explains; paired state re-renders via push
+        };
+        pairBtn.addEventListener("click", submit);
+        pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+        newPinBtn.addEventListener("click", async () => { await window.domo.applePasswordsRequestPin(); render(); });
+        rows.push(note, el("div", { class: "row" }, [pinInput, pairBtn, newPinBtn]));
+        queueMicrotask(() => pinInput.focus());
+      } else if (ap.state === "paired") {
+        rows.push(el("p", { class: "faint", text: "Paired — Apple Passwords is the credential source until quit." }));
+      } else if (ap.state === "error") {
+        const retry = el("button", { class: "btn", text: "Retry" });
+        retry.addEventListener("click", async () => { await window.domo.applePasswordsSetEnabled(true); render(); });
+        rows.push(
+          el("p", { class: "faint", text: ap.detail || "Apple Passwords helper failed to start." }),
+          el("div", { class: "row" }, [retry]),
+        );
+      }
+    }
+    box.replaceChildren(...rows);
+  };
+
+  await render();
+  applePasswordsRerender = render;
+  return box;
+}
+
+// Re-render only the Apple Passwords group when its pairing state changes.
+let applePasswordsRerender = null;
 
 function render() {
   if (currentTab === "audit") renderAudit();
@@ -558,6 +635,7 @@ function render() {
 function selectTab(tab) {
   currentTab = tab;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
+  if (tab !== "settings") applePasswordsRerender = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
@@ -574,6 +652,11 @@ seg.addEventListener("mousedown", (e) => {
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
 window.domo.onStatusChanged(() => refreshStatus());
+window.domo.onApplePasswordsChanged(() => {
+  if (currentTab === "settings" && applePasswordsRerender) applePasswordsRerender();
+});
+// Main steers here when pairing needs a PIN typed (e.g. right after launch).
+window.domo.onShowSettings(() => selectTab("settings"));
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {

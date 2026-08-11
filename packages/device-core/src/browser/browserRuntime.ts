@@ -12,6 +12,10 @@ export interface ResolvedBrowserRuntime {
   serverCommand: string[];
   /** Argv that runs the 1Password broker (before its subcommand). */
   opBrokerCommand: string[];
+  /** Argv that runs the bundled apw CLI (Apple Passwords), or null when the
+   * binary for this arch isn't bundled/fetched. Feature-gates the Apple
+   * Passwords credential source. */
+  apwCommand: string[] | null;
   /** Extra environment for both. */
   env: Record<string, string>;
   /** A complete camoufox install dir (contains config.json + browsers/), the
@@ -24,24 +28,44 @@ interface Layout {
   pythonRoot: string; // contains Python.framework and site-packages
   serverDir: string; // contains server.py and seed_op_broker/
   camoufoxDir: string; // contains <arch>/Camoufox.app (or Camoufox.app directly)
+  apwDir: string; // contains <arch>/apw (deno-compiled, thin per-arch)
 }
 
-/** Packaged: Contents/Resources/browser-runtime/{python,server,camoufox}. */
+/** Packaged: Contents/Resources/browser-runtime/{python,server,camoufox,apw}. */
 function packagedLayout(dir: string): Layout {
   return {
     pythonRoot: path.join(dir, "python"),
     serverDir: path.join(dir, "server"),
     camoufoxDir: path.join(dir, "camoufox"),
+    apwDir: path.join(dir, "apw"),
   };
 }
 
-/** Dev: repo vendor/{python-runtime,browser-server,camoufox-browser}. */
+/** Dev: repo vendor/{python-runtime,browser-server,camoufox-browser,apw-runtime}. */
 function vendorLayout(dir: string): Layout {
   return {
     pythonRoot: path.join(dir, "python-runtime"),
     serverDir: path.join(dir, "browser-server"),
     camoufoxDir: path.join(dir, "camoufox-browser"),
+    apwDir: path.join(dir, "apw-runtime"),
   };
+}
+
+/** The bundled apw binary for this arch, honoring the DOMO_APW_CMD test seam. */
+function apwIn(dir: string): string[] | null {
+  const arch = process.arch === "arm64" ? "arm64" : "x86_64";
+  const bin = path.join(dir, arch, "apw");
+  return fs.existsSync(bin) ? [bin] : null;
+}
+
+function apwOverride(): string[] | null {
+  const env = process.env.DOMO_APW_CMD;
+  if (!env) return null;
+  try {
+    return JSON.parse(env) as string[];
+  } catch {
+    throw new Error(`DOMO_APW_CMD is not a JSON argv array: ${env}`);
+  }
 }
 
 function camoufoxIn(dir: string): string | null {
@@ -64,6 +88,7 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   return {
     serverCommand: [py, server],
     opBrokerCommand: [py, "-m", "seed_op_broker"],
+    apwCommand: apwOverride() ?? apwIn(layout.apwDir),
     env: {
       PYTHONPATH: `${path.join(layout.pythonRoot, "site-packages")}:${layout.serverDir}`,
       PYTHONDONTWRITEBYTECODE: "1",
@@ -104,6 +129,7 @@ export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRun
     return {
       serverCommand: argv,
       opBrokerCommand: opCmd ? (JSON.parse(opCmd) as string[]) : argv,
+      apwCommand: apwOverride(),
       env: {},
       camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? null,
     };

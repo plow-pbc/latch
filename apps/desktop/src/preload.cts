@@ -30,6 +30,14 @@ contextBridge.exposeInMainWorld("domo", {
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
   reviewerInfoGet: () => ipcRenderer.invoke("settings:getReviewerInfo"),
   statusGet: () => ipcRenderer.invoke("status:get"),
+  // Apple Passwords: view models only; the PIN travels one way and is never
+  // echoed back to the renderer.
+  applePasswordsGet: () => ipcRenderer.invoke("applePasswords:get"),
+  applePasswordsSetEnabled: (on: boolean) => ipcRenderer.invoke("applePasswords:setEnabled", on),
+  applePasswordsRequestPin: () => ipcRenderer.invoke("applePasswords:requestPin"),
+  applePasswordsSubmitPin: (pin: string) => ipcRenderer.invoke("applePasswords:submitPin", pin),
+  onApplePasswordsChanged: (cb: () => void) => ipcRenderer.on("applePasswords:changed", cb),
+  onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 

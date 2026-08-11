@@ -15,7 +15,7 @@ import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
 import { BrowserHost } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
-import { CredentialBroker } from "./browser/credentialBroker.js";
+import { CredentialBroker, CredentialSourceSwitch } from "./browser/credentialBroker.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { Executor } from "./executor.js";
@@ -34,8 +34,10 @@ export class DeviceAgent {
   readonly skills: SkillRegistry;
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
-  /** Exposed so the approval UI can resolve credential item titles locally. */
-  readonly credentialBroker: CredentialBroker | null = null;
+  /** The active credential backend (1Password by default; the desktop app
+   * switches it to Apple Passwords when that setting is on). Exposed so the
+   * approval UI can resolve credential item titles locally. */
+  readonly credentialBroker: CredentialSourceSwitch | null = null;
   private readonly browserHost: BrowserHost | null = null;
   private readonly seenNonces = new Set<string>();
 
@@ -73,11 +75,16 @@ export class DeviceAgent {
         actionTimeoutMs: 15_000,
         audit: auditFn,
       });
-      const credentials = new CredentialBroker({
+      const opBroker = new CredentialBroker({
         command: browserRuntime.opBrokerCommand,
         env: browserRuntime.env,
         opAuditPath: path.join(browserDir, "op-audit.log"),
       });
+      // Every backend change is audited; secrets never ride through the switch
+      // except as getField's return value, same contract as the brokers.
+      const credentials = new CredentialSourceSwitch(opBroker, "1password", (source) =>
+        auditFn("credential_source_changed", { source }),
+      );
       this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
     }

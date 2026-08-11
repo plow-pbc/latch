@@ -21,7 +21,7 @@
 import crypto from "node:crypto";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost } from "./browserHost.js";
-import { CredentialBroker, CredentialError } from "./credentialBroker.js";
+import { CredentialError, CredentialSource } from "./credentialBroker.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
@@ -71,7 +71,7 @@ export class BrowserSessions {
 
   constructor(
     private readonly host: BrowserHost,
-    private readonly credentials: CredentialBroker | null,
+    private readonly credentials: CredentialSource | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
   ) {}

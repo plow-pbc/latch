@@ -16,5 +16,18 @@
         "sha256": "6e0efd66f6db46bece072827cb2c5a4851bca822ff4fed95b8a0c2fb6f61a3d4"
       }
     }
+  },
+  "apw": {
+    "version": "1.1.1",
+    "assets": {
+      "arm64": {
+        "url": "https://github.com/bendews/apw/releases/download/v1.1.1/apw-aarch64-apple-darwin",
+        "sha256": "79b52167a7ce504f4824d0c10041fece0cf41ebd6615a3973b7f0aedf318cb77"
+      },
+      "x64": {
+        "url": "https://github.com/bendews/apw/releases/download/v1.1.1/apw-x86_64-apple-darwin",
+        "sha256": "12f8e2cad23c9d5d4c87f5308c81dcc436cf3c4626a3ae15e5b82c5b7a3fb82e"
+      }
+    }
   }
 }

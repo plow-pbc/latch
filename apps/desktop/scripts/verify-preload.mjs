@@ -29,6 +29,12 @@ ipcMain.handle("settings:getRelay", async () => ({
   connected: true,
 }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
+ipcMain.handle("applePasswords:get", async () => ({
+  available: true,
+  enabled: false,
+  state: "stopped",
+  detail: "",
+}));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getApiKey", async () => "");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");

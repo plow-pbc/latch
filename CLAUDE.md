@@ -22,7 +22,10 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
   Camoufox server + 1Password broker (pins in `runtime.lock.json`;
   `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
-  tests use fake servers and need no Python).
+  tests use fake servers and need no Python). `vendor/apw/` is the provenance
+  of the bundled apw CLI (Apple Passwords credential source, pinned in the
+  same lock file; the desktop app owns its daemon + per-launch PIN pairing —
+  tests use `e2e/fixtures/fakeApw.cjs` and need no deno/Chromium/iCloud).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
   (revision 2026-07-28): the reduced tool surface (including the `browser_*`
   tools), capability construction from tool arguments, and the deferred-result

@@ -34,6 +34,13 @@ extraResources:
   - from: ../../vendor/camoufox-browser
     to: browser-runtime/camoufox
     filter: ["**/*", "!*/.sha256"]
+  # Apple Passwords CLI: one deno-compiled binary per arch (thin, like
+  # camoufox) + its GPL-3 license/provenance notice.
+  - from: ../../vendor/apw-runtime
+    to: browser-runtime/apw
+    filter: ["**/*", "!*/.sha256"]
+  - from: ../../vendor/apw
+    to: browser-runtime/apw
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png
@@ -55,13 +62,13 @@ mac:
   # hardened-runtime + timestamped signatures on them.
   signIgnore:
     - "browser-runtime/.*"
-  # Camoufox ships as two THIN per-arch trees (camoufox/arm64, camoufox/x86_64),
+  # Camoufox and apw ship as THIN per-arch trees (<payload>/arm64, /x86_64),
   # each copied identically into both the x64 and arm64 electron slices. The
   # universal merger would try to lipo a thin arm64 binary against its identical
   # twin and fail; this pattern tells it to pass those through untouched (both
   # arch trees survive intact in the universal app). The Python runtime is fully
   # universal2, so it's merged normally and not covered here.
-  x64ArchFiles: "**/browser-runtime/camoufox/**"
+  x64ArchFiles: "**/browser-runtime/{camoufox,apw}/**"
   notarize: true
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested
