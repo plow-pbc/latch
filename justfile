@@ -24,8 +24,10 @@ build:
     npx tsc -b
     node apps/desktop/scripts/copy-renderer.mjs
 
-# Run the full test suite.
-test:
+# Run the full test suite. Depends on `build` because e2e/transcripts.test.ts
+# drives scripts that import built dist/ output — without it a clean checkout
+# fails two tests for no reason other than the missing build.
+test: build
     npx vitest run
 
 # Just the golden-vector conformance (fast). fixtures/ is the frozen protocol
