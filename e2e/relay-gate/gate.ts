@@ -106,8 +106,19 @@ const PROTECTED_HOMES = new Set(
 let failures = 0;
 let step = 0;
 
+/**
+ * A live Plow credential must never reach a transcript — these get pasted into
+ * reports and pull requests. Every line goes through here, so this is the one
+ * place that has to hold. `plow_` + `secrets.token_urlsafe` (A-Za-z0-9_-) is
+ * the shape the API mints; the checks below print `key_prefix` and scopes
+ * instead, and this catches anything that slips past them.
+ */
+function redactCredentials(message: string): string {
+  return message.replace(/plow_[A-Za-z0-9_-]{12,}/g, "plow_<redacted>");
+}
+
 function say(message: string): void {
-  process.stdout.write(`${message}\n`);
+  process.stdout.write(`${redactCredentials(message)}\n`);
 }
 
 function heading(title: string): void {
@@ -348,6 +359,18 @@ interface McpTarget {
   headers: Record<string, string>;
 }
 
+/**
+ * What a successful mint may say out loud: the prefix that identifies the
+ * credential in the sessions list, its scopes, and its name. Never the token.
+ * A FAILED mint dumps its body, because a failure body carries no credential
+ * and is the only thing that explains the failure.
+ */
+function mintDetail(result: HttpResult): string {
+  if (result.status !== 200) return `status ${result.status}: ${result.text.slice(0, 200)}`;
+  const { key_prefix, scopes, name } = result.json ?? {};
+  return `key_prefix ${key_prefix} · scopes ${JSON.stringify(scopes)} · name ${JSON.stringify(name)}`;
+}
+
 /** Read the URL and headers out of `mcp_config` verbatim. Never assembled. */
 function targetFromConfig(mcpConfig: string): McpTarget {
   const parsed = JSON.parse(mcpConfig);
@@ -495,7 +518,7 @@ async function main(): Promise<void> {
     { name: `relay gate ${runId}`, revoke_calling_session: false },
     { Authorization: `Bearer ${portalA}` },
   );
-  check("mint returns 200", minted.status === 200, minted.text.slice(0, 200));
+  check("mint returns 200", minted.status === 200, mintDetail(minted));
   const deviceToken: string = minted.json.token;
   check(
     "scope is exactly relay:device",
@@ -545,7 +568,7 @@ async function main(): Promise<void> {
     { name: `gate agent ${runId}` },
     { Authorization: `Bearer ${deviceToken}` },
   );
-  check("mint returns 200", agent.status === 200, agent.text.slice(0, 200));
+  check("mint returns 200", agent.status === 200, mintDetail(agent));
   check(
     "scope is exactly relay:call",
     JSON.stringify(agent.json.scopes) === JSON.stringify(["relay:call"]),
