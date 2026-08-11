@@ -293,16 +293,25 @@ just app http://localhost:18804              # a local relay, ~/.domo-local
 just app http://localhost:18804 ~/.domo-x    # ...and a home you name
 ```
 
-`just app <url>` only sets the developer override, so any script can do the same thing directly:
+**Pointing anywhere but production switches the home too**, to `~/.domo-local`, unless you name one
+yourself. A credential is only valid against the environment that minted it, so a local one landing
+in `~/.domo` would overwrite the production install's and cost you a re-onboarding. Plain `just app`
+against production is untouched and still uses `~/.domo`.
+
+That holds whether the override is an argument or already in your shell, so these two really are
+equivalent — the recipe reads an inherited `DOMO_API_BASE_URL` and moves the home for it as well:
 
 ```bash
+just app http://localhost:18804
 DOMO_API_BASE_URL=http://localhost:18804 just app
 ```
 
-**Passing a url switches the home too**, to `~/.domo-local`, unless you name one yourself. A
-credential is only valid against the environment that minted it, so a local one landing in `~/.domo`
-would overwrite the production install's and cost you a re-onboarding. Plain `just app` is untouched
-and still uses `~/.domo`.
+Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
+production state:
+
+```bash
+DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:18804 npx electron apps/desktop
+```
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
 Set Up window when `app/settings.json` holds no `relayCredential`:

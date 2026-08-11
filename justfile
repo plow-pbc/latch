@@ -11,6 +11,11 @@ nethome := env_var('HOME') / ".domo"
 # credential is only valid against the environment that minted it, so pointing
 # at another relay must never write into the production install's settings file.
 localhome := env_var('HOME') / ".domo-local"
+# An override inherited from the shell points somewhere other than production
+# just as surely as one passed as an argument, so it has to move the home too —
+# otherwise `export DOMO_API_BASE_URL=…; just app` quietly writes a local
+# credential into the production install's settings file.
+inherited := env_var_or_default("DOMO_API_BASE_URL", "")
 
 _default:
     @just --list
@@ -64,7 +69,7 @@ package profile="domo-notary": build
 # land in the production install's settings file and overwrite it.
 
 # Launch the desktop app. Optional: a relay url, and a home to keep it in.
-app url="" home=(if url == "" { nethome } else { localhome }): build
+app url="" home=(if url != "" { localhome } else { if inherited != "" { localhome } else { nethome } }): build
     DOMO_HOME="{{home}}" {{ if url == "" { "" } else { 'DOMO_API_BASE_URL="' + url + '"' } }} npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
