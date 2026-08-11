@@ -7,6 +7,19 @@
 
 root    := justfile_directory()
 nethome := env_var('HOME') / ".domo"
+# Where `just app` keeps state when DOMO_API_BASE_URL points somewhere other
+# than production. A credential is only valid against the environment that
+# minted it, so `export DOMO_API_BASE_URL=…; just app` must never write a local
+# credential into the production install's settings file. An explicit DOMO_HOME
+# still wins.
+localhome := env_var('HOME') / ".domo-local"
+apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
+    env_var_or_default("DOMO_HOME", "")
+  } else if env_var_or_default("DOMO_API_BASE_URL", "") != "" {
+    localhome
+  } else {
+    nethome
+  }
 
 _default:
     @just --list
@@ -80,9 +93,17 @@ package profile="domo-notary": build
 # Running the app
 # ---------------------------------------------------------------------------
 
-# Launch the desktop app against {{nethome}}.
+# Every build talks to production. To point somewhere else, export the override
+# yourself — and the home moves with it so a local credential never overwrites
+# the production install's:
+#
+#   just app                                            # production, {{nethome}}
+#   DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, {{localhome}}
+#   DOMO_HOME=~/.domo-x just app                        # an explicit home wins
+
+# Launch the desktop app.
 app: build
-    DOMO_HOME="{{nethome}}" npx electron "{{root}}/apps/desktop"
+    DOMO_HOME="{{apphome}}" npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build

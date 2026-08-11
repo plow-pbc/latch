@@ -17,7 +17,7 @@ const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const AGENT_TOKEN = "plow_AGENTtok_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
-const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
+const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
@@ -325,13 +325,13 @@ describe("activation — the path a brand-new user takes", () => {
 
   it("says so when the very first call cannot reach Plow", async () => {
     plow.createActivation = async () => {
-      throw new PlowApiError("network", "Couldn't reach Plow at http://localhost:18804.");
+      throw new PlowApiError("network", "Couldn't reach Plow at http://localhost:4242.");
     };
     const state = await build().begin();
 
     expect(state.busy).toBe(false);
     expect(state.activation).toBeNull();
-    expect(state.message).toBe("Couldn't reach Plow at http://localhost:18804.");
+    expect(state.message).toBe("Couldn't reach Plow at http://localhost:4242.");
   });
 
   it("stops polling when the user switches to the phone-code fallback", async () => {

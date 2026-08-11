@@ -283,14 +283,29 @@ suspecting the app.
 ## Things you cannot guess
 
 **Point a build at a local API.** Baked in, deliberately — there is no Settings field, because a
-credential is only valid against the environment that minted it. The developer override:
+credential is only valid against the environment that minted it. **Every build defaults to
+production** (`https://api.plow.co`), including a run from source, so targeting a local relay is a
+deliberate act:
 
 ```bash
-DOMO_API_BASE_URL=http://localhost:18804 just app
+just app                                            # production, ~/.domo
+DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, ~/.domo-local
+DOMO_HOME=~/.domo-x just app                        # an explicit home always wins
 ```
 
-An unpackaged run already defaults to `http://localhost:18804`; a packaged one to
-`https://api.plow.co`.
+There is no local default and no flag — you export the URL you want.
+
+**Setting the override moves the home too**, to `~/.domo-local`, unless you set `DOMO_HOME`
+yourself. A credential is only valid against the environment that minted it, so a local one landing
+in `~/.domo` would overwrite the production install's and cost you a re-onboarding. Plain `just app`
+against production still uses `~/.domo`.
+
+Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
+production state:
+
+```bash
+DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
+```
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
 Set Up window when `app/settings.json` holds no `relayCredential`:
