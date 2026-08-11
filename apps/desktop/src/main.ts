@@ -29,6 +29,7 @@ import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
+import { seedIfMissing } from "./seed.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
@@ -483,6 +484,10 @@ app.whenReady().then(async () => {
   // A Mac with no credential cannot do anything until it has one, so first run
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
+
+  // After the window is up, so the store probe cannot delay first paint. This
+  // returns immediately — the build itself is a detached child that outlives us.
+  console.log(`[seed] fact store: ${seedIfMissing()}`);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
