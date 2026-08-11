@@ -47,6 +47,8 @@ async function render() {
   if (v.runsCommand) warnings.push("runs a command");
   if (v.writesFiles) warnings.push("writes files");
   if (v.needsNetwork) warnings.push("uses the network");
+  if (v.usesBrowser) warnings.push("browses the web as you");
+  if (v.fillsCredentials) warnings.push("types saved credentials into those sites");
 
   // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
   // is the more permissive option and sits in the middle.

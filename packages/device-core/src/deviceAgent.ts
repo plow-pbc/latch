@@ -13,10 +13,16 @@ import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo
 import path from "node:path";
 import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
+import { BrowserHost } from "./browser/browserHost.js";
+import { BrowserSessions } from "./browser/browserSessions.js";
+import { CredentialBroker } from "./browser/credentialBroker.js";
+import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
+import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { Executor } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
+import { SkillRegistry } from "./skills.js";
 
 export class DeviceAgent {
   readonly identity: DeviceIdentity;
@@ -24,6 +30,13 @@ export class DeviceAgent {
   readonly policy: PolicyEngine;
   readonly blessedTools: BlessedToolRegistry;
   readonly executor: Executor;
+  /** Owner-published skills (how-to guides), surfaced via list_tools/read_skill. */
+  readonly skills: SkillRegistry;
+  /** Null when no browser runtime is installed — browser tools report so. */
+  readonly browserSessions: BrowserSessions | null = null;
+  /** Exposed so the approval UI can resolve credential item titles locally. */
+  readonly credentialBroker: CredentialBroker | null = null;
+  private readonly browserHost: BrowserHost | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
@@ -31,12 +44,48 @@ export class DeviceAgent {
     name: string,
     private readonly delegate: PolicyDelegate,
     blessedTools?: BlessedToolRegistry,
+    browserRuntime?: ResolvedBrowserRuntime | null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
     this.blessedTools = blessedTools ?? BlessedToolRegistry.standard();
+    this.skills = new SkillRegistry();
+    this.skills.loadDir(path.join(home, "device/skills"));
+    if (browserRuntime) {
+      this.skills.register(BROWSING_SKILL);
+      const browserDir = path.join(home, "device/browser");
+      const auditFn = (event: string, fields: { [k: string]: JSONValue }) =>
+        this.audit.record(event, fields);
+      this.browserHost = new BrowserHost({
+        command: browserRuntime.serverCommand,
+        env: browserRuntime.env,
+        screenshotsDir: path.join(browserDir, "screenshots"),
+        profileDir: path.join(browserDir, "profile"),
+        camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
+        isolatedHome: path.join(browserDir, "pyhome"),
+        // Every `browser` action is non-deferrable and must answer inside the
+        // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
+        // a hung page/eval returns an error in time instead of a torn 504. The
+        // cold start is separate (startTimeoutMs) and paid by the deferrable
+        // browser_open, so it does not need to fit this bound.
+        actionTimeoutMs: 15_000,
+        audit: auditFn,
+      });
+      const credentials = new CredentialBroker({
+        command: browserRuntime.opBrokerCommand,
+        env: browserRuntime.env,
+        opAuditPath: path.join(browserDir, "op-audit.log"),
+      });
+      this.credentialBroker = credentials;
+      this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
+    }
+  }
+
+  /** Close any live browser session (app teardown). */
+  async shutdown(): Promise<void> {
+    await this.browserSessions?.closeAll("shutdown");
   }
 
   /**
@@ -95,6 +144,11 @@ export class DeviceAgent {
   // MARK: Execution
 
   private async execute(intent: Intent, payload: JSONValue): Promise<JSONValue> {
+    // Browser/credential intents contain only those kinds; dispatch them first
+    // so they can never fall into the exec path.
+    if (intent.capabilities.some((c) => c.kind === "browser" || c.kind === "credential")) {
+      return this.executeBrowserIntent(intent, payload);
+    }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
     const toolCap = intent.capabilities.find((c) => c.kind === "tool");
@@ -215,6 +269,54 @@ export class DeviceAgent {
   }
 
   /** Read more output from a still-running (or finished) command. */
+  /**
+   * A browser/credential intent either opens a session (no `session` in the
+   * payload) or widens an existing one (payload carries the handle — delivery
+   * detail, like wait_ms; the approved bound is entirely in the capabilities).
+   */
+  private async executeBrowserIntent(intent: Intent, payload: JSONValue): Promise<JSONValue> {
+    if (!this.browserSessions) {
+      return { status: "error", error: "no browser runtime installed on this device" };
+    }
+    const origins = intent.capabilities.find((c) => c.kind === "browser")?.origins ?? [];
+    const metadata = intent.capabilities.some(
+      (c) => c.kind === "credential" && c.access === "metadata",
+    );
+    const items =
+      intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+
+    const session = jv(payload).get("session").str;
+    if (session !== null) {
+      return this.browserSessions.extend(
+        intent.intentId,
+        intent.agentId,
+        session,
+        origins,
+        items,
+        metadata,
+      );
+    }
+    if (origins.length === 0) {
+      return { status: "error", error: "browser_open requires at least one origin" };
+    }
+    return this.browserSessions.open(intent.intentId, intent.agentId, origins, metadata);
+  }
+
+  /**
+   * A command inside an already-approved browser session. Rides the session
+   * grant — no new intent, no approval — exactly like getOutput binds to an
+   * already-approved run. Called in-process by the mcp-server's `browser` tool.
+   */
+  async browserCommand(agentId: string, session: string, params: JSONValue): Promise<JSONValue> {
+    if (!this.browserSessions) {
+      return { status: "error", error: "no browser runtime installed on this device" };
+    }
+    if (jv(params).get("action").str === "close") {
+      return this.browserSessions.close(session, "agent");
+    }
+    return this.browserSessions.command(agentId, session, params);
+  }
+
   getOutput(handle: string, since = 0): JSONValue {
     const result = this.executor.output(handle, since);
     if (!result.running && result.exitCode !== null) {

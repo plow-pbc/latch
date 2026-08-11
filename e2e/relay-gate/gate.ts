@@ -584,8 +584,8 @@ async function main(): Promise<void> {
   const toolNames: string[] = (listed.json?.result?.tools ?? []).map((t: any) => t.name);
   check("200 through the relay", listed.status === 200, `status ${listed.status}`);
   check(
-    "the seven Mac tools are advertised",
-    toolNames.length === 7 && toolNames.includes("run_command"),
+    "the Mac tools are advertised (core + browser)",
+    toolNames.includes("run_command") && toolNames.includes("browser_open"),
     toolNames.join(", "),
   );
 
