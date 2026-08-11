@@ -207,10 +207,17 @@ export function createDomoMcpServer(
       // authority starts carrying meaning, the value to validate is real rather
       // than a placeholder that would always pass.
       //
-      // Nothing is deployed against this, so there is no 2025-era traffic to
-      // serve. A client that cannot negotiate the modern revision should fail
-      // loudly rather than fall into a legacy lane.
-      legacy: "reject",
+      // Serve the 2025 handshake as well as the modern one. This was
+      // `"reject"`, on the premise that "nothing is deployed against this, so
+      // there is no 2025-era traffic to serve". That premise is false in the
+      // field: claude.ai's connector opens with a 2025-era `initialize` at
+      // protocol 2025-11-25, and Macs answered it `-32022 Unsupported protocol
+      // version` — a 400 the relay faithfully replayed to users who had done
+      // nothing wrong. `"stateless"` is the SDK's own default and adds no
+      // compatibility code of ours: each legacy request is served by a fresh
+      // instance, so there is still no session to hold and GET/DELETE still
+      // answer 405. Modern callers keep negotiating 2026-07-28 untouched.
+      legacy: "stateless",
       // Streaming is deferred, so one body per exchange.
       responseMode: "json",
     },
