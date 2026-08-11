@@ -118,11 +118,14 @@ describe("the budget fires while persisting the approval is still in flight", ()
     const home = tempDir();
     const approvalsDir = path.join(home, "device/approvals");
     let asked = false;
+    let sawTheAsk: () => void = () => {};
+    const askHappened = new Promise<void>((resolve) => (sawTheAsk = resolve));
     const approvals = new ApprovalStore(
       approvalsDir,
       {
         decideIntent: async () => {
           asked = true;
+          sawTheAsk();
           return "allow_once" as const;
         },
       },
@@ -142,6 +145,23 @@ describe("the budget fires while persisting the approval is still in flight", ()
     expect(asked).toBe(false);
     openGate();
     await call;
+
+    // NOT `expect(asked).toBe(true)` straight after `await call`. That assumed
+    // the call could not return before the human was asked — but the budget is
+    // allowed to fire first, and on a loaded machine it does: the call comes
+    // back with a pending handle while the delegate has not run yet. The
+    // assertion then read a `false` that was merely early, and the test failed
+    // about once in six full-suite runs under load.
+    //
+    // The claim is that the ask HAPPENS after the record is written, not that
+    // it happens before this promise resolves. So wait for the ask itself, with
+    // a bound so a genuine never-asked still fails as an assertion rather than
+    // as a timeout.
+    const wasAsked = await Promise.race([
+      askHappened.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000)),
+    ]);
+    expect(wasAsked).toBe(true);
     expect(asked).toBe(true);
   });
 });
