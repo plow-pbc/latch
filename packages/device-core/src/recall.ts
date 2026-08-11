@@ -14,24 +14,38 @@
  */
 import { execFile } from "node:child_process";
 
-/** One row of `ltmm query --json`. Ids, never message bodies. */
-export interface Fact {
+/**
+ * One row of `ltmm query --json`. Ids, never message bodies.
+ *
+ * A type alias rather than an interface so TypeScript grants it an implicit
+ * index signature and it is assignable to `JSONValue` directly -- an interface
+ * would force the blessed-tool wrapper into an `as unknown as JSONValue` double
+ * cast, which silences exactly the structural mismatch worth knowing about.
+ */
+export type Fact = {
   statement: string;
   type: string;
   person: string;
   confidence: number;
   observed: string;
   message_ids: number[];
-}
+};
 
 export const DEFAULT_LIMIT = 10;
 
 /**
+ * `limit` is agent-controlled, and the whole store would otherwise be reachable
+ * through one call -- there is no size cap on the blessed-tool result path the
+ * way there is on file reads.
+ */
+export const MAX_LIMIT = 100;
+
+/**
  * NOT the call budget -- deliberately far above it.
  *
- * `use_tool` is deferrable (tools.ts:334), so a recall that outruns
- * CALL_BUDGET_MS (8s) comes back as a handle and keeps working; `get_result`
- * collects it. Nothing here needs to finish inside the budget.
+ * `use_tool` is deferrable (see `mcp-server/src/tools.ts`), so a recall that
+ * outruns CALL_BUDGET_MS (8s) comes back as a handle and keeps working;
+ * `get_result` collects it. Nothing here needs to finish inside the budget.
  *
  * What this bound exists for is a wedged subprocess. It must sit above the worst
  * honest case, which is a cold Ollama model load: measured on the configured host,
@@ -42,13 +56,36 @@ export const DEFAULT_LIMIT = 10;
  */
 export const RECALL_TIMEOUT_MS = 60_000;
 
+/**
+ * `limit` is typed `number` but validated anyway: this is a trust boundary, and
+ * the blessed tool hands through whatever the agent sent. Coercing instead would
+ * put `--limit NaN` in front of argparse and return its usage error, which reads
+ * exactly like a genuine store failure.
+ */
 export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fact[]> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
+    return Promise.reject(
+      new Error(`ltmm recall needs an integer limit in 1..${MAX_LIMIT}, got ${limit}`),
+    );
+  }
+
   const bin = process.env.DOMO_LTMM_BIN ?? "ltmm";
-  const args = ["query", query, "--json", "--limit", String(limit)];
+  // `--` terminates option parsing, so a query that opens with a dash stays a
+  // query. Without it an agent deliberately denied `process.exec` could still
+  // steer this trusted subprocess's flags: `ltmm query` inherits `--store` and
+  // `--db`, so a query of `--store=/elsewhere` repoints the whole call. execFile
+  // stops *shell* injection; only `--` stops *argument* injection.
+  const args = ["query", "--json", "--limit", String(limit), "--", query];
 
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout: RECALL_TIMEOUT_MS }, (error, stdout, stderr) => {
       if (error) {
+        // A timeout kills the child by signal and leaves stderr empty, so name
+        // the bound that was hit rather than reporting a bare "Command failed".
+        if (error.killed) {
+          reject(new Error(`ltmm recall exceeded ${RECALL_TIMEOUT_MS}ms`));
+          return;
+        }
         // stderr carries ltmm's own diagnosis ("no store at ...", an Ollama
         // failure); surface it rather than a bare exit code.
         const detail = stderr.trim() || error.message;
@@ -62,8 +99,11 @@ export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fa
         reject(new Error(`ltmm returned invalid JSON: ${stdout.slice(0, 200)}`));
         return;
       }
-      if (!Array.isArray(parsed)) {
-        reject(new Error("ltmm returned invalid JSON: expected an array"));
+      // Rows are checked for object-ness, not asserted into shape: `["hello"]`
+      // parses fine and would otherwise surface as `undefined` fields at a
+      // consumer far from this seam.
+      if (!Array.isArray(parsed) || parsed.some((row) => typeof row !== "object" || row === null)) {
+        reject(new Error("ltmm returned invalid JSON: expected an array of fact objects"));
         return;
       }
       resolve(parsed as Fact[]);

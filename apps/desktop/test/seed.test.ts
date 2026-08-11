@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { seedIfMissing } from "../src/seed.js";
+import { afterEach, describe, expect, it } from "vitest";
+import os from "node:os";
+import path from "node:path";
+import { liveDeps, seedIfMissing } from "../src/seed.js";
 
 function deps(overrides: Partial<Parameters<typeof seedIfMissing>[0]> = {}) {
   const spawned: Array<{ bin: string; args: string[] }> = [];
@@ -15,20 +17,19 @@ function deps(overrides: Partial<Parameters<typeof seedIfMissing>[0]> = {}) {
   };
 }
 
+afterEach(() => {
+  delete process.env.DOMO_LTMM_BIN;
+});
+
 describe("seedIfMissing", () => {
-  it("starts a build when no store exists yet", () => {
+  it("starts a build with no conversation argument, so ltmm picks the top contact", () => {
+    // The exact argv is the whole point of the zero-argument bootstrap: Domo
+    // must not need to know which conversation matters, and must not hardcode
+    // one. `toEqual` pins that far more tightly than probing for an absence.
     const { spawned, deps: d } = deps();
     expect(seedIfMissing(d)).toBe("started");
     expect(spawned).toHaveLength(1);
     expect(spawned[0].args).toEqual(["run"]);
-  });
-
-  it("passes no conversation argument, so ltmm picks the top contact itself", () => {
-    // The whole point of the zero-argument bootstrap: Domo must not need to know
-    // which conversation matters, and must not hardcode one.
-    const { spawned, deps: d } = deps();
-    seedIfMissing(d);
-    expect(spawned[0].args).not.toContain("--conversation");
   });
 
   it("does nothing when a store is already present", () => {
@@ -47,5 +48,16 @@ describe("seedIfMissing", () => {
       },
     });
     expect(seedIfMissing(d)).toBe("unavailable");
+  });
+
+  it("survives a missing ltmm instead of taking the app down", async () => {
+    // Drives the REAL liveDeps.spawn, because an injected stub cannot reproduce
+    // this: spawn reports a missing binary asynchronously on the child's `error`
+    // event, and an unlistened `error` re-throws as an uncaught exception in the
+    // Electron main process. Without the listener this test file fails on that
+    // uncaught exception rather than on an assertion.
+    process.env.DOMO_LTMM_BIN = path.join(os.tmpdir(), "domo-no-such-ltmm");
+    expect(seedIfMissing({ ...liveDeps, storeExists: () => false })).toBe("started");
+    await new Promise((resolve) => setTimeout(resolve, 100));
   });
 });

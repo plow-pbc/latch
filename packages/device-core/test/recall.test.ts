@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { recall } from "../src/recall.js";
+import { DEFAULT_LIMIT, MAX_LIMIT, recall } from "../src/recall.js";
 import { BlessedToolRegistry } from "../src/blessedTools.js";
 import { DeviceAgent } from "../src/deviceAgent.js";
 import { HeadlessPolicy } from "../src/policyEngine.js";
@@ -63,8 +63,12 @@ describe("recall", () => {
     await expect(recall("anything")).rejects.toThrow(/no store/);
   });
 
-  it("rejects when ltmm emits something that is not JSON", async () => {
-    process.env.DOMO_LTMM_BIN = stubLtmm("Traceback (most recent call last):");
+  it.each([
+    ["not JSON at all", "Traceback (most recent call last):"],
+    ["valid JSON that is not an array", '{"facts": []}'],
+    ["an array of things that are not fact objects", '["hello"]'],
+  ])("rejects when ltmm emits %s", async (_label, stdout) => {
+    process.env.DOMO_LTMM_BIN = stubLtmm(stdout);
     await expect(recall("anything")).rejects.toThrow(/JSON/i);
   });
 
@@ -73,18 +77,52 @@ describe("recall", () => {
     await expect(recall("anything")).rejects.toThrow();
   });
 
-  it("passes the query and limit through to the CLI", async () => {
+  /** An `ltmm` that reports its own argv back as the single "fact" it found. */
+  function echoArgs(): string {
     const bin = path.join(dir, "echo-args");
-    fs.writeFileSync(bin, `#!/bin/sh\nprintf '["%s"]' "$*"\n`);
+    fs.writeFileSync(bin, `#!/bin/sh\nprintf '[{"statement":"%s"}]' "$*"\n`);
     fs.chmodSync(bin, 0o755);
-    process.env.DOMO_LTMM_BIN = bin;
+    return bin;
+  }
 
-    const [seen] = (await recall("where does abby work", 3)) as unknown as string[];
+  it("passes the query and limit through to the CLI", async () => {
+    process.env.DOMO_LTMM_BIN = echoArgs();
 
-    expect(seen).toContain("query");
-    expect(seen).toContain("where does abby work");
-    expect(seen).toContain("--json");
-    expect(seen).toContain("3");
+    const [fact] = await recall("where does abby work", 3);
+
+    expect(fact.statement).toContain("query");
+    expect(fact.statement).toContain("where does abby work");
+    expect(fact.statement).toContain("--json");
+    expect(fact.statement).toContain("3");
+  });
+
+  it("applies DEFAULT_LIMIT when the caller gives none", async () => {
+    process.env.DOMO_LTMM_BIN = echoArgs();
+    const [fact] = await recall("anything");
+    expect(fact.statement).toContain(`--limit ${DEFAULT_LIMIT}`);
+  });
+
+  it("keeps a dash-leading query a query rather than a flag", async () => {
+    // `ltmm query` inherits --store/--db, so without a `--` terminator this is
+    // an agent that was denied process.exec repointing a trusted subprocess.
+    process.env.DOMO_LTMM_BIN = echoArgs();
+    const [fact] = await recall("--store=/tmp/evil.db");
+    expect(fact.statement).toContain("-- --store=/tmp/evil.db");
+  });
+
+  it.each([
+    ["not a number", "3" as unknown as number],
+    ["NaN", Number.NaN],
+    ["zero", 0],
+    ["negative", -1],
+    ["fractional", 2.5],
+    ["past MAX_LIMIT", MAX_LIMIT + 1],
+  ])("rejects a limit that is %s rather than coercing it", async (_label, limit) => {
+    // Loud rather than silently swapped for the default: the agent supplies
+    // this, and `--limit NaN` would come back as an argparse usage error
+    // indistinguishable from a real store failure.
+    process.env.DOMO_LTMM_BIN = echoArgs();
+    await expect(recall("anything", limit)).rejects.toThrow(/limit/i);
   });
 });
 
@@ -126,9 +164,20 @@ describe("the recall blessed tool", () => {
     expect(result.facts[0].statement).toBe("Abby started at Menlo Church");
   });
 
-  it("rejects a call with no query rather than recalling everything", async () => {
+  it.each([
+    ["no query at all", {}],
+    ["a whitespace-only query", { query: "   " }],
+  ])("rejects %s rather than recalling everything", async (_label, args) => {
     const tool = BlessedToolRegistry.standard().tool("recall");
-    await expect(tool!.invoke({})).rejects.toThrow(/query/i);
+    await expect(tool!.invoke(args)).rejects.toThrow(/query/i);
+  });
+
+  it("hands a bad limit to recall to reject, rather than swallowing it", async () => {
+    // The tool used to swap any non-number for DEFAULT_LIMIT, which turned an
+    // agent's malformed call into a silently different one. One rule, in
+    // recall(), so this tool and the future ambient caller cannot drift.
+    const tool = BlessedToolRegistry.standard().tool("recall");
+    await expect(tool!.invoke({ query: "abby", limit: "3" })).rejects.toThrow(/limit/i);
   });
 
   it("is wired into a DeviceAgent's default tool set", () => {

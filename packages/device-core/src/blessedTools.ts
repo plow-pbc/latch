@@ -76,10 +76,14 @@ export class BlessedToolRegistry {
         if (typeof supplied.query !== "string" || supplied.query.trim().length === 0) {
           throw new Error("recall requires a non-empty `query`");
         }
-        const limit = typeof supplied.limit === "number" ? supplied.limit : DEFAULT_LIMIT;
+        // `limit` is handed straight through: recall() is the seam both this
+        // tool and the future ambient caller share, so validating it there keeps
+        // one rule instead of two that can drift. A non-number fails loudly
+        // there rather than being silently swapped for the default here.
+        const limit = supplied.limit as number | undefined;
         // Wrapped in an object rather than returned bare: a JSON array is a valid
         // JSONValue but leaves no room to say anything alongside it later.
-        return { facts: (await recall(supplied.query, limit)) as unknown as JSONValue };
+        return { facts: await recall(supplied.query, limit) };
       },
     });
     return registry;
