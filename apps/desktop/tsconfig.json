@@ -9,8 +9,8 @@
   "include": ["src/**/*"],
   "references": [
     { "path": "../../packages/protocol" },
-    { "path": "../../packages/transport" },
-    { "path": "../../packages/broker-core" },
-    { "path": "../../packages/device-core" }
+    { "path": "../../packages/device-core" },
+    { "path": "../../packages/mcp-server" },
+    { "path": "../../packages/relay-client" }
   ]
 }

@@ -16,14 +16,9 @@ files:
   - "!dist/**/*.d.cts"
   - "!dist/**/*.map"
 
-# The domo-mcp shim (and everything it imports) must exist as real files, not
-# asar entries — "Start agent" runs it with a plain `node` from a Claude
-# session's MCP config, and node can't read inside an asar archive.
-asarUnpack:
-  - node_modules/@domo/app-mcp/**
-  - node_modules/@domo/protocol/**
-  - node_modules/@domo/transport/**
-  - node_modules/ws/**
+# No asarUnpack: it existed so a plain `node` could run the domo-mcp shim for
+# "Start agent". The shim and that feature went with the broker — the MCP server
+# now runs inside this process and is reached through the relay.
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png

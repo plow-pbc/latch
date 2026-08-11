@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../protocol" }, { "path": "../transport" }]
+  "references": [{ "path": "../protocol" }]
 }

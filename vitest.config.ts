@@ -9,14 +9,14 @@ export default defineConfig({
     alias: {
       "@domo/protocol": p("packages/protocol/src/index.ts"),
       "@domo/transport": p("packages/transport/src/index.ts"),
-      "@domo/broker-core": p("packages/broker-core/src/index.ts"),
       "@domo/device-core": p("packages/device-core/src/index.ts"),
+      "@domo/mcp-server": p("packages/mcp-server/src/index.ts"),
+      "@domo/relay-client": p("packages/relay-client/src/index.ts"),
     },
   },
   test: {
     include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts", "e2e/**/*.test.ts"],
-    // E2E tests boot real processes; give them room.
-    testTimeout: 120_000,
-    hookTimeout: 120_000,
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });

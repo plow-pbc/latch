@@ -3,11 +3,10 @@
   "references": [
     { "path": "packages/protocol" },
     { "path": "packages/transport" },
-    { "path": "packages/broker-core" },
     { "path": "packages/device-core" },
-    { "path": "apps/broker" },
-    { "path": "apps/mcp" },
-    { "path": "apps/device" },
+    { "path": "packages/mcp-server" },
+    { "path": "packages/relay-client" },
+    { "path": "packages/relay-client/tsconfig.test.json" },
     { "path": "apps/desktop" }
   ]
 }

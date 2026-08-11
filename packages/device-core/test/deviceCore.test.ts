@@ -12,13 +12,13 @@ import {
   Intent,
   KeyPair,
   makeIntent,
-  signIntent,
 } from "@domo/protocol";
 import {
   AuditLog,
   FileOps,
   FileOpsError,
   HeadlessPolicy,
+  MAX_FILE_BYTES,
   PolicyEngine,
 } from "@domo/device-core";
 
@@ -33,39 +33,64 @@ function tempDir(): string {
 }
 
 describe("FileOps bounds", () => {
-  it("reads within scope, rejects outside", () => {
+  it("reads within scope, rejects outside", async () => {
     const dir = tempDir();
     const inside = path.join(dir, "a.txt");
     fs.writeFileSync(inside, "data");
-    expect(FileOps.read(inside, [dir]).toString()).toBe("data");
-    expect(() => FileOps.read("/etc/hosts", [dir])).toThrow(FileOpsError);
+    expect((await FileOps.read(inside, [dir])).toString()).toBe("data");
+    await expect(FileOps.read("/etc/hosts", [dir])).rejects.toThrow(FileOpsError);
   });
 
-  it("rejects ../ traversal escaping the root", () => {
+  it("rejects ../ traversal escaping the root", async () => {
     const dir = tempDir();
     const sub = path.join(dir, "sub");
     fs.mkdirSync(sub);
     fs.writeFileSync(path.join(dir, "secret.txt"), "s");
     // sub/../secret.txt canonicalizes to dir/secret.txt — outside [sub].
-    expect(() => FileOps.read(path.join(sub, "../secret.txt"), [sub])).toThrow(/approved scope/);
+    await expect(FileOps.read(path.join(sub, "../secret.txt"), [sub])).rejects.toThrow(
+      /approved scope/,
+    );
   });
 
-  it("rejects a symlink escaping the root", () => {
+  it("rejects a symlink escaping the root", async () => {
     const root = tempDir();
     const outside = tempDir();
     fs.writeFileSync(path.join(outside, "target.txt"), "leak");
     const link = path.join(root, "link.txt");
     fs.symlinkSync(path.join(outside, "target.txt"), link);
     // The symlink resolves outside root, so canonicalization catches it.
-    expect(() => FileOps.read(link, [root])).toThrow(/approved scope/);
+    await expect(FileOps.read(link, [root])).rejects.toThrow(/approved scope/);
   });
 
-  it("writes within scope and creates parent dirs", () => {
+  it("writes within scope and creates parent dirs", async () => {
     const dir = tempDir();
     const target = path.join(dir, "nested/deep/out.txt");
-    FileOps.write(target, Buffer.from("hi"), [dir]);
+    await FileOps.write(target, Buffer.from("hi"), [dir]);
     expect(fs.readFileSync(target, "utf8")).toBe("hi");
   });
+
+  it("refuses a read over the single-call size ceiling", async () => {
+    const dir = tempDir();
+    const big = path.join(dir, "big.bin");
+    // Sparse file: the ceiling is checked from stat, so no bytes are written.
+    const fd = fs.openSync(big, "w");
+    fs.ftruncateSync(fd, MAX_FILE_BYTES + 1);
+    fs.closeSync(fd);
+    await expect(FileOps.read(big, [dir])).rejects.toThrow(/single-call limit/);
+  });
+
+  it("refuses a write over the single-call size ceiling", async () => {
+    const dir = tempDir();
+    await expect(
+      FileOps.write(path.join(dir, "big.bin"), Buffer.alloc(MAX_FILE_BYTES + 1), [dir]),
+    ).rejects.toThrow(/single-call limit/);
+    expect(fs.existsSync(path.join(dir, "big.bin"))).toBe(false);
+  });
+
+  // "does not block the event loop" is asserted in fileOpsAsync.test.ts, which
+  // gates the read by hand. The version that used to live here armed a 0ms
+  // timer, awaited the read, then CLEARED the timer before asserting it had
+  // fired — so it was racing the loop and passing by luck. It flaked.
 });
 
 describe("PolicyEngine", () => {
@@ -73,22 +98,19 @@ describe("PolicyEngine", () => {
   // across intents requires the same agent, as it would be in a real session.
   const agentKey = new KeyPair();
   function intentWith(caps: Capability[]): Intent {
-    const intent = makeIntent({
+    return makeIntent({
       agentId: agentKey.fingerprint,
       agentDisplay: "Agent",
-      agentPublicKey: agentKey.publicKeyBase64,
       deviceId: "device-1",
       request: "test",
       capabilities: caps,
       sessionId: "s1",
     });
-    signIntent(intent, agentKey);
-    return intent;
   }
 
   it("always_allow stores a rule reused on the next matching intent", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
-    const always = new HeadlessPolicy({ access: "allow", intent: "always_allow" });
+    const always = new HeadlessPolicy({ intent: "always_allow" });
     const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
 
     const first = await engine.decide(intentWith(caps), always);
@@ -98,7 +120,7 @@ describe("PolicyEngine", () => {
 
     // A fresh intent with the same capabilities matches the stored rule —
     // even though the delegate would now deny.
-    const denyAll = new HeadlessPolicy({ access: "allow", intent: "deny" });
+    const denyAll = new HeadlessPolicy({ intent: "deny" });
     const second = await engine.decide(intentWith(caps), denyAll);
     expect(second.decision).toBe("always_allow");
     expect(second.source).toBe("rule");
@@ -106,7 +128,7 @@ describe("PolicyEngine", () => {
 
   it("deny is never stored as a rule", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
-    const deny = new HeadlessPolicy({ access: "allow", intent: "deny" });
+    const deny = new HeadlessPolicy({ intent: "deny" });
     const grant = await engine.decide(
       intentWith([{ kind: "network", allowed: true }]),
       deny,
@@ -118,7 +140,6 @@ describe("PolicyEngine", () => {
   it("denyKinds forces a deny for matching capabilities", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const policy = new HeadlessPolicy({
-      access: "allow",
       intent: "allow_once",
       denyKinds: ["process.exec"],
     });
@@ -133,7 +154,6 @@ describe("PolicyEngine", () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     // Delegate returning {decision, source} — the source is recorded.
     const annotated = {
-      decideAccess: async () => true,
       decideIntent: async () => ({ decision: "allow_once" as const, source: "approve" }),
     };
     const g1 = await engine.decide(intentWith([{ kind: "network", allowed: true }]), annotated);
@@ -142,7 +162,6 @@ describe("PolicyEngine", () => {
 
     // Back-compat: a delegate returning a bare Decision is sourced "prompt".
     const bare = {
-      decideAccess: async () => true,
       decideIntent: async () => "deny" as const,
     };
     const g2 = await engine.decide(intentWith([{ kind: "network", allowed: false }]), bare);

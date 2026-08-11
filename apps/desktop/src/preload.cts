@@ -13,17 +13,15 @@ contextBridge.exposeInMainWorld("domo", {
   goalsList: () => ipcRenderer.invoke("goals:list"),
   goalsAdd: (title: string, text: string) => ipcRenderer.invoke("goals:add", title, text),
   goalsRemove: (id: string) => ipcRenderer.invoke("goals:remove", id),
-  goalsStartAgent: (goal: string) => ipcRenderer.invoke("goals:startAgent", goal),
   goalsRestoreDefaults: () => ipcRenderer.invoke("goals:restoreDefaults"),
+  approvalsPending: () => ipcRenderer.invoke("approvals:pending"),
   rulesList: () => ipcRenderer.invoke("rules:list"),
   rulesRemove: (key: string) => ipcRenderer.invoke("rules:remove", key),
-  agentsList: () => ipcRenderer.invoke("agents:list"),
-  agentsRevoke: (agentId: string) => ipcRenderer.invoke("agents:revoke", agentId),
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
-  settingsGetBroker: () => ipcRenderer.invoke("settings:getBroker"),
-  settingsSetBroker: (url: string, pin: string, mode: string) =>
-    ipcRenderer.invoke("settings:setBroker", url, pin, mode),
+  relayGet: () => ipcRenderer.invoke("settings:getRelay"),
+  relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
+  onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
   approvalModeGet: () => ipcRenderer.invoke("settings:getApprovalMode"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
@@ -34,6 +32,25 @@ contextBridge.exposeInMainWorld("domo", {
   statusGet: () => ipcRenderer.invoke("status:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
+
+  // First-run setup window. Every call returns the whole state, so the screen
+  // renders from one shape and never has to reconcile two.
+  onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
+  onboardingBegin: () => ipcRenderer.invoke("onboarding:begin"),
+  // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
+  // so the renderer never has to build it or be trusted with it.
+  onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
+  onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
+  onboardingUsePhoneCode: () => ipcRenderer.invoke("onboarding:usePhoneCode"),
+  onboardingUseActivation: () => ipcRenderer.invoke("onboarding:useActivation"),
+  onboardingRequestCode: (phone: string) => ipcRenderer.invoke("onboarding:requestCode", phone),
+  onboardingResendCode: () => ipcRenderer.invoke("onboarding:resendCode"),
+  onboardingEditPhone: () => ipcRenderer.invoke("onboarding:editPhone"),
+  onboardingSubmitCode: (code: string) => ipcRenderer.invoke("onboarding:submitCode", code),
+  onboardingCreateAgent: (name: string) => ipcRenderer.invoke("onboarding:createAgent", name),
+  onboardingDismissAgent: () => ipcRenderer.invoke("onboarding:dismissAgent"),
+  onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
+  onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
   // Approval window.
   approvalGet: () => ipcRenderer.invoke("approval:get"),

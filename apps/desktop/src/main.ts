@@ -12,28 +12,23 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
-import { execFileSync, spawn } from "node:child_process";
-import fs from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { compactString, DomoConnection, Intent, jv, parseConnection } from "@domo/protocol";
+import { Intent } from "@domo/protocol";
 import {
-  PeerTrustEvaluator,
-  SPKIPinningEvaluator,
-  UnixSocketDialer,
-  WebSocketDialer,
-} from "@domo/transport";
-import {
+  ApprovalStore,
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
 } from "@domo/device-core";
+import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
+import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities } from "./viewModel.js";
-import { LocalBrokerHandle, startLocalBroker } from "./localBroker.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
-import { planAgentLaunch } from "./spawnAgent.js";
+import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
+import { Onboarding } from "./onboarding.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
@@ -45,46 +40,30 @@ const rendererDir = path.join(dirname, "renderer");
 
 const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
 
+/**
+ * Which Plow this build talks to. Baked in — an unpackaged run is a dev build
+ * and points at the local API; anything else points at production. There is no
+ * Settings field for it on purpose (a credential is only valid against the
+ * environment that minted it), just a developer env-var override.
+ */
+const apiBaseUrl = resolveApiBaseUrl({ isDevBuild: !app.isPackaged, env: process.env });
+
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
 let goals: GoalsLibrary | null = null;
-/** The in-process broker when "local mode" is selected; null in broker mode. */
-let localBroker: LocalBrokerHandle | null = null;
-
-/**
- * The domo-mcp shim that wires a Claude session to the broker. In development
- * it's the sibling workspace app; in the packaged app it's the asar-unpacked
- * copy of @domo/app-mcp (unpacked so a plain `node` can execute it).
- */
-function resolveShimPath(): string | null {
-  const packagedShim = path
-    .resolve(dirname, "../node_modules/@domo/app-mcp/dist/main.js")
-    .replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-  const devShim = path.resolve(dirname, "../../mcp/dist/main.js");
-  for (const candidate of [packagedShim, devShim]) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
+let mcp: DomoMcpServer | null = null;
+let approvals: ApprovalStore | null = null;
+let relay: RelayClient | null = null;
+let onboarding: Onboarding | null = null;
+let onboardingWindow: BrowserWindow | null = null;
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
- * modal window rendering the verified intent's view model and resolves on the
- * human's click. Access requests reuse the same window with a simpler model.
+ * modal window rendering the intent's view model and resolves on the human's
+ * click.
  */
 class ElectronPolicy implements PolicyDelegate {
-  // Device pairing/access is ALWAYS asked — the approval mode never applies here.
-  async decideAccess(agentId: string, agentDisplay: string, goals: string): Promise<boolean> {
-    const decision = await openApprovalWindow({
-      kind: "access",
-      agentDisplay,
-      agentId,
-      goals,
-    });
-    return decision === "allow_once" || decision === "always_allow";
-  }
-
   // Operations honor the configurable approval mode (settings.approvalMode).
   // The returned `source` records HOW it was decided, for the audit log.
   // The adversarial-agent features require an Anthropic API key; without one,
@@ -143,9 +122,7 @@ class ElectronPolicy implements PolicyDelegate {
   }
 }
 
-type ApprovalRequest =
-  | { kind: "access"; agentDisplay: string; agentId: string; goals: string }
-  | { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
+type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
 
 type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
@@ -218,7 +195,7 @@ function openApprovalWindow(
 }
 
 function approvalId(request: ApprovalRequest): string {
-  return request.kind === "intent" ? request.view.intentId : `access:${request.agentId}`;
+  return request.view.intentId;
 }
 
 function createMainWindow(): void {
@@ -308,116 +285,13 @@ ipcMain.handle("goals:remove", async (_e, id: string) => {
   return goals?.all() ?? [];
 });
 ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? []);
-// The Mac-initiated spin-up (DESIGN.md §2): mint a pre-approved agent, write an
-// ephemeral MCP config + prompt + launcher, and open Terminal running an
-// interactive Claude seeded with the goal. Returns a human status string.
-ipcMain.handle("goals:startAgent", async (_e, goalText: string) => startAgent(goalText));
-
-async function startAgent(goalText: string): Promise<{ ok: boolean; message: string }> {
-  const goal = goalText.trim();
-  if (!goal) return { ok: false, message: "Type or pick a goal first." };
-  if (!device) return { ok: false, message: "Not connected to a device yet — check the broker." };
-
-  let spawned;
-  try {
-    spawned = jv(await device.requestSpawnAgent(goal));
-  } catch (error: unknown) {
-    return { ok: false, message: `Provisioning failed: ${error instanceof Error ? error.message : error}` };
-  }
-  const token = spawned.get("token").str;
-  const socket = spawned.get("socket").str;
-  if (!token || !socket) return { ok: false, message: "Broker returned an incomplete spawn response." };
-
-  const shim = resolveShimPath();
-  if (!shim) return { ok: false, message: "The domo-mcp shim is missing from this install." };
-  const claude = findClaude();
-
-  const runDir = path.join(home, "run");
-  fs.mkdirSync(runDir, { recursive: true });
-  const plan = planAgentLaunch({
-    goal,
-    deviceId: device.identity.deviceId,
-    agentToken: token,
-    agentSocket: socket,
-    // In local mode the agent dials a Unix socket — no TLS, no pin.
-    brokerPin: localBroker ? undefined : parseBrokerConnection()?.pin,
-    shimPath: shim,
-    nodePath: process.execPath,
-    claudePath: claude ?? "claude",
-    runDir,
-    stamp: spawned.get("agent_id").str ?? String(Date.now()),
-  });
-
-  if (!claude) {
-    return {
-      ok: false,
-      message: "Claude Code CLI not found on PATH. Run this agent elsewhere:\n\n" + plan.oneLiner,
-    };
-  }
-
-  // Per-session temp files under run/; the launcher removes them on exit.
-  fs.writeFileSync(plan.cfgPath, JSON.stringify(plan.config), { mode: 0o600 });
-  fs.writeFileSync(plan.promptPath, plan.prompt);
-  fs.writeFileSync(plan.cmdPath, plan.script, { mode: 0o700 });
-
-  if (process.env.DOMO_AGENT_DRYRUN) {
-    return { ok: true, message: `[dry-run] wrote launcher: ${plan.cmdPath}` };
-  }
-  try {
-    spawn("/usr/bin/open", ["-a", "Terminal", plan.cmdPath], { detached: true }).unref();
-  } catch (error: unknown) {
-    return { ok: false, message: `Could not open Terminal: ${error instanceof Error ? error.message : error}` };
-  }
-  return {
-    ok: true,
-    message:
-      "Opened an interactive agent in Terminal.\n" +
-      `Goal: ${goal}\n\n` +
-      "The goal is pre-filled — press Return in Terminal to start. " +
-      "Approval requests appear here in the app.",
-  };
-}
-
-/** The current broker connection (for the pin), from saved settings. */
-function parseBrokerConnection(): DomoConnection | null {
-  const cs = loadSettings(home).brokerConnection;
-  return cs ? parseConnection(cs) : null;
-}
-
-/** Locate the Claude Code CLI via a login shell (matches the Swift probe). */
-function findClaude(): string | null {
-  try {
-    const out = execFileSync("/bin/zsh", ["-lc", "command -v claude"], {
-      encoding: "utf8",
-    }).trim();
-    if (out.length > 0) return out;
-  } catch {
-    // fall through to the well-known locations
-  }
-  // A Finder-launched app inherits launchd's minimal environment, and the
-  // login-shell probe above misses PATH entries added in ~/.zshrc (sourced by
-  // interactive shells only) — so check the standard install locations too.
-  const userHome = os.homedir();
-  const candidates = [
-    path.join(userHome, ".local/bin/claude"), // native installer
-    path.join(userHome, ".claude/local/claude"), // `claude migrate-installer`
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
+// Approvals still awaiting an answer, so the UI can show what is outstanding
+// rather than relying on a window that may have been closed.
+ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
 ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
 ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
   return device?.policy.allRules() ?? [];
-});
-ipcMain.handle("agents:list", async () => device?.knownAgentIds() ?? []);
-ipcMain.handle("agents:revoke", async (_e, agentId: string) => {
-  device?.revokeAgent(agentId);
-  return device?.knownAgentIds() ?? [];
 });
 ipcMain.handle("ui:getTab", async () => loadSettings(home).selectedTab);
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
@@ -425,36 +299,63 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   settings.selectedTab = tab;
   saveSettings(home, settings);
 });
-// Broker settings are shown as their decoded parts — a WebSocket URL and an
-// optional cert pin — rather than the opaque connection string. Under the hood
-// the app still connects via URL+pin (stored as a connection string).
-ipcMain.handle("settings:getBroker", async () => {
+// The account this Mac is signed into. The CREDENTIAL IS NEVER RETURNED — the
+// renderer only learns whether one is set. It is a secret with no reason to
+// leave the main process, and putting it in a sandboxed web view's memory is a
+// way for it to end up somewhere we did not choose.
+ipcMain.handle("settings:getRelay", async () => {
   const settings = loadSettings(home);
-  const conn = parseConnection(settings.brokerConnection || "");
   return {
-    url: conn?.url ?? "",
-    pin: conn?.pin ?? "",
-    authenticate: conn?.authenticate ?? false,
-    mode: settings.connectionMode ?? "broker",
+    apiBaseUrl,
+    accountUid: settings.accountUid ?? "",
+    mcpUrl: settings.mcpUrl ?? "",
+    hasCredential: (settings.relayCredential ?? "").trim().length > 0,
+    connected,
   };
 });
-ipcMain.handle("settings:setBroker", async (_e, urlOrConn: string, pin: string, mode: string) => {
-  const text = (urlOrConn || "").trim();
-  const pinText = (pin || "").trim();
+// Sign out: forget the device credential and drop the socket. The credential
+// itself is not revoked — that needs the account's own key list, which this Mac
+// deliberately cannot reach.
+ipcMain.handle("settings:signOut", async () => {
   const settings = loadSettings(home);
-  settings.connectionMode = mode === "local" ? "local" : "broker";
-  // Keep the broker connection string updated even when local mode is chosen,
-  // so switching back restores the last-entered broker without retyping.
-  if (text) {
-    // Accept a pasted connection string (domo1.…/domo://) too, decoding it.
-    const parsed = parseConnection(text);
-    const conn: DomoConnection = parsed
-      ? { url: parsed.url, pin: parsed.pin ?? (pinText || undefined), name: "Domo broker", authenticate: parsed.authenticate }
-      : { url: text, pin: pinText || undefined, name: "Domo broker", authenticate: false };
-    settings.brokerConnection = compactString(conn);
-  }
+  settings.relayCredential = "";
+  settings.accountUid = "";
+  settings.mcpUrl = "";
   saveSettings(home, settings);
-  await connectDevice();
+  await startRelay();
+});
+ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
+
+// MARK: IPC for the first-run setup window
+
+// A pure read. It must NOT publish: the renderer re-reads on every change
+// notification, so a getter that notifies is an unbroken re-render loop that
+// leaves the window rendered but inert. See the note in onboarding.ts.
+ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
+ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
+ipcMain.handle("onboarding:newCode", async () => onboarding?.newActivationCode());
+ipcMain.handle("onboarding:usePhoneCode", async () => onboarding?.usePhoneCode());
+ipcMain.handle("onboarding:useActivation", async () => onboarding?.useActivation());
+/**
+ * Open Messages with the activation text drafted.
+ *
+ * Main builds and opens the URL: the renderer is sandboxed and has no way to
+ * open one, and this keeps the only `openExternal` call in the app pinned to a
+ * `sms:` URL the app composed itself rather than anything a page handed it.
+ */
+ipcMain.handle("onboarding:openMessages", async () => {
+  const url = onboarding?.state().activation?.smsUrl;
+  if (url) await shell.openExternal(url);
+  return onboarding?.messagesOpened();
+});
+ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding?.requestCode(phone));
+ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
+ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
+ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.submitCode(code));
+ipcMain.handle("onboarding:createAgent", async (_e, name: string) => onboarding?.createAgent(name));
+ipcMain.handle("onboarding:dismissAgent", async () => onboarding?.dismissAgent());
+ipcMain.handle("onboarding:finish", async () => {
+  onboardingWindow?.close();
 });
 ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
@@ -486,78 +387,114 @@ let connected = false;
 
 function notifyRenderer(channel: string): void {
   mainWindow?.webContents.send(channel);
+  if (channel === "status:changed") onboardingWindow?.webContents.send("onboarding:changed");
 }
 
-async function connectDevice(): Promise<void> {
+/**
+ * The first-run setup window: show a code → the user texts it → connected, and
+ * where "create an agent" lives afterwards. Opened automatically when this Mac
+ * holds no credential, and on demand from Settings.
+ */
+function openOnboardingWindow(): void {
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+    onboardingWindow.show();
+    return;
+  }
+  onboardingWindow = new BrowserWindow({
+    width: 460,
+    height: 560,
+    resizable: false,
+    fullscreenable: false,
+    title: "Domo — Set Up",
+    webPreferences: {
+      preload: path.join(dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  onboardingWindow.on("closed", () => {
+    onboardingWindow = null;
+    notifyRenderer("status:changed"); // Settings re-reads what changed
+  });
+  void onboardingWindow.loadFile(path.join(rendererDir, "onboarding.html"));
+}
+
+/**
+ * (Re)start the outbound relay connection from saved settings. Stopping first
+ * is what makes this safe to call on every settings change.
+ */
+async function startRelay(): Promise<void> {
+  await relay?.stop();
+  relay = null;
+  connected = false;
+  notifyRenderer("status:changed");
+
   const settings = loadSettings(home);
-  if (!device) return;
-  device.disconnect();
-  const conn: DomoConnection | null = settings.brokerConnection
-    ? parseConnection(settings.brokerConnection)
-    : null;
+  const credential = (settings.relayCredential ?? "").trim();
+  if (!credential || !mcp) return;
 
-  device.onConnected = () => {
-    connected = true;
-    notifyRenderer("status:changed");
-  };
-  device.onLinkDown = () => {
-    connected = false;
-    notifyRenderer("status:changed");
-  };
-
-  // Leaving local mode: shut the in-process broker down before dialing out.
-  if (settings.connectionMode !== "local" && localBroker) {
-    localBroker.stop();
-    localBroker = null;
-  }
-
-  try {
-    if (settings.connectionMode === "local") {
-      if (!localBroker) localBroker = await startLocalBroker(home, resolveShimPath());
-      await device.connect(new UnixSocketDialer(localBroker.deviceSocket), true, false);
-    } else if (conn && (conn.url.startsWith("ws://") || conn.url.startsWith("wss://"))) {
-      const trust: PeerTrustEvaluator | null = conn.pin
-        ? new SPKIPinningEvaluator([{ sha256Base64: conn.pin }])
-        : null;
-      await device.connect(new WebSocketDialer(conn.url, trust), true, conn.authenticate);
-    } else {
-      // Local development: dial the default Unix device socket.
-      const socket = conn?.url ?? path.join(home, "run/device.sock");
-      await device.connect(new UnixSocketDialer(socket), true, false);
-    }
-  } catch {
-    // reconnect is on; the link will retry.
-  }
+  const server = mcp;
+  relay = new RelayClient({
+    // Derived from the build's API base URL: same origin, scheme swapped, the
+    // relay path appended. Two URL fields that must agree is a support burden.
+    url: relaySocketUrl(apiBaseUrl),
+    credential,
+    serve: (request, auth) => server.fetch(request, auth),
+    onStatusChange: (isConnected) => {
+      connected = isConnected;
+      notifyRenderer("status:changed");
+    },
+    // RelayClient redacts the credential from everything it emits; this is the
+    // only place its diagnostics reach a log at all.
+    log: (message) => console.log(`[relay] ${message}`),
+  });
+  await relay.start();
 }
 
 app.whenReady().then(async () => {
-  device = new DeviceAgent(home, hostName(), new ElectronPolicy());
+  // The dialog answers; the store writes down what was asked before it is
+  // asked, so a pending approval is a record on disk rather than only a promise
+  // in memory. It also bounds the wait: an approval nobody answers expires and
+  // fails closed instead of pending forever.
+  approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
+  device = new DeviceAgent(home, hostName(), approvals);
   goals = new GoalsLibrary(path.join(home, "device/goals.json"));
 
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
+  mcp = createDomoMcpServer(device);
+  await startRelay();
 
-  await connectDevice();
+  onboarding = new Onboarding({
+    api: new PlowApi(apiBaseUrl),
+    home,
+    startRelay,
+    isConnected: () => connected,
+    deviceName: `Domo Desktop (${hostName()})`,
+    onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
+    // RelayClient's redaction is not in play here, so nothing secret is ever
+    // handed to this — see Onboarding's callers of `warn`.
+    warn: (message) => console.log(`[onboarding] ${message}`),
+  });
+
   createMainWindow();
   setupTray();
+  // A Mac with no credential cannot do anything until it has one, so first run
+  // opens straight into login rather than an empty audit log.
+  if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
 });
 
-app.on("window-all-closed", () => {
-  // Stay resident in the tray — Domo is a menu-bar agent, not a document app.
+app.on("before-quit", () => {
+  void relay?.stop();
 });
 
-// Tear down the local broker on quit: close both listeners, drop live
-// connections, unlink the socket files. It runs in-process, so nothing can
-// outlive the app; connected MCP shims exit on their own when the socket
-// closes. (A stale socket after a crash is unlinked on the next start.)
-app.on("will-quit", () => {
-  device?.disconnect();
-  localBroker?.stop();
-  localBroker = null;
+app.on("window-all-closed", () => {
+  // Stay resident in the tray — Domo is a menu-bar agent, not a document app.
 });
 
 // Block any attempt to navigate to remote content or open external windows —
