@@ -1,0 +1,90 @@
+/**
+ * BrowserHost supervision against the fake stdio server: ready handshake, id
+ * correlation, garbage tolerance, crash → reject + lazy restart, circuit
+ * breaker, start timeout, and group shutdown.
+ */
+import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { JSONValue } from "@domo/protocol";
+import { BrowserCrashedError, BrowserHost } from "@domo/device-core";
+
+const FAKE = fileURLToPath(new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url));
+
+const hosts: BrowserHost[] = [];
+afterEach(async () => {
+  while (hosts.length) await hosts.pop()!.shutdown();
+});
+
+function makeHost(env: Record<string, string> = {}, extra: Partial<{ startTimeoutMs: number }> = {}): {
+  host: BrowserHost;
+  events: string[];
+} {
+  const events: string[] = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-"));
+  const host = new BrowserHost({
+    command: ["node", FAKE],
+    env,
+    screenshotsDir: path.join(dir, "shots"),
+    audit: (event: string, _fields: { [k: string]: JSONValue }) => events.push(event),
+    ...extra,
+  });
+  hosts.push(host);
+  return { host, events };
+}
+
+describe("BrowserHost", () => {
+  it("starts lazily, reports ready, and correlates responses by id", async () => {
+    const { host, events } = makeHost();
+    expect(host.running).toBe(false);
+    const [a, b] = await Promise.all([
+      host.sendAction({ action: "goto", url: "https://one.example/" }),
+      host.sendAction({ action: "text" }),
+    ]);
+    expect(a.url).toBe("https://one.example/");
+    expect(typeof b.text).toBe("string");
+    expect(host.running).toBe(true);
+    expect(host.browserVersion).toBe("fake-152.0.4");
+    expect(events).toContain("browser_started");
+  });
+
+  it("tolerates garbage on the protocol channel", async () => {
+    const { host } = makeHost({ GARBAGE: "1" });
+    const r = await host.sendAction({ action: "title" });
+    expect(r.title).toBe("blank");
+  });
+
+  it("rejects pending on crash and lazily restarts", async () => {
+    const { host, events } = makeHost({ CRASH_AFTER: "1" });
+    await host.sendAction({ action: "url" });
+    await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
+    expect(events).toContain("browser_crashed");
+    // Next action restarts a fresh server (state reset to about:blank).
+    const r = await host.sendAction({ action: "url" });
+    expect(r.url).toBe("about:blank");
+  });
+
+  it("trips the circuit breaker after repeated crashes", async () => {
+    const { host } = makeHost({ CRASH_AFTER: "0" });
+    for (let i = 0; i < 3; i++) {
+      await expect(host.sendAction({ action: "url" })).rejects.toThrow();
+    }
+    await expect(host.sendAction({ action: "url" })).rejects.toThrow(/giving up/);
+  });
+
+  it("fails fast when the server never becomes ready", async () => {
+    const { host } = makeHost({ NO_READY: "1" }, { startTimeoutMs: 500 });
+    await expect(host.sendAction({ action: "url" })).rejects.toThrow(/did not become ready/);
+  });
+
+  it("shutdown quits the server and audits browser_stopped", async () => {
+    const { host, events } = makeHost();
+    await host.sendAction({ action: "url" });
+    await host.shutdown();
+    expect(host.running).toBe(false);
+    expect(events).toContain("browser_stopped");
+    await expect(host.sendAction({ action: "url" })).rejects.toThrow(/shut down/);
+  });
+});

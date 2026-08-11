@@ -68,10 +68,15 @@ describe("the reduced tool surface (§4.5)", () => {
     const parsed = parse(await rpc(server, "tools/list", {}, AGENT));
     const tools = (parsed.result?.tools ?? []) as { name: string; inputSchema: any }[];
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "browser",
+      "browser_close",
+      "browser_open",
+      "browser_request",
       "get_output",
       "get_result",
       "list_tools",
       "read_file",
+      "read_skill",
       "run_command",
       "use_tool",
       "write_file",

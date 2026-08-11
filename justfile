@@ -33,6 +33,32 @@ test:
 test-vectors:
     npx vitest run packages/protocol packages/transport
 
+# ---------------------------------------------------------------------------
+# Browser runtime (Camoufox + bundled Python) — see vendor/browser-server/
+# ---------------------------------------------------------------------------
+
+# Build the universal Python 3.12 runtime for the browser stack into
+# vendor/python-runtime (cached by pin stamp; ~5 min + ~200 MB downloads cold).
+fetch-browser-runtime:
+    node scripts/build-browser-runtime.mjs
+
+# Fetch the Camoufox browser for THIS Mac's arch into vendor/camoufox-browser
+# (dev + integration tests; ~320 MB).
+fetch-browser:
+    node scripts/build-browser-runtime.mjs --browser
+
+# Both arches (what `just package` bundles into the DMG; ~640 MB).
+fetch-browser-both:
+    node scripts/build-browser-runtime.mjs --browser-both
+
+# Run the real-browser integration tier: real Python runtime + real Camoufox
+# ordering a pizza on a local fixture site through the MCP server on the Mac.
+# Needs `just fetch-browser-runtime fetch-browser` first.
+test-browser: build
+    DOMO_BROWSER_RUNTIME="{{root}}/vendor" \
+    DOMO_CAMOUFOX="{{root}}/vendor/camoufox-browser/$(uname -m)" \
+        npx vitest run packages/mcp-server/test/browser.integration.test.ts
+
 # Package the desktop app: signed + notarized "Domo Desktop.app" + DMG, in
 # apps/desktop/release/. Signs with the Plow Developer ID (must be in the
 # keychain). One-time setup for notarization — store credentials under a
@@ -40,8 +66,15 @@ test-vectors:
 #   xcrun notarytool store-credentials domo-notary \
 #       --apple-id <apple-id-email> --team-id 3559PD337Z \
 #       --password <app-specific-password>
+# The browser stack ships inside the DMG: the universal Python runtime and
+# BOTH Camoufox arches are built/fetched, then Developer-ID signed by the
+# afterPack hook AFTER electron-builder's universal merge (which rewrites nested
+# Info.plists and would break any earlier signature). CODESIGN_IDENTITY is
+# passed to electron-builder so the hook can sign; the build step itself leaves
+# the payload unsigned (afterPack is authoritative).
 package profile="domo-notary": build
-    cd "{{root}}/apps/desktop" && APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac
+    node scripts/build-browser-runtime.mjs --browser-both
+    cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac
 
 # ---------------------------------------------------------------------------
 # Running the app

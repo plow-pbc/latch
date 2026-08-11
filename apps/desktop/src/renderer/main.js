@@ -25,6 +25,7 @@ const ICONS = {
   access: "M12 3 4 6v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V6z",
   agent: "M4 8h16v12H4z M12 8V4",
   info: "M12 2v10 M18.4 6.6a9 9 0 1 1-12.8 0",
+  browser: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M3 12h18 M12 3a14 14 0 0 1 0 18 M12 3a14 14 0 0 0 0 18",
 };
 function icon(kind) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -408,6 +409,11 @@ function capText(c) {
     case "process.exec": return "run " + (c.argv || []).join(" ");
     case "network": return c.allowed ? "network: allowed" : "network: denied";
     case "tool": return "tool: " + (c.tool || "?");
+    case "browser": return "browse: " + (c.origins || []).join(", ");
+    case "credential":
+      return c.access === "metadata"
+        ? "credentials: list names/labels"
+        : "credentials: fill " + (c.items || []).join(", ");
     default: return c.kind;
   }
 }

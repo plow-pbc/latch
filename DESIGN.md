@@ -294,6 +294,73 @@ repo can prove they broke nothing.
 | `domo-mcp` | exec | stdio↔socket MCP shim for Claude Code |
 | `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Goals/Rules/Audit window, agent spin-up |
 
+## 11a. Local browsing (Camoufox + 1Password)
+
+The device can host a real anti-detection Firefox (Camoufox, driven by
+Playwright through a vendored Python server — `vendor/browser-server/`,
+provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
+user**: local IP, local cookies, and local credentials that never leave the
+Mac. The pieces:
+
+**Session grants.** Browser work is hundreds of small actions; per-action
+intents would be approval spam and "always allow browser_goto" would be an
+unbounded rule. Instead one signed intent opens a **session** whose capability
+is the enforceable bound — a `browser` capability with an origin allowlist
+(`origins: ["dominos.com", "*.dominos.com"]`, explicit patterns, no PSL
+logic) and optionally `credential` capabilities. Subsequent commands ride the
+session handle over the `browser_command` RPC with no new intent — the same
+trust model as `get_output`. Widening scope mid-session (a checkout popup
+lands on a payment provider) is a new intent with the identical capability
+shape, so always-allow rules are meaningful and reusable; a fully-ruled task
+runs unattended end to end (the e2e suite asserts a second session is decided
+entirely by `source: "rule"`).
+
+**Enforcement** lives in `packages/device-core/src/browser/browserSessions.ts`
+— trusted TS between the agent and Playwright, because seatbelt cannot cage a
+browser (network is all-or-nothing). Navigation targets are checked before
+`goto`; the observed URL is re-checked after every action; popups are swept
+and audited; on an out-of-scope page the session locks — nothing can be
+observed or interacted with except finding the way back. **Stated limit:** the
+origin bound governs what the agent observes/interacts with and where
+credentials get typed. It is *not* network egress control — page JS (the
+site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted:
+eval can't exfiltrate anything `screenshot`/`text` couldn't already carry over
+MCP.
+
+**Credentials.** A `credential` capability is separate and explicit on the
+approval card: `access: "metadata"` (list 1Password item names/field labels —
+never values) or `access: "fill"` with item ids. The vendored `seed_op_broker`
+CLI wraps `op` (a service-account token scoped to one vault). `fill_secret`
+is the strongest gate, in order: item ∈ approved set → the selector is located
+to its owning frame → the frame's origin ∈ session scope → `seed-op-broker
+get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
+check applies; credit cards deliberately pass — they are meant for any
+merchant) → a frame-targeted fill → the value is dropped. Secret values never
+traverse MCP, never appear in results, and never appear in either audit log.
+Item ids on the approval card are resolved to titles **locally** (agent-supplied
+titles would be spoofable).
+
+**Skills.** Devices publish skills (name/description/markdown body,
+`SkillRegistry`) in their register manifest; agents discover them via
+`list_device_tools` and read them with `read_skill`. The built-in
+`camoufox-browsing` skill is the operator manual for this tool surface.
+
+**Runtime & packaging.** The stack ships inside the app: a relocated
+python.org universal2 Python 3.12 + lipo-merged (delocate) universal
+site-packages + both Camoufox arches, built deterministically by
+`scripts/build-browser-runtime.mjs` from hash pins in
+`vendor/browser-server/runtime.lock.json` (version coupling
+camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
+payload is byte-identical in both electron-builder arch passes so the
+universal merge copies it through. The Camoufox payload is a complete
+`camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
+app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
+user's shared cache is never touched and no fetch happens at launch. Audit
+events (`browser_*`, `credential_*`) are the test oracle; the fake browser
+server + fake `op` fixtures make the whole flow CI-testable without Python,
+and `just test-browser` runs the real browser against a local checkout
+fixture site.
+
 ## 12. Roadmap
 
 1. **v1 (this repo, now):** everything above, local, tested.

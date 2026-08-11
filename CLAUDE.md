@@ -17,11 +17,16 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   This Mac only ever dials out, so there is no listener.
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
   `FileOps`, `Executor` (+ generated seatbelt profile), `BlessedToolRegistry`,
-  `AuditLog`, `GoalsLibrary`, identity/key store.
+  `AuditLog`, `GoalsLibrary`, identity/key store; `src/browser/` is the local
+  browsing subsystem (session grants, origin enforcement, credential gate —
+  DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
+  Camoufox server + 1Password broker (pins in `runtime.lock.json`;
+  `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
+  tests use fake servers and need no Python).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
-  (revision 2026-07-28): the reduced tool surface, capability construction from
-  tool arguments, and the deferred-result contract. Binds no port; takes a
-  `Request`, returns a `Response`.
+  (revision 2026-07-28): the reduced tool surface (including the `browser_*`
+  tools), capability construction from tool arguments, and the deferred-result
+  contract. Binds no port; takes a `Request`, returns a `Response`.
 - `packages/relay-client` (`@domo/relay-client`) — dials the Plow relay, speaks
   plow's channel handshake, and serves the HTTP exchanges it tunnels. `wire.ts`
   is the cross-repo interface.

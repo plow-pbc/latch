@@ -22,10 +22,11 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
+  resolveBrowserRuntime,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import { approvalViewModel, auditActivities } from "./viewModel.js";
+import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
@@ -102,7 +103,10 @@ class ElectronPolicy implements PolicyDelegate {
       if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
       if (verdict === "deny") return { decision: "deny", source: "adversarial" };
       // "ask" — the agent couldn't decide; hand it to the human (no suggestion).
-      const decision = await openApprovalWindow({ kind: "intent", view: approvalViewModel(intent) });
+      const decision = await openApprovalWindow({
+        kind: "intent",
+        view: approvalViewModel(intent, await resolveCredentialTitles(intent)),
+      });
       return { decision, source: "ask" };
     }
 
@@ -115,11 +119,36 @@ class ElectronPolicy implements PolicyDelegate {
           )
         : null;
     const decision = await openApprovalWindow(
-      { kind: "intent", view: approvalViewModel(intent) },
+      { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
       suggestion,
     );
     return { decision, source: "ask" };
   }
+}
+
+/**
+ * Resolve credential item ids to titles via the LOCAL 1Password broker so the
+ * approval card can show what the ids actually are. Never taken from the
+ * intent — agent-supplied titles would be spoofable. Unresolvable ids render
+ * as raw ids flagged "unknown item" (a deny signal for the human).
+ */
+async function resolveCredentialTitles(intent: Intent): Promise<CredentialTitles> {
+  const titles: CredentialTitles = new Map();
+  const broker = device?.credentialBroker;
+  if (!broker) return titles;
+  const items =
+    intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+  await Promise.all(
+    items.map(async (id) => {
+      try {
+        const item = await broker.describeItem(id);
+        titles.set(id, { title: item.title, category: item.category });
+      } catch {
+        /* unresolved — the card shows the raw id */
+      }
+    }),
+  );
+  return titles;
 }
 
 type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
@@ -458,7 +487,15 @@ app.whenReady().then(async () => {
   // in memory. It also bounds the wait: an approval nobody answers expires and
   // fails closed instead of pending forever.
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
-  device = new DeviceAgent(home, hostName(), approvals);
+  // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
+  // (extraResources). In dev the resolver falls back to the repo's vendor/.
+  device = new DeviceAgent(
+    home,
+    hostName(),
+    approvals,
+    undefined,
+    resolveBrowserRuntime(process.resourcesPath),
+  );
   goals = new GoalsLibrary(path.join(home, "device/goals.json"));
 
   // Live-refresh the audit view whenever a new event is recorded.
@@ -491,6 +528,8 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   void relay?.stop();
+  // Kill any live Camoufox session/process group so Firefox children don't outlive us.
+  void device?.shutdown();
 });
 
 app.on("window-all-closed", () => {

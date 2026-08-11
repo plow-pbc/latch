@@ -23,7 +23,7 @@ import { JSONValue } from "@domo/protocol";
 import { DeviceAgent } from "@domo/device-core";
 import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
-import { AgentIdentity, TOOLS, ToolContext, toolContent } from "./tools.js";
+import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./tools.js";
 
 /** The MCP revision this server speaks, and the only one it will speak. */
 export const PROTOCOL_REVISION = "2026-07-28";
@@ -169,7 +169,9 @@ export function createDomoMcpServer(
               const result = spec.deferrable
                 ? await deferred.run(agent.agentId, body)
                 : await body({ decided: () => {} });
-              return { content: [toolContent(result)] };
+              // Most results are one text block; a screenshot expands into an
+              // image + text block via `__mcpContent`.
+              return { content: toolBlocks(result) };
             } catch (error: unknown) {
               const message = error instanceof Error ? error.message : String(error);
               return {
