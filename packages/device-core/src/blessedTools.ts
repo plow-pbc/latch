@@ -5,6 +5,7 @@
  */
 import os from "node:os";
 import { JSONValue } from "@domo/protocol";
+import { recall, DEFAULT_LIMIT } from "./recall.js";
 
 export interface BlessedTool {
   name: string;
@@ -49,6 +50,37 @@ export class BlessedToolRegistry {
         user: os.userInfo().username,
         uptime_seconds: Math.round(os.uptime()),
       }),
+    });
+    registry.register({
+      name: "recall",
+      description:
+        "Recall durable facts about the people this Mac's owner communicates with — " +
+        "work, relationships, preferences, commitments — drawn from their message " +
+        "archive. Each fact carries the dates it was observed and the ids of the " +
+        "messages it rests on. Returns facts only, never message text. Call this " +
+        "when the task depends on something about a person that the conversation " +
+        "does not already state.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "What you want to know, as a question." },
+          limit: {
+            type: "number",
+            description: `Maximum facts to return (default ${DEFAULT_LIMIT}).`,
+          },
+        },
+        required: ["query"],
+      },
+      invoke: async (args) => {
+        const supplied = args as { query?: unknown; limit?: unknown };
+        if (typeof supplied.query !== "string" || supplied.query.trim().length === 0) {
+          throw new Error("recall requires a non-empty `query`");
+        }
+        const limit = typeof supplied.limit === "number" ? supplied.limit : DEFAULT_LIMIT;
+        // Wrapped in an object rather than returned bare: a JSON array is a valid
+        // JSONValue but leaves no room to say anything alongside it later.
+        return { facts: (await recall(supplied.query, limit)) as unknown as JSONValue };
+      },
     });
     return registry;
   }
