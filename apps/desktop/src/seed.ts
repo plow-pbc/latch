@@ -5,11 +5,9 @@
  * `ltmm run` with no arguments resolves the owner's #1 contact itself and builds
  * from that conversation, so Domo never needs to know or hardcode a conversation
  * id. The build is a multi-hour batch over years of messages: it is spawned
- * detached and never awaited, and a launch that finds a store already present
- * does nothing at all.
+ * detached and never awaited, and only ever once.
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -23,33 +21,31 @@ import { spawn } from "node:child_process";
 export type SeedOutcome = "started" | "already-seeded";
 
 export interface SeedDeps {
-  storeExists(): boolean;
-  spawn(bin: string, args: string[]): void;
+  alreadySeeded(): boolean;
+  /** Spawn the build *and* write down that it was spawned. One act, not two. */
+  startBuild(bin: string, args: string[]): void;
 }
 
 /**
- * Where `ltmm` puts its store — beside msgvault's own artifacts.
+ * Domo's own record that it has started a build, under DOMO_HOME.
  *
- * Deliberately a constant with no env override. An override here would steer
- * only this probe: `seedIfMissing` spawns `ltmm run` and `recall()` runs
- * `ltmm query`, and neither is told the path, so pointing the probe elsewhere
- * would skip seeding forever while recall answered from the default store.
- * The path is one fact, and it belongs to `ltmm`; if it needs to move, it moves
- * for the builder and the reader too, not just for the probe.
+ * Deliberately not a probe of ltmm's store file. Where ltmm writes that file is
+ * a fact this repo cannot see — its DEFAULT_STORE is currently the relative
+ * `facts.db`, not an absolute path — and a probe that guesses wrong answers "no
+ * store" on every launch forever. For a detached multi-hour batch that is not a
+ * missed optimisation: it stacks one more concurrent build over the owner's
+ * messages on every single launch. "Have I already started this?" is Domo's
+ * question, so Domo writes the answer down where it can also read it.
  *
- * Two known limitations, both waiting on `ltmm`:
- *  - This is a presence probe, not a completion probe, so it cannot tell a
- *    finished store from one an interrupted run left behind — a partial store
- *    reads as done and is never resumed.
- *  - The path itself is the plan's assumption. `ltmm`'s own DEFAULT_STORE is
- *    currently the relative `facts.db`; this is expected to become the absolute
- *    path below in the same change that adds `ltmm query --json`.
+ * Still presence, not completion: an interrupted build is not restarted. That is
+ * the safe direction to be wrong in — `ltmm run` resumes from its own progress
+ * whenever it is next run, whereas a duplicate build cannot be taken back.
  */
-export const STORE_PATH = path.join(os.homedir(), ".msgvault", "ltmm", "facts.db");
+export const seedMarkerPath = (home: string): string => path.join(home, "device/seed-started");
 
-export const liveDeps: SeedDeps = {
-  storeExists: () => fs.existsSync(STORE_PATH),
-  spawn: (bin, args) => {
+export const liveDeps = (home: string): SeedDeps => ({
+  alreadySeeded: () => fs.existsSync(seedMarkerPath(home)),
+  startBuild: (bin, args) => {
     const child = spawn(bin, args, { detached: true, stdio: "ignore" });
     // Required, not optional: spawn delivers a missing binary as an async
     // `error` event, and an EventEmitter with no `error` listener re-throws it
@@ -59,17 +55,20 @@ export const liveDeps: SeedDeps = {
     // Let the build outlive this process: it takes hours, and quitting the app
     // would otherwise throw away everything built so far.
     child.unref();
+    const marker = seedMarkerPath(home);
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(marker, `${new Date().toISOString()}\n`);
   },
-};
+});
 
-export function seedIfMissing(deps: SeedDeps = liveDeps): SeedOutcome {
-  if (deps.storeExists()) return "already-seeded";
+export function seedIfMissing(deps: SeedDeps): SeedOutcome {
+  if (deps.alreadySeeded()) return "already-seeded";
   // Deliberately unguarded, and that rests on the binary name being non-empty
   // rather than on the argv being constant: `spawn("")` throws
   // ERR_INVALID_ARG_VALUE *synchronously*, before any child exists to emit
   // `error`, and it would escape this unguarded app-ready handler. `||` rather
   // than `??` is what makes that unreachable -- `??` keeps an empty string, and
   // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac with no ltmm sets exactly that.
-  deps.spawn(process.env.DOMO_LTMM_BIN?.trim() || "ltmm", ["run"]);
+  deps.startBuild(process.env.DOMO_LTMM_BIN?.trim() || "ltmm", ["run"]);
   return "started";
 }
