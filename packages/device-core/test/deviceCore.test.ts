@@ -204,4 +204,22 @@ describe("AuditLog", () => {
     new AuditLog(preexisting).record("hello");
     expect(fs.statSync(preexisting).mode & 0o077).toBe(0);
   });
+
+  it("closes the directory too, which is where the real path is fixed", () => {
+    // The containing directory carries rules.json and scratch/, which have no
+    // mode of their own. On the real path DeviceAgent builds the identity first
+    // and identity.ts creates device/ with a plain recursive mkdir, so it is
+    // already 0755 when the log is constructed — the chmod, not the creation
+    // mode, is what tightens it. Both cases assert that, so deleting the chmod
+    // as "redundant with the mode above" cannot pass.
+    const fresh = path.join(tempDir(), "device", "audit.ndjson");
+    new AuditLog(fresh);
+    expect(fs.statSync(path.dirname(fresh)).mode & 0o077).toBe(0);
+
+    const loose = path.join(tempDir(), "device");
+    fs.mkdirSync(loose, { recursive: true });
+    fs.chmodSync(loose, 0o755);
+    new AuditLog(path.join(loose, "audit.ndjson"));
+    expect(fs.statSync(loose).mode & 0o077).toBe(0);
+  });
 });

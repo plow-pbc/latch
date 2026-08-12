@@ -18,6 +18,12 @@ export class AuditLog {
     // each remember to chmod themselves, but rules.json and scratch/ do not, and
     // the next file added here would have to remember too. One mode on the
     // container is the version of this protection that cannot be forgotten.
+    //
+    // The chmod is the load-bearing line, not the mode: DeviceAgent builds the
+    // identity one line before the log, and identity.ts creates `device/` with a
+    // plain recursive mkdir, so by the time this runs the directory already
+    // exists at 0755 and a creation mode does nothing. Do not delete the chmod
+    // as redundant -- it is the only line that tightens the real path.
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.chmodSync(path.dirname(file), 0o700);
     // 0600, like the identity store and settings.json. This is not belt-and-
