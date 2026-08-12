@@ -187,4 +187,21 @@ describe("AuditLog", () => {
       .filter((l) => l.length > 0);
     expect(lines).toHaveLength(2);
   });
+
+  it("is readable only by its owner, however it came to exist", () => {
+    // The log records the diagnostics deliberately withheld from the calling
+    // agent, so another local account being able to read it hands over exactly
+    // what the wire withholds. Both paths matter: a fresh file must be created
+    // 0600, and a log left 0644 by an earlier version must be tightened rather
+    // than trusted — creating with a mode does nothing to an existing file.
+    const fresh = path.join(tempDir(), "audit.ndjson");
+    new AuditLog(fresh).record("hello");
+    expect(fs.statSync(fresh).mode & 0o077).toBe(0);
+
+    const preexisting = path.join(tempDir(), "audit.ndjson");
+    fs.writeFileSync(preexisting, "", { mode: 0o644 });
+    fs.chmodSync(preexisting, 0o644);
+    new AuditLog(preexisting).record("hello");
+    expect(fs.statSync(preexisting).mode & 0o077).toBe(0);
+  });
 });

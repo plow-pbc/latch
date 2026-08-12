@@ -81,13 +81,18 @@ const { FakeRelay } = await import("../../../packages/relay-client/dist-test/fak
 const relay = await FakeRelay.start({ expectCredential: DEVICE_TOKEN, server: api });
 ```
 
-**2. Point the real app at it and boot it.** Both env vars must be set *before* the import:
+**2. Point the real app at it and boot it.** All three env vars must be set *before* the import:
 
 ```js
 process.env.DOMO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "drive-"));  // clean = first run
 process.env.DOMO_API_BASE_URL = API_BASE;
+process.env.DOMO_LTMM_BIN = path.join(dir, "ltmm-stub.sh");  // or the real archive gets built
 await import("../dist/main.js");   // the app's OWN main process
 ```
+
+The third is the one that bites: `DOMO_HOME` isolates what the app *writes*, but on launch the app
+also *spawns* `ltmm run` — a multi-hour build over years of the operator's real messages, which no
+`DOMO_HOME` can contain. The stub keeps that inert and still answers `recall` with `[]`.
 
 Import the real `main.js`. Do **not** re-register your own `ipcMain` handlers — the bug above lived
 in a handler, and every harness that stubbed them was green while the app was dead.

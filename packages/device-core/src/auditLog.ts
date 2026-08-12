@@ -14,6 +14,17 @@ export class AuditLog {
 
   constructor(public readonly file: string) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    // 0600, like the identity store and settings.json. This is not belt-and-
+    // braces: `tool_error` deliberately records the detail withheld from the
+    // calling agent -- absolute store paths, backend endpoints -- so a log other
+    // local accounts can read hands over exactly what the wire withholds. Under
+    // the default 0022 umask an appendFileSync-created file lands 0644.
+    //
+    // Done once, here, rather than per event: creating with a mode does nothing
+    // to a file that already exists, which is what the chmod is for, and both
+    // append and truncate preserve the mode of an existing file.
+    fs.appendFileSync(file, "", { mode: 0o600 });
+    fs.chmodSync(file, 0o600);
   }
 
   record(event: string, fields: { [k: string]: JSONValue | undefined } = {}): void {
