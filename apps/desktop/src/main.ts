@@ -13,6 +13,7 @@
  *     is derived from — not the goal text.
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,7 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
@@ -48,6 +50,35 @@ app.setPath("sessionData", instance.electronData);
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
+
+// setName above rebrands the menus and dock title, but a from-source run is
+// still the stock Electron.app bundle, so the Dock/Cmd-Tab icon stays
+// Electron's. Repoint it at the repo artwork — dev only: the packaged app
+// gets its icon from electron-builder (`mac.icon`) and doesn't ship the PNG.
+// Once the app is ready, a DEV-ribboned version replaces it (see whenReady).
+const devIconPath = path.join(dirname, "..", "..", "..", "artwork", "domo-desktop-icon.png");
+if (!app.isPackaged) {
+  app.dock?.setIcon(devIconPath);
+}
+
+/**
+ * The badged icon: the artwork with a diagonal DEV ribbon (devIcon.ts).
+ * Composited in a hidden sandboxed window because the main process can't
+ * draw; only callable once the app is ready.
+ */
+async function devBadgedDockIcon(iconPath: string): Promise<Electron.NativeImage> {
+  const png = await fs.readFile(iconPath);
+  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  try {
+    await win.loadURL("about:blank");
+    const dataUrl: string = await win.webContents.executeJavaScript(
+      devIconScript(png.toString("base64"), "DEV"),
+    );
+    return nativeImage.createFromDataURL(dataUrl);
+  } finally {
+    win.destroy();
+  }
+}
 
 const home = instance.home;
 
@@ -555,6 +586,15 @@ app.whenReady().then(async () => {
 
   createMainWindow();
   setupTray();
+  // Swap the plain artwork set at startup for the DEV-ribboned version, so a
+  // from-source Dock icon can't be mistaken for the packaged install. Purely
+  // cosmetic: on any failure the plain icon just stays.
+  if (!app.isPackaged && process.platform === "darwin") {
+    void devBadgedDockIcon(devIconPath).then(
+      (icon) => app.dock?.setIcon(icon),
+      (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
+    );
+  }
   // A Mac with no credential cannot do anything until it has one, so first run
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
