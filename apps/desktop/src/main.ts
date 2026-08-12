@@ -488,7 +488,13 @@ app.whenReady().then(async () => {
   // After the window is up, so the liveness check cannot delay first paint, and
   // not awaited: nothing here needs the answer, and the build itself is a
   // detached child that outlives us.
-  void seedIfMissing(seedDeps(home)).then((outcome) => console.log(`[seed] build: ${outcome}`));
+  // The catch is load-bearing, not decoration: seedIfMissing is async, so the
+  // one throw it deliberately leaves unguarded arrives as an unhandled
+  // rejection, which Node still turns into a dead main process by default.
+  void seedIfMissing(seedDeps(home)).then(
+    (outcome) => console.log(`[seed] build: ${outcome}`),
+    (failed: unknown) => console.log(`[seed] failed to start: ${String(failed)}`),
+  );
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

@@ -158,10 +158,12 @@ export async function seedIfMissing(deps: SeedDeps): Promise<SeedOutcome> {
   if (await deps.buildIsRunning()) return "already-running";
   // Deliberately unguarded, and that rests on the binary name being non-empty
   // rather than on the argv being constant: `spawn("")` throws
-  // ERR_INVALID_ARG_VALUE *synchronously*, before any child exists to emit
-  // `error`, and it would escape this unguarded app-ready handler. `||` rather
-  // than `??` is what makes that unreachable -- `??` keeps an empty string, and
-  // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac with no ltmm sets exactly that.
+  // ERR_INVALID_ARG_VALUE before any child exists to emit `error`. This function
+  // is async, so that arrives at the caller as a rejection rather than a throw
+  // -- still fatal to the main process if nothing handles it, which is why
+  // main.ts passes a rejection handler. `||` rather than `??` is what keeps it
+  // unreachable: `??` keeps an empty string, and `DOMO_LTMM_BIN=$(which ltmm)`
+  // on a Mac with no ltmm sets exactly that.
   deps.startBuild(process.env.DOMO_LTMM_BIN?.trim() || "ltmm", ["run"]);
   return "started";
 }
