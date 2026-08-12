@@ -27,19 +27,29 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
-// Set the app name before the app is ready so the macOS app menu, About/Hide/
-// Quit items, and dock title read "Domo Desktop" instead of "Electron".
-app.setName("Domo Desktop");
+// One folder per instance (paths.ts): the home carries everything, including
+// Chromium's userData/sessionData at <home>/electron — never a second
+// name-keyed "Domo Desktop*" folder. Two instances sharing one userData
+// contend on Chromium's LevelDB locks, so per-branch homes also keep
+// from-source runs from tripping over each other or the packaged install.
+// All of it must be set before the app is ready: the name so the macOS app
+// menu, About/Hide/Quit items, and dock title read "Domo Desktop" instead of
+// "Electron", the paths so Chromium never opens the default locations.
+const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
+app.setName(instance.appName);
+app.setPath("userData", instance.electronData);
+app.setPath("sessionData", instance.electronData);
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
 
-const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
+const home = instance.home;
 
 /**
  * Which Plow this build talks to. Baked in — every build points at production,
@@ -578,7 +588,7 @@ function setupTray(): void {
   // pipeline; a real template image ships with the packaged app.
   const image = nativeImage.createEmpty();
   tray = new Tray(image);
-  tray.setToolTip("Domo");
+  tray.setToolTip(instance.trayTooltip);
   const menu = Menu.buildFromTemplate([
     { label: "Open Domo", click: () => createMainWindow() },
     { type: "separator" },

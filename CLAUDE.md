@@ -87,7 +87,6 @@ the real thing.
   `realpath(3)` and preserves `/private` — don't swap in anything that
   normalizes differently.
 - **Everything honors `DOMO_HOME`** so tests use throwaway roots.
-- Unix socket paths are capped ~104 chars; keep test `DOMO_HOME` short.
 - `DOMO_DEBUG_SANDBOX=1` dumps generated seatbelt profiles to stderr.
 - **Canonical JSON is signature-critical.** Object keys sort by code unit (ASCII
   only — never introduce non-ASCII keys), slashes are not escaped, integral
@@ -122,3 +121,16 @@ Use `just` (run `just` to list recipes):
   checks.
 - `just app` — launch the desktop app. `just verify-preload` is the headless
   check that the sandboxed preload bridge and the renderer still render.
+
+**Git worktrees run side by side with main.** After `git worktree add`, run
+`./scripts/worktree-setup.sh` in the new checkout: it clones the gitignored browser
+runtime from the main checkout (APFS clones, no re-download), then installs and
+builds. All per-checkout state is keyed on the normalized branch name
+(`scripts/worktree-name.sh --branch`) — for **every** checkout, main included:
+one folder per instance, `~/Library/Application Support/Domo-<branch>`, which
+holds everything including Electron's userData (`<home>/electron`); the app
+name gains a `(<branch>)` suffix on screen. Only the packaged install uses the
+unsuffixed `Domo` home, so no from-source run can touch its state. Each
+checkout signs in for its own relay credential — never copy
+`settings.json` between homes (the relay does not support two devices on one
+credential). `just package` refuses to run from a worktree; package from main.
