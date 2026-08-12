@@ -327,7 +327,7 @@ DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 \
 # DOMO_HOME isolates what the app writes, DOMO_LTMM_BIN stops it launching the
 # real `ltmm` at your real message archive on every start.
 DOMO_HOME=$(mktemp -d) DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh just app
-rm ~/Library/Application\ Support/Domo-<branch>/app/settings.json  # or reset the real one
+rm "$HOME/Library/Application Support/Domo-BRANCH/app/settings.json"  # or reset the real one
 ```
 
 `just` recipes default `DOMO_HOME` to this checkout's `Domo-<branch>` home — your *real* dev one.
@@ -339,7 +339,7 @@ list here goes stale the first time one is added.
 `DOMO_LTMM_BIN` is the second half of that rule and it is easy to miss, because the state it
 protects lives *outside* `DOMO_HOME`. On launch the app spawns `ltmm run`, a multi-hour batch over
 years of your messages; pointing it at the stub makes that spawn a no-op. Use
-`scripts/ltmm-stub.sh` rather than `/usr/bin/true` — the same variable also selects the binary
+`apps/desktop/scripts/ltmm-stub.sh` rather than `/usr/bin/true` — the same variable also selects the binary
 `recall` runs, and `true` exits with empty stdout, which makes every recall in the session fail as
 if ltmm were broken. The stub emits `[]`, so recall answers honestly that it knows nothing. The
 drive harnesses (`just first-run-drive`, `just approve-drive`) set it themselves.
