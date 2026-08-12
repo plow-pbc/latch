@@ -150,6 +150,8 @@ describe("ApwDaemon", () => {
       command: ["node", FAKE_APW],
       env: { ...env, ...extraEnv },
       startTimeoutMs: 10_000,
+      startSettleMs: 0,
+      pinRetryDelayMs: 10,
       pairProbeAttempts: 2,
       pairProbeIntervalMs: 50,
       audit: (event, fields) => events.push({ event, fields }),
@@ -175,6 +177,19 @@ describe("ApwDaemon", () => {
     // The pairing is real: queries now succeed against the same state.
     const b = new ApwCredentialBroker({ command: ["node", FAKE_APW], env });
     await expect(b.getField("jon", "password", "https://pizza.example/")).resolves.toBe("hunter2");
+  });
+
+  it("rescues the first-launch challenge race by re-challenging with the same PIN", async () => {
+    // Live behavior: the FIRST challenge after the extension connects can be
+    // unverifiable even with the right PIN; a fresh challenge (same displayed
+    // PIN) then verifies. submitPin must recover in one user-visible step.
+    const d = makeDaemon({ FAKE_APW_FIRST_CHALLENGE_BROKEN: "1" });
+    await d.start();
+    await d.requestPin();
+    expect(await d.submitPin("123456")).toBe(true); // one step, no user retry
+    expect(d.status().state).toBe("paired");
+    // It really went through a second challenge:
+    expect(fs.readFileSync(path.join(stateDir, "challenge-count"), "utf8")).toBe("2");
   });
 
   it("repair() re-enters the PIN flow from paired (and only from paired)", async () => {

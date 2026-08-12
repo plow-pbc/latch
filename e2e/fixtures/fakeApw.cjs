@@ -17,6 +17,10 @@
  *   FAKE_APW_FAIL   "no-browser" → `start` fails like apw with no Chromium
  *   FAKE_APW_EXIT_AFTER  ms after which a started daemon exits on its own
  *                   (simulates a crashed helper)
+ *   FAKE_APW_FIRST_CHALLENGE_BROKEN  "1" → the FIRST challenge can never be
+ *                   verified even with the right PIN (the launch-time race in
+ *                   the real extension); a re-requested challenge works and
+ *                   the PIN stays the same, like the real helper
  */
 "use strict";
 const fs = require("node:fs");
@@ -97,6 +101,10 @@ if (cmd === "start") {
 } else if (cmd === "auth" && sub === "request") {
   if (!fs.existsSync(marker("daemon"))) fail(INVALID_SESSION, "APW is not running");
   fs.writeFileSync(marker("pin-requested"), "");
+  const count = fs.existsSync(marker("challenge-count"))
+    ? Number(fs.readFileSync(marker("challenge-count"), "utf8"))
+    : 0;
+  fs.writeFileSync(marker("challenge-count"), String(count + 1));
   ok({});
 } else if (cmd === "auth" && sub === "response") {
   if (!fs.existsSync(marker("daemon"))) fail(INVALID_SESSION, "APW is not running");
@@ -104,8 +112,13 @@ if (cmd === "start") {
   const pin = i !== -1 ? rest[i + 1] : null;
   // Faithful to apw's bridge: the response is acked as soon as the PIN is
   // DELIVERED — exit 0 even for a wrong PIN. Only a correct PIN actually
-  // establishes the session (later queries reveal which happened).
-  if (fs.existsSync(marker("pin-requested")) && pin === PIN) {
+  // establishes the session (later queries reveal which happened) — and with
+  // FIRST_CHALLENGE_BROKEN, only against a re-requested (2nd+) challenge.
+  const count = fs.existsSync(marker("challenge-count"))
+    ? Number(fs.readFileSync(marker("challenge-count"), "utf8"))
+    : 0;
+  const challengeOk = process.env.FAKE_APW_FIRST_CHALLENGE_BROKEN === "1" ? count >= 2 : true;
+  if (fs.existsSync(marker("pin-requested")) && pin === PIN && challengeOk) {
     fs.writeFileSync(marker("paired"), "");
   }
   ok({});

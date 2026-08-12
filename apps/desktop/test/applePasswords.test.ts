@@ -41,6 +41,8 @@ beforeEach(() => {
     },
     onChange: () => changes++,
     startTimeoutMs: 10_000,
+    startSettleMs: 0,
+    pinRetryDelayMs: 10,
     pairProbeAttempts: 2,
     pairProbeIntervalMs: 50,
   });

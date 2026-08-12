@@ -247,6 +247,13 @@ export interface ApwDaemonConfig extends ApwConfig {
   browser?: string;
   /** How long to wait for the headless browser + extension (default 45s). */
   startTimeoutMs?: number;
+  /** Pause after the extension connects before the first challenge. A
+   * ChallengePIN fired into a native-messaging session that hasn't settled
+   * produces a challenge the helper will never verify (observed live: the
+   * first launch-time PIN always failed until re-challenged). */
+  startSettleMs?: number;
+  /** Delay between the automatic re-challenge and the PIN re-submission. */
+  pinRetryDelayMs?: number;
   /** Pairing verification probe: how many times / how often to ask the daemon
    * whether the SRP session actually established after a PIN submission. */
   pairProbeAttempts?: number;
@@ -359,6 +366,10 @@ export class ApwDaemon {
         }
       });
     });
+
+    // Let the extension's native-messaging session settle before anyone
+    // requests a challenge (see startSettleMs).
+    await new Promise((r) => setTimeout(r, this.cfg.startSettleMs ?? 2_000));
   }
 
   /** Ask the macOS Passwords helper to show its pairing PIN dialog. */
@@ -382,19 +393,39 @@ export class ApwDaemon {
       this.setState("awaiting-pin", "The PIN is the 6-digit code in the macOS dialog");
       return false;
     }
+    if (await this.tryPin(trimmed)) {
+      this.setState("paired", "Apple Passwords is paired for this app session");
+      return true;
+    }
+    // First-challenge race: a challenge requested right after the extension
+    // came up can be unverifiable even with the RIGHT pin, while the helper
+    // keeps the displayed PIN stable for the session. Re-challenge and
+    // resubmit the same PIN once before bouncing it back to the user — this
+    // automates the manual recovery ("New PIN" shows the same digits, which
+    // then work) and makes first-launch pairing succeed in one step.
     try {
-      await this.auth(["auth", "response", "--pin", trimmed]);
+      await this.auth(["auth", "request"]);
+      await new Promise((r) => setTimeout(r, this.cfg.pinRetryDelayMs ?? 1_000));
+      if (await this.tryPin(trimmed)) {
+        this.setState("paired", "Apple Passwords is paired for this app session");
+        return true;
+      }
     } catch {
-      // Never include the attempted PIN in state, audit, or logs.
-      this.setState("awaiting-pin", "PIN not accepted — request a new PIN and try again");
+      /* fall through to the user-facing failure */
+    }
+    this.setState("awaiting-pin", "PIN not accepted — request a new PIN and try again");
+    return false;
+  }
+
+  /** Submit a PIN and verify the session actually established. Never lets the
+   * attempted PIN reach state, audit, or logs. */
+  private async tryPin(pin: string): Promise<boolean> {
+    try {
+      await this.auth(["auth", "response", "--pin", pin]);
+    } catch {
       return false;
     }
-    if (!(await this.probePaired())) {
-      this.setState("awaiting-pin", "PIN not accepted — request a new PIN and try again");
-      return false;
-    }
-    this.setState("paired", "Apple Passwords is paired for this app session");
-    return true;
+    return this.probePaired();
   }
 
   /** True once the daemon answers a query with anything but INVALID_SESSION.

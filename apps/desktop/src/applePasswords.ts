@@ -43,8 +43,10 @@ export interface ApplePasswordsOptions {
   audit?: (event: string, fields: { [k: string]: JSONValue }) => void;
   /** Fired on every pairing-state change (push to the renderer). */
   onChange?: () => void;
-  /** Test seams: apw daemon start timeout + pairing-probe tuning. */
+  /** Test seams: apw daemon start timeout + pairing timing tuning. */
   startTimeoutMs?: number;
+  startSettleMs?: number;
+  pinRetryDelayMs?: number;
   pairProbeAttempts?: number;
   pairProbeIntervalMs?: number;
 }
@@ -95,6 +97,8 @@ export class ApplePasswords {
       this.daemon = new ApwDaemon({
         command: apwCommand,
         startTimeoutMs: this.opts.startTimeoutMs,
+        startSettleMs: this.opts.startSettleMs,
+        pinRetryDelayMs: this.opts.pinRetryDelayMs,
         pairProbeAttempts: this.opts.pairProbeAttempts,
         pairProbeIntervalMs: this.opts.pairProbeIntervalMs,
         audit: this.opts.audit,
