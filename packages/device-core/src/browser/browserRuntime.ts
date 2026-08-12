@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 export interface ResolvedBrowserRuntime {
   /** Argv that starts the browser server (before server-specific flags). */
   serverCommand: string[];
-  /** Argv that runs the 1Password broker (before its subcommand). */
-  opBrokerCommand: string[];
+  /** Argv that runs the vault credential broker (before its subcommand). */
+  credentialBrokerCommand: string[];
   /** Extra environment for both. */
   env: Record<string, string>;
   /** A complete camoufox install dir (contains config.json + browsers/), the
@@ -22,7 +22,7 @@ export interface ResolvedBrowserRuntime {
 
 interface Layout {
   pythonRoot: string; // contains Python.framework and site-packages
-  serverDir: string; // contains server.py and seed_op_broker/
+  serverDir: string; // contains server.py
   camoufoxDir: string; // contains <arch>/Camoufox.app (or Camoufox.app directly)
 }
 
@@ -63,7 +63,7 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   if (!fs.existsSync(py) || !fs.existsSync(server)) return null;
   return {
     serverCommand: [py, server],
-    opBrokerCommand: [py, "-m", "seed_op_broker"],
+    credentialBrokerCommand: [process.env.DOMO_VAULT_BROKER ?? "seed-vault-broker"],
     env: {
       PYTHONPATH: `${path.join(layout.pythonRoot, "site-packages")}:${layout.serverDir}`,
       PYTHONDONTWRITEBYTECODE: "1",
@@ -100,10 +100,10 @@ export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRun
     } catch {
       throw new Error(`DOMO_BROWSER_CMD is not a JSON argv array: ${cmdEnv}`);
     }
-    const opCmd = process.env.DOMO_OP_BROKER_CMD;
+    const brokerCmd = process.env.DOMO_VAULT_BROKER_CMD;
     return {
       serverCommand: argv,
-      opBrokerCommand: opCmd ? (JSON.parse(opCmd) as string[]) : argv,
+      credentialBrokerCommand: brokerCmd ? (JSON.parse(brokerCmd) as string[]) : argv,
       env: {},
       camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? null,
     };

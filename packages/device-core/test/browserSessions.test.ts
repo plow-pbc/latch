@@ -14,7 +14,7 @@ import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-cor
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
 );
-const FAKE_OP = fileURLToPath(new URL("../../../e2e/fixtures/fakeOpBroker.cjs", import.meta.url));
+const FAKE_BROKER = fileURLToPath(new URL("../../../e2e/fixtures/fakeVaultBroker.cjs", import.meta.url));
 
 interface Ctx {
   sessions: BrowserSessions;
@@ -69,8 +69,8 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
     audit,
   });
   const credentials = new CredentialBroker({
-    command: ["node", FAKE_OP],
-    env: { FAKE_OP_VAULT: vaultPath },
+    command: ["node", FAKE_BROKER],
+    env: { FAKE_BROKER_VAULT: vaultPath },
   });
   const sessions = new BrowserSessions(host, credentials, audit, 60_000);
   return { sessions, host, events, dir, fillLog };
@@ -284,7 +284,7 @@ describe("credentials", () => {
     expect(r.get("error").str).toContain("refused");
     expect(JSON.stringify(ctx.events)).not.toContain("sekret");
     const denied = ctx.events.filter((e) => e.event === "credential_denied");
-    expect(JSON.stringify(denied)).toContain("OpDenied");
+    expect(JSON.stringify(denied)).toContain("VaultDenied");
   });
 
   it("fill_secret refuses frames outside the session scope, allows approved card frames", async () => {

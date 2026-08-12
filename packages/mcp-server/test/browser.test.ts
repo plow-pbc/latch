@@ -1,6 +1,6 @@
 /**
  * The browser tool surface, end to end and in process — the MCP server on the
- * Mac driving a fake browser server + fake 1Password broker (no Python, no
+ * Mac driving a fake browser server + fake vault broker (no Python, no
  * Camoufox). A `Request` goes in, a `Response` comes out; the audit log is the
  * oracle and never holds a secret.
  *
@@ -19,7 +19,7 @@ import { callTool, parse, rpc } from "./client.js";
 
 const fixtures = fileURLToPath(new URL("../../../e2e/fixtures", import.meta.url));
 const FAKE_SERVER = path.join(fixtures, "fakeBrowserServer.cjs");
-const FAKE_OP = path.join(fixtures, "fakeOpBroker.cjs");
+const FAKE_BROKER = path.join(fixtures, "fakeVaultBroker.cjs");
 
 const AGENT: RelayAuth = { agent_id: "agent-1", agent_name: "Pizza Agent", scopes: ["relay:call"] };
 
@@ -55,8 +55,8 @@ function makeServer(
   const fillLog = path.join(dir, "fills.log");
   const runtime: ResolvedBrowserRuntime = {
     serverCommand: ["node", FAKE_SERVER],
-    opBrokerCommand: ["node", FAKE_OP],
-    env: { FAKE_OP_VAULT: writeVault(dir), FAKE_FILL_LOG: fillLog },
+    credentialBrokerCommand: ["node", FAKE_BROKER],
+    env: { FAKE_BROKER_VAULT: writeVault(dir), FAKE_FILL_LOG: fillLog },
     camoufoxInstallDir: null,
   };
   const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, undefined, runtime);

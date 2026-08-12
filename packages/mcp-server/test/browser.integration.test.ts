@@ -52,8 +52,8 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       ...base,
       env: {
         ...base.env,
-        PATH: `${path.join(fixtures, "fake-op")}:${process.env.PATH ?? ""}`,
-        FAKE_OP_VAULT: vaultPath,
+        PATH: `${path.join(fixtures, "fake-broker")}:${process.env.PATH ?? ""}`,
+        FAKE_BROKER_VAULT: vaultPath,
       },
     };
     device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), undefined, runtime);

@@ -50,7 +50,7 @@ Prefer a clear allow or deny; use ask sparingly.
 
 Browser intents ("Browse: …") grant navigation within the listed origins for a \
 WHOLE session of many actions, and credential intents authorize typing the named \
-1Password items into pages on those origins (values never reach the agent). \
+vault items into pages on those origins (values never reach the agent). \
 Judge the origin list against the concrete task: allow narrow, task-consistent \
 origin sets; deny broad or unrelated ones (huge wildcard sets, aggregator or \
 paste/upload sites unrelated to the stated merchant, origin lists that do not \

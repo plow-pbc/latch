@@ -10,7 +10,7 @@ export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
-    "owner's local credentials (1Password) without ever seeing the secret values. Use for " +
+    "owner's local credentials (their vault) without ever seeing the secret values. Use for " +
     "any task that requires visiting, reading, or acting on real websites: finding " +
     "information, comparing prices, filling forms, logging in, buying things.",
   body: `# Browsing on this Mac
@@ -56,7 +56,7 @@ url, title, links, forms, tables, pages, credentials, describe_item.
 ## Credentials (logins, cards) — values never reach you
 
 1. Open the session with \`credentials_metadata: true\` (or add it later via browser_request).
-2. On a login/checkout page: \`browser {action: "credentials"}\` lists the owner's 1Password
+2. On a login/checkout page: \`browser {action: "credentials"}\` lists the owner's vault
    items — titles, usernames, URLs, and whether each matches the current page. Metadata only.
 3. Pick the right item by reading the page. \`describe_item\` shows its field LABELS.
 4. Ask for fill rights: \`browser_request {session, credential_items: ["<item-id>"]}\` —

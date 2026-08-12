@@ -1,5 +1,5 @@
 /**
- * Thin wrapper over the vendored seed-op-broker CLI (1Password resolver).
+ * Thin wrapper over the seed-vault-broker CLI (our self-hosted vault resolver).
  * Every call is a short-lived process; secrets appear only in getField's
  * return value, which the caller must hand straight to the browser fill and
  * drop — never to the agent, never to the audit log.
@@ -18,11 +18,15 @@ export class CredentialError extends Error {
 }
 
 export interface CredentialBrokerConfig {
-  /** Argv prefix, e.g. [python, "-m", "seed_op_broker"] or a test fake. */
+  /** Argv prefix, e.g. ["seed-vault-broker"] or a test fake. */
   command: string[];
   env?: Record<string, string>;
-  /** Where seed-op-broker writes its own audit lines. */
-  opAuditPath?: string;
+  /** Where the broker writes its own audit lines. */
+  auditPath?: string;
+  /** Whose vault this machine reads, and the token that fetches that agent's
+   * access. Both come from the app's settings, not from a file next to the code. */
+  person?: string;
+  fleetToken?: string;
   timeoutMs?: number;
 }
 
@@ -47,14 +51,16 @@ export class CredentialBroker {
           env: {
             ...process.env,
             ...this.cfg.env,
-            ...(this.cfg.opAuditPath ? { SEED_OP_AUDIT: this.cfg.opAuditPath } : {}),
+            ...(this.cfg.auditPath ? { SEED_VAULT_AUDIT: this.cfg.auditPath } : {}),
+            ...(this.cfg.person ? { SEED_VAULT_PERSON: this.cfg.person } : {}),
+            ...(this.cfg.fleetToken ? { SEED_VAULT_TOKEN: this.cfg.fleetToken } : {}),
           },
           timeout: this.cfg.timeoutMs ?? 45_000,
           maxBuffer: 4 * 1024 * 1024,
         },
         (error, stdout, stderr) => {
           if (error) {
-            // seed-op-broker emits one JSON line {type, message} on stderr for
+            // the broker emits one JSON line {type, message} on stderr for
             // every typed failure; surface it as a structured error.
             try {
               const parsed = JSON.parse(stderr.trim().split("\n").pop() ?? "") as {

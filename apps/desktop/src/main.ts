@@ -127,7 +127,7 @@ class ElectronPolicy implements PolicyDelegate {
 }
 
 /**
- * Resolve credential item ids to titles via the LOCAL 1Password broker so the
+ * Resolve credential item ids to titles via the LOCAL vault broker so the
  * approval card can show what the ids actually are. Never taken from the
  * intent — agent-supplied titles would be spoofable. Unresolvable ids render
  * as raw ids flagged "unknown item" (a deny signal for the human).

@@ -74,9 +74,11 @@ export class DeviceAgent {
         audit: auditFn,
       });
       const credentials = new CredentialBroker({
-        command: browserRuntime.opBrokerCommand,
+        command: browserRuntime.credentialBrokerCommand,
         env: browserRuntime.env,
-        opAuditPath: path.join(browserDir, "op-audit.log"),
+        auditPath: path.join(browserDir, "credential-audit.log"),
+        person: process.env.DOMO_VAULT_PERSON,
+        fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);

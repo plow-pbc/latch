@@ -380,7 +380,7 @@ export const TOOLS: ToolSpec[] = [
       "Open a supervised anti-detection browser session on this Mac, scoped to the listed site " +
       "origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
-      "permission to list the owner's 1Password item names (never values). Returns a session " +
+      "permission to list the owner's vault item names (never values). Returns a session " +
       "handle for the 'browser' tool. Read the camoufox-browsing skill first.",
     inputSchema: {
       type: "object",
@@ -393,7 +393,7 @@ export const TOOLS: ToolSpec[] = [
         },
         credentials_metadata: {
           type: "boolean",
-          description: "Also request 1Password metadata listing (default false)",
+          description: "Also request vault metadata listing (default false)",
         },
         goal: GOAL,
       },
@@ -427,7 +427,7 @@ export const TOOLS: ToolSpec[] = [
     name: "browser_request",
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
-      "popup went to paypal.com) and/or permission to fill specific 1Password items into pages " +
+      "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
       "(find item ids via the browser tool's 'credentials' action). Secret values are never " +
       "revealed to you; they are typed into the page on this Mac.",
     inputSchema: {
@@ -439,7 +439,7 @@ export const TOOLS: ToolSpec[] = [
         credential_items: {
           type: "array",
           items: { type: "string" },
-          description: "1Password item ids to make fillable",
+          description: "vault item ids to make fillable",
         },
         goal: GOAL,
       },
@@ -482,7 +482,7 @@ export const TOOLS: ToolSpec[] = [
       "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages, " +
       "credentials, describe_item. 'screenshot' returns an image of the page — take one after " +
-      "every navigation to see where you are. 'credentials' lists 1Password items relevant to " +
+      "every navigation to see where you are. 'credentials' lists vault items relevant to " +
       "the current page (metadata only); 'fill_secret' types an approved item's field into a form " +
       "field without ever showing you the value. Actions on pages outside the approved origins are " +
       "refused — use browser_request to widen scope. Every result includes the current url and " +
@@ -505,7 +505,7 @@ export const TOOLS: ToolSpec[] = [
         value: { type: "string", description: "fill: literal text to type (non-secret)" },
         expression: { type: "string", description: "eval: JS expression (top frame)" },
         index: { type: "integer", description: "use_page: page index from 'pages'" },
-        item: { type: "string", description: "fill_secret / describe_item: 1Password item id" },
+        item: { type: "string", description: "fill_secret / describe_item: vault item id" },
         field: { type: "string", description: "fill_secret: field label from describe_item (or 'totp')" },
         direction: { type: "string", description: "scroll: down|up|bottom|top" },
         seconds: { type: "number", description: "wait: seconds" },
