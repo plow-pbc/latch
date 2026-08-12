@@ -129,7 +129,10 @@ describe("the recall blessed tool", () => {
     // passed: seeding builds from one conversation, so a description claiming
     // everyone the owner talks to turns `[]` into an authoritative "no such fact".
     expect(tool!.description).toMatch(/messages most/i);
+    // The disclaiming half, not just the phrase: inverting it to "an empty
+    // result means no such fact exists" is the regression being prevented.
     expect(tool!.description).toMatch(/empty result/i);
+    expect(tool!.description).toMatch(/not evidence/i);
   });
 
   it("returns the store's facts through invoke", async () => {
