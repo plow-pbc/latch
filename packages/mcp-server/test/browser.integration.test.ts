@@ -1,7 +1,7 @@
 /**
  * The heavy tier: REAL Python runtime + REAL Camoufox driving a local
- * pizza-checkout fixture site through the whole MCP server, with the real
- * seed_op_broker resolving credentials from a fake `op` binary.
+ * pizza-checkout fixture site through the whole MCP server, with a fake
+ * credential broker standing in for the bundled seed_vault_broker.
  *
  * Opt-in: skipped unless DOMO_BROWSER_RUNTIME and DOMO_CAMOUFOX are set (run via
  * `just test-browser` after `just fetch-browser-runtime fetch-browser`).
@@ -50,11 +50,11 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     const base = resolveBrowserRuntime()!;
     const runtime = {
       ...base,
-      env: {
-        ...base.env,
-        PATH: `${path.join(fixtures, "fake-broker")}:${process.env.PATH ?? ""}`,
-        FAKE_BROKER_VAULT: vaultPath,
-      },
+      // The broker now ships inside the app and is run by absolute path, so a
+      // PATH shim can no longer stand in for it — name the fake outright, or
+      // this test would read the real vault.
+      credentialBrokerCommand: [path.join(fixtures, "fake-broker", "seed-vault-broker")],
+      env: { ...base.env, FAKE_BROKER_VAULT: vaultPath },
     };
     device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), undefined, runtime);
     server = createDomoMcpServer(device);

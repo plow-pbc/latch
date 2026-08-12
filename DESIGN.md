@@ -294,7 +294,7 @@ repo can prove they broke nothing.
 | `domo-mcp` | exec | stdio↔socket MCP shim for Claude Code |
 | `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Goals/Rules/Audit window, agent spin-up |
 
-## 11a. Local browsing (Camoufox + 1Password)
+## 11a. Local browsing (Camoufox + self-hosted vault)
 
 The device can host a real anti-detection Firefox (Camoufox, driven by
 Playwright through a vendored Python server — `vendor/browser-server/`,
@@ -328,11 +328,12 @@ eval can't exfiltrate anything `screenshot`/`text` couldn't already carry over
 MCP.
 
 **Credentials.** A `credential` capability is separate and explicit on the
-approval card: `access: "metadata"` (list 1Password item names/field labels —
-never values) or `access: "fill"` with item ids. The vendored `seed_op_broker`
-CLI wraps `op` (a service-account token scoped to one vault). `fill_secret`
+approval card: `access: "metadata"` (list vault item names/field labels —
+never values) or `access: "fill"` with item ids. The vendored
+`seed_vault_broker` CLI wraps the bundled `bw` (an agent account scoped to one
+vault's collections). `fill_secret`
 is the strongest gate, in order: item ∈ approved set → the selector is located
-to its owning frame → the frame's origin ∈ session scope → `seed-op-broker
+to its owning frame → the frame's origin ∈ session scope → `seed-vault-broker
 get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
 check applies; credit cards deliberately pass — they are meant for any
 merchant) → a frame-targeted fill → the value is dropped. Secret values never

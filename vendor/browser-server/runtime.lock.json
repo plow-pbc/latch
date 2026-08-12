@@ -16,5 +16,18 @@
         "sha256": "6e0efd66f6db46bece072827cb2c5a4851bca822ff4fed95b8a0c2fb6f61a3d4"
       }
     }
+  },
+  "vaultCli": {
+    "version": "2026.7.0",
+    "assets": {
+      "arm64": {
+        "url": "https://github.com/bitwarden/clients/releases/download/cli-v2026.7.0/bw-oss-macos-arm64-2026.7.0.zip",
+        "sha256": "b07673ed1364df5843d7a02b1fdb58472e67cd4ef45d877fc057c36165007be0"
+      },
+      "x64": {
+        "url": "https://github.com/bitwarden/clients/releases/download/cli-v2026.7.0/bw-oss-macos-2026.7.0.zip",
+        "sha256": "3013eee9970ca2f3e6a54ddbe7ffd377e61bc6dd81f272ff660d6850529dc012"
+      }
+    }
   }
 }

@@ -27,6 +27,7 @@ const serverDir = path.join(vendorDir, "browser-server");
 const runtimeDir = path.join(vendorDir, "python-runtime");
 const downloadsDir = path.join(vendorDir, "downloads");
 const browserDir = path.join(vendorDir, "camoufox-browser");
+const vaultCliDir = path.join(vendorDir, "vault-cli");
 
 const lock = JSON.parse(fs.readFileSync(path.join(serverDir, "runtime.lock.json"), "utf8"));
 const requirementsPath = path.join(serverDir, "requirements.txt");
@@ -492,6 +493,51 @@ function signCamoufox(arch, identity) {
 }
 
 // ---------------------------------------------------------------------------
+// Vault CLI payload (the credential broker's `bw`)
+// ---------------------------------------------------------------------------
+/**
+ * Unpacks Bitwarden's standalone CLI into vendor/vault-cli/<arch>/bw, so the
+ * broker finds one inside the app and the user installs nothing. Same shape as
+ * the camoufox payload: hash-pinned zip, per-arch tree, .sha256 marker.
+ *
+ * The pinned asset is the `bw-oss-*` build deliberately: the plain `bw-*` one
+ * carries Bitwarden-Licensed code we have no right to redistribute.
+ */
+function fetchVaultCli(arch) {
+  const asset = lock.vaultCli.assets[arch === "arm64" ? "arm64" : "x64"];
+  const installRoot = path.join(vaultCliDir, arch);
+  const marker = path.join(installRoot, ".sha256");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
+    log(`vault cli ${arch} up to date`);
+    return;
+  }
+  const zipDest = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
+  download(asset.url, asset.sha256, zipDest);
+  log(`extracting vault cli (${arch})`);
+  fs.rmSync(installRoot, { recursive: true, force: true });
+  fs.mkdirSync(installRoot, { recursive: true });
+  run("ditto", ["-x", "-k", zipDest, installRoot]);
+  const bw = path.join(installRoot, "bw");
+  if (!fs.existsSync(bw)) throw new Error(`no bw binary in ${asset.url}`);
+  fs.chmodSync(bw, 0o755); // the zip is built on CI; don't trust its mode bits
+  fs.writeFileSync(marker, asset.sha256);
+  log(`vault cli ${arch} ready at ${installRoot}`);
+}
+
+/** Developer ID + helper entitlements (it is a Node build — V8 needs JIT). */
+function signVaultCli(arch, identity) {
+  const bw = path.join(vaultCliDir, arch, "bw");
+  if (!fs.existsSync(bw)) return;
+  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
+  run(
+    "codesign",
+    ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, bw],
+    { quiet: true },
+  );
+  log(`signed vault cli (${arch}) with Developer ID`);
+}
+
+// ---------------------------------------------------------------------------
 try {
   const builtArches = [];
   buildRuntime(); // stamp-cached: fast no-op once built
@@ -500,6 +546,7 @@ try {
     const arches = wantBoth ? ["arm64", "x86_64"] : [hostArch];
     for (const a of arches) {
       fetchBrowser(a);
+      fetchVaultCli(a);
       builtArches.push(a);
     }
   }
@@ -510,7 +557,10 @@ try {
   const identity = process.env.CODESIGN_IDENTITY;
   if (identity) {
     signRuntime(identity);
-    for (const a of builtArches) signCamoufox(a, identity);
+    for (const a of builtArches) {
+      signCamoufox(a, identity);
+      signVaultCli(a, identity);
+    }
   } else {
     log("CODESIGN_IDENTITY not set — keeping existing/ad-hoc signatures (dev mode)");
   }

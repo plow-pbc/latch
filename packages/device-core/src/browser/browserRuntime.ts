@@ -22,32 +22,42 @@ export interface ResolvedBrowserRuntime {
 
 interface Layout {
   pythonRoot: string; // contains Python.framework and site-packages
-  serverDir: string; // contains server.py
+  serverDir: string; // contains server.py and seed_vault_broker/
   camoufoxDir: string; // contains <arch>/Camoufox.app (or Camoufox.app directly)
+  vaultCliDir: string; // contains <arch>/bw (or bw directly)
 }
 
-/** Packaged: Contents/Resources/browser-runtime/{python,server,camoufox}. */
+/** Packaged: Contents/Resources/browser-runtime/{python,server,camoufox,vault-cli}. */
 function packagedLayout(dir: string): Layout {
   return {
     pythonRoot: path.join(dir, "python"),
     serverDir: path.join(dir, "server"),
     camoufoxDir: path.join(dir, "camoufox"),
+    vaultCliDir: path.join(dir, "vault-cli"),
   };
 }
 
-/** Dev: repo vendor/{python-runtime,browser-server,camoufox-browser}. */
+/** Dev: repo vendor/{python-runtime,browser-server,camoufox-browser,vault-cli}. */
 function vendorLayout(dir: string): Layout {
   return {
     pythonRoot: path.join(dir, "python-runtime"),
     serverDir: path.join(dir, "browser-server"),
     camoufoxDir: path.join(dir, "camoufox-browser"),
+    vaultCliDir: path.join(dir, "vault-cli"),
   };
 }
 
+const hostArch = (): string => (process.arch === "arm64" ? "arm64" : "x86_64");
+
 function camoufoxIn(dir: string): string | null {
-  const arch = process.arch === "arm64" ? "arm64" : "x86_64";
-  const candidates = [path.join(dir, arch), dir];
+  const candidates = [path.join(dir, hostArch()), dir];
   return candidates.find((c) => fs.existsSync(path.join(c, "config.json"))) ?? null;
+}
+
+/** The `bw` we ship, this machine's arch. Null falls back to one on PATH. */
+function vaultCliIn(dir: string): string | null {
+  const candidates = [path.join(dir, hostArch(), "bw"), path.join(dir, "bw")];
+  return candidates.find((c) => fs.existsSync(c)) ?? null;
 }
 
 function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
@@ -61,13 +71,19 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   );
   const server = path.join(layout.serverDir, "server.py");
   if (!fs.existsSync(py) || !fs.existsSync(server)) return null;
+  // The broker ships as a module next to server.py and runs on the same
+  // bundled interpreter; the vault CLI it shells out to ships beside it. Both
+  // env vars are overrides the broker already supports, so a machine with its
+  // own install can still be pointed at that instead.
+  const bw = process.env.SEED_VAULT_BW ?? vaultCliIn(layout.vaultCliDir);
   return {
     serverCommand: [py, server],
-    credentialBrokerCommand: [process.env.DOMO_VAULT_BROKER ?? "seed-vault-broker"],
+    credentialBrokerCommand: [py, "-m", "seed_vault_broker"],
     env: {
       PYTHONPATH: `${path.join(layout.pythonRoot, "site-packages")}:${layout.serverDir}`,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONNOUSERSITE: "1",
+      ...(bw ? { SEED_VAULT_BW: bw } : {}),
     },
     camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? camoufoxIn(layout.camoufoxDir),
   };
