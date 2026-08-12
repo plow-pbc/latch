@@ -6,7 +6,11 @@
 # is left here is build, test, and running the app against its local state.
 
 root    := justfile_directory()
-nethome := env_var('HOME') / ".domo"
+# Defaults to the real ~/.domo, but an inherited DOMO_HOME wins — every recipe
+# below hardcodes `DOMO_HOME="{{nethome}}"`, so without the fallback a caller's
+# `DOMO_HOME=$(mktemp -d) just app` was silently discarded and the "clean first
+# run" documented in docs/TESTING-THE-APP.md wrote to the operator's real state.
+nethome := env_var_or_default('DOMO_HOME', env_var('HOME') / ".domo")
 
 _default:
     @just --list
