@@ -299,7 +299,7 @@ Set Up window when `app/settings.json` holds no `relayCredential`:
 # A clean first run, your real state untouched. Both overrides are needed:
 # DOMO_HOME isolates what the app writes, DOMO_LTMM_BIN stops it launching the
 # real `ltmm` at your real message archive on every start.
-DOMO_HOME=$(mktemp -d) DOMO_LTMM_BIN=/usr/bin/true just app
+DOMO_HOME=$(mktemp -d) DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh just app
 rm ~/.domo/app/settings.json             # or reset the real one
 ```
 
@@ -308,8 +308,11 @@ anything that writes state.
 
 `DOMO_LTMM_BIN` is the second half of that rule and it is easy to miss, because the state it
 protects lives *outside* `DOMO_HOME`. On launch the app spawns `ltmm run`, a multi-hour batch over
-years of your messages; pointing it at `/usr/bin/true` makes the spawn a no-op. The drive harnesses
-(`just first-run-drive`, `just approve-drive`) set it themselves.
+years of your messages; pointing it at the stub makes that spawn a no-op. Use
+`scripts/ltmm-stub.sh` rather than `/usr/bin/true` — the same variable also selects the binary
+`recall` runs, and `true` exits with empty stdout, which makes every recall in the session fail as
+if ltmm were broken. The stub emits `[]`, so recall answers honestly that it knows nothing. The
+drive harnesses (`just first-run-drive`, `just approve-drive`) set it themselves.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:

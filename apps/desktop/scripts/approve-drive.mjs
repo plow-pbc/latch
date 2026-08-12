@@ -117,8 +117,11 @@ async function main() {
   process.env.DOMO_HOME = home;
   process.env.DOMO_API_BASE_URL = API_BASE;
   // Not covered by DOMO_HOME: seeding spawns the installed `ltmm`, which builds
-  // against the operator's real archive regardless of where the app writes.
-  process.env.DOMO_LTMM_BIN = "/usr/bin/true";
+  // against the operator's real archive regardless of where the app writes. The
+  // stub answers both gateway operations, which matters here in particular --
+  // this drive makes real tunnelled tool calls, so a stand-in that broke recall
+  // would surface as a recall bug rather than a harness choice.
+  process.env.DOMO_LTMM_BIN = path.join(dir, "ltmm-stub.sh");
   say(`DOMO_HOME ${home}`);
   say(`API base ${API_BASE} — the app will dial ${API_BASE.replace(/^http/, "ws")}/v1/relay/ws`);
 
