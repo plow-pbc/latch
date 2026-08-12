@@ -485,9 +485,10 @@ app.whenReady().then(async () => {
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
 
-  // After the window is up, so the marker probe cannot delay first paint. This
-  // returns immediately — the build itself is a detached child that outlives us.
-  console.log(`[seed] fact store: ${seedIfMissing(seedDeps(home))}`);
+  // After the window is up, so the liveness check cannot delay first paint, and
+  // not awaited: nothing here needs the answer, and the build itself is a
+  // detached child that outlives us.
+  void seedIfMissing(seedDeps(home)).then((outcome) => console.log(`[seed] build: ${outcome}`));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

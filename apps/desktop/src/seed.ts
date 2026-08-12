@@ -9,7 +9,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 
 /**
  * `started` means the spawn was *attempted*, not that ltmm is running: spawn
@@ -21,7 +21,7 @@ import { execFileSync, spawn } from "node:child_process";
 export type SeedOutcome = "started" | "already-running";
 
 export interface SeedDeps {
-  buildIsRunning(): boolean;
+  buildIsRunning(): Promise<boolean>;
   /** Spawn the build *and* write down its pid. One act, not two. */
   startBuild(bin: string, args: string[]): void;
 }
@@ -63,36 +63,63 @@ function recordedBuild(home: string): { pid: number; startedAt: number } | null 
  */
 const START_TOLERANCE_MS = 5_000;
 
-function isRunning(record: { pid: number; startedAt: number } | null): boolean {
+/** When `ps` exits 1 it has answered: no process holds that pid. */
+function psSaidNoSuchProcess(error: unknown): boolean {
+  // A spawn failure sets `code` to a string errno instead of an exit status,
+  // and a timeout sets `killed` -- neither is an answer to the question.
+  const e = error as { code?: unknown; killed?: boolean };
+  return e.killed !== true && e.code === 1;
+}
+
+/**
+ * Identity, not liveness. A pid is a slot the OS reuses: macOS hands them out
+ * sequentially and wraps at 99999, so on a Mac with weeks of uptime the number
+ * recorded for a finished build comes back around to something else the user is
+ * running -- and since nothing rewrites this record, believing it would skip
+ * seeding for as long as that process lives.
+ *
+ * Pid plus start time is the durable identity. Deliberately NOT `comm`: `ltmm`
+ * is a Python console script, and `ps -o comm=` reports the interpreter for a
+ * shebang script (measured: a `#!/bin/sh` script reports `/bin/sh`), so
+ * name-matching would fail for the real binary and respawn a duplicate build on
+ * every launch. Deliberately NOT boot-time arithmetic either: comparing a
+ * recorded wall clock against one re-derived from uptime breaks under an NTP
+ * correction. Both sides here are the same wall-clock instant, recorded once.
+ *
+ * Async because this is a fork+exec, and its one caller runs on the Electron
+ * main thread during app-ready: done synchronously it freezes the tray, the
+ * window and the relay pump for as long as it takes.
+ */
+async function isRunning(record: { pid: number; startedAt: number } | null): Promise<boolean> {
   if (record === null) return false;
+  let lstart: string;
   try {
-    // Identity, not liveness. A pid is a slot the OS reuses: macOS hands them
-    // out sequentially and wraps at 99999, so on a Mac with weeks of uptime the
-    // number recorded for a finished build comes back around to something else
-    // the user is running -- and since nothing rewrites this record, believing
-    // it would skip seeding for as long as that process lives.
-    //
-    // Pid plus start time is the durable identity. Deliberately NOT `comm`:
-    // `ltmm` is a Python console script, and `ps -o comm=` reports the
-    // interpreter for a shebang script (measured: a `#!/bin/sh` script reports
-    // `/bin/sh`), so name-matching would fail for the real binary and respawn a
-    // duplicate build on every launch. Deliberately NOT boot-time arithmetic
-    // either: comparing a recorded wall clock against one re-derived from
-    // uptime breaks under an NTP correction, and errs toward a second build.
-    // Both sides here are the same wall-clock instant, recorded once.
-    const lstart = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(record.pid)], {
-      encoding: "utf8",
-      timeout: 5_000,
-    }).trim();
-    const actualStart = Date.parse(lstart);
-    return (
-      !Number.isNaN(actualStart) && Math.abs(actualStart - record.startedAt) <= START_TOLERANCE_MS
-    );
-  } catch {
-    // No such process, or ps itself failed. Falls through to running the build,
-    // the safe direction everywhere in this file.
-    return false;
+    lstart = await psStart(record.pid);
+  } catch (probeFailed) {
+    if (psSaidNoSuchProcess(probeFailed)) return false;
+    // We could not ask -- a fork-exhausted machine, EMFILE, a timeout. Being
+    // unable to ask is not an answer, and reading it as "the build is dead"
+    // starts a second multi-hour build over the same messages. Defer instead:
+    // this launch skips, the record is probed again on the next one, so no
+    // failure here can skip seeding permanently.
+    console.log(`[seed] could not check the running build: ${String(probeFailed)}`);
+    return true;
   }
+  const actualStart = Date.parse(lstart);
+  return (
+    !Number.isNaN(actualStart) && Math.abs(actualStart - record.startedAt) <= START_TOLERANCE_MS
+  );
+}
+
+function psStart(pid: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "/bin/ps",
+      ["-o", "lstart=", "-p", String(pid)],
+      { timeout: 5_000 },
+      (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
+    );
+  });
 }
 
 export const liveDeps = (home: string): SeedDeps => ({
@@ -127,8 +154,8 @@ export const liveDeps = (home: string): SeedDeps => ({
   },
 });
 
-export function seedIfMissing(deps: SeedDeps): SeedOutcome {
-  if (deps.buildIsRunning()) return "already-running";
+export async function seedIfMissing(deps: SeedDeps): Promise<SeedOutcome> {
+  if (await deps.buildIsRunning()) return "already-running";
   // Deliberately unguarded, and that rests on the binary name being non-empty
   // rather than on the argv being constant: `spawn("")` throws
   // ERR_INVALID_ARG_VALUE *synchronously*, before any child exists to emit
