@@ -35,7 +35,7 @@ echo "worktree:      $name"
 echo "main checkout: $main_root"
 
 # --- browser runtime: clone from the main checkout -------------------------
-for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads; do
+for dir in vendor/python-runtime vendor/camoufox-browser vendor/apw-runtime vendor/downloads; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -d "$main_root/$dir" ]]; then
