@@ -34,12 +34,20 @@ import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
 // Quit items, and dock title read "Domo Desktop" instead of "Electron".
-app.setName("Domo Desktop");
+// DOMO_WORKTREE (set by `just app` in a linked git worktree, empty on main)
+// suffixes the name, which also moves Electron's userData dir — two instances
+// sharing one userData contend on Chromium's LevelDB locks — and makes the
+// two instances tellable apart on screen. Main keeps the plain name and the
+// default locations.
+const worktree = (process.env.DOMO_WORKTREE ?? "").trim();
+app.setName(worktree ? `Domo Desktop (${worktree})` : "Domo Desktop");
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
 
-const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
+const home =
+  process.env.DOMO_HOME ??
+  path.join(app.getPath("appData"), worktree ? `Domo (${worktree})` : "Domo");
 
 /**
  * Which Plow this build talks to. Baked in — every build points at production,
@@ -578,7 +586,7 @@ function setupTray(): void {
   // pipeline; a real template image ships with the packaged app.
   const image = nativeImage.createEmpty();
   tray = new Tray(image);
-  tray.setToolTip("Domo");
+  tray.setToolTip(worktree ? `Domo (${worktree})` : "Domo");
   const menu = Menu.buildFromTemplate([
     { label: "Open Domo", click: () => createMainWindow() },
     { type: "separator" },

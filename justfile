@@ -6,13 +6,27 @@
 # is left here is build, test, and running the app against its local state.
 
 root    := justfile_directory()
-nethome := env_var('HOME') / ".domo"
+# Empty in the main checkout; the normalized branch name in a linked git
+# worktree. Worktrees get their own state (home, screenshots, Electron
+# userData) keyed on this name so two checkouts can build and run side by
+# side; the main checkout keeps the historical defaults. See
+# scripts/worktree-setup.sh.
+worktree := `sh scripts/worktree-name.sh`
+nethome := if worktree == "" {
+    env_var('HOME') / ".domo"
+  } else {
+    env_var('HOME') / ".domo-worktrees" / worktree
+  }
 # Where `just app` keeps state when DOMO_API_BASE_URL points somewhere other
 # than production. A credential is only valid against the environment that
 # minted it, so `export DOMO_API_BASE_URL=…; just app` must never write a local
 # credential into the production install's settings file. An explicit DOMO_HOME
 # still wins.
-localhome := env_var('HOME') / ".domo-local"
+localhome := if worktree == "" {
+    env_var('HOME') / ".domo-local"
+  } else {
+    env_var('HOME') / ".domo-worktrees" / (worktree + "-local")
+  }
 apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
     env_var_or_default("DOMO_HOME", "")
   } else if env_var_or_default("DOMO_API_BASE_URL", "") != "" {
@@ -20,6 +34,10 @@ apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
   } else {
     nethome
   }
+# Where the evidence scripts drop screenshots. Per-worktree so simultaneous
+# runs don't clobber each other's output; explicit OUT/OUT_DIR/SETTINGS_OUT
+# env vars still win inside the recipes.
+outdir := if worktree == "" { "/tmp" } else { "/tmp/domo-" + worktree }
 
 _default:
     @just --list
@@ -85,7 +103,13 @@ test-browser: build
 # Info.plists and would break any earlier signature). CODESIGN_IDENTITY is
 # passed to electron-builder so the hook can sign; the build step itself leaves
 # the payload unsigned (afterPack is authoritative).
-package profile="domo-notary": build
+# Packaging runs from the main checkout only: worktrees share the per-user
+# electron-builder caches and the signing/notary keychain state, so concurrent
+# packages would race, and the DMG should come from main anyway.
+_main-only:
+    @if [ -n "{{worktree}}" ]; then echo "error: just package runs from the main checkout only (this is worktree '{{worktree}}')" >&2; exit 1; fi
+
+package profile="domo-notary": _main-only build
     node scripts/build-browser-runtime.mjs --browser-both
     cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac
 
@@ -100,22 +124,32 @@ package profile="domo-notary": build
 #   just app                                            # production, {{nethome}}
 #   DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, {{localhome}}
 #   DOMO_HOME=~/.domo-x just app                        # an explicit home wins
+#
+# In a linked git worktree both defaults move under ~/.domo-worktrees/<branch>
+# so worktrees run side by side with main. Each home signs in on its own —
+# never copy a relay credential between homes (the relay does not support two
+# devices on one credential).
 
-# Launch the desktop app.
+# Launch the desktop app. DOMO_WORKTREE brands a worktree's instance (app
+# name, tray tooltip, Electron userData dir) so it never collides with the
+# main checkout's; it is empty — and changes nothing — on main.
 app: build
-    DOMO_HOME="{{apphome}}" npx electron "{{root}}/apps/desktop"
+    DOMO_HOME="{{apphome}}" DOMO_WORKTREE="{{worktree}}" npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build
-    DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/verify-preload.mjs
+    @mkdir -p "{{outdir}}"
+    DOMO_HOME="{{apphome}}" SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" npx electron apps/desktop/scripts/verify-preload.mjs
 
 # Screenshot the approval dialog (evidence that it names the calling agent).
 approval-screenshot: build
-    DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/approval-screenshot.mjs
+    @mkdir -p "{{outdir}}"
+    DOMO_HOME="{{apphome}}" OUT="${OUT:-{{outdir}}/approval-dialog.png}" npx electron apps/desktop/scripts/approval-screenshot.mjs
 
 # Screenshot every first-run login screen. Fails if a screen lost its content.
 onboarding-screenshots: build
-    DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/onboarding-screenshot.mjs
+    @mkdir -p "{{outdir}}"
+    DOMO_HOME="{{apphome}}" OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/onboarding-screenshot.mjs
 
 # First-run login end to end from a clean home, with the no-credential-in-a-log
 # grep. Fails if any check fails.
@@ -128,21 +162,23 @@ slow-approval-transcript: build
 
 # Print this Mac's device id (once the app has created its identity).
 device-id:
-    @node -e 'try{console.log(JSON.parse(require("fs").readFileSync("{{nethome}}/device/identity.json")).deviceId)}catch{console.log("(no device identity yet — launch the app once: just app)")}'
+    @node -e 'try{console.log(JSON.parse(require("fs").readFileSync("{{apphome}}/device/identity.json")).deviceId)}catch{console.log("(no device identity yet — launch the app once: just app)")}'
 
 # Show the device's audit log (the record of everything that happened).
 audit:
-    @cat "{{nethome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
+    @cat "{{apphome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
 
-# Wipe the entire app home (identity, rules, audit log, settings).
+# Wipe THIS checkout's app home (identity, rules, audit log, settings) — on a
+# worktree that is the worktree's home, never the main checkout's.
 clean:
-    rm -rf "{{nethome}}"
-    @echo "wiped {{nethome}}"
+    rm -rf "{{apphome}}"
+    @echo "wiped {{apphome}}"
 
 # Drive the REAL app through the whole first run with REAL key and mouse
 # events. The harness that catches a panel nobody can type in.
 first-run-drive: build
-    OUT_DIR="${OUT_DIR:-/tmp}" npx electron apps/desktop/scripts/first-run-drive.mjs
+    @mkdir -p "{{outdir}}"
+    OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/first-run-drive.mjs
 
 # The app half of the acceptance run: launch already signed in against a stack
 # someone else is driving, wait for the socket, and click approvals for real.
