@@ -134,10 +134,7 @@ device-id:
 
 # Show the device's audit log (the record of everything that happened).
 audit:
-    @# -s, not cat's exit status: the log is now created empty at startup, so a
-    @# launch with no approvals yet leaves a zero-byte file that cats successfully
-    @# and would print nothing instead of the hint.
-    @[ -s "{{nethome}}/device/audit.ndjson" ] && cat "{{nethome}}/device/audit.ndjson" || echo "(no audit log yet — approve something in the app first)"
+    @cat "{{nethome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
 
 # Wipe the entire app home (identity, rules, audit log, settings).
 clean:

@@ -53,13 +53,18 @@ export class BlessedToolRegistry {
     });
     registry.register({
       name: "recall",
+      // The scope and the empty-result sentence are load-bearing: seeding builds
+      // from one conversation, so promising facts about everyone the owner talks
+      // to made `[]` read as "no such fact" rather than "not in this store".
       description:
-        "Recall durable facts about the people this Mac's owner communicates with — " +
-        "work, relationships, preferences, commitments — drawn from their message " +
-        "archive. Each fact carries the dates it was observed and the ids of the " +
-        "messages it rests on. Returns facts only, never message text. Call this " +
-        "when the task depends on something about a person that the conversation " +
-        "does not already state.",
+        "Recall durable facts about the person this Mac's owner messages most, and the " +
+        "people who come up in that conversation — work, relationships, preferences, " +
+        "commitments — drawn from its history. Each fact carries the dates it was " +
+        "observed and the ids of the messages it rests on. Returns facts only, never " +
+        "message text. Call this when the task depends on something about that person " +
+        "the conversation does not already state. An empty result means this store " +
+        "holds nothing on the subject — it is not evidence that no such fact exists, " +
+        "and says nothing about anyone outside that conversation.",
       inputSchema: {
         type: "object",
         properties: {

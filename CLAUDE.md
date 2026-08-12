@@ -86,7 +86,10 @@ the real thing.
   because seatbelt enforces against physical paths. `fs.realpathSync` is
   `realpath(3)` and preserves `/private` — don't swap in anything that
   normalizes differently.
-- **Everything honors `DOMO_HOME`** so tests use throwaway roots.
+- **Domo's own state honors `DOMO_HOME`** so tests use throwaway roots. It does
+  not cover the LTMM fact store: launch also spawns `ltmm run`, a multi-hour
+  build over the owner's real messages, so an isolated launch must set
+  `DOMO_LTMM_BIN` too (`apps/desktop/scripts/ltmm-stub.sh`).
 - Unix socket paths are capped ~104 chars; keep test `DOMO_HOME` short.
 - `DOMO_DEBUG_SANDBOX=1` dumps generated seatbelt profiles to stderr.
 - **Canonical JSON is signature-critical.** Object keys sort by code unit (ASCII

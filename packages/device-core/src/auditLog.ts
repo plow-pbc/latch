@@ -13,30 +13,7 @@ export class AuditLog {
   readonly events = new EventEmitter();
 
   constructor(public readonly file: string) {
-    // 0700 on the directory, because the per-file rule does not cover the
-    // directory's other occupants: identity.json, approvals and settings.json
-    // each remember to chmod themselves, but rules.json and scratch/ do not, and
-    // the next file added here would have to remember too. One mode on the
-    // container is the version of this protection that cannot be forgotten.
-    //
-    // The chmod is the load-bearing line, not the mode: DeviceAgent builds the
-    // identity one line before the log, and identity.ts creates `device/` with a
-    // plain recursive mkdir, so by the time this runs the directory already
-    // exists at 0755 and a creation mode does nothing. Do not delete the chmod
-    // as redundant -- it is the only line that tightens the real path.
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.chmodSync(path.dirname(file), 0o700);
-    // 0600, like the identity store and settings.json. This is not belt-and-
-    // braces: `tool_error` deliberately records the detail withheld from the
-    // calling agent -- absolute store paths, backend endpoints -- so a log other
-    // local accounts can read hands over exactly what the wire withholds. Under
-    // the default 0022 umask an appendFileSync-created file lands 0644.
-    //
-    // Done once, here, rather than per event: creating with a mode does nothing
-    // to a file that already exists, which is what the chmod is for, and both
-    // append and truncate preserve the mode of an existing file.
-    fs.appendFileSync(file, "", { mode: 0o600 });
-    fs.chmodSync(file, 0o600);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
   }
 
   record(event: string, fields: { [k: string]: JSONValue | undefined } = {}): void {

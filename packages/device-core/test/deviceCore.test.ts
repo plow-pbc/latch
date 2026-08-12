@@ -15,6 +15,7 @@ import {
 } from "@domo/protocol";
 import {
   AuditLog,
+  DeviceAgent,
   FileOps,
   FileOpsError,
   HeadlessPolicy,
@@ -187,39 +188,33 @@ describe("AuditLog", () => {
       .filter((l) => l.length > 0);
     expect(lines).toHaveLength(2);
   });
+});
 
-  it("is readable only by its owner, however it came to exist", () => {
-    // The log records the diagnostics deliberately withheld from the calling
-    // agent, so another local account being able to read it hands over exactly
-    // what the wire withholds. Both paths matter: a fresh file must be created
-    // 0600, and a log left 0644 by an earlier version must be tightened rather
-    // than trusted — creating with a mode does nothing to an existing file.
-    const fresh = path.join(tempDir(), "audit.ndjson");
-    new AuditLog(fresh).record("hello");
-    expect(fs.statSync(fresh).mode & 0o077).toBe(0);
+describe("the device directory", () => {
+  const modeOf = (dir: string): number => fs.statSync(dir).mode & 0o077;
+  const build = (home: string): void => {
+    new DeviceAgent(home, "test-device", new HeadlessPolicy({ intent: "deny" }));
+  };
 
-    const preexisting = path.join(tempDir(), "audit.ndjson");
-    fs.writeFileSync(preexisting, "", { mode: 0o644 });
-    fs.chmodSync(preexisting, 0o644);
-    new AuditLog(preexisting).record("hello");
-    expect(fs.statSync(preexisting).mode & 0o077).toBe(0);
-  });
+  it("is closed to other local accounts, on a fresh home and an old one", () => {
+    // It holds the audit log — which records the diagnostics deliberately
+    // withheld from the calling agent — plus rules.json, scratch/ and skills/.
+    // One mode on the container rather than one per store, because a per-file
+    // rule is one every future store has to remember.
+    //
+    // The second case is the load-bearing one: every store under here creates
+    // its directory with a plain recursive mkdir, so on a home from an earlier
+    // version the directory already exists at 0755 and the creation mode is
+    // inert. Only the chmod tightens it, and deleting that as "redundant with
+    // the mode above" has to fail here.
+    const fresh = tempDir();
+    build(fresh);
+    expect(modeOf(path.join(fresh, "device"))).toBe(0);
 
-  it("closes the directory too, which is where the real path is fixed", () => {
-    // The containing directory carries rules.json and scratch/, which have no
-    // mode of their own. On the real path DeviceAgent builds the identity first
-    // and identity.ts creates device/ with a plain recursive mkdir, so it is
-    // already 0755 when the log is constructed — the chmod, not the creation
-    // mode, is what tightens it. Both cases assert that, so deleting the chmod
-    // as "redundant with the mode above" cannot pass.
-    const fresh = path.join(tempDir(), "device", "audit.ndjson");
-    new AuditLog(fresh);
-    expect(fs.statSync(path.dirname(fresh)).mode & 0o077).toBe(0);
-
-    const loose = path.join(tempDir(), "device");
-    fs.mkdirSync(loose, { recursive: true });
-    fs.chmodSync(loose, 0o755);
-    new AuditLog(path.join(loose, "audit.ndjson"));
-    expect(fs.statSync(loose).mode & 0o077).toBe(0);
+    const old = tempDir();
+    fs.mkdirSync(path.join(old, "device"), { recursive: true });
+    fs.chmodSync(path.join(old, "device"), 0o755);
+    build(old);
+    expect(modeOf(path.join(old, "device"))).toBe(0);
   });
 });
