@@ -20,9 +20,15 @@ import {
   ApwCredentialBroker,
   ApwDaemon,
   ApwPairingState,
+  CredentialError,
   CredentialSourceSwitch,
 } from "@domo/device-core";
 import { JSONValue } from "@domo/protocol";
+
+export interface ApwWarmup {
+  host: string;
+  username: string;
+}
 
 export interface ApplePasswordsView {
   /** False when this build/install has no apw binary — the toggle is disabled. */
@@ -40,6 +46,10 @@ export interface ApplePasswordsOptions {
   /** Read/write the persisted setting. */
   isEnabled: () => boolean;
   setEnabled: (on: boolean) => void;
+  /** Read/write the remembered last release (host + username, never a secret)
+   * used to front-load macOS's AutoFill consent right after pairing. */
+  loadWarmup?: () => ApwWarmup | null;
+  saveWarmup?: (warmup: ApwWarmup | null) => void;
   audit?: (event: string, fields: { [k: string]: JSONValue }) => void;
   /** Fired on every pairing-state change (push to the renderer). */
   onChange?: () => void;
@@ -90,6 +100,9 @@ export class ApplePasswords {
       // never actually settled): re-enter the PIN flow instead of leaving
       // every later fill to die on the same error.
       onNotPaired: () => void this.daemon?.repair(),
+      // Remember where a password was last released (metadata only) so the
+      // next pairing can warm up macOS's AutoFill consent immediately.
+      onRelease: (host, username) => this.opts.saveWarmup?.({ host, username }),
     });
     credentials.set(this.broker, "apple-passwords");
 
@@ -126,7 +139,32 @@ export class ApplePasswords {
 
   /** Complete pairing. Returns false when the PIN was rejected. */
   async submitPin(pin: string): Promise<boolean> {
-    return (await this.daemon?.submitPin(pin)) ?? false;
+    const paired = (await this.daemon?.submitPin(pin)) ?? false;
+    // macOS asks for one user-presence approval ("AutoFill for …") per pairing
+    // session, at the first password release. Trigger that release NOW — while
+    // the user is standing at the PIN field — instead of mid-task later. The
+    // value is dropped on the spot and never leaves this call.
+    if (paired) void this.warmUp();
+    return paired;
+  }
+
+  private async warmUp(): Promise<void> {
+    const warmup = this.opts.loadWarmup?.();
+    if (!warmup || !this.broker) return;
+    try {
+      await this.broker.getField(warmup.username, "password", warmup.host);
+      this.opts.audit?.("apw_warmup", { host: warmup.host, ok: true });
+    } catch (error) {
+      this.opts.audit?.("apw_warmup", { host: warmup.host, ok: false });
+      // The remembered entry no longer exists — forget it; a later real fill
+      // will remember a fresh one. Transient errors keep the memory.
+      if (
+        error instanceof CredentialError &&
+        (error.type === "ApwDenied" || error.type === "ApwNoResults")
+      ) {
+        this.opts.saveWarmup?.(null);
+      }
+    }
   }
 
   /** Turn the feature off: persist, kill the daemon (unpairs), restore the

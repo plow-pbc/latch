@@ -45,6 +45,10 @@ export interface ApwConfig {
   /** Fired when a query finds the daemon unpaired (the helper session dropped
    * or pairing never completed) — the app re-opens the PIN flow on this. */
   onNotPaired?: () => void;
+  /** Fired after a successful password release with the host + username it was
+   * released for (never the secret). The app remembers the last one to warm up
+   * macOS's AutoFill consent dialog right after the next pairing. */
+  onRelease?: (host: string, username: string) => void;
 }
 
 interface ApwEntry {
@@ -226,6 +230,7 @@ export class ApwCredentialBroker implements CredentialSource {
     if (typeof entry.password !== "string" || entry.password === "") {
       throw new CredentialError("ApwDenied", "Apple Passwords did not release a password");
     }
+    this.cfg.onRelease?.(apwHost(pageUrl), itemId);
     return entry.password;
   }
 }

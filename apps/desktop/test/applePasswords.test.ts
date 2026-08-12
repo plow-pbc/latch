@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CredentialSource, CredentialSourceSwitch } from "@domo/device-core";
-import { ApplePasswords } from "../src/applePasswords.js";
+import { ApplePasswords, ApwWarmup } from "../src/applePasswords.js";
 import { loadSettings } from "../src/settings.js";
 
 const FAKE_APW = fileURLToPath(new URL("../../../e2e/fixtures/fakeApw.cjs", import.meta.url));
@@ -25,20 +25,22 @@ let enabled: boolean;
 let ap: ApplePasswords;
 let credentials: CredentialSourceSwitch;
 let changes: number;
+let warmup: ApwWarmup | null;
+let audits: { event: string; fields: Record<string, unknown> }[];
 
-beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-ap-"));
-  fs.writeFileSync(path.join(dir, "vault.json"), "[]");
-  enabled = false;
-  changes = 0;
-  credentials = new CredentialSourceSwitch(dummySource, "1password");
-  ap = new ApplePasswords({
+function makeManager(): ApplePasswords {
+  return new ApplePasswords({
     apwCommand: ["node", FAKE_APW],
     credentials,
     isEnabled: () => enabled,
     setEnabled: (on) => {
       enabled = on;
     },
+    loadWarmup: () => warmup,
+    saveWarmup: (w) => {
+      warmup = w;
+    },
+    audit: (event, fields) => audits.push({ event, fields: fields as Record<string, unknown> }),
     onChange: () => changes++,
     startTimeoutMs: 10_000,
     startSettleMs: 0,
@@ -46,6 +48,22 @@ beforeEach(() => {
     pairProbeAttempts: 2,
     pairProbeIntervalMs: 50,
   });
+}
+
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-ap-"));
+  fs.writeFileSync(
+    path.join(dir, "vault.json"),
+    JSON.stringify([
+      { username: "jon", domain: "pizza.example", sites: [], password: "hunter2" },
+    ]),
+  );
+  enabled = false;
+  changes = 0;
+  warmup = null;
+  audits = [];
+  credentials = new CredentialSourceSwitch(dummySource, "1password");
+  ap = makeManager();
   process.env.FAKE_APW_STATE = path.join(dir, "state");
   process.env.FAKE_APW_VAULT = path.join(dir, "vault.json");
 });
@@ -141,6 +159,34 @@ describe("ApplePasswords", () => {
     await none.enable();
     expect(credentials.active).toBe("1password");
     expect(none.view().state).toBe("stopped");
+  });
+
+  it("a fill remembers its host; the next pairing warms up the AutoFill consent", async () => {
+    await ap.enable();
+    await ap.submitPin("123456");
+    // A real fill happens (value dropped immediately, as in fillSecret).
+    await credentials.getField("jon", "password", "https://pizza.example/login");
+    expect(warmup).toEqual({ host: "pizza.example", username: "jon" });
+
+    // "Next launch": a fresh manager over the same persisted state.
+    await ap.shutdown();
+    ap = makeManager();
+    audits = [];
+    await ap.enable(false);
+    await ap.submitPin("123456");
+    await new Promise((r) => setTimeout(r, 200)); // warm-up is fire-and-forget
+    const warmed = audits.find((a) => a.event === "apw_warmup");
+    expect(warmed?.fields).toMatchObject({ host: "pizza.example", ok: true });
+    expect(JSON.stringify(audits)).not.toContain("hunter2");
+  });
+
+  it("a stale warm-up memory (entry deleted) is forgotten, not fatal", async () => {
+    warmup = { host: "gone.example", username: "nobody" };
+    await ap.enable();
+    expect(await ap.submitPin("123456")).toBe(true); // pairing unaffected
+    await new Promise((r) => setTimeout(r, 200));
+    expect(audits.find((a) => a.event === "apw_warmup")?.fields.ok).toBe(false);
+    expect(warmup).toBeNull();
   });
 
   it("shutdown kills the daemon but keeps the setting for next launch", async () => {

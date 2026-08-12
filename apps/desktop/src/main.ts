@@ -593,6 +593,12 @@ app.whenReady().then(async () => {
       settings.applePasswordsEnabled = on;
       saveSettings(home, settings);
     },
+    loadWarmup: () => loadSettings(home).applePasswordsWarmup,
+    saveWarmup: (warmup) => {
+      const settings = loadSettings(home);
+      settings.applePasswordsWarmup = warmup;
+      saveSettings(home, settings);
+    },
     audit: (event, fields) => device?.audit.record(event, fields),
     onChange: () => {
       notifyRenderer("applePasswords:changed");

@@ -58,6 +58,10 @@ export interface Settings {
   /** Use Apple Passwords (via the bundled apw daemon, paired at each launch)
    * instead of 1Password as the browser credential source. Off by default. */
   applePasswordsEnabled: boolean;
+  /** The last successful Apple Passwords release — host + username only,
+   * NEVER a secret. Used to trigger macOS's one-per-session AutoFill consent
+   * dialog right after pairing, instead of mid-task at the first real fill. */
+  applePasswordsWarmup: { host: string; username: string } | null;
 }
 
 function settingsPath(home: string): string {
@@ -74,6 +78,7 @@ export function loadSettings(home: string): Settings {
     showAgentSuggestions: true,
     anthropicApiKey: "",
     applePasswordsEnabled: false,
+    applePasswordsWarmup: null,
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
