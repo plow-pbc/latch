@@ -1,15 +1,24 @@
 #!/bin/sh
-# Prints this checkout's branch name, normalized for use in filesystem paths,
-# when the checkout is a linked git worktree. Prints nothing (and exits 0) in
-# the main checkout or outside a git repository — "no output" is how the
-# justfile and worktree-setup.sh know they are on main and should use the
-# default per-user state locations (~/.domo, "Domo Desktop", /tmp).
+# Prints this checkout's branch name, normalized for use in filesystem paths.
+#
+# Two modes:
+#   (no args)   Prints the name only when the checkout is a linked git
+#               worktree; prints nothing (and exits 0) in the main checkout or
+#               outside a git repository. "No output" is how worktree-setup.sh
+#               and the justfile's main-only guard (`just package`) know they
+#               are on main.
+#   --branch    Prints the name in ANY checkout, main included. This keys the
+#               per-branch dev state (app home ~/Library/Application
+#               Support/Domo-<branch>, Electron userData suffix), so every
+#               from-source run is isolated from every other and from the
+#               packaged install's unsuffixed "Domo" home.
 #
 # Normalization: any byte outside [A-Za-z0-9._-] becomes "-", runs collapse,
 # and leading dots/dashes are stripped, so "feature/foo bar" -> "feature-foo-bar".
+mode=${1:-}
 gitdir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) || exit 0
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
-[ "$gitdir" = "$common" ] && exit 0
+[ "$gitdir" = "$common" ] && [ "$mode" != "--branch" ] && exit 0
 
 branch=$(git branch --show-current 2>/dev/null)
 if [ -z "$branch" ]; then

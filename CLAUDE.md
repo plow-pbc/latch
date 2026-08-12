@@ -126,9 +126,11 @@ Use `just` (run `just` to list recipes):
 `./scripts/worktree-setup.sh` in the new checkout: it clones the gitignored browser
 runtime from the main checkout (APFS clones, no re-download), then installs and
 builds. All per-checkout state is keyed on the normalized branch name
-(`scripts/worktree-name.sh`): the app home moves to `~/.domo-worktrees/<branch>`
-and Electron's userData/app name gain a `(<branch>)` suffix, while the main
-checkout keeps the plain defaults. Each worktree signs in for its own relay
-credential — never copy `settings.json` between homes (the relay does not
-support two devices on one credential). `just package` refuses to run from a
-worktree; package from main.
+(`scripts/worktree-name.sh --branch`) — for **every** checkout, main included:
+one folder per instance, `~/Library/Application Support/Domo-<branch>`, which
+holds everything including Electron's userData (`<home>/electron`); the app
+name gains a `(<branch>)` suffix on screen. Only the packaged install uses the
+unsuffixed `Domo` home, so no from-source run can touch its state. Each
+checkout signs in for its own relay credential — never copy
+`settings.json` between homes (the relay does not support two devices on one
+credential). `just package` refuses to run from a worktree; package from main.

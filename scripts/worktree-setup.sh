@@ -7,12 +7,13 @@
 #      (APFS clones, so it is instant and costs no disk on the same volume)
 #   2. installs workspace dependencies and builds everything
 #
-# Per-worktree isolation is handled by the justfile and the app, keyed on the
-# normalized branch name (scripts/worktree-name.sh):
+# Per-checkout isolation is handled by the justfile and the app, keyed on the
+# normalized branch name (scripts/worktree-name.sh) — for EVERY checkout, the
+# main one included; only the packaged install uses the unsuffixed defaults:
 #
-#   app home          ~/.domo-worktrees/<branch>            (main: ~/.domo)
-#   local-relay home  ~/.domo-worktrees/<branch>-local      (main: ~/.domo-local)
-#   Electron userData ~/Library/Application Support/Domo Desktop (<branch>)
+#   app home          ~/Library/Application Support/Domo-<branch>
+#   local-relay home  ~/Library/Application Support/Domo-<branch>-local
+#   Electron userData inside the home (<home>/electron) — one folder per instance
 #   screenshots       /tmp/domo-<branch>                    (main: /tmp)
 #
 # What is deliberately NOT copied: settings.json and the relay credential in
@@ -53,6 +54,6 @@ just build
 echo ""
 echo "Worktree '$name' is ready."
 echo "  run the suite:   just test"
-echo "  launch the app:  just app     (state in ~/.domo-worktrees/$name;"
+echo "  launch the app:  just app     (state in \"~/Library/Application Support/Domo-$name\";"
 echo "                                 first launch opens sign-in — this"
 echo "                                 worktree needs its own relay credential)"

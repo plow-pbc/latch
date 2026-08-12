@@ -24,8 +24,8 @@ function git(cwd: string, ...args: string[]): string {
   );
 }
 
-function nameIn(cwd: string): string {
-  return execFileSync("sh", [script], { cwd, encoding: "utf8" }).trim();
+function nameIn(cwd: string, ...args: string[]): string {
+  return execFileSync("sh", [script, ...args], { cwd, encoding: "utf8" }).trim();
 }
 
 function makeRepo(dir: string): string {
@@ -57,5 +57,17 @@ describe("worktree-name.sh", () => {
     const wt = path.join(tmp, "wt-detached");
     git(repo, "worktree", "add", "-q", "--detach", wt);
     expect(nameIn(wt)).toBe("wt-detached");
+  });
+
+  // --branch keys the per-branch app homes ("Domo-<branch>"), so unlike the
+  // bare mode it must name EVERY checkout — the main one included — and still
+  // print nothing outside a repository.
+  it("--branch prints the normalized branch name in any checkout", () => {
+    const repo = makeRepo("branch-mode");
+    expect(nameIn(repo, "--branch")).toBe("main");
+    const wt = path.join(tmp, "wt-branch-mode");
+    git(repo, "worktree", "add", "-q", "-b", "feature/foo@bar", wt);
+    expect(nameIn(wt, "--branch")).toBe("feature-foo-bar");
+    expect(nameIn(tmp, "--branch")).toBe("");
   });
 });

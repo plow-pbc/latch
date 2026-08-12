@@ -7,26 +7,23 @@
 
 root    := justfile_directory()
 # Empty in the main checkout; the normalized branch name in a linked git
-# worktree. Worktrees get their own state (home, screenshots, Electron
-# userData) keyed on this name so two checkouts can build and run side by
-# side; the main checkout keeps the historical defaults. See
-# scripts/worktree-setup.sh.
+# worktree. Only "is this a worktree at all" still keys on this — the
+# main-only guard under `just package`, worktree-setup.sh, and the screenshot
+# dir. App state is keyed on the branch name below.
 worktree := `sh scripts/worktree-name.sh`
-nethome := if worktree == "" {
-    env_var('HOME') / ".domo"
-  } else {
-    env_var('HOME') / ".domo-worktrees" / worktree
-  }
+# The normalized branch name of THIS checkout — main or worktree. Every
+# from-source run keeps its state in ~/Library/Application Support under a
+# branch-suffixed folder ("Domo-<branch>"), so checkouts run side by side and
+# none of them ever touches the packaged install's unsuffixed "Domo" home.
+# Nothing lands in dotfolders at the top of $HOME.
+branch := `sh scripts/worktree-name.sh --branch`
+appsupport := env_var('HOME') / "Library" / "Application Support"
+nethome := appsupport / ("Domo-" + branch)
 # Where `just app` keeps state when DOMO_API_BASE_URL points somewhere other
 # than production. A credential is only valid against the environment that
 # minted it, so `export DOMO_API_BASE_URL=…; just app` must never write a local
-# credential into the production install's settings file. An explicit DOMO_HOME
-# still wins.
-localhome := if worktree == "" {
-    env_var('HOME') / ".domo-local"
-  } else {
-    env_var('HOME') / ".domo-worktrees" / (worktree + "-local")
-  }
+# credential into the production-facing home. An explicit DOMO_HOME still wins.
+localhome := appsupport / ("Domo-" + branch + "-local")
 apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
     env_var_or_default("DOMO_HOME", "")
   } else if env_var_or_default("DOMO_API_BASE_URL", "") != "" {
@@ -119,22 +116,24 @@ package profile="domo-notary": _main-only build
 
 # Every build talks to production. To point somewhere else, export the override
 # yourself — and the home moves with it so a local credential never overwrites
-# the production install's:
+# the production-facing one:
 #
 #   just app                                            # production, {{nethome}}
 #   DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, {{localhome}}
-#   DOMO_HOME=~/.domo-x just app                        # an explicit home wins
+#   DOMO_HOME=/tmp/domo-x just app                      # an explicit home wins
 #
-# In a linked git worktree both defaults move under ~/.domo-worktrees/<branch>
-# so worktrees run side by side with main. Each home signs in on its own —
-# never copy a relay credential between homes (the relay does not support two
-# devices on one credential).
+# Both defaults are keyed on this checkout's branch, so checkouts run side by
+# side and no from-source run ever opens the packaged install's plain "Domo"
+# home. Each home signs in on its own — never copy a relay credential between
+# homes (the relay does not support two devices on one credential).
 
-# Launch the desktop app. DOMO_WORKTREE brands a worktree's instance (app
-# name, tray tooltip, Electron userData dir) so it never collides with the
-# main checkout's; it is empty — and changes nothing — on main.
+# Launch the desktop app. DOMO_BRANCH picks this checkout's per-branch home
+# (one folder per instance — Electron's own state lives inside it) and brands
+# the app name/tray tooltip with the branch, so from-source runs never collide
+# with each other — or with the packaged install, which runs unbranded from
+# the plain "Domo" home.
 app: build
-    DOMO_HOME="{{apphome}}" DOMO_WORKTREE="{{worktree}}" npx electron "{{root}}/apps/desktop"
+    DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" npx electron "{{root}}/apps/desktop"
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build
@@ -168,8 +167,9 @@ device-id:
 audit:
     @cat "{{apphome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
 
-# Wipe THIS checkout's app home (identity, rules, audit log, settings) — on a
-# worktree that is the worktree's home, never the main checkout's.
+# Wipe THIS checkout's app home (identity, rules, audit log, settings) — that
+# is this branch's "Domo-<branch>" home, never another checkout's and never
+# the packaged install's plain "Domo".
 clean:
     rm -rf "{{apphome}}"
     @echo "wiped {{apphome}}"
