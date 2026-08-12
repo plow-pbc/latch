@@ -133,4 +133,5 @@ name gains a `(<branch>)` suffix on screen. Only the packaged install uses the
 unsuffixed `Domo` home, so no from-source run can touch its state. Each
 checkout signs in for its own relay credential — never copy
 `settings.json` between homes (the relay does not support two devices on one
-credential). `just package` refuses to run from a worktree; package from main.
+credential). `just package` refuses to run from a worktree; package from main
+(`just package-unnotarized`, the local-check build, runs from any checkout).

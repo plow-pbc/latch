@@ -100,15 +100,26 @@ test-browser: build
 # Info.plists and would break any earlier signature). CODESIGN_IDENTITY is
 # passed to electron-builder so the hook can sign; the build step itself leaves
 # the payload unsigned (afterPack is authoritative).
-# Packaging runs from the main checkout only: worktrees share the per-user
-# electron-builder caches and the signing/notary keychain state, so concurrent
-# packages would race, and the DMG should come from main anyway.
+# The distributable `just package` runs from the main checkout only: the DMG
+# should come from main, and all checkouts share the per-user electron-builder
+# caches and the signing/notary keychain state, so concurrent packages would
+# race. `package-unnotarized` is exempt — it never produces a distributable —
+# but the cache race is checkout-agnostic, so still don't package in two
+# checkouts at once.
 _main-only:
-    @if [ -n "{{worktree}}" ]; then echo "error: just package runs from the main checkout only (this is worktree '{{worktree}}')" >&2; exit 1; fi
+    @if [ -n "{{worktree}}" ]; then echo "error: just package runs from the main checkout only (this is worktree '{{worktree}}'; for a local check build, use just package-unnotarized)" >&2; exit 1; fi
 
-package profile="domo-notary": _main-only build
+package profile="domo-notary": _main-only (_package profile "")
+
+# Same signed DMG, but WITHOUT the notarization round-trip (which can take a
+# long time). For local manual checks only: the app runs fine on this Mac, but
+# Gatekeeper will refuse the DMG once it's downloaded onto any other one.
+# Runs from any checkout; output lands in THIS checkout's apps/desktop/release/.
+package-unnotarized: (_package "domo-notary" "-c.mac.notarize=false")
+
+_package profile flags: build
     node scripts/build-browser-runtime.mjs --browser-both
-    cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac
+    cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac {{flags}}
 
 # ---------------------------------------------------------------------------
 # Running the app
