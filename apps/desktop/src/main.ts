@@ -22,11 +22,12 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
+  resolveBrowserRuntime,
   startSeeding,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import { approvalViewModel, auditActivities } from "./viewModel.js";
+import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
@@ -42,12 +43,12 @@ const rendererDir = path.join(dirname, "renderer");
 const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
 
 /**
- * Which Plow this build talks to. Baked in — an unpackaged run is a dev build
- * and points at the local API; anything else points at production. There is no
- * Settings field for it on purpose (a credential is only valid against the
- * environment that minted it), just a developer env-var override.
+ * Which Plow this build talks to. Baked in — every build points at production,
+ * including a run from source. There is no Settings field for it on purpose (a
+ * credential is only valid against the environment that minted it), just a
+ * developer env-var override a developer exports when they want another relay.
  */
-const apiBaseUrl = resolveApiBaseUrl({ isDevBuild: !app.isPackaged, env: process.env });
+const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -103,7 +104,10 @@ class ElectronPolicy implements PolicyDelegate {
       if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
       if (verdict === "deny") return { decision: "deny", source: "adversarial" };
       // "ask" — the agent couldn't decide; hand it to the human (no suggestion).
-      const decision = await openApprovalWindow({ kind: "intent", view: approvalViewModel(intent) });
+      const decision = await openApprovalWindow({
+        kind: "intent",
+        view: approvalViewModel(intent, await resolveCredentialTitles(intent)),
+      });
       return { decision, source: "ask" };
     }
 
@@ -116,11 +120,36 @@ class ElectronPolicy implements PolicyDelegate {
           )
         : null;
     const decision = await openApprovalWindow(
-      { kind: "intent", view: approvalViewModel(intent) },
+      { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
       suggestion,
     );
     return { decision, source: "ask" };
   }
+}
+
+/**
+ * Resolve credential item ids to titles via the LOCAL 1Password broker so the
+ * approval card can show what the ids actually are. Never taken from the
+ * intent — agent-supplied titles would be spoofable. Unresolvable ids render
+ * as raw ids flagged "unknown item" (a deny signal for the human).
+ */
+async function resolveCredentialTitles(intent: Intent): Promise<CredentialTitles> {
+  const titles: CredentialTitles = new Map();
+  const broker = device?.credentialBroker;
+  if (!broker) return titles;
+  const items =
+    intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+  await Promise.all(
+    items.map(async (id) => {
+      try {
+        const item = await broker.describeItem(id);
+        titles.set(id, { title: item.title, category: item.category });
+      } catch {
+        /* unresolved — the card shows the raw id */
+      }
+    }),
+  );
+  return titles;
 }
 
 type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
@@ -317,12 +346,31 @@ ipcMain.handle("settings:getRelay", async () => {
 // Sign out: forget the device credential and drop the socket. The credential
 // itself is not revoked — that needs the account's own key list, which this Mac
 // deliberately cannot reach.
-ipcMain.handle("settings:signOut", async () => {
+
+/**
+ * Forget this Mac's credential and put the user back at the start.
+ *
+ * Blanking the settings is only half of it: `Onboarding` decides its step in
+ * its constructor, so without the reset the window sits on the connected
+ * screen against empty settings — "Signed in — connecting…" with a blank
+ * endpoint and no way forward but quitting the app.
+ */
+function signOut(): void {
   const settings = loadSettings(home);
   settings.relayCredential = "";
   settings.accountUid = "";
   settings.mcpUrl = "";
   saveSettings(home, settings);
+  onboarding?.reset();
+  // Opening it boots the renderer, which calls `begin` and mints the code the
+  // activation screen needs. `begin` covers the already-open case; it is
+  // idempotent, so between them exactly one code is minted.
+  openOnboardingWindow();
+  void onboarding?.begin();
+}
+
+ipcMain.handle("settings:signOut", async () => {
+  signOut();
   await startRelay();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
@@ -446,6 +494,15 @@ async function startRelay(): Promise<void> {
       connected = isConnected;
       notifyRenderer("status:changed");
     },
+    // The relay refused the credential — revoked in the console, or minted
+    // against a different environment. It will never work again, so the app
+    // signs itself out rather than reconnecting forever with a dead token.
+    onAuthFailed: (reason) => {
+      console.log(`[relay] credential rejected (${reason}); signing out`);
+      connected = false;
+      signOut();
+      notifyRenderer("status:changed");
+    },
     // RelayClient redacts the credential from everything it emits; this is the
     // only place its diagnostics reach a log at all.
     log: (message) => console.log(`[relay] ${message}`),
@@ -459,7 +516,15 @@ app.whenReady().then(async () => {
   // in memory. It also bounds the wait: an approval nobody answers expires and
   // fails closed instead of pending forever.
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
-  device = new DeviceAgent(home, hostName(), approvals);
+  // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
+  // (extraResources). In dev the resolver falls back to the repo's vendor/.
+  device = new DeviceAgent(
+    home,
+    hostName(),
+    approvals,
+    undefined,
+    resolveBrowserRuntime(process.resourcesPath),
+  );
   goals = new GoalsLibrary(path.join(home, "device/goals.json"));
 
   // Live-refresh the audit view whenever a new event is recorded.
@@ -496,6 +561,8 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   void relay?.stop();
+  // Kill any live Camoufox session/process group so Firefox children don't outlive us.
+  void device?.shutdown();
 });
 
 app.on("window-all-closed", () => {

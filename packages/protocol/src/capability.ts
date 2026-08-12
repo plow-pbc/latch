@@ -6,8 +6,16 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import { canonicalBytes, canonicalJSON, JSONValue } from "./json.js";
 import { Hashing } from "./identity.js";
+import { normalizeOrigin } from "./origins.js";
 
-export type CapabilityKind = "fs.read" | "fs.write" | "process.exec" | "network" | "tool";
+export type CapabilityKind =
+  | "fs.read"
+  | "fs.write"
+  | "process.exec"
+  | "network"
+  | "tool"
+  | "browser"
+  | "credential";
 
 export interface Capability {
   kind: CapabilityKind;
@@ -16,6 +24,9 @@ export interface Capability {
   cwd?: string; // process.exec
   allowed?: boolean; // network
   tool?: string; // tool
+  origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
+  access?: "metadata" | "fill"; // credential: list names/labels vs type values into pages
+  items?: string[]; // credential(fill): 1Password item ids
   reason?: string; // display-only justification
 }
 
@@ -28,6 +39,8 @@ export function normalizedCapability(c: Capability): Capability {
   delete out.reason;
   if (out.paths) out.paths = out.paths.map((p) => canonicalize(p)).sort();
   if (out.cwd !== undefined) out.cwd = canonicalize(out.cwd);
+  if (out.origins) out.origins = out.origins.map((o) => normalizeOrigin(o)).sort();
+  if (out.items) out.items = [...out.items].sort();
   return out;
 }
 
@@ -46,6 +59,12 @@ export function capabilityDisplay(c: Capability): string {
       return c.allowed ? "Network: allowed" : "Network: denied";
     case "tool":
       return `Tool: ${c.tool ?? "?"}`;
+    case "browser":
+      return `Browse: ${(c.origins ?? []).join(", ")}`;
+    case "credential":
+      return c.access === "metadata"
+        ? "Credentials: list 1Password item names & field labels (no secret values)"
+        : `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (values never leave this Mac)`;
   }
 }
 

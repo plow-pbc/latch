@@ -20,6 +20,21 @@ files:
 # "Start agent". The shim and that feature went with the broker — the MCP server
 # now runs inside this process and is reached through the relay.
 
+# The browser stack: universal Python runtime + vendored server + both
+# Camoufox arches. Built by scripts/build-browser-runtime.mjs (a `just
+# package` dependency) and byte-identical in both electron-builder arch
+# passes, so the universal merge copies it through untouched. Runtime code
+# resolves it via process.resourcesPath ("browser-runtime/...").
+extraResources:
+  - from: ../../vendor/python-runtime
+    to: browser-runtime/python
+    filter: ["**/*", "!.stamp"]
+  - from: ../../vendor/browser-server
+    to: browser-runtime/server
+  - from: ../../vendor/camoufox-browser
+    to: browser-runtime/camoufox
+    filter: ["**/*", "!*/.sha256"]
+
 mac:
   icon: ../../artwork/domo-desktop-icon.png
   category: public.app-category.developer-tools
@@ -31,7 +46,27 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # The browser runtime (Python + Camoufox) is already Developer-ID signed by
+  # scripts/build-browser-runtime.mjs with its OWN entitlements (Python: JIT +
+  # unsigned-exec-memory; Camoufox: Mozilla's full set incl. library-validation
+  # off). Tell electron-builder's signer to leave it alone — a re-sign would
+  # stamp the app's minimal entitlements onto Firefox and break it at runtime.
+  # The outer app signature still seals these files; notarization sees our
+  # hardened-runtime + timestamped signatures on them.
+  signIgnore:
+    - "browser-runtime/.*"
+  # Camoufox ships as two THIN per-arch trees (camoufox/arm64, camoufox/x86_64),
+  # each copied identically into both the x64 and arm64 electron slices. The
+  # universal merger would try to lipo a thin arm64 binary against its identical
+  # twin and fail; this pattern tells it to pass those through untouched (both
+  # arch trees survive intact in the universal app). The Python runtime is fully
+  # universal2, so it's merged normally and not covered here.
+  x64ArchFiles: "**/browser-runtime/camoufox/**"
   notarize: true
+
+# Re-sign browser-runtime after the universal merge (which rewrites nested
+# Info.plists and breaks their seals) and before signing/notarization.
+afterPack: build/afterPack.cjs
 
 dmg:
   artifactName: ${productName}-${version}.${ext}

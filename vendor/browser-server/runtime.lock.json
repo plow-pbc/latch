@@ -1,0 +1,20 @@
+{
+  "python": {
+    "version": "3.12.10",
+    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg",
+    "sha256": "8373e58da4ea146b3eb1c1f9834f19a319440b6b679b06050b1f9ee3237aa8e4"
+  },
+  "camoufox": {
+    "browserVersion": "official/152.0.4-beta.28",
+    "assets": {
+      "arm64": {
+        "url": "https://github.com/daijro/camoufox/releases/download/v152.0.4-beta.28/camoufox-152.0.4-beta.28-mac.arm64.zip",
+        "sha256": "8b7680a61818245cf4eb0150edab811d4ed937b6723514569e74c3e7df9685bd"
+      },
+      "x64": {
+        "url": "https://github.com/daijro/camoufox/releases/download/v152.0.4-beta.28/camoufox-152.0.4-beta.28-mac.x86_64.zip",
+        "sha256": "6e0efd66f6db46bece072827cb2c5a4851bca822ff4fed95b8a0c2fb6f61a3d4"
+      }
+    }
+  }
+}
