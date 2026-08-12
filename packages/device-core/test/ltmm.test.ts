@@ -8,6 +8,7 @@ import { DeviceAgent } from "../src/deviceAgent.js";
 import { HeadlessPolicy } from "../src/policyEngine.js";
 
 let dir: string;
+const realPath = process.env.PATH;
 
 /** A stand-in for the ltmm CLI: emits what we give it, with an exit code. */
 function stubLtmm(stdout: string, code = 0, stderr = ""): string {
@@ -35,6 +36,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.DOMO_LTMM_BIN;
+  process.env.PATH = realPath;
 });
 
 describe("recall", () => {
@@ -195,18 +197,22 @@ describe("the recall blessed tool", () => {
 
 describe("startSeeding", () => {
   /** A stand-in ltmm that records the argv it was spawned with. */
-  function recordingLtmm(): { bin: string; argv: () => Promise<string> } {
-    const bin = path.join(dir, "record-argv");
-    const out = path.join(dir, "argv.txt");
+  function recordingLtmm(name = "record-argv"): { bin: string; argv: () => Promise<string> } {
+    const bin = path.join(dir, name);
+    const out = path.join(dir, `${name}.argv`);
     fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s' "$*" > "${out}"\n`);
     fs.chmodSync(bin, 0o755);
     return {
       bin,
       argv: async () => {
         // The child is detached, so poll rather than assume it has run.
+        // Content, not existence: the stub's `>` redirection truncates the
+        // file open before printf writes, so existence alone can be observed
+        // as an empty string.
         const deadline = Date.now() + 2_000;
         while (Date.now() < deadline) {
-          if (fs.existsSync(out)) return fs.readFileSync(out, "utf8");
+          const seen = fs.existsSync(out) ? fs.readFileSync(out, "utf8") : "";
+          if (seen) return seen;
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
         throw new Error("the stub was never spawned");
@@ -241,8 +247,22 @@ describe("startSeeding", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
   });
 
-  // Deliberately untested: that an empty DOMO_LTMM_BIN falls back to "ltmm".
-  // Asserting it means letting the fallback run, and the fallback is a real
-  // `ltmm run` — a multi-hour build over the owner's messages on any machine
-  // that has it installed. Both operations share one `ltmmBin()`.
+  it("treats an empty DOMO_LTMM_BIN as unset rather than spawning nothing", async () => {
+    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets exactly this, and
+    // spawn("") throws ERR_INVALID_ARG_VALUE synchronously — out of the
+    // app-ready handler that calls this. `||` rather than `??` is what keeps it
+    // unreachable.
+    //
+    // Safe to exercise because the fallback is a bare name, so it resolves
+    // through PATH: shadowing `ltmm` in a temp dir means the fallback finds this
+    // stub and never a real ltmm, whose `run` is a multi-hour build over the
+    // owner's messages.
+    const stub = recordingLtmm("ltmm");
+    process.env.PATH = `${dir}:${process.env.PATH ?? ""}`;
+    process.env.DOMO_LTMM_BIN = "";
+
+    expect(() => startSeeding()).not.toThrow();
+
+    expect(await stub.argv()).toBe("run");
+  });
 });
