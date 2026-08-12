@@ -180,6 +180,32 @@ describe("a tool call end to end, in process", () => {
     expect(events(device)).not.toContain("file_read");
   });
 
+  it("a failing tool tells the agent nothing it did not already know", async () => {
+    // This repo assumes the calling agent may be compromised, so a tool's
+    // failure detail — absolute paths, backend endpoints — is reconnaissance.
+    // A tool may split its error: a stable public message, and a `cause` this
+    // Mac records and keeps. Asserted through the audit log, the oracle.
+    const { server, device } = makeServer();
+    const secret = "/Users/abby/.msgvault/ltmm/facts.db";
+    device.blessedTools.register({
+      name: "boom",
+      description: "Fails, with detail it must not hand back.",
+      inputSchema: { type: "object", properties: {} },
+      invoke: async () => {
+        throw new Error("tool failed", { cause: `no store at ${secret}` });
+      },
+    });
+
+    const { payload, isError } = await callTool(server, "use_tool", { tool: "boom" }, AGENT);
+
+    expect(isError).toBe(true);
+    expect(JSON.stringify(payload)).toContain("tool failed");
+    expect(JSON.stringify(payload)).not.toContain(secret);
+
+    const recorded = device.audit.entries().at(-1) as JSONValue;
+    expect(jv(recorded).get("event").str).toBe("tool_error");
+    expect(jv(recorded).get("detail").str).toContain(secret);
+  });
 });
 
 describe("agent identity", () => {

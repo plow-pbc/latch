@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_LIMIT, MAX_LIMIT, recall } from "../src/recall.js";
+import { RECALL_FAILED, RECALL_UNREADABLE, recall } from "../src/recall.js";
 import { BlessedToolRegistry } from "../src/blessedTools.js";
 import { DeviceAgent } from "../src/deviceAgent.js";
 import { HeadlessPolicy } from "../src/policyEngine.js";
@@ -66,42 +66,54 @@ describe("recall", () => {
     await expect(recall("anything")).resolves.toEqual([]);
   });
 
-  it("rejects when ltmm exits non-zero, surfacing its stderr", async () => {
-    process.env.DOMO_LTMM_BIN = stubLtmm("", 1, "ltmm: no store at /nope");
-    await expect(recall("anything")).rejects.toThrow(/no store/);
+  it("keeps ltmm's diagnosis out of the message and in the cause", async () => {
+    // The message is what a possibly-compromised agent gets; the cause is what
+    // this Mac writes down. An absolute store path is the reconnaissance the
+    // split exists to withhold, so it must appear in exactly one of them.
+    process.env.DOMO_LTMM_BIN = stubLtmm("", 1, "ltmm: no store at /Users/abby/.msgvault/x.db");
+
+    const failure = await recall("anything").catch((e: Error) => e);
+
+    expect(failure.message).toBe(RECALL_FAILED);
+    expect(failure.message).not.toContain("/Users/abby");
+    expect(String(failure.cause)).toContain("/Users/abby/.msgvault/x.db");
   });
 
   it.each([
-    ["not JSON at all", "Traceback (most recent call last):"],
-    ["valid JSON that is not an array", '{"facts": []}'],
-    ["an array of things that are not fact objects", '["hello"]'],
-    ["an array of nested arrays", "[[1,2]]"],
-    ["fact objects with no statement", "[{}]"],
-  ])("rejects when ltmm emits %s", async (_label, stdout) => {
+    ["not JSON at all", "Traceback (most recent call last):", "Traceback"],
+    ["valid JSON that is not an array", '{"facts": []}', "expected an array"],
+    ["an array of things that are not fact objects", '["hello"]', "expected an array"],
+    ["an array of nested arrays", "[[1,2]]", "expected an array"],
+    ["fact objects with no statement", "[{}]", "expected an array"],
+  ])("rejects when ltmm emits %s", async (_label, stdout, causeFragment) => {
     process.env.DOMO_LTMM_BIN = stubLtmm(stdout);
-    await expect(recall("anything")).rejects.toThrow(/JSON/i);
+
+    const failure = await recall("anything").catch((e: Error) => e);
+
+    // Same split: a stable public message, detail only in the cause. A Python
+    // traceback carries absolute paths just as stderr does.
+    expect(failure.message).toBe(RECALL_UNREADABLE);
+    expect(String(failure.cause)).toContain(causeFragment);
   });
 
   it("rejects when ltmm is not installed", async () => {
     process.env.DOMO_LTMM_BIN = path.join(dir, "does-not-exist");
-    await expect(recall("anything")).rejects.toThrow();
+    await expect(recall("anything")).rejects.toThrow(RECALL_FAILED);
   });
 
-  it("passes the query and limit through to the CLI", async () => {
+  it("rejects an empty query rather than recalling everything", async () => {
     process.env.DOMO_LTMM_BIN = echoArgs();
-
-    const [fact] = await recall("where does abby work", 3);
-
-    expect(fact.statement).toContain("query");
-    expect(fact.statement).toContain("where does abby work");
-    expect(fact.statement).toContain("--json");
-    expect(fact.statement).toContain("3");
+    await expect(recall("   ")).rejects.toThrow(/query/i);
   });
 
-  it("applies DEFAULT_LIMIT when the caller gives none", async () => {
+  it("passes the query through to the CLI under a fixed cap", async () => {
+    // The cap is ours, not the caller's: nothing in the argv comes from the
+    // agent except the query itself, after the `--`.
     process.env.DOMO_LTMM_BIN = echoArgs();
-    const [fact] = await recall("anything");
-    expect(fact.statement).toContain(`--limit ${DEFAULT_LIMIT}`);
+
+    const [fact] = await recall("where does abby work");
+
+    expect(fact.statement).toBe("query --json --limit 10 -- where does abby work");
   });
 
   it("keeps a dash-leading query a query rather than a flag", async () => {
@@ -111,25 +123,10 @@ describe("recall", () => {
     const [fact] = await recall("--store=/tmp/evil.db");
     expect(fact.statement).toContain("-- --store=/tmp/evil.db");
   });
-
-  it.each([
-    ["not a number", "3" as unknown as number],
-    ["NaN", Number.NaN],
-    ["zero", 0],
-    ["negative", -1],
-    ["fractional", 2.5],
-    ["past MAX_LIMIT", MAX_LIMIT + 1],
-  ])("rejects a limit that is %s rather than coercing it", async (_label, limit) => {
-    // Loud rather than silently swapped for the default: the agent supplies
-    // this, and `--limit NaN` would come back as an argparse usage error
-    // indistinguishable from a real store failure.
-    process.env.DOMO_LTMM_BIN = echoArgs();
-    await expect(recall("anything", limit)).rejects.toThrow(/limit/i);
-  });
 });
 
 describe("the recall blessed tool", () => {
-  it("appears in the standard manifest with a required query parameter", () => {
+  it("takes a query and nothing else", () => {
     const manifest = BlessedToolRegistry.standard().manifest() as Array<{
       name: string;
       description: string;
@@ -138,7 +135,7 @@ describe("the recall blessed tool", () => {
     const tool = manifest.find((t) => t.name === "recall");
 
     expect(tool).toBeDefined();
-    expect(tool!.inputSchema.properties).toHaveProperty("query");
+    expect(Object.keys(tool!.inputSchema.properties)).toEqual(["query"]);
     expect(tool!.inputSchema.required).toEqual(["query"]);
     // The description is the only thing the agent reads when deciding to call it.
     expect(tool!.description.length).toBeGreaterThan(40);
@@ -167,43 +164,25 @@ describe("the recall blessed tool", () => {
   });
 
   it.each([
-    ["no query at all", {}, /query/i],
-    ["a whitespace-only query", { query: "   " }, /query/i],
-    // The tool used to swap any non-number for DEFAULT_LIMIT, turning an agent's
-    // malformed call into a silently different one.
-    ["a non-numeric limit", { query: "abby", limit: "3" }, /limit/i],
-    ["a limit past the advertised maximum", { query: "abby", limit: 500 }, /limit/i],
-  ])("rejects %s rather than recalling something else", async (_label, args, expected) => {
+    ["no query at all", {}],
+    ["a whitespace-only query", { query: "   " }],
+  ])("rejects %s rather than recalling everything", async (_label, args) => {
     const tool = BlessedToolRegistry.standard().tool("recall");
-    await expect(tool!.invoke(args)).rejects.toThrow(expected);
+    await expect(tool!.invoke(args)).rejects.toThrow(/query/i);
   });
 
-  it("hands an in-range limit through to the CLI unchanged", () => {
-    // The accepting half of the relocated rules, and the inclusive upper bound
-    // the schema advertises — covered only by rejections otherwise.
+  it("ignores an agent-supplied limit instead of honoring it", async () => {
+    // How much of a private store one call returns is not the caller's to
+    // choose, and an unknown argument is not an error worth failing on.
     process.env.DOMO_LTMM_BIN = echoArgs();
 
     const tool = BlessedToolRegistry.standard().tool("recall");
-    return expect(
-      tool!.invoke({ query: "abby", limit: MAX_LIMIT }) as Promise<{
-        facts: Array<{ statement: string }>;
-      }>,
-    ).resolves.toMatchObject({
-      facts: [{ statement: expect.stringContaining(`--limit ${MAX_LIMIT}`) }],
-    });
-  });
-
-  it("advertises the bounds recall actually enforces", () => {
-    // The schema is the only contract the agent sees, and use_tool does not
-    // validate against it — an agent that obeys it and is still rejected has
-    // been misled by this file.
-    const tool = BlessedToolRegistry.standard().tool("recall");
-    const schema = tool!.inputSchema as {
-      properties: { limit: { type: string; minimum: number; maximum: number } };
+    const result = (await tool!.invoke({ query: "abby", limit: 500 })) as {
+      facts: Array<{ statement: string }>;
     };
-    expect(schema.properties.limit.type).toBe("integer");
-    expect(schema.properties.limit.minimum).toBe(1);
-    expect(schema.properties.limit.maximum).toBe(MAX_LIMIT);
+
+    expect(result.facts[0].statement).toContain("--limit 10");
+    expect(result.facts[0].statement).not.toContain("500");
   });
 
   it("is wired into a DeviceAgent's default tool set", () => {

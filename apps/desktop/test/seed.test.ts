@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { liveDeps, seedIfMissing } from "../src/seed.js";
+import { liveDeps, seedIfMissing, seedPidPath } from "../src/seed.js";
 
 function deps(overrides: Partial<Parameters<typeof seedIfMissing>[0]> = {}) {
   const started: Array<{ bin: string; args: string[] }> = [];
   return {
     started,
     deps: {
-      alreadySeeded: () => false,
+      buildIsRunning: () => false,
       startBuild: (bin: string, args: string[]) => {
         started.push({ bin, args });
       },
@@ -28,6 +28,11 @@ function withHome(body: (home: string) => void): void {
   }
 }
 
+function writePid(home: string, contents: string): void {
+  fs.mkdirSync(path.dirname(seedPidPath(home)), { recursive: true });
+  fs.writeFileSync(seedPidPath(home), contents);
+}
+
 afterEach(() => {
   delete process.env.DOMO_LTMM_BIN;
 });
@@ -43,32 +48,85 @@ describe("seedIfMissing", () => {
     expect(started[0].args).toEqual(["run"]);
   });
 
-  it("does nothing when a build has already been started", () => {
-    // Seeding is a multi-hour batch. Re-running it on every launch would
-    // relaunch that batch behind the user's back on a store already being built.
-    const { started, deps: d } = deps({ alreadySeeded: () => true });
-    expect(seedIfMissing(d)).toBe("already-seeded");
+  it("does nothing while a build is already running", () => {
+    // Seeding is a multi-hour batch. Launching a second one alongside the first
+    // would run two of them over the same messages.
+    const { started, deps: d } = deps({ buildIsRunning: () => true });
+    expect(seedIfMissing(d)).toBe("already-running");
     expect(started).toHaveLength(0);
   });
 
-  it("records the build under DOMO_HOME, so a second launch never starts another", () => {
-    // The branch that matters most and the one an injected `alreadySeeded` can
-    // never cover: if the real probe answers "no" forever, every launch stacks
-    // another multi-hour build over the owner's messages. `/usr/bin/true` stands
-    // in for ltmm because the marker is the behavior under test, not the build.
-    process.env.DOMO_LTMM_BIN = "/usr/bin/true";
+  it("treats an empty DOMO_LTMM_BIN as unset rather than spawning nothing", () => {
+    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets exactly this,
+    // and spawn("") throws ERR_INVALID_ARG_VALUE synchronously — before any
+    // child exists to emit `error` — straight out of the app-ready handler.
+    //
+    // Asserted through the stub rather than liveDeps: once the fallback works,
+    // real liveDeps spawns a real `ltmm run`, which on a machine that HAS ltmm
+    // starts a multi-hour build over the owner's messages.
+    process.env.DOMO_LTMM_BIN = "";
+    const { started, deps: d } = deps();
+    expect(seedIfMissing(d)).toBe("started");
+    expect(started[0].bin).toBe("ltmm");
+  });
+});
+
+describe("liveDeps", () => {
+  it("records the running build, so a second launch does not start another", () => {
+    // `/usr/bin/yes` stands in for ltmm: it runs until killed, which is the one
+    // property that matters here — a live pid to find.
+    process.env.DOMO_LTMM_BIN = "/usr/bin/yes";
     withHome((home) => {
       const live = liveDeps(home);
-      expect(live.alreadySeeded()).toBe(false);
+      expect(live.buildIsRunning()).toBe(false);
 
       expect(seedIfMissing(live)).toBe("started");
 
-      expect(live.alreadySeeded()).toBe(true);
-      expect(seedIfMissing(live)).toBe("already-seeded");
+      const pid = Number.parseInt(fs.readFileSync(seedPidPath(home), "utf8"), 10);
+      try {
+        expect(live.buildIsRunning()).toBe(true);
+        expect(seedIfMissing(live)).toBe("already-running");
+      } finally {
+        process.kill(pid);
+      }
     });
   });
 
-  it("survives a missing ltmm instead of taking the app down", async () => {
+  it("starts again once the recorded build is gone, rather than skipping forever", async () => {
+    // The failure this exists to prevent: a build that dies mid-run leaves its
+    // record behind, every later launch skips seeding, and the user silently
+    // never gets facts. Re-running is cheap and correct — `ltmm run` records
+    // processed days and resumes.
+    process.env.DOMO_LTMM_BIN = "/usr/bin/true";
+    withHome((home) => {
+      const live = liveDeps(home);
+      expect(seedIfMissing(live)).toBe("started");
+      expect(fs.existsSync(seedPidPath(home))).toBe(true);
+
+      // A pid that cannot be running: the recorded build is dead.
+      writePid(home, "999999\n");
+
+      expect(live.buildIsRunning()).toBe(false);
+      expect(seedIfMissing(live)).toBe("started");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  it.each([
+    ["an unreadable record", undefined],
+    ["a malformed record", "not-a-pid\n"],
+    ["a nonsense pid", "0\n"],
+  ])("retries rather than skipping on %s", (_label, contents) => {
+    // Every unreadable case resolves toward running the build again. That is
+    // the safe direction: a resumed build costs little, and being wrong the
+    // other way means a user who never gets facts at all.
+    withHome((home) => {
+      if (contents !== undefined) writePid(home, contents);
+      expect(liveDeps(home).buildIsRunning()).toBe(false);
+    });
+  });
+
+  it("records nothing when the spawn fails, so the next launch tries again", async () => {
     // Drives the REAL liveDeps, because an injected stub cannot reproduce this:
     // spawn reports a missing binary asynchronously on the child's `error`
     // event, and an unlistened `error` re-throws as an uncaught exception in the
@@ -80,29 +138,13 @@ describe("seedIfMissing", () => {
       const live = liveDeps(home);
       expect(seedIfMissing(live)).toBe("started");
 
-      // And the launch that could not start a build must try again next time:
-      // the marker is written before the async failure arrives, so the `error`
-      // handler has to take it back. Without that, a Mac where ltmm is off the
-      // launchd PATH reports `already-seeded` forever and never seeds at all.
+      // A spawn that never produced a process has no pid to record, so the door
+      // stays open: nothing here can report `already-running` forever.
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(live.alreadySeeded()).toBe(false);
+      expect(fs.existsSync(seedPidPath(home))).toBe(false);
+      expect(live.buildIsRunning()).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
-  });
-
-  it("treats an empty DOMO_LTMM_BIN as unset rather than spawning nothing", () => {
-    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets exactly this,
-    // and spawn("") throws ERR_INVALID_ARG_VALUE synchronously — before any
-    // child exists to emit `error` — straight out of the app-ready handler.
-    //
-    // Asserted through the stub rather than liveDeps, unlike the tests above:
-    // once the fallback works, real liveDeps spawns a real `ltmm run`, which on
-    // a machine that HAS ltmm starts a multi-hour build over the owner's
-    // messages. The resolution rule is the fix, and it is what this pins.
-    process.env.DOMO_LTMM_BIN = "";
-    const { started, deps: d } = deps();
-    expect(seedIfMissing(d)).toBe("started");
-    expect(started[0].bin).toBe("ltmm");
   });
 });

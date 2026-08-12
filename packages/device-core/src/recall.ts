@@ -31,14 +31,16 @@ export type Fact = {
   message_ids: number[];
 };
 
-export const DEFAULT_LIMIT = 10;
-
 /**
- * `limit` is agent-controlled, and the whole store would otherwise be reachable
- * through one call -- there is no size cap on the blessed-tool result path the
- * way there is on file reads.
+ * A fixed cap, not a parameter.
+ *
+ * There is no size cap on the blessed-tool result path the way there is on file
+ * reads, so the payload needs bounding somewhere. Letting the *agent* choose the
+ * bound bought nothing — no caller passes one, and the ambient enricher won't
+ * either — while costing a validation branch, a schema property and a test
+ * matrix, all to let an untrusted caller widen its own read of a private store.
  */
-export const MAX_LIMIT = 100;
+const FACT_LIMIT = 10;
 
 /**
  * NOT the call budget -- deliberately far above it.
@@ -56,24 +58,24 @@ export const MAX_LIMIT = 100;
  */
 export const RECALL_TIMEOUT_MS = 60_000;
 
+/** The only two things a remote caller is ever told about a failed recall. */
+export const RECALL_FAILED = "recall failed";
+export const RECALL_UNREADABLE = "recall returned an unreadable response";
+
 /**
- * Both arguments are typed but validated anyway: this is the trust boundary, and
- * the blessed tool hands through whatever the agent sent. Coercing `limit`
- * instead would put `--limit NaN` in front of argparse and return its usage
- * error, which reads exactly like a genuine store failure.
+ * Errors here are split in two on purpose. `message` is a stable, public string
+ * safe to hand a caller this repo assumes may be compromised; `cause` carries
+ * ltmm's real diagnosis -- absolute store paths, Ollama endpoints and model
+ * names -- which is exactly the reconnaissance such a caller wants. `deviceAgent`
+ * records the cause in the local audit log and returns only the message.
  *
- * Both rules live here rather than in the tool because the ambient enricher will
- * be a second caller of this same function; a rule kept in one wrapper is a rule
- * the other caller silently does not have.
+ * The query rule lives here rather than in the tool because the ambient enricher
+ * will be a second caller of this same function; a rule kept in one wrapper is a
+ * rule the other caller silently does not have.
  */
-export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fact[]> {
+export function recall(query: string): Promise<Fact[]> {
   if (query.trim().length === 0) {
     return Promise.reject(new Error("ltmm recall needs a non-empty query"));
-  }
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
-    return Promise.reject(
-      new Error(`ltmm recall needs an integer limit in 1..${MAX_LIMIT}, got ${limit}`),
-    );
   }
 
   // `||`, not `??`: an empty override is an unset one. `??` would keep "" and
@@ -84,7 +86,7 @@ export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fa
   // steer this trusted subprocess's flags: `ltmm query` inherits `--store` and
   // `--db`, so a query of `--store=/elsewhere` repoints the whole call. execFile
   // stops *shell* injection; only `--` stops *argument* injection.
-  const args = ["query", "--json", "--limit", String(limit), "--", query];
+  const args = ["query", "--json", "--limit", String(FACT_LIMIT), "--", query];
 
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout: RECALL_TIMEOUT_MS }, (error, stdout, stderr) => {
@@ -95,17 +97,17 @@ export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fa
           reject(new Error(`ltmm recall exceeded ${RECALL_TIMEOUT_MS}ms`));
           return;
         }
-        // stderr carries ltmm's own diagnosis ("no store at ...", an Ollama
-        // failure); surface it rather than a bare exit code.
-        const detail = stderr.trim() || error.message;
-        reject(new Error(`ltmm recall failed: ${detail}`));
+        // The diagnosis stays local, as the cause -- see the note above.
+        reject(new Error(RECALL_FAILED, { cause: stderr.trim() || error.message }));
         return;
       }
       let parsed: unknown;
       try {
         parsed = JSON.parse(stdout);
       } catch {
-        reject(new Error(`ltmm returned invalid JSON: ${stdout.slice(0, 200)}`));
+        // A Python traceback on stdout carries absolute paths too, so it is a
+        // cause for the same reason stderr is.
+        reject(new Error(RECALL_UNREADABLE, { cause: stdout.slice(0, 200) }));
         return;
       }
       // Probes `statement`, the field every consumer reads, rather than mere
@@ -118,7 +120,7 @@ export function recall(query: string, limit: number = DEFAULT_LIMIT): Promise<Fa
         !Array.isArray(parsed) ||
         parsed.some((row) => typeof (row as Fact | null | undefined)?.statement !== "string")
       ) {
-        reject(new Error("ltmm returned invalid JSON: expected an array of fact objects"));
+        reject(new Error(RECALL_UNREADABLE, { cause: "expected an array of fact objects" }));
         return;
       }
       resolve(parsed as Fact[]);

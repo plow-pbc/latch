@@ -5,7 +5,7 @@
  */
 import os from "node:os";
 import { JSONValue } from "@domo/protocol";
-import { recall, DEFAULT_LIMIT, MAX_LIMIT } from "./recall.js";
+import { recall } from "./recall.js";
 
 export interface BlessedTool {
   name: string;
@@ -64,31 +64,21 @@ export class BlessedToolRegistry {
         type: "object",
         properties: {
           query: { type: "string", description: "What you want to know, as a question." },
-          // The bounds are the ones recall() enforces. use_tool does not check
-          // arguments against this schema, so it is documentation -- and an
-          // agent that follows it and still gets rejected has been misled.
-          limit: {
-            type: "integer",
-            minimum: 1,
-            maximum: MAX_LIMIT,
-            description: `Maximum facts to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`,
-          },
         },
         required: ["query"],
       },
       invoke: async (args) => {
-        // Only the narrowing from `unknown` happens here. Every actual rule --
-        // non-empty query, integer limit in range -- lives in recall(), the seam
-        // this tool and the future ambient caller share, so neither caller can
-        // end up with a rule the other lacks.
-        const supplied = args as { query?: unknown; limit?: unknown };
+        // Only the narrowing from `unknown` happens here. The one actual rule --
+        // a non-empty query -- lives in recall(), the seam this tool and the
+        // future ambient caller share, so neither can end up with a rule the
+        // other lacks. How many facts come back is not the caller's to choose.
+        const supplied = args as { query?: unknown };
         if (typeof supplied.query !== "string") {
           throw new Error("recall requires a `query` string");
         }
-        const limit = supplied.limit as number | undefined;
         // Wrapped in an object rather than returned bare: a JSON array is a valid
         // JSONValue but leaves no room to say anything alongside it later.
-        return { facts: await recall(supplied.query, limit) };
+        return { facts: await recall(supplied.query) };
       },
     });
     return registry;

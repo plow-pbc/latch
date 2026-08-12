@@ -209,7 +209,17 @@ export class DeviceAgent {
       return { status: "completed", result };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: message });
+      // A tool may split its failure in two: a stable public `message`, and a
+      // `cause` holding detail the caller must not see -- local paths, backend
+      // endpoints. The audit log is this Mac's own record and keeps both; the
+      // agent, which this repo assumes may be compromised, gets only the message.
+      const cause = error instanceof Error ? error.cause : undefined;
+      this.audit.record("tool_error", {
+        intentId: intent.intentId,
+        tool: name,
+        error: message,
+        detail: cause === undefined ? null : String(cause),
+      });
       return { status: "error", error: message };
     }
   }

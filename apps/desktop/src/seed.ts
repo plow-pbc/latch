@@ -5,7 +5,7 @@
  * `ltmm run` with no arguments resolves the owner's #1 contact itself and builds
  * from that conversation, so Domo never needs to know or hardcode a conversation
  * id. The build is a multi-hour batch over years of messages: it is spawned
- * detached and never awaited, and only ever once.
+ * detached and never awaited.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -18,68 +18,73 @@ import { spawn } from "node:child_process";
  * this function cannot know, and inventing one would certify a path production
  * never takes.
  */
-export type SeedOutcome = "started" | "already-seeded";
+export type SeedOutcome = "started" | "already-running";
 
 export interface SeedDeps {
-  alreadySeeded(): boolean;
-  /** Spawn the build *and* write down that it was spawned. One act, not two. */
+  buildIsRunning(): boolean;
+  /** Spawn the build *and* write down its pid. One act, not two. */
   startBuild(bin: string, args: string[]): void;
 }
 
+/** Where Domo records the pid of the build it started, under DOMO_HOME. */
+export const seedPidPath = (home: string): string => path.join(home, "device/seed.pid");
+
 /**
- * Domo's own record that it has started a build, under DOMO_HOME.
+ * Liveness, not completion — the whole state machine.
  *
- * Deliberately not a probe of ltmm's store file. Where ltmm writes that file is
- * a fact this repo cannot see — its DEFAULT_STORE is currently the relative
- * `facts.db`, not an absolute path — and a probe that guesses wrong answers "no
- * store" on every launch forever. For a detached multi-hour batch that is not a
- * missed optimisation: it stacks one more concurrent build over the owner's
- * messages on every single launch. "Have I already started this?" is Domo's
- * question, so Domo writes the answer down where it can also read it.
+ * `ltmm run` is resumable by design: it records processed days in a `progress`
+ * table and skips them next time. So "did the last build finish?" never needs
+ * answering. Re-spawning after a death is correct and cheap, and re-spawning
+ * over a *live* build is the only thing worth preventing.
  *
- * Still presence, not completion: an interrupted build is not restarted. That is
- * the safe direction to be wrong in — `ltmm run` resumes from its own progress
- * whenever it is next run, whereas a duplicate build cannot be taken back.
+ * Anything unreadable or malformed counts as not running, which is the safe
+ * direction: the cost is a resumed build, and the cost of being wrong the other
+ * way is a user who silently never gets facts at all.
  */
-export const seedMarkerPath = (home: string): string => path.join(home, "device/seed-started");
+function recordedPid(home: string): number | null {
+  try {
+    const pid = Number.parseInt(fs.readFileSync(seedPidPath(home), "utf8"), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isAlive(pid: number | null): boolean {
+  if (pid === null) return false;
+  try {
+    // Signal 0 runs the permission and existence checks without delivering
+    // anything; it throws ESRCH when no such process exists.
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const liveDeps = (home: string): SeedDeps => ({
-  alreadySeeded: () => fs.existsSync(seedMarkerPath(home)),
+  buildIsRunning: () => isAlive(recordedPid(home)),
   startBuild: (bin, args) => {
-    const marker = seedMarkerPath(home);
     const child = spawn(bin, args, { detached: true, stdio: "ignore" });
     // Required, not optional: spawn delivers a missing binary as an async
     // `error` event, and an EventEmitter with no `error` listener re-throws it
     // as an uncaught exception -- which in the Electron main process takes the
     // whole app down on any Mac that has no ltmm installed.
-    //
-    // It also undoes the record below, which spawn returning was never evidence
-    // for. Without that, a Mac where ltmm is not on the launchd PATH writes the
-    // marker, fails a moment later, and reports `already-seeded` forever after
-    // -- including once the user installs ltmm -- with no path that ever clears
-    // it. The failure we can already detect has to reopen the door.
-    child.on("error", (e) => {
-      console.log(`[seed] ltmm unavailable: ${e.message}`);
-      try {
-        fs.rmSync(marker, { force: true });
-      } catch (unlinkFailed) {
-        // This handler exists to keep a failure out of the main process's
-        // uncaught path; it must not become one itself. `force` already absorbs
-        // a missing file, so anything reaching here is a real filesystem
-        // problem, and the cost is only that seeding is not retried.
-        console.log(`[seed] could not clear ${marker}: ${String(unlinkFailed)}`);
-      }
-    });
+    child.on("error", (e) => console.log(`[seed] ltmm unavailable: ${e.message}`));
     // Let the build outlive this process: it takes hours, and quitting the app
     // would otherwise throw away everything built so far.
     child.unref();
-    fs.mkdirSync(path.dirname(marker), { recursive: true });
-    fs.writeFileSync(marker, `${new Date().toISOString()}\n`);
+    // A spawn that failed has no pid, and recording nothing is exactly right --
+    // the next launch finds no live build and tries again.
+    if (child.pid === undefined) return;
+    const pidFile = seedPidPath(home);
+    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+    fs.writeFileSync(pidFile, `${child.pid}\n`);
   },
 });
 
 export function seedIfMissing(deps: SeedDeps): SeedOutcome {
-  if (deps.alreadySeeded()) return "already-seeded";
+  if (deps.buildIsRunning()) return "already-running";
   // Deliberately unguarded, and that rests on the binary name being non-empty
   // rather than on the argv being constant: `spawn("")` throws
   // ERR_INVALID_ARG_VALUE *synchronously*, before any child exists to emit
