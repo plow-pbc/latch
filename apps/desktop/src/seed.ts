@@ -8,14 +8,26 @@
  * detached and never awaited.
  *
  * Unconditional by design. Domo does not track whether a build is running,
- * finished, or died -- `ltmm run` resumes from its own `progress` table and
- * prints "nothing to do: every day is already processed" when it is caught up,
- * so asking it again is the cheapest correct thing Domo can do. Every attempt to
- * answer "have we already seeded?" from this side needed a record of a
- * *previous* run, and any such record is either stale (a build that died, or a
- * store that has since fallen behind new messages, skipped forever) or a lie (a
- * pid is a slot the OS reuses). Asking ltmm has neither failure mode, and a
- * store that has fallen behind now catches up on the next launch.
+ * finished, or died. Every attempt to answer "have we already seeded?" from this
+ * side needed a record of a *previous* run, and any such record is either stale
+ * (a build that died, or a store that has since fallen behind new messages,
+ * skipped forever) or a lie (a pid is a slot the OS reuses). Asking ltmm has
+ * neither failure mode, and a store that has fallen behind now catches up on the
+ * next launch.
+ *
+ * That correctness is borrowed, not local, so state the contract plainly. This
+ * depends on three behaviors of whatever `ltmm` is on the machine:
+ *
+ *  1. `run` resumes from its `progress` table rather than rebuilding.
+ *  2. `run` exits 0 with "nothing to do" when every day is processed.
+ *  3. Two concurrent `run`s do not corrupt the store.
+ *
+ * (1) and (2) hold as of the sibling PR that adds `query --json`. **(3) does
+ * not hold yet** -- there is no stand-down when another run holds the store, and
+ * two runs read `done_days` once at start, so they would process the same days
+ * and decay each twice. That PR must land the guard before this ships. Nothing
+ * on this side can check any of it: `DOMO_LTMM_BIN` points at whatever the user
+ * has, and there is no version floor.
  */
 import { spawn } from "node:child_process";
 
@@ -31,6 +43,11 @@ export const liveDeps: SeedDeps = {
     // as an uncaught exception -- which in the Electron main process takes the
     // whole app down on any Mac that has no ltmm installed.
     child.on("error", (e) => console.log(`[seed] ltmm unavailable: ${e.message}`));
+    // The only record that a build was started, now that nothing is written
+    // down. `stdio: "ignore"` throws away ltmm's own output, so without this
+    // line "how many times, and when, did Domo spawn a build?" is unanswerable
+    // -- which is the first question to ask if two ever overlap.
+    console.log(`[seed] started ${bin} run (pid ${child.pid})`);
     // Let the build outlive this process: it takes hours, and quitting the app
     // would otherwise throw away everything built so far.
     child.unref();

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import os from "node:os";
 import path from "node:path";
-import { liveDeps, startSeeding } from "../src/seed.js";
+import { startSeeding } from "../src/seed.js";
 
 function deps() {
   const started: Array<{ bin: string; args: string[] }> = [];
