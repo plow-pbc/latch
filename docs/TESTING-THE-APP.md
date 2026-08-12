@@ -293,42 +293,48 @@ production** (`https://api.plow.co`), including a run from source, so targeting 
 deliberate act:
 
 ```bash
-just app                                            # production, ~/.domo
-DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, ~/.domo-local
-DOMO_HOME=~/.domo-x just app                        # an explicit home always wins
+just app                                          # production, ~/Library/Application Support/Domo-<branch>
+DOMO_API_BASE_URL=http://localhost:4242 just app  # that relay, …/Domo-<branch>-local
+DOMO_HOME=/tmp/domo-x just app                    # an explicit home always wins
 ```
 
 There is no local default and no flag — you export the URL you want.
 
-**Setting the override moves the home too**, to `~/.domo-local`, unless you set `DOMO_HOME`
+`<branch>` is this checkout's normalized branch name (`scripts/worktree-name.sh --branch`), so every
+checkout — main included — has its own home, and none of them is the packaged install's unsuffixed
+`~/Library/Application Support/Domo`.
+
+**Setting the override moves the home too**, to `…/Domo-<branch>-local`, unless you set `DOMO_HOME`
 yourself. A credential is only valid against the environment that minted it, so a local one landing
-in `~/.domo` would overwrite the production install's and cost you a re-onboarding. Plain `just app`
-against production still uses `~/.domo`.
+in the production-facing home would overwrite the credential there and cost you a re-onboarding.
+Plain `just app` against production still uses `…/Domo-<branch>`.
 
 Outside `just`, nothing moves the home for you — and nothing stops the launch seeding. Set all
 three, or you are running a local relay against production state and building the fact store while
 you do it:
 
 ```bash
-DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:4242 \
+DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 \
   DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh npx electron apps/desktop
 ```
 
-**Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
-Set Up window when `app/settings.json` holds no `relayCredential`:
+**Reset to first-run state.** State lives under `DOMO_HOME` (default
+`~/Library/Application Support/Domo-<branch>` under `just`). The app opens the Set Up window when
+`app/settings.json` holds no `relayCredential`:
 
 ```bash
 # A clean first run, your real state untouched. Both overrides are needed:
 # DOMO_HOME isolates what the app writes, DOMO_LTMM_BIN stops it launching the
 # real `ltmm` at your real message archive on every start.
 DOMO_HOME=$(mktemp -d) DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh just app
-rm ~/.domo/app/settings.json             # or reset the real one
+rm ~/Library/Application\ Support/Domo-<branch>/app/settings.json  # or reset the real one
 ```
 
-`just app` honours an inherited `DOMO_HOME`. Other recipes may not — each names its own home, and
-several deliberately target the real `~/.domo` because inspecting or resetting the real install is
-their whole purpose. Read the recipe before running one against state you care about; this file
-does not list them, because a list here goes stale the first time one is added.
+`just` recipes default `DOMO_HOME` to this checkout's `Domo-<branch>` home — your *real* dev one.
+`just app` honours an inherited `DOMO_HOME`; other recipes may not, and several target that real
+home deliberately, because inspecting or resetting the install is their whole purpose. Read the
+recipe before running one against state you care about; this file does not list them, because a
+list here goes stale the first time one is added.
 
 `DOMO_LTMM_BIN` is the second half of that rule and it is easy to miss, because the state it
 protects lives *outside* `DOMO_HOME`. On launch the app spawns `ltmm run`, a multi-hour batch over
