@@ -266,6 +266,10 @@ def _agent_identity() -> tuple[str, str]:
     """
     supplied = os.environ.get("SEED_VAULT_PASSWORD", "")
     if _VAULT_USER and supplied:
+        # Same as every other path: if this is a different account than last
+        # time, the tool's local copy belongs to the old one and has to go, or
+        # it keeps answering for whoever was signed in before.
+        _remember_identity(_VAULT_USER)
         return _VAULT_USER, supplied
     if _VAULT_USER:                        # an explicit override still wins
         pw = _keychain_read(_VAULT_USER)
@@ -300,10 +304,13 @@ def _vault_password() -> str:
 
 def _raw_bw(args: list[str], session: str | None) -> subprocess.CompletedProcess:
     try:
+        # --nointeraction + closed stdin: without a TTY, bw otherwise blocks on
+        # prompts forever (the "browser crashed" hang on credentials).
         return subprocess.run(
-            [_BW_BIN, *args],
+            [_BW_BIN, "--nointeraction", *args],
             capture_output=True, text=True, check=False,
             env=_vault_env(session), timeout=_BW_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:
         raise _VaultToolError(_ERR_VAULT_UNAVAILABLE, _UNAVAILABLE_MSG)
@@ -318,9 +325,7 @@ def _open_vault() -> str:
     vault rejects it; that keeps a page fill fast without holding the password.
     """
     _state_dir()
-    cfg = _raw_bw(["config", "server", _VAULT_URL], None)
-    if cfg.returncode != 0:
-        raise _VaultToolError(_ERR_VAULT_ERROR, "Could not point the vault tool at %s." % _VAULT_URL)
+    _point_at_vault()
     status = _raw_bw(["status"], None)
     try:
         if json.loads(status.stdout)["serverUrl"] != _VAULT_URL:
@@ -352,6 +357,30 @@ def _open_vault() -> str:
 _server_set = False
 
 
+def _point_at_vault() -> None:
+    """Aim the vault tool at our vault, but only when it is not already aimed there.
+
+    `config server` is refused outright while the tool is signed in ("Logout
+    required before server config update"), so setting it unconditionally works
+    exactly once — on a fresh state — and fails on every call after the first
+    login. Ask first, and only log out if the address really has to change.
+    """
+    status = _raw_bw(["status"], None)
+    try:
+        if json.loads(status.stdout).get("serverUrl") == _VAULT_URL:
+            return
+    except (ValueError, KeyError, TypeError):
+        pass
+    cfg = _raw_bw(["config", "server", _VAULT_URL], None)
+    if cfg.returncode != 0:
+        # Pointed somewhere else and signed in there: that session belongs to
+        # the old address, so it goes before the address changes.
+        _raw_bw(["logout"], None)
+        cfg = _raw_bw(["config", "server", _VAULT_URL], None)
+    if cfg.returncode != 0:
+        raise _VaultToolError(_ERR_VAULT_ERROR, "Could not point the vault tool at %s." % _VAULT_URL)
+
+
 def _ensure_identity_and_server() -> None:
     """Point the vault tool at the configured vault, once per run.
 
@@ -366,7 +395,7 @@ def _ensure_identity_and_server() -> None:
     # would otherwise answer, silently, with the wrong vault
     _agent_identity()
     _state_dir()
-    _raw_bw(["config", "server", _VAULT_URL], None)
+    _point_at_vault()
     _server_set = True
 
 

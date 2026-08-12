@@ -41,12 +41,14 @@ export async function ensureVaultAccount(
   const store = new VaultSecretStore(storeDir);
   if (store.read()) return null;
 
-  // A vault with a database but no stored account means the account was lost,
-  // not that this is a first run. Registering a second one here would leave
-  // whatever is already in there unreachable, with nobody told — so stop.
-  if (fs.existsSync(path.join(storeDir, "db.sqlite3"))) {
+  // The vault writes its database the moment it starts, so its presence says
+  // nothing. This marker is written by us, beside the account, and only ever
+  // together with it: marker without account means the account was lost, and
+  // registering a second one would strand whatever is already in the vault.
+  const marker = path.join(storeDir, "account-created");
+  if (fs.existsSync(marker)) {
     throw new Error(
-      "this vault already has data but its account is missing — refusing to create a second one",
+      "this vault already has an account but its password is missing — refusing to create a second one",
     );
   }
 
@@ -87,5 +89,6 @@ export async function ensureVaultAccount(
   // Written only after the account exists, so a failed run retries cleanly
   // rather than leaving a password for an account that was never created.
   store.write({ email, password });
+  fs.writeFileSync(marker, email, { mode: 0o600 });
   return email;
 }

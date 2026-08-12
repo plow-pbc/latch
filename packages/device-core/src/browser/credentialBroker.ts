@@ -49,7 +49,7 @@ export interface CredentialItemSummary {
 export class CredentialBroker {
   constructor(private readonly cfg: CredentialBrokerConfig) {}
 
-  private async run(args: string[]): Promise<string> {
+  private async run(args: string[], timeoutMs?: number): Promise<string> {
     await this.cfg.beforeRun?.();
     return new Promise((resolve, reject) => {
       execFile(
@@ -64,7 +64,7 @@ export class CredentialBroker {
             ...(this.cfg.person ? { SEED_VAULT_PERSON: this.cfg.person } : {}),
             ...(this.cfg.fleetToken ? { SEED_VAULT_TOKEN: this.cfg.fleetToken } : {}),
           },
-          timeout: this.cfg.timeoutMs ?? 45_000,
+          timeout: timeoutMs ?? this.cfg.timeoutMs ?? 45_000,
           maxBuffer: 4 * 1024 * 1024,
         },
         (error, stdout, stderr) => {
@@ -90,6 +90,20 @@ export class CredentialBroker {
         },
       );
     });
+  }
+
+  /**
+   * Sign in once, off the critical path. The first call after a launch pays for
+   * a key derivation and a sync, which together take longer than a browser
+   * action is allowed to; every call after that reuses the session. Failures
+   * are the caller's problem later, not a reason to hold up startup.
+   */
+  async warm(): Promise<void> {
+    try {
+      await this.run(["status"], 60_000);
+    } catch {
+      /* the next real call reports it properly */
+    }
   }
 
   /** Everything in the vault, metadata only. Never a secret value. */

@@ -96,9 +96,12 @@ export class DeviceAgent {
       // Up with the app, not on first use: the owner has to be able to open
       // the vault's own page whenever Domo is running, not only after an agent
       // happens to ask for a credential.
-      void vault?.start().catch(() => {
-        /* the broker surfaces this as a locked vault when it next runs */
-      });
+      void vault
+        ?.start()
+        .then(() => this.credentialBroker?.warm())
+        .catch(() => {
+          /* the broker surfaces this as a locked vault when it next runs */
+        });
       const credentials = new CredentialBroker({
         command: browserRuntime.credentialBrokerCommand,
         env: browserRuntime.env,
@@ -111,10 +114,21 @@ export class DeviceAgent {
               SEED_VAULT_CA: vault.certPath,
               SEED_VAULT_USER: vault.account?.email ?? "",
               SEED_VAULT_PASSWORD: vault.account?.password ?? "",
+              // Its own client state, beside its own vault. Sharing the
+              // standalone default means inheriting whatever server and
+              // account a previous install was pointed at.
+              SEED_VAULT_STATE: path.join(vault.dataDir, "client"),
+              // Below the per-action ceiling on purpose: an unreachable vault
+              // must come back as an error the agent can report, not as a call
+              // that never returns and takes the session down with it.
+              SEED_VAULT_TIMEOUT: "10",
             })
           : undefined,
         beforeRun: vault ? () => vault.start() : undefined,
         auditPath: path.join(browserDir, "credential-audit.log"),
+        // The relay gives up around 20s and every browser action is capped at
+        // 15s, so the broker has to fail inside that or the session dies.
+        timeoutMs: 12_000,
         person: vaultPerson,
         fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
