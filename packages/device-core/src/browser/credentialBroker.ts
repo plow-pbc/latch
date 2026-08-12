@@ -28,6 +28,9 @@ export interface CredentialBrokerConfig {
   person?: string;
   fleetToken?: string;
   timeoutMs?: number;
+  /** Extra environment resolved AT CALL TIME. A plain object cannot carry the
+   * vault account, because it does not exist yet when this is constructed. */
+  envFor?: () => Record<string, string>;
   /** Awaited before every call. When the vault runs on this Mac, this is what
    * starts it — the broker is the only thing that needs it up, so it pays the
    * cold start rather than app launch. Idempotent by contract. */
@@ -56,6 +59,7 @@ export class CredentialBroker {
           env: {
             ...process.env,
             ...this.cfg.env,
+            ...(this.cfg.envFor?.() ?? {}),
             ...(this.cfg.auditPath ? { SEED_VAULT_AUDIT: this.cfg.auditPath } : {}),
             ...(this.cfg.person ? { SEED_VAULT_PERSON: this.cfg.person } : {}),
             ...(this.cfg.fleetToken ? { SEED_VAULT_TOKEN: this.cfg.fleetToken } : {}),

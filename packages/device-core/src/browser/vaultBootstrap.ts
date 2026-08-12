@@ -10,6 +10,8 @@
  * stretched from that password.
  */
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { encString, httpCa, masterKeyAndHash, send, KDF_ITERATIONS } from "./vaultCrypto.js";
 import { VaultSecretStore, VaultAccount } from "./vaultSecretStore.js";
 
@@ -38,6 +40,15 @@ export async function ensureVaultAccount(
 ): Promise<string | null> {
   const store = new VaultSecretStore(storeDir);
   if (store.read()) return null;
+
+  // A vault with a database but no stored account means the account was lost,
+  // not that this is a first run. Registering a second one here would leave
+  // whatever is already in there unreachable, with nobody told — so stop.
+  if (fs.existsSync(path.join(storeDir, "db.sqlite3"))) {
+    throw new Error(
+      "this vault already has data but its account is missing — refusing to create a second one",
+    );
+  }
 
   // One account for this machine: the human signs into it on the vault's page
   // and the agent signs into it to read what is there.

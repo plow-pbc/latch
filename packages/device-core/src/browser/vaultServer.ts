@@ -100,10 +100,10 @@ export class VaultServer {
         ROCKET_PORT: String(this.port),
         ROCKET_TLS: `{certs="${cert}",key="${key}"}`,
         DOMAIN: this.url,
-        // Open, but only ever on loopback: the owner registers their own
-        // account on the vault's own page, with a password we never see, and
-        // nothing off this Mac can reach the port at all.
-        SIGNUPS_ALLOWED: "true",
+        // Open only while this machine still needs its one account, and only
+        // ever on loopback. Left open, anything running as the user could add
+        // accounts to the vault.
+        SIGNUPS_ALLOWED: this.needsAccount() ? "true" : "false",
       },
       stdio: ["ignore", "ignore", "pipe"],
       detached: true,

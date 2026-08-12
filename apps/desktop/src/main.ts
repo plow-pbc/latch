@@ -429,6 +429,15 @@ ipcMain.handle("vault:get", async () => {
   return readCredentials(vault.url, vault.dataDir);
 });
 
+// A renderer anchor cannot open a browser from inside Electron, so the main
+// process does it — and only ever for this machine's own vault address.
+ipcMain.handle("vault:open", async () => {
+  const vault = device?.vaultServer;
+  if (!vault) return false;
+  await shell.openExternal(vault.url);
+  return true;
+});
+
 ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
   const vault = device?.vaultServer;
   if (!vault) throw new Error("this build has no vault");

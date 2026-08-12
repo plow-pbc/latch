@@ -421,24 +421,46 @@ function capText(c) {
 // ---- Settings ----
 
 /**
- * The vault's own account. It is shown, not hidden: this is what the owner
- * types into the vault's page to look at their secrets, and they can replace
- * either half with something they choose. The account key is re-wrapped behind
- * the scenes, so what is already stored stays readable.
+ * The vault's own account. Shown, not hidden: this is what the owner types into
+ * the vault's page to read their own secrets, and either half can be replaced
+ * with something they choose — the account key is re-wrapped underneath, so
+ * what is already stored stays readable.
  */
+/** One editable value with a Copy button beside it — never two of the same. */
+function fieldRow(input) {
+  const copy = el("button", { class: "btn small", text: "Copy" });
+  copy.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(input.value);
+    copy.textContent = "Copied";
+    setTimeout(() => { copy.textContent = "Copy"; }, 1200);
+  });
+  return el("div", { class: "copyrow" }, [input, copy]);
+}
+
 async function renderVault() {
   const creds = await window.domo.vaultGet();
   if (!creds) {
-    view.replaceChildren(el("div", { class: "card" }, [
-      el("p", { class: "faint", text: "This build has no vault, or it has not started yet." }),
+    view.replaceChildren(el("div", { class: "panel" }, [
+      el("div", { class: "section-label", text: "Your vault" }),
+      el("div", { class: "empty", text: "The vault has not started yet." }),
     ]));
     return;
   }
-  const open = el("a", { class: "btn", text: "Open vault", href: creds.url, target: "_blank" });
-  const emailInput = el("input", { class: "input", value: creds.email });
-  const passwordInput = el("input", { class: "input", value: creds.password });
-  const note = el("p", { class: "faint", text: "Sign in with these at " + creds.url });
-  const save = el("button", { class: "btn primary", text: "Save" });
+
+  // Anchors go nowhere inside Electron; the main process opens the browser.
+  const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    window.domo.vaultOpen();
+  });
+
+  const emailInput = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
+  emailInput.value = creds.email;
+  const passwordInput = el("input", { class: "text mono", attrs: { type: "text", spellcheck: "false" } });
+  passwordInput.value = creds.password;
+
+  const note = el("p", { class: "faint", text: "Sign in on that page with these two." });
+  const save = el("button", { class: "btn primary", text: "Save changes" });
   save.addEventListener("click", async () => {
     save.disabled = true;
     note.textContent = "Changing…";
@@ -446,18 +468,20 @@ async function renderVault() {
       const updated = await window.domo.vaultSet(emailInput.value.trim(), passwordInput.value);
       emailInput.value = updated.email;
       passwordInput.value = updated.password;
-      note.textContent = "Saved. Use these at " + updated.url;
+      note.textContent = "Saved. Sign in with these from now on.";
     } catch (err) {
       note.textContent = "Could not change it: " + (err && err.message ? err.message : String(err));
     }
     save.disabled = false;
   });
-  view.replaceChildren(el("div", { class: "card" }, [
-    el("h2", { text: "Your vault" }),
-    el("div", { class: "field" }, [el("label", { text: "Email" }), emailInput]),
-    el("div", { class: "field" }, [el("label", { text: "Password" }), passwordInput]),
+
+  view.replaceChildren(el("div", { class: "panel" }, [
+    el("div", { class: "section-label", text: "Your vault" }),
+    el("div", { class: "field" }, [el("label", { text: "Address" }), link]),
+    el("div", { class: "field" }, [el("label", { text: "Email" }), fieldRow(emailInput)]),
+    el("div", { class: "field" }, [el("label", { text: "Password" }), fieldRow(passwordInput)]),
     note,
-    el("div", { class: "row" }, [open, save]),
+    el("div", { class: "row" }, [save]),
   ]));
 }
 

@@ -101,23 +101,18 @@ export class DeviceAgent {
       });
       const credentials = new CredentialBroker({
         command: browserRuntime.credentialBrokerCommand,
-        env: {
-          ...browserRuntime.env,
-          ...(vault
-            ? {
-                SEED_VAULT_URL: vault.url,
-                SEED_VAULT_CA: vault.certPath,
-                // Read at call time, not at startup: the account does not exist
-                // until the vault's first run has finished creating it.
-                get SEED_VAULT_USER() {
-                  return vault.account?.email ?? "";
-                },
-                get SEED_VAULT_PASSWORD() {
-                  return vault.account?.password ?? "";
-                },
-              }
-            : {}),
-        },
+        env: browserRuntime.env,
+        // Resolved per call: the account is created by the vault's first run,
+        // which happens after this object exists. Getters in a spread would be
+        // read once, right here, and freeze an empty account in place.
+        envFor: vault
+          ? () => ({
+              SEED_VAULT_URL: vault.url,
+              SEED_VAULT_CA: vault.certPath,
+              SEED_VAULT_USER: vault.account?.email ?? "",
+              SEED_VAULT_PASSWORD: vault.account?.password ?? "",
+            })
+          : undefined,
         beforeRun: vault ? () => vault.start() : undefined,
         auditPath: path.join(browserDir, "credential-audit.log"),
         person: vaultPerson,
