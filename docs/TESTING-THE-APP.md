@@ -318,11 +318,10 @@ DOMO_HOME=$(mktemp -d) DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh just app
 rm ~/.domo/app/settings.json             # or reset the real one
 ```
 
-`just app` honours an inherited `DOMO_HOME` (via `apphome`), so the throwaway above reaches it.
-The other recipes — `verify-preload`, the screenshot ones, `device-id`, `audit`, `clean` — target
-`nethome`, your *real* `~/.domo`, deliberately: they exist to inspect or reset the real install.
-Pass a throwaway to anything that writes state, and read that list as "which home am I pointing
-at" rather than assuming the export carries everywhere.
+`just app` honours an inherited `DOMO_HOME`. Other recipes may not — each names its own home, and
+several deliberately target the real `~/.domo` because inspecting or resetting the real install is
+their whole purpose. Read the recipe before running one against state you care about; this file
+does not list them, because a list here goes stale the first time one is added.
 
 `DOMO_LTMM_BIN` is the second half of that rule and it is easy to miss, because the state it
 protects lives *outside* `DOMO_HOME`. On launch the app spawns `ltmm run`, a multi-hour batch over
