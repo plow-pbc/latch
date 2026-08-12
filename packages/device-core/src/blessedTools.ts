@@ -5,7 +5,7 @@
  */
 import os from "node:os";
 import { JSONValue } from "@domo/protocol";
-import { recall } from "./recall.js";
+import { recall } from "./ltmm.js";
 
 export interface BlessedTool {
   name: string;

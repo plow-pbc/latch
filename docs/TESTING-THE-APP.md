@@ -296,12 +296,20 @@ An unpackaged run already defaults to `http://localhost:18804`; a packaged one t
 Set Up window when `app/settings.json` holds no `relayCredential`:
 
 ```bash
-DOMO_HOME=$(mktemp -d) just app          # a clean first run, your real state untouched
+# A clean first run, your real state untouched. Both overrides are needed:
+# DOMO_HOME isolates what the app writes, DOMO_LTMM_BIN stops it launching the
+# real `ltmm` at your real message archive on every start.
+DOMO_HOME=$(mktemp -d) DOMO_LTMM_BIN=/usr/bin/true just app
 rm ~/.domo/app/settings.json             # or reset the real one
 ```
 
 `just` recipes default `DOMO_HOME` to `~/.domo` — your *real* one. Always pass a throwaway to
 anything that writes state.
+
+`DOMO_LTMM_BIN` is the second half of that rule and it is easy to miss, because the state it
+protects lives *outside* `DOMO_HOME`. On launch the app spawns `ltmm run`, a multi-hour batch over
+years of your messages; pointing it at `/usr/bin/true` makes the spawn a no-op. The drive harnesses
+(`just first-run-drive`, `just approve-drive`) set it themselves.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:

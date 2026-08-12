@@ -116,6 +116,9 @@ async function main() {
 
   process.env.DOMO_HOME = home;
   process.env.DOMO_API_BASE_URL = API_BASE;
+  // Not covered by DOMO_HOME: seeding spawns the installed `ltmm`, which builds
+  // against the operator's real archive regardless of where the app writes.
+  process.env.DOMO_LTMM_BIN = "/usr/bin/true";
   say(`DOMO_HOME ${home}`);
   say(`API base ${API_BASE} — the app will dial ${API_BASE.replace(/^http/, "ws")}/v1/relay/ws`);
 

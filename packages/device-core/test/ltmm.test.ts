@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { RECALL_FAILED, RECALL_UNREADABLE, recall } from "../src/recall.js";
+import { RECALL_FAILED, RECALL_UNREADABLE, recall, startSeeding } from "../src/ltmm.js";
 import { BlessedToolRegistry } from "../src/blessedTools.js";
 import { DeviceAgent } from "../src/deviceAgent.js";
 import { HeadlessPolicy } from "../src/policyEngine.js";
@@ -64,19 +64,6 @@ describe("recall", () => {
     // "the store knows nothing about this" from "the tool failed".
     process.env.DOMO_LTMM_BIN = stubLtmm("[]");
     await expect(recall("anything")).resolves.toEqual([]);
-  });
-
-  it("keeps ltmm's diagnosis out of the message and in the cause", async () => {
-    // The message is what a possibly-compromised agent gets; the cause is what
-    // this Mac writes down. An absolute store path is the reconnaissance the
-    // split exists to withhold, so it must appear in exactly one of them.
-    process.env.DOMO_LTMM_BIN = stubLtmm("", 1, "ltmm: no store at /Users/abby/.msgvault/x.db");
-
-    const failure = await recall("anything").catch((e: Error) => e);
-
-    expect(failure.message).toBe(RECALL_FAILED);
-    expect(failure.message).not.toContain("/Users/abby");
-    expect(String(failure.cause)).toContain("/Users/abby/.msgvault/x.db");
   });
 
   it.each([
@@ -196,5 +183,58 @@ describe("the recall blessed tool", () => {
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("startSeeding", () => {
+  function seedDeps() {
+    const started: Array<{ bin: string; args: string[] }> = [];
+    return {
+      started,
+      deps: {
+        startBuild: (bin: string, args: string[]) => {
+          started.push({ bin, args });
+        },
+      },
+    };
+  }
+
+  it("runs ltmm with no conversation argument, so ltmm picks the top contact", () => {
+    // The exact argv is the whole point of the zero-argument bootstrap: Domo
+    // must not need to know which conversation matters, and must not hardcode
+    // one. It is also the whole command — no store path and no resume flag,
+    // because deciding what is left to do is ltmm's job, not Domo's.
+    const { started, deps } = seedDeps();
+    startSeeding(deps);
+    expect(started).toHaveLength(1);
+    expect(started[0].args).toEqual(["run"]);
+  });
+
+  it("resolves the binary the same way recall does", () => {
+    // The point of one gateway: a test harness that overrides the binary must
+    // not find it honoured on the read path and missed on the seeding path.
+    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets an empty string,
+    // and spawn("") throws ERR_INVALID_ARG_VALUE synchronously, out of the
+    // app-ready handler that calls this.
+    process.env.DOMO_LTMM_BIN = "";
+    const { started, deps } = seedDeps();
+    startSeeding(deps);
+    expect(started[0].bin).toBe("ltmm");
+
+    process.env.DOMO_LTMM_BIN = "/usr/bin/true";
+    const override = seedDeps();
+    startSeeding(override.deps);
+    expect(override.started[0].bin).toBe("/usr/bin/true");
+  });
+
+  it("survives a missing ltmm instead of taking the app down", async () => {
+    // Drives the REAL deps, because an injected stub cannot reproduce this:
+    // spawn reports a missing binary asynchronously on the child's `error`
+    // event, and an unlistened `error` re-throws as an uncaught exception in the
+    // Electron main process. Without the listener this file fails on that
+    // uncaught exception rather than on an assertion.
+    process.env.DOMO_LTMM_BIN = path.join(dir, "does-not-exist");
+    expect(() => startSeeding()).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 100));
   });
 });

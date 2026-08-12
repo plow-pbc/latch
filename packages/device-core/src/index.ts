@@ -6,5 +6,5 @@ export * from "./executor.js";
 export * from "./fileOps.js";
 export * from "./goalsLibrary.js";
 export * from "./identity.js";
+export * from "./ltmm.js";
 export * from "./policyEngine.js";
-export * from "./recall.js";
