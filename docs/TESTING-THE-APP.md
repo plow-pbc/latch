@@ -305,11 +305,13 @@ yourself. A credential is only valid against the environment that minted it, so 
 in `~/.domo` would overwrite the production install's and cost you a re-onboarding. Plain `just app`
 against production still uses `~/.domo`.
 
-Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
-production state:
+Outside `just`, nothing moves the home for you — and nothing stops the launch seeding. Set all
+three, or you are running a local relay against production state and building the fact store while
+you do it:
 
 ```bash
-DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
+DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:4242 \
+  DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh npx electron apps/desktop
 ```
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
@@ -343,7 +345,8 @@ terminal you launched from. Renderer console does not — subscribe to it:
 win.webContents.on("console-message", (_e, level, message) => console.log(`RENDERER[${level}] ${message}`));
 ```
 
-To attach DevTools to a running app: `npx electron --remote-debugging-port=9222 apps/desktop`, then
+To attach DevTools to a running app:
+`DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh npx electron --remote-debugging-port=9222 apps/desktop`, then
 open `http://localhost:9222`. A normally-launched app has no debugging port — you cannot attach
 after the fact, so start it that way if you might need it.
 

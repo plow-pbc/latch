@@ -535,7 +535,12 @@ async function main(): Promise<void> {
     const seededAt = (await deviceInfo()).json;
     const file = seedRealApp(deviceToken, seededAt.uid, seededAt.mcp_url);
     say(`   seeded ${file}`);
-    say(`   launch the app with DOMO_HOME=${path.resolve(DOMO_HOME)} DOMO_API_BASE_URL=${API}`);
+    // DOMO_LTMM_BIN rides along because DOMO_HOME does not cover it: the app
+    // seeds on launch, and the gate is a check, not the product path.
+    say(
+      `   launch the app with DOMO_HOME=${path.resolve(DOMO_HOME)} DOMO_API_BASE_URL=${API} ` +
+        `DOMO_LTMM_BIN=${path.resolve("apps/desktop/scripts/ltmm-stub.sh")}`,
+    );
     say(`   (the app derives the socket from that origin; DOMO_HOME must match, or it dials with another home's credential)`);
     say(`   waiting for the app to dial in…`);
     const started = Date.now();
