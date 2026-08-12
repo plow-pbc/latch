@@ -15,6 +15,7 @@ import {
 } from "@domo/protocol";
 import {
   AuditLog,
+  DeviceAgent,
   FileOps,
   FileOpsError,
   HeadlessPolicy,
@@ -186,5 +187,34 @@ describe("AuditLog", () => {
       .split("\n")
       .filter((l) => l.length > 0);
     expect(lines).toHaveLength(2);
+  });
+});
+
+describe("the device directory", () => {
+  const modeOf = (dir: string): number => fs.statSync(dir).mode & 0o077;
+  const build = (home: string): void => {
+    new DeviceAgent(home, "test-device", new HeadlessPolicy({ intent: "deny" }));
+  };
+
+  it("is closed to other local accounts, on a fresh home and an old one", () => {
+    // It holds the audit log — which records the diagnostics deliberately
+    // withheld from the calling agent — plus rules.json, scratch/ and skills/.
+    // One mode on the container rather than one per store, because a per-file
+    // rule is one every future store has to remember.
+    //
+    // The second case is the load-bearing one: every store under here creates
+    // its directory with a plain recursive mkdir, so on a home from an earlier
+    // version the directory already exists at 0755 and the creation mode is
+    // inert. Only the chmod tightens it, and deleting that as "redundant with
+    // the mode above" has to fail here.
+    const fresh = tempDir();
+    build(fresh);
+    expect(modeOf(path.join(fresh, "device"))).toBe(0);
+
+    const old = tempDir();
+    fs.mkdirSync(path.join(old, "device"), { recursive: true });
+    fs.chmodSync(path.join(old, "device"), 0o755);
+    build(old);
+    expect(modeOf(path.join(old, "device"))).toBe(0);
   });
 });

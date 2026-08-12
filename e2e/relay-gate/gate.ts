@@ -23,6 +23,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DeviceAgent, PolicyDelegate } from "@domo/device-core";
 import { Intent } from "@domo/protocol";
 import { createDomoMcpServer, DomoMcpServer, PROTOCOL_REVISION } from "@domo/mcp-server";
@@ -543,7 +544,16 @@ async function main(): Promise<void> {
     const seededAt = (await deviceInfo()).json;
     const file = seedRealApp(deviceToken, seededAt.uid, seededAt.mcp_url);
     say(`   seeded ${file}`);
-    say(`   launch the app with DOMO_HOME=${path.resolve(DOMO_HOME)} DOMO_API_BASE_URL=${API}`);
+    // DOMO_LTMM_BIN rides along because DOMO_HOME does not cover it: the app
+    // seeds on launch, and the gate is a check, not the product path. Anchored
+    // to this module rather than resolved against cwd, so the printed command is
+    // absolute by construction instead of by where the gate happened to start.
+    const stub = fileURLToPath(new URL("../../apps/desktop/scripts/ltmm-stub.sh", import.meta.url));
+    assert.ok(fs.existsSync(stub), `the ltmm stub is missing: ${stub}`);
+    say(
+      `   launch the app with DOMO_HOME=${path.resolve(DOMO_HOME)} DOMO_API_BASE_URL=${API} ` +
+        `DOMO_LTMM_BIN=${stub}`,
+    );
     say(`   (the app derives the socket from that origin; DOMO_HOME must match, or it dials with another home's credential)`);
     say(`   waiting for the app to dial in…`);
     const started = Date.now();

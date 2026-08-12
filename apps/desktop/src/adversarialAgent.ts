@@ -167,5 +167,23 @@ export function agentHistory(allEvents: JSONValue[], agentId: string, limit = 40
     const iid = ev.get("intentId").str;
     return iid !== null && intentIds.has(iid);
   });
-  return relevant.slice(-limit);
+  return relevant.slice(-limit).map(withoutPrivateDetail);
+}
+
+/**
+ * The audit log stays on this Mac; this history does not.
+ *
+ * `tool_error.detail` is where a tool records the diagnosis deliberately kept
+ * from the calling agent -- for recall, ltmm's absolute store path and backend
+ * endpoint. This history is serialized into the reviewer's prompt and sent to
+ * Anthropic, so forwarding it there would undo the withholding: a third party
+ * is not a smaller disclosure than the agent, just a different one.
+ *
+ * The event itself survives. The reviewer still needs to see that a tool failed
+ * and which one; only the local-only field goes.
+ */
+function withoutPrivateDetail(event: JSONValue): JSONValue {
+  if (jv(event).get("event").str !== "tool_error") return event;
+  const { detail: _localOnly, ...rest } = event as { [k: string]: JSONValue };
+  return rest;
 }

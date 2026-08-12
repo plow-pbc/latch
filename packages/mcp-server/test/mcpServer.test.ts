@@ -185,6 +185,38 @@ describe("a tool call end to end, in process", () => {
     expect(events(device)).not.toContain("file_read");
   });
 
+  it("a failing recall tells the agent nothing it did not already know", async () => {
+    // This repo assumes the calling agent may be compromised, so ltmm's failure
+    // detail — absolute store paths, backend endpoints — is reconnaissance. The
+    // error is split: a stable public message for the wire, and a `cause` this
+    // Mac keeps. Driven through the real recall tool rather than a synthetic
+    // one, so the producer (ltmm.ts), the transport (executeTool) and the oracle
+    // (audit.ndjson) are all covered by the one test.
+    const { server, device } = makeServer();
+    const secret = "/Users/abby/.msgvault/ltmm/facts.db";
+    const bin = path.join(tempDir(), "ltmm");
+    fs.writeFileSync(bin, `#!/bin/sh\necho "no store at ${secret}" >&2\nexit 1\n`);
+    fs.chmodSync(bin, 0o755);
+    process.env.DOMO_LTMM_BIN = bin;
+    cleanups.push(() => {
+      delete process.env.DOMO_LTMM_BIN;
+    });
+
+    const { payload, isError } = await callTool(
+      server,
+      "use_tool",
+      { tool: "recall", args: { query: "abby" } },
+      AGENT,
+    );
+
+    expect(isError).toBe(true);
+    expect(JSON.stringify(payload)).toContain("recall failed");
+    expect(JSON.stringify(payload)).not.toContain(secret);
+
+    const recorded = device.audit.entries().at(-1) as JSONValue;
+    expect(jv(recorded).get("event").str).toBe("tool_error");
+    expect(jv(recorded).get("detail").str).toContain(secret);
+  });
 });
 
 describe("agent identity", () => {

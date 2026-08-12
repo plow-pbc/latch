@@ -12,4 +12,8 @@ export * from "./executor.js";
 export * from "./fileOps.js";
 export * from "./goalsLibrary.js";
 export * from "./identity.js";
+// Named, not `export *`: `startSeeding` is the only part of the LTMM gateway
+// used outside this package. The rest is consumed in-package by the blessed
+// tool, and exporting it would make each piece an API to preserve.
+export { startSeeding } from "./ltmm.js";
 export * from "./policyEngine.js";

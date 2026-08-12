@@ -251,7 +251,9 @@ $DOMO_HOME (default ~/Library/Application Support/Domo)
 └── device/scratch/…                     # per-run sandbox scratch dirs
 ```
 
-Everything honors `DOMO_HOME` so tests run against throwaway roots.
+Domo's own state honors `DOMO_HOME` so tests run against throwaway roots. The LTMM fact store is
+not Domo's state and lives outside it, so an isolated launch must also set `DOMO_LTMM_BIN` — the
+app spawns `ltmm run` on startup, a multi-hour build over the owner's real messages.
 
 ## 10. Testing strategy
 
@@ -450,8 +452,8 @@ Invariants carried over verbatim:
   SBPL profile mechanically derived from the capability set (§6). Profile
   generation is pure string-building and must produce **byte-identical SBPL**
   to the Swift generator (golden-tested).
-- **Everything honors `DOMO_HOME`; audit log stays append-only NDJSON and
-  stays the test oracle** (§10).
+- **Domo's own state honors `DOMO_HOME`** (the LTMM store does not — see §9);
+  **audit log stays append-only NDJSON and stays the test oracle** (§10).
 - Consent-UI rule, restated for a web renderer: the approval window renders
   **only** from the verified canonical intent — never remote content, never
   agent-controlled markup. `contextIsolation` on, `nodeIntegration` off,

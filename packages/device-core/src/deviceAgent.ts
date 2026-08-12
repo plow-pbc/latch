@@ -10,6 +10,7 @@
  * there is no signature to verify and no agent public key to pin.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import fs from "node:fs";
 import path from "node:path";
 import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
@@ -46,8 +47,22 @@ export class DeviceAgent {
     blessedTools?: BlessedToolRegistry,
     browserRuntime?: ResolvedBrowserRuntime | null,
   ) {
+    // Every store below lands in this one directory, so its mode is set once
+    // here rather than per file. The audit log records the diagnostics
+    // deliberately withheld from the calling agent -- absolute store paths,
+    // backend endpoints -- and rules.json, scratch/ and skills/ carry the rest
+    // of this device's private state; under the default 0022 umask each would
+    // be world-readable, and a per-file rule is one every future store has to
+    // remember. The chmod is what does the work: `loadOrCreateIdentity` and the
+    // stores below all create directories with a plain recursive mkdir, so on a
+    // home from an earlier version this directory already exists at 0755 and a
+    // creation mode alone would be inert.
+    const deviceDir = path.join(home, "device");
+    fs.mkdirSync(deviceDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(deviceDir, 0o700);
+
     this.identity = loadOrCreateIdentity(home, name);
-    this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
+    this.audit = new AuditLog(path.join(deviceDir, "audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
     this.blessedTools = blessedTools ?? BlessedToolRegistry.standard();
@@ -263,7 +278,17 @@ export class DeviceAgent {
       return { status: "completed", result };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: message });
+      // A tool may split its failure in two: a stable public `message`, and a
+      // `cause` holding detail the caller must not see -- local paths, backend
+      // endpoints. The audit log is this Mac's own record and keeps both; the
+      // agent, which this repo assumes may be compromised, gets only the message.
+      const cause = error instanceof Error ? error.cause : undefined;
+      this.audit.record("tool_error", {
+        intentId: intent.intentId,
+        tool: name,
+        error: message,
+        detail: cause === undefined ? null : String(cause),
+      });
       return { status: "error", error: message };
     }
   }

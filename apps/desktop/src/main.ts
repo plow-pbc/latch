@@ -24,6 +24,7 @@ import {
   GoalsLibrary,
   PolicyDelegate,
   resolveBrowserRuntime,
+  startSeeding,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
@@ -598,6 +599,10 @@ app.whenReady().then(async () => {
   // A Mac with no credential cannot do anything until it has one, so first run
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
+
+  // After the window is up, so nothing here delays first paint. Returns as soon
+  // as the child is spawned; ltmm decides whether there is anything to do.
+  startSeeding();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

@@ -1,6 +1,11 @@
 /**
  * Canonical install locations — twin of DomoProtocol/DomoPaths.swift.
- * Everything honors DOMO_HOME so tests use throwaway roots.
+ *
+ * Domo's own install locations honor DOMO_HOME, so tests use throwaway roots.
+ * That is the whole of what it covers: the LTMM fact store is external state,
+ * built by a separate CLI the app spawns on launch, and no DOMO_HOME reaches
+ * it. An isolated run must set DOMO_LTMM_BIN as well, or a throwaway home still
+ * starts a multi-hour build over the owner's real messages.
  */
 import os from "node:os";
 

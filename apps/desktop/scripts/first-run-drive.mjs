@@ -202,6 +202,12 @@ async function main() {
   // app's main.js is imported — it reads them as it loads.
   process.env.DOMO_HOME = home;
   process.env.DOMO_API_BASE_URL = API_BASE;
+  // DOMO_HOME does not contain this one: seeding spawns the installed `ltmm`,
+  // which builds against the operator's real message archive no matter which
+  // home the app is pointed at. A drive that promises real state is untouched
+  // has to say which binary runs, not just where the app writes. The stub
+  // answers both gateway operations -- an inert seed AND an empty recall.
+  process.env.DOMO_LTMM_BIN = path.join(dir, "ltmm-stub.sh");
   say(`clean DOMO_HOME ${home}`);
   say(`stand-in Plow (HTTP + device socket) ${API_BASE}`);
 

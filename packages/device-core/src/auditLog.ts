@@ -2,6 +2,12 @@
  * Append-only NDJSON audit log — twin of DomoDeviceCore/AuditLog.swift.
  * One event per line: the human record, the test oracle (DESIGN.md §10), and
  * the stream the future adversarial reviewer consumes.
+ *
+ * Entries carry what the wire withholds — a `tool_error` records the `cause`,
+ * i.e. absolute store paths and backend endpoints — so callers must put this
+ * inside an owner-only directory. `DeviceAgent` sets 0700 on `device/` once,
+ * for every store in it; confidentiality is that directory's job, not this
+ * file's.
  */
 import { EventEmitter } from "node:events";
 import fs from "node:fs";

@@ -81,13 +81,18 @@ const { FakeRelay } = await import("../../../packages/relay-client/dist-test/fak
 const relay = await FakeRelay.start({ expectCredential: DEVICE_TOKEN, server: api });
 ```
 
-**2. Point the real app at it and boot it.** Both env vars must be set *before* the import:
+**2. Point the real app at it and boot it.** All three env vars must be set *before* the import:
 
 ```js
 process.env.DOMO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "drive-"));  // clean = first run
 process.env.DOMO_API_BASE_URL = API_BASE;
+process.env.DOMO_LTMM_BIN = path.join(dir, "ltmm-stub.sh");  // or the real archive gets built
 await import("../dist/main.js");   // the app's OWN main process
 ```
+
+The third is the one that bites: `DOMO_HOME` isolates what the app *writes*, but on launch the app
+also *spawns* `ltmm run` — a multi-hour build over years of the operator's real messages, which no
+`DOMO_HOME` can contain. The stub keeps that inert and still answers `recall` with `[]`.
 
 Import the real `main.js`. Do **not** re-register your own `ipcMain` handlers — the bug above lived
 in a handler, and every harness that stubbed them was green while the app was dead.
@@ -304,11 +309,13 @@ yourself. A credential is only valid against the environment that minted it, so 
 in the production-facing home would overwrite the credential there and cost you a re-onboarding.
 Plain `just app` against production still uses `…/Domo-<branch>`.
 
-Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
-production-facing state:
+Outside `just`, nothing moves the home for you — and nothing stops the launch seeding. Set all
+three, or you are running a local relay against production state and building the fact store while
+you do it:
 
 ```bash
-DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
+DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 \
+  DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh npx electron apps/desktop
 ```
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default
@@ -316,12 +323,26 @@ DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron a
 `app/settings.json` holds no `relayCredential`:
 
 ```bash
-DOMO_HOME=$(mktemp -d) just app                                    # a clean first run, your real state untouched
-rm ~/Library/Application\ Support/Domo-<branch>/app/settings.json  # or reset the real one
+# A clean first run, your real state untouched. Both overrides are needed:
+# DOMO_HOME isolates what the app writes, DOMO_LTMM_BIN stops it launching the
+# real `ltmm` at your real message archive on every start.
+DOMO_HOME=$(mktemp -d) DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh just app
+rm "$HOME/Library/Application Support/Domo-BRANCH/app/settings.json"  # or reset the real one
 ```
 
 `just` recipes default `DOMO_HOME` to this checkout's `Domo-<branch>` home — your *real* dev one.
-Always pass a throwaway to anything that writes state.
+`just app` honours an inherited `DOMO_HOME`; other recipes may not, and several target that real
+home deliberately, because inspecting or resetting the install is their whole purpose. Read the
+recipe before running one against state you care about; this file does not list them, because a
+list here goes stale the first time one is added.
+
+`DOMO_LTMM_BIN` is the second half of that rule and it is easy to miss, because the state it
+protects lives *outside* `DOMO_HOME`. On launch the app spawns `ltmm run`, a multi-hour batch over
+years of your messages; pointing it at the stub makes that spawn a no-op. Use
+`apps/desktop/scripts/ltmm-stub.sh` rather than `/usr/bin/true` — the same variable also selects the binary
+`recall` runs, and `true` exits with empty stdout, which makes every recall in the session fail as
+if ltmm were broken. The stub emits `[]`, so recall answers honestly that it knows nothing. The
+drive harnesses (`just first-run-drive`, `just approve-drive`) set it themselves.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:
@@ -330,7 +351,8 @@ terminal you launched from. Renderer console does not — subscribe to it:
 win.webContents.on("console-message", (_e, level, message) => console.log(`RENDERER[${level}] ${message}`));
 ```
 
-To attach DevTools to a running app: `npx electron --remote-debugging-port=9222 apps/desktop`, then
+To attach DevTools to a running app:
+`DOMO_LTMM_BIN=apps/desktop/scripts/ltmm-stub.sh npx electron --remote-debugging-port=9222 apps/desktop`, then
 open `http://localhost:9222`. A normally-launched app has no debugging port — you cannot attach
 after the fact, so start it that way if you might need it.
 
