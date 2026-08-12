@@ -112,15 +112,15 @@ describe("liveDeps", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
   });
 
-  it("ignores a record written before this boot, whoever holds that pid now", () => {
-    // The pid-recycling trap. A reboot kills the detached build and the OS
-    // reissues low pids, so this records OUR OWN pid — indisputably alive — with
-    // a start time from before the machine booted. Believing it would skip
-    // seeding for as long as that unrelated process lives, and nothing ever
-    // rewrites the record, so that would be forever.
+  it("ignores a live process that is not the build that was recorded", () => {
+    // The pid-recycling trap, reproduced exactly: this records OUR OWN pid —
+    // indisputably alive, so a liveness check alone says "already-running" —
+    // against a start time that is not ours. That is what a wrapped-around pid
+    // looks like, and believing it skips seeding for as long as that unrelated
+    // process lives, which since nothing rewrites the record is forever.
     withHome((home) => {
-      const beforeThisBoot = Date.now() - os.uptime() * 1000 - 60_000;
-      writePid(home, `${process.pid} ${beforeThisBoot}\n`);
+      const aDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      writePid(home, `${process.pid} ${aDayAgo}\n`);
 
       expect(liveDeps(home).buildIsRunning()).toBe(false);
     });

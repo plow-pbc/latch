@@ -8,9 +8,8 @@
  * detached and never awaited.
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 /**
  * `started` means the spawn was *attempted*, not that ltmm is running: spawn
@@ -57,21 +56,41 @@ function recordedBuild(home: string): { pid: number; startedAt: number } | null 
   }
 }
 
+/**
+ * `lstart` has one-second resolution and is read a moment after the recorded
+ * `Date.now()`, so they agree to within a second in practice. Wide enough to
+ * absorb that, far narrower than the gap to any unrelated process.
+ */
+const START_TOLERANCE_MS = 5_000;
+
 function isRunning(record: { pid: number; startedAt: number } | null): boolean {
   if (record === null) return false;
-  // A pid means nothing outside the boot session that issued it. A reboot kills
-  // the detached build and the OS reissues low pids from scratch, so a record
-  // written before this boot may now name an unrelated process the user happens
-  // to be running -- their editor, a shell. Believing it would skip seeding for
-  // as long as that process lives, and since nothing rewrites the record, that
-  // is the "silently never gets facts" outcome the pid was meant to remove.
-  if (record.startedAt < Date.now() - os.uptime() * 1000) return false;
   try {
-    // Signal 0 runs the permission and existence checks without delivering
-    // anything; it throws ESRCH when no such process exists.
-    process.kill(record.pid, 0);
-    return true;
+    // Identity, not liveness. A pid is a slot the OS reuses: macOS hands them
+    // out sequentially and wraps at 99999, so on a Mac with weeks of uptime the
+    // number recorded for a finished build comes back around to something else
+    // the user is running -- and since nothing rewrites this record, believing
+    // it would skip seeding for as long as that process lives.
+    //
+    // Pid plus start time is the durable identity. Deliberately NOT `comm`:
+    // `ltmm` is a Python console script, and `ps -o comm=` reports the
+    // interpreter for a shebang script (measured: a `#!/bin/sh` script reports
+    // `/bin/sh`), so name-matching would fail for the real binary and respawn a
+    // duplicate build on every launch. Deliberately NOT boot-time arithmetic
+    // either: comparing a recorded wall clock against one re-derived from
+    // uptime breaks under an NTP correction, and errs toward a second build.
+    // Both sides here are the same wall-clock instant, recorded once.
+    const lstart = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(record.pid)], {
+      encoding: "utf8",
+      timeout: 5_000,
+    }).trim();
+    const actualStart = Date.parse(lstart);
+    return (
+      !Number.isNaN(actualStart) && Math.abs(actualStart - record.startedAt) <= START_TOLERANCE_MS
+    );
   } catch {
+    // No such process, or ps itself failed. Falls through to running the build,
+    // the safe direction everywhere in this file.
     return false;
   }
 }
