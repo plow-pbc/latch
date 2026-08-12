@@ -10,55 +10,10 @@
  * stretched from that password.
  */
 import crypto from "node:crypto";
-import fs from "node:fs";
-import https from "node:https";
+import { encString, httpCa, masterKeyAndHash, send, KDF_ITERATIONS } from "./vaultCrypto.js";
 import { VaultSecretStore, VaultAccount } from "./vaultSecretStore.js";
 
-const KDF_ITERATIONS = 600_000;
 
-const pbkdf2 = (pw: crypto.BinaryLike, salt: crypto.BinaryLike, iters: number, len: number) =>
-  crypto.pbkdf2Sync(pw, salt, iters, len, "sha256");
-
-/** HKDF-Expand (RFC 5869), single block — all a 32-byte key needs. */
-function hkdfExpand(prk: Buffer, info: string, len: number): Buffer {
-  const h = crypto.createHmac("sha256", prk);
-  h.update(Buffer.concat([Buffer.from(info, "utf8"), Buffer.from([1])]));
-  return h.digest().subarray(0, len);
-}
-
-/** Bitwarden EncString type 2: AES-256-CBC then HMAC-SHA256, base64 pieces. */
-function encString(plain: Buffer, encKey: Buffer, macKey: Buffer): string {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv("aes-256-cbc", encKey, iv);
-  const ct = Buffer.concat([cipher.update(plain), cipher.final()]);
-  const mac = crypto.createHmac("sha256", macKey).update(Buffer.concat([iv, ct])).digest();
-  return `2.${iv.toString("base64")}|${ct.toString("base64")}|${mac.toString("base64")}`;
-}
-
-/**
- * POST JSON to our own vault. `fetch` cannot be told to trust one certificate,
- * and the vault's cert is the one this machine minted for itself — so use the
- * https client, which can, rather than disabling verification globally.
- */
-function post(url: string, body: unknown, caPath?: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const payload = Buffer.from(JSON.stringify(body));
-    const req = https.request(
-      url,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Content-Length": payload.length },
-        ...(caPath && fs.existsSync(caPath) ? { ca: fs.readFileSync(caPath) } : {}),
-      },
-      (res) => {
-        res.resume();
-        res.once("end", () => resolve(res.statusCode ?? 0));
-      },
-    );
-    req.once("error", reject);
-    req.end(payload);
-  });
-}
 
 /** The one vault account this machine uses, or null before it has one. */
 export function vaultAccount(storeDir: string): VaultAccount | null {
@@ -89,14 +44,9 @@ export async function ensureVaultAccount(
   const email = `${person.split("@")[0]}-${crypto.randomBytes(3).toString("hex")}@local`;
   const password = crypto.randomBytes(32).toString("base64url");
 
-  const masterKey = pbkdf2(password, email.toLowerCase(), KDF_ITERATIONS, 32);
-  const masterPasswordHash = pbkdf2(masterKey, password, 1, 32).toString("base64");
+  const derived = masterKeyAndHash(email, password);
   const userKey = crypto.randomBytes(64);
-  const protectedKey = encString(
-    userKey,
-    hkdfExpand(masterKey, "enc", 32),
-    hkdfExpand(masterKey, "mac", 32),
-  );
+  const protectedKey = encString(userKey, derived.stretchedEnc, derived.stretchedMac);
   const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   const encryptedPrivateKey = encString(
     privateKey.export({ type: "pkcs8", format: "der" }),
@@ -104,22 +54,23 @@ export async function ensureVaultAccount(
     userKey.subarray(32),
   );
 
-  const status = await post(
-    `${vaultUrl}/identity/accounts/register`,
-    {
+  const res = await send(
+    { url: vaultUrl, ca: httpCa(caPath) },
+    "POST",
+    "/identity/accounts/register",
+    JSON.stringify({
       email,
       name: email.split("@")[0],
-      masterPasswordHash,
+      masterPasswordHash: derived.hash,
       masterPasswordHint: null,
       key: protectedKey,
       kdf: 0,
       kdfIterations: KDF_ITERATIONS,
       keys: { publicKey: publicKey.export({ type: "spki", format: "der" }).toString("base64"), encryptedPrivateKey },
-    },
-    caPath,
+    }),
   );
-  if (status < 200 || status >= 300) {
-    throw new Error(`vault refused to create this machine's account (HTTP ${status})`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`vault refused to create this machine's account (HTTP ${res.status})`);
   }
 
   // Written only after the account exists, so a failed run retries cleanly

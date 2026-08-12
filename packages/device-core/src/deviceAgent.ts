@@ -38,7 +38,8 @@ export class DeviceAgent {
   readonly browserSessions: BrowserSessions | null = null;
   /** Exposed so the approval UI can resolve credential item titles locally. */
   readonly credentialBroker: CredentialBroker | null = null;
-  private readonly vaultServer: VaultServer | null = null;
+  /** The vault this machine runs, when this build ships one. */
+  readonly vaultServer: VaultServer | null = null;
   private readonly browserHost: BrowserHost | null = null;
   private readonly seenNonces = new Set<string>();
 

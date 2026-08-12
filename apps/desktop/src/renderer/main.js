@@ -420,6 +420,47 @@ function capText(c) {
 
 // ---- Settings ----
 
+/**
+ * The vault's own account. It is shown, not hidden: this is what the owner
+ * types into the vault's page to look at their secrets, and they can replace
+ * either half with something they choose. The account key is re-wrapped behind
+ * the scenes, so what is already stored stays readable.
+ */
+async function renderVault() {
+  const creds = await window.domo.vaultGet();
+  if (!creds) {
+    view.replaceChildren(el("div", { class: "card" }, [
+      el("p", { class: "faint", text: "This build has no vault, or it has not started yet." }),
+    ]));
+    return;
+  }
+  const open = el("a", { class: "btn", text: "Open vault", href: creds.url, target: "_blank" });
+  const emailInput = el("input", { class: "input", value: creds.email });
+  const passwordInput = el("input", { class: "input", value: creds.password });
+  const note = el("p", { class: "faint", text: "Sign in with these at " + creds.url });
+  const save = el("button", { class: "btn primary", text: "Save" });
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    note.textContent = "Changing…";
+    try {
+      const updated = await window.domo.vaultSet(emailInput.value.trim(), passwordInput.value);
+      emailInput.value = updated.email;
+      passwordInput.value = updated.password;
+      note.textContent = "Saved. Use these at " + updated.url;
+    } catch (err) {
+      note.textContent = "Could not change it: " + (err && err.message ? err.message : String(err));
+    }
+    save.disabled = false;
+  });
+  view.replaceChildren(el("div", { class: "card" }, [
+    el("h2", { text: "Your vault" }),
+    el("div", { class: "field" }, [el("label", { text: "Email" }), emailInput]),
+    el("div", { class: "field" }, [el("label", { text: "Password" }), passwordInput]),
+    note,
+    el("div", { class: "row" }, [open, save]),
+  ]));
+}
+
 async function renderSettings() {
   // The Plow account. There is no credential field and no URL field here: the
   // credential is minted by first-run login and never leaves the main process,
@@ -552,6 +593,7 @@ function render() {
   if (currentTab === "audit") renderAudit();
   else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
+  else if (currentTab === "vault") renderVault();
   else if (currentTab === "settings") renderSettings();
 }
 
