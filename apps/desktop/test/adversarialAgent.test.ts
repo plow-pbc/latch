@@ -8,7 +8,7 @@
  * The model client is stubbed; nothing here touches the network.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Intent, JSONValue, makeIntent } from "@domo/protocol";
+import { Intent, JSONValue, jv, makeIntent } from "@domo/protocol";
 
 /** Set per test: what the stubbed `messages.create` does. */
 let createImpl: (params: unknown) => Promise<unknown>;
@@ -233,6 +233,32 @@ describe("agentHistory", () => {
     const history = agentHistory(events, "agent-1");
     expect(JSON.stringify(history)).not.toContain("agent-2");
     expect(JSON.stringify(history)).not.toContain(".ssh");
+  });
+
+  it("keeps a failed tool call visible but drops its private diagnosis", () => {
+    // This history is serialized into the reviewer's prompt and sent to
+    // Anthropic, so `detail` — what recall withheld from the calling agent —
+    // must not ride along. Asserted on the leak, not the field: the event has to
+    // survive, and a "field is absent" check would pass a dropped event.
+    const secret = "/Users/abby/.msgvault/ltmm/facts.db";
+    const failed: JSONValue[] = [
+      { event: "intent_received", intentId: "i9", agent: "agent-1", request: "use blessed tool: recall" },
+      {
+        event: "tool_error",
+        intentId: "i9",
+        tool: "recall",
+        error: "recall failed",
+        detail: `no store at ${secret}`,
+      },
+    ];
+
+    const history = agentHistory(failed, "agent-1");
+
+    expect(history).toHaveLength(2);
+    expect(jv(history[1]).get("event").str).toBe("tool_error");
+    expect(jv(history[1]).get("tool").str).toBe("recall");
+    expect(jv(history[1]).get("error").str).toBe("recall failed");
+    expect(JSON.stringify(history)).not.toContain(secret);
   });
 
   it("returns nothing for an agent with no activity", () => {

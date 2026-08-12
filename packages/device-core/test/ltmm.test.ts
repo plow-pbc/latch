@@ -194,48 +194,44 @@ describe("the recall blessed tool", () => {
 });
 
 describe("startSeeding", () => {
-  function seedDeps() {
-    const started: Array<{ bin: string; args: string[] }> = [];
+  /** A stand-in ltmm that records the argv it was spawned with. */
+  function recordingLtmm(): { bin: string; argv: () => Promise<string> } {
+    const bin = path.join(dir, "record-argv");
+    const out = path.join(dir, "argv.txt");
+    fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s' "$*" > "${out}"\n`);
+    fs.chmodSync(bin, 0o755);
     return {
-      started,
-      deps: {
-        startBuild: (bin: string, args: string[]) => {
-          started.push({ bin, args });
-        },
+      bin,
+      argv: async () => {
+        // The child is detached, so poll rather than assume it has run.
+        const deadline = Date.now() + 2_000;
+        while (Date.now() < deadline) {
+          if (fs.existsSync(out)) return fs.readFileSync(out, "utf8");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error("the stub was never spawned");
       },
     };
   }
 
-  it("runs ltmm with no conversation argument, so ltmm picks the top contact", () => {
+  it("runs ltmm with no conversation argument, so ltmm picks the top contact", async () => {
     // The exact argv is the whole point of the zero-argument bootstrap: Domo
     // must not need to know which conversation matters, and must not hardcode
     // one. It is also the whole command — no store path and no resume flag,
     // because deciding what is left to do is ltmm's job, not Domo's.
-    const { started, deps } = seedDeps();
-    startSeeding(deps);
-    expect(started).toHaveLength(1);
-    expect(started[0].args).toEqual(["run"]);
-  });
+    //
+    // Driven through DOMO_LTMM_BIN and a real detached spawn rather than an
+    // injected seam: the executable override is the same one recall uses, so
+    // there is no second mechanism to keep working.
+    const stub = recordingLtmm();
+    process.env.DOMO_LTMM_BIN = stub.bin;
 
-  it("resolves the binary the same way recall does", () => {
-    // The point of one gateway: a test harness that overrides the binary must
-    // not find it honoured on the read path and missed on the seeding path.
-    // `DOMO_LTMM_BIN=$(which ltmm)` on a Mac without ltmm sets an empty string,
-    // and spawn("") throws ERR_INVALID_ARG_VALUE synchronously, out of the
-    // app-ready handler that calls this.
-    process.env.DOMO_LTMM_BIN = "";
-    const { started, deps } = seedDeps();
-    startSeeding(deps);
-    expect(started[0].bin).toBe("ltmm");
+    startSeeding();
 
-    process.env.DOMO_LTMM_BIN = "/usr/bin/true";
-    const override = seedDeps();
-    startSeeding(override.deps);
-    expect(override.started[0].bin).toBe("/usr/bin/true");
+    expect(await stub.argv()).toBe("run");
   });
 
   it("survives a missing ltmm instead of taking the app down", async () => {
-    // Drives the REAL deps, because an injected stub cannot reproduce this:
     // spawn reports a missing binary asynchronously on the child's `error`
     // event, and an unlistened `error` re-throws as an uncaught exception in the
     // Electron main process. Without the listener this file fails on that
@@ -244,4 +240,9 @@ describe("startSeeding", () => {
     expect(() => startSeeding()).not.toThrow();
     await new Promise((resolve) => setTimeout(resolve, 100));
   });
+
+  // Deliberately untested: that an empty DOMO_LTMM_BIN falls back to "ltmm".
+  // Asserting it means letting the fallback run, and the fallback is a real
+  // `ltmm run` — a multi-hour build over the owner's messages on any machine
+  // that has it installed. Both operations share one `ltmmBin()`.
 });

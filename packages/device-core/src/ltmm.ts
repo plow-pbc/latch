@@ -181,31 +181,25 @@ export function recall(query: string): Promise<Fact[]> {
  * this side can verify any of it: `DOMO_LTMM_BIN` points at whatever the user
  * has, and there is no version floor.
  */
-export interface SeedDeps {
-  startBuild(bin: string, args: string[]): void;
-}
-
-export const liveSeedDeps: SeedDeps = {
-  startBuild: (bin, args) => {
-    const child = spawn(bin, args, { detached: true, stdio: "ignore" });
-    // Required, not optional: spawn delivers a missing binary as an async
-    // `error` event, and an EventEmitter with no `error` listener re-throws it
-    // as an uncaught exception -- which in the Electron main process takes the
-    // whole app down on any Mac that has no ltmm installed.
-    child.on("error", (e) => console.log(`[seed] ltmm unavailable: ${e.message}`));
-    // The only record that a build was started, now that nothing is written
-    // down: `stdio: "ignore"` throws away ltmm's own output, so without this
-    // line "how many times, and when, did Domo spawn a build?" is unanswerable.
-    // Gated on the pid because a failed spawn returns a ChildProcess whose pid
-    // is already undefined, and an ungated line would claim a start on every
-    // launch of a Mac with no ltmm.
-    if (child.pid !== undefined) console.log(`[seed] started ${bin} run (pid ${child.pid})`);
-    // Let the build outlive this process: it takes hours, and quitting the app
-    // would otherwise throw away everything built so far.
-    child.unref();
-  },
-};
-
-export function startSeeding(deps: SeedDeps = liveSeedDeps): void {
-  deps.startBuild(ltmmBin(), ["run"]);
+export function startSeeding(): void {
+  // No injection seam. `DOMO_LTMM_BIN` is already the seam a test needs -- the
+  // same one recall uses, pointed at scripts/ltmm-stub.sh -- so a second,
+  // test-only mechanism for the same job was one more public surface every
+  // change to this gateway had to preserve.
+  const bin = ltmmBin();
+  const child = spawn(bin, ["run"], { detached: true, stdio: "ignore" });
+  // Required, not optional: spawn delivers a missing binary as an async `error`
+  // event, and an EventEmitter with no `error` listener re-throws it as an
+  // uncaught exception -- which in the Electron main process takes the whole app
+  // down on any Mac that has no ltmm installed.
+  child.on("error", (e) => console.log(`[seed] ltmm unavailable: ${e.message}`));
+  // The only record that a build was started: `stdio: "ignore"` throws away
+  // ltmm's own output, so without this line "how many times, and when, did Domo
+  // spawn a build?" is unanswerable. Gated on the pid because a failed spawn
+  // returns a ChildProcess whose pid is already undefined, and an ungated line
+  // would claim a start on every launch of a Mac with no ltmm.
+  if (child.pid !== undefined) console.log(`[seed] started ${bin} run (pid ${child.pid})`);
+  // Let the build outlive this process: it takes hours, and quitting the app
+  // would otherwise throw away everything built so far.
+  child.unref();
 }
