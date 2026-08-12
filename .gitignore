@@ -12,3 +12,4 @@ vendor/python-runtime/
 vendor/camoufox-browser/
 vendor/vault-cli/
 vendor/downloads/
+vendor/vault-server/

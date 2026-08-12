@@ -16,6 +16,7 @@ import { BlessedToolRegistry } from "./blessedTools.js";
 import { BrowserHost } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
+import { VaultServer } from "./browser/vaultServer.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { Executor } from "./executor.js";
@@ -36,6 +37,7 @@ export class DeviceAgent {
   readonly browserSessions: BrowserSessions | null = null;
   /** Exposed so the approval UI can resolve credential item titles locally. */
   readonly credentialBroker: CredentialBroker | null = null;
+  private readonly vaultServer: VaultServer | null = null;
   private readonly browserHost: BrowserHost | null = null;
   private readonly seenNonces = new Set<string>();
 
@@ -73,9 +75,24 @@ export class DeviceAgent {
         actionTimeoutMs: 15_000,
         audit: auditFn,
       });
+      // When this build ships its own vault, run it here rather than talking to
+      // one we host: same broker, same CLI, just pointed at 127.0.0.1 with the
+      // cert this machine minted for itself.
+      const vault = browserRuntime.vaultServer
+        ? new VaultServer({
+            binary: browserRuntime.vaultServer.binary,
+            webVaultDir: browserRuntime.vaultServer.webVaultDir,
+            dataDir: path.join(browserDir, "vault"),
+          })
+        : null;
+      this.vaultServer = vault;
       const credentials = new CredentialBroker({
         command: browserRuntime.credentialBrokerCommand,
-        env: browserRuntime.env,
+        env: {
+          ...browserRuntime.env,
+          ...(vault ? { SEED_VAULT_URL: vault.url, SEED_VAULT_CA: vault.certPath } : {}),
+        },
+        beforeRun: vault ? () => vault.start() : undefined,
         auditPath: path.join(browserDir, "credential-audit.log"),
         person: process.env.DOMO_VAULT_PERSON,
         fleetToken: process.env.DOMO_VAULT_TOKEN,
@@ -85,9 +102,10 @@ export class DeviceAgent {
     }
   }
 
-  /** Close any live browser session (app teardown). */
+  /** Close any live browser session, and the vault if we are running one. */
   async shutdown(): Promise<void> {
     await this.browserSessions?.closeAll("shutdown");
+    this.vaultServer?.stop();
   }
 
   /**

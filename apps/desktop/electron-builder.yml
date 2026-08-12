@@ -37,6 +37,9 @@ extraResources:
   - from: ../../vendor/vault-cli
     to: browser-runtime/vault-cli
     filter: ["**/*", "!*/.sha256"]
+  - from: ../../vendor/vault-server
+    to: browser-runtime/vault-server
+    filter: ["**/*", "!*/.commit", "!.web-vault.sha256"]
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png
@@ -65,7 +68,7 @@ mac:
   # those through untouched (both arch trees survive intact in the universal
   # app). The Python runtime is fully universal2, so it's merged normally and
   # not covered here.
-  x64ArchFiles: "**/browser-runtime/{camoufox,vault-cli}/**"
+  x64ArchFiles: "**/browser-runtime/{camoufox,vault-cli,vault-server}/**"
   notarize: true
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested

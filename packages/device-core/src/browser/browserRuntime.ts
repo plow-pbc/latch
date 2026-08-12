@@ -14,6 +14,8 @@ export interface ResolvedBrowserRuntime {
   credentialBrokerCommand: string[];
   /** Extra environment for both. */
   env: Record<string, string>;
+  /** The vault this machine runs for itself, when one ships in this build. */
+  vaultServer: { binary: string; webVaultDir: string } | null;
   /** A complete camoufox install dir (contains config.json + browsers/), the
    * layout `camoufox fetch` creates. BrowserHost exposes it to the server via
    * an app-scoped $HOME symlink. Null when the command embeds its own. */
@@ -25,6 +27,7 @@ interface Layout {
   serverDir: string; // contains server.py and seed_vault_broker/
   camoufoxDir: string; // contains <arch>/Camoufox.app (or Camoufox.app directly)
   vaultCliDir: string; // contains <arch>/bw (or bw directly)
+  vaultServerDir: string; // contains <arch>/vaultwarden and web-vault/
 }
 
 /** Packaged: Contents/Resources/browser-runtime/{python,server,camoufox,vault-cli}. */
@@ -34,6 +37,7 @@ function packagedLayout(dir: string): Layout {
     serverDir: path.join(dir, "server"),
     camoufoxDir: path.join(dir, "camoufox"),
     vaultCliDir: path.join(dir, "vault-cli"),
+    vaultServerDir: path.join(dir, "vault-server"),
   };
 }
 
@@ -44,6 +48,7 @@ function vendorLayout(dir: string): Layout {
     serverDir: path.join(dir, "browser-server"),
     camoufoxDir: path.join(dir, "camoufox-browser"),
     vaultCliDir: path.join(dir, "vault-cli"),
+    vaultServerDir: path.join(dir, "vault-server"),
   };
 }
 
@@ -52,6 +57,18 @@ const hostArch = (): string => (process.arch === "arm64" ? "arm64" : "x86_64");
 function camoufoxIn(dir: string): string | null {
   const candidates = [path.join(dir, hostArch()), dir];
   return candidates.find((c) => fs.existsSync(path.join(c, "config.json"))) ?? null;
+}
+
+/** The vault we ship: its binary for this arch plus the shared web interface.
+ * Null when this build has no vault payload — the broker then talks to whatever
+ * SEED_VAULT_URL points at, the way it did when we hosted it. */
+function vaultServerIn(dir: string): { binary: string; webVaultDir: string } | null {
+  const binary = [path.join(dir, hostArch(), "vaultwarden"), path.join(dir, "vaultwarden")].find(
+    (c) => fs.existsSync(c),
+  );
+  const webVaultDir = path.join(dir, "web-vault");
+  if (!binary || !fs.existsSync(webVaultDir)) return null;
+  return { binary, webVaultDir };
 }
 
 /** The `bw` we ship, this machine's arch. Null falls back to one on PATH. */
@@ -92,6 +109,7 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
       ...(fs.existsSync(caBundle) ? { SSL_CERT_FILE: caBundle } : {}),
       ...(bw ? { SEED_VAULT_BW: bw } : {}),
     },
+    vaultServer: vaultServerIn(layout.vaultServerDir),
     camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? camoufoxIn(layout.camoufoxDir),
   };
 }
@@ -128,6 +146,7 @@ export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRun
       serverCommand: argv,
       credentialBrokerCommand: brokerCmd ? (JSON.parse(brokerCmd) as string[]) : argv,
       env: {},
+      vaultServer: null,
       camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? null,
     };
   }

@@ -22,7 +22,7 @@ afterEach(() => {
  * browser-runtime/, the layout electron-builder produces. Returns the dir to
  * hand to resolveBrowserRuntime.
  */
-function fakePayload(opts: { withVaultCli: boolean }): { resources: string; root: string } {
+function fakePayload(opts: { withVaultCli: boolean; withVaultServer?: boolean }): { resources: string; root: string } {
   const resources = fs.mkdtempSync(path.join(os.tmpdir(), "domo-runtime-"));
   dirs.push(resources);
   const root = path.join(resources, "browser-runtime");
@@ -37,6 +37,11 @@ function fakePayload(opts: { withVaultCli: boolean }): { resources: string; root
   if (opts.withVaultCli) {
     fs.mkdirSync(path.join(root, "vault-cli", arch), { recursive: true });
     fs.writeFileSync(path.join(root, "vault-cli", arch, "bw"), "");
+  }
+  if (opts.withVaultServer) {
+    fs.mkdirSync(path.join(root, "vault-server", arch), { recursive: true });
+    fs.writeFileSync(path.join(root, "vault-server", arch, "vaultwarden"), "");
+    fs.mkdirSync(path.join(root, "vault-server", "web-vault"), { recursive: true });
   }
   return { resources, root };
 }
@@ -67,6 +72,20 @@ describe("resolveBrowserRuntime", () => {
     expect(runtime.env.SSL_CERT_FILE).toBe(
       path.join(root, "python", "site-packages", "certifi", "cacert.pem"),
     );
+  });
+
+  it("finds the vault this build ships, binary plus web interface", () => {
+    const { resources, root } = fakePayload({ withVaultCli: true, withVaultServer: true });
+    const runtime = resolveBrowserRuntime(resources)!;
+    expect(runtime.vaultServer).toEqual({
+      binary: path.join(root, "vault-server", arch, "vaultwarden"),
+      webVaultDir: path.join(root, "vault-server", "web-vault"),
+    });
+  });
+
+  it("reports no vault when this build ships none, so we can still point at a hosted one", () => {
+    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: true }).resources)!;
+    expect(runtime.vaultServer).toBeNull();
   });
 
   it("lets an explicit SEED_VAULT_BW win over the bundled copy", () => {

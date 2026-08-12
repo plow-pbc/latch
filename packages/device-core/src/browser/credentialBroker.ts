@@ -28,6 +28,10 @@ export interface CredentialBrokerConfig {
   person?: string;
   fleetToken?: string;
   timeoutMs?: number;
+  /** Awaited before every call. When the vault runs on this Mac, this is what
+   * starts it — the broker is the only thing that needs it up, so it pays the
+   * cold start rather than app launch. Idempotent by contract. */
+  beforeRun?: () => Promise<void>;
 }
 
 export interface CredentialItemSummary {
@@ -42,7 +46,8 @@ export interface CredentialItemSummary {
 export class CredentialBroker {
   constructor(private readonly cfg: CredentialBrokerConfig) {}
 
-  private run(args: string[]): Promise<string> {
+  private async run(args: string[]): Promise<string> {
+    await this.cfg.beforeRun?.();
     return new Promise((resolve, reject) => {
       execFile(
         this.cfg.command[0],

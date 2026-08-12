@@ -28,6 +28,7 @@ const runtimeDir = path.join(vendorDir, "python-runtime");
 const downloadsDir = path.join(vendorDir, "downloads");
 const browserDir = path.join(vendorDir, "camoufox-browser");
 const vaultCliDir = path.join(vendorDir, "vault-cli");
+const vaultServerDir = path.join(vendorDir, "vault-server");
 
 const lock = JSON.parse(fs.readFileSync(path.join(serverDir, "runtime.lock.json"), "utf8"));
 const requirementsPath = path.join(serverDir, "requirements.txt");
@@ -493,6 +494,86 @@ function signCamoufox(arch, identity) {
 }
 
 // ---------------------------------------------------------------------------
+// Vault server payload (the vault itself, running on the user's Mac)
+// ---------------------------------------------------------------------------
+/**
+ * Builds Vaultwarden from source into vendor/vault-server/<arch>/vaultwarden.
+ *
+ * Upstream publishes Linux container images and nothing else — no macOS binary,
+ * no Homebrew formula, and the crates.io entry is an empty 0.0.1 placeholder —
+ * so this is the one payload we compile ourselves. Needs a Rust toolchain on
+ * the packaging machine; the pinned rust-toolchain.toml in their tree decides
+ * the compiler version, so `rustup` fetches it on first run.
+ *
+ * The web interface is NOT compiled: it ships as a hash-pinned prebuilt tarball.
+ */
+function fetchVaultServer(arch) {
+  const { repo, commit, version } = lock.vaultServer;
+  const installRoot = path.join(vaultServerDir, arch);
+  const marker = path.join(installRoot, ".commit");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === commit) {
+    log(`vault server ${arch} up to date`);
+    return;
+  }
+  const srcDir = path.join(downloadsDir, "vaultwarden-src");
+  if (!fs.existsSync(path.join(srcDir, ".git"))) {
+    fs.rmSync(srcDir, { recursive: true, force: true });
+    log(`cloning vaultwarden ${version}`);
+    run("git", ["clone", "--quiet", repo, srcDir]);
+  }
+  run("git", ["-C", srcDir, "fetch", "--quiet", "origin", commit], { quiet: true });
+  run("git", ["-C", srcDir, "checkout", "--quiet", commit], { quiet: true });
+
+  const triple = arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
+  run("cargo", ["build", "--release", "--locked", "--features", "sqlite", "--target", triple], {
+    cwd: srcDir,
+  });
+  const built = path.join(srcDir, "target", triple, "release", "vaultwarden");
+  if (!fs.existsSync(built)) throw new Error(`cargo produced no binary at ${built}`);
+
+  fs.rmSync(installRoot, { recursive: true, force: true });
+  fs.mkdirSync(installRoot, { recursive: true });
+  fs.copyFileSync(built, path.join(installRoot, "vaultwarden"));
+  fs.chmodSync(path.join(installRoot, "vaultwarden"), 0o755);
+  fs.writeFileSync(marker, commit);
+  log(`vault server ${arch} ready at ${installRoot}`);
+}
+
+/** The web interface — prebuilt upstream, arch-independent, hash-pinned. */
+function fetchVaultWebUi() {
+  const asset = lock.vaultServer.webVault;
+  const webRoot = path.join(vaultServerDir, "web-vault");
+  const marker = path.join(vaultServerDir, ".web-vault.sha256");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
+    log("vault web ui up to date");
+    return;
+  }
+  const tgz = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
+  download(asset.url, asset.sha256, tgz);
+  log("extracting vault web ui");
+  fs.rmSync(webRoot, { recursive: true, force: true });
+  fs.mkdirSync(webRoot, { recursive: true });
+  // The tarball holds a single web-vault/ top level; strip it.
+  run("tar", ["-xzf", tgz, "-C", webRoot, "--strip-components", "1"]);
+  fs.writeFileSync(marker, asset.sha256);
+  log(`vault web ui ready at ${webRoot}`);
+}
+
+/** Developer ID + helper entitlements, same as the other bundled executables. */
+function signVaultServer(arch, identity) {
+  const bin = path.join(vaultServerDir, arch, "vaultwarden");
+  if (!fs.existsSync(bin)) return;
+  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
+  run(
+    "codesign",
+    ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, bin],
+    { quiet: true },
+  );
+  log(`signed vault server (${arch}) with Developer ID`);
+}
+
+// ---------------------------------------------------------------------------
 // Vault CLI payload (the credential broker's `bw`)
 // ---------------------------------------------------------------------------
 /**
@@ -544,9 +625,11 @@ try {
   if (wantBrowser) {
     const hostArch = process.arch === "arm64" ? "arm64" : "x86_64";
     const arches = wantBoth ? ["arm64", "x86_64"] : [hostArch];
+    fetchVaultWebUi();
     for (const a of arches) {
       fetchBrowser(a);
       fetchVaultCli(a);
+      fetchVaultServer(a);
       builtArches.push(a);
     }
   }
@@ -560,6 +643,7 @@ try {
     for (const a of builtArches) {
       signCamoufox(a, identity);
       signVaultCli(a, identity);
+      signVaultServer(a, identity);
     }
   } else {
     log("CODESIGN_IDENTITY not set — keeping existing/ad-hoc signatures (dev mode)");
