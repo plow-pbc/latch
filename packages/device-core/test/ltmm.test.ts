@@ -124,8 +124,12 @@ describe("the recall blessed tool", () => {
     expect(tool).toBeDefined();
     expect(Object.keys(tool!.inputSchema.properties)).toEqual(["query"]);
     expect(tool!.inputSchema.required).toEqual(["query"]);
-    // The description is the only thing the agent reads when deciding to call it.
-    expect(tool!.description.length).toBeGreaterThan(40);
+
+    // Asserted by content, not by a length floor the overpromising text also
+    // passed: seeding builds from one conversation, so a description claiming
+    // everyone the owner talks to turns `[]` into an authoritative "no such fact".
+    expect(tool!.description).toMatch(/messages most/i);
+    expect(tool!.description).toMatch(/empty result/i);
   });
 
   it("returns the store's facts through invoke", async () => {
