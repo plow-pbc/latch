@@ -47,7 +47,10 @@ export const liveDeps: SeedDeps = {
     // down. `stdio: "ignore"` throws away ltmm's own output, so without this
     // line "how many times, and when, did Domo spawn a build?" is unanswerable
     // -- which is the first question to ask if two ever overlap.
-    console.log(`[seed] started ${bin} run (pid ${child.pid})`);
+    // Gated on the pid: a failed spawn returns a ChildProcess whose pid is
+    // already undefined, so an ungated line would claim a start on every launch
+    // of a Mac with no ltmm and contradict the listener above a tick later.
+    if (child.pid !== undefined) console.log(`[seed] started ${bin} run (pid ${child.pid})`);
     // Let the build outlive this process: it takes hours, and quitting the app
     // would otherwise throw away everything built so far.
     child.unref();
