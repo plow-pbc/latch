@@ -82,7 +82,7 @@ describe("liveDeps", () => {
 
       expect(seedIfMissing(live)).toBe("started");
 
-      const pid = Number.parseInt(fs.readFileSync(seedPidPath(home), "utf8"), 10);
+      const [pid] = fs.readFileSync(seedPidPath(home), "utf8").trim().split(/\s+/).map(Number);
       try {
         expect(live.buildIsRunning()).toBe(true);
         expect(seedIfMissing(live)).toBe("already-running");
@@ -104,7 +104,7 @@ describe("liveDeps", () => {
       expect(fs.existsSync(seedPidPath(home))).toBe(true);
 
       // A pid that cannot be running: the recorded build is dead.
-      writePid(home, "999999\n");
+      writePid(home, `999999 ${Date.now()}\n`);
 
       expect(live.buildIsRunning()).toBe(false);
       expect(seedIfMissing(live)).toBe("started");
@@ -112,10 +112,25 @@ describe("liveDeps", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
   });
 
+  it("ignores a record written before this boot, whoever holds that pid now", () => {
+    // The pid-recycling trap. A reboot kills the detached build and the OS
+    // reissues low pids, so this records OUR OWN pid — indisputably alive — with
+    // a start time from before the machine booted. Believing it would skip
+    // seeding for as long as that unrelated process lives, and nothing ever
+    // rewrites the record, so that would be forever.
+    withHome((home) => {
+      const beforeThisBoot = Date.now() - os.uptime() * 1000 - 60_000;
+      writePid(home, `${process.pid} ${beforeThisBoot}\n`);
+
+      expect(liveDeps(home).buildIsRunning()).toBe(false);
+    });
+  });
+
   it.each([
     ["an unreadable record", undefined],
     ["a malformed record", "not-a-pid\n"],
-    ["a nonsense pid", "0\n"],
+    ["a nonsense pid", `0 ${Date.now()}\n`],
+    ["a record with no start time", "4242\n"],
   ])("retries rather than skipping on %s", (_label, contents) => {
     // Every unreadable case resolves toward running the build again. That is
     // the safe direction: a resumed build costs little, and being wrong the

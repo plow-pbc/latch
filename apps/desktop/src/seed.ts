@@ -8,6 +8,7 @@
  * detached and never awaited.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -41,21 +42,34 @@ export const seedPidPath = (home: string): string => path.join(home, "device/see
  * direction: the cost is a resumed build, and the cost of being wrong the other
  * way is a user who silently never gets facts at all.
  */
-function recordedPid(home: string): number | null {
+function recordedBuild(home: string): { pid: number; startedAt: number } | null {
   try {
-    const pid = Number.parseInt(fs.readFileSync(seedPidPath(home), "utf8"), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const [pid, startedAt] = fs
+      .readFileSync(seedPidPath(home), "utf8")
+      .trim()
+      .split(/\s+/)
+      .map((field) => Number.parseInt(field, 10));
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    if (!Number.isInteger(startedAt)) return null;
+    return { pid, startedAt };
   } catch {
     return null;
   }
 }
 
-function isAlive(pid: number | null): boolean {
-  if (pid === null) return false;
+function isRunning(record: { pid: number; startedAt: number } | null): boolean {
+  if (record === null) return false;
+  // A pid means nothing outside the boot session that issued it. A reboot kills
+  // the detached build and the OS reissues low pids from scratch, so a record
+  // written before this boot may now name an unrelated process the user happens
+  // to be running -- their editor, a shell. Believing it would skip seeding for
+  // as long as that process lives, and since nothing rewrites the record, that
+  // is the "silently never gets facts" outcome the pid was meant to remove.
+  if (record.startedAt < Date.now() - os.uptime() * 1000) return false;
   try {
     // Signal 0 runs the permission and existence checks without delivering
     // anything; it throws ESRCH when no such process exists.
-    process.kill(pid, 0);
+    process.kill(record.pid, 0);
     return true;
   } catch {
     return false;
@@ -63,7 +77,7 @@ function isAlive(pid: number | null): boolean {
 }
 
 export const liveDeps = (home: string): SeedDeps => ({
-  buildIsRunning: () => isAlive(recordedPid(home)),
+  buildIsRunning: () => isRunning(recordedBuild(home)),
   startBuild: (bin, args) => {
     const child = spawn(bin, args, { detached: true, stdio: "ignore" });
     // Required, not optional: spawn delivers a missing binary as an async
@@ -78,8 +92,19 @@ export const liveDeps = (home: string): SeedDeps => ({
     // the next launch finds no live build and tries again.
     if (child.pid === undefined) return;
     const pidFile = seedPidPath(home);
-    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
-    fs.writeFileSync(pidFile, `${child.pid}\n`);
+    try {
+      fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+      // The start time rides along because the pid alone is not an identity;
+      // see isRunning.
+      fs.writeFileSync(pidFile, `${child.pid} ${Date.now()}\n`);
+    } catch (recordFailed) {
+      // This runs inside an unguarded app-ready handler, and it now runs on
+      // every launch that starts a build rather than once ever, so an EACCES or
+      // ENOSPC on DOMO_HOME must not take the app down. The build has already
+      // spawned; the only cost of losing the record is starting it again later,
+      // which ltmm resumes.
+      console.log(`[seed] could not record build start: ${String(recordFailed)}`);
+    }
   },
 });
 
