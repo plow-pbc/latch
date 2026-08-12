@@ -1,7 +1,7 @@
 # Packaging config for `just package` — signed + notarized Domo Desktop.app + DMG.
 # Signing identity is pinned to the Plow Developer ID; notarization credentials
 # come from the keychain profile named by APPLE_KEYCHAIN_PROFILE (see justfile).
-appId: com.plowcollective.domo-desktop
+appId: co.plow.domo-desktop
 productName: Domo Desktop
 
 directories:
