@@ -254,11 +254,15 @@ describe("startSeeding", () => {
     // unreachable.
     //
     // Safe to exercise because the fallback is a bare name, so it resolves
-    // through PATH: shadowing `ltmm` in a temp dir means the fallback finds this
-    // stub and never a real ltmm, whose `run` is a multi-hour build over the
-    // owner's messages.
+    // through PATH. The replacement is exclusive rather than prepended, and that
+    // distinction is the safety property: prepending leaves the real world on
+    // PATH, so if the fallback name ever changes this test would resolve a real
+    // ltmm and launch `run` -- a multi-hour build over the owner's messages,
+    // detached and outliving the suite. With only the temp dir and the two
+    // system dirs the shebang needs, any name but this stub simply fails to
+    // resolve and the poll fails cleanly.
     const stub = recordingLtmm("ltmm");
-    process.env.PATH = `${dir}:${process.env.PATH ?? ""}`;
+    process.env.PATH = `${dir}:/usr/bin:/bin`;
     process.env.DOMO_LTMM_BIN = "";
 
     expect(() => startSeeding()).not.toThrow();
