@@ -10,6 +10,7 @@
  * there is no signature to verify and no agent public key to pin.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import os from "node:os";
 import path from "node:path";
 import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
@@ -75,6 +76,10 @@ export class DeviceAgent {
         actionTimeoutMs: 15_000,
         audit: auditFn,
       });
+      // Launched from Finder there is no environment to speak of, so the vault
+      // and the broker agree on one identity for this machine rather than each
+      // falling back to a different default.
+      const vaultPerson = process.env.DOMO_VAULT_PERSON ?? `${os.userInfo().username}@local`;
       // When this build ships its own vault, run it here rather than talking to
       // one we host: same broker, same CLI, just pointed at 127.0.0.1 with the
       // cert this machine minted for itself.
@@ -83,18 +88,38 @@ export class DeviceAgent {
             binary: browserRuntime.vaultServer.binary,
             webVaultDir: browserRuntime.vaultServer.webVaultDir,
             dataDir: path.join(browserDir, "vault"),
+            person: vaultPerson,
           })
         : null;
       this.vaultServer = vault;
+      // Up with the app, not on first use: the owner has to be able to open
+      // the vault's own page whenever Domo is running, not only after an agent
+      // happens to ask for a credential.
+      void vault?.start().catch(() => {
+        /* the broker surfaces this as a locked vault when it next runs */
+      });
       const credentials = new CredentialBroker({
         command: browserRuntime.credentialBrokerCommand,
         env: {
           ...browserRuntime.env,
-          ...(vault ? { SEED_VAULT_URL: vault.url, SEED_VAULT_CA: vault.certPath } : {}),
+          ...(vault
+            ? {
+                SEED_VAULT_URL: vault.url,
+                SEED_VAULT_CA: vault.certPath,
+                // Read at call time, not at startup: the account does not exist
+                // until the vault's first run has finished creating it.
+                get SEED_VAULT_USER() {
+                  return vault.account?.email ?? "";
+                },
+                get SEED_VAULT_PASSWORD() {
+                  return vault.account?.password ?? "";
+                },
+              }
+            : {}),
         },
         beforeRun: vault ? () => vault.start() : undefined,
         auditPath: path.join(browserDir, "credential-audit.log"),
-        person: process.env.DOMO_VAULT_PERSON,
+        person: vaultPerson,
         fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;

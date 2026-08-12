@@ -258,8 +258,15 @@ def _remember_identity(email: str) -> None:
 
 
 def _agent_identity() -> tuple[str, str]:
-    """The agent address and password for this machine's person, fetching them the first
-    time and reading the keychain after that."""
+    """The address and password this machine signs into the vault with.
+
+    Domo hands both in the environment: the vault lives in the app now, so the app
+    owns that account and keeps its password in its own secure storage. The keychain
+    path below is what a standalone install still uses.
+    """
+    supplied = os.environ.get("SEED_VAULT_PASSWORD", "")
+    if _VAULT_USER and supplied:
+        return _VAULT_USER, supplied
     if _VAULT_USER:                        # an explicit override still wins
         pw = _keychain_read(_VAULT_USER)
         if pw:

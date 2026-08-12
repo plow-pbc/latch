@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { ensureVaultAccount, vaultAccount, vaultAccountExists } from "./vaultBootstrap.js";
 
 export interface VaultServerConfig {
   /** The bundled `vaultwarden` binary for this arch. */
@@ -23,6 +24,8 @@ export interface VaultServerConfig {
   dataDir: string;
   /** Loopback port. Anything else would publish the vault to the network. */
   port?: number;
+  /** Whose machine this is — names the account created on first run. */
+  person?: string;
   startTimeoutMs?: number;
 }
 
@@ -97,9 +100,10 @@ export class VaultServer {
         ROCKET_PORT: String(this.port),
         ROCKET_TLS: `{certs="${cert}",key="${key}"}`,
         DOMAIN: this.url,
-        // Nobody signs up over the network: the app creates the one account it
-        // needs through the admin path and closes the door behind it.
-        SIGNUPS_ALLOWED: "false",
+        // Open, but only ever on loopback: the owner registers their own
+        // account on the vault's own page, with a password we never see, and
+        // nothing off this Mac can reach the port at all.
+        SIGNUPS_ALLOWED: "true",
       },
       stdio: ["ignore", "ignore", "pipe"],
       detached: true,
@@ -110,12 +114,35 @@ export class VaultServer {
 
     const deadline = Date.now() + (this.cfg.startTimeoutMs ?? 30_000);
     while (Date.now() < deadline) {
-      if (await this.portOpen()) return;
+      if (await this.portOpen()) {
+        await this.bootstrap();
+        return;
+      }
       if (!this.child) throw new Error("vault server exited during startup");
       await new Promise((r) => setTimeout(r, 250));
     }
     this.stop();
     throw new Error(`vault server did not open ${this.url} in time`);
+  }
+
+  private needsAccount(): boolean {
+    return !!this.cfg.person && !vaultAccountExists(this.dataDir);
+  }
+
+  /** The one account for this vault: what the page and the agent both use. */
+  get account() {
+    return vaultAccount(this.dataDir);
+  }
+
+  /**
+   * First run only: create the account the broker signs in as. A failure here
+   * must not take the vault down — the broker reports it as a locked vault,
+   * which is what it is.
+   */
+  private async bootstrap(): Promise<void> {
+    const person = this.cfg.person;
+    if (!person || !this.needsAccount()) return;
+    await ensureVaultAccount(this.url, this.dataDir, person, this.certPath);
   }
 
   /** Kill the process group, so nothing it spawned outlives the app. */
