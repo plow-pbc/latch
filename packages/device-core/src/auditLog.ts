@@ -13,7 +13,13 @@ export class AuditLog {
   readonly events = new EventEmitter();
 
   constructor(public readonly file: string) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // 0700 on the directory, because the per-file rule does not cover the
+    // directory's other occupants: identity.json, approvals and settings.json
+    // each remember to chmod themselves, but rules.json and scratch/ do not, and
+    // the next file added here would have to remember too. One mode on the
+    // container is the version of this protection that cannot be forgotten.
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(file), 0o700);
     // 0600, like the identity store and settings.json. This is not belt-and-
     // braces: `tool_error` deliberately records the detail withheld from the
     // calling agent -- absolute store paths, backend endpoints -- so a log other
