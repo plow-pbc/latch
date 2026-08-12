@@ -29,7 +29,7 @@ import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
-import { liveDeps as seedDeps, seedIfMissing } from "./seed.js";
+import { startSeeding } from "./seed.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
@@ -485,16 +485,9 @@ app.whenReady().then(async () => {
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
 
-  // After the window is up, so the liveness check cannot delay first paint, and
-  // not awaited: nothing here needs the answer, and the build itself is a
-  // detached child that outlives us.
-  // The catch is load-bearing, not decoration: seedIfMissing is async, so the
-  // one throw it deliberately leaves unguarded arrives as an unhandled
-  // rejection, which Node still turns into a dead main process by default.
-  void seedIfMissing(seedDeps(home)).then(
-    (outcome) => console.log(`[seed] build: ${outcome}`),
-    (failed: unknown) => console.log(`[seed] failed to start: ${String(failed)}`),
-  );
+  // After the window is up, so nothing here delays first paint. Returns as soon
+  // as the child is spawned; ltmm decides whether there is anything to do.
+  startSeeding();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
