@@ -31,6 +31,9 @@ function fakePayload(opts: { withVaultCli: boolean }): { resources: string; root
   fs.writeFileSync(path.join(pyBin, "python3.12"), "");
   fs.mkdirSync(path.join(root, "server"), { recursive: true });
   fs.writeFileSync(path.join(root, "server", "server.py"), "");
+  const certifi = path.join(root, "python", "site-packages", "certifi");
+  fs.mkdirSync(certifi, { recursive: true });
+  fs.writeFileSync(path.join(certifi, "cacert.pem"), "");
   if (opts.withVaultCli) {
     fs.mkdirSync(path.join(root, "vault-cli", arch), { recursive: true });
     fs.writeFileSync(path.join(root, "vault-cli", arch, "bw"), "");
@@ -56,6 +59,14 @@ describe("resolveBrowserRuntime", () => {
   it("leaves SEED_VAULT_BW unset when nothing is bundled, so a PATH bw still works", () => {
     const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
     expect(runtime.env.SEED_VAULT_BW).toBeUndefined();
+  });
+
+  it("points the interpreter at the bundled CA bundle, or its https dies in the app", () => {
+    const { resources, root } = fakePayload({ withVaultCli: true });
+    const runtime = resolveBrowserRuntime(resources)!;
+    expect(runtime.env.SSL_CERT_FILE).toBe(
+      path.join(root, "python", "site-packages", "certifi", "cacert.pem"),
+    );
   });
 
   it("lets an explicit SEED_VAULT_BW win over the bundled copy", () => {

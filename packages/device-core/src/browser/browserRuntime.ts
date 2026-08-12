@@ -76,13 +76,20 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   // env vars are overrides the broker already supports, so a machine with its
   // own install can still be pointed at that instead.
   const bw = process.env.SEED_VAULT_BW ?? vaultCliIn(layout.vaultCliDir);
+  const sitePackages = path.join(layout.pythonRoot, "site-packages");
+  // python.org's framework hunts for CA certs under its ORIGINAL install path
+  // (/Library/Frameworks/...), which does not exist inside the app — every
+  // https call out of the broker then dies with CERTIFICATE_VERIFY_FAILED.
+  // Point it at the bundle certifi already ships.
+  const caBundle = path.join(sitePackages, "certifi", "cacert.pem");
   return {
     serverCommand: [py, server],
     credentialBrokerCommand: [py, "-m", "seed_vault_broker"],
     env: {
-      PYTHONPATH: `${path.join(layout.pythonRoot, "site-packages")}:${layout.serverDir}`,
+      PYTHONPATH: `${sitePackages}:${layout.serverDir}`,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONNOUSERSITE: "1",
+      ...(fs.existsSync(caBundle) ? { SSL_CERT_FILE: caBundle } : {}),
       ...(bw ? { SEED_VAULT_BW: bw } : {}),
     },
     camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? camoufoxIn(layout.camoufoxDir),
