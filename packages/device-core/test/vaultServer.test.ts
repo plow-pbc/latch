@@ -142,7 +142,7 @@ async function makeServer(mode: "registers" | "silent" = "registers", registerDe
 
 describe("the vault process", () => {
   it("makes every concurrent caller wait for the account, not just for the process", async () => {
-    const { server, launches, signups, registrations } = await makeServer();
+    const { server, launches, registrations } = await makeServer();
 
     // Every credential lookup calls start(); a cold launch has several in
     // flight at once. What each one must NOT do is return as soon as a process
@@ -198,7 +198,7 @@ describe("the vault process", () => {
     expect(server.account, "and it made the account this time").not.toBeNull();
   }, 30_000);
 
-  it("a dying predecessor does not orphan the vault that replaced it", async () => {
+  it("replaces a predecessor without orphaning it, and the replacement makes no second account", async () => {
     // The failure this guards: the first process exits AFTER its replacement is
     // up, its `exit` handler clears the shared handle, and the live detached
     // vaultwarden is left holding the port with nothing tracking it.
