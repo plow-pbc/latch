@@ -251,6 +251,7 @@ function buildRuntime() {
   }
 
   // 4. Sanity: the relocated interpreter must run from here ----------------
+  assertNoForeignLinks(pybin); // the same probe the cached path gets
   const versionOut = capture(pybin, ["--version"]).trim();
   log(`relocated interpreter: ${versionOut}`);
   run(pybin, ["-m", "ensurepip", "--upgrade"], { quiet: true });
