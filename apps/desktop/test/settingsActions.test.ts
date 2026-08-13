@@ -271,9 +271,41 @@ describe("signing out retires the credential server-side, best effort", () => {
     });
 
     expect(seen).toEqual([PLOW_CREDENTIAL]);
-    // Revoking after the local clear would have nothing left to authenticate.
-    expect(onDiskWhenAsked).toBe(PLOW_CREDENTIAL);
+    // The revoke authenticates with the CAPTURED token, so the disk copy is
+    // already gone by the time we ask — see the quit test below for why.
+    expect(onDiskWhenAsked).toBe("");
     expect(stored(home).relayCredential).toBe("");
+  });
+
+  it("the credential is off disk and the socket down BEFORE the revoke is awaited", async () => {
+    // The quit-during-revoke window. `app.quit()` does not wait for a pending
+    // IPC handler, so anything still awaiting when the user picks Quit simply
+    // never happens. With the revoke in front, the process exits holding a
+    // spend-capable credential that reconnects on the next launch — the user
+    // asked to sign out and, from the app's next boot, never did.
+    const home = homeSignedIn();
+    let relayStopped = false;
+
+    // A revoke that never settles: exactly what a hung network looks like, and
+    // the window a quit lands in.
+    const signOut = revokeAndSignOut(
+      home,
+      () => new Promise(() => {}),
+      async () => {
+        relayStopped = true;
+      },
+    );
+    // Let everything that does NOT depend on the network run to completion.
+    await Promise.race([signOut, Promise.resolve()]);
+    await new Promise((r) => setImmediate(r));
+
+    // Quit here and this is the state that survives to the next launch.
+    const after = stored(home);
+    expect(after.relayCredential).toBe("");
+    expect(after.accountUid).toBe("");
+    expect(after.mcpUrl).toBe("");
+    expect(after.approvalMode).toBe("ask");
+    expect(relayStopped).toBe(true);
   });
 
   it("clears locally even when the revoke FAILS", async () => {

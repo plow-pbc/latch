@@ -77,22 +77,35 @@ export function signOutOfPlow(home: string): void {
 }
 
 /**
- * Sign out: retire the credential server-side if we can, then forget it here.
+ * Sign out: forget the credential here, then ask Plow to retire it.
  *
- * The order is the point. Revocation is attempted FIRST, while the credential
- * still exists to authenticate with — afterwards there is nothing left to ask
- * with. And it is strictly best-effort: offline, API down, route not deployed,
- * any error at all, the local clear still happens. Sign-out that fails because
- * a server could not be reached would leave the Mac holding a live credential
- * while telling its owner it had signed out, which is worse than not revoking.
+ * The order is the point, and it is LOCAL FIRST. Revoking first reads well —
+ * ask while we still have something to authenticate with — but it puts a
+ * network round-trip in front of the only step that is ours to guarantee. Quit
+ * during that round-trip (`app.quit()` does not wait for a pending IPC handler)
+ * and the process exits with the credential still on disk, and the next launch
+ * dials the relay back up with a token the owner believes they retired. So the
+ * token is captured into a local first, the on-disk copy and the socket go, and
+ * only then is Plow asked — with the captured value, which does not need the
+ * file to still exist.
  *
- * `revoke` is injected so this path is reachable by a test without a network.
+ * It stays strictly best-effort: offline, API down, route not deployed, any
+ * error at all, the local clear has already happened. Sign-out that failed
+ * because a server could not be reached would leave the Mac holding a live
+ * credential while telling its owner it had signed out, which is worse than not
+ * revoking.
+ *
+ * `revoke` and `afterClear` are injected so this path — including the ordering
+ * above — is reachable by a test without a network or an Electron app.
  */
 export async function revokeAndSignOut(
   home: string,
   revoke: (credential: string) => Promise<unknown>,
+  afterClear: () => Promise<unknown> = async () => {},
 ): Promise<void> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
+  signOutOfPlow(home);
+  await afterClear();
   if (credential) {
     try {
       await revoke(credential);
@@ -102,7 +115,6 @@ export async function revokeAndSignOut(
       // credential itself.
     }
   }
-  signOutOfPlow(home);
 }
 
 /**

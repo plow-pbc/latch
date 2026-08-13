@@ -281,10 +281,13 @@ ipcMain.handle("settings:getRelay", async () => {
 // socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
 // cannot reach Plow still signs out locally.
 ipcMain.handle("settings:signOut", async () => {
-  await revokeAndSignOut(home, (credential) =>
-    new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
+  await revokeAndSignOut(
+    home,
+    (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
+    // Dropping the socket is part of "signed out", so it belongs on the near
+    // side of the network call, with the local clear.
+    startRelay,
   );
-  await startRelay();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
