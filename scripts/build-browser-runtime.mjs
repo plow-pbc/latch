@@ -762,8 +762,8 @@ function fetchVaultServer(arch) {
   // `vendored_openssl` is at the same commit but links Homebrew's libssl, and
   // caching on the commit alone would ship it. Same reason `PRUNE_VERSION`
   // exists — build logic changing has to bust the stamp too.
-  const stamp = `${commit} ${VAULT_FEATURES}`;
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
+  const vaultStamp = `${commit} ${VAULT_FEATURES}`;
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === vaultStamp) {
     // Checked on the cached path too — that is the path most packaging runs
     // take, so an assertion that only fires after a compile is an assertion
     // that mostly does not fire.
@@ -788,12 +788,6 @@ function fetchVaultServer(arch) {
   // A no-op once present, and a far better failure than 200 lines of E0463.
   run("rustup", ["target", "add", triple], { cwd: srcDir, quiet: true });
   log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
-  // `vendored_openssl` is not optional here. Without it the build links against
-  // whatever libssl the packaging machine happens to have — on this one that is
-  // /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib, which does not exist on a
-  // user's Mac, so the bundled vault would refuse to launch for everyone who
-  // does not have Homebrew. Statically linked, it depends on nothing outside
-  // the OS. It also removes the cross-compile's search for an x86_64 libssl.
   run("cargo", ["build", "--release", "--locked", "--features", VAULT_FEATURES, "--target", triple], {
     cwd: srcDir,
   });
@@ -805,7 +799,7 @@ function fetchVaultServer(arch) {
   fs.mkdirSync(installRoot, { recursive: true });
   fs.copyFileSync(built, path.join(installRoot, "vaultwarden"));
   fs.chmodSync(path.join(installRoot, "vaultwarden"), 0o755);
-  fs.writeFileSync(marker, stamp);
+  fs.writeFileSync(marker, vaultStamp);
   log(`vault server ${arch} ready at ${installRoot}`);
 }
 
@@ -817,7 +811,9 @@ function fetchVaultServer(arch) {
 function assertNoForeignLinks(binary) {
   const foreign = capture("otool", ["-L", binary])
     .split("\n")
-    .slice(1)
+    // A fat binary repeats a "<path> (architecture arm64):" header per slice;
+    // those name the file itself, not something it links.
+    .filter((l) => l.startsWith("\t"))
     .map((l) => l.trim().split(" ")[0])
     .filter((p) => p && !p.startsWith("/usr/lib/") && !p.startsWith("/System/Library/"));
   if (foreign.length) {

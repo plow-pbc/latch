@@ -26,8 +26,10 @@ function freePort(): Promise<number> {
   });
 }
 
-/** One connect attempt: is something serving right now? */
-function portAnswers(port: number): Promise<boolean> {
+/** One connect attempt. `onTimeout` decides what an ambiguous socket means:
+ *  a probe asking "is it up?" and one asking "is it gone?" want opposite
+ *  answers, and that is the only thing separating the two callers below. */
+function portAnswers(port: number, { timeoutMs = 1_000, onTimeout = false } = {}): Promise<boolean> {
   return new Promise((resolve) => {
     const sock = net.connect({ host: "127.0.0.1", port });
     const done = (v: boolean) => {
@@ -36,7 +38,7 @@ function portAnswers(port: number): Promise<boolean> {
     };
     sock.once("connect", () => done(true));
     sock.once("error", () => done(false));
-    sock.setTimeout(1_000, () => done(false));
+    sock.setTimeout(timeoutMs, () => done(onTimeout));
   });
 }
 
@@ -44,17 +46,8 @@ function portAnswers(port: number): Promise<boolean> {
 async function portFreesUp(port: number, withinMs = 5_000): Promise<boolean> {
   const deadline = Date.now() + withinMs;
   while (Date.now() < deadline) {
-    const answered = await new Promise<boolean>((resolve) => {
-      const sock = net.connect({ host: "127.0.0.1", port });
-      const done = (v: boolean) => {
-        sock.destroy();
-        resolve(v);
-      };
-      sock.once("connect", () => done(true));
-      sock.once("error", () => done(false));
-      sock.setTimeout(500, () => done(true));
-    });
-    if (!answered) return true;
+    // A socket that hangs is still something holding the port.
+    if (!(await portAnswers(port, { timeoutMs: 500, onTimeout: true }))) return true;
     await new Promise((r) => setTimeout(r, 100));
   }
   return false;
