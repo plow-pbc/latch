@@ -121,13 +121,23 @@ function buildPrompt(intent: Intent, history: JSONValue[]): string {
  * audit.ndjson and rendered in the sandboxed activity view, and the credential
  * belongs in neither.
  *
- * A ten-character head counts: it is the length V8 exposes when it quotes
- * offending input, so it is the shape a partial leak actually takes here.
+ * `headLength` opts into matching a leading fragment as well as the whole
+ * token, because a partial echo is still an echo — ten characters is what V8
+ * quotes when it reports offending input.
+ *
+ * It is opt-in per provider, and that matters: a head is only evidence of a
+ * leak when the head is itself secret. Anthropic keys all begin `sk-ant-api`,
+ * which is public format, not a token — matching on it discarded any verdict
+ * whose reason merely DESCRIBED a key, and downgraded a real allow/deny to
+ * `ask`. So that branch matches the whole key and nothing shorter.
  */
-function echoesSecret(text: string, secret: string): boolean {
+function echoesSecret(text: string, secret: string, headLength = 0): boolean {
   const trimmed = secret.trim();
   if (trimmed.length < 10) return false;
-  return text.includes(trimmed) || text.includes(trimmed.slice(0, 10));
+  if (text.includes(trimmed)) return true;
+  return (
+    headLength > 0 && trimmed.length > headLength && text.includes(trimmed.slice(0, headLength))
+  );
 }
 
 /**
@@ -328,7 +338,7 @@ function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
     }
     // A schema-valid answer that repeats our own bearer token is discarded
     // whole — before it is parsed, so no part of it can reach a reason string.
-    if (echoesSecret(content, credential)) {
+    if (echoesSecret(content, credential, 10)) {
       return { ok: false, reason: "reviewer answer discarded: it repeated a credential" };
     }
     return { ok: true, text: content };
