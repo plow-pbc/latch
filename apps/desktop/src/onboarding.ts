@@ -110,10 +110,12 @@ export interface OnboardingDeps {
   startRelay: () => Promise<void>;
   /**
    * Register work a quit must not terminate in the middle of, and hand back the
-   * same promise. Injected because the gate is Electron's business; the default
-   * is the identity, so a test or a screenshot script needs no shutdown at all.
+   * same promise. Injected because the gate is Electron's business — and
+   * REQUIRED, because the one thing it guards is a credential outliving the
+   * process. A default would let a construction site forget it silently, which
+   * is exactly how that guarantee would be lost.
    */
-  critical?: <T>(work: Promise<T>) => Promise<T>;
+  critical: <T>(work: Promise<T>) => Promise<T>;
   isConnected: () => boolean;
   /** Names this Mac, both in the activation and in the user's key list. */
   deviceName: string;
@@ -607,7 +609,7 @@ export class Onboarding {
     // is either saved or handed back leaves the account holding a live one this
     // Mac has never heard of — unsaved, so unrevocable by anything here. The
     // whole span is critical shutdown work, not just the request.
-    await this.critical(this.mintAndCommit(sessionToken, info, login));
+    await this.deps.critical(this.mintAndCommit(sessionToken, info, login));
   }
 
   /** The half of a login that can create a credential. See finishWithSession. */
@@ -667,11 +669,6 @@ export class Onboarding {
     this.step = "connected";
     this.codeExpiresAt = null;
     this.message = "";
-  }
-
-  /** Work a quit must not cut in half. Identity when nothing is tracking. */
-  private critical<T>(work: Promise<T>): Promise<T> {
-    return this.deps.critical ? this.deps.critical(work) : work;
   }
 
   /**

@@ -108,6 +108,8 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
       plow.connected = true;
     },
     isConnected: () => plow.connected,
+    // Identity by default; the tests that care pass their own and watch it.
+    critical: (work) => work,
     deviceName: "Domo Desktop (test)",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
@@ -527,16 +529,7 @@ describe("reading the state is a read", () => {
     // Asserting on renders-per-second would be a timing test. The invariant is
     // simpler and exact: reading must not notify.
     let notifications = 0;
-    const onboarding = new Onboarding({
-      api: plow.api(),
-      home,
-      startRelay: async () => {},
-      isConnected: () => false,
-      deviceName: "Domo Desktop (test)",
-      now: () => clock,
-      wait: async (ms) => {
-        clock += ms;
-      },
+    const onboarding = build({
       onChange: () => {
         notifications += 1;
       },
@@ -818,98 +811,74 @@ describe("a sign-out during finishWithSession", () => {
     });
   }
 
-  it("a sign-out during startRelay does not report connected over the fresh activation", async () => {
-    // The continuation AFTER the save, which I previously called safe because
-    // the save had already happened. The credential is indeed gone — the
-    // sign-out's own clear ran — but this continuation went on to set
-    // `connected` and wipe the activation `signedOut()` had just started,
-    // leaving a window claiming to be signed in with nothing behind it.
-    let release = () => {};
-    const onTheWire = new Promise<void>((r) => {
-      release = () => r();
-    });
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-    const onboarding = new Onboarding({
-      api: plow.api(),
-      home,
-      startRelay: async () => {
+  // The continuation AFTER the save, which an earlier report of mine called
+  // safe because the save had already happened. The save is safe; this is not.
+  // A sign-out during the dial clears the credential and starts a fresh
+  // activation, and a stale continuation then wiped that activation — reporting
+  // `connected` with nothing behind it on the success side, and painting a dial
+  // error over the new screen on the failure side.
+  const relayOutcomes = [
+    {
+      name: "resolves",
+      startRelay: (parked: Promise<void>) => async () => {
         started += 1;
-        await onTheWire;
+        await parked;
         plow.connected = true;
       },
-      isConnected: () => plow.connected,
-      deviceName: "Domo Desktop (test)",
-      now: () => clock,
-      wait: async (ms) => {
-        waits.push(ms);
-        clock += ms;
+      // The fresh activation's own five-minute give-up would rewrite `message`
+      // during `settle()`, so only the failure case stops the clock.
+      holdClock: false,
+      check: (onboarding: Onboarding) => {
+        expect(onboarding.state().step).not.toBe("connected");
       },
-      onChange: () => {
-        changes += 1;
-      },
-      warn: (m) => warnings.push(m),
-    });
-    const begun = onboarding.begin();
-    await settle();
-
-    // The user signs out while the relay is still dialling.
-    signOutOfPlow(home);
-    await onboarding.signedOut();
-    const freshCode = onboarding.state().activation?.displayCode;
-    expect(freshCode).toBeTruthy();
-
-    release();
-    await begun;
-    await settle();
-
-    expect(onboarding.state().step).not.toBe("connected");
-    expect(loadSettings(home).relayCredential).toBe("");
-    // The activation the sign-out started is still the one on screen.
-    expect(onboarding.state().activation?.displayCode).toBe(freshCode);
-  });
-
-  it("a FAILING startRelay after a sign-out says nothing on the new screen", async () => {
-    // Same continuation, failure side. `run()` would have caught this and put
-    // the dial error over an activation screen the user is now looking at.
-    let release = () => {};
-    const onTheWire = new Promise<void>((r) => {
-      release = () => r();
-    });
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-    const onboarding = new Onboarding({
-      api: plow.api(),
-      home,
-      startRelay: async () => {
+    },
+    {
+      name: "rejects",
+      startRelay: (parked: Promise<void>) => async () => {
         started += 1;
-        await onTheWire;
+        await parked;
         throw new PlowApiError("network", "Couldn't dial the relay.");
       },
-      isConnected: () => plow.connected,
-      deviceName: "Domo Desktop (test)",
-      now: () => clock,
-      // The clock deliberately does NOT advance here: the fresh activation the
-      // sign-out starts would otherwise reach its five-minute give-up during
-      // `settle()` and overwrite the very message this test is reading.
-      wait: async (ms) => {
-        waits.push(ms);
+      holdClock: true,
+      check: (onboarding: Onboarding) => {
+        // `run()` would have caught the rethrow and put it on the activation
+        // screen the user is now looking at.
+        expect(onboarding.state().message).not.toContain("Couldn't dial the relay");
+        expect(onboarding.state().step).not.toBe("connected");
       },
-      warn: (m) => warnings.push(m),
+    },
+  ];
+
+  for (const outcome of relayOutcomes) {
+    it(`a sign-out while startRelay ${outcome.name} leaves the fresh activation alone`, async () => {
+      let release = () => {};
+      const parked = new Promise<void>((r) => {
+        release = () => r();
+      });
+      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+      const onboarding = build({
+        startRelay: outcome.startRelay(parked),
+        ...(outcome.holdClock ? { wait: async (ms: number) => void waits.push(ms) } : {}),
+      });
+      const begun = onboarding.begin();
+      await settle();
+
+      // The user signs out while the relay is still dialling.
+      signOutOfPlow(home);
+      await onboarding.signedOut();
+      const freshCode = onboarding.state().activation?.displayCode;
+      expect(freshCode).toBeTruthy();
+
+      release();
+      await begun;
+      await settle();
+
+      outcome.check(onboarding);
+      expect(loadSettings(home).relayCredential).toBe("");
+      // The activation the sign-out started is still the one on screen.
+      expect(onboarding.state().activation?.displayCode).toBe(freshCode);
     });
-    const begun = onboarding.begin();
-    await settle();
-
-    signOutOfPlow(home);
-    await onboarding.signedOut();
-
-    release();
-    await begun;
-    await settle();
-
-    // `run()` would have caught the rethrow and put it on the activation screen
-    // the user is now looking at.
-    expect(onboarding.state().message).not.toContain("Couldn't dial the relay");
-    expect(onboarding.state().step).not.toBe("connected");
-  });
+  }
 
   it("the mint-to-commit span is registered as critical shutdown work", async () => {
     // A quit between the mint starting and the credential being saved or handed
@@ -926,24 +895,11 @@ describe("a sign-out during finishWithSession", () => {
       return realMint(token, name);
     };
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-    const onboarding = new Onboarding({
-      api: plow.api(),
-      home,
-      startRelay: async () => {
-        started += 1;
-      },
+    const onboarding = build({
       critical: (work) => {
         tracked.push(work);
         return work;
       },
-      isConnected: () => plow.connected,
-      deviceName: "Domo Desktop (test)",
-      now: () => clock,
-      wait: async (ms) => {
-        waits.push(ms);
-        clock += ms;
-      },
-      warn: (m) => warnings.push(m),
     });
     const begun = onboarding.begin();
     await settle();
@@ -964,107 +920,62 @@ describe("a sign-out during finishWithSession", () => {
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
   });
 
-  it("the hand-back is INSIDE the tracked span, not beside it", async () => {
-    // The bug this pins: the hand-back used to register with the gate on its
-    // own account, after the span it belonged to had already settled. A quit
-    // snapshots the outstanding work, so one that had already looked never saw
-    // the late registration and exited with the credential still live.
-    const tracked: Promise<unknown>[] = [];
-    let releaseRevoke = () => {};
-    const revokeOnTheWire = new Promise<void>((r) => {
-      releaseRevoke = () => r();
+  // The bug this pins: the hand-back used to register with the gate on its own
+  // account, AFTER the span it belonged to had settled. A quit snapshots the
+  // outstanding work, so one that had already looked never saw the late
+  // registration and exited with the credential still live. Both cases watch
+  // the SPAN — which is the thing a quit actually waits on — rather than the
+  // login's own promise.
+  const handBackOutcomes = [
+    { name: "lands", hangs: false },
+    // A hand-back that never answers must hold the span open for as long as the
+    // credential is live. What stops that becoming a hung app is the quit's own
+    // two-second bound, which `shutdownGate.test.ts` pins.
+    { name: "never answers", hangs: true },
+  ];
+
+  for (const outcome of handBackOutcomes) {
+    it(`the hand-back is INSIDE the tracked span when it ${outcome.name}`, async () => {
+      const tracked: Promise<unknown>[] = [];
+      let releaseRevoke = () => {};
+      const revokeOnTheWire = new Promise<void>((r) => {
+        releaseRevoke = () => r();
+      });
+      const { onboarding, release, begun } = await parkedInside("mintDeviceCredential", {
+        critical: (work) => {
+          tracked.push(work);
+          return work;
+        },
+      });
+      plow.revokeDeviceCredential = async (token: string) => {
+        plow.revoked.push(token);
+        await revokeOnTheWire;
+      };
+      await onboarding.signedOut();
+
+      release();
+      await settle();
+
+      // ONE registration — the mint-to-commit span — and no second one to be
+      // missed by a snapshot already taken.
+      expect(tracked).toHaveLength(1);
+      expect(plow.revoked).toEqual([DEVICE_TOKEN]);
+
+      // …and that one span is still outstanding while the revoke is on the wire.
+      let spanSettled = false;
+      void tracked[0].then(() => {
+        spanSettled = true;
+      });
+      await settle();
+      expect(spanSettled).toBe(false);
+
+      if (outcome.hangs) return; // the quit's bound is what ends this one
+      releaseRevoke();
+      await begun;
+      await settle();
+      expect(spanSettled).toBe(true);
     });
-    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential", {
-      critical: (work) => {
-        tracked.push(work);
-        return work;
-      },
-    });
-    plow.revokeDeviceCredential = async (token: string) => {
-      plow.revoked.push(token);
-      await revokeOnTheWire;
-    };
-    await onboarding.signedOut();
-
-    release();
-    await begun;
-    await settle();
-
-    // ONE registration — the mint-to-commit span — and no second one to be
-    // missed by a snapshot already taken.
-    expect(tracked).toHaveLength(1);
-    expect(plow.revoked).toEqual([DEVICE_TOKEN]);
-
-    // …and that one span is still outstanding while the revoke is on the wire.
-    let spanSettled = false;
-    void tracked[0].then(() => {
-      spanSettled = true;
-    });
-    await settle();
-    expect(spanSettled).toBe(false);
-
-    releaseRevoke();
-    await settle();
-    expect(spanSettled).toBe(true);
-  });
-
-  /**
-   * Park inside the mint on the ONE caller that awaits `finishWithSession` all
-   * the way out: `newActivationCode` → `tryFinish` → here. The poll loop is
-   * detached, so its promise says nothing about whether the login finished;
-   * this one does, which is what makes "did not block" observable.
-   */
-  async function parkedInsideAwaitable() {
-    plow.redeems = [{ status: "pending" }];
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-
-    let release = () => {};
-    const onTheWire = new Promise<void>((r) => {
-      release = () => r();
-    });
-    const realMint = plow.mintDeviceCredential.bind(plow);
-    plow.mintDeviceCredential = async (token: string, name: string) => {
-      await onTheWire;
-      return realMint(token, name);
-    };
-    // The old code turns out to have been texted after all — the recovery this
-    // re-poll exists for — so `newActivationCode` finishes the login instead of
-    // minting a new code.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-    const finishing = onboarding.newActivationCode();
-    await settle();
-    return { onboarding, release, finishing };
   }
-
-  /** Did `finishing` resolve on its own, or is it still parked? */
-  async function resolvedWithoutBlocking(finishing: Promise<unknown>): Promise<boolean> {
-    return (
-      (await Promise.race([finishing.then(() => "done"), settle().then(() => "parked")])) === "done"
-    );
-  }
-
-  it("a HUNG hand-back holds the span open — the quit's bound is what releases it", async () => {
-    // This reverses what an earlier round pinned here, deliberately. Keeping the
-    // login unblocked meant the span settled while the revoke was still on the
-    // wire, and a quit that had already snapshotted the outstanding work never
-    // saw it. The span must stay open for exactly as long as the credential is
-    // still live; what stops that becoming a hung app is the quit's own two
-    // seconds, which `shutdownGate.test.ts` pins.
-    const { onboarding, release, finishing } = await parkedInsideAwaitable();
-    plow.revokeDeviceCredential = (token: string) => {
-      plow.revoked.push(token);
-      return new Promise(() => {}); // never answers
-    };
-    await onboarding.signedOut();
-
-    release();
-
-    expect(await resolvedWithoutBlocking(finishing)).toBe(false);
-    expect(plow.revoked).toEqual([DEVICE_TOKEN]); // started, and still waited on
-    expect(loadSettings(home).relayCredential).toBe("");
-  });
 
   it("a FAILING hand-back is absorbed, and never reported to the user", async () => {
     // The login it belonged to is gone, so there is nobody to report to. A
