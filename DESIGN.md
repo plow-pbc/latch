@@ -347,12 +347,16 @@ titles would be spoofable).
 
 **Runtime & packaging.** The stack ships inside the app: a relocated
 python.org universal2 Python 3.12 + lipo-merged (delocate) universal
-site-packages + both Camoufox arches, built deterministically by
+site-packages + one lipo-fused universal Camoufox tree (both arches' Mach-Os
+fused, the arch-independent payload shipped once), built deterministically by
 `scripts/build-browser-runtime.mjs` from hash pins in
 `vendor/browser-server/runtime.lock.json` (version coupling
 camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
-payload is byte-identical in both electron-builder arch passes so the
-universal merge copies it through. The Camoufox payload is a complete
+build prunes what can never load at runtime (Camoufox's bundled Windows/Linux
+spoofing fonts — the vendored server pins the fingerprint to macOS — plus
+Python test suites, dSYMs, headers, bytecode caches). The payload is
+byte-identical in both electron-builder arch passes so the universal merge
+copies it through. The Camoufox payload is a complete
 `camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
 app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
 user's shared cache is never touched and no fetch happens at launch. Audit

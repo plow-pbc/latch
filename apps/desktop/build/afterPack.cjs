@@ -103,11 +103,21 @@ module.exports = async function afterPack(context) {
     for (const f of loose) signFile(f, HELPER_ENTITLEMENTS);
   }
 
-  // 4) Camoufox — deep-sign each arch's Camoufox.app with Mozilla's set.
+  // 4) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.
+  // `--deep` only discovers nested code in the standard locations (MacOS,
+  // Frameworks, PlugIns, …); a Mach-O under Resources — gmp-clearkey's CDM
+  // stub — keeps whatever signature it shipped with (Mozilla's ad-hoc, which
+  // notarization rejects). Sign those individually first; the --deep pass
+  // then seals them as resources.
   const camoufox = path.join(runtime, "camoufox");
   let apps = 0;
   if (fs.existsSync(camoufox)) {
     for (const app of findApps(camoufox)) {
+      const inResources = [...walk(app)]
+        .filter(isMachO)
+        .filter((f) => path.relative(app, f).startsWith(path.join("Contents", "Resources") + path.sep))
+        .sort((a, b) => b.split("/").length - a.split("/").length);
+      for (const f of inResources) signFile(f, BROWSER_ENTITLEMENTS);
       signBundle(app, BROWSER_ENTITLEMENTS);
       apps++;
     }
@@ -143,7 +153,7 @@ module.exports = async function afterPack(context) {
   );
 };
 
-/** Every Camoufox.app under a dir (one per shipped arch). */
+/** Every Camoufox.app under a dir (the fused universal tree ships one). */
 function findApps(root) {
   const apps = [];
   const rec = (dir) => {

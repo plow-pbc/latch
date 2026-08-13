@@ -75,7 +75,8 @@ fetch-browser-runtime:
 fetch-browser:
     node scripts/build-browser-runtime.mjs --browser
 
-# Both arches (what `just package` bundles into the DMG; ~640 MB).
+# Both arches, lipo-fused into one universal tree at
+# vendor/camoufox-browser/universal — what `just package` bundles into the DMG.
 fetch-browser-both:
     node scripts/build-browser-runtime.mjs --browser-both
 
@@ -94,10 +95,10 @@ test-browser: build
 #   xcrun notarytool store-credentials domo-notary \
 #       --apple-id <apple-id-email> --team-id 3559PD337Z \
 #       --password <app-specific-password>
-# The browser stack ships inside the DMG: the universal Python runtime and
-# BOTH Camoufox arches are built/fetched, then Developer-ID signed by the
-# afterPack hook AFTER electron-builder's universal merge (which rewrites nested
-# Info.plists and would break any earlier signature). CODESIGN_IDENTITY is
+# The browser stack ships inside the DMG: the universal Python runtime and the
+# lipo-fused universal Camoufox tree are built/fetched, then Developer-ID
+# signed by the afterPack hook AFTER electron-builder's universal merge (which
+# rewrites nested Info.plists and would break any earlier signature). CODESIGN_IDENTITY is
 # passed to electron-builder so the hook can sign; the build step itself leaves
 # the payload unsigned (afterPack is authoritative).
 # The distributable `just package` runs from the main checkout only: the DMG
