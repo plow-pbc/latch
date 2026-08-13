@@ -19,6 +19,10 @@ run-name: Manual build — ${{ github.ref_name }}@${{ github.sha }}
 
 on:
   workflow_dispatch:
+  # TEMP (remove before merge): workflow_dispatch only works once this file is
+  # on the default branch, so pre-merge test runs trigger on push instead.
+  push:
+    branches: [feature/software-updates]
 
 permissions:
   id-token: write
