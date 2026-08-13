@@ -50,10 +50,25 @@ _FIELD_USERNAME = "username"
 _FIELD_EMAIL = "email"
 _FIELD_LOGIN = "login"
 _FIELD_USER = "user"
+_USERNAME_FIELDS = frozenset({_FIELD_USERNAME, _FIELD_EMAIL, _FIELD_LOGIN, _FIELD_USER})
+# A card is only useful if its parts can actually be released: the item is
+# already exempt from the site check on purpose (a card is meant for any
+# merchant), and describe-item has always advertised these labels.
+# `cvv` and `expiry` are what checkout forms call them; the vault calls them
+# `code` and `expMonth`/`expYear`.
+_CARD_FIELDS = {
+    "number": "number",
+    "code": "code",
+    "cvv": "code",
+    "security code": "code",
+    "expiry month": "expMonth",
+    "expiry year": "expYear",
+    "cardholder name": "cardholderName",
+}
 _ALLOWED_FIELDS = frozenset(
     {_FIELD_PASSWORD, _FIELD_TOTP, _FIELD_USERNAME, _FIELD_EMAIL, _FIELD_LOGIN, _FIELD_USER}
+    | set(_CARD_FIELDS)
 )
-_USERNAME_FIELDS = frozenset({_FIELD_USERNAME, _FIELD_EMAIL, _FIELD_LOGIN, _FIELD_USER})
 
 _MAX_ENTRIES = 50
 
@@ -569,6 +584,10 @@ def _read_field(item: dict, field: str) -> str | None:
         return login.get("password")
     if field in _USERNAME_FIELDS:
         return login.get("username")
+    card_key = _CARD_FIELDS.get(field)
+    if card_key:
+        value = (raw.get("card") or {}).get(card_key)
+        return str(value) if value not in (None, "") else None
     return None
 
 
