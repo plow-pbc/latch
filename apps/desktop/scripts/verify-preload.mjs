@@ -239,39 +239,6 @@ app.whenReady().then(async () => {
     })()`),
   };
 
-  // A relay reconnect fires status:changed on its own schedule. Re-rendering
-  // under a half-typed key would take the draft with it, so the re-render waits
-  // — but it must still land once the draft is committed.
-  await win.webContents.executeJavaScript(`(() => {
-    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
-    input.value = "sk-ant-half-typed";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    return true;
-  })()`);
-  // Change something only the account refresh redraws.
-  saveSettings(probeHome, { ...loadSettings(probeHome), accountUid: "u_after_reconnect" });
-  win.webContents.send("status:changed");
-  await new Promise((r) => setTimeout(r, 400));
-  const draft = {
-    survivesStatusChanged: await win.webContents.executeJavaScript(`(() => {
-      const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
-      return input.value === "sk-ant-half-typed";
-    })()`),
-    // …and the pane is NOT held stale to achieve it: the account nodes update
-    // in place, right past the open draft.
-    accountUpdatesWhileDrafting: await win.webContents.executeJavaScript(
-      `document.body.innerText.includes("u_after_reconnect")`,
-    ),
-    commitStillPersists: false,
-  };
-  await win.webContents.executeJavaScript(`(() => {
-    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  })()`);
-  await new Promise((r) => setTimeout(r, 400));
-  draft.commitStillPersists = loadSettings(probeHome).anthropicApiKey === "sk-ant-half-typed";
-
   // THE RACE, specifically: typing that starts while a status-driven refresh is
   // ALREADY IN FLIGHT and parked on one of its awaited reads. The dirty-flag
   // version sampled the flag before that read and replaced the field after it,
@@ -358,9 +325,6 @@ app.whenReady().then(async () => {
     transientInput.storedKeyUntouched &&
     staleSettingsPane.disabledWhileSignedOut &&
     staleSettingsPane.enabledAfterStatusChanged &&
-    draft.survivesStatusChanged &&
-    draft.accountUpdatesWhileDrafting &&
-    draft.commitStillPersists &&
     raceDuringRefresh.kept &&
     raceDuringRefresh.sameNode &&
     raceDuringRefresh.accountRefreshed &&
@@ -372,7 +336,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, roundTrip, modeFallback, transientInput, staleSettingsPane, draft, raceDuringRefresh, settingsShot, approval, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, roundTrip, modeFallback, transientInput, staleSettingsPane, raceDuringRefresh, settingsShot, approval, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

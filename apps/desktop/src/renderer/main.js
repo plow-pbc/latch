@@ -427,10 +427,9 @@ async function renderSettings() {
   const setUp = el("button", { class: "btn primary", text: "Sign In" });
   setUp.addEventListener("click", () => window.domo.onboardingOpen());
   const signOut = el("button", { class: "btn danger", text: "Sign Out" });
-  signOut.addEventListener("click", async () => {
-    await window.domo.relaySignOut();
-    await refreshAccount();
-  });
+  // No explicit refresh: signing out restarts the relay, which publishes
+  // `status:changed`, which is already the one thing that redraws this pane.
+  signOut.addEventListener("click", () => window.domo.relaySignOut());
   // A stable container the account rows are drawn into, so signing in or out
   // rewrites its contents rather than the pane.
   const accountBox = el("div", { class: "account" });
