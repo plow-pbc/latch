@@ -108,7 +108,7 @@ describe("capabilityDisplay", () => {
 
   it("credential distinguishes metadata from fill", () => {
     expect(capabilityDisplay({ kind: "credential", access: "metadata" })).toBe(
-      "Credentials: list 1Password item names & field labels (no secret values)",
+      "Credentials: list vault item names & field labels (no secret values)",
     );
     expect(capabilityDisplay({ kind: "credential", access: "fill", items: ["a1", "b2"] })).toBe(
       "Credentials: fill a1, b2 into approved sites (values never leave this Mac)",

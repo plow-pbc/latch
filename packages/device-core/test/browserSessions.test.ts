@@ -14,7 +14,7 @@ import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-cor
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
 );
-const FAKE_OP = fileURLToPath(new URL("../../../e2e/fixtures/fakeOpBroker.cjs", import.meta.url));
+const FAKE_BROKER = fileURLToPath(new URL("../../../e2e/fixtures/fakeVaultBroker.cjs", import.meta.url));
 
 interface Ctx {
   sessions: BrowserSessions;
@@ -69,8 +69,8 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
     audit,
   });
   const credentials = new CredentialBroker({
-    command: ["node", FAKE_OP],
-    env: { FAKE_OP_VAULT: vaultPath },
+    command: ["node", FAKE_BROKER],
+    env: { FAKE_BROKER_VAULT: vaultPath },
   });
   const sessions = new BrowserSessions(host, credentials, audit, 60_000);
   return { sessions, host, events, dir, fillLog };
@@ -231,24 +231,10 @@ describe("origin scope", () => {
 });
 
 describe("credentials", () => {
-  it("metadata listing requires the metadata grant", async () => {
-    const s = await openSession(["pizza.example"], false);
+  it("no longer answers vault questions — that moved to the vault tool", async () => {
+    const s = await openSession(["pizza.example"]);
     const r = jv(await ctx.sessions.command(AGENT, s, { action: "credentials" }));
     expect(r.get("status").str).toBe("error");
-    expect(r.get("error").str).toContain("credential metadata was not approved");
-  });
-
-  it("lists metadata only — no secret values anywhere", async () => {
-    const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "credentials" }));
-    expect(r.get("status").str).toBe("completed");
-    const items = r.get("items").arr!;
-    expect(items.length).toBe(3);
-    expect(jv(items[0]).get("title").str).toBe("Pizza Login");
-    expect(jv(items[0]).get("matches_this_page").bool).toBe(true);
-    expect(JSON.stringify(items)).not.toContain("hunter2");
-    expect(eventNames()).toContain("credential_metadata");
   });
 
   it("fill_secret refuses items not approved for the session", async () => {
@@ -306,7 +292,7 @@ describe("credentials", () => {
     expect(r.get("error").str).toContain("refused");
     expect(JSON.stringify(ctx.events)).not.toContain("sekret");
     const denied = ctx.events.filter((e) => e.event === "credential_denied");
-    expect(JSON.stringify(denied)).toContain("OpDenied");
+    expect(JSON.stringify(denied)).toContain("VaultDenied");
   });
 
   it("fill_secret refuses frames outside the session scope, allows approved card frames", async () => {

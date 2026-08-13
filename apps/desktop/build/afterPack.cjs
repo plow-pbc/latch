@@ -123,6 +123,23 @@ module.exports = async function afterPack(context) {
     }
   }
 
+  // 4b) Vault CLI — one loose Mach-O per arch, helper entitlements (it is a
+  // Node build, so V8 needs JIT).
+  const vaultCli = path.join(runtime, "vault-cli");
+  if (fs.existsSync(vaultCli)) {
+    for (const f of walk(vaultCli)) {
+      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
+    }
+  }
+
+  // 4c) Vault server — one loose Mach-O per arch (compiled from Rust source).
+  const vaultServer = path.join(runtime, "vault-server");
+  if (fs.existsSync(vaultServer)) {
+    for (const f of walk(vaultServer)) {
+      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
+    }
+  }
+
   // 5) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a
   // secure timestamp — the three things notarization checks. Fails the build in
   // seconds instead of after a ~15-minute notarization round-trip.

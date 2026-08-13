@@ -1,4 +1,0 @@
-{
-  "comment": "The extensionless `op` script is CommonJS; without this, the repo root's type:module makes node parse it as ESM.",
-  "type": "commonjs"
-}

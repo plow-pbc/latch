@@ -25,6 +25,8 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
+  changeCredentials,
+  readCredentials,
   resolveBrowserRuntime,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
@@ -180,7 +182,7 @@ class ElectronPolicy implements PolicyDelegate {
 }
 
 /**
- * Resolve credential item ids to titles via the LOCAL 1Password broker so the
+ * Resolve credential item ids to titles via the LOCAL vault broker so the
  * approval card can show what the ids actually are. Never taken from the
  * intent — agent-supplied titles would be spoofable. Unresolvable ids render
  * as raw ids flagged "unknown item" (a deny signal for the human).
@@ -472,6 +474,30 @@ ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   saveSettings(home, settings);
 });
 ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
+// The vault's own account: the owner reads it here to sign in on the vault's
+// page, and can replace either half with something of their own choosing.
+ipcMain.handle("vault:get", async () => {
+  const vault = device?.vaultServer;
+  if (!vault) return null;
+  return readCredentials(vault.url, vault.dataDir);
+});
+
+// A renderer anchor cannot open a browser from inside Electron, so the main
+// process does it — and only ever for this machine's own vault address.
+ipcMain.handle("vault:open", async () => {
+  const vault = device?.vaultServer;
+  if (!vault) return false;
+  await shell.openExternal(vault.url);
+  return true;
+});
+
+ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
+  const vault = device?.vaultServer;
+  if (!vault) throw new Error("this build has no vault");
+  await changeCredentials(vault.url, vault.dataDir, { email, password }, vault.certPath);
+  return readCredentials(vault.url, vault.dataDir);
+});
+
 ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
 ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
   const settings = loadSettings(home);

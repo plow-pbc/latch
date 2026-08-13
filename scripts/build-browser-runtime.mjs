@@ -30,6 +30,8 @@ const serverDir = path.join(vendorDir, "browser-server");
 const runtimeDir = path.join(vendorDir, "python-runtime");
 const downloadsDir = path.join(vendorDir, "downloads");
 const browserDir = path.join(vendorDir, "camoufox-browser");
+const vaultCliDir = path.join(vendorDir, "vault-cli");
+const vaultServerDir = path.join(vendorDir, "vault-server");
 
 const lock = JSON.parse(fs.readFileSync(path.join(serverDir, "runtime.lock.json"), "utf8"));
 const requirementsPath = path.join(serverDir, "requirements.txt");
@@ -732,11 +734,162 @@ function signCamoufox(arch, identity) {
 }
 
 // ---------------------------------------------------------------------------
+// Vault server payload (the vault itself, running on the user's Mac)
+// ---------------------------------------------------------------------------
+/**
+ * Builds Vaultwarden from source into vendor/vault-server/<arch>/vaultwarden.
+ *
+ * Upstream publishes Linux container images and nothing else — no macOS binary,
+ * no Homebrew formula, and the crates.io entry is an empty 0.0.1 placeholder —
+ * so this is the one payload we compile ourselves. Needs a Rust toolchain on
+ * the packaging machine; the pinned rust-toolchain.toml in their tree decides
+ * the compiler version, so `rustup` fetches it on first run.
+ *
+ * The web interface is NOT compiled: it ships as a hash-pinned prebuilt tarball.
+ */
+function fetchVaultServer(arch) {
+  const { repo, commit, version } = lock.vaultServer;
+  const installRoot = path.join(vaultServerDir, arch);
+  // Keyed by the recipe as well as the commit: the same source built the old
+  // way produced a binary linked against the build machine's OpenSSL, and a
+  // marker that only knew the commit would keep serving it from cache.
+  const marker = path.join(installRoot, ".commit");
+  const stamp = `${commit}:vendored-openssl`;
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
+    log(`vault server ${arch} up to date`);
+    return;
+  }
+  const srcDir = path.join(downloadsDir, "vaultwarden-src");
+  if (!fs.existsSync(path.join(srcDir, ".git"))) {
+    fs.rmSync(srcDir, { recursive: true, force: true });
+    log(`cloning vaultwarden ${version}`);
+    run("git", ["clone", "--quiet", repo, srcDir]);
+  }
+  run("git", ["-C", srcDir, "fetch", "--quiet", "origin", commit], { quiet: true });
+  run("git", ["-C", srcDir, "checkout", "--quiet", commit], { quiet: true });
+
+  const triple = arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  // Their tree pins its own toolchain, and a target added to the default one is
+  // invisible to it — the build then fails deep in the dependency graph with
+  // "can't find crate for `core`". Run from their directory and rustup applies
+  // that pin itself; a no-op once the target is present.
+  run("rustup", ["target", "add", triple], { cwd: srcDir, quiet: true });
+  log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
+  // vendored_openssl builds OpenSSL from source and links it statically. Two
+  // reasons, and the second is the important one: cross-compiling to x86_64
+  // finds no OpenSSL for that arch on an arm64 Mac, and without it the binary
+  // links whatever OpenSSL the BUILD machine had — /opt/homebrew/... — which is
+  // not on the machine of anyone we ship to.
+  run("cargo", [
+    "build", "--release", "--locked",
+    "--features", "sqlite,vendored_openssl",
+    "--target", triple,
+  ], { cwd: srcDir });
+  const built = path.join(srcDir, "target", triple, "release", "vaultwarden");
+  if (!fs.existsSync(built)) throw new Error(`cargo produced no binary at ${built}`);
+
+  fs.rmSync(installRoot, { recursive: true, force: true });
+  fs.mkdirSync(installRoot, { recursive: true });
+  fs.copyFileSync(built, path.join(installRoot, "vaultwarden"));
+  fs.chmodSync(path.join(installRoot, "vaultwarden"), 0o755);
+  fs.writeFileSync(marker, stamp);
+  log(`vault server ${arch} ready at ${installRoot}`);
+}
+
+/** The web interface — prebuilt upstream, arch-independent, hash-pinned. */
+function fetchVaultWebUi() {
+  const asset = lock.vaultServer.webVault;
+  const webRoot = path.join(vaultServerDir, "web-vault");
+  const marker = path.join(vaultServerDir, ".web-vault.sha256");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
+    log("vault web ui up to date");
+    return;
+  }
+  const tgz = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
+  download(asset.url, asset.sha256, tgz);
+  log("extracting vault web ui");
+  fs.rmSync(webRoot, { recursive: true, force: true });
+  fs.mkdirSync(webRoot, { recursive: true });
+  // The tarball holds a single web-vault/ top level; strip it.
+  run("tar", ["-xzf", tgz, "-C", webRoot, "--strip-components", "1"]);
+  fs.writeFileSync(marker, asset.sha256);
+  log(`vault web ui ready at ${webRoot}`);
+}
+
+/** Developer ID + helper entitlements, same as the other bundled executables. */
+function signVaultServer(arch, identity) {
+  const bin = path.join(vaultServerDir, arch, "vaultwarden");
+  if (!fs.existsSync(bin)) return;
+  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
+  run(
+    "codesign",
+    ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, bin],
+    { quiet: true },
+  );
+  log(`signed vault server (${arch}) with Developer ID`);
+}
+
+// ---------------------------------------------------------------------------
+// Vault CLI payload (the credential broker's `bw`)
+// ---------------------------------------------------------------------------
+/**
+ * Unpacks Bitwarden's standalone CLI into vendor/vault-cli/<arch>/bw, so the
+ * broker finds one inside the app and the user installs nothing. Same shape as
+ * the camoufox payload: hash-pinned zip, per-arch tree, .sha256 marker.
+ *
+ * The pinned asset is the `bw-oss-*` build deliberately: the plain `bw-*` one
+ * carries Bitwarden-Licensed code we have no right to redistribute.
+ */
+function fetchVaultCli(arch) {
+  const asset = lock.vaultCli.assets[arch === "arm64" ? "arm64" : "x64"];
+  const installRoot = path.join(vaultCliDir, arch);
+  const marker = path.join(installRoot, ".sha256");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
+    log(`vault cli ${arch} up to date`);
+    return;
+  }
+  const zipDest = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
+  download(asset.url, asset.sha256, zipDest);
+  log(`extracting vault cli (${arch})`);
+  fs.rmSync(installRoot, { recursive: true, force: true });
+  fs.mkdirSync(installRoot, { recursive: true });
+  run("ditto", ["-x", "-k", zipDest, installRoot]);
+  const bw = path.join(installRoot, "bw");
+  if (!fs.existsSync(bw)) throw new Error(`no bw binary in ${asset.url}`);
+  fs.chmodSync(bw, 0o755); // the zip is built on CI; don't trust its mode bits
+  fs.writeFileSync(marker, asset.sha256);
+  log(`vault cli ${arch} ready at ${installRoot}`);
+}
+
+/** Developer ID + helper entitlements (it is a Node build — V8 needs JIT). */
+function signVaultCli(arch, identity) {
+  const bw = path.join(vaultCliDir, arch, "bw");
+  if (!fs.existsSync(bw)) return;
+  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
+  run(
+    "codesign",
+    ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, bw],
+    { quiet: true },
+  );
+  log(`signed vault cli (${arch}) with Developer ID`);
+}
+
+// ---------------------------------------------------------------------------
 try {
   const builtArches = [];
+  const vaultArches = [];
   buildRuntime(); // stamp-cached: fast no-op once built
   if (wantBrowser) {
     const hostArch = process.arch === "arm64" ? "arm64" : "x86_64";
+    // The vault and its CLI stay per-arch: unlike Camoufox they are single
+    // binaries nobody has fused yet (issue #15), so both trees ship and
+    // electron-builder passes them through the universal merge.
+    fetchVaultWebUi();
+    for (const a of wantBoth ? ["arm64", "x86_64"] : [hostArch]) {
+      fetchVaultCli(a);
+      fetchVaultServer(a);
+      vaultArches.push(a);
+    }
     if (wantBoth) {
       // The per-arch trees are intermediates; the universal fuse is what gets
       // bundled (and therefore what gets the Developer ID signature).
@@ -757,6 +910,10 @@ try {
   if (identity) {
     signRuntime(identity);
     for (const a of builtArches) signCamoufox(a, identity);
+    for (const a of vaultArches) {
+      signVaultCli(a, identity);
+      signVaultServer(a, identity);
+    }
   } else {
     log("CODESIGN_IDENTITY not set — keeping existing/ad-hoc signatures (dev mode)");
   }

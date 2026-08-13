@@ -33,7 +33,7 @@ export interface ApprovalViewModel {
   credentialItems: { id: string; title: string | null; category: string | null }[];
 }
 
-/** Locally-resolved 1Password item titles, keyed by item id. */
+/** Locally-resolved vault item titles, keyed by item id. */
 export type CredentialTitles = Map<string, { title: string; category: string }>;
 
 /** Build the approval card model from an already-verified intent. */

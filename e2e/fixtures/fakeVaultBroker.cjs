@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Fake seed-op-broker for unit tests: speaks the same CLI surface
+ * Fake seed-vault-broker for unit tests: speaks the same CLI surface
  * (whats-here / describe-item / get-field / status) and mimics the origin
- * check, backed by a JSON vault file. The REAL python seed_op_broker is
+ * check, backed by a JSON vault file. The REAL seed-vault-broker is
  * exercised in the integration tier against a fake `op` binary; this fake is
  * only for python-free unit tests of the TS layer above it.
  *
- * Vault file (env FAKE_OP_VAULT):
+ * Vault file (env FAKE_BROKER_VAULT):
  *   [{ "id", "title", "category", "username", "urls": ["https://..."],
  *      "fields": { "password": "hunter2", ... } }]
  */
@@ -14,7 +14,7 @@
 const fs = require("node:fs");
 
 function vault() {
-  return JSON.parse(fs.readFileSync(process.env.FAKE_OP_VAULT, "utf8"));
+  return JSON.parse(fs.readFileSync(process.env.FAKE_BROKER_VAULT, "utf8"));
 }
 
 function hostKey(url) {
@@ -54,7 +54,7 @@ if (cmd === "status") {
 } else if (cmd === "describe-item") {
   const id = argValue(args, "--item-id");
   const item = vault().find((i) => i.id === id);
-  if (!item) fail("OpNotFound", "1Password item not found.");
+  if (!item) fail("VaultNotFound", "No such item in the vault.");
   process.stdout.write(
     JSON.stringify({
       id: item.id,
@@ -68,12 +68,12 @@ if (cmd === "status") {
   const field = argValue(args, "--field");
   const url = argValue(args, "--url");
   const item = vault().find((i) => i.id === id);
-  if (!item) fail("OpNotFound", "1Password item not found.");
+  if (!item) fail("VaultNotFound", "No such item in the vault.");
   if (url && item.category !== "CREDIT_CARD") {
     const page = hostKey(url);
     const keys = (item.urls || []).map(hostKey).filter(Boolean);
     if (keys.length && !keys.includes(page)) {
-      fail("OpDenied", `item belongs to ${keys.join(", ")}, not to ${page}`);
+      fail("VaultDenied", `item belongs to ${keys.join(", ")}, not to ${page}`);
     }
   }
   const value = (item.fields || {})[field];
