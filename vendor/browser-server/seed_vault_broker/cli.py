@@ -692,14 +692,16 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
         _audit(args.item_id, args.field, page or "SEM-URL", "ERROR %s" % exc.type_name)
         return _emit_error(exc.type_name, exc.message)
 
-    # With a page given: a login is refused off its own site. A card has no URL to
-    # match -- it is meant to work at any merchant -- so it is released and logged
-    # instead of blocked.
+    # The site check is about LOGINS: a login belongs to its site, and letting
+    # one loose on another page is how a password ends up somewhere it should
+    # never be. Everything else in a vault -- cards, notes, addresses -- is not
+    # tied to a site by nature and is meant to be used wherever it is needed, so
+    # it is released and logged rather than blocked.
     #
-    # An item carrying no site at all is refused outright: there is nothing to
-    # match the page against, and treating "no sites" as "every site" hands the
-    # password to whatever page happens to be open.
-    if page and item.get("category") != "CREDIT_CARD":
+    # Within logins, an item carrying no site at all is still refused: there is
+    # nothing to match the page against, and treating "no sites" as "every site"
+    # hands the password to whatever page happens to be open.
+    if page and item.get("category") == "LOGIN":
         keys = _item_host_keys(item)
         if not keys:
             _audit(args.item_id, args.field, page, "DENIED no site on item")
