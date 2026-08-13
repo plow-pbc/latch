@@ -38,6 +38,7 @@ import {
   setApprovalMode,
   setInferenceProvider,
 } from "./settingsActions.js";
+import { deferQuitForWork, REVOKE_QUIT_GRACE_MS, ShutdownGate } from "./shutdownGate.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
 // Quit items, and dock title read "Domo Desktop" instead of "Electron".
@@ -65,6 +66,8 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let onboardingWindow: BrowserWindow | null = null;
+/** Work a quit gives a moment to finish — today, the sign-out revoke. */
+const shutdown = new ShutdownGate();
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -283,7 +286,10 @@ ipcMain.handle("settings:getRelay", async () => {
 ipcMain.handle("settings:signOut", async () => {
   await revokeAndSignOut(
     home,
-    (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
+    // Registered with the shutdown gate so a quit lands AFTER it, not through
+    // it. `track` hands back the same promise, so what is awaited here is
+    // unchanged.
+    (credential) => shutdown.track(new PlowApi(apiBaseUrl).revokeDeviceCredential(credential)),
     // Dropping the socket is part of "signed out". It runs ALONGSIDE the
     // revoke, not in front of it: `stop()` waits for in-flight requests, which
     // is unbounded, and the revoke must not queue behind that.
@@ -454,18 +460,22 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
+/** Set once the deferred quit below re-issues, so it is not deferred twice. */
+let quitDeferred = false;
+
+app.on("before-quit", (event) => {
   void relay?.stop();
+  // A sign-out's revoke may still be on the wire. Hold the quit until it lands
+  // — or until the bound elapses, so a dead network cannot take the quit
+  // hostage. The decision and the bound live in shutdownGate.ts; this is the
+  // Electron-shaped adapter around them and nothing else.
+  if (quitDeferred) return;
+  const deferring = deferQuitForWork(shutdown, REVOKE_QUIT_GRACE_MS, () => {
+    quitDeferred = true;
+    app.quit();
+  });
+  if (deferring) event.preventDefault();
 });
-// KNOWN GAP, recorded where the fix would go. Nothing here holds the quit, so a
-// sign-out whose revoke is still on the wire when the user picks Quit dies with
-// the process — the token stays valid on the account even though this Mac has
-// forgotten it. `revokeAndSignOut` shrinks that window to one round-trip by
-// starting the revoke before it awaits anything, but it cannot close it: only a
-// `before-quit` that defers the quit until an outstanding revoke settles (under
-// a bound, or a quit becomes hostage to a dead network) can. Deliberately not
-// done here — this file is the one vitest cannot import, so a guard added here
-// is a guard nothing can execute.
 
 app.on("window-all-closed", () => {
   // Stay resident in the tray — Domo is a menu-bar agent, not a document app.

@@ -107,10 +107,11 @@ export function signOutOfPlow(home: string): void {
  * leave the Mac holding a live credential while telling its owner it had signed
  * out, which is worse than not revoking.
  *
- * What this still cannot promise: initiating a request is not completing one.
- * A quit inside the revoke's own round-trip exits before it lands, and only
- * something holding the quit itself could change that — see the `before-quit`
- * note in main.ts.
+ * What this function cannot promise on its own: initiating a request is not
+ * completing one, so a quit inside the revoke's own round-trip would still exit
+ * before it landed. That last gap is closed from the other side — `main.ts`
+ * registers the revoke with the `ShutdownGate` and holds the quit until it
+ * settles or a short bound elapses. See shutdownGate.ts.
  *
  * `revoke` and `afterClear` are injected so this path — including the ordering
  * above — is reachable by a test without a network or an Electron app.
