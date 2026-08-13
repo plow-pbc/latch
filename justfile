@@ -151,6 +151,11 @@ verify-preload: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" npx electron apps/desktop/scripts/verify-preload.mjs
 
+# Screenshot the audit screen's live-browser thumbnail (evidence the owner can watch the browser).
+viewer-screenshot: build
+    @mkdir -p "{{outdir}}"
+    DOMO_HOME="{{apphome}}" OUT="${OUT:-{{outdir}}/browser-viewer.png}" npx electron apps/desktop/scripts/viewer-screenshot.mjs
+
 # Screenshot the approval dialog (evidence that it names the calling agent).
 approval-screenshot: build
     @mkdir -p "{{outdir}}"

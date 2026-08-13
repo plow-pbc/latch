@@ -14,6 +14,14 @@ import path from "node:path";
 import readline from "node:readline";
 import { JSONValue, jv } from "@domo/protocol";
 
+/** One frame for the owner's viewer window (browserHost.viewFrame). */
+export interface ViewerFrame {
+  dataB64: string;
+  mime: string;
+  /** URL of the page the frame shows, straight from the server envelope. */
+  url: string;
+}
+
 export class BrowserCrashedError extends Error {
   constructor(message: string) {
     super(message);
@@ -91,6 +99,30 @@ export class BrowserHost {
         }
       });
     });
+  }
+
+  /**
+   * One screenshot frame for the owner's viewer window. Strictly best-effort:
+   * returns null when the browser isn't running (and never starts it — a
+   * viewer poll must not be able to launch Camoufox), and null on any failure
+   * (frame mid-navigation, action timeout, crash). Deliberately NOT routed
+   * through BrowserSessions: the frame is for the device owner's own eyes, so
+   * session scope does not apply, and a ~1/s poll must not flood the audit log.
+   */
+  async viewFrame(): Promise<ViewerFrame | null> {
+    if (!this.child || this.shuttingDown) return null;
+    try {
+      const result = await this.sendAction({ action: "view" });
+      const dataB64 = typeof result.data_b64 === "string" ? result.data_b64 : null;
+      if (dataB64 === null) return null;
+      return {
+        dataB64,
+        mime: typeof result.mime === "string" ? result.mime : "image/jpeg",
+        url: typeof result.url === "string" ? result.url : "",
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**

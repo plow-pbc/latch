@@ -59,6 +59,12 @@ function handle(cmd) {
     return { ok: true, title: current().title };
   }
   if (a === "back") return { title: current().title, moved: false };
+  if (a === "view") {
+    return {
+      data_b64: Buffer.from("fake-view-jpeg").toString("base64"),
+      mime: "image/jpeg",
+    };
+  }
   if (a === "screenshot") {
     return {
       data_b64: Buffer.from("fake-jpeg-bytes").toString("base64"),

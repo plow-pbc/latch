@@ -466,6 +466,23 @@ ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
   settings.anthropicApiKey = (key || "").trim();
   saveSettings(home, settings);
 });
+// The live-browser thumbnail's whole state, one shape per poll (like
+// onboarding:get). Frames come from the browser host directly, bypassing
+// session scope: they are for the device owner's own eyes, and the owner
+// watching an out-of-scope page is exactly the oversight the thumbnail exists
+// for. `frame` is null while the browser is busy or restarting — the renderer
+// keeps showing the frame it already has rather than flickering.
+ipcMain.handle("viewer:state", async () => {
+  const session = device?.browserSessions?.current() ?? null;
+  const frame = session ? await device!.browserViewFrame() : null;
+  return {
+    active: session !== null,
+    origins: session?.origins ?? [],
+    inScope: session?.inScope ?? true,
+    url: frame?.url ?? session?.lastUrl ?? "",
+    frame: frame ? { dataB64: frame.dataB64, mime: frame.mime } : null,
+  };
+});
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
   name: device?.identity.name ?? "",

@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld("domo", {
   onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
+  // Live browser thumbnail (audit detail pane). One whole-state shape per
+  // poll; no push channel — the renderer's own interval is the clock.
+  viewerState: () => ipcRenderer.invoke("viewer:state"),
+
   // Approval window.
   approvalGet: () => ipcRenderer.invoke("approval:get"),
   approvalDecide: (id: string, decision: string) =>

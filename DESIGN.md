@@ -340,6 +340,18 @@ traverse MCP, never appear in results, and never appear in either audit log.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
+**The owner's live view.** While a browsing session is open, the audit
+screen's detail pane shows a small near-live mirror of what Camoufox is
+showing, pinned in the pane's bottom-right corner outside the timeline scroll
+(~1 frame/s, a `view` server action that never touches disk). Frames ride
+`BrowserHost.viewFrame()` — deliberately *outside* `BrowserSessions`: session
+scope bounds what the **agent** observes, and the owner watching an
+out-of-scope page is exactly the oversight the view exists for (the caption
+flags "Out of approved scope"). `viewFrame` is strictly best-effort — it never
+starts the browser, never throws, and a ~1/s poll writes nothing to the audit
+log. The thumbnail appears only while a session is active and disappears when
+it closes.
+
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`) in their register manifest; agents discover them via
 `list_device_tools` and read them with `read_skill`. The built-in
