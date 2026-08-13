@@ -498,28 +498,39 @@ function fieldRow(value) {
 
 async function renderVault() {
   const creds = await window.domo.vaultGet();
+  const HINT = "Sign in on that page with these two to add what Domo may use.";
+  const note = el("p", { class: "faint", text: creds ? HINT : "Opening it will start it." });
+
+  // Anchors go nowhere inside Electron; the main process opens the browser —
+  // and starts the vault on the way, which is why this is offered even before
+  // there is an account to show.
+  const open = el("button", { class: "btn", text: "Open the vault" });
+  open.addEventListener("click", async () => {
+    open.disabled = true;
+    note.textContent = "Starting…";
+    const ok = await window.domo.vaultOpen();
+    note.textContent = ok ? HINT : "The vault did not start. Try again in a moment.";
+    open.disabled = false;
+    if (ok) renderVault(); // the account exists now, if it did not before
+  });
+
   if (!creds) {
     view.replaceChildren(el("div", { class: "panel" }, [
       el("div", { class: "section-label", text: "Your vault" }),
       el("div", { class: "empty", text: "The vault has not started yet." }),
+      note,
+      el("div", { class: "row" }, [open]),
     ]));
     return;
   }
 
-  // Anchors go nowhere inside Electron; the main process opens the browser.
-  const note = el("p", { class: "faint", text: "Sign in on that page with these two to add what Domo may use." });
-  const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });
-  link.addEventListener("click", async (e) => {
-    e.preventDefault();
-    if (!(await window.domo.vaultOpen())) note.textContent = "The vault did not start. Try again in a moment.";
-  });
-
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "section-label", text: "Your vault" }),
-    el("div", { class: "field" }, [el("label", { text: "Address" }), link]),
+    el("div", { class: "field" }, [el("label", { text: "Address" }), el("span", { class: "mono", text: creds.url })]),
     el("div", { class: "field" }, [el("label", { text: "Email" }), fieldRow(creds.email)]),
     el("div", { class: "field" }, [el("label", { text: "Password" }), fieldRow(creds.password)]),
     note,
+    el("div", { class: "row" }, [open]),
   ]));
 }
 

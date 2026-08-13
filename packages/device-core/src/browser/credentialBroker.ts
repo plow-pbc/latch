@@ -7,24 +7,6 @@
 import { execFile } from "node:child_process";
 import { JSONValue } from "@domo/protocol";
 
-/**
- * The environment for a long-lived child, with everything vault out of it.
- *
- * The broker is handed what it needs below — per call, by name — so nothing
- * that outlives a broker call has any use for these. The browser server and
- * every Firefox it spawns are the least trustworthy processes here, and the
- * family carries the bootstrap token, the account's own address and password,
- * and the path to the client state they unlock.
- *
- * Matched by PREFIX on purpose: the next `SEED_VAULT_*` anyone adds is excluded
- * because it is a vault variable, not because someone remembered to list it.
- */
-export function withoutVaultSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(env).filter(([k]) => !k.startsWith("SEED_VAULT_") && !k.startsWith("DOMO_VAULT_")),
-  );
-}
-
 export class CredentialError extends Error {
   constructor(
     public readonly type: string,

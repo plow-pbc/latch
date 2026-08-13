@@ -26,9 +26,11 @@ export function httpCa(caPath?: string): Buffer | undefined {
 }
 
 /**
- * A vault that opened its port but does not answer must not hang the caller:
- * `VaultServer.start()` is awaited before every credential lookup, and a browser
- * action has ~15s before the relay gives up on the whole call.
+ * A vault that opened its port but never finishes a TLS handshake must not hang
+ * the caller forever: `VaultServer.start()` is awaited before every credential
+ * lookup. This bounds the wait; it does not by itself fit the relay's budget —
+ * waiting for the port can precede it — which is why `browser_open` pays the
+ * cold start behind a deferred handle.
  */
 const REQUEST_TIMEOUT_MS = 10_000;
 

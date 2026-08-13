@@ -4,6 +4,7 @@ export * from "./blessedTools.js";
 export * from "./browser/browserHost.js";
 export * from "./browser/browserRuntime.js";
 export * from "./browser/browserSessions.js";
+export * from "./browser/childEnv.js";
 export * from "./browser/credentialBroker.js";
 export * from "./browser/vaultServer.js";
 export * from "./browser/vaultBootstrap.js";

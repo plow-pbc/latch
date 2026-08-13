@@ -22,6 +22,10 @@ from seed_vault_broker import __version__
 _PROG = "seed-vault-broker"
 _BW_BIN = os.environ.get("SEED_VAULT_BW", "bw")
 _BW_TIMEOUT_S = int(os.environ.get("SEED_VAULT_TIMEOUT", "60"))
+# A refresh is not the operation the caller asked for, so it gets a smaller
+# share of the budget: sync plus the real command has to fit what the broker
+# is allowed overall, and a slow vault must not eat the whole ceiling here.
+_SYNC_TIMEOUT_S = max(1, _BW_TIMEOUT_S // 3)
 
 # The vault this broker reads, and whose machine it is. Both come from whoever
 # starts the broker -- there is no default, because a default here is one
@@ -93,10 +97,6 @@ _UNAVAILABLE_MSG = (
     "The vault command line tool is not on PATH. Install it with `npm install -g @bitwarden/cli`."
 )
 _TIMEOUT_MSG = "The vault did not answer in time."
-_NO_PASSWORD_MSG = (
-    "The agent's vault password is not in the login keychain "
-    "(service %r, account %r)." % (_KEYCHAIN_SERVICE, _VAULT_USER)
-)
 
 _FILTER_LOGINS_DESC = (
     "List vault Login items whose stored URLs match the given eTLD+1 domain. "
@@ -223,9 +223,14 @@ def _keychain_read(account: str) -> str:
 
 
 def _keychain_write(account: str, secret: str) -> None:
-    subprocess.run(["security", "add-generic-password", "-a", account,
-                    "-s", _KEYCHAIN_SERVICE, "-w", secret, "-U"],
-                   capture_output=True, timeout=_BW_TIMEOUT_S)
+    # Guarded like the read above: an uncaught traceback here would break the
+    # one-JSON-line-on-stderr contract every caller parses.
+    try:
+        subprocess.run(["security", "add-generic-password", "-a", account,
+                        "-s", _KEYCHAIN_SERVICE, "-w", secret, "-U"],
+                       capture_output=True, timeout=_BW_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired):
+        pass  # not remembering it costs a re-derivation, not the call
 
 
 def _fetch_credential() -> tuple[str, str]:
@@ -313,30 +318,15 @@ def _agent_identity() -> tuple[str, str]:
     return email, password
 
 
-def _vault_password() -> str:
-    """Kept for the explicit-override path: the agent password from the keychain."""
-    try:
-        probe = subprocess.run(
-            ["security", "find-generic-password", "-a", _VAULT_USER,
-             "-s", _KEYCHAIN_SERVICE, "-w"],
-            capture_output=True, text=True, check=False, timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        raise _VaultToolError(_ERR_VAULT_LOCKED, _NO_PASSWORD_MSG)
-    password = probe.stdout.strip()
-    if probe.returncode != 0 or not password:
-        raise _VaultToolError(_ERR_VAULT_LOCKED, _NO_PASSWORD_MSG)
-    return password
-
-
-def _raw_bw(args: list[str], session: str | None) -> subprocess.CompletedProcess:
+def _raw_bw(args: list[str], session: str | None,
+            timeout: int | None = None) -> subprocess.CompletedProcess:
     try:
         # --nointeraction + closed stdin: without a TTY, bw otherwise blocks on
         # prompts forever (the "browser crashed" hang on credentials).
         return subprocess.run(
             [_BW_BIN, "--nointeraction", *args],
             capture_output=True, text=True, check=False,
-            env=_vault_env(session), timeout=_BW_TIMEOUT_S,
+            env=_vault_env(session), timeout=timeout or _BW_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:
@@ -421,18 +411,18 @@ def _ensure_identity_and_server() -> None:
     _server_set = True
 
 
-def _run_vault(args: list[str]) -> tuple[int, str, str]:
+def _run_vault(args: list[str], timeout: int | None = None) -> tuple[int, str, str]:
     """Run one vault command, unlocking once if the cached session is stale."""
     _ensure_identity_and_server()
     session = _read_session()
     if session:
-        result = _raw_bw(args, session)
+        result = _raw_bw(args, session, timeout)
         if result.returncode == 0:
             return result.returncode, result.stdout, result.stderr
         if _classify(result.stderr + result.stdout) != _ERR_VAULT_LOCKED:
             return result.returncode, result.stdout, result.stderr
     session = _open_vault()
-    result = _raw_bw(args, session)
+    result = _raw_bw(args, session, timeout)
     return result.returncode, result.stdout, result.stderr
 
 
@@ -442,11 +432,19 @@ def _sync() -> None:
     Answering from the local copy after a failed sync is how a rotated password
     gets typed into a page long after it stopped being the password. A failure the
     caller can see is the honest outcome; silence here is not.
+
+    Classified on its own terms: `_classify` is written for item lookups, so it
+    would report a 404 from a misconfigured vault address as "No such item in the
+    vault" -- for a call that looked up no item.
     """
-    rc, _, stderr = _run_vault(["sync"])
-    if rc != 0:
-        kind = _classify(stderr)
-        raise _VaultToolError(kind, _classify_message(kind, stderr))
+    rc, _, stderr = _run_vault(["sync"], timeout=_SYNC_TIMEOUT_S)
+    if rc == 0:
+        return
+    lowered = stderr.lower()
+    if any(p in lowered for p in _LOCKED_PATTERNS):
+        raise _VaultToolError(_ERR_VAULT_LOCKED, _LOCKED_MSG)
+    raise _VaultToolError(_ERR_VAULT_UNAVAILABLE,
+                          "Could not reach the vault to refresh what it holds.")
 
 
 def _normalize(raw: dict) -> dict:
@@ -483,11 +481,11 @@ def _list_items(logins_only: bool = False) -> list[dict]:
 
 
 def _get_item(item_id: str) -> dict:
-    # Deliberately does NOT sync. An item id only ever comes from `whats-here`,
-    # which syncs, so the copy this reads is already current for the flow that
-    # asked. Syncing again here would put two bw calls -- each allowed
-    # SEED_VAULT_TIMEOUT (10s) -- on the release path, inside a broker ceiling of
-    # 12s: freshness nobody asked for, bought with a fill that times out.
+    # This is the path that releases a secret, so it refreshes first: the id may
+    # have come from a listing in an earlier process, minutes or days ago, and
+    # filling last week's password is the failure `_sync` exists to prevent.
+    # The refresh gets a third of the budget so it plus the read still fit.
+    _sync()
     rc, stdout, stderr = _run_vault(["get", "item", item_id])
     if rc != 0:
         kind = _classify(stderr)

@@ -24,7 +24,6 @@ import {
   GoalsLibrary,
   PolicyDelegate,
   resolveBrowserRuntime,
-  vaultAccount,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
@@ -467,7 +466,7 @@ ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 ipcMain.handle("vault:get", async () => {
   const vault = device?.vaultServer;
   if (!vault) return null;
-  const account = vaultAccount(vault.dataDir);
+  const account = vault.account;
   return account ? { url: vault.url, email: account.email, password: account.password } : null;
 });
 

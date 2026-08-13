@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { JSONValue, jv } from "@domo/protocol";
-import { withoutVaultSecrets } from "./credentialBroker.js";
+import { withoutVaultSecrets } from "./childEnv.js";
 
 /** One frame for the owner's viewer window (browserHost.viewFrame). */
 export interface ViewerFrame {
@@ -183,7 +183,7 @@ export class BrowserHost {
       ...(this.cfg.headed ? ["--headed"] : []),
     ];
     const child = spawn(argv[0], argv.slice(1), {
-      env: { ...withoutVaultSecrets(process.env), ...extraEnv },
+      env: withoutVaultSecrets({ ...process.env, ...extraEnv }),
       stdio: ["pipe", "pipe", "pipe"],
       detached: true, // own process group, so shutdown can kill Firefox children
     });

@@ -17,62 +17,91 @@ afterEach(() => {
   for (const s of servers.splice(0)) s.stop();
 });
 
-/** A stand-in vaultwarden: appends its env, then answers on ROCKET_PORT. */
-function stubVault(dir: string): { binary: string; envLog: string } {
+/**
+ * A stand-in vaultwarden. `registers` serves HTTPS with the cert the server
+ * minted and accepts an account; `silent` takes the connection and never speaks
+ * TLS, which is how a half-started vault behaves.
+ */
+function stubVault(dir: string, mode: "registers" | "silent"): { binary: string; envLog: string; hits: string } {
   const envLog = path.join(dir, "env.jsonl");
+  const hits = path.join(dir, "register-hits.log");
+  const serve =
+    mode === "silent"
+      ? `require("node:net").createServer(() => {}).listen(port, "127.0.0.1");`
+      : `const tls = process.env.ROCKET_TLS.match(/certs="([^"]+)",key="([^"]+)"/);
+require("node:https")
+  .createServer({ cert: fs.readFileSync(tls[1]), key: fs.readFileSync(tls[2]) }, (req, res) => {
+    fs.appendFileSync(${JSON.stringify(hits)}, req.url + "\\n");
+    req.resume();
+    req.once("end", () => { res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); });
+  })
+  .listen(port, "127.0.0.1");`;
   const binary = path.join(dir, "stub-vaultwarden");
   fs.writeFileSync(
     binary,
     `#!/usr/bin/env node
-const fs = require("node:fs"), net = require("node:net");
+const fs = require("node:fs");
 fs.appendFileSync(${JSON.stringify(envLog)}, JSON.stringify(process.env) + "\\n");
-net.createServer(() => {}).listen(Number(process.env.ROCKET_PORT), "127.0.0.1");
+const port = Number(process.env.ROCKET_PORT);
+${serve}
 `,
     { mode: 0o755 },
   );
-  return { binary, envLog };
+  return { binary, envLog, hits };
 }
 
-/** `person` set means bootstrap runs — and against this stub, fails. */
-function makeServer(port: number, person?: string) {
+function makeServer(port: number, mode: "registers" | "silent" = "registers") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-vault-"));
-  const { binary, envLog } = stubVault(dir);
+  const { binary, envLog, hits } = stubVault(dir, mode);
   const server = new VaultServer({
     binary,
     webVaultDir: dir,
     dataDir: path.join(dir, "data"),
     port,
-    person,
+    person: "someone@example.com",
     startTimeoutMs: 15_000,
   });
   servers.push(server);
-  return { server, envLog };
+  const lines = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim().split("\n") : []);
+  return { server, launches: () => lines(envLog), registrations: () => lines(hits), envLog };
 }
 
 describe("the vault process", () => {
-  it("starts once no matter how many callers ask at the same time", async () => {
-    const { server, envLog } = makeServer(18231);
+  it("makes every concurrent caller wait for the account, not just for the process", async () => {
+    const { server, launches, registrations } = makeServer(18231);
 
     // Every credential lookup calls start(); a cold launch has several in
-    // flight at once. All of them must wait for the one startup.
-    await Promise.all([server.start(), server.start(), server.start()]);
-    await server.start();
+    // flight at once. What each one must NOT do is return as soon as a process
+    // exists — the broker it is about to run needs the account, which is
+    // created after that.
+    const sawAccount = await Promise.all(
+      [1, 2, 3].map(() => server.start().then(() => server.account !== null)),
+    );
 
-    const launches = fs.readFileSync(envLog, "utf8").trim().split("\n");
-    expect(launches, "one vault, not one per caller").toHaveLength(1);
-  });
+    expect(sawAccount, "every caller had an account by the time it resolved").toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(launches(), "one vault, not one per caller").toHaveLength(1);
+    expect(registrations(), "one account, made once").toEqual(["/identity/accounts/register"]);
+
+    await server.start(); // already up: no relaunch, no second account
+    expect(launches()).toHaveLength(1);
+    expect(registrations()).toHaveLength(1);
+  }, 30_000);
 
   it("retries when the account never got made, instead of reporting itself started", async () => {
     // The port answers but the stub is not a vault, so creating the account
     // fails. A live process with no account in it is NOT started: the next
     // caller would otherwise run its broker against an empty vault.
-    const { server, envLog } = makeServer(18233, "someone@example.com");
+    const { server, launches } = makeServer(18233, "silent");
 
     await expect(server.start()).rejects.toThrow();
     await expect(server.start()).rejects.toThrow();
 
-    const launches = fs.readFileSync(envLog, "utf8").trim().split("\n");
-    expect(launches, "the second call tried again rather than believing the first").toHaveLength(2);
+    const found = launches();
+    expect(found, "the second call tried again rather than believing the first").toHaveLength(2);
     // Two 10s request timeouts: the stub takes the connection and never speaks
     // TLS, which is also what proves `send()` gives up rather than hanging the
     // credential call behind it. Explicit ceiling so load cannot flake it.

@@ -118,11 +118,16 @@ describe("the budget fires while persisting the approval is still in flight", ()
     const home = tempDir();
     const approvalsDir = path.join(home, "device/approvals");
     let asked = false;
+    let theAsk!: () => void;
+    const wasAsked = new Promise<void>((r) => {
+      theAsk = r;
+    });
     const approvals = new ApprovalStore(
       approvalsDir,
       {
         decideIntent: async () => {
           asked = true;
+          theAsk();
           return "allow_once" as const;
         },
       },
@@ -144,8 +149,8 @@ describe("the budget fires while persisting the approval is still in flight", ()
     await call;
     // `call` is not the join point: under load the 40ms budget can fire first,
     // in which case it answers with a handle and the human is asked just after.
-    // Either way the ask follows the write, which is what this is about.
-    for (let i = 0; i < 200 && !asked; i++) await new Promise((r) => setTimeout(r, 25));
+    // The ask itself is, and it always follows the write — the point here.
+    await wasAsked;
     expect(asked).toBe(true);
   });
 });

@@ -14,7 +14,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { ensureVaultAccount, vaultAccount, vaultAccountExists } from "./vaultBootstrap.js";
-import { withoutVaultSecrets } from "./credentialBroker.js";
+import { withoutVaultSecrets } from "./childEnv.js";
 
 export interface VaultServerConfig {
   /** The bundled `vaultwarden` binary for this arch. */
@@ -118,7 +118,7 @@ export class VaultServer {
     fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const { cert, key } = this.ensureCert();
 
-    this.child = spawn(this.cfg.binary, [], {
+    const child = spawn(this.cfg.binary, [], {
       env: {
         ...withoutVaultSecrets(process.env),
         DATA_FOLDER: this.dataDir,
@@ -137,18 +137,28 @@ export class VaultServer {
       stdio: ["ignore", "ignore", "pipe"],
       detached: true,
     });
-    this.child.once("exit", () => {
-      this.child = null;
-      this.ready = false;
+    this.child = child;
+    // Guarded on identity: a retry can have this one dying while its successor
+    // is already running, and clearing `child` then would leave the live vault
+    // untracked — `stop()` would never kill it, and it would hold the port for
+    // the rest of the session.
+    child.once("exit", () => {
+      if (this.child === child) {
+        this.child = null;
+        this.ready = false;
+      }
     });
 
     const deadline = Date.now() + (this.cfg.startTimeoutMs ?? 30_000);
     while (Date.now() < deadline) {
       if (await this.portOpen()) {
         await this.bootstrap();
+        // `stop()` while we were bootstrapping means this vault is already
+        // gone; reporting it started would hand the next caller nothing.
+        if (this.child !== child) throw new Error("vault server was stopped during startup");
         return;
       }
-      if (!this.child) throw new Error("vault server exited during startup");
+      if (this.child !== child) throw new Error("vault server exited during startup");
       await new Promise((r) => setTimeout(r, 250));
     }
     this.stop();
@@ -165,9 +175,9 @@ export class VaultServer {
   }
 
   /**
-   * First run only: create the account the broker signs in as. A failure here
-   * must not take the vault down — the broker reports it as a locked vault,
-   * which is what it is.
+   * First run only: create the account the broker signs in as. A vault without
+   * its account is not a started vault, so a failure here surfaces to the
+   * caller and takes the process down; the next call starts over.
    */
   private async bootstrap(): Promise<void> {
     const person = this.cfg.person;

@@ -9,6 +9,11 @@
  * Vault file (env FAKE_BROKER_VAULT):
  *   [{ "id", "title", "category", "username", "urls": ["https://..."],
  *      "fields": { "password": "hunter2", ... } }]
+ *
+ * Two simplifications, deliberate: fields are a plain map, so the real broker's
+ * card-label aliases (`cvv` → `code`) are written out in the fixture; and a
+ * missing field is always `VaultNotFound`, where the real one distinguishes
+ * "this item has no such label" (InvalidArgument) from "the label is empty".
  */
 "use strict";
 const fs = require("node:fs");
@@ -33,9 +38,10 @@ function fail(type, message) {
 /** What the real broker records: who, what, where, and how it ended — never the value. */
 function audit(itemId, field, page, outcome) {
   if (!process.env.SEED_VAULT_AUDIT) return;
+  const stamp = new Date().toISOString().slice(0, 19).replace("T", " "); // as the real one writes it
   fs.appendFileSync(
     process.env.SEED_VAULT_AUDIT,
-    `${new Date().toISOString()}  item=${itemId}  field=${field}  page=${page}  -> ${outcome}\n`,
+    `${stamp}  item=${itemId}  field=${field}  page=${page}  -> ${outcome}\n`,
     { mode: 0o600 },
   );
 }
@@ -52,6 +58,10 @@ if (cmd === "status") {
 } else if (cmd === "whats-here") {
   const url = argValue(args, "--url") ?? "";
   const page = hostKey(url);
+  // A URL with no readable host is refused, not treated as "no URL given" —
+  // otherwise a caller that hands over an about:/data:/blank page would sail
+  // past the origin check here and be refused only by the real broker.
+  if (url && !page) fail("InvalidArgument", `could not read a host from ${url}`);
   const out = vault().map((item) => ({
     id: item.id,
     title: item.title,
@@ -65,6 +75,7 @@ if (cmd === "status") {
   const id = argValue(args, "--item-id");
   const item = vault().find((i) => i.id === id);
   if (!item) fail("VaultNotFound", "No such item in the vault.");
+  audit(id, "(labels)", "-", "DESCRIBED");
   process.stdout.write(
     JSON.stringify({
       id: item.id,
@@ -78,6 +89,7 @@ if (cmd === "status") {
   const field = argValue(args, "--field");
   const url = argValue(args, "--url");
   const page = url ? hostKey(url) : null;
+  if (url && !page) fail("InvalidArgument", `could not read a host from ${url}`);
   const item = vault().find((i) => i.id === id);
   if (!item) fail("VaultNotFound", "No such item in the vault.");
   // Logins belong to their site; a login with no site at all belongs nowhere and
