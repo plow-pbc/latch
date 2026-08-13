@@ -374,7 +374,8 @@ copies it through. The Camoufox payload is a complete
 app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
 user's shared cache is never touched and no fetch happens at launch. Audit
 events (`browser_*`, `credential_*`) are the test oracle; the fake browser
-server + fake `op` fixtures make the whole flow CI-testable without Python,
+server plus `e2e/fixtures/fake-broker/seed-vault-broker.cjs` — the one double
+for the vault broker — make the whole flow CI-testable without Python,
 and `just test-browser` runs the real browser against a local checkout
 fixture site.
 

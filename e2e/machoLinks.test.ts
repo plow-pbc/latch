@@ -14,38 +14,37 @@ const OS_ONLY = `vendor/vault-server/arm64/vaultwarden:
 \t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
 `;
 
-describe("what otool -L says a binary needs", () => {
-  it("passes a binary that needs only the OS", () => {
-    expect(foreignLinks(OS_ONLY)).toEqual([]);
-  });
+const BREWED = OS_ONLY.replace(
+  "\t/usr/lib/libiconv.2.dylib",
+  "\t/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libiconv.2.dylib",
+);
 
-  it("catches the Homebrew dylib that would have shipped", () => {
-    const brewed = OS_ONLY.replace(
-      "\t/usr/lib/libiconv.2.dylib",
-      "\t/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libiconv.2.dylib",
-    );
-    expect(foreignLinks(brewed)).toEqual(["/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib"]);
-  });
-
-  it("does not mistake a fat binary's own slice headers for dependencies", () => {
-    // Both `bw` binaries are thin today, but they are built by someone else and
-    // pinned by URL — a universal one would arrive in this shape.
-    const fat = `vendor/vault-cli/bw (architecture arm64):
+// Both `bw` binaries are thin today, but they are built by someone else and
+// pinned by URL — a universal one would arrive with a header per slice, naming
+// the file itself rather than anything it links.
+const FAT = `vendor/vault-cli/bw (architecture arm64):
 \t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
 vendor/vault-cli/bw (architecture x86_64):
 \t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
 `;
-    expect(foreignLinks(fat)).toEqual([]);
-  });
 
-  it("treats loader-relative references as resolved, not as missing", () => {
-    // The Python relocation step writes these on purpose; calling one foreign
-    // would abort packaging over a link that resolves inside the bundle.
-    const relative = `Python.framework/Versions/3.12/lib/libpython3.12.dylib:
+// The Python relocation step writes these on purpose; calling one foreign would
+// abort packaging over a link that resolves inside the bundle.
+const RELATIVE = `Python.framework/Versions/3.12/lib/libpython3.12.dylib:
 \t@loader_path/../Python (compatibility version 3.12.0, current version 3.12.0)
 \t@rpath/libssl.dylib (compatibility version 1.0.0, current version 1.0.0)
 \t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
 `;
-    expect(foreignLinks(relative)).toEqual([]);
+
+describe("what otool -L says a binary needs", () => {
+  it.each([
+    ["needs only the OS", OS_ONLY, []],
+    ["the Homebrew dylib that would have shipped", BREWED, [
+      "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
+    ]],
+    ["a fat binary's own slice headers", FAT, []],
+    ["loader-relative references, which resolve inside the bundle", RELATIVE, []],
+  ])("%s", (_what, output, foreign) => {
+    expect(foreignLinks(output)).toEqual(foreign);
   });
 });
