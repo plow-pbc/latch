@@ -10,7 +10,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from typing import Iterable
 
 import tldextract
@@ -184,6 +186,16 @@ def _vault_env(session: str | None) -> dict[str, str]:
 
 
 def _read_session() -> str | None:
+    """The unlocked session: owner-only, beside the cache it unlocks.
+
+    It does NOT go in the keychain. The only OS-backed store a Python CLI can
+    reach here is the `security` binary, and both of its ways in are worse than
+    this file: `-w <secret>` publishes the session in argv, where every process
+    on the machine can read it off `ps` (the rule `_vault_env` states below),
+    and `security -i` keeps it off argv but mangles any secret containing a
+    space, a quote or a backslash. Whoever can read this file can already read
+    the `bw` cache sitting next to it, so it is not the weak link it looks like.
+    """
     try:
         with open(_SESSION_PATH, encoding="utf-8") as fh:
             return fh.read().strip() or None
@@ -203,7 +215,8 @@ def _keychain_read(account: str) -> str:
     try:
         p = subprocess.run(["security", "find-generic-password", "-a", account,
                             "-s", _KEYCHAIN_SERVICE, "-w"],
-                           capture_output=True, text=True, check=False, timeout=30)
+                           capture_output=True, text=True, check=False,
+                           timeout=_BW_TIMEOUT_S)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return p.stdout.strip() if p.returncode == 0 else ""
@@ -212,7 +225,7 @@ def _keychain_read(account: str) -> str:
 def _keychain_write(account: str, secret: str) -> None:
     subprocess.run(["security", "add-generic-password", "-a", account,
                     "-s", _KEYCHAIN_SERVICE, "-w", secret, "-U"],
-                   capture_output=True, timeout=30)
+                   capture_output=True, timeout=_BW_TIMEOUT_S)
 
 
 def _fetch_credential() -> tuple[str, str]:
@@ -337,16 +350,11 @@ def _open_vault() -> str:
 
     Unlocking costs a key derivation every time, so the session is reused until the
     vault rejects it; that keeps a page fill fast without holding the password.
-    """
-    _state_dir()
-    _point_at_vault()
-    status = _raw_bw(["status"], None)
-    try:
-        if json.loads(status.stdout)["serverUrl"] != _VAULT_URL:
-            raise _VaultToolError(_ERR_VAULT_ERROR, "The vault tool is pointed at the wrong server.")
-    except (ValueError, KeyError):
-        raise _VaultToolError(_ERR_VAULT_ERROR, "Could not read the vault's status.")
 
+    The one caller has already run `_ensure_identity_and_server()`, which pointed
+    the tool at the vault and verified it — repeating that here only bought a
+    second `bw status` subprocess on every cold login.
+    """
     email, password = _agent_identity()
     directory = tempfile.mkdtemp(prefix="vault-broker-")
     pw_path = os.path.join(directory, "p")
@@ -429,11 +437,16 @@ def _run_vault(args: list[str]) -> tuple[int, str, str]:
 
 
 def _sync() -> None:
-    """Pull the latest items. Without this a credential added a moment ago is invisible."""
-    try:
-        _run_vault(["sync"])
-    except _VaultToolError:
-        pass  # a stale local copy still beats failing the whole call
+    """Pull the latest items, and say so when it fails.
+
+    Answering from the local copy after a failed sync is how a rotated password
+    gets typed into a page long after it stopped being the password. A failure the
+    caller can see is the honest outcome; silence here is not.
+    """
+    rc, _, stderr = _run_vault(["sync"])
+    if rc != 0:
+        kind = _classify(stderr)
+        raise _VaultToolError(kind, _classify_message(kind, stderr))
 
 
 def _normalize(raw: dict) -> dict:
@@ -470,6 +483,11 @@ def _list_items(logins_only: bool = False) -> list[dict]:
 
 
 def _get_item(item_id: str) -> dict:
+    # Deliberately does NOT sync. An item id only ever comes from `whats-here`,
+    # which syncs, so the copy this reads is already current for the flow that
+    # asked. Syncing again here would put two bw calls -- each allowed
+    # SEED_VAULT_TIMEOUT (10s) -- on the release path, inside a broker ceiling of
+    # 12s: freshness nobody asked for, bought with a fill that times out.
     rc, stdout, stderr = _run_vault(["get", "item", item_id])
     if rc != 0:
         kind = _classify(stderr)
