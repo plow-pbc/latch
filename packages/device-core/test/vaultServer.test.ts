@@ -132,9 +132,6 @@ async function makeServer(mode: "registers" | "silent" = "registers", registerDe
   return {
     server,
     port,
-    // NOTE: a FIRST start is two processes by design — one open to registration
-    // to make the account, immediately replaced by one that refuses to make any
-    // more (see "stops accepting new accounts"). Later starts are one each.
     launches: () => lines(envLog),
     signups: () => lines(envLog).map((l) => (JSON.parse(l) as Record<string, string>).SIGNUPS_ALLOWED),
     envOf: (nth: number) => JSON.parse(lines(envLog).at(nth)!) as Record<string, string>,
@@ -161,13 +158,10 @@ describe("the vault process", () => {
       true,
     ]);
     expect(registrations(), "one account, made once").toEqual(["/identity/accounts/register"]);
-    expect(signups(), "one startup's worth of processes, not one per caller").toEqual([
-      "true",
-      "false",
-    ]);
+    expect(launches(), "one vault, not one per caller").toHaveLength(1);
 
     await server.start(); // already up: no relaunch, no second account
-    expect(launches()).toHaveLength(2);
+    expect(launches()).toHaveLength(1);
     expect(registrations()).toHaveLength(1);
   }, 30_000);
 
@@ -200,8 +194,7 @@ describe("the vault process", () => {
 
     await expect(starting, "a vault that was stopped did not start").rejects.toThrow();
     await server.start();
-    // 1 abandoned + the retry's 2 (open to register, then closed).
-    expect(launches(), "the next caller really relaunched").toHaveLength(3);
+    expect(launches(), "the next caller really relaunched").toHaveLength(2);
     expect(server.account, "and it made the account this time").not.toBeNull();
   }, 30_000);
 
@@ -215,9 +208,7 @@ describe("the vault process", () => {
     await server.start();
     await new Promise((r) => setTimeout(r, 750)); // let the first one's exit arrive
 
-    // 2 for the first start, 1 for the replacement — the account already exists
-    // by then, so the replacement has no signup window to close.
-    expect(launches(), "the replacement really is a second process").toHaveLength(3);
+    expect(launches(), "the replacement really is a second process").toHaveLength(2);
     expect(
       await portAnswers(port),
       "the replacement is actually serving, so the next assertion means something",
@@ -228,21 +219,6 @@ describe("the vault process", () => {
     // would stay held by a process nothing tracks.
     server.stop();
     expect(await portFreesUp(port), "nothing was left holding the port").toBe(true);
-  }, 30_000);
-
-  it("stops accepting new accounts as soon as it has the one it needed", async () => {
-    // Registration is open only for the window in which this machine gets its
-    // account. Left open for the session, anything running as the user could
-    // add accounts to the vault. Asserted against the vault's ANSWER, not the
-    // variable it was handed — the stub refuses registration the same way.
-    const { server, port, register } = await makeServer();
-    await server.start();
-    expect(server.account, "the account survived the replacement").not.toBeNull();
-
-    expect(
-      await register(port),
-      "the vault now serving refuses to make another account",
-    ).toBe(400);
   }, 30_000);
 
   it("is never given the vault variables it has no use for", async () => {

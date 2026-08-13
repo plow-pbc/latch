@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { JSONValue, jv } from "@domo/protocol";
-import { withoutVaultSecrets } from "./childEnv.js";
+import { signalProcessGroup, withoutVaultSecrets } from "./childProcess.js";
 
 /** One frame for the owner's viewer window (browserHost.viewFrame). */
 export interface ViewerFrame {
@@ -202,7 +202,7 @@ export class BrowserHost {
       let ready = false;
       const startTimer = setTimeout(() => {
         if (!ready) {
-          this.killGroup("SIGKILL");
+          signalProcessGroup(this.child, "SIGKILL");
           this.child = null;
           reject(
             new BrowserCrashedError(
@@ -281,20 +281,6 @@ export class BrowserHost {
     });
   }
 
-  private killGroup(signal: NodeJS.Signals): void {
-    const pid = this.child?.pid;
-    if (!pid) return;
-    try {
-      process.kill(-pid, signal);
-    } catch {
-      try {
-        process.kill(pid, signal);
-      } catch {
-        /* already gone */
-      }
-    }
-  }
-
   /** Graceful quit, then SIGTERM the group, then SIGKILL. Idempotent. */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
@@ -309,9 +295,9 @@ export class BrowserHost {
       /* stdin already closed */
     }
     if (!(await withTimeout(exited, 3000))) {
-      this.killGroup("SIGTERM");
+      signalProcessGroup(this.child, "SIGTERM");
       if (!(await withTimeout(exited, 5000))) {
-        this.killGroup("SIGKILL");
+        signalProcessGroup(this.child, "SIGKILL");
         await withTimeout(exited, 2000);
       }
     }
