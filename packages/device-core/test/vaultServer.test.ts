@@ -202,7 +202,7 @@ describe("the vault process", () => {
     // The failure this guards: the first process exits AFTER its replacement is
     // up, its `exit` handler clears the shared handle, and the live detached
     // vaultwarden is left holding the port with nothing tracking it.
-    const { server, port, launches } = await makeServer();
+    const { server, port, launches, signups, register } = await makeServer();
     await server.start();
     server.stop(); // SIGTERM; the exit event lands a tick or two later
     await server.start();
@@ -211,8 +211,16 @@ describe("the vault process", () => {
     expect(launches(), "the replacement really is a second process").toHaveLength(2);
     expect(
       await portAnswers(port),
-      "the replacement is actually serving, so the next assertion means something",
+      "the replacement is actually serving, so the next assertions mean something",
     ).toBe(true);
+
+    // The account already existed when this one started, so registration is
+    // closed — the property that outlives the deleted signup-closing lifecycle.
+    expect(signups(), "open to make the account, closed once it exists").toEqual(["true", "false"]);
+    expect(
+      await register(port),
+      "the vault that inherited the account refuses to make another",
+    ).toBe(400);
 
     // The whole point: `stop()` can still reach the live one. If the dead
     // predecessor had cleared the handle, this would kill nothing and the port
