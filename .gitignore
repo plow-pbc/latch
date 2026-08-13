@@ -16,3 +16,7 @@ vendor/vault-server/
 
 # a stray bw run once defaulted its app data here
 Library/
+
+# python bytecode from running the vendored broker in place
+__pycache__/
+*.pyc

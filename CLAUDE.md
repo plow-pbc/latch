@@ -20,9 +20,11 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   `AuditLog`, `GoalsLibrary`, identity/key store; `src/browser/` is the local
   browsing subsystem (session grants, origin enforcement, credential gate —
   DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
-  Camoufox server + 1Password broker (pins in `runtime.lock.json`;
+  Camoufox server + `seed_vault_broker`, which reads the vault through the
+  bundled Bitwarden CLI (pins in `runtime.lock.json`;
   `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
-  tests use fake servers and need no Python).
+  tests use fake servers and one fake broker,
+  `e2e/fixtures/fake-broker/seed-vault-broker.cjs`, and need no Python).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
   (revision 2026-07-28): the reduced tool surface (including the `browser_*`
   tools), capability construction from tool arguments, and the deferred-result
