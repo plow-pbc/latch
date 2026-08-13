@@ -9,6 +9,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
+// The frozen Anthropic request, as a golden. The intent below must stay the one
+// it was generated from.
+import GOLDEN_ANTHROPIC_REQUEST from "./fixtures/anthropic-review-request.json" with { type: "json" };
 
 /** Set per test: what the stubbed `messages.create` does. */
 let createImpl: (params: unknown) => Promise<unknown>;
@@ -50,8 +53,24 @@ function verdictResponse(decision: unknown, reason = "because") {
   };
 }
 
+/**
+ * A schema-valid verdict whose `reason` is the secret written entirely in JSON
+ * `\uXXXX` escapes.
+ *
+ * The point is that the two texts differ: no substring of this JSON is the
+ * credential, or any fragment of it, so a scan of the raw answer sees nothing —
+ * and `JSON.parse` hands back the credential in full. Any check that runs
+ * before the parse is looking at the wrong string.
+ */
+function escapedVerdict(decision: string, secret: string): string {
+  const escaped = [...secret]
+    .map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .join("");
+  return `{"decision":"${decision}","reason":"${escaped}"}`;
+}
+
 function review(apiKey = "sk-test") {
-  return adversarialReview({ intent: intent(), history: [], apiKey });
+  return adversarialReview({ intent: intent(), history: [], provider: "anthropic", apiKey });
 }
 
 beforeEach(() => {
@@ -61,6 +80,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("adversarialReview — clean verdicts flow through", () => {
@@ -93,6 +113,7 @@ describe("adversarialReview — clean verdicts flow through", () => {
         capabilities: [{ kind: "process.exec", argv: ["rm", "-rf", "/"] }],
       }),
       history: [],
+      provider: "anthropic",
       apiKey: "sk-test",
     });
     expect(prompt).toContain("Requested capability bounds");
@@ -114,6 +135,7 @@ describe("adversarialReview — clean verdicts flow through", () => {
     await adversarialReview({
       intent: intent({ agentId: "sess_alice", agentDisplay: "Claude Code" }),
       history: [],
+      provider: "anthropic",
       apiKey: "sk-test",
     });
     expect(prompt).toContain("Claude Code");
@@ -208,6 +230,595 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
       content: [{ type: "text", text: JSON.stringify({ reason: "looks fine" }) }],
     });
     await failsClosed(await review());
+  });
+
+  it("a reason that merely mentions the key FORMAT is not discarded", async () => {
+    // `sk-ant-api` is how every Anthropic key begins: public format, not a
+    // secret. Matching a ten-character head — right for an opaque Plow token —
+    // threw away real verdicts here, downgrading an allow or a deny to `ask`
+    // because the reviewer described a key rather than leaking one.
+    createImpl = async () =>
+      verdictResponse("deny", "would expose an sk-ant-api... style key to the network");
+    expect(
+      await adversarialReview({
+        intent: intent(),
+        history: [],
+        provider: "anthropic",
+        apiKey: "sk-ant-api03-REAL-SECRET-VALUE-0123456789",
+      }),
+    ).toEqual({
+      verdict: "deny",
+      reason: "would expose an sk-ant-api... style key to the network",
+    });
+  });
+
+  it("a TRUNCATED key fragment is discarded too", async () => {
+    // `sk-ant-api03-` is 13 characters of public format; a 20-character head
+    // therefore carries 7 characters of the secret tail. A fragment that long
+    // is a leak, and whole-key-only matching let it through.
+    const key = "sk-ant-api03-SECRETTAILabcdefghijklmnop0123456789";
+    const fragment = key.slice(0, 20);
+    createImpl = async () => verdictResponse("deny", `your key starts ${fragment}`);
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "anthropic",
+      apiKey: key,
+    });
+    await failsClosed(result);
+    expect(JSON.stringify(result)).not.toContain(fragment);
+  });
+
+  it("a schema-valid verdict that repeats the API key is discarded whole", async () => {
+    // The same defect as on the Plow path: the answer body is where a secret we
+    // sent can come back, and `reason` is persisted to audit.ndjson and drawn in
+    // the sandboxed activity view.
+    // A realistic key: the public `sk-ant-api` prefix plus the part that is
+    // actually secret. Direction (b) must keep holding while (a) is fixed.
+    const key = "sk-ant-api03-do-not-leak-me-0123456789";
+    createImpl = async () => verdictResponse("allow", `your key is ${key}`);
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "anthropic",
+      apiKey: key,
+    });
+    await failsClosed(result);
+    expect(JSON.stringify(result)).not.toContain(key);
+  });
+
+  it("a JSON-ESCAPED key in the reason is discarded too", async () => {
+    // The bypass the raw-text scan could never see: the answer body contains no
+    // fragment of the key, and the parser puts it back together.
+    const key = "sk-ant-api03-do-not-leak-me-0123456789";
+    createImpl = async () => ({
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: escapedVerdict("allow", key) }],
+    });
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "anthropic",
+      apiKey: key,
+    });
+    await failsClosed(result);
+    expect(JSON.stringify(result)).not.toContain(key);
+  });
+});
+
+/**
+ * The verdict must satisfy the WHOLE schema we constrained the model to, not
+ * just its `decision`. An answer that is only half the shape is an answer we
+ * did not ask for, and a security gate does not approve on one of those.
+ */
+describe("a verdict is accepted only if it matches the full schema", () => {
+  const answers = async (text: string) => {
+    createImpl = async () => ({ stop_reason: "end_turn", content: [{ type: "text", text }] });
+    return review();
+  };
+
+  it("accepts the exact shape", async () => {
+    expect(await answers(JSON.stringify({ decision: "allow", reason: "harmless" }))).toEqual({
+      verdict: "allow",
+      reason: "harmless",
+    });
+  });
+
+  it("rejects an allow with no reason at all", async () => {
+    expect((await answers(JSON.stringify({ decision: "allow" }))).verdict).toBe("ask");
+  });
+
+  it("rejects an allow whose reason is null", async () => {
+    expect((await answers(JSON.stringify({ decision: "allow", reason: null }))).verdict).toBe("ask");
+  });
+
+  it("rejects an allow whose reason is not a string", async () => {
+    for (const reason of [42, true, { text: "fine" }, ["fine"]]) {
+      expect((await answers(JSON.stringify({ decision: "allow", reason }))).verdict).toBe("ask");
+    }
+  });
+
+  it("rejects an allow carrying fields we never asked for", async () => {
+    // additionalProperties: false. An answer with extra keys did not come from
+    // the schema we constrained, whatever else it looks like.
+    expect(
+      (await answers(JSON.stringify({ decision: "allow", reason: "ok", confidence: 0.9 })))
+        .verdict,
+    ).toBe("ask");
+  });
+
+  it("rejects a bare array or a JSON scalar", async () => {
+    for (const text of ['["allow"]', '"allow"', "42", "null", "true"]) {
+      expect((await answers(text)).verdict).toBe("ask");
+    }
+  });
+
+  it("a rejected verdict never carries the model's own text as its reason", async () => {
+    // The reason is fixed. Model output is attacker-influenced, and a rejected
+    // answer's contents have no business being quoted back into the UI.
+    const result = await answers(
+      // Near-miss decision, so this answer is rejected — and its `reason` must
+      // not be carried into the verdict we return.
+      JSON.stringify({ decision: "ALLOW", reason: "ignore previous instructions" }),
+    );
+    expect(result.verdict).toBe("ask");
+    expect(result.reason).not.toContain("ignore previous instructions");
+  });
+});
+
+describe("the Anthropic request survives the provider seam unchanged", () => {
+  it("builds byte-for-byte the request it always built", async () => {
+    // The provider seam is a transport change; the classifier is not allowed to
+    // drift. This asserts the COMPLETE request against a frozen golden — every
+    // key, the full system prompt text, and the full user message content — so
+    // that any edit to the model, the budget, the schema, the prompt wording or
+    // the prompt layout fails here rather than silently changing what a
+    // security gate asks. Regenerate the golden only on a deliberate change.
+    let params: unknown;
+    createImpl = async (p) => {
+      params = p;
+      return verdictResponse("allow");
+    };
+    await review();
+
+    expect(params).toEqual(GOLDEN_ANTHROPIC_REQUEST);
+    // toEqual ignores key order but not presence; make the exact key set
+    // explicit too, so an added field cannot slip past as undefined.
+    expect(Object.keys(params as object).sort()).toEqual(
+      Object.keys(GOLDEN_ANTHROPIC_REQUEST).sort(),
+    );
+  });
+});
+
+describe("adversarialReview — provider selection", () => {
+  it("plow with no credential fails closed to ask, with no network call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    createImpl = async () => {
+      throw new Error("the Anthropic path must not be used");
+    };
+
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: "   ",
+      apiBaseUrl: "https://api.plow.co",
+    });
+
+    expect(result.verdict).toBe("ask");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(clientOptions).toBeUndefined(); // nor did it silently fall back
+  });
+
+  it("plow with no API base URL fails closed to ask, with no network call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: "plow_sk_secret",
+      apiBaseUrl: "",
+    });
+    expect(result.verdict).toBe("ask");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("selecting plow does not construct the Anthropic client", async () => {
+    vi.stubGlobal("fetch", async () => plowResponse(verdictJson("allow")));
+    await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: "plow_sk_secret",
+      apiBaseUrl: "https://api.plow.co",
+    });
+    expect(clientOptions).toBeUndefined();
+  });
+});
+
+/** A Plow chat-completions body carrying `text` as the assistant content. */
+function plowResponse(text: string, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => ({ choices: [{ message: { role: "assistant", content: text } }] }),
+  } as unknown as Response;
+}
+
+/** An HTTP failure, with a body the client must never quote back. */
+function plowError(status: number): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => ({ detail: "upstream said something" }),
+  } as unknown as Response;
+}
+
+/** An HTTP failure carrying a specific `detail`, the shape Plow documents. */
+function plowDetail(status: number, detail: string): Response {
+  return { ok: false, status, json: async () => ({ detail }) } as unknown as Response;
+}
+
+function verdictJson(decision: unknown, reason = "because") {
+  return JSON.stringify({ decision, reason });
+}
+
+const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
+
+describe("the Plow provider", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  const plowReview = (overrides: Record<string, unknown> = {}) =>
+    adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: PLOW_CREDENTIAL,
+      apiBaseUrl: "https://api.plow.co",
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => plowResponse(verdictJson("allow")));
+    vi.stubGlobal("fetch", fetchMock);
+    createImpl = async () => {
+      throw new Error("the Anthropic path must not be used");
+    };
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const requestBody = () => JSON.parse(fetchMock.mock.calls[0][1].body as string);
+  const requestInit = () => fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+
+  // One successful response, proving this transport's output reaches the shared
+  // parser. The verdict matrix itself — near-misses, prose, missing fields — is
+  // `parseVerdict`'s, and lives once under the Anthropic path; both providers
+  // hand it the same string and always will.
+  it("a clean verdict flows through to the shared parser", async () => {
+    fetchMock.mockResolvedValue(plowResponse(verdictJson("deny", "a reason")));
+    expect(await plowReview()).toEqual({ verdict: "deny", reason: "a reason" });
+  });
+
+  describe("the request", () => {
+    it("POSTs to the chat-completions endpoint on the configured origin", async () => {
+      await plowReview();
+      expect(fetchMock.mock.calls[0][0]).toBe("https://api.plow.co/v1/chat/completions");
+      expect(requestInit().method).toBe("POST");
+    });
+
+    it("does not double the slash when the base URL has a trailing one", async () => {
+      await plowReview({ apiBaseUrl: "https://api.plow.co/" });
+      expect(fetchMock.mock.calls[0][0]).toBe("https://api.plow.co/v1/chat/completions");
+    });
+
+    it("asks for anthropic/claude-sonnet-4-6, provider prefix and all", async () => {
+      // Not claude-sonnet-5: on the pinned litellm, thinking + response_format
+      // there drops the forced tool_choice and the schema stops being a
+      // guarantee. This model keeps both.
+      //
+      // The `anthropic/` prefix is the part that has actually been wrong in
+      // production: Plow's allowlist holds provider-prefixed ids and strips only
+      // a leading `plow/` before checking membership, so the BARE id comes back
+      // `400 Model 'claude-sonnet-4-6' is not allowed` and the reviewer never
+      // returns a verdict. It fails closed, so the symptom is a reviewer that
+      // silently abstains forever — which is why this is pinned exactly rather
+      // than matched loosely.
+      await plowReview();
+      expect(requestBody().model).toBe("anthropic/claude-sonnet-4-6");
+    });
+
+    it("sends a model id that is prefixed, not bare", async () => {
+      // Stated as its own property so a future model swap cannot quietly drop
+      // the prefix and reintroduce the inert reviewer.
+      await plowReview();
+      const model = requestBody().model as string;
+      expect(model.startsWith("anthropic/")).toBe(true);
+      expect(model).not.toBe("claude-sonnet-4-6");
+    });
+
+    it("carries the verdict schema as an OpenAI json_schema response_format", async () => {
+      await plowReview();
+      const format = requestBody().response_format;
+      expect(format.type).toBe("json_schema");
+      expect(format.json_schema.schema).toEqual({
+        type: "object",
+        properties: {
+          decision: { type: "string", enum: ["allow", "deny", "ask"] },
+          reason: { type: "string" },
+        },
+        required: ["decision", "reason"],
+        additionalProperties: false,
+      });
+    });
+
+    it("carries extended thinking, under the output cap", async () => {
+      await plowReview();
+      const body = requestBody();
+      expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+      expect(body.max_tokens).toBe(4096);
+      // litellm only auto-raises max_tokens when the caller sends none; a
+      // budget >= max_tokens comes back as an opaque provider 400.
+      expect(body.thinking.budget_tokens).toBeLessThan(body.max_tokens);
+    });
+
+    it("never sends temperature", async () => {
+      // Anthropic rejects a non-default temperature alongside extended
+      // thinking, and litellm forwards whatever we send.
+      await plowReview();
+      expect(requestBody()).not.toHaveProperty("temperature");
+    });
+
+    it("sends the system prompt and the built user prompt", async () => {
+      await adversarialReview({
+        intent: intent({ agentId: "sess_alice", agentDisplay: "Claude Code" }),
+        history: [],
+        provider: "plow",
+        plowCredential: PLOW_CREDENTIAL,
+        apiBaseUrl: "https://api.plow.co",
+      });
+      const messages = requestBody().messages as { role: string; content: string }[];
+      expect(messages.map((m) => m.role)).toEqual(["system", "user"]);
+      expect(messages[0].content).toContain("adversarial security reviewer");
+      expect(messages[1].content).toContain("Requested capability bounds");
+      expect(messages[1].content).toContain("UNVERIFIED");
+      expect(messages[1].content).toContain("sess_alice");
+      expect(messages[1].content).toContain("Claude Code");
+    });
+  });
+
+  describe("the credential rides in the Authorization header and nowhere else", () => {
+    it("is sent as a bearer token", async () => {
+      await plowReview();
+      expect(requestInit().headers.authorization).toBe(`Bearer ${PLOW_CREDENTIAL}`);
+    });
+
+    it("is absent from the URL and the request body", async () => {
+      await plowReview();
+      expect(String(fetchMock.mock.calls[0][0])).not.toContain(PLOW_CREDENTIAL);
+      expect(requestInit().body as string).not.toContain(PLOW_CREDENTIAL);
+    });
+
+    it("is absent from every returned reason and from the console, on every failure path", async () => {
+      const logs: string[] = [];
+      for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+        vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+          logs.push(args.map(String).join(" "));
+        });
+      }
+
+      const failures: (() => void)[] = [
+        () => fetchMock.mockResolvedValue(plowError(402)),
+        () => fetchMock.mockResolvedValue(plowError(400)),
+        () => fetchMock.mockResolvedValue(plowError(502)),
+        () => fetchMock.mockResolvedValue(plowError(418)),
+        // A transport error whose message embeds the whole request — the shape
+        // a naive `${error}` would leak.
+        () =>
+          fetchMock.mockRejectedValue(
+            new Error(`connect ECONNREFUSED (authorization: Bearer ${PLOW_CREDENTIAL})`),
+          ),
+        () => fetchMock.mockResolvedValue(plowResponse("not json at all")),
+        // The JSON.parse path specifically. V8 embeds the offending input in
+        // its message — truncated to ten characters, so what escapes is a
+        // credential PREFIX rather than the whole token (and a shorter token
+        // would escape whole: `Unexpected token 'o', "not json at all" is not
+        // valid JSON` quotes its input in full). Content leading with the
+        // credential puts that prefix in the message.
+        () => fetchMock.mockResolvedValue(plowResponse(`${PLOW_CREDENTIAL} says allow`)),
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(`{"decision":"allow","reason":"Bearer ${PLOW_CREDENTIAL}`),
+          ),
+        // Same path, valid JSON but the wrong shape, still quoting the token.
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(JSON.stringify({ decision: "ALLOW", reason: PLOW_CREDENTIAL })),
+          ),
+        // And a schema-valid verdict whose reason quotes it: rejected for the
+        // near-miss decision above, but this one is accepted, so the guarantee
+        // has to come from the reason being fixed on rejection rather than from
+        // luck about what the model said.
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(JSON.stringify({ decision: "maybe", reason: PLOW_CREDENTIAL })),
+          ),
+        // The success body. Nothing is malformed here: a 200, the exact schema,
+        // a legal decision — and the credential sitting in `reason`, where it
+        // would be persisted to audit.ndjson and drawn in the activity view.
+        // The answer body is the one place our own token can come back to us.
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(JSON.stringify({ decision: "allow", reason: PLOW_CREDENTIAL })),
+          ),
+        // A partial echo counts too — ten characters is what V8 quotes.
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(
+              JSON.stringify({ decision: "ask", reason: `token ${PLOW_CREDENTIAL.slice(0, 10)}…` }),
+            ),
+          ),
+        // And the escape hatch out of both of those: a schema-valid answer whose
+        // reason spells the credential in `\uXXXX`. Scanning the answer text
+        // finds nothing — not the token, not its prefix — because the token only
+        // exists once the parser has decoded it.
+        () => fetchMock.mockResolvedValue(plowResponse(escapedVerdict("allow", PLOW_CREDENTIAL))),
+      ];
+
+      // A prefix counts as a leak: the point is that no part of the token is
+      // reachable from a failure, and truncated echoes are how it gets out.
+      const prefix = PLOW_CREDENTIAL.slice(0, 10);
+      for (const arrange of failures) {
+        arrange();
+        const result = await plowReview();
+        expect(result.verdict).toBe("ask");
+        expect(JSON.stringify(result)).not.toContain(PLOW_CREDENTIAL);
+        expect(JSON.stringify(result)).not.toContain(prefix);
+      }
+
+      expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
+      expect(logs.join("\n")).not.toContain(prefix);
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe("every failure falls back to ask, never allow", () => {
+    const failsClosed = (result: { verdict: string; reason: string }) => {
+      expect(result.verdict).toBe("ask");
+      expect(result.verdict).not.toBe("allow");
+    };
+
+    it("402 names the balance, so the human knows why it abstained", async () => {
+      fetchMock.mockResolvedValue(plowError(402));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toContain("balance");
+    });
+
+
+
+    it("400 names the model the SERVER rejected, not the one we meant to send", async () => {
+      // The bug this pins: the reason was built from our own constant, so when
+      // the server refused a different id — the case where the human most needs
+      // the truth — it confidently named the wrong model.
+      fetchMock.mockResolvedValue(
+        plowDetail(400, "Model 'anthropic/claude-nonexistent-9-9' is not allowed"),
+      );
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toMatch(/reject/i);
+      expect(result.reason).toContain("anthropic/claude-nonexistent-9-9");
+      // Specifically NOT the model we shipped.
+      expect(result.reason).not.toContain("claude-sonnet-4-6");
+    });
+
+    it("400 still says it was the model, when the body does not name one", async () => {
+      fetchMock.mockResolvedValue(plowError(400));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toMatch(/reject/i);
+      expect(result.reason).toContain("model");
+    });
+
+    it("400 quotes nothing but a model-shaped id", async () => {
+      // The body is upstream text. Only an id matching the documented shape and
+      // a conservative charset is repeated; anything else gets the generic
+      // reason rather than being echoed into the UI.
+      for (const detail of [
+        "Model 'a b; DROP TABLE' is not allowed", // spaces
+        "Model '<script>alert(1)</script>' is not allowed", // markup
+        `Model '${PLOW_CREDENTIAL}' is not allowed`, // credential-shaped
+        `Model '${"x".repeat(200)}' is not allowed`, // unbounded
+        "Something else entirely went wrong",
+        "Model 'anthropic/claude-sonnet-4-6' is not allowed; extra trailing prose",
+      ]) {
+        fetchMock.mockResolvedValue(plowDetail(400, detail));
+        const result = await plowReview();
+        failsClosed(result);
+        expect(result.reason).toBe("Plow rejected the request's model");
+      }
+    });
+
+    it("502 is a generic upstream failure, never an auth prompt", async () => {
+      // The API masks provider 401/403/408 behind 502. Telling the user to
+      // re-authenticate over it would send them to fix the wrong thing.
+      fetchMock.mockResolvedValue(plowError(502));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toMatch(/upstream/i);
+      expect(result.reason).not.toMatch(/sign in|auth|credential|token|key/i);
+    });
+
+    it("any other status is reported with its code", async () => {
+      fetchMock.mockResolvedValue(plowError(418));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toContain("418");
+    });
+
+    it("a transport error", async () => {
+      fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
+      failsClosed(await plowReview());
+    });
+
+    it("the call times out, and the request is ABORTED rather than abandoned", async () => {
+      // The orphan bug: the race gave up on the promise but nothing gave up on
+      // the request, so a slow review returned `ask` at 30s and left a paid call
+      // running behind it. The budget that ends the wait must end the request.
+      vi.useFakeTimers();
+      let signal: AbortSignal | undefined;
+      fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+        signal = init.signal ?? undefined;
+        return new Promise(() => {}); // never settles
+      });
+
+      const pending = plowReview();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal, "the request must carry a signal at all").toBeDefined();
+      expect(signal!.aborted, "not aborted while still within budget").toBe(false);
+
+      await vi.advanceTimersByTimeAsync(REVIEWER_TIMEOUT_MS + 1);
+      const result = await pending;
+      failsClosed(result);
+      expect(result.reason).toContain("timed out");
+      expect(signal!.aborted, "aborted once the budget is spent").toBe(true);
+    });
+
+    it("a body that is not JSON at all", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new Error("Unexpected token < in JSON");
+        },
+      } as unknown as Response);
+      failsClosed(await plowReview());
+    });
+
+    it("a well-formed body with no choices", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [] }),
+      } as unknown as Response);
+      failsClosed(await plowReview());
+    });
+
+    it("content that is empty, or not a string", async () => {
+      for (const content of ["", "   ", null, 42, { decision: "allow" }]) {
+        fetchMock.mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content } }] }),
+        } as unknown as Response);
+        failsClosed(await plowReview());
+      }
+    });
+
   });
 });
 
