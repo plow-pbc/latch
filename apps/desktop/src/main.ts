@@ -30,7 +30,7 @@ import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { adversarialReview } from "./adversarialAgent.js";
-import { ApprovalDecision, activeProvider, decideIntent, reviewerInfo } from "./reviewPolicy.js";
+import { ApprovalDecision, decideIntent } from "./reviewPolicy.js";
 import {
   readInference,
   setAnthropicApiKey,
@@ -325,11 +325,6 @@ ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   settings.showAgentSuggestions = !!on;
   saveSettings(home, settings);
 });
-// The info of whichever provider is active — the reviewer's model is not fixed
-// any more, and Settings must not claim a model that will not run.
-ipcMain.handle("settings:getReviewerInfo", async () =>
-  reviewerInfo(activeProvider(loadSettings(home))),
-);
 ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
 ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
 /**

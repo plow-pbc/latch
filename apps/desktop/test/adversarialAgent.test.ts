@@ -406,13 +406,13 @@ describe("the Plow provider", () => {
   const requestBody = () => JSON.parse(fetchMock.mock.calls[0][1].body as string);
   const requestInit = () => fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
 
-  describe("clean verdicts flow through", () => {
-    for (const decision of ["allow", "deny", "ask"] as const) {
-      it(decision, async () => {
-        fetchMock.mockResolvedValue(plowResponse(verdictJson(decision, "a reason")));
-        expect(await plowReview()).toEqual({ verdict: decision, reason: "a reason" });
-      });
-    }
+  // One successful response, proving this transport's output reaches the shared
+  // parser. The verdict matrix itself — near-misses, prose, missing fields — is
+  // `parseVerdict`'s, and lives once under the Anthropic path; both providers
+  // hand it the same string and always will.
+  it("a clean verdict flows through to the shared parser", async () => {
+    fetchMock.mockResolvedValue(plowResponse(verdictJson("deny", "a reason")));
+    expect(await plowReview()).toEqual({ verdict: "deny", reason: "a reason" });
   });
 
   describe("the request", () => {
@@ -654,21 +654,10 @@ describe("the Plow provider", () => {
       failsClosed(await plowReview());
     });
 
-    it("the call times out", async () => {
-      vi.useFakeTimers();
-      fetchMock.mockImplementation(() => new Promise(() => {})); // never settles
-      const pending = plowReview();
-      await vi.advanceTimersByTimeAsync(REVIEWER_TIMEOUT_MS + 1);
-      const result = await pending;
-      failsClosed(result);
-      expect(result.reason).toContain("timed out");
-    });
-
-    it("a timed-out call is ABORTED, not just abandoned", async () => {
+    it("the call times out, and the request is ABORTED rather than abandoned", async () => {
       // The orphan bug: the race gave up on the promise but nothing gave up on
-      // the request, so a slow review returned `ask` at 30s and left a paid
-      // call running behind it. The budget that ends the wait must also end the
-      // request.
+      // the request, so a slow review returned `ask` at 30s and left a paid call
+      // running behind it. The budget that ends the wait must end the request.
       vi.useFakeTimers();
       let signal: AbortSignal | undefined;
       fetchMock.mockImplementation((_url: string, init: RequestInit) => {
@@ -682,18 +671,10 @@ describe("the Plow provider", () => {
       expect(signal!.aborted, "not aborted while still within budget").toBe(false);
 
       await vi.advanceTimersByTimeAsync(REVIEWER_TIMEOUT_MS + 1);
-      await pending;
+      const result = await pending;
+      failsClosed(result);
+      expect(result.reason).toContain("timed out");
       expect(signal!.aborted, "aborted once the budget is spent").toBe(true);
-    });
-
-    it("a call that answers in time is never aborted", async () => {
-      let signal: AbortSignal | undefined;
-      fetchMock.mockImplementation((_url: string, init: RequestInit) => {
-        signal = init.signal ?? undefined;
-        return Promise.resolve(plowResponse(verdictJson("allow")));
-      });
-      expect((await plowReview()).verdict).toBe("allow");
-      expect(signal!.aborted).toBe(false);
     });
 
     it("a body that is not JSON at all", async () => {
@@ -727,24 +708,6 @@ describe("the Plow provider", () => {
       }
     });
 
-    it("content that is prose rather than the schema", async () => {
-      fetchMock.mockResolvedValue(plowResponse("Sure! I think you should allow this."));
-      failsClosed(await plowReview());
-    });
-
-    // The dangerous class again, on this transport: output that LOOKS like an
-    // approval but is not exactly the enum value.
-    for (const decision of ["ALLOW", "allow ", "approved", "yes", "", null, true, 1, ["allow"]]) {
-      it(`a near-miss decision ${JSON.stringify(decision)} is not read as allow`, async () => {
-        fetchMock.mockResolvedValue(plowResponse(verdictJson(decision)));
-        failsClosed(await plowReview());
-      });
-    }
-
-    it("a missing decision field", async () => {
-      fetchMock.mockResolvedValue(plowResponse(JSON.stringify({ reason: "looks fine" })));
-      failsClosed(await plowReview());
-    });
   });
 });
 

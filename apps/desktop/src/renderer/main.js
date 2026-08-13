@@ -9,6 +9,11 @@ const statusText = document.getElementById("statusText");
 
 let currentTab = "audit";
 let filter = "all";
+// Settings' password field holds an uncommitted draft, and a re-render that
+// arrived while it did. Module scope because a re-render replaces the pane's
+// own locals — which is exactly the event being guarded against.
+let settingsDraftDirty = false;
+let settingsRerenderDeferred = false;
 
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
@@ -452,23 +457,23 @@ async function renderSettings() {
   // Anthropic API key — one of the two ways to power the adversarial agent.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
+  settingsDraftDirty = false; // a fresh pane shows the committed value
 
-  // Which backend runs the reviewer. `inference` carries availability booleans
-  // and the active model — never a credential.
+  // Which backend runs the reviewer. `inference` carries a per-provider
+  // availability map and the active model — never a credential.
   let inference = await window.domo.inferenceGet();
   const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
   const providerChips = el("div", { class: "chips" });
-  const PROVIDERS = [
-    ["plow", "Plow account", () => inference.plowAvailable],
-    ["anthropic", "Anthropic API key", () => inference.anthropicAvailable],
-  ];
+  // Labels are the only provider knowledge left here; which providers exist,
+  // and whether each is usable, comes from main.
+  const PROVIDER_LABELS = { plow: "Plow account", anthropic: "Anthropic API key" };
 
   // Approval mode for operations.
   let currentMode = await window.domo.approvalModeGet();
   const showSuggestions = await window.domo.showSuggestionsGet();
   // Adversarial mode needs a credential for the ACTIVE provider — a pasted
   // Anthropic key does not enable it while Plow is selected, and vice versa.
-  let hasKey = inference.provider === "plow" ? inference.plowAvailable : inference.anthropicAvailable;
+  let hasKey = inference.available[inference.provider];
   const modeChips = el("div", { class: "chips" });
   const MODES = [
     ["approve", "Approve"],
@@ -514,8 +519,9 @@ async function renderSettings() {
   // process enforces the same rule, this only keeps the UI honest.
   const renderProviderChips = () => {
     reviewerNote.textContent = `Reviewer: ${inference.info}`;
-    providerChips.replaceChildren(...PROVIDERS.map(([value, label, available]) => {
-      const disabled = !available();
+    providerChips.replaceChildren(...Object.entries(inference.available).map(([value, usable]) => {
+      const label = PROVIDER_LABELS[value] ?? value;
+      const disabled = !usable;
       const chip = el("span", {
         class:
           "chip" +
@@ -542,18 +548,33 @@ async function renderSettings() {
   const syncReviewerAvailability = async () => {
     inference = await window.domo.inferenceGet();
     currentMode = await window.domo.approvalModeGet();
-    hasKey =
-      inference.provider === "plow" ? inference.plowAvailable : inference.anthropicAvailable;
+    hasKey = inference.available[inference.provider];
     renderProviderChips();
     renderModeChips();
     updateSuggestEnabled();
   };
+
+  // Track whether the field holds an uncommitted draft. Purely local — it
+  // persists nothing, which is the whole point of committing on `change`.
+  // A relay reconnect fires `status:changed` on its own schedule, and
+  // re-rendering the pane under a half-typed key would throw the draft away.
+  const committedKey = apiKeyInput.value;
+  apiKeyInput.addEventListener("input", () => {
+    settingsDraftDirty = apiKeyInput.value !== committedKey;
+  });
 
   // Only on `change` — on commit (blur or Enter), never per keystroke. An
   // `input` handler sees every transient value on the way to the real one,
   // including the empty field between clearing and pasting.
   apiKeyInput.addEventListener("change", async () => {
     await window.domo.apiKeySet(apiKeyInput.value.trim());
+    settingsDraftDirty = false;
+    // Anything that arrived while the draft was open is applied now.
+    if (settingsRerenderDeferred) {
+      settingsRerenderDeferred = false;
+      await renderSettings();
+      return;
+    }
     await syncReviewerAvailability();
   });
 
@@ -622,7 +643,14 @@ window.domo.onStatusChanged(() => {
   // Signing in or out changes which providers Settings may offer, so an open
   // Settings pane has to re-read — main fires this saying "Settings re-reads
   // what changed", and until now only the header did.
-  if (currentTab === "settings") renderSettings();
+  //
+  // But `status:changed` also fires on an ordinary relay reconnect, which the
+  // person typing a key did not ask for and must not be punished by: rendering
+  // replaces the input and takes the draft with it. Hold the re-render until
+  // the draft is committed.
+  if (currentTab !== "settings") return;
+  if (settingsDraftDirty) settingsRerenderDeferred = true;
+  else renderSettings();
 });
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).

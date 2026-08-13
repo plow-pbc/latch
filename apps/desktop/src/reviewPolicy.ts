@@ -17,15 +17,12 @@ import {
   ReviewArgs,
   Verdict,
 } from "./adversarialAgent.js";
-import { InferenceProvider, Settings } from "./settings.js";
+import { INFERENCE_PROVIDERS, InferenceProvider, Settings } from "./settings.js";
 
 export type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
 /** Which providers this Mac currently holds a credential for. */
-export interface ProviderAvailability {
-  plow: boolean;
-  anthropic: boolean;
-}
+export type ProviderAvailability = Record<InferenceProvider, boolean>;
 
 /**
  * What the renderer is allowed to know about inference: the selection, which
@@ -34,13 +31,11 @@ export interface ProviderAvailability {
  */
 export interface InferenceStatus {
   provider: InferenceProvider;
-  plowAvailable: boolean;
-  anthropicAvailable: boolean;
+  /** Keyed by provider, so a caller never has to know their names to read it. */
+  available: ProviderAvailability;
   /** Model + limits of the *active* provider, for display. */
   info: string;
 }
-
-const PROVIDERS: InferenceProvider[] = ["plow", "anthropic"];
 
 /**
  * The stored selection, defaulting to Plow. An absent field reads as `plow`, and
@@ -49,7 +44,9 @@ const PROVIDERS: InferenceProvider[] = ["plow", "anthropic"];
  */
 export function activeProvider(settings: Pick<Settings, "inferenceProvider">): InferenceProvider {
   const stored = settings.inferenceProvider;
-  return PROVIDERS.includes(stored as InferenceProvider) ? (stored as InferenceProvider) : "plow";
+  return INFERENCE_PROVIDERS.includes(stored as InferenceProvider)
+    ? (stored as InferenceProvider)
+    : "plow";
 }
 
 /** A provider is usable exactly when its credential is present. */
@@ -74,13 +71,7 @@ export function reviewerInfo(provider: InferenceProvider): string {
 /** The renderer-facing shape. Built here so there is one definition of "safe". */
 export function inferenceStatus(settings: Settings): InferenceStatus {
   const provider = activeProvider(settings);
-  const availability = providerAvailability(settings);
-  return {
-    provider,
-    plowAvailable: availability.plow,
-    anthropicAvailable: availability.anthropic,
-    info: reviewerInfo(provider),
-  };
+  return { provider, available: providerAvailability(settings), info: reviewerInfo(provider) };
 }
 
 /** Can the reviewer run at all right now? */

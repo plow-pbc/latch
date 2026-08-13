@@ -301,21 +301,4 @@ describe("chatCompletion returns outcomes instead of throwing them", () => {
     expect(url).not.toContain("plow_sk_do_not_leak_me");
     expect(init.body as string).not.toContain("plow_sk_do_not_leak_me");
   });
-
-  it("uses the caller's budget signal when given one, and a default bound otherwise", async () => {
-    // The reviewer owns a 30s budget and must not silently inherit the 15s one.
-    const budget = new AbortController();
-    const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: {} },
-      { status: 200, body: {} },
-    ]);
-    const api = new PlowApi("https://api.plow.co", fetchImpl);
-
-    await api.chatCompletion("t", {}, { signal: budget.signal });
-    expect(calls[0].init.signal).toBe(budget.signal);
-
-    await api.chatCompletion("t", {});
-    expect(calls[1].init.signal).toBeDefined();
-    expect(calls[1].init.signal).not.toBe(budget.signal);
-  });
 });

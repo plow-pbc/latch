@@ -351,8 +351,7 @@ describe("the renderer's view of inference carries no credentials", () => {
   it("is booleans, a selection, and a model string", () => {
     expect(inferenceStatus(full)).toEqual({
       provider: "plow",
-      plowAvailable: true,
-      anthropicAvailable: true,
+      available: { plow: true, anthropic: true },
       info: reviewerInfo("plow"),
     });
   });

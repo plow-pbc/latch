@@ -10,15 +10,13 @@
  * so what a test observes is what actually survives a relaunch — the interlock
  * is only worth anything if it persists.
  */
-import { loadSettings, saveSettings, Settings } from "./settings.js";
+import { INFERENCE_PROVIDERS, loadSettings, saveSettings, Settings } from "./settings.js";
 import {
   InferenceStatus,
   inferenceStatus,
   modeAfterAvailabilityChange,
   providerAvailability,
 } from "./reviewPolicy.js";
-
-const PROVIDERS = ["plow", "anthropic"] as const;
 
 /** Read-modify-write, always re-applying the interlock before persisting. */
 function update(home: string, mutate: (settings: Settings) => void): Settings {
@@ -49,7 +47,7 @@ export function readInference(home: string): InferenceStatus {
  * what the truth is rather than leaving it to assume its own optimistic guess.
  */
 export function setInferenceProvider(home: string, provider: unknown): InferenceStatus {
-  const next = PROVIDERS.find((p) => p === provider);
+  const next = INFERENCE_PROVIDERS.find((p) => p === provider);
   const settings = loadSettings(home);
   if (!next || !providerAvailability(settings)[next]) return inferenceStatus(settings);
   return inferenceStatus(update(home, (s) => (s.inferenceProvider = next)));

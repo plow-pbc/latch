@@ -31,7 +31,6 @@ contextBridge.exposeInMainWorld("domo", {
   // Availability booleans and the active model — never a credential.
   inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
   inferenceSet: (provider: string) => ipcRenderer.invoke("settings:setInference", provider),
-  reviewerInfoGet: () => ipcRenderer.invoke("settings:getReviewerInfo"),
   statusGet: () => ipcRenderer.invoke("status:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),

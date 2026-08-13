@@ -34,8 +34,13 @@ export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
  *   - plow:      Plow's API, billed to the signed-in Plow account, authenticated
  *                with this Mac's relay credential. The default.
  *   - anthropic: the Anthropic API with a key the user pastes below.
+ *
+ * The tuple is the single source: the type derives from it, validation iterates
+ * it, and availability is keyed by it. Adding a provider is one edit here.
  */
-export type InferenceProvider = "plow" | "anthropic";
+export const INFERENCE_PROVIDERS = ["plow", "anthropic"] as const;
+
+export type InferenceProvider = (typeof INFERENCE_PROVIDERS)[number];
 
 export interface Settings {
   /* There is deliberately NO API base URL here. It is baked into the build

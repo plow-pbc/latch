@@ -52,7 +52,7 @@ describe("selecting a provider is refused by main, not merely hidden in the UI",
 
     expect(stored(home).inferenceProvider).toBe("plow");
     expect(status.provider).toBe("plow");
-    expect(status.anthropicAvailable).toBe(false);
+    expect(status.available.anthropic).toBe(false);
   });
 
   it("allows a provider that does have a credential", () => {

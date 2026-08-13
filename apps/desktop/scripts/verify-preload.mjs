@@ -42,17 +42,19 @@ ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
 // A signed-in Mac: the credential itself is deliberately absent from this
 // shape, because the main process never hands it to the renderer.
-ipcMain.handle("settings:getRelay", async () => ({
-  apiBaseUrl: "https://api.plow.co",
-  accountUid: "u_probe",
-  mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
-  hasCredential: true,
-  connected: true,
-}));
+ipcMain.handle("settings:getRelay", async () => {
+  const s = loadSettings(probeHome);
+  return {
+    apiBaseUrl: "https://api.plow.co",
+    accountUid: s.accountUid,
+    mcpUrl: s.mcpUrl,
+    hasCredential: !!(s.relayCredential ?? "").trim(),
+    connected: true,
+  };
+});
 ipcMain.handle("settings:getApprovalMode", async () => loadSettings(probeHome).approvalMode);
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
-ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
@@ -164,9 +166,9 @@ app.whenReady().then(async () => {
     await window.domo.apiKeySet("sk-ant-probe");
     const accepted = await window.domo.inferenceSet("anthropic");
     return {
-      refusedStaysOnPlow: refused.provider === "plow" && refused.anthropicAvailable === false,
+      refusedStaysOnPlow: refused.provider === "plow" && refused.available.anthropic === false,
       junkStaysOnPlow: junk.provider === "plow",
-      acceptedSwitches: accepted.provider === "anthropic" && accepted.anthropicAvailable === true,
+      acceptedSwitches: accepted.provider === "anthropic" && accepted.available.anthropic === true,
       // The status shape never carries a credential.
       leaksCredential: JSON.stringify([refused, junk, accepted]).includes("plow_sk"),
     };
@@ -235,6 +237,38 @@ app.whenReady().then(async () => {
     })()`),
   };
 
+  // A relay reconnect fires status:changed on its own schedule. Re-rendering
+  // under a half-typed key would take the draft with it, so the re-render waits
+  // — but it must still land once the draft is committed.
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+    input.value = "sk-ant-half-typed";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  // Change something only a full re-render redraws — the account identity, not
+  // the provider chips, which the commit refreshes on its own either way.
+  saveSettings(probeHome, { ...loadSettings(probeHome), accountUid: "u_after_reconnect" });
+  win.webContents.send("status:changed");
+  await new Promise((r) => setTimeout(r, 400));
+  const draft = {
+    survivesStatusChanged: await win.webContents.executeJavaScript(`(() => {
+      const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+      return input.value === "sk-ant-half-typed";
+    })()`),
+    // The pane must not be stale forever either: the deferred re-render lands
+    // once the draft is committed.
+    heldWhileDrafting: !(await win.webContents.executeJavaScript(
+      `document.body.innerText.includes("u_after_reconnect")`,
+    )),
+    appliedOnCommit: await win.webContents.executeJavaScript(`(async () => {
+      const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 400));
+      return document.body.innerText.includes("u_after_reconnect");
+    })()`),
+  };
+
   fs.rmSync(probeHome, { recursive: true, force: true });
 
   const approvalWin = offscreen();
@@ -269,6 +303,9 @@ app.whenReady().then(async () => {
     transientInput.storedKeyUntouched &&
     staleSettingsPane.disabledWhileSignedOut &&
     staleSettingsPane.enabledAfterStatusChanged &&
+    draft.survivesStatusChanged &&
+    draft.heldWhileDrafting &&
+    draft.appliedOnCommit &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
@@ -276,7 +313,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, roundTrip, modeFallback, transientInput, staleSettingsPane, settingsShot, approval, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, roundTrip, modeFallback, transientInput, staleSettingsPane, draft, settingsShot, approval, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });
