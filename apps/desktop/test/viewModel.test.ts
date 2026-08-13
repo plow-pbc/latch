@@ -165,3 +165,67 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.title).toBe("future_event");
   });
 });
+
+describe("auditActivities (Apple Passwords lifecycle)", () => {
+  const ts = (s: number) => `2026-08-12T23:52:${String(s).padStart(2, "0")}Z`;
+  const lifecycle: JSONValue[] = [
+    { event: "credential_source_changed", source: "apple-passwords", ts: ts(20) },
+    { event: "apw_state", state: "starting", detail: "Starting…", ts: ts(21) },
+    { event: "apw_state", state: "awaiting-pin", detail: "Enter the PIN", ts: ts(25) },
+    { event: "apw_state", state: "paired", detail: "Paired", ts: ts(31) },
+    { event: "apw_warmup", host: "pizza.example", ok: true, source: "probe", ts: ts(33) },
+  ];
+
+  it("groups one daemon lifecycle into a single, never-'Pending' activity", () => {
+    const acts = auditActivities(lifecycle);
+    expect(acts).toHaveLength(1);
+    const a = acts[0]!;
+    expect(a.title).toBe("Apple Passwords");
+    expect(a.status).toBe("Paired · AutoFill approved");
+    expect(a.tone).toBe("green");
+    expect(a.category).toBe("other");
+    expect(a.timeline.map((s) => s.text)).toEqual([
+      "Credential source: Apple Passwords",
+      "Apple Passwords helper starting…",
+      "Waiting for the macOS pairing PIN",
+      "Paired with Apple Passwords",
+      "AutoFill approval requested (pizza.example)",
+    ]);
+  });
+
+  it("each stop closes the activity; the next launch starts a fresh one", () => {
+    const acts = auditActivities([
+      ...lifecycle,
+      { event: "apw_state", state: "stopped", detail: "", ts: ts(40) },
+      { event: "apw_state", state: "starting", detail: "Starting…", ts: ts(50) },
+      { event: "apw_state", state: "awaiting-pin", detail: "Enter the PIN", ts: ts(52) },
+    ]);
+    expect(acts).toHaveLength(2); // newest first
+    expect(acts[0]!.status).toBe("Awaiting PIN");
+    expect(acts[0]!.tone).toBe("amber");
+    expect(acts[1]!.status).toBe("Ended");
+    expect(acts[1]!.tone).toBe("zinc");
+  });
+
+  it("a lifecycle that errored reads Failed and files under the failed chip", () => {
+    const acts = auditActivities([
+      { event: "apw_state", state: "starting", detail: "Starting…", ts: ts(0) },
+      { event: "apw_state", state: "error", detail: "No supported browser found", ts: ts(2) },
+    ]);
+    expect(acts[0]!.status).toBe("Failed");
+    expect(acts[0]!.tone).toBe("red");
+    expect(acts[0]!.category).toBe("failed");
+    expect(acts[0]!.timeline.at(-1)!.text).toContain("No supported browser");
+    expect(acts[0]!.timeline.at(-1)!.state).toBe("bad");
+  });
+
+  it("a paired lifecycle without warm-up success reads plain Paired", () => {
+    const acts = auditActivities([
+      { event: "apw_state", state: "starting", detail: "", ts: ts(0) },
+      { event: "apw_state", state: "paired", detail: "", ts: ts(5) },
+      { event: "apw_warmup", skipped: true, ts: ts(6) },
+    ]);
+    expect(acts[0]!.status).toBe("Paired");
+    expect(acts[0]!.tone).toBe("green");
+  });
+});

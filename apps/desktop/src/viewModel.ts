@@ -138,6 +138,8 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
   const order: string[] = [];
   const map = new Map<string, JSONValue[]>();
   const pendingAccess = new Map<string, string>(); // agent -> activity id
+  let apwActivity: string | null = null; // current Apple Passwords lifecycle
+  let apwStarted = false; // that lifecycle has seen its "starting" already
   let counter = 0;
   const push = (id: string, e: JSONValue) => {
     if (!map.has(id)) {
@@ -175,6 +177,27 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
         counter += 1;
         push(`access:${counter}`, e);
       }
+    } else if (
+      event === "apw_state" ||
+      event === "apw_warmup" ||
+      event === "credential_source_changed"
+    ) {
+      // One activity per Apple Passwords daemon lifecycle (enable/launch →
+      // pairing → warm-up → stop). These events carry no intent/session; left
+      // ungrouped each rendered as its own row stuck on "Pending" forever.
+      const state = ev.get("state").str;
+      const isStart = event === "apw_state" && state === "starting";
+      if (apwActivity === null || (isStart && apwStarted)) {
+        counter += 1;
+        apwActivity = `apw:${counter}`;
+        apwStarted = false;
+      }
+      if (isStart) apwStarted = true;
+      push(apwActivity, e);
+      if (event === "apw_state" && state === "stopped") {
+        apwActivity = null;
+        apwStarted = false;
+      }
     } else {
       counter += 1;
       push(`${event}:${counter}`, e);
@@ -202,7 +225,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     status,
     title,
     kind: activityKind(events, has, value),
-    category: activityCategory(has, entry),
+    category: activityCategory(events, has, entry),
     command: activityCommand(entry, value),
     agentId:
       value("intent_received", "agent") ??
@@ -234,6 +257,13 @@ function activityTitle(
 ): string {
   const request = value("intent_received", "request");
   if (request !== null) return request;
+  if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("apw_"))) {
+    return "Apple Passwords";
+  }
+  const source = value("credential_source_changed", "source");
+  if (source !== null) {
+    return `Credential source — ${source === "1password" ? "1Password" : "Apple Passwords"}`;
+  }
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
     const lastNav = [...events]
       .reverse()
@@ -266,6 +296,24 @@ function activityStatus(
   }
   if (has("device_started")) return { status: "Info", tone: "zinc" };
   if (has("agent_spawned")) return { status: "Spawned", tone: "blue" };
+  if (has("apw_state") || has("apw_warmup") || has("credential_source_changed")) {
+    // These are punctual lifecycle facts, never "pending" — the latest state
+    // event IS the outcome.
+    const lastState = [...events].reverse().find((e) => jv(e).get("event").str === "apw_state");
+    const state = lastState ? (jv(lastState).get("state").str ?? "") : "";
+    const warm = entry("apw_warmup");
+    const warmedOk = warm !== null && jv(warm).get("ok").bool === true;
+    if (state === "error") return { status: "Failed", tone: "red" };
+    if (state === "stopped") return { status: "Ended", tone: "zinc" };
+    if (state === "paired") {
+      return warmedOk
+        ? { status: "Paired · AutoFill approved", tone: "green" }
+        : { status: "Paired", tone: "green" };
+    }
+    if (state === "awaiting-pin") return { status: "Awaiting PIN", tone: "amber" };
+    if (state === "starting") return { status: "Starting", tone: "blue" };
+    return { status: "Info", tone: "zinc" };
+  }
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
     if (has("credential_denied") || has("browser_scope_violation")) {
       return has("browser_session_closed")
@@ -304,6 +352,7 @@ function activityKind(
   if (has("device_started")) return "info";
   if (has("agent_spawned")) return "agent";
   if (has("access_request") || has("access_decision")) return "access";
+  if (has("apw_state") || has("apw_warmup") || has("credential_source_changed")) return "access";
   if (
     events.some((e) => {
       const name = jv(e).get("event").str ?? "";
@@ -334,6 +383,7 @@ function activityKind(
  *   - other:    pending / spawned / uncategorized
  */
 function activityCategory(
+  events: JSONValue[],
   has: (e: string) => boolean,
   entry: (e: string) => JSONValue | null,
 ): string {
@@ -353,6 +403,14 @@ function activityCategory(
     return "approved";
   }
   if (entry("denied_operation")) return "failed";
+  if (has("apw_state")) {
+    // An error anywhere in the Apple Passwords lifecycle files it under the
+    // "failed" chip; otherwise it's housekeeping.
+    const errored = events.some(
+      (e) => jv(e).get("event").str === "apw_state" && jv(e).get("state").str === "error",
+    );
+    return errored ? "failed" : "other";
+  }
   return "other";
 }
 
@@ -442,6 +500,34 @@ function describeStep(e: JSONValue): AuditStep {
     case "browser_started": text = "Browser launched"; break;
     case "browser_stopped": text = "Browser stopped"; break;
     case "browser_crashed": text = "Browser crashed"; state = "bad"; break;
+    case "apw_state": {
+      const s = ev.get("state").str ?? "";
+      const detail = ev.get("detail").str ?? "";
+      const labels: { [k: string]: string } = {
+        starting: "Apple Passwords helper starting…",
+        "awaiting-pin": "Waiting for the macOS pairing PIN",
+        paired: "Paired with Apple Passwords",
+        stopped: "Apple Passwords helper stopped",
+        error: `Apple Passwords failed: ${detail}`,
+      };
+      text = labels[s] ?? `Apple Passwords: ${s}`;
+      state = s === "paired" ? "ok" : s === "error" ? "bad" : "neutral";
+      break;
+    }
+    case "apw_warmup":
+      if (ev.get("skipped").bool) {
+        text = "AutoFill warm-up skipped — no saved entry to release yet";
+      } else if (ev.get("ok").bool) {
+        text = `AutoFill approval requested (${ev.get("host").str ?? ""})`;
+        state = "ok";
+      } else {
+        text = `AutoFill warm-up failed (${ev.get("host").str ?? ""})`;
+        state = "bad";
+      }
+      break;
+    case "credential_source_changed":
+      text = `Credential source: ${ev.get("source").str === "1password" ? "1Password" : "Apple Passwords"}`;
+      break;
     default: text = event;
   }
   return { time: clock(ev.get("ts").str ?? ""), text, state };
