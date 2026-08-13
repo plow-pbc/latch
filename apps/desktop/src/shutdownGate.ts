@@ -1,7 +1,7 @@
 /**
  * Work a quit should wait for, and the bound on that wait.
  *
- * There is exactly one kind so far: the sign-out revoke. `revokeAndSignOut`
+ * There is exactly one kind, and the design leans on that. `revokeAndSignOut`
  * starts `/self/revoke` before it awaits anything, which is what stopped a quit
  * during the relay's drain from cancelling it — but starting a request is not
  * completing one, and `app.quit()` does not wait for a pending IPC handler. A
@@ -12,10 +12,16 @@
  * because `main.ts` cannot be imported under vitest — a guard that lives only
  * there is a guard nothing can execute. `main.ts` keeps the `before-quit`
  * registration and delegates the decision here.
+ *
+ * **One revoke at a time, not a queue.** Sign-out clears the stored credential
+ * synchronously, before its first `await`, so the next sign-out reads an empty
+ * credential and starts nothing: a second revoke cannot overlap the first
+ * without a full re-login in between. A set, a drain and a result code were all
+ * generality for a case sign-out cannot produce.
  */
 
 /**
- * How long a quit may wait for outstanding revokes. **2 seconds.**
+ * How long a quit may wait for an outstanding revoke. **2 seconds.**
  *
  * Short on purpose: someone who pressed Quit expects the app to go away, and
  * the whole point of a bound is that a dead network must not take the quit
@@ -37,79 +43,57 @@
 export const REVOKE_QUIT_GRACE_MS = 2_000;
 
 /**
- * Outstanding work a shutdown should give a moment to finish.
+ * The one revoke a shutdown gives a moment to finish.
  *
- * Deliberately not a queue and not a scheduler: registering work must never be
- * able to fail, delay, or reject anything, because the caller registering it is
- * a best-effort revoke and the gate is a courtesy.
+ * Deliberately not a scheduler: registering must never be able to fail, delay,
+ * or reject anything, because what registers is a best-effort revoke and this
+ * is a courtesy.
  */
 export class ShutdownGate {
-  /** Settled-tracking copies, never the caller's promise. See `track`. */
-  private readonly outstanding = new Set<Promise<void>>();
-
-  /** How many pieces of work have yet to settle. */
-  get pending(): number {
-    return this.outstanding.size;
-  }
+  /** A settled-tracking copy of the outstanding revoke, never the caller's. */
+  private outstanding: Promise<void> | null = null;
 
   /**
-   * Register work and hand back the SAME promise, so a caller can wrap a call
-   * in this without changing what it awaits or what it catches.
+   * Register the revoke and hand back the SAME promise, so the caller can wrap
+   * a call in this without changing what it awaits or what it catches.
    *
-   * What is retained is a copy that absorbs the outcome, never the original.
-   * Rejection is an ordinary outcome here — a revoke that fails is a revoke
-   * that is over — and a gate that let one become an unhandled rejection would
-   * turn best-effort cleanup into a crash.
+   * What is retained is a copy that absorbs the outcome. Rejection is an
+   * ordinary outcome here — a revoke that fails is a revoke that is over — and
+   * a gate that let one become an unhandled rejection would turn best-effort
+   * cleanup into a crash.
    */
   track<T>(work: Promise<T>): Promise<T> {
     const settled = work.then(
       () => {},
       () => {},
     );
-    this.outstanding.add(settled);
-    void settled.then(() => this.outstanding.delete(settled));
+    this.outstanding = settled;
+    void settled.then(() => {
+      if (this.outstanding === settled) this.outstanding = null;
+    });
     return work;
   }
 
   /**
-   * Wait for everything outstanding, or for `boundMs`, whichever comes first.
-   * Resolves true when the work finished, false when the bound elapsed.
+   * The `before-quit` decision: should this quit be deferred?
    *
-   * The set is snapshotted at entry: work registered DURING a drain is not
-   * waited on. A shutdown that kept extending itself for newly-arriving work
-   * would have no bound at all, which is the one property this must not lose.
+   * Returns true when the caller must hold the quit — it will be re-issued
+   * through `quit` once the revoke settles or the bound elapses, whichever is
+   * first. Returns false when nothing is outstanding, and then it has done
+   * NOTHING: no timer, no microtask. A quit with no revoke in flight is the
+   * overwhelmingly common one and must not pay for this at all.
    */
-  async drain(boundMs: number): Promise<boolean> {
-    if (this.outstanding.size === 0) return true;
+  deferQuit(quit: () => void): boolean {
+    const outstanding = this.outstanding;
+    if (!outstanding) return false;
     let timer: NodeJS.Timeout | undefined;
-    const bound = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), boundMs);
+    const bound = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, REVOKE_QUIT_GRACE_MS);
     });
-    const finished = Promise.allSettled([...this.outstanding]).then(() => true);
-    try {
-      return await Promise.race([finished, bound]);
-    } finally {
+    void Promise.race([outstanding, bound]).then(() => {
       clearTimeout(timer);
-    }
+      quit();
+    });
+    return true;
   }
-}
-
-/**
- * The `before-quit` decision: should this quit be deferred, and if so, when may
- * it proceed?
- *
- * Returns true when the caller must hold the quit — it will be re-issued
- * through `quit` once the work settles or `boundMs` elapses, whichever is
- * first. Returns false when there is nothing outstanding, and then it has done
- * NOTHING: no timer, no microtask, no deferral. A quit with no revoke in flight
- * is the overwhelmingly common one and must not pay for this at all.
- */
-export function deferQuitForWork(
-  gate: ShutdownGate,
-  boundMs: number,
-  quit: () => void,
-): boolean {
-  if (gate.pending === 0) return false;
-  void gate.drain(boundMs).then(quit, quit);
-  return true;
 }

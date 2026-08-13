@@ -101,9 +101,10 @@ export function signOutOfPlow(home: string): void {
  * draining and `/self/revoke` never even began. So both are started here and
  * settled together.
  *
- * It stays strictly best-effort: offline, API down, route not deployed, a
- * synchronous throw, any error at all, and the local clear has already
- * happened. Sign-out that failed because a server could not be reached would
+ * It stays strictly best-effort: offline, API down, route not deployed, any
+ * error at all, and the local clear has already happened — both callbacks are
+ * async, so every failure arrives as a rejection `allSettled` absorbs.
+ * Sign-out that failed because a server could not be reached would
  * leave the Mac holding a live credential while telling its owner it had signed
  * out, which is worse than not revoking.
  *
@@ -123,11 +124,10 @@ export async function revokeAndSignOut(
 ): Promise<void> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
   signOutOfPlow(home);
-  // Both STARTED before either is awaited. The async IIFEs are what make that
-  // true of a callback that throws synchronously as well as one that rejects:
-  // the call happens now, the failure becomes a rejection allSettled absorbs.
-  const pending = [(async () => afterClear())()];
-  if (credential) pending.push((async () => revoke(credential))());
+  // Both STARTED before either is awaited. Calling them here is what makes
+  // that true; awaiting neither until both are running is what keeps it true.
+  const pending = [afterClear()];
+  if (credential) pending.push(revoke(credential));
   // Failures are deliberately swallowed and deliberately not logged: neither is
   // actionable here, and the only interesting value in scope is the credential.
   await Promise.allSettled(pending);

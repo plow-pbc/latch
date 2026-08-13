@@ -9,17 +9,13 @@
  * the account.
  *
  * These are the two properties that close it and the one that keeps it
- * bearable: the quit waits for outstanding work, the quit happens anyway once
- * the bound elapses, and a quit with nothing outstanding is not touched at all.
- * The bound is driven with fake timers, because a real 2-second wait in a test
- * suite is a 2-second wait in every test suite.
+ * bearable: the quit waits for an outstanding revoke, the quit happens anyway
+ * once the bound elapses, and a quit with nothing outstanding is not touched at
+ * all. The bound is driven with fake timers, because a real 2-second wait in a
+ * test suite is a 2-second wait in every test suite.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  deferQuitForWork,
-  REVOKE_QUIT_GRACE_MS,
-  ShutdownGate,
-} from "../src/shutdownGate.js";
+import { REVOKE_QUIT_GRACE_MS, ShutdownGate } from "../src/shutdownGate.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -56,7 +52,7 @@ describe("a quit waits for an in-flight revoke, then quits", () => {
     gate.track(revoke.promise);
 
     let quits = 0;
-    const deferring = deferQuitForWork(gate, REVOKE_QUIT_GRACE_MS, () => quits++);
+    const deferring = gate.deferQuit(() => quits++);
 
     expect(deferring).toBe(true); // the caller must hold the quit
     expect(quits).toBe(0);
@@ -70,26 +66,6 @@ describe("a quit waits for an in-flight revoke, then quits", () => {
     expect(quits).toBe(1);
   });
 
-  it("waits for the LAST of several revokes", async () => {
-    vi.useFakeTimers();
-    const gate = new ShutdownGate();
-    const first = deferred();
-    const second = deferred();
-    gate.track(first.promise);
-    gate.track(second.promise);
-
-    let quits = 0;
-    deferQuitForWork(gate, REVOKE_QUIT_GRACE_MS, () => quits++);
-
-    first.resolve();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(quits).toBe(0); // one still out
-
-    second.resolve();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(quits).toBe(1);
-  });
-
   it("a FAILING revoke releases the quit like any other outcome", async () => {
     // A revoke that errors is a revoke that is over. Holding the quit for a
     // rejection would turn a network error into an app that will not close.
@@ -99,7 +75,7 @@ describe("a quit waits for an in-flight revoke, then quits", () => {
     gate.track(revoke.promise).catch(() => {}); // the caller's own handling
 
     let quits = 0;
-    deferQuitForWork(gate, REVOKE_QUIT_GRACE_MS, () => quits++);
+    gate.deferQuit(() => quits++);
 
     revoke.reject(new Error("ENOTFOUND api.plow.co"));
     await vi.advanceTimersByTimeAsync(0);
@@ -116,44 +92,13 @@ describe("a quit with a HUNG revoke goes ahead once the bound elapses", () => {
     gate.track(new Promise(() => {})); // never settles
 
     let quits = 0;
-    expect(deferQuitForWork(gate, REVOKE_QUIT_GRACE_MS, () => quits++)).toBe(true);
+    expect(gate.deferQuit(() => quits++)).toBe(true);
 
     await vi.advanceTimersByTimeAsync(REVOKE_QUIT_GRACE_MS - 1);
     expect(quits).toBe(0);
 
     await vi.advanceTimersByTimeAsync(1);
     expect(quits).toBe(1);
-  });
-
-  it("drain reports WHICH happened, so the caller is not guessing", async () => {
-    vi.useFakeTimers();
-    const finished = new ShutdownGate();
-    const landed = deferred();
-    finished.track(landed.promise);
-    const finishedDrain = finished.drain(REVOKE_QUIT_GRACE_MS);
-    landed.resolve();
-    await expect(finishedDrain).resolves.toBe(true);
-
-    const hung = new ShutdownGate();
-    hung.track(new Promise(() => {}));
-    const hungDrain = hung.drain(REVOKE_QUIT_GRACE_MS);
-    await vi.advanceTimersByTimeAsync(REVOKE_QUIT_GRACE_MS);
-    await expect(hungDrain).resolves.toBe(false);
-  });
-
-  it("work registered DURING a drain does not extend it", async () => {
-    // Otherwise there is no bound at all — only a shutdown that keeps renewing
-    // itself for whatever arrives next.
-    vi.useFakeTimers();
-    const gate = new ShutdownGate();
-    const first = deferred();
-    gate.track(first.promise);
-
-    const draining = gate.drain(REVOKE_QUIT_GRACE_MS);
-    gate.track(new Promise(() => {})); // arrives mid-drain, never settles
-    first.resolve();
-
-    await expect(draining).resolves.toBe(true);
   });
 });
 
@@ -165,42 +110,30 @@ describe("a quit with nothing outstanding is not delayed at all", () => {
     const gate = new ShutdownGate();
 
     let quits = 0;
-    const deferring = deferQuitForWork(gate, REVOKE_QUIT_GRACE_MS, () => quits++);
+    const deferring = gate.deferQuit(() => quits++);
 
     expect(deferring).toBe(false); // the caller quits immediately, itself
     expect(quits).toBe(0); // …so the callback is not the path taken
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("is the state a gate returns to once its work settles", async () => {
+  it("is the state a gate returns to once its revoke settles", async () => {
+    // The quit AFTER a completed sign-out. Nothing is outstanding any more, so
+    // it must be as undelayed as one that never signed out.
+    vi.useFakeTimers();
     const gate = new ShutdownGate();
     const revoke = deferred();
     gate.track(revoke.promise);
-    expect(gate.pending).toBe(1);
 
     revoke.resolve();
-    await revoke.promise;
-    await Promise.resolve();
-    expect(gate.pending).toBe(0);
-    expect(deferQuitForWork(gate, REVOKE_QUIT_GRACE_MS, () => {})).toBe(false);
-  });
+    await vi.advanceTimersByTimeAsync(0);
 
-  it("an empty drain resolves true without consuming the bound", async () => {
-    vi.useFakeTimers();
-    await expect(new ShutdownGate().drain(REVOKE_QUIT_GRACE_MS)).resolves.toBe(true);
+    expect(gate.deferQuit(() => {})).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
 
-describe("registering work never changes what the caller sees", () => {
-  it("hands back the same promise and the same value", async () => {
-    const gate = new ShutdownGate();
-    const work = Promise.resolve("revoked");
-    const tracked = gate.track(work);
-    expect(tracked).toBe(work);
-    await expect(tracked).resolves.toBe("revoked");
-  });
-
+describe("registering a revoke never changes what the caller sees", () => {
   it("a rejection still reaches the caller, and is not an unhandled rejection", async () => {
     // `revokeAndSignOut` absorbs revoke failures itself. The gate must not
     // reject on its own account — a best-effort cleanup that can crash the
@@ -217,6 +150,5 @@ describe("registering work never changes what the caller sees", () => {
 
     process.off("unhandledRejection", onUnhandled);
     expect(unhandled).toEqual([]);
-    expect(gate.pending).toBe(0);
   });
 });

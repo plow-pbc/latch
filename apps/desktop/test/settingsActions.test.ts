@@ -383,26 +383,6 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(settled).toBe(true);
   });
 
-  it("a drain that THROWS does not take the revoke down with it", async () => {
-    const home = homeSignedIn();
-    const seen: string[] = [];
-
-    await expect(
-      revokeAndSignOut(
-        home,
-        async (credential) => {
-          seen.push(credential);
-        },
-        () => {
-          throw new Error("relay stop blew up");
-        },
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(seen).toEqual([PLOW_CREDENTIAL]);
-    expect(stored(home).relayCredential).toBe("");
-  });
-
   it("clears locally even when the revoke FAILS", async () => {
     // Offline, API down, route not deployed — the case that matters most,
     // because a Mac that cannot reach Plow is the one whose owner most wants
@@ -428,9 +408,6 @@ describe("signing out retires the credential server-side, best effort", () => {
       () => Promise.reject(new Error("500")),
       () => Promise.reject("a bare string"),
       () => Promise.reject(new PlowApiError("http", "Plow returned 404.", 404)),
-      () => {
-        throw new Error("threw synchronously");
-      },
     ]) {
       const home = homeSignedIn();
       await revokeAndSignOut(home, fail as () => Promise<unknown>);

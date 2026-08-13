@@ -38,7 +38,7 @@ import {
   setApprovalMode,
   setInferenceProvider,
 } from "./settingsActions.js";
-import { deferQuitForWork, REVOKE_QUIT_GRACE_MS, ShutdownGate } from "./shutdownGate.js";
+import { ShutdownGate } from "./shutdownGate.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
 // Quit items, and dock title read "Domo Desktop" instead of "Electron".
@@ -66,7 +66,7 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let onboardingWindow: BrowserWindow | null = null;
-/** Work a quit gives a moment to finish — today, the sign-out revoke. */
+/** The sign-out revoke a quit gives a moment to finish. */
 const shutdown = new ShutdownGate();
 
 /**
@@ -470,7 +470,7 @@ app.on("before-quit", (event) => {
   // hostage. The decision and the bound live in shutdownGate.ts; this is the
   // Electron-shaped adapter around them and nothing else.
   if (quitDeferred) return;
-  const deferring = deferQuitForWork(shutdown, REVOKE_QUIT_GRACE_MS, () => {
+  const deferring = shutdown.deferQuit(() => {
     quitDeferred = true;
     app.quit();
   });
