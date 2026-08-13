@@ -88,7 +88,10 @@ class ElectronPolicy implements PolicyDelegate {
         agent: intent.agentId,
         model: REVIEWER_MODEL,
       });
-      const r = await adversarialReview({ intent, history, apiKey: key });
+      // Provider is passed explicitly. Wiring it to the stored setting (which
+      // defaults to Plow) is the settings/IPC chunk's job; until then this stays
+      // on the Anthropic path it has always used.
+      const r = await adversarialReview({ intent, history, provider: "anthropic", apiKey: key });
       audit?.record("adversarial_review_result", {
         intentId: intent.intentId,
         verdict: r.verdict,

@@ -5,21 +5,46 @@
  * capability bounds, and the agent's recent history on this device, then decides
  * to allow (once), deny, or defer to the human (ask).
  *
- * Model choice is deliberately small and fast (Claude Haiku 4.5) with a modest
- * thinking budget, so a decision returns well inside the 20s ceiling. Haiku uses
- * the classic extended-thinking parameter (`budget_tokens`) — it does not
- * support the newer `effort` control. The verdict is a structured JSON output.
+ * Inference runs through one of two providers, selected by the caller:
+ *
+ *   - `plow`      — Plow's OpenAI-shaped `/v1/chat/completions`, billed to the
+ *                   user's Plow account, authenticated with the device's relay
+ *                   credential. Model `claude-sonnet-4-6`.
+ *   - `anthropic` — the Anthropic SDK with a user-pasted key. Model
+ *                   `claude-haiku-4-5`, unchanged.
+ *
+ * Everything that decides *what* the reviewer does — the system prompt, the
+ * verdict schema, the prompt builder, the timeout, and the fail-closed mapping
+ * — is shared. The providers differ only in how a prompt becomes verdict text.
+ *
+ * Both models use the classic extended-thinking parameter (`budget_tokens`);
+ * neither supports the newer `effort` control. The verdict is a structured JSON
+ * output in both cases.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
+import { normalizeApiBaseUrl } from "./plowApi.js";
+
+/** Which backend performs the review. */
+export type InferenceProvider = "plow" | "anthropic";
 
 // Displayed in Settings so it's clear what's being used. Keep in sync with the
-// request below.
+// requests below.
 export const REVIEWER_MODEL = "claude-haiku-4-5";
+/**
+ * Plow's route to Anthropic goes through litellm, which only takes the *native*
+ * `output_format` path for a hardcoded list of models. `claude-sonnet-4-6` is on
+ * that list; `claude-sonnet-5` is not, and there falls back to a tool-use
+ * emulation whose forced `tool_choice` is dropped whenever thinking is on —
+ * which would downgrade the schema from a guarantee to a likelihood. This
+ * classifier keeps both, so it keeps `claude-sonnet-4-6`.
+ */
+export const PLOW_REVIEWER_MODEL = "claude-sonnet-4-6";
 export const REVIEWER_THINKING_BUDGET = 2048;
 export const REVIEWER_MAX_TOKENS = 4096;
 export const REVIEWER_TIMEOUT_MS = 30_000;
 export const REVIEWER_INFO = `${REVIEWER_MODEL} · thinking budget ${REVIEWER_THINKING_BUDGET} tokens · 30s limit`;
+export const PLOW_REVIEWER_INFO = `${PLOW_REVIEWER_MODEL} · thinking budget ${REVIEWER_THINKING_BUDGET} tokens · 30s limit`;
 
 export type Verdict = "allow" | "deny" | "ask";
 
@@ -91,41 +116,169 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * Review one intent. Any failure — no key, timeout, API error, refusal, or an
- * unparseable answer — resolves to "ask" so the human is never bypassed by a
- * broken reviewer.
+ * What a provider hands back: either the model's raw verdict text, or a reason
+ * the review could not produce one. A provider never decides the verdict — it
+ * only reports text or failure, and the shared code below maps both.
  */
-export async function adversarialReview(args: {
-  intent: Intent;
-  history: JSONValue[];
-  apiKey: string;
-}): Promise<{ verdict: Verdict; reason: string }> {
-  const apiKey = args.apiKey.trim();
-  if (!apiKey) return { verdict: "ask", reason: "no API key configured" };
+type ProviderResult = { ok: true; text: string } | { ok: false; reason: string };
 
-  const client = new Anthropic({ apiKey, maxRetries: 0, timeout: REVIEWER_TIMEOUT_MS });
-  try {
-    const response = await withTimeout(
-      client.messages.create({
-        model: REVIEWER_MODEL,
-        max_tokens: REVIEWER_MAX_TOKENS,
-        thinking: { type: "enabled", budget_tokens: REVIEWER_THINKING_BUDGET },
-        system: SYSTEM_PROMPT,
-        // Structured output: constrain the final answer to the verdict schema.
-        output_config: { format: { type: "json_schema", schema: VERDICT_SCHEMA } },
-        messages: [{ role: "user", content: buildPrompt(args.intent, args.history) }],
-      } as Anthropic.MessageCreateParamsNonStreaming),
-      REVIEWER_TIMEOUT_MS,
-    );
+/** One review round-trip. Providers are the only part that touches a network. */
+type ProviderCall = (prompt: string) => Promise<ProviderResult>;
+
+/** The Anthropic SDK path: a pasted key, `claude-haiku-4-5`. */
+function anthropicProvider(apiKey: string): ProviderCall {
+  return async (prompt) => {
+    const client = new Anthropic({ apiKey, maxRetries: 0, timeout: REVIEWER_TIMEOUT_MS });
+    const response = await client.messages.create({
+      model: REVIEWER_MODEL,
+      max_tokens: REVIEWER_MAX_TOKENS,
+      thinking: { type: "enabled", budget_tokens: REVIEWER_THINKING_BUDGET },
+      system: SYSTEM_PROMPT,
+      // Structured output: constrain the final answer to the verdict schema.
+      output_config: { format: { type: "json_schema", schema: VERDICT_SCHEMA } },
+      messages: [{ role: "user", content: prompt }],
+    } as Anthropic.MessageCreateParamsNonStreaming);
 
     if (response.stop_reason === "refusal") {
-      return { verdict: "ask", reason: "reviewer declined to assess" };
+      return { ok: false, reason: "reviewer declined to assess" };
     }
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
-      return { verdict: "ask", reason: "reviewer returned no verdict" };
+      return { ok: false, reason: "reviewer returned no verdict" };
     }
-    const parsed = JSON.parse(textBlock.text) as { decision?: string; reason?: string };
+    return { ok: true, text: textBlock.text };
+  };
+}
+
+/**
+ * Map a Plow HTTP failure onto a reason a human can act on.
+ *
+ * Only the status code and fixed text — never the response body, which is
+ * attacker-influenced upstream text, and never anything derived from the
+ * credential.
+ */
+function plowHttpReason(status: number): string {
+  if (status === 402) return "insufficient Plow balance";
+  if (status === 400) return "Plow rejected the review request";
+  // The API masks provider 401/403/408 behind an opaque 502. It specifically
+  // does NOT mean "these credentials are wrong" — do not send anyone to
+  // re-authenticate over it.
+  if (status === 502) return "Plow upstream failure";
+  return `Plow returned HTTP ${status}`;
+}
+
+/**
+ * The Plow path: OpenAI-shaped chat completions, billed to the Plow account.
+ *
+ * The credential rides in the `Authorization` header and nowhere else — not in
+ * the URL, not in a thrown message, not in anything this returns.
+ */
+function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
+  return async (prompt) => {
+    const url = `${normalizeApiBaseUrl(apiBaseUrl)}/v1/chat/completions`;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential}`,
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          model: PLOW_REVIEWER_MODEL,
+          // No `temperature`: litellm forwards it and Anthropic rejects a
+          // non-default temperature alongside extended thinking.
+          max_tokens: REVIEWER_MAX_TOKENS,
+          // budget_tokens must stay < max_tokens; litellm only auto-raises
+          // max_tokens when the caller sends none, and a violation comes back
+          // as an opaque provider 400.
+          thinking: { type: "enabled", budget_tokens: REVIEWER_THINKING_BUDGET },
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "verdict", strict: true, schema: VERDICT_SCHEMA },
+          },
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+    } catch {
+      // Deliberately not echoing the thrown error: a transport failure can
+      // carry the request (and so the header) in its message on some runtimes.
+      return { ok: false, reason: "could not reach Plow" };
+    }
+
+    if (!response.ok) return { ok: false, reason: plowHttpReason(response.status) };
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return { ok: false, reason: "reviewer returned no verdict" };
+    }
+    const content = (body as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]
+      ?.message?.content;
+    if (typeof content !== "string" || !content.trim()) {
+      return { ok: false, reason: "reviewer returned no verdict" };
+    }
+    return { ok: true, text: content };
+  };
+}
+
+/**
+ * Pick the provider, or explain why there isn't one. A missing credential is a
+ * configuration answer, not a network one — nothing is dialled.
+ */
+function selectProvider(args: ReviewArgs): ProviderCall | { reason: string } {
+  if (args.provider === "plow") {
+    const credential = (args.plowCredential ?? "").trim();
+    if (!credential) return { reason: "not signed in to Plow" };
+    const base = normalizeApiBaseUrl(args.apiBaseUrl ?? "");
+    if (!base) return { reason: "no Plow API URL configured" };
+    return plowProvider(credential, base);
+  }
+  const apiKey = (args.apiKey ?? "").trim();
+  if (!apiKey) return { reason: "no API key configured" };
+  return anthropicProvider(apiKey);
+}
+
+export interface ReviewArgs {
+  intent: Intent;
+  history: JSONValue[];
+  /** Which backend to use. The caller applies the stored setting. */
+  provider: InferenceProvider;
+  /** Anthropic API key. Required for, and used only by, the `anthropic` path. */
+  apiKey?: string;
+  /**
+   * The `relay:device` credential. Required for, and used only by, the `plow`
+   * path. A SECRET: it goes in the `Authorization` header and nowhere else.
+   */
+  plowCredential?: string;
+  /** Plow API origin, e.g. `https://api.plow.co`. Required by the `plow` path. */
+  apiBaseUrl?: string;
+}
+
+/**
+ * Review one intent. Any failure — no credential, timeout, API error, refusal,
+ * or an unparseable answer — resolves to "ask" so the human is never bypassed
+ * by a broken reviewer.
+ */
+export async function adversarialReview(
+  args: ReviewArgs,
+): Promise<{ verdict: Verdict; reason: string }> {
+  const provider = selectProvider(args);
+  if (typeof provider !== "function") return { verdict: "ask", reason: provider.reason };
+
+  try {
+    const result = await withTimeout(
+      provider(buildPrompt(args.intent, args.history)),
+      REVIEWER_TIMEOUT_MS,
+    );
+    if (!result.ok) return { verdict: "ask", reason: result.reason };
+
+    const parsed = JSON.parse(result.text) as { decision?: string; reason?: string };
     const verdict: Verdict =
       parsed.decision === "allow" || parsed.decision === "deny" || parsed.decision === "ask"
         ? parsed.decision

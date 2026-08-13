@@ -51,7 +51,7 @@ function verdictResponse(decision: unknown, reason = "because") {
 }
 
 function review(apiKey = "sk-test") {
-  return adversarialReview({ intent: intent(), history: [], apiKey });
+  return adversarialReview({ intent: intent(), history: [], provider: "anthropic", apiKey });
 }
 
 beforeEach(() => {
@@ -61,6 +61,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("adversarialReview — clean verdicts flow through", () => {
@@ -93,6 +94,7 @@ describe("adversarialReview — clean verdicts flow through", () => {
         capabilities: [{ kind: "process.exec", argv: ["rm", "-rf", "/"] }],
       }),
       history: [],
+      provider: "anthropic",
       apiKey: "sk-test",
     });
     expect(prompt).toContain("Requested capability bounds");
@@ -114,6 +116,7 @@ describe("adversarialReview — clean verdicts flow through", () => {
     await adversarialReview({
       intent: intent({ agentId: "sess_alice", agentDisplay: "Claude Code" }),
       history: [],
+      provider: "anthropic",
       apiKey: "sk-test",
     });
     expect(prompt).toContain("Claude Code");
@@ -208,6 +211,376 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
       content: [{ type: "text", text: JSON.stringify({ reason: "looks fine" }) }],
     });
     await failsClosed(await review());
+  });
+});
+
+describe("the Anthropic request survives the provider seam unchanged", () => {
+  it("builds exactly the request it always built", async () => {
+    // The provider seam is a transport change; the classifier is not allowed to
+    // drift. Pin the whole request object, not a subset, so an accidental edit
+    // to the model, the thinking budget, the schema or the system prompt fails
+    // here rather than silently changing what a security gate asks.
+    let params: Record<string, unknown> = {};
+    createImpl = async (p) => {
+      params = p as Record<string, unknown>;
+      return verdictResponse("allow");
+    };
+    await review();
+
+    expect(Object.keys(params).sort()).toEqual(
+      ["max_tokens", "messages", "model", "output_config", "system", "thinking"].sort(),
+    );
+    expect(params.model).toBe("claude-haiku-4-5");
+    expect(params.max_tokens).toBe(4096);
+    expect(params.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+    expect(params.output_config).toEqual({
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: {
+            decision: { type: "string", enum: ["allow", "deny", "ask"] },
+            reason: { type: "string" },
+          },
+          required: ["decision", "reason"],
+          additionalProperties: false,
+        },
+      },
+    });
+    // The system prompt is the security instruction; it stays on `system`, and
+    // the single user message is the built prompt.
+    expect(params.system).toContain("adversarial security reviewer");
+    expect(params.system).toContain('Return a JSON object {"decision"');
+    expect((params.messages as { role: string }[]).map((m) => m.role)).toEqual(["user"]);
+  });
+});
+
+describe("adversarialReview — provider selection", () => {
+  it("plow with no credential fails closed to ask, with no network call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    createImpl = async () => {
+      throw new Error("the Anthropic path must not be used");
+    };
+
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: "   ",
+      apiBaseUrl: "https://api.plow.co",
+    });
+
+    expect(result.verdict).toBe("ask");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(clientOptions).toBeUndefined(); // nor did it silently fall back
+  });
+
+  it("plow with no API base URL fails closed to ask, with no network call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: "plow_sk_secret",
+      apiBaseUrl: "",
+    });
+    expect(result.verdict).toBe("ask");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("selecting plow does not construct the Anthropic client", async () => {
+    vi.stubGlobal("fetch", async () => plowResponse(verdictJson("allow")));
+    await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: "plow_sk_secret",
+      apiBaseUrl: "https://api.plow.co",
+    });
+    expect(clientOptions).toBeUndefined();
+  });
+});
+
+/** A Plow chat-completions body carrying `text` as the assistant content. */
+function plowResponse(text: string, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => ({ choices: [{ message: { role: "assistant", content: text } }] }),
+  } as unknown as Response;
+}
+
+/** An HTTP failure, with a body the client must never quote back. */
+function plowError(status: number): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => ({ detail: "upstream said something" }),
+  } as unknown as Response;
+}
+
+function verdictJson(decision: unknown, reason = "because") {
+  return JSON.stringify({ decision, reason });
+}
+
+const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
+
+describe("the Plow provider", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  const plowReview = (overrides: Record<string, unknown> = {}) =>
+    adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "plow",
+      plowCredential: PLOW_CREDENTIAL,
+      apiBaseUrl: "https://api.plow.co",
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => plowResponse(verdictJson("allow")));
+    vi.stubGlobal("fetch", fetchMock);
+    createImpl = async () => {
+      throw new Error("the Anthropic path must not be used");
+    };
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const requestBody = () => JSON.parse(fetchMock.mock.calls[0][1].body as string);
+  const requestInit = () => fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+
+  describe("clean verdicts flow through", () => {
+    for (const decision of ["allow", "deny", "ask"] as const) {
+      it(decision, async () => {
+        fetchMock.mockResolvedValue(plowResponse(verdictJson(decision, "a reason")));
+        expect(await plowReview()).toEqual({ verdict: decision, reason: "a reason" });
+      });
+    }
+  });
+
+  describe("the request", () => {
+    it("POSTs to the chat-completions endpoint on the configured origin", async () => {
+      await plowReview();
+      expect(fetchMock.mock.calls[0][0]).toBe("https://api.plow.co/v1/chat/completions");
+      expect(requestInit().method).toBe("POST");
+    });
+
+    it("does not double the slash when the base URL has a trailing one", async () => {
+      await plowReview({ apiBaseUrl: "https://api.plow.co/" });
+      expect(fetchMock.mock.calls[0][0]).toBe("https://api.plow.co/v1/chat/completions");
+    });
+
+    it("asks for claude-sonnet-4-6", async () => {
+      // Not claude-sonnet-5: on the pinned litellm, thinking + response_format
+      // there drops the forced tool_choice and the schema stops being a
+      // guarantee. This model keeps both.
+      await plowReview();
+      expect(requestBody().model).toBe("claude-sonnet-4-6");
+    });
+
+    it("carries the verdict schema as an OpenAI json_schema response_format", async () => {
+      await plowReview();
+      const format = requestBody().response_format;
+      expect(format.type).toBe("json_schema");
+      expect(format.json_schema.schema).toEqual({
+        type: "object",
+        properties: {
+          decision: { type: "string", enum: ["allow", "deny", "ask"] },
+          reason: { type: "string" },
+        },
+        required: ["decision", "reason"],
+        additionalProperties: false,
+      });
+    });
+
+    it("carries extended thinking, under the output cap", async () => {
+      await plowReview();
+      const body = requestBody();
+      expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+      expect(body.max_tokens).toBe(4096);
+      // litellm only auto-raises max_tokens when the caller sends none; a
+      // budget >= max_tokens comes back as an opaque provider 400.
+      expect(body.thinking.budget_tokens).toBeLessThan(body.max_tokens);
+    });
+
+    it("never sends temperature", async () => {
+      // Anthropic rejects a non-default temperature alongside extended
+      // thinking, and litellm forwards whatever we send.
+      await plowReview();
+      expect(requestBody()).not.toHaveProperty("temperature");
+    });
+
+    it("sends the system prompt and the built user prompt", async () => {
+      await adversarialReview({
+        intent: intent({ agentId: "sess_alice", agentDisplay: "Claude Code" }),
+        history: [],
+        provider: "plow",
+        plowCredential: PLOW_CREDENTIAL,
+        apiBaseUrl: "https://api.plow.co",
+      });
+      const messages = requestBody().messages as { role: string; content: string }[];
+      expect(messages.map((m) => m.role)).toEqual(["system", "user"]);
+      expect(messages[0].content).toContain("adversarial security reviewer");
+      expect(messages[1].content).toContain("Requested capability bounds");
+      expect(messages[1].content).toContain("UNVERIFIED");
+      expect(messages[1].content).toContain("sess_alice");
+      expect(messages[1].content).toContain("Claude Code");
+    });
+  });
+
+  describe("the credential rides in the Authorization header and nowhere else", () => {
+    it("is sent as a bearer token", async () => {
+      await plowReview();
+      expect(requestInit().headers.authorization).toBe(`Bearer ${PLOW_CREDENTIAL}`);
+    });
+
+    it("is absent from the URL and the request body", async () => {
+      await plowReview();
+      expect(String(fetchMock.mock.calls[0][0])).not.toContain(PLOW_CREDENTIAL);
+      expect(requestInit().body as string).not.toContain(PLOW_CREDENTIAL);
+    });
+
+    it("is absent from every returned reason and from the console, on every failure path", async () => {
+      const logs: string[] = [];
+      for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+        vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+          logs.push(args.map(String).join(" "));
+        });
+      }
+
+      const failures: (() => void)[] = [
+        () => fetchMock.mockResolvedValue(plowError(402)),
+        () => fetchMock.mockResolvedValue(plowError(400)),
+        () => fetchMock.mockResolvedValue(plowError(502)),
+        () => fetchMock.mockResolvedValue(plowError(418)),
+        // A transport error whose message embeds the whole request — the shape
+        // a naive `${error}` would leak.
+        () =>
+          fetchMock.mockRejectedValue(
+            new Error(`connect ECONNREFUSED (authorization: Bearer ${PLOW_CREDENTIAL})`),
+          ),
+        () => fetchMock.mockResolvedValue(plowResponse("not json at all")),
+      ];
+
+      for (const arrange of failures) {
+        arrange();
+        const result = await plowReview();
+        expect(result.verdict).toBe("ask");
+        expect(JSON.stringify(result)).not.toContain(PLOW_CREDENTIAL);
+      }
+
+      expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe("every failure falls back to ask, never allow", () => {
+    const failsClosed = (result: { verdict: string; reason: string }) => {
+      expect(result.verdict).toBe("ask");
+      expect(result.verdict).not.toBe("allow");
+    };
+
+    it("402 names the balance, so the human knows why it abstained", async () => {
+      fetchMock.mockResolvedValue(plowError(402));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toContain("balance");
+    });
+
+    it("400 names the rejected request", async () => {
+      fetchMock.mockResolvedValue(plowError(400));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toMatch(/reject/i);
+    });
+
+    it("502 is a generic upstream failure, never an auth prompt", async () => {
+      // The API masks provider 401/403/408 behind 502. Telling the user to
+      // re-authenticate over it would send them to fix the wrong thing.
+      fetchMock.mockResolvedValue(plowError(502));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toMatch(/upstream/i);
+      expect(result.reason).not.toMatch(/sign in|auth|credential|token|key/i);
+    });
+
+    it("any other status is reported with its code", async () => {
+      fetchMock.mockResolvedValue(plowError(418));
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toContain("418");
+    });
+
+    it("a transport error", async () => {
+      fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
+      failsClosed(await plowReview());
+    });
+
+    it("the call times out", async () => {
+      vi.useFakeTimers();
+      fetchMock.mockImplementation(() => new Promise(() => {})); // never settles
+      const pending = plowReview();
+      await vi.advanceTimersByTimeAsync(REVIEWER_TIMEOUT_MS + 1);
+      const result = await pending;
+      failsClosed(result);
+      expect(result.reason).toContain("timed out");
+    });
+
+    it("a body that is not JSON at all", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new Error("Unexpected token < in JSON");
+        },
+      } as unknown as Response);
+      failsClosed(await plowReview());
+    });
+
+    it("a well-formed body with no choices", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [] }),
+      } as unknown as Response);
+      failsClosed(await plowReview());
+    });
+
+    it("content that is empty, or not a string", async () => {
+      for (const content of ["", "   ", null, 42, { decision: "allow" }]) {
+        fetchMock.mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content } }] }),
+        } as unknown as Response);
+        failsClosed(await plowReview());
+      }
+    });
+
+    it("content that is prose rather than the schema", async () => {
+      fetchMock.mockResolvedValue(plowResponse("Sure! I think you should allow this."));
+      failsClosed(await plowReview());
+    });
+
+    // The dangerous class again, on this transport: output that LOOKS like an
+    // approval but is not exactly the enum value.
+    for (const decision of ["ALLOW", "allow ", "approved", "yes", "", null, true, 1, ["allow"]]) {
+      it(`a near-miss decision ${JSON.stringify(decision)} is not read as allow`, async () => {
+        fetchMock.mockResolvedValue(plowResponse(verdictJson(decision)));
+        failsClosed(await plowReview());
+      });
+    }
+
+    it("a missing decision field", async () => {
+      fetchMock.mockResolvedValue(plowResponse(JSON.stringify({ reason: "looks fine" })));
+      failsClosed(await plowReview());
+    });
   });
 });
 
