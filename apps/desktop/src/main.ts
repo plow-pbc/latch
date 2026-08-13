@@ -284,8 +284,9 @@ ipcMain.handle("settings:signOut", async () => {
   await revokeAndSignOut(
     home,
     (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
-    // Dropping the socket is part of "signed out", so it belongs on the near
-    // side of the network call, with the local clear.
+    // Dropping the socket is part of "signed out". It runs ALONGSIDE the
+    // revoke, not in front of it: `stop()` waits for in-flight requests, which
+    // is unbounded, and the revoke must not queue behind that.
     startRelay,
   );
 });
@@ -456,6 +457,15 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
   void relay?.stop();
 });
+// KNOWN GAP, recorded where the fix would go. Nothing here holds the quit, so a
+// sign-out whose revoke is still on the wire when the user picks Quit dies with
+// the process — the token stays valid on the account even though this Mac has
+// forgotten it. `revokeAndSignOut` shrinks that window to one round-trip by
+// starting the revoke before it awaits anything, but it cannot close it: only a
+// `before-quit` that defers the quit until an outstanding revoke settles (under
+// a bound, or a quit becomes hostage to a dead network) can. Deliberately not
+// done here — this file is the one vitest cannot import, so a guard added here
+// is a guard nothing can execute.
 
 app.on("window-all-closed", () => {
   // Stay resident in the tray — Domo is a menu-bar agent, not a document app.

@@ -308,6 +308,101 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(relayStopped).toBe(true);
   });
 
+  it("the revoke is INITIATED even while the relay is still draining", async () => {
+    // The third window in this area, and the one the two tests above do not
+    // reach: production passes `startRelay` as `afterClear`, and
+    // `RelayClient.stop()` deliberately waits for in-flight requests so a
+    // shutdown never strands an agent mid-call. Awaiting that before starting
+    // the revoke parks the one call that matters behind a drain as long as an
+    // agent's slowest tool — and a quit in there means `/self/revoke` never
+    // began at all. Nothing that can block arbitrarily long may sit in front
+    // of it.
+    const home = homeSignedIn();
+    const seen: string[] = [];
+    let drainStarted = false;
+    let signOutSettled = false;
+
+    // A drain that never finishes: an agent mid-call at the moment of sign-out.
+    void revokeAndSignOut(
+      home,
+      async (credential) => {
+        seen.push(credential);
+      },
+      () => {
+        drainStarted = true;
+        return new Promise(() => {});
+      },
+    ).then(() => {
+      signOutSettled = true;
+    });
+    await new Promise((r) => setImmediate(r));
+
+    // Quit here — mid-drain — and the revoke has still gone out.
+    expect(drainStarted).toBe(true);
+    expect(signOutSettled).toBe(false); // still parked on the drain, as it should be
+    expect(seen).toEqual([PLOW_CREDENTIAL]);
+    expect(stored(home).relayCredential).toBe("");
+  });
+
+  it("waits for both the drain and the revoke before it resolves", async () => {
+    // Started together, but the caller's promise still covers both: a sign-out
+    // that resolved while either was outstanding would report a completion it
+    // has no evidence for.
+    const home = homeSignedIn();
+    let revokeDone = false;
+    let drainDone = false;
+    let settled = false;
+
+    const signOut = revokeAndSignOut(
+      home,
+      () =>
+        new Promise((r) => {
+          setTimeout(() => {
+            revokeDone = true;
+            r(null);
+          }, 20);
+        }),
+      () =>
+        new Promise((r) => {
+          setTimeout(() => {
+            drainDone = true;
+            r(null);
+          }, 40);
+        }),
+    ).then(() => {
+      settled = true;
+    });
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(revokeDone).toBe(true);
+    expect(drainDone).toBe(false);
+    expect(settled).toBe(false); // the drain is still out
+
+    await signOut;
+    expect(drainDone).toBe(true);
+    expect(settled).toBe(true);
+  });
+
+  it("a drain that THROWS does not take the revoke down with it", async () => {
+    const home = homeSignedIn();
+    const seen: string[] = [];
+
+    await expect(
+      revokeAndSignOut(
+        home,
+        async (credential) => {
+          seen.push(credential);
+        },
+        () => {
+          throw new Error("relay stop blew up");
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(seen).toEqual([PLOW_CREDENTIAL]);
+    expect(stored(home).relayCredential).toBe("");
+  });
+
   it("clears locally even when the revoke FAILS", async () => {
     // Offline, API down, route not deployed — the case that matters most,
     // because a Mac that cannot reach Plow is the one whose owner most wants

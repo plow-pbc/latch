@@ -77,23 +77,40 @@ export function signOutOfPlow(home: string): void {
 }
 
 /**
- * Sign out: forget the credential here, then ask Plow to retire it.
+ * Sign out: forget the credential here, and ask Plow to retire it.
  *
- * The order is the point, and it is LOCAL FIRST. Revoking first reads well —
- * ask while we still have something to authenticate with — but it puts a
- * network round-trip in front of the only step that is ours to guarantee. Quit
- * during that round-trip (`app.quit()` does not wait for a pending IPC handler)
- * and the process exits with the credential still on disk, and the next launch
- * dials the relay back up with a token the owner believes they retired. So the
- * token is captured into a local first, the on-disk copy and the socket go, and
- * only then is Plow asked — with the captured value, which does not need the
- * file to still exist.
+ * A credential survives a sign-out in exactly two ways, and this function is
+ * shaped around denying both:
  *
- * It stays strictly best-effort: offline, API down, route not deployed, any
- * error at all, the local clear has already happened. Sign-out that failed
- * because a server could not be reached would leave the Mac holding a live
- * credential while telling its owner it had signed out, which is worse than not
- * revoking.
+ *   1. **The on-disk copy is still there** — the next launch dials the relay
+ *      back up with a token its owner believes they retired. Denied by doing
+ *      the local clear FIRST, synchronously, before this function's first
+ *      `await`. There is no point at which a quit can land between reading the
+ *      token and erasing it.
+ *   2. **The revoke never reaches Plow** — this Mac has forgotten the token but
+ *      it stays valid on the account. Denied by INITIATING the revoke before
+ *      awaiting anything, using the captured value (which does not need the
+ *      file to still exist).
+ *
+ * The second is why nothing is sequenced here. `afterClear` drops the relay
+ * socket, and `RelayClient.stop()` waits for in-flight requests so a shutdown
+ * never strands an agent mid-call — an unbounded wait, on purpose. Awaiting it
+ * before starting the revoke put the one network call that matters behind a
+ * drain that can take as long as an agent's slowest tool, and `app.quit()` does
+ * not wait for a pending IPC handler: Sign Out then Quit while the relay was
+ * draining and `/self/revoke` never even began. So both are started here and
+ * settled together.
+ *
+ * It stays strictly best-effort: offline, API down, route not deployed, a
+ * synchronous throw, any error at all, and the local clear has already
+ * happened. Sign-out that failed because a server could not be reached would
+ * leave the Mac holding a live credential while telling its owner it had signed
+ * out, which is worse than not revoking.
+ *
+ * What this still cannot promise: initiating a request is not completing one.
+ * A quit inside the revoke's own round-trip exits before it lands, and only
+ * something holding the quit itself could change that — see the `before-quit`
+ * note in main.ts.
  *
  * `revoke` and `afterClear` are injected so this path — including the ordering
  * above — is reachable by a test without a network or an Electron app.
@@ -105,16 +122,14 @@ export async function revokeAndSignOut(
 ): Promise<void> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
   signOutOfPlow(home);
-  await afterClear();
-  if (credential) {
-    try {
-      await revoke(credential);
-    } catch {
-      // Deliberately swallowed, and deliberately not logged: the failure is
-      // not actionable here, and the only interesting value in scope is the
-      // credential itself.
-    }
-  }
+  // Both STARTED before either is awaited. The async IIFEs are what make that
+  // true of a callback that throws synchronously as well as one that rejects:
+  // the call happens now, the failure becomes a rejection allSettled absorbs.
+  const pending = [(async () => afterClear())()];
+  if (credential) pending.push((async () => revoke(credential))());
+  // Failures are deliberately swallowed and deliberately not logged: neither is
+  // actionable here, and the only interesting value in scope is the credential.
+  await Promise.allSettled(pending);
 }
 
 /**
