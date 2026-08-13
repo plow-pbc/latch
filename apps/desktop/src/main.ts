@@ -30,15 +30,14 @@ import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { adversarialReview } from "./adversarialAgent.js";
+import { ApprovalDecision, activeProvider, decideIntent, reviewerInfo } from "./reviewPolicy.js";
 import {
-  ApprovalDecision,
-  decideIntent,
-  inferenceStatus,
-  modeAfterAvailabilityChange,
-  reviewerInfo,
-  activeProvider,
-  providerAvailability,
-} from "./reviewPolicy.js";
+  readInference,
+  setAnthropicApiKey,
+  setApprovalMode,
+  setInferenceProvider,
+  signOutOfPlow,
+} from "./settingsActions.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
 // Quit items, and dock title read "Domo Desktop" instead of "Electron".
@@ -282,14 +281,7 @@ ipcMain.handle("settings:getRelay", async () => {
 // itself is not revoked — that needs the account's own key list, which this Mac
 // deliberately cannot reach.
 ipcMain.handle("settings:signOut", async () => {
-  const settings = loadSettings(home);
-  settings.relayCredential = "";
-  settings.accountUid = "";
-  settings.mcpUrl = "";
-  // Signing out takes the Plow reviewer's credential with it, so Adversarial
-  // mode retires the same way clearing the Anthropic key retires it.
-  settings.approvalMode = modeAfterAvailabilityChange(settings);
-  saveSettings(home, settings);
+  signOutOfPlow(home);
   await startRelay();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
@@ -326,12 +318,7 @@ ipcMain.handle("onboarding:finish", async () => {
   onboardingWindow?.close();
 });
 ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
-ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
-  const allowed = ["approve", "adversarial", "ask", "deny"];
-  const settings = loadSettings(home);
-  settings.approvalMode = (allowed.includes(mode) ? mode : "ask") as typeof settings.approvalMode;
-  saveSettings(home, settings);
-});
+ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
 ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).showAgentSuggestions ?? true);
 ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   const settings = loadSettings(home);
@@ -344,33 +331,16 @@ ipcMain.handle("settings:getReviewerInfo", async () =>
   reviewerInfo(activeProvider(loadSettings(home))),
 );
 ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
-ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
-  const settings = loadSettings(home);
-  settings.anthropicApiKey = (key || "").trim();
-  // Clearing the credential the reviewer was using retires Adversarial mode.
-  settings.approvalMode = modeAfterAvailabilityChange(settings);
-  saveSettings(home, settings);
-});
+ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
 /**
  * Everything the renderer is allowed to know about inference: the selection,
  * which providers are usable, and the active model. Deliberately booleans and
  * not credentials — the relay credential never crosses this bridge.
  */
-ipcMain.handle("settings:getInference", async () => inferenceStatus(loadSettings(home)));
-ipcMain.handle("settings:setInference", async (_e, provider: string) => {
-  const settings = loadSettings(home);
-  const allowed = ["plow", "anthropic"] as const;
-  const next = allowed.find((p) => p === provider);
-  // A provider with no credential cannot be selected. The UI disables it; this
-  // is the enforcement, so a wedged or replayed IPC call cannot park the
-  // reviewer on a provider that can never answer.
-  if (next && providerAvailability(settings)[next]) {
-    settings.inferenceProvider = next;
-    settings.approvalMode = modeAfterAvailabilityChange(settings);
-    saveSettings(home, settings);
-  }
-  return inferenceStatus(loadSettings(home));
-});
+ipcMain.handle("settings:getInference", async () => readInference(home));
+ipcMain.handle("settings:setInference", async (_e, provider: string) =>
+  setInferenceProvider(home, provider),
+);
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
   name: device?.identity.name ?? "",

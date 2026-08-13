@@ -5,11 +5,31 @@
 // Run: DOMO_HOME=/tmp/x npx electron apps/desktop/scripts/verify-preload.mjs
 import { app, BrowserWindow, ipcMain } from "electron";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// The REAL settings actions, so the inference handlers below are the ones the
+// app runs rather than stubs that agree with the renderer by construction.
+import {
+  readInference,
+  setAnthropicApiKey,
+  setInferenceProvider,
+} from "../dist/settingsActions.js";
+import { loadSettings, saveSettings } from "../dist/settings.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
+
+// A throwaway home for the round-trip checks: signed in to Plow, no Anthropic
+// key, so exactly one provider is selectable.
+const probeHome = fs.mkdtempSync(path.join(os.tmpdir(), "domo-probe-"));
+saveSettings(probeHome, {
+  ...loadSettings(probeHome),
+  relayCredential: "plow_sk_probe_credential",
+  accountUid: "u_probe",
+  inferenceProvider: "plow",
+  approvalMode: "adversarial",
+});
 
 // Stub the IPC handlers the renderer calls on load, so this probe needs no
 // device — we're testing the bridge + render path, not the data.
@@ -30,17 +50,16 @@ ipcMain.handle("settings:getRelay", async () => ({
 }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getShowSuggestions", async () => true);
-ipcMain.handle("settings:getApiKey", async () => "");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
-// A signed-in Mac with no Anthropic key: Plow is usable and selected, the
-// Anthropic provider is not. Availability booleans only — the credential
-// deliberately has no representation in this shape at all.
-ipcMain.handle("settings:getInference", async () => ({
-  provider: "plow",
-  plowAvailable: true,
-  anthropicAvailable: false,
-  info: "claude-sonnet-4-6 · probe",
-}));
+// These four are the real handlers, running the real guards against real
+// on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
+// selected, the Anthropic provider is not.
+ipcMain.handle("settings:getApiKey", async () => loadSettings(probeHome).anthropicApiKey ?? "");
+ipcMain.handle("settings:setApiKey", async (_e, key) => setAnthropicApiKey(probeHome, key));
+ipcMain.handle("settings:getInference", async () => readInference(probeHome));
+ipcMain.handle("settings:setInference", async (_e, provider) =>
+  setInferenceProvider(probeHome, provider),
+);
 
 // The approval window pulls one view model — the same shape approvalViewModel()
 // produces from an intent.
@@ -131,6 +150,38 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(settingsShot, (await win.webContents.capturePage()).toPNG());
 
+  // The interlock, driven end to end from the sandboxed renderer: bridge →
+  // ipcMain → the real guard → disk. `inferenceSet` is called directly rather
+  // than by clicking, because the UI does not even attach a click handler to a
+  // disabled chip — the point here is that a call the renderer *could* make
+  // anyway is refused by the main process, not merely hidden.
+  const roundTrip = await win.webContents.executeJavaScript(`(async () => {
+    const refused = await window.domo.inferenceSet("anthropic");
+    const junk = await window.domo.inferenceSet("openai");
+    // Now give it a key, the way the settings pane does, and try again.
+    await window.domo.apiKeySet("sk-ant-probe");
+    const accepted = await window.domo.inferenceSet("anthropic");
+    return {
+      refusedStaysOnPlow: refused.provider === "plow" && refused.anthropicAvailable === false,
+      junkStaysOnPlow: junk.provider === "plow",
+      acceptedSwitches: accepted.provider === "anthropic" && accepted.anthropicAvailable === true,
+      // The status shape never carries a credential.
+      leaksCredential: JSON.stringify([refused, junk, accepted]).includes("plow_sk"),
+    };
+  })()`);
+
+  // And the mode fallback survives the same round trip: the probe home starts
+  // in Adversarial on Plow, so clearing Plow's credential must retire it.
+  const before = loadSettings(probeHome).approvalMode;
+  setInferenceProvider(probeHome, "plow");
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
+  await win.webContents.executeJavaScript(`window.domo.apiKeySet("")`);
+  const modeFallback = {
+    startedAdversarial: before === "adversarial",
+    retiredToAsk: loadSettings(probeHome).approvalMode === "ask",
+  };
+  fs.rmSync(probeHome, { recursive: true, force: true });
+
   const approvalWin = offscreen();
   await approvalWin.loadFile(path.join(dist, "renderer/approval.html"));
   await new Promise((r) => setTimeout(r, 400));
@@ -152,11 +203,20 @@ app.whenReady().then(async () => {
     settings.plowChipActive &&
     settings.anthropicChipDisabled &&
     settings.showsActiveModel &&
+    roundTrip.refusedStaysOnPlow &&
+    roundTrip.junkStaysOnPlow &&
+    roundTrip.acceptedSwitches &&
+    !roundTrip.leaksCredential &&
+    modeFallback.startedAdversarial &&
+    modeFallback.retiredToAsk &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
     approval.buttons.length > 0 &&
     errors.length === 0;
-  console.log("PROBE:" + JSON.stringify({ main, settings, settingsShot, approval, consoleErrors: errors, ok }));
+  console.log(
+    "PROBE:" +
+      JSON.stringify({ main, settings, roundTrip, modeFallback, settingsShot, approval, consoleErrors: errors, ok }),
+  );
   app.exit(ok ? 0 : 1);
 });
