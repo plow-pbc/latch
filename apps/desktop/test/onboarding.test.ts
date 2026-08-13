@@ -785,33 +785,6 @@ describe("a sign-out during finishWithSession", () => {
     return { onboarding, release, begun };
   }
 
-  // The two yield points now share ONE outcome, and that is the change this
-  // round made. Yielding before the mint used to exit early and create nothing,
-  // which looked like the cheaper answer and was the wrong one: by then a
-  // session token exists, and `mintDeviceCredential` is the only call that
-  // retires it. So both schedules mint, and both hand the unwanted credential
-  // straight back. The schedules stay separate because they exercise different
-  // interleavings, not because they expect different things.
-  for (const where of ["relayInfo", "mintDeviceCredential"] as const) {
-    it(`yielding in ${where} still mints, and hands the credential back`, async () => {
-      const { onboarding, release, begun } = await parkedInside(where);
-      await onboarding.signedOut();
-
-      release();
-      await begun;
-      await settle();
-
-      // The mint happened — which is what killed the session token — and what
-      // it produced was returned rather than kept.
-      expect(plow.minted).toHaveLength(1);
-      expect(plow.revoked).toEqual([DEVICE_TOKEN]);
-      // Never persisted, and the relay was never brought up on it.
-      expect(loadSettings(home).relayCredential).toBe("");
-      expect(loadSettings(home).accountUid).toBe("");
-      expect(onboarding.state().step).not.toBe("connected");
-    });
-  }
-
   // The continuation AFTER the save, which an earlier report of mine called
   // safe because the save had already happened. The save is safe; this is not.
   // A sign-out during the dial clears the credential and starts a fresh
@@ -1068,90 +1041,99 @@ describe("a sign-out during finishWithSession", () => {
     expect(onboarding.state().step).toBe("connected");
   });
 
-  // Every exchange that can deliver a session token, each parked inside
-  // `relayInfo` — after the token exists and before the mint that disposes of
-  // it. That gap is where a quit used to find an empty gate and outrun the
-  // login, and where refusing to continue stranded the session outright.
-  const tokenPaths = [
-    {
-      name: "the poll loop's late accept",
-      arrive: async (onboarding: Onboarding) => {
-        plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-        const begun = onboarding.begin();
-        await settle();
-        return { finished: begun };
-      },
-    },
-    {
-      name: "the re-poll before a new code",
-      arrive: async (onboarding: Onboarding) => {
-        plow.redeems = [{ status: "pending" }];
-        await onboarding.begin();
-        await settle();
-        // The old code turns out to have been texted after all.
-        plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-        const asked = onboarding.newActivationCode();
-        await settle();
-        return { finished: asked };
-      },
-    },
-    {
-      name: "an OTP verification",
-      arrive: async (onboarding: Onboarding) => {
-        onboarding.usePhoneCode();
-        await onboarding.requestCode("+15551234567");
-        const submitted = onboarding.submitCode("12345678");
-        await settle();
-        return { finished: submitted };
-      },
-    },
-  ];
+  // Every way a login can be abandoned while it is finishing, in one table.
+  // `park` is WHERE it is caught — after the session token exists and before,
+  // or during, the mint that disposes of it. `abandon` is WHAT caught it. The
+  // outcome is the same for all of them, and that sameness is the point of this
+  // round's change: once a token has been delivered, the mint always happens,
+  // because `revoke_calling_session` rides on it and is the only thing that
+  // retires the session. What the mint produces is then handed straight back.
+  const abandonedLogins = [
+    { name: "a sign-out while relayInfo is on the wire", park: "relayInfo", arrive: "poll", abandon: "signOut" },
+    { name: "a sign-out while the mint is on the wire", park: "mint", arrive: "poll", abandon: "signOut" },
+    { name: "a quit while relayInfo is on the wire", park: "relayInfo", arrive: "poll", abandon: "quit" },
+    { name: "a quit during the re-poll before a new code", park: "relayInfo", arrive: "newCode", abandon: "quit" },
+    { name: "a quit during an OTP verification", park: "relayInfo", arrive: "otp", abandon: "quit" },
+  ] as const;
 
-  for (const path of tokenPaths) {
-    it(`a quit during ${path.name} still mints, because that is what kills the session`, async () => {
-      // The bug my own last round introduced. Refusing `finishWithSession`
-      // after the latch was right for an exchange that had not started and
-      // wrong once a token existed: `sessionToken` carries `keys:manage` and
-      // `relay:*`, and `mintDeviceCredential` — with `revoke_calling_session` —
-      // is the ONLY thing that retires it. Returning early stranded a live
-      // session that could mint anything on the account.
+  /** Drive a session token to the door, boxed so `await` cannot unwrap it. */
+  async function deliverToken(
+    onboarding: Onboarding,
+    via: "poll" | "newCode" | "otp",
+  ): Promise<{ finished: Promise<unknown> }> {
+    if (via === "poll") {
+      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+      const begun = onboarding.begin();
+      await settle();
+      return { finished: begun };
+    }
+    if (via === "newCode") {
+      plow.redeems = [{ status: "pending" }];
+      await onboarding.begin();
+      await settle();
+      // The old code turns out to have been texted after all.
+      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+      const asked = onboarding.newActivationCode();
+      await settle();
+      return { finished: asked };
+    }
+    onboarding.usePhoneCode();
+    await onboarding.requestCode("+15551234567");
+    const submitted = onboarding.submitCode("12345678");
+    await settle();
+    return { finished: submitted };
+  }
+
+  for (const login of abandonedLogins) {
+    it(`${login.name} still mints, and hands the credential back`, async () => {
       const tracked: Promise<unknown>[] = [];
       let release = () => {};
       const onTheWire = new Promise<void>((r) => {
         release = () => r();
       });
-      const realRelayInfo = plow.relayInfo.bind(plow);
-      plow.relayInfo = async (token: string) => {
-        await onTheWire;
-        return realRelayInfo(token);
-      };
+      if (login.park === "relayInfo") {
+        const real = plow.relayInfo.bind(plow);
+        plow.relayInfo = async (token: string) => {
+          await onTheWire;
+          return real(token);
+        };
+      } else {
+        const real = plow.mintDeviceCredential.bind(plow);
+        plow.mintDeviceCredential = async (token: string, name: string) => {
+          await onTheWire;
+          return real(token, name);
+        };
+      }
       const onboarding = build({
         critical: (work) => {
           tracked.push(work);
           return work;
         },
       });
-      // Boxed: `await` unwraps a promise-returning promise twice, which would
-      // park the test itself inside the very call it means to observe.
-      const { finished } = await path.arrive(onboarding);
+      const { finished } = await deliverToken(onboarding, login.arrive);
 
-      // Tracked while `relayInfo` is on the wire — before this round the span
-      // started at the mint, so a quit here found an empty gate and outran it.
+      // The span covers the WHOLE exchange, not just the mint — otherwise a
+      // quit parked here would find an empty gate and outrun the disposal.
       expect(tracked).toHaveLength(1);
 
-      // Same tick as the latch, no await between: a latch landing a tick later
-      // would leave the credential SAVED rather than handed back.
-      onboarding.quitting();
-      release();
+      if (login.abandon === "quit") {
+        // Same tick as the latch, no await between: a latch landing a tick
+        // later would leave the credential SAVED rather than handed back.
+        onboarding.quitting();
+        release();
+      } else {
+        await onboarding.signedOut();
+        release();
+      }
 
       await finished;
       await settle();
 
-      // Minted — so `revoke_calling_session` fired and the session is gone —
-      // and the device credential it produced was handed straight back.
+      // Minted — so the session is gone — and handed straight back.
       expect(plow.minted).toHaveLength(1);
       expect(plow.revoked).toEqual([DEVICE_TOKEN]);
       expect(loadSettings(home).relayCredential).toBe("");
+      expect(loadSettings(home).accountUid).toBe("");
       expect(onboarding.state().step).not.toBe("connected");
     });
   }
@@ -1251,6 +1233,50 @@ describe("a sign-out during finishWithSession", () => {
     await settle();
 
     expect(plow.minted).toEqual([]);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("a FAILING relayInfo still kills the session, and strands nothing", async () => {
+    // The last disposal gap. `sessionToken` lives only in this frame, so an
+    // error let straight out ended the login with a live `keys:manage` session
+    // on the account and no handle left to retire it. `revoke_calling_session`
+    // rides on the mint, so the mint has to happen even though nothing wants
+    // what it produces.
+    plow.relayInfo = async () => {
+      throw new PlowApiError("http", "Plow returned 500.", 500);
+    };
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    // Minted — so the session is gone — and handed straight back, because
+    // there is nothing to save it against.
+    expect(plow.minted).toHaveLength(1);
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(loadSettings(home).accountUid).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+    // …and the user is told what actually went wrong.
+    expect(onboarding.state().message).toContain("500");
+  });
+
+  it("when the mint fails too, the honest message is still the first failure", async () => {
+    // Nothing further to try, so the error worth reporting is the one that
+    // started it — not the second-order failure of the cleanup.
+    plow.relayInfo = async () => {
+      throw new PlowApiError("http", "Plow returned 500.", 500);
+    };
+    plow.mintDeviceCredential = async () => {
+      throw new PlowApiError("network", "Couldn't reach Plow.");
+    };
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(onboarding.state().message).toContain("500");
+    expect(onboarding.state().message).not.toContain("Couldn't reach Plow");
     expect(loadSettings(home).relayCredential).toBe("");
   });
 

@@ -660,14 +660,40 @@ export class Onboarding {
     // Captured before the first yield. What it decides is whether the minted
     // credential is KEPT — never whether the mint happens.
     const login = this.loginGeneration;
-    const info = await this.deps.api.relayInfo(sessionToken);
+    let info;
+    try {
+      info = await this.deps.api.relayInfo(sessionToken);
+    } catch (error) {
+      // The account lookup failed, and this is the last moment anything holds
+      // the session token — it lives only in this frame. Letting the error
+      // straight out would end the login with a live `keys:manage` session on
+      // the account and no handle left to retire it.
+      //
+      // So mint anyway. Not because a credential is wanted — there is nothing
+      // to save it against — but because `revoke_calling_session` rides on that
+      // one call and is the only thing that kills the session. `null` info
+      // routes what it produces through the same hand-back the abandoned-login
+      // path uses.
+      try {
+        await this.mintAndCommit(sessionToken, null, login);
+      } catch {
+        // The mint failed too — the API is having a bad day and there is
+        // nothing further to try. The original failure is the honest one.
+      }
+      throw error;
+    }
     await this.mintAndCommit(sessionToken, info, login);
   }
 
   /** The half of a login that can create a credential. See finishWithSession. */
+  /**
+   * `info` is null when the account lookup failed: mint to kill the session,
+   * then hand the credential back. There is nothing to save it against, and a
+   * credential with no `accountUid` or `mcpUrl` behind it is not a sign-in.
+   */
   private async mintAndCommit(
     sessionToken: string,
-    info: { uid: string; mcpUrl: string },
+    info: { uid: string; mcpUrl: string } | null,
     login: number,
   ): Promise<void> {
     const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
@@ -683,7 +709,7 @@ export class Onboarding {
     // credential on the way out the door. The mint still had to happen — it is
     // what retires the session token — but keeping what it produced is a
     // different question, and the answer during a quit is always no.
-    if (login !== this.loginGeneration || this.isQuitting) {
+    if (info === null || login !== this.loginGeneration || this.isQuitting) {
       // Awaited, so the hand-back is INSIDE this span rather than beside it.
       // Registering it separately meant this span settled while the revoke was
       // still pending, and a quit that had already snapshotted the outstanding
