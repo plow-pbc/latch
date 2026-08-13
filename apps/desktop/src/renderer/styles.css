@@ -506,3 +506,31 @@ textarea.text { min-height: 70px; resize: vertical; }
 
 /* Apple Passwords pairing: a compact PIN field next to its buttons. */
 input.text.pin { width: 9em; flex: none; letter-spacing: 0.2em; }
+
+/* Apple Passwords pairing banner — an amber band under the titlebar while a
+   pairing PIN is awaited; removed from layout once paired or dismissed. */
+.apw-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: var(--amber-bg); color: var(--amber-fg);
+  border-bottom: 1px solid var(--amber-bd);
+  font-size: 13px;
+}
+.apw-banner.hidden { display: none; }
+.apw-banner .apw-title { font-weight: 600; white-space: nowrap; }
+.apw-banner .apw-note { opacity: 0.85; }
+.apw-banner .spacer { flex: 1; }
+/* Dismiss sits at the far left. Own styling — .iconbtn is opacity-0 until its
+   goal row is hovered, which made the glyph invisible here. */
+.apw-banner .apw-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: none; cursor: pointer;
+  color: var(--amber-fg); opacity: 0.7;
+  font-size: 14px; line-height: 1; padding: 4px 6px; border-radius: 6px;
+}
+.apw-banner .apw-close:hover { opacity: 1; background: var(--amber-bd); }
+
+/* Apple Passwords settings group: stacked rows with real air between them. */
+.apw-group { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.apw-group .check { margin-top: 0; }  /* the column gap spaces it already */
+.apw-group p { margin: 0; }

@@ -29,11 +29,14 @@ ipcMain.handle("settings:getRelay", async () => ({
   connected: true,
 }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
+// awaiting-pin so the probe can assert the pairing banner shows on every tab —
+// it is the only PIN entry point (the Settings group just reports status).
 ipcMain.handle("applePasswords:get", async () => ({
   available: true,
-  enabled: false,
-  state: "stopped",
-  detail: "",
+  enabled: true,
+  state: "awaiting-pin",
+  detail: "Enter the PIN shown by macOS",
+  dismissed: false,
 }));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getApiKey", async () => "");
@@ -82,11 +85,17 @@ app.whenReady().then(async () => {
   // Give the async render() a tick.
   await new Promise((r) => setTimeout(r, 400));
   const main = await win.webContents.executeJavaScript(`(${() => {
+    const banner = document.getElementById("apwBanner");
     return {
       hasBridge: typeof window.domo === "object" && window.domo !== null,
       bridgeKeys: window.domo ? Object.keys(window.domo).length : 0,
       viewChildren: document.getElementById("view")?.childElementCount ?? -1,
       statusText: document.getElementById("statusText")?.textContent ?? "",
+      // The stub reports awaiting-pin: the pairing banner must be up, with a
+      // PIN field, on a non-Settings tab.
+      pairingBannerShown: !!banner && !banner.classList.contains("hidden"),
+      pairingBannerHasPin: !!banner?.querySelector("input.pin"),
+      pairingBannerHasDismiss: !!banner?.querySelector(".apw-close"),
     };
   }})()`);
 
@@ -97,12 +106,15 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
   await new Promise((r) => setTimeout(r, 300));
   const settings = await win.webContents.executeJavaScript(`(${() => {
-    const inputs = [...document.querySelectorAll("input")];
+    const banner = document.getElementById("apwBanner");
     return {
       hasAccountGroup: document.body.innerText.includes("Plow account"),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
+      // The banner stays up on Settings too, and is the ONLY PIN field.
+      pairingBannerShown: !!banner && !banner.classList.contains("hidden"),
+      settingsHasNoPinField: !document.querySelector("#view input.pin"),
     };
   }})()`);
 
@@ -127,8 +139,13 @@ app.whenReady().then(async () => {
     settings.hasAccountGroup &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
+    settings.pairingBannerShown &&
+    settings.settingsHasNoPinField &&
     main.hasBridge &&
     main.viewChildren > 0 &&
+    main.pairingBannerShown &&
+    main.pairingBannerHasPin &&
+    main.pairingBannerHasDismiss &&
     approval.showsCapability &&
     approval.buttons.length > 0 &&
     errors.length === 0;

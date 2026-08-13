@@ -35,9 +35,10 @@ contextBridge.exposeInMainWorld("domo", {
   applePasswordsGet: () => ipcRenderer.invoke("applePasswords:get"),
   applePasswordsSetEnabled: (on: boolean) => ipcRenderer.invoke("applePasswords:setEnabled", on),
   applePasswordsRequestPin: () => ipcRenderer.invoke("applePasswords:requestPin"),
+  applePasswordsDismissPin: () => ipcRenderer.invoke("applePasswords:dismissPin"),
+  applePasswordsRestartPairing: () => ipcRenderer.invoke("applePasswords:restartPairing"),
   applePasswordsSubmitPin: (pin: string) => ipcRenderer.invoke("applePasswords:submitPin", pin),
   onApplePasswordsChanged: (cb: () => void) => ipcRenderer.on("applePasswords:changed", cb),
-  onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 

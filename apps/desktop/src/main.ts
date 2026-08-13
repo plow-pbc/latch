@@ -483,6 +483,14 @@ ipcMain.handle("applePasswords:requestPin", async () => {
   await applePasswords?.requestPin();
   return applePasswords?.view() ?? null;
 });
+ipcMain.handle("applePasswords:dismissPin", async () => {
+  applePasswords?.dismissPin();
+  return applePasswords?.view() ?? null;
+});
+ipcMain.handle("applePasswords:restartPairing", async () => {
+  await applePasswords?.restartPairing();
+  return applePasswords?.view() ?? null;
+});
 ipcMain.handle("applePasswords:submitPin", async (_e, pin: string) => {
   const ok = (await applePasswords?.submitPin(String(pin))) ?? false;
   return { ok, view: applePasswords?.view() ?? null };
@@ -603,12 +611,10 @@ app.whenReady().then(async () => {
     onChange: () => {
       notifyRenderer("applePasswords:changed");
       // Whenever a PIN is being waited on — launch pairing or a mid-session
-      // re-pair after the helper dropped the session — surface the place to
-      // type it (macOS is showing its dialog right now).
-      if (applePasswords?.view().state === "awaiting-pin") {
-        mainWindow?.show();
-        mainWindow?.webContents.send("ui:showSettings");
-      }
+      // re-pair after the helper dropped the session — bring the window up:
+      // macOS is showing its dialog right now, and the renderer's pairing
+      // banner (top of the main window) is where the PIN gets typed.
+      if (applePasswords?.view().state === "awaiting-pin") mainWindow?.show();
     },
   });
 

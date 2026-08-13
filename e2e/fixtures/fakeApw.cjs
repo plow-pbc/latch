@@ -86,7 +86,11 @@ if (cmd === "start") {
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(marker("daemon"), String(process.pid));
   const cleanup = () => {
-    for (const m of ["daemon", "pin-requested", "paired"]) fs.rmSync(marker(m), { force: true });
+    // challenge-count dies with the session too: a fresh daemon puppets a
+    // fresh extension, whose challenge state starts over.
+    for (const m of ["daemon", "pin-requested", "paired", "challenge-count"]) {
+      fs.rmSync(marker(m), { force: true });
+    }
     process.exit(0);
   };
   process.on("SIGTERM", cleanup);

@@ -36,6 +36,9 @@ export interface ApplePasswordsView {
   enabled: boolean;
   state: ApwPairingState;
   detail: string;
+  /** True when the user dismissed the PIN banner: still unpaired (state stays
+   * awaiting-pin), banner hidden, Settings offers to pair again. */
+  dismissed: boolean;
 }
 
 export interface ApplePasswordsOptions {
@@ -102,6 +105,8 @@ export class ApplePasswords {
   private broker: ApwCredentialBroker | null = null;
   /** Where this session's one-time AutoFill consent stands (see warmUp). */
   private warmupState: "warmed" | "first-fill" | "failed" | null = null;
+  /** The user closed the PIN banner without pairing (cleared by requestPin). */
+  private pinDismissed = false;
 
   constructor(private readonly opts: ApplePasswordsOptions) {}
 
@@ -115,7 +120,15 @@ export class ApplePasswords {
         status.state === "paired" && this.warmupState
           ? WARMUP_DETAIL[this.warmupState]
           : status.detail,
+      dismissed: this.pinDismissed,
     };
+  }
+
+  /** Close the PIN banner without pairing. The daemon stays awaiting-pin (the
+   * challenge is still outstanding); Settings offers to pair again. */
+  dismissPin(): void {
+    this.pinDismissed = true;
+    this.opts.onChange?.();
   }
 
   /** Launch path: start + pair if the persisted setting says so. Never throws
@@ -134,6 +147,7 @@ export class ApplePasswords {
     const { apwCommand, credentials } = this.opts;
     if (!apwCommand || !credentials) return;
     if (persist) this.opts.setEnabled(true);
+    this.pinDismissed = false;
 
     this.broker ??= new ApwCredentialBroker({
       command: apwCommand,
@@ -169,13 +183,31 @@ export class ApplePasswords {
     }
   }
 
-  /** Re-trigger the macOS PIN dialog (the old PIN expired or was dismissed). */
+  /** Re-trigger the macOS PIN dialog (the old PIN expired or was dismissed).
+   * Also un-dismisses: asking for a PIN means the banner is wanted back. */
   async requestPin(): Promise<void> {
+    this.pinDismissed = false;
     try {
       await this.daemon?.requestPin();
     } catch {
       /* state carries the failure detail */
     }
+    this.opts.onChange?.();
+  }
+
+  /**
+   * Start pairing over from scratch (Settings' "Pair" after a dismissal).
+   * The helper keeps ONE challenge — and one PIN — per extension session, so
+   * merely re-requesting shows the same digits again; a dismissed attempt
+   * deserves a fresh session and a fresh macOS dialog. Costs a daemon restart
+   * (a few seconds of "Starting…").
+   */
+  async restartPairing(): Promise<void> {
+    this.pinDismissed = false;
+    const daemon = this.daemon;
+    this.daemon = null;
+    await daemon?.stop();
+    await this.enable(false);
   }
 
   /** Complete pairing. Returns false when the PIN was rejected. */

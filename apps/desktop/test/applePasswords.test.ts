@@ -212,6 +212,29 @@ describe("ApplePasswords", () => {
     expect(warmup).toBeNull();
   });
 
+  it("dismissing the PIN leaves it unpaired; requesting a new PIN un-dismisses", async () => {
+    await ap.enable();
+    expect(ap.view()).toMatchObject({ state: "awaiting-pin", dismissed: false });
+    ap.dismissPin();
+    // Still unpaired — nothing about the daemon changed, only the UI intent.
+    expect(ap.view()).toMatchObject({ state: "awaiting-pin", dismissed: true });
+    await ap.requestPin(); // the banner's own "New PIN"
+    expect(ap.view()).toMatchObject({ state: "awaiting-pin", dismissed: false });
+    expect(await ap.submitPin("123456")).toBe(true);
+  });
+
+  it("Pair after a dismissal restarts pairing with a fresh helper session", async () => {
+    await ap.enable();
+    const firstPid = fs.readFileSync(path.join(dir, "state", "daemon"), "utf8");
+    ap.dismissPin();
+    await ap.restartPairing(); // Settings' "Pair" button
+    expect(ap.view()).toMatchObject({ state: "awaiting-pin", dismissed: false });
+    // A genuinely new daemon (→ new extension session → new challenge/PIN):
+    const secondPid = fs.readFileSync(path.join(dir, "state", "daemon"), "utf8");
+    expect(secondPid).not.toBe(firstPid);
+    expect(await ap.submitPin("123456")).toBe(true);
+  });
+
   it("shutdown kills the daemon but keeps the setting for next launch", async () => {
     await ap.enable();
     await ap.submitPin("123456");
