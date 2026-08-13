@@ -367,6 +367,11 @@ function plowError(status: number): Response {
   } as unknown as Response;
 }
 
+/** An HTTP failure carrying a specific `detail`, the shape Plow documents. */
+function plowDetail(status: number, detail: string): Response {
+  return { ok: false, status, json: async () => ({ detail }) } as unknown as Response;
+}
+
 function verdictJson(decision: unknown, reason = "because") {
   return JSON.stringify({ decision, reason });
 }
@@ -422,12 +427,29 @@ describe("the Plow provider", () => {
       expect(fetchMock.mock.calls[0][0]).toBe("https://api.plow.co/v1/chat/completions");
     });
 
-    it("asks for claude-sonnet-4-6", async () => {
+    it("asks for anthropic/claude-sonnet-4-6, provider prefix and all", async () => {
       // Not claude-sonnet-5: on the pinned litellm, thinking + response_format
       // there drops the forced tool_choice and the schema stops being a
       // guarantee. This model keeps both.
+      //
+      // The `anthropic/` prefix is the part that has actually been wrong in
+      // production: Plow's allowlist holds provider-prefixed ids and strips only
+      // a leading `plow/` before checking membership, so the BARE id comes back
+      // `400 Model 'claude-sonnet-4-6' is not allowed` and the reviewer never
+      // returns a verdict. It fails closed, so the symptom is a reviewer that
+      // silently abstains forever — which is why this is pinned exactly rather
+      // than matched loosely.
       await plowReview();
-      expect(requestBody().model).toBe("claude-sonnet-4-6");
+      expect(requestBody().model).toBe("anthropic/claude-sonnet-4-6");
+    });
+
+    it("sends a model id that is prefixed, not bare", async () => {
+      // Stated as its own property so a future model swap cannot quietly drop
+      // the prefix and reintroduce the inert reviewer.
+      await plowReview();
+      const model = requestBody().model as string;
+      expect(model.startsWith("anthropic/")).toBe(true);
+      expect(model).not.toBe("claude-sonnet-4-6");
     });
 
     it("carries the verdict schema as an OpenAI json_schema response_format", async () => {
@@ -568,15 +590,46 @@ describe("the Plow provider", () => {
       expect(result.reason).toContain("balance");
     });
 
-    it("400 names the model that was rejected", async () => {
-      // 400 from this endpoint is the allowlist refusing the model. Saying only
-      // "rejected" leaves the human with no idea the fix is a different model.
+    it("400 names the model the SERVER rejected, not the one we meant to send", async () => {
+      // The bug this pins: the reason was built from our own constant, so when
+      // the server refused a different id — the case where the human most needs
+      // the truth — it confidently named the wrong model.
+      fetchMock.mockResolvedValue(
+        plowDetail(400, "Model 'anthropic/claude-nonexistent-9-9' is not allowed"),
+      );
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toMatch(/reject/i);
+      expect(result.reason).toContain("anthropic/claude-nonexistent-9-9");
+      // Specifically NOT the model we shipped.
+      expect(result.reason).not.toContain("claude-sonnet-4-6");
+    });
+
+    it("400 still says it was the model, when the body does not name one", async () => {
       fetchMock.mockResolvedValue(plowError(400));
       const result = await plowReview();
       failsClosed(result);
       expect(result.reason).toMatch(/reject/i);
       expect(result.reason).toContain("model");
-      expect(result.reason).toContain("claude-sonnet-4-6");
+    });
+
+    it("400 quotes nothing but a model-shaped id", async () => {
+      // The body is upstream text. Only an id matching the documented shape and
+      // a conservative charset is repeated; anything else gets the generic
+      // reason rather than being echoed into the UI.
+      for (const detail of [
+        "Model 'a b; DROP TABLE' is not allowed", // spaces
+        "Model '<script>alert(1)</script>' is not allowed", // markup
+        `Model '${PLOW_CREDENTIAL}' is not allowed`, // credential-shaped
+        `Model '${"x".repeat(200)}' is not allowed`, // unbounded
+        "Something else entirely went wrong",
+        "Model 'anthropic/claude-sonnet-4-6' is not allowed; extra trailing prose",
+      ]) {
+        fetchMock.mockResolvedValue(plowDetail(400, detail));
+        const result = await plowReview();
+        failsClosed(result);
+        expect(result.reason).toBe("Plow rejected the request's model");
+      }
     });
 
     it("502 is a generic upstream failure, never an auth prompt", async () => {

@@ -137,7 +137,7 @@ app.whenReady().then(async () => {
       hasInferenceGroup: document.body.innerText.includes("Reviewer inference"),
       plowChipActive: !!plow && plow.classList.contains("active"),
       anthropicChipDisabled: !!anthropic && anthropic.classList.contains("disabled"),
-      showsActiveModel: document.body.innerText.includes("claude-sonnet-4-6"),
+      showsActiveModel: document.body.innerText.includes("anthropic/claude-sonnet-4-6"),
     };
   }})()`);
 

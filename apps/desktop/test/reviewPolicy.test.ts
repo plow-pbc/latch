@@ -137,9 +137,11 @@ describe("availability is credential presence, per provider", () => {
 
 describe("the model reported is the model that runs", () => {
   it("per provider", () => {
-    expect(reviewerModel("plow")).toBe("claude-sonnet-4-6");
+    // The wire id, provider prefix included — a bare id is rejected by
+    // Plow's allowlist, and this is the value the audit log records.
+    expect(reviewerModel("plow")).toBe("anthropic/claude-sonnet-4-6");
     expect(reviewerModel("anthropic")).toBe("claude-haiku-4-5");
-    expect(reviewerInfo("plow")).toContain("claude-sonnet-4-6");
+    expect(reviewerInfo("plow")).toContain("anthropic/claude-sonnet-4-6");
     expect(reviewerInfo("anthropic")).toContain("claude-haiku-4-5");
   });
 
@@ -147,7 +149,7 @@ describe("the model reported is the model that runs", () => {
     // The audit log is the test oracle (CLAUDE.md). A review recorded under a
     // model that never saw the intent makes it lie.
     for (const [provider, model] of [
-      ["plow", "claude-sonnet-4-6"],
+      ["plow", "anthropic/claude-sonnet-4-6"],
       ["anthropic", "claude-haiku-4-5"],
     ] as const) {
       const h = harness(
@@ -364,7 +366,7 @@ describe("the renderer's view of inference carries no credentials", () => {
   });
 
   it("reports the active provider's model, not a fixed one", () => {
-    expect(inferenceStatus(settings({ inferenceProvider: "plow" })).info).toContain("claude-sonnet-4-6");
+    expect(inferenceStatus(settings({ inferenceProvider: "plow" })).info).toContain("anthropic/claude-sonnet-4-6");
     expect(inferenceStatus(settings({ inferenceProvider: "anthropic" })).info).toContain("claude-haiku-4-5");
   });
 });

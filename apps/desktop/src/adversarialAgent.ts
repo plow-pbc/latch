@@ -40,8 +40,14 @@ export const REVIEWER_MODEL = "claude-haiku-4-5";
  * emulation whose forced `tool_choice` is dropped whenever thinking is on —
  * which would downgrade the schema from a guarantee to a likelihood. This
  * classifier keeps both, so it keeps `claude-sonnet-4-6`.
+ *
+ * **The `anthropic/` prefix is load-bearing.** Plow's allowlist holds
+ * provider-prefixed ids and only strips a leading `plow/` before the membership
+ * test, so the bare id is rejected with `400 Model '…' is not allowed` and the
+ * reviewer can never return a verdict — it fails closed to `ask` on every
+ * single call, which looks like a quiet reviewer rather than a broken one.
  */
-export const PLOW_REVIEWER_MODEL = "claude-sonnet-4-6";
+export const PLOW_REVIEWER_MODEL = "anthropic/claude-sonnet-4-6";
 export const REVIEWER_THINKING_BUDGET = 2048;
 export const REVIEWER_MAX_TOKENS = 4096;
 export const REVIEWER_TIMEOUT_MS = 30_000;
@@ -186,18 +192,44 @@ function anthropicProvider(apiKey: string): ProviderCall {
 }
 
 /**
+ * A model id we are willing to repeat back to the human: the character set real
+ * ids use, and short. Everything else in an error body stays unquoted.
+ *
+ * Note what this excludes — spaces, quotes, and `_`. Plow credentials are
+ * `plow_sk_…`, so a body crafted to smuggle one through the pattern below fails
+ * the charset and falls back to the generic reason.
+ */
+const QUOTABLE_MODEL_ID = /^[A-Za-z0-9./-]{1,64}$/;
+
+/**
+ * The model id the server said it rejected — if the body says so in the shape
+ * it documents (`{"detail": "Model 'x' is not allowed"}`) and the id is safe to
+ * repeat. Null for anything else.
+ */
+function rejectedModelId(body: unknown): string | null {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail !== "string") return null;
+  const id = /^Model '([^']*)' is not allowed$/.exec(detail)?.[1];
+  return id && QUOTABLE_MODEL_ID.test(id) ? id : null;
+}
+
+/**
  * Map a Plow HTTP failure onto a reason a human can act on.
  *
- * Only the status code and fixed text — never the response body, which is
- * attacker-influenced upstream text, and never anything derived from the
- * credential.
+ * The status code and fixed text, plus — for a 400 only — the rejected model id
+ * lifted out of the body under the strict pattern above. Nothing else from the
+ * body is ever quoted: it is upstream text we do not control.
  */
-function plowHttpReason(status: number): string {
+function plowHttpReason(status: number, body: unknown = null): string {
   if (status === 402) return "insufficient Plow balance";
-  // 400 from this endpoint is the model allowlist rejecting the model, so the
-  // reason names it — otherwise the human sees "rejected" with no idea that the
-  // fix is a model that Plow actually serves.
-  if (status === 400) return `Plow rejected the model ${PLOW_REVIEWER_MODEL}`;
+  // 400 from this endpoint is the allowlist refusing a model. Name the model the
+  // SERVER rejected, read from its answer — naming the constant we meant to send
+  // reports the wrong id the moment the two disagree, which is precisely the
+  // case where the human needs the truth.
+  if (status === 400) {
+    const rejected = rejectedModelId(body);
+    return rejected ? `Plow rejected the model ${rejected}` : "Plow rejected the request's model";
+  }
   // The API masks provider 401/403/408 behind an opaque 502. It specifically
   // does NOT mean "these credentials are wrong" — do not send anyone to
   // re-authenticate over it.
@@ -248,7 +280,20 @@ function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
       return { ok: false, reason: "could not reach Plow" };
     }
 
-    if (!response.ok) return { ok: false, reason: plowHttpReason(response.status) };
+    if (!response.ok) {
+      // A 400 carries which model was refused; read it so the reason can name
+      // the server's answer rather than our intention. An unreadable body just
+      // means the generic reason.
+      let errorBody: unknown = null;
+      if (response.status === 400) {
+        try {
+          errorBody = await response.json();
+        } catch {
+          errorBody = null;
+        }
+      }
+      return { ok: false, reason: plowHttpReason(response.status, errorBody) };
+    }
 
     let body: unknown;
     try {
