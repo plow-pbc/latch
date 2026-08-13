@@ -112,6 +112,28 @@ describe("session lifecycle", () => {
     );
   });
 
+  it("exposes current() for the owner's live-browser view", async () => {
+    expect(ctx.sessions.current()).toBeNull();
+
+    const s = await openSession(["pizza.example"]);
+    expect(ctx.sessions.current()).toMatchObject({
+      origins: ["pizza.example"],
+      agentId: AGENT,
+      inScope: true,
+    });
+
+    // A click that wanders off-scope flips the viewer's inScope flag.
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" });
+    expect(ctx.sessions.current()).toMatchObject({
+      lastUrl: "https://offsite.example/lander",
+      inScope: false,
+    });
+
+    await ctx.sessions.close(s, "test");
+    expect(ctx.sessions.current()).toBeNull();
+  });
+
   it("rejects a command from the wrong agent or session", async () => {
     const s = await openSession(["pizza.example"]);
     const wrongAgent = jv(await ctx.sessions.command("intruder", s, { action: "url" }));

@@ -13,7 +13,7 @@ import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo
 import path from "node:path";
 import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
-import { BrowserHost } from "./browser/browserHost.js";
+import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
@@ -86,6 +86,14 @@ export class DeviceAgent {
   /** Close any live browser session (app teardown). */
   async shutdown(): Promise<void> {
     await this.browserSessions?.closeAll("shutdown");
+  }
+
+  /**
+   * One frame for the owner's browser-viewer window. Best-effort and local:
+   * null when no browser is running (it is never started for a viewer poll).
+   */
+  async browserViewFrame(): Promise<ViewerFrame | null> {
+    return this.browserHost?.viewFrame() ?? null;
   }
 
   /**
