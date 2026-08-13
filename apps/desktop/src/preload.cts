@@ -33,6 +33,17 @@ contextBridge.exposeInMainWorld("domo", {
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
+  // Software updates: one whole-state shape per read (see updates:get).
+  updatesGet: () => ipcRenderer.invoke("updates:get"),
+  updatesCheck: () => ipcRenderer.invoke("updates:check"),
+  updatesRestart: () => ipcRenderer.invoke("updates:restart"),
+  updatesDismiss: () => ipcRenderer.invoke("updates:dismiss"),
+  updatesSetAutoCheck: (on: boolean) => ipcRenderer.invoke("updates:setAutoCheck", on),
+  updatesSetAutoInstall: (on: boolean) => ipcRenderer.invoke("updates:setAutoInstall", on),
+  onUpdatesChanged: (cb: () => void) => ipcRenderer.on("updates:changed", cb),
+  // The menu-bar "Check for Updates…" lands the window on the Settings tab.
+  onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
+
   // First-run setup window. Every call returns the whole state, so the screen
   // renders from one shape and never has to reconcile two.
   onboardingGet: () => ipcRenderer.invoke("onboarding:get"),

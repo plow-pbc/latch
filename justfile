@@ -118,9 +118,68 @@ package profile="domo-notary": _main-only (_package profile "")
 # Runs from any checkout; output lands in THIS checkout's apps/desktop/release/.
 package-unnotarized: (_package "domo-notary" "-c.mac.notarize=false")
 
+# Every package run — notarized or not — mints its version: major.minor from
+# apps/desktop's package.json + a UTC timestamp patch (0.1.202608121530),
+# stamped via extraMetadata into the app, the feed, and the artifact names,
+# with the same stamp as CFBundleVersion. electron-updater updates on a SEMVER
+# comparison of this version (never the build number), so stamping here — not
+# in `release` — is what keeps every packaged build, local ones included,
+# ahead of everything packaged before it: a locally installed package is never
+# yanked back by the stable feed, no version-bump commit ever gates a release,
+# and package.json's patch digit is dead. The git commit rides along too
+# ("-dirty" when the tree isn't clean): DomoGitCommit in Info.plist for anyone
+# with the artifact, gitCommit in the app's package.json for the running app —
+# CI tags identify CI builds, but the artifact travels alone and local builds
+# have no tag. --publish never: the generic provider is download-only; uploads
+# belong to the release scripts, never electron-builder.
 _package profile flags: build
     node scripts/build-browser-runtime.mjs --browser-both
-    cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac {{flags}}
+    @build="$(date -u +%Y%m%d%H%M)"; \
+    base="$(node -p "require('{{root}}/apps/desktop/package.json').version.split('.').slice(0,2).join('.')")"; \
+    version="${base}.${build}"; \
+    sha="$(git -C "{{root}}" rev-parse --short=12 HEAD)"; \
+    [ -z "$(git -C "{{root}}" status --porcelain)" ] || sha="${sha}-dirty"; \
+    echo "packaging Domo Desktop ${version} (${sha})"; \
+    cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac --publish never -c.extraMetadata.version="$version" -c.extraMetadata.gitCommit="$sha" -c.buildVersion="$build" -c.mac.extendInfo.DomoGitCommit="$sha" {{flags}}
+
+# Build, sign, notarize, and upload a versioned release candidate to
+# s3://releases.plow.co/domo/releases/<version>-<build>/. Stable keys are NOT
+# touched — nobody receives this until `just promote <version> <build>`.
+# Version and build are read back from the packaged app so there is exactly
+# one clock: the one `package` stamped. s3_profile "" uses ambient AWS
+# credentials (CI's OIDC role).
+release profile="domo-notary" s3_profile="plow": _main-only
+    @just package "{{profile}}"; \
+    plist="{{root}}/apps/desktop/release/mac-universal/Domo Desktop.app/Contents/Info.plist"; \
+    version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"; \
+    build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"; \
+    bash scripts/release-upload.sh --version "$version" --build "$build" --profile "{{s3_profile}}"
+
+# Ship an uploaded candidate: copy its artifacts onto the stable keys installed
+# apps poll (domo/latest-mac.yml + zip, domo/Domo-Desktop.dmg). In CI this runs
+# from the promote workflow when a draft GitHub release is published.
+promote version build s3_profile="plow":
+    bash scripts/release-promote.sh --version "{{version}}" --build "{{build}}" --profile "{{s3_profile}}"
+
+# Serve THIS checkout's apps/desktop/release/ as a local update feed, for
+# testing the whole update loop with no S3. The loop:
+#   1. just package-unnotarized                  # build A
+#   2. cp -R "apps/desktop/release/mac-universal/Domo Desktop.app" /Applications
+#   3. just package-unnotarized                  # build B — wait for the next
+#      minute first: the version stamp has minute granularity, and a same-
+#      minute rebuild is the SAME version, which the updater ignores
+#   4. just serve-updates
+#   5. DOMO_HOME=/tmp/domo-update-test DOMO_UPDATE_FEED_URL=http://127.0.0.1:8043 \
+#        "/Applications/Domo Desktop.app/Contents/MacOS/Domo Desktop"
+#   6. Tray → "Check for Updates…" → restart → the startup log reports B.
+# DOMO_HOME keeps the test app out of the real packaged install's "Domo" home;
+# copying (not downloading) build A avoids quarantine/translocation, which
+# would break Squirrel.Mac's app swap.
+# For UI-only iteration skip all of that: DOMO_SIMULATE_UPDATE=available just
+# app fakes the updater timeline (found → downloading → ready in ~2s) in a
+# from-source run — no packaging, no server. Also: =none, =error.
+serve-updates port="8043":
+    node scripts/serve-updates.mjs "{{root}}/apps/desktop/release" "{{port}}"
 
 # ---------------------------------------------------------------------------
 # Running the app

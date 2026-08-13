@@ -1,0 +1,56 @@
+name: App release
+
+# Fires when a draft GitHub Release (created by build-release-candidate.yml) is
+# published. Copies the versioned S3 artifacts onto the stable keys installed
+# apps poll (domo/latest-mac.yml + zip, domo/Domo-Desktop.dmg) — publishing the
+# draft IS the approval to ship.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  promote:
+    # Only app release tags (v<version>-build.<build>) — ignore anything else.
+    if: ${{ startsWith(github.event.release.tag_name, 'v') && contains(github.event.release.tag_name, '-build.') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse version from tag
+        id: parse
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          # v0.1.0-build.202608121504 → version=0.1.0, build=202608121504
+          VERSION="$(echo "$TAG" | sed -E 's|^v([^-]+)-build\..*|\1|')"
+          BUILD="$(echo "$TAG" | sed -E 's|^v[^-]+-build\.||')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "Promoting: version=$VERSION build=$BUILD"
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          AWS_RELEASE_ROLE_ARN: op://terraform/GitHub Actions Release Secrets/AWS_RELEASE_ROLE_ARN
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Promote release
+        run: |
+          bash scripts/release-promote.sh \
+            --version "${{ steps.parse.outputs.version }}" \
+            --build "${{ steps.parse.outputs.build }}" \
+            --profile ""

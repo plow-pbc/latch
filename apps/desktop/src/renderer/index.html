@@ -23,6 +23,9 @@
         <button data-tab="settings">Settings</button>
       </div>
     </div>
+    <!-- Passive update notice: shown only when an update is staged and not
+         dismissed (main.js drives it from updates:get). Never modal. -->
+    <div id="updateBanner" class="update-banner" hidden></div>
     <div id="view"></div>
     <script type="module" src="main.js"></script>
   </body>

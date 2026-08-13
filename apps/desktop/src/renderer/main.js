@@ -476,6 +476,45 @@ function capText(c) {
   }
 }
 
+// ---- Software updates (banner + settings section) ----
+
+const updateBanner = document.getElementById("updateBanner");
+
+/** One honest status line from the updater's whole-state shape. */
+function updateStatusText(u) {
+  if (!u.supported) return "This build updates with git, not the feed — only the packaged app self-updates.";
+  if (u.phase === "checking") return "Checking for updates…";
+  if (u.phase === "downloading") return `Downloading Domo Desktop ${u.availableVersion}…`;
+  if (u.phase === "ready")
+    return `Domo Desktop ${u.availableVersion} is downloaded — restart to install${u.autoInstall ? ", or it installs when you quit" : ""}.`;
+  if (u.phase === "error") return `Last check failed: ${u.error}`;
+  // "You're up to date" only when a check THIS session confirmed it; a
+  // timestamp persisted from an earlier launch only proves we once looked.
+  if (u.upToDate) return `You're up to date. Last checked ${new Date(u.lastCheckAt).toLocaleString()}.`;
+  return u.lastCheckAt ? `Last checked ${new Date(u.lastCheckAt).toLocaleString()}.` : "Not checked yet.";
+}
+
+/** The passive banner: visible only while an update is staged and undismissed. */
+async function refreshUpdateBanner() {
+  const u = await window.domo.updatesGet();
+  const show = u.supported && u.phase === "ready" && !u.dismissed;
+  updateBanner.hidden = !show;
+  if (!show) return;
+  const restart = el("button", { class: "btn primary", text: "Restart to Update" });
+  restart.addEventListener("click", () => window.domo.updatesRestart());
+  const later = el("button", { class: "btn", text: "Later" });
+  later.addEventListener("click", () => window.domo.updatesDismiss());
+  const close = el("button", { class: "banner-close", text: "×", attrs: { "aria-label": "Dismiss" } });
+  close.addEventListener("click", () => window.domo.updatesDismiss());
+  updateBanner.replaceChildren(
+    close,
+    el("span", { text: `Domo Desktop ${u.availableVersion} is ready to install.` }),
+    el("div", { class: "spacer" }),
+    later,
+    restart,
+  );
+}
+
 // ---- Settings ----
 
 async function renderSettings() {
@@ -505,6 +544,37 @@ async function renderSettings() {
         ]),
       ]
     : [];
+
+  // Software updates: version + status + a check/restart action + the two
+  // automation preferences. Everything renders from one updates:get shape.
+  const u = await window.domo.updatesGet();
+  const updateStatus = el("p", { class: "faint", text: updateStatusText(u) });
+  const updateAction =
+    u.phase === "ready"
+      ? el("button", { class: "btn primary", text: "Restart to Update" })
+      : el("button", { class: "btn", text: "Check for Updates" });
+  updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+  updateAction.addEventListener("click", async () => {
+    if (u.phase === "ready") await window.domo.updatesRestart();
+    else await window.domo.updatesCheck();
+    // The controller's change events re-render this screen as the check runs.
+  });
+  const autoCheckBox = el("input", { attrs: { type: "checkbox" } });
+  autoCheckBox.checked = u.autoCheck;
+  autoCheckBox.disabled = !u.supported;
+  autoCheckBox.addEventListener("change", () => window.domo.updatesSetAutoCheck(autoCheckBox.checked));
+  const autoCheckLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+    autoCheckBox,
+    el("span", { text: "Automatically check for updates" }),
+  ]);
+  const autoInstallBox = el("input", { attrs: { type: "checkbox" } });
+  autoInstallBox.checked = u.autoInstall;
+  autoInstallBox.disabled = !u.supported;
+  autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
+  const autoInstallLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+    autoInstallBox,
+    el("span", { text: "Install downloaded updates when quitting Domo" }),
+  ]);
 
   const restoreNote = el("p", { class: "faint", text: "" });
   const restore = el("button", { class: "btn", text: "Restore Default Goals" });
@@ -588,20 +658,25 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Plow account", "Sign in with your phone number to let agents reach this Mac.", [
+    group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
       ...accountRows,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
     ]),
-    group("Anthropic API key", "Required for the Adversarial Agent features. Stored locally.", [
+    group("Anthropic API Key", "Required for the Adversarial Agent features. Stored locally.", [
       apiKeyInput,
       el("p", { class: "faint reviewer-note", text: `Reviewer: ${reviewerInfo}` }),
     ]),
-    group("Approval mode", "How operations are decided.", [
+    group("Approval Mode", "How operations are decided.", [
       modeChips,
       suggestLabel,
     ]),
     group("Goals", "Re-add any default goals you've removed.", [
       el("div", { class: "row" }, [restore, restoreNote]),
+    ]),
+    group("Software Updates", `Version ${u.currentVersion}`, [
+      el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
+      autoCheckLabel,
+      autoInstallLabel,
     ]),
   ]));
 }
@@ -632,10 +707,17 @@ seg.addEventListener("mousedown", (e) => {
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
 window.domo.onStatusChanged(() => refreshStatus());
+window.domo.onUpdatesChanged(() => {
+  refreshUpdateBanner();
+  if (currentTab === "settings") renderSettings();
+});
+// The menu-bar "Check for Updates…" lands here so its outcome is visible.
+window.domo.onShowSettings(() => selectTab("settings"));
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {
   refreshStatus();
+  refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
   const known = ["goals", "audit", "rules", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");

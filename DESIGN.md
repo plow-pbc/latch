@@ -377,6 +377,72 @@ server + fake `op` fixtures make the whole flow CI-testable without Python,
 and `just test-browser` runs the real browser against a local checkout
 fixture site.
 
+## 11b. Software updates
+
+The packaged app self-updates via **electron-updater** (generic provider — no
+update server). electron-builder bakes the feed URL into the app; the feed is
+static files on the same S3 bucket Phoenix's Sparkle appcast uses:
+`https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/latest-mac.yml`, with
+the update zip beside it. Auto-update needs the `zip` target (Squirrel.Mac
+cannot consume a DMG); both artifacts come from the one signed, notarized pack.
+
+Decisions and their reasons:
+
+- **Only the packaged install updates.** `main.ts` constructs the
+  `UpdateController` behind `app.isPackaged`, so from-source/worktree runs
+  never poll the feed. This composes with the worktree state model (§13): only
+  the packaged install uses the unsuffixed `Domo` home.
+- **Nothing about updates is modal.** Downloads are automatic and silent; a
+  staged update surfaces as a passive banner in the main window, a tray item
+  ("Restart to Update"), and the Software Updates settings section — never a
+  dialog, which could interrupt an approval decision. A restart tears down
+  live agent sessions, so it happens only on the human's click or at a
+  natural quit. Two preferences, both default-on: "automatically check"
+  (gates the 4-hour background cadence; a manual check always works) and
+  "install when quitting" (`autoInstallOnAppQuit` — the VS Code/Slack
+  pattern). The menu-bar and tray "Check for Updates…" land the window on
+  Settings, where version, last-check time, and the outcome are visible;
+  background outcomes are never surfaced anywhere louder than that section.
+- **Versions are minted by `just package`, never committed.** electron-updater
+  updates on a SEMVER comparison of the feed's version — the build number
+  plays no part (the opposite of Sparkle, which compares `CFBundleVersion`).
+  So `package` stamps `major.minor.<UTC yyyymmddHHMM>` into the app via
+  `extraMetadata` (same stamp as `CFBundleVersion`), making every packaged
+  build — local ones included — semver-newer than everything packaged before
+  it. A locally installed package is never yanked back by the stable feed, any
+  candidate is promotable, and no version-bump commit gates a release.
+  package.json owns only `major.minor` (bump it when the release deserves it);
+  its patch digit is dead. Cost: user-visible versions are long and
+  date-shaped, Chrome-style — accepted for the zero-commit pipeline. The git
+  commit is stamped alongside (`DomoGitCommit` in Info.plist, `gitCommit` in
+  the app's package.json, `-dirty` when the tree isn't clean), because the
+  artifact travels alone: CI builds are tagged in git, local builds aren't,
+  and either way a DMG on a desk should answer what it was built from.
+- **Versioned-then-promote, human-gated** (mirrors Plow's Phoenix pipeline):
+  `just release` uploads to `domo/releases/<version>-<build>/` where nobody's
+  app looks; a human publishing the draft GitHub release fires the promote
+  workflow, which copies artifacts onto the stable keys — feed last, because
+  writing `latest-mac.yml` is the ship moment. `just promote` is the manual
+  equivalent. Trust comes from the sha512 in the feed plus the Developer ID
+  signature; there is no Sparkle-style appcast key.
+- The update controller is pure over injected seams (`updates.ts`,
+  `updates.test.ts`) per the testing rule — updater, dialogs, and clock are
+  all injectable.
+- **The whole loop is testable locally, no S3.** `DOMO_UPDATE_FEED_URL`
+  points a packaged build at any feed (honored unconditionally — Squirrel.Mac
+  only installs updates signed by the same Developer ID, so a hostile feed
+  can offer nothing the app accepts), and `just serve-updates` serves this
+  checkout's `apps/desktop/release/` as that feed. Package twice, install A,
+  serve B, launch A with the override + a throwaway `DOMO_HOME` — the recipe
+  comment in the justfile walks through it.
+
+Known cost: the DMG and zip each carry the full browser runtime (the fused
+universal Camoufox tree + Python — the DMG-halving work in §11a shrank it,
+but it still dominates the artifact), so updates are large. Blockmap
+differential downloads may soften this; shipping the browser runtime
+out-of-band (it is already pinned by `runtime.lock.json`) is the eventual fix
+if update size becomes a problem.
+
 ## 12. Roadmap
 
 1. **v1 (this repo, now):** everything above, local, tested.

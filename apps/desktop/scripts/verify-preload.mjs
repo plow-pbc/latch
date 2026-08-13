@@ -28,6 +28,20 @@ ipcMain.handle("settings:getRelay", async () => ({
   hasCredential: true,
   connected: true,
 }));
+// A packaged-looking updater state so the Software Updates section renders
+// its full form (status line, check button, both preference checkboxes).
+ipcMain.handle("updates:get", async () => ({
+  supported: true,
+  currentVersion: "0.1.202608130900",
+  autoCheck: true,
+  autoInstall: true,
+  phase: "idle",
+  availableVersion: null,
+  lastCheckAt: "2026-08-13T09:00:00.000Z",
+  error: null,
+  dismissed: false,
+  upToDate: false,
+}));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getApiKey", async () => "");
@@ -101,7 +115,7 @@ app.whenReady().then(async () => {
   const settings = await win.webContents.executeJavaScript(`(${() => {
     const inputs = [...document.querySelectorAll("input")];
     return {
-      hasAccountGroup: document.body.innerText.includes("Plow account"),
+      hasAccountGroup: document.body.innerText.includes("Plow Account"),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
