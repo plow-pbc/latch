@@ -5,7 +5,10 @@
  *
  *   vendor/python-runtime/Python.framework   relocatable python.org universal2 3.12
  *   vendor/python-runtime/site-packages      lipo-merged universal wheel install
- *   vendor/camoufox-browser/<arch>/Camoufox.app   (--browser / --browser-both)
+ *   vendor/camoufox-browser/<arch>/Camoufox.app   (--browser: this arch only)
+ *   vendor/camoufox-browser/universal/            (--browser-both: both arches
+ *                                                  lipo-fused into one tree —
+ *                                                  what `just package` bundles)
  *
  * Sources and pins live in vendor/browser-server/runtime.lock.json +
  * requirements.txt. Downloads are cached in vendor/downloads/. A stamp file
@@ -41,6 +44,10 @@ const sitePackages = path.join(runtimeDir, "site-packages");
 const args = process.argv.slice(2);
 const wantBrowser = args.includes("--browser") || args.includes("--browser-both");
 const wantBoth = args.includes("--browser-both");
+
+// Bump when the pruning/merging logic below changes, so cached trees (which
+// are keyed on the download pins) rebuild with the new slimming applied.
+const PRUNE_VERSION = "1";
 
 function log(msg) {
   process.stdout.write(`[browser-runtime] ${msg}\n`);
@@ -111,6 +118,7 @@ const stamp = crypto
   .createHash("sha256")
   .update(fs.readFileSync(path.join(serverDir, "runtime.lock.json")))
   .update(fs.readFileSync(requirementsPath))
+  .update(PRUNE_VERSION)
   .digest("hex");
 
 function buildRuntime() {
@@ -143,6 +151,8 @@ function buildRuntime() {
     `lib/python${PYVER}/idlelib`,
     `lib/python${PYVER}/tkinter`,
     `lib/python${PYVER}/turtledemo`,
+    `lib/python${PYVER}/pydoc_data`,
+    `lib/python${PYVER}/lib2to3`,
     "share",
     "Resources/English.lproj",
   ]) {
@@ -335,7 +345,76 @@ function buildRuntime() {
     ...mergedWheels,
   ]);
 
-  // 8. Verify: every native module is universal; imports work natively ----
+  // 8. Prune runtime-dead weight from the installed tree -------------------
+  // Nothing here is loadable at runtime: test suites, debug symbols, type
+  // stubs, C headers, static archives (which also can't carry a hardened
+  // signature — see the sweep above), and bytecode caches (the runtime sets
+  // PYTHONDONTWRITEBYTECODE=1, so shipped .pyc files are dead weight anyway).
+  // License files and .dist-info metadata are deliberately KEPT: redistributing
+  // these packages requires retaining their notices, and some packages resolve
+  // their own version via importlib.metadata. The smoke import below is the
+  // gate against over-pruning.
+  log("pruning site-packages");
+  const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true });
+  rmrf(path.join(sitePackages, "PyObjCTest")); // pyobjc's bundled test suite (incl. dSYMs)
+  for (const doomed of [
+    "numpy/f2py", // Fortran-binding generator, a build tool
+    "numpy/_core/include",
+    "numpy/_core/lib",
+    "lxml/includes",
+    // Playwright's driver: doc-generation metadata, TS declarations, and the
+    // recorder/trace-viewer web bundles — none used by a headless launch.
+    "playwright/driver/package/api.json",
+    "playwright/driver/package/protocol.yml",
+    "playwright/driver/package/types",
+    "playwright/driver/package/lib/vite",
+  ]) {
+    rmrf(path.join(sitePackages, doomed));
+  }
+  const pruneSweep = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        if (
+          entry.name === "__pycache__" ||
+          entry.name === "tests" ||
+          entry.name === "test" ||
+          entry.name.endsWith(".dSYM")
+        ) {
+          rmrf(p);
+        } else {
+          pruneSweep(p);
+        }
+      } else if (/\.(pyi|h|a|o)$/.test(entry.name)) {
+        fs.rmSync(p, { force: true });
+      }
+    }
+  };
+  pruneSweep(sitePackages);
+  // Build-time-only framework payloads, removable now that pip has run: pip
+  // itself (ensurepip put it in the framework's site-packages), ensurepip,
+  // the C headers (plus the Headers symlinks that point at them), and the
+  // stdlib's shipped bytecode caches.
+  const fwSitePackages = path.join(v, `lib/python${PYVER}/site-packages`);
+  for (const entry of fs.readdirSync(fwSitePackages)) {
+    if (entry.startsWith("pip")) rmrf(path.join(fwSitePackages, entry));
+  }
+  rmrf(path.join(v, `lib/python${PYVER}/ensurepip`));
+  rmrf(path.join(v, "include"));
+  fs.rmSync(path.join(v, "Headers"), { force: true });
+  fs.rmSync(path.join(fw, "Headers"), { force: true });
+  const pycacheSweep = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
+      const p = path.join(dir, entry.name);
+      if (entry.name === "__pycache__") rmrf(p);
+      else pycacheSweep(p);
+    }
+  };
+  pycacheSweep(path.join(v, `lib/python${PYVER}`));
+
+  // 9. Verify: every native module is universal; imports work natively ----
   log("verifying universality");
   let checked = 0;
   for (const macho of machOFiles(sitePackages)) {
@@ -346,8 +425,18 @@ function buildRuntime() {
     checked++;
   }
   log(`  ${checked} Mach-O files universal`);
-  const smoke = "import camoufox, playwright, lxml, numpy, orjson, tldextract; print('imports ok')";
-  const smokeEnv = { ...process.env, PYTHONPATH: sitePackages, PYTHONNOUSERSITE: "1" };
+  // camoufox.sync_api pulls the full launch-time import graph (screeninfo,
+  // browserforge, playwright.sync_api, …) — the canary against over-pruning.
+  const smoke =
+    "import camoufox.sync_api, playwright, lxml, numpy, orjson, tldextract; print('imports ok')";
+  // PYTHONDONTWRITEBYTECODE: the smoke run must not regenerate the __pycache__
+  // dirs the prune above just removed (the runtime sets the same flag).
+  const smokeEnv = {
+    ...process.env,
+    PYTHONPATH: sitePackages,
+    PYTHONNOUSERSITE: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
+  };
   run(pybin, ["-c", smoke], { env: smokeEnv, quiet: true });
   log("  native smoke import ok");
   const rosetta = spawnSync("arch", ["-x86_64", "/usr/bin/true"]).status === 0;
@@ -401,7 +490,8 @@ function fetchBrowser(arch) {
   const asset = lock.camoufox.assets[arch === "arm64" ? "arm64" : "x64"];
   const installRoot = path.join(browserDir, arch);
   const marker = path.join(installRoot, ".sha256");
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
+  const markerValue = `${asset.sha256}:${PRUNE_VERSION}`;
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === markerValue) {
     log(`camoufox ${arch} up to date`);
     return;
   }
@@ -418,6 +508,18 @@ function fetchBrowser(arch) {
   fs.rmSync(installRoot, { recursive: true, force: true });
   fs.mkdirSync(installPath, { recursive: true });
   run("ditto", ["-x", "-k", zipDest, installPath]); // preserves symlinks + exec bits
+
+  // Camoufox bundles ~360 MB of Windows/Linux fonts so a spoofed non-mac
+  // fingerprint can actually render its claimed fonts. server.py pins the
+  // fingerprint to macOS (which renders with the system fonts — camoufox's
+  // fonts.json mac list is entirely macOS-shipped families), so the bundle
+  // is dead weight. Fail loudly if the layout ever moves.
+  const fontsDir = path.join(installPath, "Camoufox.app", "Contents", "Resources", "fonts");
+  if (!fs.existsSync(fontsDir)) {
+    throw new Error(`expected bundled fonts at ${fontsDir} — did the zip layout change?`);
+  }
+  fs.rmSync(fontsDir, { recursive: true });
+
   fs.writeFileSync(
     path.join(installPath, "version.json"),
     JSON.stringify({ version, build, prerelease: true, sha256: asset.sha256 }),
@@ -442,8 +544,146 @@ function fetchBrowser(arch) {
   fs.mkdirSync(uboDir, { recursive: true });
   run("ditto", ["-x", "-k", uboZip, uboDir]);
 
-  fs.writeFileSync(marker, asset.sha256);
+  fs.writeFileSync(marker, markerValue);
   log(`camoufox ${arch} install ready at ${installRoot}`);
+}
+
+/**
+ * Fuse the two per-arch Camoufox install dirs into one universal tree at
+ * vendor/camoufox-browser/universal — what `just package` bundles. lipo saves
+ * nothing on the binaries themselves (a fat file is the two thin slices
+ * concatenated); the win is everything else: the arch-independent payload
+ * (omni.ja, addons, …) ships once instead of twice.
+ *
+ * Merge rules, enforced loudly so a future browser bump can't silently ship a
+ * broken merge: every Mach-O must have a twin in the other arch (lipo-fused);
+ * every other file must be byte-identical across arches, with two exceptions
+ * where arm64's copy wins:
+ *   - application.ini / platform.ini differ only in BuildID (camoufox's CI
+ *     builds the two arches minutes apart) — asserted line-by-line below. The
+ *     inis are what Gecko reports as its buildid, so both slices behave
+ *     identically; the compiled-in buildid is only crash-report/telemetry
+ *     metadata.
+ *   - the top-level omni.ja, whose only cross-arch diff is the
+ *     about:buildconfig page naming the build arch (verified for
+ *     152.0.4-beta.28).
+ */
+function mergeCamoufoxUniversal() {
+  const outRoot = path.join(browserDir, "universal");
+  const marker = path.join(outRoot, ".sha256");
+  const markerValue = [
+    lock.camoufox.assets.arm64.sha256,
+    lock.camoufox.assets.x64.sha256,
+    PRUNE_VERSION,
+  ].join(":");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === markerValue) {
+    log("camoufox universal up to date");
+    return;
+  }
+
+  const installPathOf = (root) => {
+    const cfg = JSON.parse(fs.readFileSync(path.join(root, "config.json"), "utf8"));
+    return path.join(root, cfg.active_version);
+  };
+  const armInstall = installPathOf(path.join(browserDir, "arm64"));
+  const intelInstall = installPathOf(path.join(browserDir, "x86_64"));
+
+  const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
+  const folder = `${fullVersion}-universal`;
+  const outInstall = path.join(outRoot, "browsers", repo, folder);
+  fs.rmSync(outRoot, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(outInstall), { recursive: true });
+
+  log("fusing camoufox universal tree");
+  run("ditto", [armInstall, outInstall]); // preserves symlinks + exec bits
+
+  // Non-Mach-O files allowed to differ across the per-arch zips. A checker of
+  // null means the diff is trusted as-is; otherwise it must return true.
+  const sameExceptBuildId = (aFile, bFile) => {
+    const strip = (f) => fs.readFileSync(f, "utf8").replace(/^BuildID=.*$/m, "BuildID=");
+    return strip(aFile) === strip(bFile);
+  };
+  const allowedDiff = new Map([
+    ["Camoufox.app/Contents/Resources/omni.ja", null],
+    ["Camoufox.app/Contents/Resources/application.ini", sameExceptBuildId],
+    ["Camoufox.app/Contents/Resources/platform.ini", sameExceptBuildId],
+  ]);
+
+  let fused = 0;
+  for (const macho of machOFiles(outInstall)) {
+    const rel = path.relative(outInstall, macho);
+    const armFile = path.join(armInstall, rel);
+    const intelFile = path.join(intelInstall, rel);
+    if (!fs.existsSync(intelFile)) {
+      throw new Error(`arm64-only Mach-O with no x86_64 twin: ${rel}`);
+    }
+    run("lipo", ["-create", armFile, intelFile, "-output", macho], { quiet: true });
+    fs.chmodSync(macho, fs.statSync(armFile).mode);
+    const archs = capture("lipo", ["-archs", macho]).trim().split(/\s+/);
+    if (!archs.includes("arm64") || !archs.includes("x86_64")) {
+      throw new Error(`fused ${rel} is not universal (archs: ${archs.join(", ")})`);
+    }
+    fused++;
+  }
+  log(`  ${fused} Mach-O files fused`);
+
+  // Sweep the x86_64 tree: no file may exist only there, and every non-Mach-O
+  // must match arm64's bytes unless allow-listed.
+  const verify = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      const rel = path.relative(intelInstall, p);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        verify(p);
+        continue;
+      }
+      if (rel === "version.json") continue; // ours, rewritten below
+      const armFile = path.join(armInstall, rel);
+      if (!fs.existsSync(armFile)) throw new Error(`x86_64-only file: ${rel}`);
+      if (allowedDiff.has(rel)) {
+        const checker = allowedDiff.get(rel);
+        if (checker && !checker(armFile, p)) {
+          throw new Error(`allow-listed file diverges beyond its known diff: ${rel}`);
+        }
+        continue;
+      }
+      const fd = fs.openSync(p, "r");
+      const buf = Buffer.alloc(4);
+      fs.readSync(fd, buf, 0, 4, 0);
+      fs.closeSync(fd);
+      const magic = buf.readUInt32BE(0);
+      if ([0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca].includes(magic)) continue; // fused above
+      if (!fs.readFileSync(p).equals(fs.readFileSync(armFile))) {
+        throw new Error(`unexpected cross-arch diff in non-Mach-O file: ${rel}`);
+      }
+    }
+  };
+  verify(intelInstall);
+
+  // The install-dir bookkeeping (same layout fetchBrowser writes per arch).
+  const dash = fullVersion.indexOf("-");
+  const version = dash === -1 ? fullVersion : fullVersion.slice(0, dash);
+  const build = dash === -1 ? "" : fullVersion.slice(dash + 1);
+  fs.writeFileSync(
+    path.join(outInstall, "version.json"),
+    JSON.stringify({
+      version,
+      build,
+      prerelease: true,
+      sha256: lock.camoufox.assets.arm64.sha256,
+      sha256_x64: lock.camoufox.assets.x64.sha256,
+    }),
+  );
+  fs.writeFileSync(
+    path.join(outRoot, "config.json"),
+    JSON.stringify({ active_version: `browsers/${repo}/${folder}` }),
+  );
+  fs.writeFileSync(path.join(outRoot, ".0.5_FLAG"), "");
+  run("ditto", [path.join(browserDir, "arm64", "addons"), path.join(outRoot, "addons")]);
+
+  fs.writeFileSync(marker, markerValue);
+  log(`camoufox universal install ready at ${outRoot}`);
 }
 
 /**
@@ -621,16 +861,29 @@ function signVaultCli(arch, identity) {
 // ---------------------------------------------------------------------------
 try {
   const builtArches = [];
+  const vaultArches = [];
   buildRuntime(); // stamp-cached: fast no-op once built
   if (wantBrowser) {
     const hostArch = process.arch === "arm64" ? "arm64" : "x86_64";
-    const arches = wantBoth ? ["arm64", "x86_64"] : [hostArch];
+    // The vault and its CLI stay per-arch: unlike Camoufox they are single
+    // binaries nobody has fused yet (issue #15), so both trees ship and
+    // electron-builder passes them through the universal merge.
     fetchVaultWebUi();
-    for (const a of arches) {
-      fetchBrowser(a);
+    for (const a of wantBoth ? ["arm64", "x86_64"] : [hostArch]) {
       fetchVaultCli(a);
       fetchVaultServer(a);
-      builtArches.push(a);
+      vaultArches.push(a);
+    }
+    if (wantBoth) {
+      // The per-arch trees are intermediates; the universal fuse is what gets
+      // bundled (and therefore what gets the Developer ID signature).
+      fetchBrowser("arm64");
+      fetchBrowser("x86_64");
+      mergeCamoufoxUniversal();
+      builtArches.push("universal");
+    } else {
+      fetchBrowser(hostArch);
+      builtArches.push(hostArch);
     }
   }
 
@@ -640,8 +893,8 @@ try {
   const identity = process.env.CODESIGN_IDENTITY;
   if (identity) {
     signRuntime(identity);
-    for (const a of builtArches) {
-      signCamoufox(a, identity);
+    for (const a of builtArches) signCamoufox(a, identity);
+    for (const a of vaultArches) {
       signVaultCli(a, identity);
       signVaultServer(a, identity);
     }

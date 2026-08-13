@@ -37,6 +37,12 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
   - `--executable` uses camoufox's `executable_path` so the browser ships in
     our app payload and the shared `~/Library/Caches/camoufox` is never used.
   - SIGTERM, `quit`, and stdin EOF all close the Camoufox context cleanly.
+  - Fingerprint OS pinned to `macos` (upstream lets Camoufox pick randomly
+    among macos/windows/linux). The device is a Mac, so this is the honest
+    fingerprint — and it's what lets the packaged app drop Camoufox's bundled
+    Windows/Linux spoofing fonts (`scripts/build-browser-runtime.mjs` strips
+    `Contents/Resources/fonts`, ~360 MB per arch); macOS fingerprints render
+    with the system fonts.
 
 Upstream's `SKILL.md` is *not* vendored: it documents a shell CLI surface. Its
 Domo replacement is the built-in `camoufox-browsing` skill in

@@ -141,6 +141,16 @@ class Session:
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title(), "moved": self.page.url != was}
 
+        if action == "view":
+            # Viewer frame for the owner's monitor window: like screenshot but
+            # never touches disk (frames arrive ~1/s; writing them would grow
+            # the screenshots dir without bound) and slightly cheaper.
+            data = self.page.screenshot(type="jpeg", quality=60, full_page=False)
+            return {
+                "data_b64": base64.b64encode(data).decode("ascii"),
+                "mime": "image/jpeg",
+            }
+
         if action == "screenshot":
             data = self.page.screenshot(type="jpeg", quality=70, full_page=False)
             path = os.path.join(screenshots_dir, "shot-%d.jpg" % int(time.time() * 1000))
@@ -240,7 +250,10 @@ def main():
 
     from camoufox.sync_api import Camoufox
 
-    kwargs = {"headless": not args.headed}
+    # Always present a macOS fingerprint: this device IS a Mac, and the pin is
+    # what lets the packaged app drop Camoufox's bundled Windows/Linux spoofing
+    # fonts (~360 MB/arch) — a macOS fingerprint renders with the system fonts.
+    kwargs = {"headless": not args.headed, "os": "macos"}
     if args.executable:
         kwargs["executable_path"] = args.executable
     if args.profile_dir:

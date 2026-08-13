@@ -13,6 +13,7 @@
  *     is derived from — not the goal text.
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,19 +30,59 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { devIconScript } from "./devIcon.js";
+import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
-// Set the app name before the app is ready so the macOS app menu, About/Hide/
-// Quit items, and dock title read "Domo Desktop" instead of "Electron".
-app.setName("Domo Desktop");
+// One folder per instance (paths.ts): the home carries everything, including
+// Chromium's userData/sessionData at <home>/electron — never a second
+// name-keyed "Domo Desktop*" folder. Two instances sharing one userData
+// contend on Chromium's LevelDB locks, so per-branch homes also keep
+// from-source runs from tripping over each other or the packaged install.
+// All of it must be set before the app is ready: the name so the macOS app
+// menu, About/Hide/Quit items, and dock title read "Domo Desktop" instead of
+// "Electron", the paths so Chromium never opens the default locations.
+const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
+app.setName(instance.appName);
+app.setPath("userData", instance.electronData);
+app.setPath("sessionData", instance.electronData);
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
 
-const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
+// setName above rebrands the menus and dock title, but a from-source run is
+// still the stock Electron.app bundle, so the Dock/Cmd-Tab icon stays
+// Electron's. Repoint it at the repo artwork — dev only: the packaged app
+// gets its icon from electron-builder (`mac.icon`) and doesn't ship the PNG.
+// Once the app is ready, a DEV-ribboned version replaces it (see whenReady).
+const devIconPath = path.join(dirname, "..", "..", "..", "artwork", "domo-desktop-icon.png");
+if (!app.isPackaged) {
+  app.dock?.setIcon(devIconPath);
+}
+
+/**
+ * The badged icon: the artwork with a diagonal DEV ribbon (devIcon.ts).
+ * Composited in a hidden sandboxed window because the main process can't
+ * draw; only callable once the app is ready.
+ */
+async function devBadgedDockIcon(iconPath: string): Promise<Electron.NativeImage> {
+  const png = await fs.readFile(iconPath);
+  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  try {
+    await win.loadURL("about:blank");
+    const dataUrl: string = await win.webContents.executeJavaScript(
+      devIconScript(png.toString("base64"), "DEV"),
+    );
+    return nativeImage.createFromDataURL(dataUrl);
+  } finally {
+    win.destroy();
+  }
+}
+
+const home = instance.home;
 
 /**
  * Which Plow this build talks to. Baked in — every build points at production,
@@ -451,6 +492,23 @@ ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
   settings.anthropicApiKey = (key || "").trim();
   saveSettings(home, settings);
 });
+// The live-browser thumbnail's whole state, one shape per poll (like
+// onboarding:get). Frames come from the browser host directly, bypassing
+// session scope: they are for the device owner's own eyes, and the owner
+// watching an out-of-scope page is exactly the oversight the thumbnail exists
+// for. `frame` is null while the browser is busy or restarting — the renderer
+// keeps showing the frame it already has rather than flickering.
+ipcMain.handle("viewer:state", async () => {
+  const session = device?.browserSessions?.current() ?? null;
+  const frame = session ? await device!.browserViewFrame() : null;
+  return {
+    active: session !== null,
+    origins: session?.origins ?? [],
+    inScope: session?.inScope ?? true,
+    url: frame?.url ?? session?.lastUrl ?? "",
+    frame: frame ? { dataB64: frame.dataB64, mime: frame.mime } : null,
+  };
+});
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
   name: device?.identity.name ?? "",
@@ -571,6 +629,15 @@ app.whenReady().then(async () => {
 
   createMainWindow();
   setupTray();
+  // Swap the plain artwork set at startup for the DEV-ribboned version, so a
+  // from-source Dock icon can't be mistaken for the packaged install. Purely
+  // cosmetic: on any failure the plain icon just stays.
+  if (!app.isPackaged && process.platform === "darwin") {
+    void devBadgedDockIcon(devIconPath).then(
+      (icon) => app.dock?.setIcon(icon),
+      (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
+    );
+  }
   // A Mac with no credential cannot do anything until it has one, so first run
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
@@ -604,7 +671,7 @@ function setupTray(): void {
   // pipeline; a real template image ships with the packaged app.
   const image = nativeImage.createEmpty();
   tray = new Tray(image);
-  tray.setToolTip("Domo");
+  tray.setToolTip(instance.trayTooltip);
   const menu = Menu.buildFromTemplate([
     { label: "Open Domo", click: () => createMainWindow() },
     { type: "separator" },

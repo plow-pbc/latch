@@ -288,35 +288,40 @@ production** (`https://api.plow.co`), including a run from source, so targeting 
 deliberate act:
 
 ```bash
-just app                                            # production, ~/.domo
-DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, ~/.domo-local
-DOMO_HOME=~/.domo-x just app                        # an explicit home always wins
+just app                                          # production, ~/Library/Application Support/Domo-<branch>
+DOMO_API_BASE_URL=http://localhost:4242 just app  # that relay, …/Domo-<branch>-local
+DOMO_HOME=/tmp/domo-x just app                    # an explicit home always wins
 ```
 
 There is no local default and no flag — you export the URL you want.
 
-**Setting the override moves the home too**, to `~/.domo-local`, unless you set `DOMO_HOME`
+`<branch>` is this checkout's normalized branch name (`scripts/worktree-name.sh --branch`), so every
+checkout — main included — has its own home, and none of them is the packaged install's unsuffixed
+`~/Library/Application Support/Domo`.
+
+**Setting the override moves the home too**, to `…/Domo-<branch>-local`, unless you set `DOMO_HOME`
 yourself. A credential is only valid against the environment that minted it, so a local one landing
-in `~/.domo` would overwrite the production install's and cost you a re-onboarding. Plain `just app`
-against production still uses `~/.domo`.
+in the production-facing home would overwrite the credential there and cost you a re-onboarding.
+Plain `just app` against production still uses `…/Domo-<branch>`.
 
 Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
-production state:
+production-facing state:
 
 ```bash
-DOMO_HOME=~/.domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
+DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
 ```
 
-**Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). The app opens the
-Set Up window when `app/settings.json` holds no `relayCredential`:
+**Reset to first-run state.** State lives under `DOMO_HOME` (default
+`~/Library/Application Support/Domo-<branch>` under `just`). The app opens the Set Up window when
+`app/settings.json` holds no `relayCredential`:
 
 ```bash
-DOMO_HOME=$(mktemp -d) just app          # a clean first run, your real state untouched
-rm ~/.domo/app/settings.json             # or reset the real one
+DOMO_HOME=$(mktemp -d) just app                                    # a clean first run, your real state untouched
+rm ~/Library/Application\ Support/Domo-<branch>/app/settings.json  # or reset the real one
 ```
 
-`just` recipes default `DOMO_HOME` to `~/.domo` — your *real* one. Always pass a throwaway to
-anything that writes state.
+`just` recipes default `DOMO_HOME` to this checkout's `Domo-<branch>` home — your *real* dev one.
+Always pass a throwaway to anything that writes state.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:

@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
-import { BrowserHost } from "./browser/browserHost.js";
+import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { VaultServer } from "./browser/vaultServer.js";
@@ -175,6 +175,14 @@ export class DeviceAgent {
   async shutdown(): Promise<void> {
     await this.browserSessions?.closeAll("shutdown");
     this.vaultServer?.stop();
+  }
+
+  /**
+   * One frame for the owner's browser-viewer window. Best-effort and local:
+   * null when no browser is running (it is never started for a viewer poll).
+   */
+  async browserViewFrame(): Promise<ViewerFrame | null> {
+    return this.browserHost?.viewFrame() ?? null;
   }
 
   /**

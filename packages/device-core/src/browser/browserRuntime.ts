@@ -25,7 +25,7 @@ export interface ResolvedBrowserRuntime {
 interface Layout {
   pythonRoot: string; // contains Python.framework and site-packages
   serverDir: string; // contains server.py and seed_vault_broker/
-  camoufoxDir: string; // contains <arch>/Camoufox.app (or Camoufox.app directly)
+  camoufoxDir: string; // contains <arch>/ or universal/ install dirs (or one directly)
   vaultCliDir: string; // contains <arch>/bw (or bw directly)
   vaultServerDir: string; // contains <arch>/vaultwarden and web-vault/
 }
@@ -55,7 +55,10 @@ function vendorLayout(dir: string): Layout {
 const hostArch = (): string => (process.arch === "arm64" ? "arm64" : "x86_64");
 
 function camoufoxIn(dir: string): string | null {
-  const candidates = [path.join(dir, hostArch()), dir];
+  // Dev checkouts have thin per-arch trees (`just fetch-browser`); a
+  // `fetch-browser-both` also leaves the lipo-fused universal tree, which is
+  // what the packaged app bundles — there the install dir IS `dir` itself.
+  const candidates = [path.join(dir, hostArch()), path.join(dir, "universal"), dir];
   return candidates.find((c) => fs.existsSync(path.join(c, "config.json"))) ?? null;
 }
 

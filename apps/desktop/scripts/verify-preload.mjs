@@ -32,6 +32,14 @@ ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getApiKey", async () => "");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
+// No browsing session: the audit screen's live thumbnail stays hidden.
+ipcMain.handle("viewer:state", async () => ({
+  active: false,
+  origins: [],
+  inScope: true,
+  url: "",
+  frame: null,
+}));
 
 // The approval window pulls one view model — the same shape approvalViewModel()
 // produces from an intent.

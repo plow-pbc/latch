@@ -83,12 +83,13 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
 
     await act("goto", { url: site.url + "/" });
 
-    const creds = await act("credentials");
-    const login = (creds.payload.items as { id: string; matches_this_page: boolean }[]).find((i) => i.id === "L1")!;
-    expect(login.matches_this_page).toBe(true);
+    // The vault answers on its own tool, with no session involved.
+    const creds = await callTool(server, "vault", { action: "list" }, AGENT);
+    const login = (creds.payload.items as { id: string }[]).find((i) => i.id === "L1")!;
+    expect(login).toBeTruthy();
     expect(JSON.stringify(creds.payload)).not.toContain("pizza-time-99");
 
-    const described = await act("describe_item", { item: "L1" });
+    const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
     expect(described.payload.fields).toContain("password");
 
     await callTool(server, "browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
@@ -123,7 +124,16 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(blocks[0].type).toBe("image");
     expect(Buffer.from(blocks[0].data ?? "", "base64").length).toBeGreaterThan(5000);
 
+    // The owner's viewer gets a real frame over the direct host path…
+    const frame = await device.browserViewFrame();
+    expect(frame).not.toBeNull();
+    expect(frame!.mime).toBe("image/jpeg");
+    expect(Buffer.from(frame!.dataB64, "base64").length).toBeGreaterThan(5000);
+
     await callTool(server, "browser_close", { session }, AGENT);
+
+    // …and never resurrects a browser the session close shut down.
+    expect(await device.browserViewFrame()).toBeNull();
 
     const auditRaw = fs.readFileSync(device.audit.file, "utf8");
     for (const e of ["browser_session_opened", "credential_metadata", "credential_filled", "credential_denied", "browser_session_closed"]) {
@@ -131,7 +141,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     }
     expect(auditRaw).not.toContain("pizza-time-99");
     expect(auditRaw).not.toContain("4111111111111111");
-    const opAudit = fs.readFileSync(path.join(device.home, "device/browser/op-audit.log"), "utf8");
+    const opAudit = fs.readFileSync(path.join(device.home, "device/browser/credential-audit.log"), "utf8");
     expect(opAudit).toContain("RELEASED");
     expect(opAudit).not.toContain("pizza-time-99");
   }, 300_000);

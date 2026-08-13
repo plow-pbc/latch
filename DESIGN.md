@@ -341,6 +341,18 @@ traverse MCP, never appear in results, and never appear in either audit log.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
+**The owner's live view.** While a browsing session is open, the audit
+screen's detail pane shows a small near-live mirror of what Camoufox is
+showing, pinned in the pane's bottom-right corner outside the timeline scroll
+(~1 frame/s, a `view` server action that never touches disk). Frames ride
+`BrowserHost.viewFrame()` — deliberately *outside* `BrowserSessions`: session
+scope bounds what the **agent** observes, and the owner watching an
+out-of-scope page is exactly the oversight the view exists for (the caption
+flags "Out of approved scope"). `viewFrame` is strictly best-effort — it never
+starts the browser, never throws, and a ~1/s poll writes nothing to the audit
+log. The thumbnail appears only while a session is active and disappears when
+it closes.
+
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`) in their register manifest; agents discover them via
 `list_device_tools` and read them with `read_skill`. The built-in
@@ -348,12 +360,16 @@ titles would be spoofable).
 
 **Runtime & packaging.** The stack ships inside the app: a relocated
 python.org universal2 Python 3.12 + lipo-merged (delocate) universal
-site-packages + both Camoufox arches, built deterministically by
+site-packages + one lipo-fused universal Camoufox tree (both arches' Mach-Os
+fused, the arch-independent payload shipped once), built deterministically by
 `scripts/build-browser-runtime.mjs` from hash pins in
 `vendor/browser-server/runtime.lock.json` (version coupling
 camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
-payload is byte-identical in both electron-builder arch passes so the
-universal merge copies it through. The Camoufox payload is a complete
+build prunes what can never load at runtime (Camoufox's bundled Windows/Linux
+spoofing fonts — the vendored server pins the fingerprint to macOS — plus
+Python test suites, dSYMs, headers, bytecode caches). The payload is
+byte-identical in both electron-builder arch passes so the universal merge
+copies it through. The Camoufox payload is a complete
 `camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
 app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
 user's shared cache is never touched and no fetch happens at launch. Audit

@@ -100,6 +100,30 @@ describe("BrowserHost", () => {
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(/did not become ready/);
   });
 
+  it("viewFrame never starts the browser: null while not running", async () => {
+    const { host } = makeHost();
+    expect(await host.viewFrame()).toBeNull();
+    expect(host.running).toBe(false);
+  });
+
+  it("viewFrame returns a frame from a running browser", async () => {
+    const { host } = makeHost();
+    await host.ensureReady();
+    const frame = await host.viewFrame();
+    expect(frame).not.toBeNull();
+    expect(Buffer.from(frame!.dataB64, "base64").toString()).toBe("fake-view-jpeg");
+    expect(frame!.mime).toBe("image/jpeg");
+    expect(frame!.url).toBe("about:blank");
+  });
+
+  it("viewFrame is best-effort: a hung view action yields null, not a throw", async () => {
+    const { host } = makeHost({ HANG_ACTION: "view" }, { actionTimeoutMs: 300 });
+    await host.ensureReady();
+    expect(await host.viewFrame()).toBeNull();
+    // The browser itself is still fine.
+    expect((await host.sendAction({ action: "url" })).url).toBe("about:blank");
+  });
+
   it("shutdown quits the server and audits browser_stopped", async () => {
     const { host, events } = makeHost();
     await host.sendAction({ action: "url" });

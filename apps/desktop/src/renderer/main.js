@@ -89,7 +89,17 @@ async function renderAudit() {
   ]);
 
   const listBox = el("div", { class: "list" });
-  const detailBox = el("aside", { class: "detail" });
+  // The detail pane is a column: the activity info scrolls in .detail-scroll;
+  // the live browser thumbnail sits pinned below it, outside the scroll.
+  const detailScroll = el("div", { class: "detail-scroll" });
+  const liveImg = el("img", { attrs: { alt: "Live browser view" } });
+  const liveDot = el("span", { class: "dot" });
+  const liveCapText = el("span");
+  const liveBox = el("div", { class: "live-corner hidden" }, [
+    liveImg,
+    el("div", { class: "live-cap" }, [liveDot, liveCapText]),
+  ]);
+  const detailBox = el("aside", { class: "detail" }, [detailScroll, liveBox]);
   detailBox.style.width = detailWidth + "px";
   const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
   wireSplitter(splitter, detailBox);
@@ -106,8 +116,12 @@ async function renderAudit() {
     tbody,
   ]);
 
-  auditMounted = { listBox, detailBox, count, chipsBox, clearBtn, table, tbody, rows: new Map() };
+  auditMounted = {
+    listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows: new Map(),
+    liveBox, liveImg, liveDot, liveCapText, liveHasFrame: false,
+  };
   await refreshAudit();
+  refreshLiveThumb();
   searchInput.focus();
   const len = searchInput.value.length;
   searchInput.setSelectionRange(len, len);
@@ -140,7 +154,7 @@ function wireSplitter(splitter, detailBox) {
 // newest row when it was pinned to the top, so streaming activity stays in view.
 async function refreshAudit(opts = {}) {
   if (!auditMounted) return;
-  const { listBox, detailBox, count, chipsBox, clearBtn, table, tbody, rows } = auditMounted;
+  const { listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows } = auditMounted;
   const activities = await window.domo.auditActivities();
   clearBtn.disabled = activities.length === 0;
   const q = auditSearch.trim().toLowerCase();
@@ -178,7 +192,7 @@ async function refreshAudit(opts = {}) {
     rows.clear();
     tbody.replaceChildren();
     listBox.replaceChildren(el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }));
-    detailBox.replaceChildren(detailFor(selected));
+    detailScroll.replaceChildren(detailFor(selected));
     return;
   }
   if (listBox.firstChild !== table) listBox.replaceChildren(table);
@@ -216,11 +230,55 @@ async function refreshAudit(opts = {}) {
     else tbody.insertBefore(node, expected);
   }
 
-  detailBox.replaceChildren(detailFor(selected));
+  detailScroll.replaceChildren(detailFor(selected));
 
   // Rows are in the DOM now (natural size measurable) — play the insert
   // animation for any freshly arrived rows.
   enterRows.forEach(animateRowEnter);
+}
+
+// ---- Live browser thumbnail ----
+// While an agent has a browsing session open, a small near-live view of the
+// Camoufox browser sits pinned in the detail pane's bottom-right corner —
+// outside the timeline scroll, so it stays put. Polls the whole viewer state
+// about once a second; between frames (or while the browser is mid-action) the
+// last image simply stays. Frames are for the owner's eyes and are shown even
+// when the page is out of the approved scope — that state is flagged red.
+
+let liveThumbBusy = false;
+
+async function refreshLiveThumb() {
+  if (liveThumbBusy || currentTab !== "audit" || !auditMounted) return;
+  liveThumbBusy = true;
+  try {
+    const s = await window.domo.viewerState();
+    const m = auditMounted;
+    if (!m) return;
+    if (!s.active) m.liveHasFrame = false; // next session starts with a fresh frame
+    if (s.active && s.frame && /^image\/(jpeg|png|webp)$/.test(s.frame.mime)) {
+      m.liveImg.src = `data:${s.frame.mime};base64,${s.frame.dataB64}`;
+      m.liveHasFrame = true;
+    }
+    m.liveBox.classList.toggle("hidden", !(s.active && m.liveHasFrame));
+    m.liveBox.classList.toggle("offscope", s.active && !s.inScope);
+    if (s.active) {
+      m.liveCapText.textContent = s.inScope ? hostOf(s.url) || "Live" : "Out of approved scope";
+      m.liveImg.title = s.url; // full URL on hover; the caption shows the host
+    }
+  } catch {
+    /* main is busy — keep the last render */
+  } finally {
+    liveThumbBusy = false;
+  }
+}
+setInterval(refreshLiveThumb, 1000);
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
 }
 
 // Build a reusable audit row. Cell content is wrapped in a `.cw` so a new row

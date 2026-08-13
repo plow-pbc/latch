@@ -65,6 +65,16 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  */
 const MAX_WAIT_SECONDS = 12;
 
+/** What the owner's viewer needs to know about the live session. */
+export interface BrowserSessionInfo {
+  origins: string[];
+  agentId: string;
+  /** Last URL observed after an action (query/fragment intact — local eyes only). */
+  lastUrl: string;
+  /** False when the active page is outside the approved origins (lockout). */
+  inScope: boolean;
+}
+
 export class BrowserSessions {
   private session: Session | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -83,6 +93,18 @@ export class BrowserSessions {
     const host = hostOf(url);
     if (host === null) return true; // about:, data: — no origin to judge
     return originMatches(host, s.origins);
+  }
+
+  /** The live session as the owner's viewer sees it, or null. */
+  current(): BrowserSessionInfo | null {
+    const s = this.session;
+    if (!s) return null;
+    return {
+      origins: [...s.origins],
+      agentId: s.agentId,
+      lastUrl: s.lastUrl,
+      inScope: this.inScope(s, s.lastUrl),
+    };
   }
 
   /** Open a new session (called only after an approved intent). */
