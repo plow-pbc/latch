@@ -42,7 +42,9 @@ ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
 // A signed-in Mac: the credential itself is deliberately absent from this
 // shape, because the main process never hands it to the renderer.
+let relayGate = null; // when set, `settings:getRelay` blocks until released
 ipcMain.handle("settings:getRelay", async () => {
+  if (relayGate) await relayGate;
   const s = loadSettings(probeHome);
   return {
     apiBaseUrl: "https://api.plow.co",
@@ -246,8 +248,7 @@ app.whenReady().then(async () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     return true;
   })()`);
-  // Change something only a full re-render redraws — the account identity, not
-  // the provider chips, which the commit refreshes on its own either way.
+  // Change something only the account refresh redraws.
   saveSettings(probeHome, { ...loadSettings(probeHome), accountUid: "u_after_reconnect" });
   win.webContents.send("status:changed");
   await new Promise((r) => setTimeout(r, 400));
@@ -256,17 +257,71 @@ app.whenReady().then(async () => {
       const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
       return input.value === "sk-ant-half-typed";
     })()`),
-    // The pane must not be stale forever either: the deferred re-render lands
-    // once the draft is committed.
-    heldWhileDrafting: !(await win.webContents.executeJavaScript(
+    // …and the pane is NOT held stale to achieve it: the account nodes update
+    // in place, right past the open draft.
+    accountUpdatesWhileDrafting: await win.webContents.executeJavaScript(
       `document.body.innerText.includes("u_after_reconnect")`,
-    )),
-    appliedOnCommit: await win.webContents.executeJavaScript(`(async () => {
-      const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 400));
-      return document.body.innerText.includes("u_after_reconnect");
-    })()`),
+    ),
+    commitStillPersists: false,
+  };
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 400));
+  draft.commitStillPersists = loadSettings(probeHome).anthropicApiKey === "sk-ant-half-typed";
+
+  // THE RACE, specifically: typing that starts while a status-driven refresh is
+  // ALREADY IN FLIGHT and parked on one of its awaited reads. The dirty-flag
+  // version sampled the flag before that read and replaced the field after it,
+  // so a keystroke landing in between was lost. Hold `settings:getRelay` open,
+  // type while the refresh is blocked on it, then release.
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+    input.value = "";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dataset.probeMark = "original-node";
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 300));
+
+  let releaseRelay = () => {};
+  relayGate = new Promise((r) => {
+    releaseRelay = r;
+  });
+  saveSettings(probeHome, { ...loadSettings(probeHome), accountUid: "u_mid_flight" });
+  win.webContents.send("status:changed"); // refresh starts, parks on relayGet
+  await new Promise((r) => setTimeout(r, 200)); // …it is now definitely in flight
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+    input.value = "sk-ant-typed-mid-refresh";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  releaseRelay();
+  relayGate = null;
+  await new Promise((r) => setTimeout(r, 500));
+
+  const midFlight = await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+    return {
+      kept: input.value === "sk-ant-typed-mid-refresh",
+      // The same DOM node, not a rebuilt one that happens to hold the value.
+      sameNode: input.dataset.probeMark === "original-node",
+      accountRefreshed: document.body.innerText.includes("u_mid_flight"),
+    };
+  })()`);
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 400));
+  const raceDuringRefresh = {
+    ...midFlight,
+    // The keystroke that arrived mid-refresh is what got committed.
+    committed: loadSettings(probeHome).anthropicApiKey === "sk-ant-typed-mid-refresh",
   };
 
   fs.rmSync(probeHome, { recursive: true, force: true });
@@ -304,8 +359,12 @@ app.whenReady().then(async () => {
     staleSettingsPane.disabledWhileSignedOut &&
     staleSettingsPane.enabledAfterStatusChanged &&
     draft.survivesStatusChanged &&
-    draft.heldWhileDrafting &&
-    draft.appliedOnCommit &&
+    draft.accountUpdatesWhileDrafting &&
+    draft.commitStillPersists &&
+    raceDuringRefresh.kept &&
+    raceDuringRefresh.sameNode &&
+    raceDuringRefresh.accountRefreshed &&
+    raceDuringRefresh.committed &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
@@ -313,7 +372,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, roundTrip, modeFallback, transientInput, staleSettingsPane, draft, settingsShot, approval, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, roundTrip, modeFallback, transientInput, staleSettingsPane, draft, raceDuringRefresh, settingsShot, approval, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

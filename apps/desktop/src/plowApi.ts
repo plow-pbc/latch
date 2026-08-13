@@ -209,8 +209,11 @@ export class PlowApi {
   }
 
   /**
-   * Mint this Mac's credential. `relay:device` and nothing else: it holds the
-   * socket and may create agents, and can touch nothing else on the account.
+   * Mint this Mac's credential: `relay:device` + `llm:chat`, and nothing else.
+   * It holds the socket, may create agents, and — because of `llm:chat` — **it
+   * can spend the account's Plow credits**: it is the bearer token on the
+   * `chatCompletion` calls that fund adversarial-reviewer inference. It can
+   * touch nothing else on the account.
    *
    * `revoke_calling_session` retires the session that authorised this call — the
    * activation or OTP session — in the same transaction as the mint. That

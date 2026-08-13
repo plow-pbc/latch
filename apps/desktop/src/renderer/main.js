@@ -9,11 +9,10 @@ const statusText = document.getElementById("statusText");
 
 let currentTab = "audit";
 let filter = "all";
-// Settings' password field holds an uncommitted draft, and a re-render that
-// arrived while it did. Module scope because a re-render replaces the pane's
-// own locals — which is exactly the event being guarded against.
-let settingsDraftDirty = false;
-let settingsRerenderDeferred = false;
+// The mounted Settings pane, while that tab is up. Holds a `refresh` that
+// updates the display nodes in place — the editable key field is never rebuilt,
+// so no amount of re-reading can take a half-typed key with it.
+let settingsMounted = null;
 
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
@@ -424,28 +423,38 @@ async function renderSettings() {
   // credential is minted by first-run login and never leaves the main process,
   // and the API origin is baked into the build (a token is only valid against
   // the environment that minted it, so an editable origin could only be wrong).
-  const relay = await window.domo.relayGet();
-  const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
-  const setUp = el("button", { class: "btn primary", text: relay.hasCredential ? "Create Agent" : "Sign In" });
+  const relayNote = el("p", { class: "faint", text: "" });
+  const setUp = el("button", { class: "btn primary", text: "Sign In" });
   setUp.addEventListener("click", () => window.domo.onboardingOpen());
   const signOut = el("button", { class: "btn danger", text: "Sign Out" });
-  signOut.disabled = !relay.hasCredential;
   signOut.addEventListener("click", async () => {
     await window.domo.relaySignOut();
-    renderSettings();
+    await refreshAccount();
   });
-  const accountRows = relay.hasCredential
-    ? [
-        el("div", { class: "field" }, [
-          el("label", { text: "Agent endpoint" }),
-          el("div", { class: "mono faint", text: relay.mcpUrl || "—" }),
-        ]),
-        el("div", { class: "field" }, [
-          el("label", { text: "Account" }),
-          el("div", { class: "mono faint", text: relay.accountUid || "—" }),
-        ]),
-      ]
-    : [];
+  // A stable container the account rows are drawn into, so signing in or out
+  // rewrites its contents rather than the pane.
+  const accountBox = el("div", { class: "account" });
+  const refreshAccount = async () => {
+    const relay = await window.domo.relayGet();
+    relayNote.textContent = relayStatusText(relay);
+    setUp.textContent = relay.hasCredential ? "Create Agent" : "Sign In";
+    signOut.disabled = !relay.hasCredential;
+    accountBox.replaceChildren(
+      ...(relay.hasCredential
+        ? [
+            el("div", { class: "field" }, [
+              el("label", { text: "Agent endpoint" }),
+              el("div", { class: "mono faint", text: relay.mcpUrl || "—" }),
+            ]),
+            el("div", { class: "field" }, [
+              el("label", { text: "Account" }),
+              el("div", { class: "mono faint", text: relay.accountUid || "—" }),
+            ]),
+          ]
+        : []),
+    );
+  };
+  await refreshAccount();
 
   const restoreNote = el("p", { class: "faint", text: "" });
   const restore = el("button", { class: "btn", text: "Restore Default Goals" });
@@ -457,7 +466,6 @@ async function renderSettings() {
   // Anthropic API key — one of the two ways to power the adversarial agent.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
-  settingsDraftDirty = false; // a fresh pane shows the committed value
 
   // Which backend runs the reviewer. `inference` carries a per-provider
   // availability map and the active model — never a credential.
@@ -554,33 +562,27 @@ async function renderSettings() {
     updateSuggestEnabled();
   };
 
-  // Track whether the field holds an uncommitted draft. Purely local — it
-  // persists nothing, which is the whole point of committing on `change`.
-  // A relay reconnect fires `status:changed` on its own schedule, and
-  // re-rendering the pane under a half-typed key would throw the draft away.
-  const committedKey = apiKeyInput.value;
-  apiKeyInput.addEventListener("input", () => {
-    settingsDraftDirty = apiKeyInput.value !== committedKey;
-  });
-
   // Only on `change` — on commit (blur or Enter), never per keystroke. An
   // `input` handler sees every transient value on the way to the real one,
   // including the empty field between clearing and pasting.
   apiKeyInput.addEventListener("change", async () => {
     await window.domo.apiKeySet(apiKeyInput.value.trim());
-    settingsDraftDirty = false;
-    // Anything that arrived while the draft was open is applied now.
-    if (settingsRerenderDeferred) {
-      settingsRerenderDeferred = false;
-      await renderSettings();
-      return;
-    }
     await syncReviewerAvailability();
   });
 
   renderProviderChips();
   renderModeChips();
   updateSuggestEnabled();
+
+  // What a status change re-reads. Display nodes only: `apiKeyInput` is not
+  // among them and is never replaced, so there is no window in which a keystroke
+  // can be lost — no flag, no deferral, nothing to get the ordering wrong.
+  settingsMounted = {
+    refresh: async () => {
+      await refreshAccount();
+      await syncReviewerAvailability();
+    },
+  };
 
   // Build one settings group: a prominent title, an optional description, then
   // the group's body nodes.
@@ -593,7 +595,7 @@ async function renderSettings() {
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
     group("Plow account", "Sign in with your phone number to let agents reach this Mac.", [
-      ...accountRows,
+      accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
     ]),
     group("Reviewer inference", "Which account pays for the Adversarial Agent's model calls.", [
@@ -623,6 +625,7 @@ function render() {
 function selectTab(tab) {
   currentTab = tab;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
+  if (tab !== "settings") settingsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
@@ -644,13 +647,10 @@ window.domo.onStatusChanged(() => {
   // Settings pane has to re-read — main fires this saying "Settings re-reads
   // what changed", and until now only the header did.
   //
-  // But `status:changed` also fires on an ordinary relay reconnect, which the
-  // person typing a key did not ask for and must not be punished by: rendering
-  // replaces the input and takes the draft with it. Hold the re-render until
-  // the draft is committed.
-  if (currentTab !== "settings") return;
-  if (settingsDraftDirty) settingsRerenderDeferred = true;
-  else renderSettings();
+  // `status:changed` also fires on an ordinary relay reconnect, which the
+  // person typing a key did not ask for and must not be punished by — so this
+  // updates the account and provider nodes and leaves the field alone.
+  if (currentTab === "settings") settingsMounted?.refresh();
 });
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
