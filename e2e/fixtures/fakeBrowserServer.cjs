@@ -11,6 +11,7 @@
  *   CRASH_AFTER=n      exit(9) after n commands (crash/restart tests)
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
+ *   FAKE_ENV_LOG=path  write this process's whole environment once, at startup
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
  *
  * Scripted page behaviors:
@@ -111,6 +112,9 @@ function handle(cmd) {
 }
 
 function main() {
+  if (process.env.FAKE_ENV_LOG) {
+    fs.writeFileSync(process.env.FAKE_ENV_LOG, JSON.stringify(process.env));
+  }
   const start = () => {
     if (process.env.NO_READY !== "1") {
       respond({ status: "ready", pid: process.pid, browser_version: "fake-152.0.4" });

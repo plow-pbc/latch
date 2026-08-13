@@ -22,10 +22,6 @@ from seed_vault_broker import __version__
 _PROG = "seed-vault-broker"
 _BW_BIN = os.environ.get("SEED_VAULT_BW", "bw")
 _BW_TIMEOUT_S = int(os.environ.get("SEED_VAULT_TIMEOUT", "60"))
-# A refresh is not the operation the caller asked for, so it gets a smaller
-# share of the budget: sync plus the real command has to fit what the broker
-# is allowed overall, and a slow vault must not eat the whole ceiling here.
-_SYNC_TIMEOUT_S = max(1, _BW_TIMEOUT_S // 3)
 
 # The vault this broker reads, and whose machine it is. Both come from whoever
 # starts the broker -- there is no default, because a default here is one
@@ -318,15 +314,14 @@ def _agent_identity() -> tuple[str, str]:
     return email, password
 
 
-def _raw_bw(args: list[str], session: str | None,
-            timeout: int | None = None) -> subprocess.CompletedProcess:
+def _raw_bw(args: list[str], session: str | None) -> subprocess.CompletedProcess:
     try:
         # --nointeraction + closed stdin: without a TTY, bw otherwise blocks on
         # prompts forever (the "browser crashed" hang on credentials).
         return subprocess.run(
             [_BW_BIN, "--nointeraction", *args],
             capture_output=True, text=True, check=False,
-            env=_vault_env(session), timeout=timeout or _BW_TIMEOUT_S,
+            env=_vault_env(session), timeout=_BW_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:
@@ -411,18 +406,18 @@ def _ensure_identity_and_server() -> None:
     _server_set = True
 
 
-def _run_vault(args: list[str], timeout: int | None = None) -> tuple[int, str, str]:
+def _run_vault(args: list[str]) -> tuple[int, str, str]:
     """Run one vault command, unlocking once if the cached session is stale."""
     _ensure_identity_and_server()
     session = _read_session()
     if session:
-        result = _raw_bw(args, session, timeout)
+        result = _raw_bw(args, session)
         if result.returncode == 0:
             return result.returncode, result.stdout, result.stderr
         if _classify(result.stderr + result.stdout) != _ERR_VAULT_LOCKED:
             return result.returncode, result.stdout, result.stderr
     session = _open_vault()
-    result = _raw_bw(args, session, timeout)
+    result = _raw_bw(args, session)
     return result.returncode, result.stdout, result.stderr
 
 
@@ -437,14 +432,15 @@ def _sync() -> None:
     would report a 404 from a misconfigured vault address as "No such item in the
     vault" -- for a call that looked up no item.
     """
-    rc, _, stderr = _run_vault(["sync"], timeout=_SYNC_TIMEOUT_S)
+    rc, _, stderr = _run_vault(["sync"])
     if rc == 0:
         return
     lowered = stderr.lower()
     if any(p in lowered for p in _LOCKED_PATTERNS):
         raise _VaultToolError(_ERR_VAULT_LOCKED, _LOCKED_MSG)
-    raise _VaultToolError(_ERR_VAULT_UNAVAILABLE,
-                          "Could not reach the vault to refresh what it holds.")
+    raise _VaultToolError(_ERR_VAULT_ERROR,
+                          "Could not refresh what the vault holds: %s"
+                          % (stderr.strip() or "the vault tool gave no reason"))
 
 
 def _normalize(raw: dict) -> dict:
@@ -481,11 +477,12 @@ def _list_items(logins_only: bool = False) -> list[dict]:
 
 
 def _get_item(item_id: str) -> dict:
-    # This is the path that releases a secret, so it refreshes first: the id may
-    # have come from a listing in an earlier process, minutes or days ago, and
-    # filling last week's password is the failure `_sync` exists to prevent.
-    # The refresh gets a third of the budget so it plus the read still fit.
-    _sync()
+    # Deliberately one `bw` call, no refresh. Each command here is its own short
+    # lived process and `bw` costs ~3s to start, so a refresh would DOUBLE the
+    # release path -- measured at ~6.3s against a 12s broker ceiling, with the
+    # unlock and the server probe still to fit. The listing that hands out item
+    # ids already syncs; the window this leaves is a credential changed between
+    # that listing and the fill, which at this size is worth ~3s a fill.
     rc, stdout, stderr = _run_vault(["get", "item", item_id])
     if rc != 0:
         kind = _classify(stderr)

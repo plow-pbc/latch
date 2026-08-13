@@ -765,6 +765,10 @@ function fetchVaultServer(arch) {
   run("git", ["-C", srcDir, "checkout", "--quiet", commit], { quiet: true });
 
   const triple = arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  // The universal app needs both slices, so packaging on an arm64 Mac
+  // cross-compiles for x86_64 — a target a fresh `rustup` install does not have.
+  // A no-op once present, and a far better failure than 200 lines of E0463.
+  run("rustup", ["target", "add", triple], { quiet: true });
   log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
   run("cargo", ["build", "--release", "--locked", "--features", "sqlite", "--target", triple], {
     cwd: srcDir,

@@ -509,6 +509,9 @@ async function renderVault() {
     open.disabled = true;
     note.textContent = "Starting…";
     const ok = await window.domo.vaultOpen();
+    // A cold start can take a while; the owner may be on another tab by now,
+    // and re-rendering would replace whatever they moved to.
+    if (currentTab !== "vault") return;
     note.textContent = ok ? HINT : "The vault did not start. Try again in a moment.";
     open.disabled = false;
     if (ok) renderVault(); // the account exists now, if it did not before

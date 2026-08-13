@@ -10,10 +10,14 @@
  *   [{ "id", "title", "category", "username", "urls": ["https://..."],
  *      "fields": { "password": "hunter2", ... } }]
  *
- * Two simplifications, deliberate: fields are a plain map, so the real broker's
- * card-label aliases (`cvv` → `code`) are written out in the fixture; and a
- * missing field is always `VaultNotFound`, where the real one distinguishes
- * "this item has no such label" (InvalidArgument) from "the label is empty".
+ * Three simplifications, deliberate: fields are a plain map, so the real
+ * broker's card-label aliases (`cvv` → `code`) are written out in the fixture;
+ * a missing field is always `VaultNotFound`, where the real one distinguishes
+ * "this item has no such label" (InvalidArgument) from "the label is empty";
+ * and the origin key is the full hostname, where the real broker folds to the
+ * registrable domain (so `login.example.com` and `www.example.com` match each
+ * other there but not here). All three make this fake STRICTER than the real
+ * one, which is the safe direction for a fixture to differ in.
  */
 "use strict";
 const fs = require("node:fs");
@@ -24,7 +28,11 @@ function vault() {
 
 function hostKey(url) {
   try {
-    return new URL(url).hostname;
+    const u = new URL(url);
+    // Only the web. The real broker refuses anything else outright, and a fake
+    // that accepted ftp:/data:/about: would let an origin-check bypass through
+    // the whole suite.
+    return u.protocol === "http:" || u.protocol === "https:" ? u.hostname : null;
   } catch {
     return null;
   }

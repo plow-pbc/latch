@@ -124,6 +124,27 @@ describe("BrowserHost", () => {
     expect((await host.sendAction({ action: "url" })).url).toBe("about:blank");
   });
 
+  it("is never handed the vault's variables, not even through its own runtime env", async () => {
+    // The regression this guards: the runtime's env bag is spread over the
+    // inherited one, and that bag is also the broker's — it carries
+    // SEED_VAULT_BW today, and would carry a secret the day one is added.
+    process.env.DOMO_VAULT_TOKEN = "bootstrap-token";
+    try {
+      const envLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-env-")), "env.json");
+      const { host } = makeHost({ FAKE_ENV_LOG: envLog, SEED_VAULT_BW: "/somewhere/bw" });
+      await host.ensureReady();
+
+      const seen = JSON.parse(fs.readFileSync(envLog, "utf8")) as Record<string, string>;
+      const leaked = Object.keys(seen).filter(
+        (k) => k.startsWith("SEED_VAULT_") || k.startsWith("DOMO_VAULT_"),
+      );
+      expect(leaked, "the browser server is not where these belong").toEqual([]);
+      expect(seen.FAKE_ENV_LOG, "everything else it was given still arrives").toBe(envLog);
+    } finally {
+      delete process.env.DOMO_VAULT_TOKEN;
+    }
+  });
+
   it("shutdown quits the server and audits browser_stopped", async () => {
     const { host, events } = makeHost();
     await host.sendAction({ action: "url" });

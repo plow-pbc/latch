@@ -8,9 +8,43 @@
  */
 import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { VaultServer } from "@domo/device-core";
+
+/** A port nobody is on, asked for at the moment it is needed: fixed numbers
+ *  collide with whatever a previous failed run left behind. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as net.AddressInfo;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+/** True once nothing answers on the port; false if something still does. */
+async function portFreesUp(port: number, withinMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + withinMs;
+  while (Date.now() < deadline) {
+    const answered = await new Promise<boolean>((resolve) => {
+      const sock = net.connect({ host: "127.0.0.1", port });
+      const done = (v: boolean) => {
+        sock.destroy();
+        resolve(v);
+      };
+      sock.once("connect", () => done(true));
+      sock.once("error", () => done(false));
+      sock.setTimeout(500, () => done(true));
+    });
+    if (!answered) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
 
 const servers: VaultServer[] = [];
 afterEach(() => {
@@ -22,7 +56,7 @@ afterEach(() => {
  * minted and accepts an account; `silent` takes the connection and never speaks
  * TLS, which is how a half-started vault behaves.
  */
-function stubVault(dir: string, mode: "registers" | "silent"): { binary: string; envLog: string; hits: string } {
+function stubVault(dir: string, mode: "registers" | "silent", registerDelayMs = 0): { binary: string; envLog: string; hits: string } {
   const envLog = path.join(dir, "env.jsonl");
   const hits = path.join(dir, "register-hits.log");
   const serve =
@@ -33,7 +67,10 @@ require("node:https")
   .createServer({ cert: fs.readFileSync(tls[1]), key: fs.readFileSync(tls[2]) }, (req, res) => {
     fs.appendFileSync(${JSON.stringify(hits)}, req.url + "\\n");
     req.resume();
-    req.once("end", () => { res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); });
+    req.once("end", () => setTimeout(() => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}");
+    }, ${JSON.stringify(registerDelayMs)}));
   })
   .listen(port, "127.0.0.1");`;
   const binary = path.join(dir, "stub-vaultwarden");
@@ -50,9 +87,10 @@ ${serve}
   return { binary, envLog, hits };
 }
 
-function makeServer(port: number, mode: "registers" | "silent" = "registers") {
+async function makeServer(mode: "registers" | "silent" = "registers", registerDelayMs = 0) {
+  const port = await freePort();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-vault-"));
-  const { binary, envLog, hits } = stubVault(dir, mode);
+  const { binary, envLog, hits } = stubVault(dir, mode, registerDelayMs);
   const server = new VaultServer({
     binary,
     webVaultDir: dir,
@@ -63,12 +101,12 @@ function makeServer(port: number, mode: "registers" | "silent" = "registers") {
   });
   servers.push(server);
   const lines = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim().split("\n") : []);
-  return { server, launches: () => lines(envLog), registrations: () => lines(hits), envLog };
+  return { server, port, launches: () => lines(envLog), registrations: () => lines(hits), envLog };
 }
 
 describe("the vault process", () => {
   it("makes every concurrent caller wait for the account, not just for the process", async () => {
-    const { server, launches, registrations } = makeServer(18231);
+    const { server, launches, registrations } = await makeServer();
 
     // Every credential lookup calls start(); a cold launch has several in
     // flight at once. What each one must NOT do is return as soon as a process
@@ -95,7 +133,7 @@ describe("the vault process", () => {
     // The port answers but the stub is not a vault, so creating the account
     // fails. A live process with no account in it is NOT started: the next
     // caller would otherwise run its broker against an empty vault.
-    const { server, launches } = makeServer(18233, "silent");
+    const { server, launches } = await makeServer("silent");
 
     await expect(server.start()).rejects.toThrow();
     await expect(server.start()).rejects.toThrow();
@@ -107,11 +145,45 @@ describe("the vault process", () => {
     // credential call behind it. Explicit ceiling so load cannot flake it.
   }, 60_000);
 
+  it("stopped mid-startup does not come back claiming it started", async () => {
+    // The stub holds the registration open, so stop() lands while the account
+    // is genuinely being made — not merely while the port is still opening.
+    const { server, launches } = await makeServer("registers", 3_000);
+    const starting = server.start();
+    setTimeout(() => server.stop(), 900);
+
+    await expect(starting, "a vault that was stopped did not start").rejects.toThrow();
+    // The contract that matters: the next caller gets a real launch, not an
+    // instant resolve off a `ready` flag the killed startup left behind.
+    await server.start();
+    expect(launches()).toHaveLength(2);
+    expect(server.account, "and this one really did make the account").not.toBeNull();
+  }, 30_000);
+
+  it("a dying predecessor does not orphan the vault that replaced it", async () => {
+    // The failure this guards: the first process exits AFTER its replacement is
+    // up, its `exit` handler clears the shared handle, and the live detached
+    // vaultwarden is left holding the port with nothing tracking it.
+    const { server, port, launches } = await makeServer();
+    await server.start();
+    server.stop(); // SIGTERM; the exit event lands a tick or two later
+    await server.start();
+    await new Promise((r) => setTimeout(r, 750)); // let the first one's exit arrive
+
+    expect(launches(), "the replacement really is a second process").toHaveLength(2);
+
+    // The whole point: `stop()` can still reach the live one. If the dead
+    // predecessor had cleared the handle, this would kill nothing and the port
+    // would stay held by a process nothing tracks.
+    server.stop();
+    expect(await portFreesUp(port), "nothing was left holding the port").toBe(true);
+  }, 30_000);
+
   it("is never given the vault variables it has no use for", async () => {
     process.env.DOMO_VAULT_TOKEN = "bootstrap-token";
     process.env.SEED_VAULT_PASSWORD = "the-account-password";
     try {
-      const { server, envLog } = makeServer(18232);
+      const { server, port, envLog } = await makeServer();
       await server.start();
 
       const seen = JSON.parse(fs.readFileSync(envLog, "utf8").trim()) as Record<string, string>;
@@ -119,7 +191,7 @@ describe("the vault process", () => {
         (k) => k.startsWith("SEED_VAULT_") || k.startsWith("DOMO_VAULT_"),
       );
       expect(leaked, "the vault server is not where these belong").toEqual([]);
-      expect(seen.ROCKET_PORT, "what it does need still arrives").toBe("18232");
+      expect(seen.ROCKET_PORT, "what it does need still arrives").toBe(String(port));
     } finally {
       delete process.env.DOMO_VAULT_TOKEN;
       delete process.env.SEED_VAULT_PASSWORD;
