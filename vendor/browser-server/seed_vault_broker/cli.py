@@ -21,12 +21,11 @@ _PROG = "seed-vault-broker"
 _BW_BIN = os.environ.get("SEED_VAULT_BW", "bw")
 _BW_TIMEOUT_S = int(os.environ.get("SEED_VAULT_TIMEOUT", "60"))
 
-# The vault this broker reads. The account is the agent's own -- not the human's --
-# so its reach is exactly the collections that account can see.
-_VAULT_URL = os.environ.get("SEED_VAULT_URL", "https://daniel.vaultwarden.plow.co")
-# Whose agent this machine runs. The agent's own address is derived from it, the same
-# way the server derives it, so nothing has to be configured per person.
-_PERSON = os.environ.get("SEED_VAULT_PERSON", "daniel@plow.co")
+# The vault this broker reads, and whose machine it is. Both come from whoever
+# starts the broker -- there is no default, because a default here is one
+# person's address shipped to everybody else.
+_VAULT_URL = os.environ.get("SEED_VAULT_URL", "")
+_PERSON = os.environ.get("SEED_VAULT_PERSON", "")
 _VAULT_USER = os.environ.get("SEED_VAULT_USER", "")
 _VAULT_CA = os.environ.get("SEED_VAULT_CA", "")  # the server has a real certificate
 _KEYCHAIN_SERVICE = os.environ.get("SEED_VAULT_KEYCHAIN", "vaultwarden-agent")
@@ -829,9 +828,25 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _require_config() -> None:
+    """Refuse to guess. Without these the broker would have to invent a vault
+    address or a person, and inventing either means answering for someone
+    else's account."""
+    missing = [n for n, v in (("SEED_VAULT_URL", _VAULT_URL), ("SEED_VAULT_PERSON", _PERSON)) if not v]
+    if missing:
+        raise _VaultToolError(
+            _ERR_INVALID_ARG,
+            "not configured: %s must be set by whoever starts this." % " and ".join(missing),
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    try:
+        _require_config()
+    except _VaultToolError as exc:
+        return _emit_error(exc.type_name, exc.message)
     return args.func(args)
 
 
