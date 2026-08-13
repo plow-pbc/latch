@@ -8,6 +8,7 @@
  */
 import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs";
+import https from "node:https";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -74,6 +75,12 @@ require("node:https")
   .createServer({ cert: fs.readFileSync(tls[1]), key: fs.readFileSync(tls[2]) }, (req, res) => {
     fs.appendFileSync(${JSON.stringify(hits)}, req.url + "\\n");
     req.resume();
+    // Honours the flag, like the real one: a vault started with registration
+    // closed refuses to make accounts, which is the property under test.
+    if (req.url.includes("/register") && process.env.SIGNUPS_ALLOWED !== "true") {
+      req.once("end", () => { res.writeHead(400); res.end("{}"); });
+      return;
+    }
     req.once("end", () => setTimeout(() => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end("{}");
@@ -108,6 +115,20 @@ async function makeServer(mode: "registers" | "silent" = "registers", registerDe
   });
   servers.push(server);
   const lines = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim().split("\n") : []);
+  /** Ask the running vault to make an account; returns its HTTP status. */
+  const register = (p: number): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const req = https.request(
+        `https://127.0.0.1:${p}/identity/accounts/register`,
+        { method: "POST", ca: fs.readFileSync(server.certPath) },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.once("error", reject);
+      req.end("{}");
+    });
   return {
     server,
     port,
@@ -118,6 +139,7 @@ async function makeServer(mode: "registers" | "silent" = "registers", registerDe
     signups: () => lines(envLog).map((l) => (JSON.parse(l) as Record<string, string>).SIGNUPS_ALLOWED),
     envOf: (nth: number) => JSON.parse(lines(envLog).at(nth)!) as Record<string, string>,
     registrations: () => lines(hits),
+    register,
   };
 }
 
@@ -211,17 +233,16 @@ describe("the vault process", () => {
   it("stops accepting new accounts as soon as it has the one it needed", async () => {
     // Registration is open only for the window in which this machine gets its
     // account. Left open for the session, anything running as the user could
-    // add accounts to the vault.
-    const { server, launches, registrations } = await makeServer();
+    // add accounts to the vault. Asserted against the vault's ANSWER, not the
+    // variable it was handed — the stub refuses registration the same way.
+    const { server, port, register } = await makeServer();
     await server.start();
+    expect(server.account, "the account survived the replacement").not.toBeNull();
 
-    const signups = launches().map((l) => (JSON.parse(l) as Record<string, string>).SIGNUPS_ALLOWED);
-    expect(signups, "open to make the account, then replaced by one that is not").toEqual([
-      "true",
-      "false",
-    ]);
-    expect(registrations(), "still exactly one account").toHaveLength(1);
-    expect(server.account, "and it survived the replacement").not.toBeNull();
+    expect(
+      await register(port),
+      "the vault now serving refuses to make another account",
+    ).toBe(400);
   }, 30_000);
 
   it("is never given the vault variables it has no use for", async () => {

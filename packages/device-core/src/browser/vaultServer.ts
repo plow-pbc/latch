@@ -30,15 +30,25 @@ export interface VaultServerConfig {
   startTimeoutMs?: number;
 }
 
-/** Resolves once the process is gone, or after `timeoutMs` if it will not go. */
-function exited(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
+/** Resolves once the process is gone. Escalates rather than waiting forever. */
+function exited(child: ChildProcess, graceMs = 3_000): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("exit", () => {
+    const done = () => {
       clearTimeout(timer);
       resolve();
-    });
+    };
+    const timer = setTimeout(() => {
+      // It ignored SIGTERM. The caller checks the port before trusting this,
+      // so the worst case is a loud failure rather than a silent one.
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+      setTimeout(resolve, 500);
+    }, graceMs);
+    child.once("exit", done);
   });
 }
 
@@ -47,6 +57,8 @@ export class VaultServer {
   private starting: Promise<void> | null = null;
   /** Whether the RUNNING process was started with registration open. */
   private acceptingSignups = false;
+  /** Set by stop(), so a shutdown mid-startup is not undone by a relaunch. */
+  private stopped = false;
   /** Up AND holding this machine's account. Liveness alone is not enough: a
    *  vault that started but failed to bootstrap has nothing to sign in to. */
   private ready = false;
@@ -111,6 +123,7 @@ export class VaultServer {
   start(): Promise<void> {
     if (this.starting) return this.starting;
     if (this.ready) return Promise.resolve();
+    this.stopped = false;
     this.starting = this.launch()
       .then(() => this.closeSignups())
       .then(() => {
@@ -192,12 +205,21 @@ export class VaultServer {
   private async closeSignups(): Promise<void> {
     if (!this.acceptingSignups) return;
     const dying = this.child;
-    this.stop();
+    this.kill(); // not stop(): that records an intent to shut down, and this is
+                 // a replacement, not a shutdown
     // Wait for it to actually go. SIGTERM is asynchronous, and the replacement
     // decides it is up by finding the port open — which the process being
     // replaced is still holding, so without this the "closed" vault can report
     // itself started while the one accepting signups is the one still serving.
     if (dying) await exited(dying);
+    // A shutdown that landed while we were waiting means the app is going away;
+    // relaunching here would leave a vault nothing holds a handle to.
+    if (this.stopped) return;
+    // Loud, not permissive: if the port is still held, the process accepting
+    // registrations is still serving, and pretending otherwise is the bug.
+    if (await this.portOpen()) {
+      throw new Error("the vault accepting registrations would not release the port");
+    }
     await this.launch(); // needsAccount() is false now, so this one is closed
   }
 
@@ -223,6 +245,12 @@ export class VaultServer {
 
   /** Kill the process group, so nothing it spawned outlives the app. */
   stop(): void {
+    this.stopped = true;
+    this.kill();
+  }
+
+  /** Terminate the running process without recording a shutdown intent. */
+  private kill(): void {
     this.ready = false;
     const pid = this.child?.pid;
     if (pid === undefined) return;

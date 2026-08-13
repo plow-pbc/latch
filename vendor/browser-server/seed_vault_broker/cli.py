@@ -238,13 +238,10 @@ def _agent_identity() -> tuple[str, str]:
     fallback and a fleet-token pairing call existed for a hosted vault nothing
     provisions, which is an unexercised path to a live credential.
     """
-    supplied = os.environ.get("SEED_VAULT_PASSWORD", "")
-    if not _VAULT_USER or not supplied:
-        raise _VaultToolError(
-            _ERR_VAULT_LOCKED,
-            "This broker was started without an account to sign in as "
-            "(SEED_VAULT_USER and SEED_VAULT_PASSWORD).",
-        )
+    # Presence is `_require_config`'s job, at the one chokepoint that owns
+    # "you did not configure this" -- reporting it here would say VaultLocked,
+    # which means "unlock it", to someone who has nothing to unlock.
+    supplied = os.environ["SEED_VAULT_PASSWORD"]
     # If this is a different account than last time, the tool's local copy
     # belongs to the old one and has to go, or it keeps answering for whoever
     # was signed in before.
@@ -829,7 +826,16 @@ def _require_config() -> None:
     """Refuse to guess. Without these the broker would have to invent a vault
     address or a person, and inventing either means answering for someone
     else's account."""
-    missing = [n for n, v in (("SEED_VAULT_URL", _VAULT_URL), ("SEED_VAULT_PERSON", _PERSON)) if not v]
+    missing = [
+        n
+        for n, v in (
+            ("SEED_VAULT_URL", _VAULT_URL),
+            ("SEED_VAULT_PERSON", _PERSON),
+            ("SEED_VAULT_USER", _VAULT_USER),
+            ("SEED_VAULT_PASSWORD", os.environ.get("SEED_VAULT_PASSWORD", "")),
+        )
+        if not v
+    ]
     if missing:
         raise _VaultToolError(
             _ERR_INVALID_ARG,
