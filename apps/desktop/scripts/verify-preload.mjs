@@ -32,6 +32,15 @@ ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getApiKey", async () => "");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
+// A signed-in Mac with no Anthropic key: Plow is usable and selected, the
+// Anthropic provider is not. Availability booleans only — the credential
+// deliberately has no representation in this shape at all.
+ipcMain.handle("settings:getInference", async () => ({
+  provider: "plow",
+  plowAvailable: true,
+  anthropicAvailable: false,
+  info: "claude-sonnet-4-6 · probe",
+}));
 
 // The approval window pulls one view model — the same shape approvalViewModel()
 // produces from an intent.
@@ -62,6 +71,10 @@ function offscreen() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // A hidden window throttles rendering, so capturePage() hands back the
+      // last frame it happened to paint — which made the screenshots below show
+      // whichever tab was up at load time, no matter what the DOM said.
+      backgroundThrottling: false,
     },
   });
   win.webContents.on("console-message", (_e, level, message) => {
@@ -91,17 +104,31 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
   await new Promise((r) => setTimeout(r, 300));
   const settings = await win.webContents.executeJavaScript(`(${() => {
-    const inputs = [...document.querySelectorAll("input")];
+    const chip = (label) =>
+      [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === label);
+    const plow = chip("Plow account");
+    const anthropic = chip("Anthropic API key");
     return {
       hasAccountGroup: document.body.innerText.includes("Plow account"),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
+      // The new group, and its interlock: Plow has a credential so it is
+      // selected; Anthropic has none so its chip is disabled.
+      hasInferenceGroup: document.body.innerText.includes("Reviewer inference"),
+      plowChipActive: !!plow && plow.classList.contains("active"),
+      anthropicChipDisabled: !!anthropic && anthropic.classList.contains("disabled"),
+      showsActiveModel: document.body.innerText.includes("claude-sonnet-4-6"),
     };
   }})()`);
 
   // Settings changed with first-run login, and every UI change gets an image.
+  // Wait for two frames to actually land before capturing, so the image is the
+  // pane we just asserted on rather than whatever was painted before it.
   const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
   fs.writeFileSync(settingsShot, (await win.webContents.capturePage()).toPNG());
 
   const approvalWin = offscreen();
@@ -121,6 +148,10 @@ app.whenReady().then(async () => {
     settings.hasAccountGroup &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
+    settings.hasInferenceGroup &&
+    settings.plowChipActive &&
+    settings.anthropicChipDisabled &&
+    settings.showsActiveModel &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&

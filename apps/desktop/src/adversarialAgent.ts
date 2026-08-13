@@ -24,9 +24,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
 import { normalizeApiBaseUrl } from "./plowApi.js";
+import type { InferenceProvider } from "./settings.js";
 
-/** Which backend performs the review. */
-export type InferenceProvider = "plow" | "anthropic";
+// The selection is a stored setting, so it is declared with the other settings
+// types; re-exported here because this is where providers are implemented.
+export type { InferenceProvider };
 
 // Displayed in Settings so it's clear what's being used. Keep in sync with the
 // requests below.

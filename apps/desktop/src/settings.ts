@@ -29,6 +29,14 @@ export interface WindowBounds {
  */
 export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
 
+/**
+ * Which backend runs the adversarial reviewer:
+ *   - plow:      Plow's API, billed to the signed-in Plow account, authenticated
+ *                with this Mac's relay credential. The default.
+ *   - anthropic: the Anthropic API with a key the user pastes below.
+ */
+export type InferenceProvider = "plow" | "anthropic";
+
 export interface Settings {
   /* There is deliberately NO API base URL here. It is baked into the build
    * (`resolveApiBaseUrl`), because a credential is only valid against the
@@ -55,6 +63,8 @@ export interface Settings {
   showAgentSuggestions: boolean;
   /** Anthropic API key — required for the adversarial agent features. */
   anthropicApiKey: string;
+  /** Which backend runs the reviewer. An absent field reads as `plow`. */
+  inferenceProvider: InferenceProvider;
 }
 
 function settingsPath(home: string): string {
@@ -70,6 +80,7 @@ export function loadSettings(home: string): Settings {
     approvalMode: "ask",
     showAgentSuggestions: true,
     anthropicApiKey: "",
+    inferenceProvider: "plow",
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };

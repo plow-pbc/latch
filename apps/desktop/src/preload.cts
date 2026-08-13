@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld("domo", {
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
+  // Availability booleans and the active model — never a credential.
+  inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
+  inferenceSet: (provider: string) => ipcRenderer.invoke("settings:setInference", provider),
   reviewerInfoGet: () => ipcRenderer.invoke("settings:getReviewerInfo"),
   statusGet: () => ipcRenderer.invoke("status:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),

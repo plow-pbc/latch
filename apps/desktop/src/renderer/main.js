@@ -449,15 +449,26 @@ async function renderSettings() {
     restoreNote.textContent = "Default goals restored.";
   });
 
-  // Anthropic API key — gates the adversarial-agent features.
+  // Anthropic API key — one of the two ways to power the adversarial agent.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
-  const reviewerInfo = await window.domo.reviewerInfoGet();
+
+  // Which backend runs the reviewer. `inference` carries availability booleans
+  // and the active model — never a credential.
+  let inference = await window.domo.inferenceGet();
+  const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
+  const providerChips = el("div", { class: "chips" });
+  const PROVIDERS = [
+    ["plow", "Plow account", () => inference.plowAvailable],
+    ["anthropic", "Anthropic API key", () => inference.anthropicAvailable],
+  ];
 
   // Approval mode for operations.
   let currentMode = await window.domo.approvalModeGet();
   const showSuggestions = await window.domo.showSuggestionsGet();
-  let hasKey = !!apiKeyInput.value.trim();
+  // Adversarial mode needs a credential for the ACTIVE provider — a pasted
+  // Anthropic key does not enable it while Plow is selected, and vice versa.
+  let hasKey = inference.provider === "plow" ? inference.plowAvailable : inference.anthropicAvailable;
   const modeChips = el("div", { class: "chips" });
   const MODES = [
     ["approve", "Approve"],
@@ -499,18 +510,57 @@ async function renderSettings() {
     suggestLabel.classList.toggle("disabled", !on);
   };
 
-  apiKeyInput.addEventListener("input", async () => {
-    hasKey = !!apiKeyInput.value.trim();
-    // If the key is removed while Adversarial mode is active, fall back to Ask.
+  // A provider with no credential is disabled and cannot be selected; the main
+  // process enforces the same rule, this only keeps the UI honest.
+  const renderProviderChips = () => {
+    reviewerNote.textContent = `Reviewer: ${inference.info}`;
+    providerChips.replaceChildren(...PROVIDERS.map(([value, label, available]) => {
+      const disabled = !available();
+      const chip = el("span", {
+        class:
+          "chip" +
+          (inference.provider === value ? " active" : "") +
+          (disabled ? " disabled" : ""),
+      }, [el("span", { text: label })]);
+      if (!disabled && inference.provider !== value) {
+        chip.addEventListener("click", async () => {
+          inference = await window.domo.inferenceSet(value);
+          await syncReviewerAvailability();
+        });
+      }
+      return chip;
+    }));
+  };
+
+  // Anything that can change which credential the reviewer needs re-reads the
+  // status from main and re-applies the interlock.
+  const syncReviewerAvailability = async () => {
+    hasKey =
+      inference.provider === "plow" ? inference.plowAvailable : inference.anthropicAvailable;
+    // If the active provider has no credential while Adversarial mode is on,
+    // fall back to Ask — main does this too, so mirror its answer.
     if (!hasKey && currentMode === "adversarial") {
       currentMode = "ask";
       await window.domo.approvalModeSet("ask");
     }
+    renderProviderChips();
     renderModeChips();
     updateSuggestEnabled();
-  });
-  apiKeyInput.addEventListener("change", () => window.domo.apiKeySet(apiKeyInput.value.trim()));
+  };
 
+  apiKeyInput.addEventListener("input", async () => {
+    // Typing a key can make the Anthropic provider selectable; it does not make
+    // it active, so availability comes back from main rather than being assumed.
+    inference = { ...inference, anthropicAvailable: !!apiKeyInput.value.trim() };
+    await syncReviewerAvailability();
+  });
+  apiKeyInput.addEventListener("change", async () => {
+    await window.domo.apiKeySet(apiKeyInput.value.trim());
+    inference = await window.domo.inferenceGet();
+    await syncReviewerAvailability();
+  });
+
+  renderProviderChips();
   renderModeChips();
   updateSuggestEnabled();
 
@@ -528,9 +578,12 @@ async function renderSettings() {
       ...accountRows,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
     ]),
-    group("Anthropic API key", "Required for the Adversarial Agent features. Stored locally.", [
+    group("Reviewer inference", "Which account pays for the Adversarial Agent's model calls.", [
+      providerChips,
+      reviewerNote,
+    ]),
+    group("Anthropic API key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
       apiKeyInput,
-      el("p", { class: "faint reviewer-note", text: `Reviewer: ${reviewerInfo}` }),
     ]),
     group("Approval mode", "How operations are decided.", [
       modeChips,
