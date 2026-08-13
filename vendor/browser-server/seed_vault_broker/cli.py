@@ -669,9 +669,19 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
     # With a page given: a login is refused off its own site. A card has no URL to
     # match -- it is meant to work at any merchant -- so it is released and logged
     # instead of blocked.
+    #
+    # An item carrying no site at all is refused outright: there is nothing to
+    # match the page against, and treating "no sites" as "every site" hands the
+    # password to whatever page happens to be open.
     if page and item.get("category") != "CREDIT_CARD":
         keys = _item_host_keys(item)
-        if keys and page not in keys:
+        if not keys:
+            _audit(args.item_id, args.field, page, "DENIED no site on item")
+            return _emit_error(
+                _ERR_VAULT_DENIED,
+                "item is not tied to any site, so it cannot be released on %s" % page,
+            )
+        if page not in keys:
             _audit(args.item_id, args.field, page, "DENIED origin mismatch")
             return _emit_error(
                 _ERR_VAULT_DENIED,
