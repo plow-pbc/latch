@@ -236,6 +236,23 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
     });
   });
 
+  it("a TRUNCATED key fragment is discarded too", async () => {
+    // `sk-ant-api03-` is 13 characters of public format; a 20-character head
+    // therefore carries 7 characters of the secret tail. A fragment that long
+    // is a leak, and whole-key-only matching let it through.
+    const key = "sk-ant-api03-SECRETTAILabcdefghijklmnop0123456789";
+    const fragment = key.slice(0, 20);
+    createImpl = async () => verdictResponse("deny", `your key starts ${fragment}`);
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "anthropic",
+      apiKey: key,
+    });
+    await failsClosed(result);
+    expect(JSON.stringify(result)).not.toContain(fragment);
+  });
+
   it("a schema-valid verdict that repeats the API key is discarded whole", async () => {
     // The same defect as on the Plow path: the answer body is where a secret we
     // sent can come back, and `reason` is persisted to audit.ndjson and drawn in

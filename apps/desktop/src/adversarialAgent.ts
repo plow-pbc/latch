@@ -125,12 +125,24 @@ function buildPrompt(intent: Intent, history: JSONValue[]): string {
  * token, because a partial echo is still an echo — ten characters is what V8
  * quotes when it reports offending input.
  *
- * It is opt-in per provider, and that matters: a head is only evidence of a
- * leak when the head is itself secret. Anthropic keys all begin `sk-ant-api`,
- * which is public format, not a token — matching on it discarded any verdict
- * whose reason merely DESCRIBED a key, and downgraded a real allow/deny to
- * `ask`. So that branch matches the whole key and nothing shorter.
+ * It is opt-in per provider, and the LENGTH is the whole argument: a head is
+ * evidence of a leak only once it reaches past the public part of the token.
+ *
+ *   - Plow credentials are opaque, so ten characters already carry entropy.
+ *   - Anthropic keys begin `sk-ant-api03-` — thirteen characters of published
+ *     format that say nothing secret. Matching ten discarded any verdict whose
+ *     reason merely DESCRIBED a key and downgraded a real allow/deny to `ask`;
+ *     matching only the whole key let a truncated fragment through into
+ *     audit.ndjson and the activity view. Twenty is past the prefix by seven
+ *     characters of the secret tail, which is a leak either way you read it.
  */
+/**
+ * `sk-ant-api03-` is 13 characters of public format; 20 reaches 7 characters
+ * into the secret tail. Long enough that a match means a leak, short enough to
+ * catch a truncation.
+ */
+const ANTHROPIC_SECRET_HEAD = 20;
+
 function echoesSecret(text: string, secret: string, headLength = 0): boolean {
   const trimmed = secret.trim();
   if (trimmed.length < 10) return false;
@@ -229,7 +241,7 @@ function anthropicProvider(apiKey: string): ProviderCall {
     if (!textBlock || textBlock.type !== "text") {
       return { ok: false, reason: "reviewer returned no verdict" };
     }
-    if (echoesSecret(textBlock.text, apiKey)) {
+    if (echoesSecret(textBlock.text, apiKey, ANTHROPIC_SECRET_HEAD)) {
       return { ok: false, reason: "reviewer answer discarded: it repeated a credential" };
     }
     return { ok: true, text: textBlock.text };

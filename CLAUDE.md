@@ -37,11 +37,13 @@ against a stand-in speaking the same wire contract, and has never run against
 the real thing.
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
-  log.** It rides in exactly two places: the post-challenge `auth` frame, and the
-  `Authorization` header of the reviewer's Plow inference calls. A response that
-  repeats it back is discarded before it is parsed, so it cannot return by way of
-  a verdict. `settings.json` holds it and is written `0600`; the renderer is
-  never given it.
+  log.** Two transports carry it, and no third kind: the relay socket's
+  post-challenge `auth` frame, and the `Authorization` header of an
+  authenticated Plow API call — today agent creation and reviewer inference,
+  and anything else added the same way. A response that repeats it back is
+  discarded before it is parsed, so it cannot return by way of a verdict.
+  `settings.json` holds it and is written `0600`; the renderer is never given
+  it.
 
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`
