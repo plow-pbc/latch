@@ -24,10 +24,74 @@ import {
   CredentialSourceSwitch,
 } from "@domo/device-core";
 import { JSONValue } from "@domo/protocol";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 export interface ApwWarmup {
   host: string;
   username: string;
+}
+
+/** What apw needs on this Mac before it can run (see vendor/apw/UPSTREAM.md). */
+export interface ApwPrereqs {
+  /** Display name of the first supported Chromium-family browser found. */
+  browser: string | null;
+  /** That browser's .app name (e.g. "Brave Browser") — what `open -a` takes,
+   * so the extension's Web Store page opens IN that browser, where the
+   * install actually has to happen, not in the user's default browser. */
+  browserApp: string | null;
+  /** Apple's iCloud Passwords extension is available — installed in a browser
+   * profile, or already cached by apw (~/.apw/extension survives removal). */
+  extensionInstalled: boolean;
+}
+
+/** The Chrome Web Store page for Apple's iCloud Passwords extension. */
+export const ICLOUD_PASSWORDS_EXTENSION_URL =
+  "https://chromewebstore.google.com/detail/icloud-passwords/pejdijmoenmkgeppbflobdenhhabjlaj";
+export const CHROME_DOWNLOAD_URL = "https://www.google.com/chrome/";
+
+const EXTENSION_ID = "pejdijmoenmkgeppbflobdenhhabjlaj";
+
+/** Mirrors apw's supported-browser list (upstream src/browser.ts). */
+const APW_BROWSERS = [
+  { name: "Ungoogled Chromium", app: "Chromium", data: "Chromium" },
+  { name: "Microsoft Edge", app: "Microsoft Edge", data: "Microsoft Edge" },
+  { name: "Brave", app: "Brave Browser", data: "BraveSoftware/Brave-Browser" },
+  { name: "Google Chrome", app: "Google Chrome", data: "Google/Chrome" },
+];
+
+/** Detect apw's prerequisites the same way apw itself looks for them, so the
+ * Settings UI can explain exactly what's missing instead of relaying apw's
+ * error strings. Roots are injectable for tests. */
+export function checkApwPrereqs(
+  roots: { applicationsDir?: string; appSupportDir?: string; apwDataDir?: string } = {},
+): ApwPrereqs {
+  const applications = roots.applicationsDir ?? "/Applications";
+  const appSupport = roots.appSupportDir ?? path.join(os.homedir(), "Library/Application Support");
+  const apwData = roots.apwDataDir ?? path.join(os.homedir(), ".apw");
+
+  const found = APW_BROWSERS.find((b) => fs.existsSync(path.join(applications, `${b.app}.app`)));
+  const browser = found?.name ?? null;
+  const browserApp = found?.app ?? null;
+
+  // apw copies the extension out of a browser profile ONCE and then runs from
+  // its own cache — either location satisfies the prerequisite.
+  let extensionInstalled = fs.existsSync(path.join(apwData, "extension", "background.js.orig"));
+  for (const b of APW_BROWSERS) {
+    if (extensionInstalled) break;
+    const dataPath = path.join(appSupport, b.data);
+    let profiles: string[] = [];
+    try {
+      profiles = fs.readdirSync(dataPath);
+    } catch {
+      continue;
+    }
+    extensionInstalled = profiles.some((p) =>
+      fs.existsSync(path.join(dataPath, p, "Extensions", EXTENSION_ID)),
+    );
+  }
+  return { browser, browserApp, extensionInstalled };
 }
 
 export interface ApplePasswordsView {
@@ -39,6 +103,9 @@ export interface ApplePasswordsView {
   /** True when the user dismissed the PIN banner: still unpaired (state stays
    * awaiting-pin), banner hidden, Settings offers to pair again. */
   dismissed: boolean;
+  /** What apw needs on this Mac — lets Settings explain a missing browser or
+   * extension precisely, with install links, instead of a raw apw error. */
+  prereqs: ApwPrereqs;
 }
 
 export interface ApplePasswordsOptions {
@@ -59,6 +126,8 @@ export interface ApplePasswordsOptions {
   audit?: (event: string, fields: { [k: string]: JSONValue }) => void;
   /** Fired on every pairing-state change (push to the renderer). */
   onChange?: () => void;
+  /** Test seam: prerequisite detection (defaults to the real filesystem). */
+  prereqs?: () => ApwPrereqs;
   /** Test seams: apw daemon start timeout + pairing timing tuning. */
   startTimeoutMs?: number;
   startSettleMs?: number;
@@ -121,6 +190,7 @@ export class ApplePasswords {
           ? WARMUP_DETAIL[this.warmupState]
           : status.detail,
       dismissed: this.pinDismissed,
+      prereqs: (this.opts.prereqs ?? checkApwPrereqs)(),
     };
   }
 

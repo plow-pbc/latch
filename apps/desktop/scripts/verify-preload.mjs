@@ -37,6 +37,7 @@ ipcMain.handle("applePasswords:get", async () => ({
   state: "awaiting-pin",
   detail: "Enter the PIN shown by macOS",
   dismissed: false,
+  prereqs: { browser: "Google Chrome", browserApp: "Google Chrome", extensionInstalled: true },
 }));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getApiKey", async () => "");

@@ -612,10 +612,33 @@ async function applePasswordsGroup() {
       } else if (ap.state === "error") {
         const retry = el("button", { class: "btn", text: "Retry" });
         retry.addEventListener("click", async () => { await window.domo.applePasswordsSetEnabled(true); render(); });
-        rows.push(
-          el("p", { class: "faint", text: ap.detail || "Apple Passwords helper failed to start." }),
-          el("div", { class: "row" }, [retry]),
-        );
+        const buttons = [];
+        if (!ap.prereqs.browser) {
+          // No Chromium-family browser at all — the extension can't even be
+          // installed until one exists.
+          rows.push(el("p", { class: "faint", text:
+            "Apple Passwords is read through Apple's own iCloud Passwords browser extension, " +
+            "which needs a Chromium-family browser (Chrome, Brave, Edge, or Chromium) to run in. " +
+            "Install one, then install the extension in it — Domo runs a hidden copy; you never " +
+            "use it there, and you can remove it from the browser after the first pairing." }));
+          const getChrome = el("button", { class: "btn primary", text: "Get Google Chrome" });
+          getChrome.addEventListener("click", () => window.domo.applePasswordsOpenChromePage());
+          const getExt = el("button", { class: "btn", text: "Get the Extension" });
+          getExt.addEventListener("click", () => window.domo.applePasswordsOpenExtensionPage());
+          buttons.push(getChrome, getExt);
+        } else if (!ap.prereqs.extensionInstalled) {
+          rows.push(el("p", { class: "faint", text:
+            "Apple Passwords is read through Apple's own iCloud Passwords extension — Domo runs a " +
+            `hidden copy of it to talk to macOS securely. Install it once in ${ap.prereqs.browser} ` +
+            "from the Chrome Web Store; no setup or sign-in needed there, and it's safe to remove " +
+            "from the browser after the first pairing." }));
+          const getExt = el("button", { class: "btn primary", text: "Get the Extension" });
+          getExt.addEventListener("click", () => window.domo.applePasswordsOpenExtensionPage());
+          buttons.push(getExt);
+        } else {
+          rows.push(el("p", { class: "faint", text: ap.detail || "Apple Passwords helper failed to start." }));
+        }
+        rows.push(el("div", { class: "row" }, [...buttons, retry]));
       }
     }
     box.replaceChildren(...rows);

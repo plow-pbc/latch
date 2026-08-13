@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("domo", {
   applePasswordsRequestPin: () => ipcRenderer.invoke("applePasswords:requestPin"),
   applePasswordsDismissPin: () => ipcRenderer.invoke("applePasswords:dismissPin"),
   applePasswordsRestartPairing: () => ipcRenderer.invoke("applePasswords:restartPairing"),
+  // Prerequisite install pages — main opens pinned URLs; nothing comes from here.
+  applePasswordsOpenExtensionPage: () => ipcRenderer.invoke("applePasswords:openExtensionPage"),
+  applePasswordsOpenChromePage: () => ipcRenderer.invoke("applePasswords:openChromePage"),
   applePasswordsSubmitPin: (pin: string) => ipcRenderer.invoke("applePasswords:submitPin", pin),
   onApplePasswordsChanged: (cb: () => void) => ipcRenderer.on("applePasswords:changed", cb),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),

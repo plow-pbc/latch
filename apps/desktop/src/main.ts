@@ -13,6 +13,7 @@
  *     is derived from — not the goal text.
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -30,7 +31,11 @@ import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
-import { ApplePasswords } from "./applePasswords.js";
+import {
+  ApplePasswords,
+  CHROME_DOWNLOAD_URL,
+  ICLOUD_PASSWORDS_EXTENSION_URL,
+} from "./applePasswords.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
@@ -490,6 +495,31 @@ ipcMain.handle("applePasswords:dismissPin", async () => {
 ipcMain.handle("applePasswords:restartPairing", async () => {
   await applePasswords?.restartPairing();
   return applePasswords?.view() ?? null;
+});
+// Install links for apw's prerequisites. Main composes the URLs from pinned
+// constants — like the onboarding `sms:` link, the renderer never supplies a
+// URL to open, so external opens stay limited to app-chosen destinations.
+ipcMain.handle("applePasswords:openExtensionPage", async () => {
+  // The Web Store install must happen INSIDE the Chromium browser apw will
+  // drive, so open the page there (`open -a`), not in the default browser.
+  // Fall back to the default browser only when targeting fails.
+  const browserApp = applePasswords?.view().prereqs.browserApp;
+  if (browserApp) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile("open", ["-a", browserApp, ICLOUD_PASSWORDS_EXTENSION_URL], (error) =>
+          error ? reject(error) : resolve(),
+        );
+      });
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  await shell.openExternal(ICLOUD_PASSWORDS_EXTENSION_URL);
+});
+ipcMain.handle("applePasswords:openChromePage", async () => {
+  await shell.openExternal(CHROME_DOWNLOAD_URL);
 });
 ipcMain.handle("applePasswords:submitPin", async (_e, pin: string) => {
   const ok = (await applePasswords?.submitPin(String(pin))) ?? false;
