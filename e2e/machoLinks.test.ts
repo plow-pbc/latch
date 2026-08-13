@@ -38,12 +38,12 @@ const RELATIVE = `Python.framework/Versions/3.12/lib/libpython3.12.dylib:
 
 describe("what otool -L says a binary needs", () => {
   it.each([
-    ["needs only the OS", OS_ONLY, []],
-    ["the Homebrew dylib that would have shipped", BREWED, [
+    ["passes a binary that needs only the OS", OS_ONLY, []],
+    ["catches the Homebrew dylib that would have shipped", BREWED, [
       "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
     ]],
-    ["a fat binary's own slice headers", FAT, []],
-    ["loader-relative references, which resolve inside the bundle", RELATIVE, []],
+    ["ignores a fat binary's own slice headers", FAT, []],
+    ["treats loader-relative references as resolved, not missing", RELATIVE, []],
   ])("%s", (_what, output, foreign) => {
     expect(foreignLinks(output)).toEqual(foreign);
   });
