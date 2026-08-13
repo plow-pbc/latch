@@ -633,18 +633,18 @@ describe("the Plow provider", () => {
         });
       }
 
+      // Only arrangements that actually CARRY the credential. The plain status
+      // codes and the not-JSON body live in the fail-closed matrix below, which
+      // is where their reason text is asserted; repeating them here asserted the
+      // absence of a token that was never in the fixture to begin with.
       const failures: (() => void)[] = [
-        () => fetchMock.mockResolvedValue(plowError(402)),
-        () => fetchMock.mockResolvedValue(plowError(400)),
-        () => fetchMock.mockResolvedValue(plowError(502)),
-        () => fetchMock.mockResolvedValue(plowError(418)),
         // A transport error whose message embeds the whole request — the shape
-        // a naive `${error}` would leak.
+        // a naive `${error}` would leak. It reaches this provider through
+        // `PlowApi`, which writes its own message, so this pins the pair.
         () =>
           fetchMock.mockRejectedValue(
             new Error(`connect ECONNREFUSED (authorization: Bearer ${PLOW_CREDENTIAL})`),
           ),
-        () => fetchMock.mockResolvedValue(plowResponse("not json at all")),
         // The JSON.parse path specifically. V8 embeds the offending input in
         // its message — truncated to ten characters, so what escapes is a
         // credential PREFIX rather than the whole token (and a shorter token
@@ -723,40 +723,17 @@ describe("the Plow provider", () => {
 
 
 
-    it("400 names the model the SERVER rejected, not the one we meant to send", async () => {
-      // The bug this pins: the reason was built from our own constant, so when
-      // the server refused a different id — the case where the human most needs
-      // the truth — it confidently named the wrong model.
-      fetchMock.mockResolvedValue(
-        plowDetail(400, "Model 'anthropic/claude-nonexistent-9-9' is not allowed"),
-      );
-      const result = await plowReview();
-      failsClosed(result);
-      expect(result.reason).toMatch(/reject/i);
-      expect(result.reason).toContain("anthropic/claude-nonexistent-9-9");
-      // Specifically NOT the model we shipped.
-      expect(result.reason).not.toContain("claude-sonnet-4-6");
-    });
-
-    it("400 still says it was the model, when the body does not name one", async () => {
-      fetchMock.mockResolvedValue(plowError(400));
-      const result = await plowReview();
-      failsClosed(result);
-      expect(result.reason).toMatch(/reject/i);
-      expect(result.reason).toContain("model");
-    });
-
-    it("400 quotes nothing but a model-shaped id", async () => {
-      // The body is upstream text. Only an id matching the documented shape and
-      // a conservative charset is repeated; anything else gets the generic
-      // reason rather than being echoed into the UI.
+    it("400 says it was the model, and quotes nothing from the body", async () => {
+      // The body is upstream text we do not control. An earlier version lifted
+      // the rejected model id out of it behind a charset allowlist; a fixed
+      // string needs no allowlist to be safe, and the id is recoverable from
+      // the request we sent.
       for (const detail of [
-        "Model 'a b; DROP TABLE' is not allowed", // spaces
-        "Model '<script>alert(1)</script>' is not allowed", // markup
-        `Model '${PLOW_CREDENTIAL}' is not allowed`, // credential-shaped
-        `Model '${"x".repeat(200)}' is not allowed`, // unbounded
+        "Model 'anthropic/claude-nonexistent-9-9' is not allowed",
+        "Model 'a b; DROP TABLE' is not allowed",
+        "Model '<script>alert(1)</script>' is not allowed",
+        `Model '${PLOW_CREDENTIAL}' is not allowed`,
         "Something else entirely went wrong",
-        "Model 'anthropic/claude-sonnet-4-6' is not allowed; extra trailing prose",
       ]) {
         fetchMock.mockResolvedValue(plowDetail(400, detail));
         const result = await plowReview();

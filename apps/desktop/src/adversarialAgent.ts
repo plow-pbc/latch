@@ -267,44 +267,20 @@ function anthropicCall(apiKey: string): ProviderCall {
 }
 
 /**
- * A model id we are willing to repeat back to the human: the character set real
- * ids use, and short. Everything else in an error body stays unquoted.
- *
- * Note what this excludes — spaces, quotes, and `_`. Plow credentials are
- * `plow_sk_…`, so a body crafted to smuggle one through the pattern below fails
- * the charset and falls back to the generic reason.
- */
-const QUOTABLE_MODEL_ID = /^[A-Za-z0-9./-]{1,64}$/;
-
-/**
- * The model id the server said it rejected — if the body says so in the shape
- * it documents (`{"detail": "Model 'x' is not allowed"}`) and the id is safe to
- * repeat. Null for anything else.
- */
-function rejectedModelId(body: unknown): string | null {
-  const detail = (body as { detail?: unknown } | null)?.detail;
-  if (typeof detail !== "string") return null;
-  const id = /^Model '([^']*)' is not allowed$/.exec(detail)?.[1];
-  return id && QUOTABLE_MODEL_ID.test(id) ? id : null;
-}
-
-/**
  * Map a Plow HTTP failure onto a reason a human can act on.
  *
- * The status code and fixed text, plus — for a 400 only — the rejected model id
- * lifted out of the body under the strict pattern above. Nothing else from the
- * body is ever quoted: it is upstream text we do not control.
+ * The status code and fixed text, and nothing else. An earlier version lifted
+ * the rejected model id out of the body so the message could name what the
+ * SERVER refused rather than what we meant to send — genuinely more useful, and
+ * it needed a parser plus a charset allowlist to keep a hostile body out of a
+ * string the human reads. The body is upstream text we do not control, and a
+ * fixed string needs no allowlist to be safe. The id is recoverable from the
+ * request we sent; the parser was not worth its own attack surface.
  */
-function plowHttpReason(status: number, body: unknown = null): string {
+function plowHttpReason(status: number): string {
   if (status === 402) return "insufficient Plow balance";
-  // 400 from this endpoint is the allowlist refusing a model. Name the model the
-  // SERVER rejected, read from its answer — naming the constant we meant to send
-  // reports the wrong id the moment the two disagree, which is precisely the
-  // case where the human needs the truth.
-  if (status === 400) {
-    const rejected = rejectedModelId(body);
-    return rejected ? `Plow rejected the model ${rejected}` : "Plow rejected the request's model";
-  }
+  // 400 from this endpoint is the allowlist refusing a model.
+  if (status === 400) return "Plow rejected the request's model";
   // The API masks provider 401/403/408 behind an opaque 502. It specifically
   // does NOT mean "these credentials are wrong" — do not send anyone to
   // re-authenticate over it.
@@ -355,10 +331,8 @@ function plowCall(credential: string, apiBaseUrl: string): ProviderCall {
       return { ok: false, reason: "could not reach Plow" };
     }
 
-    // A 400 carries which model was refused; the mapping reads it so the reason
-    // can name the server's answer rather than our intention.
     if (status < 200 || status >= 300) {
-      return { ok: false, reason: plowHttpReason(status, body) };
+      return { ok: false, reason: plowHttpReason(status) };
     }
 
     const content = (body as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]

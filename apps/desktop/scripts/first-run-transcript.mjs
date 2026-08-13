@@ -217,8 +217,6 @@ const deps = (over = {}) => ({
   home,
   startRelay,
   isConnected: () => connected,
-  // No shutdown to defer here: this script runs to completion and exits.
-  critical: (work) => work,
   deviceName: "Domo Desktop (transcript)",
   now: () => nowMs,
   wait: async (ms) => {

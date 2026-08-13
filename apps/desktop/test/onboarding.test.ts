@@ -62,13 +62,6 @@ class FakePlow {
     return OTP_TOKEN;
   }
 
-  /** Credentials handed back with `/self/revoke`. */
-  revoked: string[] = [];
-
-  async revokeDeviceCredential(token: string): Promise<void> {
-    this.revoked.push(token);
-  }
-
   async relayInfo(token: string) {
     // The login session, whichever path minted it — never the device credential.
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
@@ -108,8 +101,6 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
       plow.connected = true;
     },
     isConnected: () => plow.connected,
-    // Identity by default; the tests that care pass their own and watch it.
-    critical: (work) => work,
     deviceName: "Domo Desktop (test)",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
