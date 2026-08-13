@@ -40,10 +40,13 @@ the real thing.
   log.** Two transports carry it, and no third kind: the relay socket's
   post-challenge `auth` frame, and the `Authorization` header of an
   authenticated Plow API call — today agent creation and reviewer inference,
-  and anything else added the same way. A response that repeats it back is
-  discarded before it is parsed, so it cannot return by way of a verdict.
-  `settings.json` holds it and is written `0600`; the renderer is never given
-  it.
+  and anything else added the same way. **A response that repeats it back never
+  becomes a verdict, an audit record, or anything the renderer is shown — in any
+  encoding.** That is the guarantee; the means is a check on the decoded
+  `reason` after the single parse, and the means has changed three times.
+  Describe the guarantee here and leave the mechanism to the code, or this line
+  goes stale again the next time it moves. `settings.json` holds it and is
+  written `0600`; the renderer is never given it.
 
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`
