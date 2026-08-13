@@ -7,6 +7,7 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   Onboarding,
+  OnboardingDeps,
   agentConfig,
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
@@ -98,7 +99,7 @@ let waits: number[];
 /** How many times the instance told the window to re-read. */
 let changes: number;
 
-function build(): Onboarding {
+function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
   return new Onboarding({
     api: plow.api(),
     home,
@@ -120,6 +121,7 @@ function build(): Onboarding {
       changes += 1;
     },
     warn: (m) => warnings.push(m),
+    ...extra,
   });
 }
 
@@ -759,7 +761,10 @@ describe("signing out", () => {
  */
 describe("a sign-out during finishWithSession", () => {
   /** Sign in, then park inside `finishWithSession` at the named call. */
-  async function parkedInside(where: "relayInfo" | "mintDeviceCredential") {
+  async function parkedInside(
+    where: "relayInfo" | "mintDeviceCredential",
+    critical?: <T>(work: Promise<T>) => Promise<T>,
+  ) {
     let release = () => {};
     const onTheWire = new Promise<void>((r) => {
       release = () => r();
@@ -781,45 +786,201 @@ describe("a sign-out during finishWithSession", () => {
     // Verified once — this login — then pending forever, so the fresh code the
     // sign-out mints behaves like the untexted code it is.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-    const onboarding = build();
+    const onboarding = critical ? build({ critical }) : build();
     const begun = onboarding.begin();
     await settle();
     return { onboarding, release, begun };
   }
 
-  it("yielding in relayInfo — before the mint — creates nothing at all", async () => {
-    const { onboarding, release, begun } = await parkedInside("relayInfo");
-    // Nothing has been created yet, so the cheapest exit is the right one.
+  // The two yield points, and the reason they cannot share an assertion: before
+  // the mint nothing exists yet, so the cheapest exit is right; after it a live
+  // credential does, so the exit has to hand it back.
+  const yieldPoints = [
+    { where: "relayInfo" as const, minted: 0, revoked: [] as string[] },
+    { where: "mintDeviceCredential" as const, minted: 1, revoked: [DEVICE_TOKEN] },
+  ];
+
+  for (const point of yieldPoints) {
+    it(`yielding in ${point.where} creates ${point.minted} credential(s) and hands back ${point.revoked.length}`, async () => {
+      const { onboarding, release, begun } = await parkedInside(point.where);
+      await onboarding.signedOut();
+
+      release();
+      await begun;
+      await settle();
+
+      expect(plow.minted).toHaveLength(point.minted);
+      expect(plow.revoked).toEqual(point.revoked);
+      // Never persisted, and the relay was never brought up on it.
+      expect(loadSettings(home).relayCredential).toBe("");
+      expect(loadSettings(home).accountUid).toBe("");
+      expect(onboarding.state().step).not.toBe("connected");
+    });
+  }
+
+  it("a sign-out during startRelay does not report connected over the fresh activation", async () => {
+    // The continuation AFTER the save, which I previously called safe because
+    // the save had already happened. The credential is indeed gone — the
+    // sign-out's own clear ran — but this continuation went on to set
+    // `connected` and wipe the activation `signedOut()` had just started,
+    // leaving a window claiming to be signed in with nothing behind it.
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = new Onboarding({
+      api: plow.api(),
+      home,
+      startRelay: async () => {
+        started += 1;
+        await onTheWire;
+        plow.connected = true;
+      },
+      isConnected: () => plow.connected,
+      deviceName: "Domo Desktop (test)",
+      now: () => clock,
+      wait: async (ms) => {
+        waits.push(ms);
+        clock += ms;
+      },
+      onChange: () => {
+        changes += 1;
+      },
+      warn: (m) => warnings.push(m),
+    });
+    const begun = onboarding.begin();
+    await settle();
+
+    // The user signs out while the relay is still dialling.
+    signOutOfPlow(home);
     await onboarding.signedOut();
-    const mintedBefore = plow.minted.length;
+    const freshCode = onboarding.state().activation?.displayCode;
+    expect(freshCode).toBeTruthy();
 
     release();
     await begun;
     await settle();
 
-    expect(plow.minted.length).toBe(mintedBefore);
-    expect(plow.revoked).toEqual([]); // nothing to hand back
+    expect(onboarding.state().step).not.toBe("connected");
     expect(loadSettings(home).relayCredential).toBe("");
+    // The activation the sign-out started is still the one on screen.
+    expect(onboarding.state().activation?.displayCode).toBe(freshCode);
+  });
+
+  it("a FAILING startRelay after a sign-out says nothing on the new screen", async () => {
+    // Same continuation, failure side. `run()` would have caught this and put
+    // the dial error over an activation screen the user is now looking at.
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = new Onboarding({
+      api: plow.api(),
+      home,
+      startRelay: async () => {
+        started += 1;
+        await onTheWire;
+        throw new PlowApiError("network", "Couldn't dial the relay.");
+      },
+      isConnected: () => plow.connected,
+      deviceName: "Domo Desktop (test)",
+      now: () => clock,
+      // The clock deliberately does NOT advance here: the fresh activation the
+      // sign-out starts would otherwise reach its five-minute give-up during
+      // `settle()` and overwrite the very message this test is reading.
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+      warn: (m) => warnings.push(m),
+    });
+    const begun = onboarding.begin();
+    await settle();
+
+    signOutOfPlow(home);
+    await onboarding.signedOut();
+
+    release();
+    await begun;
+    await settle();
+
+    // `run()` would have caught the rethrow and put it on the activation screen
+    // the user is now looking at.
+    expect(onboarding.state().message).not.toContain("Couldn't dial the relay");
     expect(onboarding.state().step).not.toBe("connected");
   });
 
-  it("yielding in mintDeviceCredential — after it returns — hands the credential back", async () => {
-    // The credential EXISTS on the account by now, and the sign-out's revoke
-    // went out against a different one. Returning quietly would leave the
-    // account holding a live, spend-capable credential its owner just retired.
-    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");
+  it("the mint-to-commit span is registered as critical shutdown work", async () => {
+    // A quit between the mint starting and the credential being saved or handed
+    // back is what leaves a live credential on an account nobody can revoke it
+    // from. The gate has to be holding something for that whole span.
+    const tracked: Promise<unknown>[] = [];
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    const realMint = plow.mintDeviceCredential.bind(plow);
+    plow.mintDeviceCredential = async (token: string, name: string) => {
+      await onTheWire;
+      return realMint(token, name);
+    };
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = new Onboarding({
+      api: plow.api(),
+      home,
+      startRelay: async () => {
+        started += 1;
+      },
+      critical: (work) => {
+        tracked.push(work);
+        return work;
+      },
+      isConnected: () => plow.connected,
+      deviceName: "Domo Desktop (test)",
+      now: () => clock,
+      wait: async (ms) => {
+        waits.push(ms);
+        clock += ms;
+      },
+      warn: (m) => warnings.push(m),
+    });
+    const begun = onboarding.begin();
+    await settle();
+
+    // Parked inside the mint: the span must already be registered.
+    expect(tracked).toHaveLength(1);
+    let done = false;
+    void tracked[0].then(() => {
+      done = true;
+    });
+    await settle();
+    expect(done).toBe(false); // …and still outstanding while the mint is out
+
+    release();
+    await begun;
+    await settle();
+    expect(done).toBe(true);
+    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+  });
+
+  it("the hand-back is critical shutdown work too", async () => {
+    // The cleanup half of the same lifecycle. A quit during it strands exactly
+    // the credential this exists to hand back.
+    const tracked: Promise<unknown>[] = [];
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential", (work) => {
+      tracked.push(work);
+      return work;
+    });
     await onboarding.signedOut();
 
     release();
     await begun;
     await settle();
 
-    expect(plow.minted).toHaveLength(1); // it really was minted
-    expect(plow.revoked).toEqual([DEVICE_TOKEN]); // …and handed straight back
-    // Never persisted, and the relay was never brought up on it.
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(loadSettings(home).accountUid).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
+    // The mint-to-commit span, and the hand-back that followed it.
+    expect(tracked).toHaveLength(2);
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]);
   });
 
   /**

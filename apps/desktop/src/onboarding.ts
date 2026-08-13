@@ -108,6 +108,12 @@ export interface OnboardingDeps {
   home: string;
   /** (Re)start the relay from stored settings. */
   startRelay: () => Promise<void>;
+  /**
+   * Register work a quit must not terminate in the middle of, and hand back the
+   * same promise. Injected because the gate is Electron's business; the default
+   * is the identity, so a test or a screenshot script needs no shutdown at all.
+   */
+  critical?: <T>(work: Promise<T>) => Promise<T>;
   isConnected: () => boolean;
   /** Names this Mac, both in the activation and in the user's key list. */
   deviceName: string;
@@ -597,12 +603,25 @@ export class Onboarding {
     // Nothing has been created yet, so a lost race here is a plain exit.
     if (login !== this.loginGeneration) return;
 
+    // From here a credential is about to EXIST, and a quit that lands before it
+    // is either saved or handed back leaves the account holding a live one this
+    // Mac has never heard of — unsaved, so unrevocable by anything here. The
+    // whole span is critical shutdown work, not just the request.
+    await this.critical(this.mintAndCommit(sessionToken, info, login));
+  }
+
+  /** The half of a login that can create a credential. See finishWithSession. */
+  private async mintAndCommit(
+    sessionToken: string,
+    info: { uid: string; mcpUrl: string },
+    login: number,
+  ): Promise<void> {
     const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
-    // …and again the instant the mint returns. This exit CANNOT just return:
-    // the credential now exists on the account, and the sign-out that beat us
-    // to it revoked a different one. Persisting it would leave the account
-    // holding a live, spend-capable credential its owner had just retired, so
-    // it is handed back instead.
+    // Checked the instant the mint returns. This exit CANNOT just return: the
+    // credential now exists on the account, and the sign-out that beat us to it
+    // revoked a different one. Persisting it would leave the account holding a
+    // live, spend-capable credential its owner had just retired, so it is
+    // handed back instead.
     if (login !== this.loginGeneration) {
       this.discardLostCredential(minted.token);
       return;
@@ -619,7 +638,21 @@ export class Onboarding {
     settings.mcpUrl = info.mcpUrl;
     this.save(settings);
 
-    await this.deps.startRelay();
+    try {
+      await this.deps.startRelay();
+    } catch (error) {
+      // The FAILURE continuation is generation-aware too. A sign-out during the
+      // dial means this message would land on a screen the user has already
+      // left — and `run()` would put it there, over the fresh activation.
+      if (login !== this.loginGeneration) return;
+      throw error;
+    }
+    // …and the success continuation, which is the one that actually did damage:
+    // it reported `connected` and cleared the activation the sign-out had just
+    // started, leaving a window claiming to be signed in with no credential
+    // behind it. The save above is not undone here because the sign-out's own
+    // clear already ran — this state is all that is left to get wrong.
+    if (login !== this.loginGeneration) return;
 
     // The activation is spent: drop the code and the secret rather than leave
     // either sitting in memory or on a screen behind this one.
@@ -632,6 +665,11 @@ export class Onboarding {
     this.message = "";
   }
 
+  /** Work a quit must not cut in half. Identity when nothing is tracking. */
+  private critical<T>(work: Promise<T>): Promise<T> {
+    return this.deps.critical ? this.deps.critical(work) : work;
+  }
+
   /**
    * Hand back a credential minted into a race we lost.
    *
@@ -642,7 +680,10 @@ export class Onboarding {
    * best-effort is strictly better and never worse.
    */
   private discardLostCredential(token: string): void {
-    void this.deps.api.revokeDeviceCredential(token).catch(() => {});
+    // Tracked, but still not awaited: a quit must wait for the hand-back to
+    // land — it is the only thing standing between the account and a live
+    // credential nobody knows about — while the login it belonged to must not.
+    void this.critical(this.deps.api.revokeDeviceCredential(token)).catch(() => {});
   }
 
   // MARK: plumbing

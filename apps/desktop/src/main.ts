@@ -443,6 +443,10 @@ app.whenReady().then(async () => {
     api: new PlowApi(apiBaseUrl),
     home,
     startRelay,
+    // A login mints a credential; a quit between that mint and the moment it is
+    // saved or handed back would strand a live one on the account. Same gate
+    // the sign-out revoke uses, and the two can overlap.
+    critical: (work) => shutdown.track(work),
     isConnected: () => connected,
     deviceName: `Domo Desktop (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),

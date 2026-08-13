@@ -13,11 +13,14 @@
  * there is a guard nothing can execute. `main.ts` keeps the `before-quit`
  * registration and delegates the decision here.
  *
- * **One revoke at a time, not a queue.** Sign-out clears the stored credential
- * synchronously, before its first `await`, so the next sign-out reads an empty
- * credential and starts nothing: a second revoke cannot overlap the first
- * without a full re-login in between. A set, a drain and a result code were all
- * generality for a case sign-out cannot produce.
+ * **Two kinds of work, not a queue.** Sign-out clears the stored credential
+ * synchronously, so a second sign-out revoke cannot overlap the first. What
+ * can overlap it is a LOGIN finishing in the other window: `finishWithSession`
+ * mints a credential, and a quit between that mint and the moment it is either
+ * saved or handed back leaves the account holding a live one the app has never
+ * heard of. So this holds a set — and nothing more than a set. The drain, the
+ * result code and the multi-work API the earlier collapse removed are still
+ * gone; what came back is only the ability to be waiting on two things.
  */
 
 /**
@@ -50,8 +53,18 @@ export const REVOKE_QUIT_GRACE_MS = 2_000;
  * is a courtesy.
  */
 export class ShutdownGate {
-  /** A settled-tracking copy of the outstanding revoke, never the caller's. */
-  private outstanding: Promise<void> | null = null;
+  /**
+   * Settled-tracking copies of the outstanding work, never the callers'.
+   *
+   * A set rather than a single slot, and that is the ONLY generality here. Two
+   * kinds of work can genuinely overlap — a Settings sign-out revoke and a
+   * login's mint-to-cleanup span, which belong to different windows and neither
+   * of which waits for the other — so a single slot silently dropped one of
+   * them. Everything else the earlier collapse removed stays removed: there is
+   * no `pending`, no `drain`, no result code, and no way to ask this anything
+   * except the one question `before-quit` needs answered.
+   */
+  private readonly outstanding = new Set<Promise<void>>();
 
   /**
    * Register the revoke and hand back the SAME promise, so the caller can wrap
@@ -67,10 +80,8 @@ export class ShutdownGate {
       () => {},
       () => {},
     );
-    this.outstanding = settled;
-    void settled.then(() => {
-      if (this.outstanding === settled) this.outstanding = null;
-    });
+    this.outstanding.add(settled);
+    void settled.then(() => this.outstanding.delete(settled));
     return work;
   }
 
@@ -84,13 +95,15 @@ export class ShutdownGate {
    * overwhelmingly common one and must not pay for this at all.
    */
   deferQuit(quit: () => void): boolean {
-    const outstanding = this.outstanding;
-    if (!outstanding) return false;
+    if (this.outstanding.size === 0) return false;
+    // Snapshotted: work registered DURING the wait is not waited on, or the
+    // bound would keep renewing itself and stop being a bound.
+    const settling = Promise.all([...this.outstanding]);
     let timer: NodeJS.Timeout | undefined;
     const bound = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, REVOKE_QUIT_GRACE_MS);
     });
-    void Promise.race([outstanding, bound]).then(() => {
+    void Promise.race([settling, bound]).then(() => {
       clearTimeout(timer);
       quit();
     });

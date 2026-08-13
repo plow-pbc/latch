@@ -66,6 +66,33 @@ describe("a quit waits for an in-flight revoke, then quits", () => {
     expect(quits).toBe(1);
   });
 
+  it("waits for BOTH when two pieces of work overlap", async () => {
+    // The one thing the single-slot version could not do. A Settings sign-out
+    // revoke and a login's mint-to-cleanup span belong to different windows and
+    // neither waits for the other; with one slot the second silently replaced
+    // the first, and a quit stopped waiting for it.
+    vi.useFakeTimers();
+    const gate = new ShutdownGate();
+    const revoke = deferred();
+    const mint = deferred();
+    gate.track(revoke.promise);
+    gate.track(mint.promise);
+
+    let quits = 0;
+    expect(gate.deferQuit(() => quits++)).toBe(true);
+
+    // The SECOND registration settles first, deliberately: a single slot drops
+    // whichever was registered earlier, and that is invisible unless the one
+    // that survived is the one that finishes first.
+    mint.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quits).toBe(0); // the revoke is still out
+
+    revoke.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quits).toBe(1);
+  });
+
   it("a FAILING revoke releases the quit like any other outcome", async () => {
     // A revoke that errors is a revoke that is over. Holding the quit for a
     // rejection would turn a network error into an app that will not close.
