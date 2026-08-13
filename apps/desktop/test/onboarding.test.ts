@@ -753,6 +753,26 @@ describe("signing out", () => {
  * differ: before the mint nothing exists yet; after it, a live credential does.
  */
 describe("a sign-out during finishWithSession", () => {
+  /**
+   * A `critical` hook that answers the question `deferQuit` asks: how many
+   * pieces of work is the gate holding right NOW. Counting registrations
+   * instead would grow with every poll and say nothing about whether a quit
+   * landing here would wait.
+   */
+  function spanWatcher() {
+    const spans: { done: boolean }[] = [];
+    const critical = <T>(work: Promise<T>): Promise<T> => {
+      const span = { done: false };
+      spans.push(span);
+      const finish = () => {
+        span.done = true;
+      };
+      void work.then(finish, finish);
+      return work;
+    };
+    return { critical, outstanding: () => spans.filter((s) => !s.done).length };
+  }
+
   /** Sign in, then park inside `finishWithSession` at the named call. */
   async function parkedInside(
     where: "relayInfo" | "mintDeviceCredential",
@@ -858,7 +878,7 @@ describe("a sign-out during finishWithSession", () => {
     // A quit between the mint starting and the credential being saved or handed
     // back is what leaves a live credential on an account nobody can revoke it
     // from. The gate has to be holding something for that whole span.
-    const tracked: Promise<unknown>[] = [];
+    const gate = spanWatcher();
     let release = () => {};
     const onTheWire = new Promise<void>((r) => {
       release = () => r();
@@ -870,27 +890,18 @@ describe("a sign-out during finishWithSession", () => {
     };
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
     const onboarding = build({
-      critical: (work) => {
-        tracked.push(work);
-        return work;
-      },
+      critical: gate.critical,
     });
     const begun = onboarding.begin();
     await settle();
 
-    // Parked inside the mint: the span must already be registered.
-    expect(tracked).toHaveLength(1);
-    let done = false;
-    void tracked[0].then(() => {
-      done = true;
-    });
-    await settle();
-    expect(done).toBe(false); // …and still outstanding while the mint is out
+    // Parked inside the mint: the gate must be holding it.
+    expect(gate.outstanding()).toBe(1);
 
     release();
     await begun;
     await settle();
-    expect(done).toBe(true);
+    expect(gate.outstanding()).toBe(0);
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
   });
 
@@ -910,16 +921,13 @@ describe("a sign-out during finishWithSession", () => {
 
   for (const outcome of handBackOutcomes) {
     it(`the hand-back is INSIDE the tracked span when it ${outcome.name}`, async () => {
-      const tracked: Promise<unknown>[] = [];
+      const gate = spanWatcher();
       let releaseRevoke = () => {};
       const revokeOnTheWire = new Promise<void>((r) => {
         releaseRevoke = () => r();
       });
       const { onboarding, release, begun } = await parkedInside("mintDeviceCredential", {
-        critical: (work) => {
-          tracked.push(work);
-          return work;
-        },
+        critical: gate.critical,
       });
       plow.revokeDeviceCredential = async (token: string) => {
         plow.revoked.push(token);
@@ -930,24 +938,17 @@ describe("a sign-out during finishWithSession", () => {
       release();
       await settle();
 
-      // ONE registration — the mint-to-commit span — and no second one to be
-      // missed by a snapshot already taken.
-      expect(tracked).toHaveLength(1);
+      // The hand-back is inside the span that minted, not a late registration
+      // a snapshot already taken would miss — so the gate is still holding
+      // exactly one thing while the revoke is on the wire.
       expect(plow.revoked).toEqual([DEVICE_TOKEN]);
-
-      // …and that one span is still outstanding while the revoke is on the wire.
-      let spanSettled = false;
-      void tracked[0].then(() => {
-        spanSettled = true;
-      });
-      await settle();
-      expect(spanSettled).toBe(false);
+      expect(gate.outstanding()).toBe(1);
 
       if (outcome.hangs) return; // the quit's bound is what ends this one
       releaseRevoke();
       await begun;
       await settle();
-      expect(spanSettled).toBe(true);
+      expect(gate.outstanding()).toBe(0);
     });
   }
 
@@ -1086,7 +1087,7 @@ describe("a sign-out during finishWithSession", () => {
 
   for (const login of abandonedLogins) {
     it(`${login.name} still mints, and hands the credential back`, async () => {
-      const tracked: Promise<unknown>[] = [];
+      const gate = spanWatcher();
       let release = () => {};
       const onTheWire = new Promise<void>((r) => {
         release = () => r();
@@ -1104,17 +1105,12 @@ describe("a sign-out during finishWithSession", () => {
           return real(token, name);
         };
       }
-      const onboarding = build({
-        critical: (work) => {
-          tracked.push(work);
-          return work;
-        },
-      });
+      const onboarding = build({ critical: gate.critical });
       const { finished } = await deliverToken(onboarding, login.arrive);
 
       // The span covers the WHOLE exchange, not just the mint — otherwise a
       // quit parked here would find an empty gate and outrun the disposal.
-      expect(tracked).toHaveLength(1);
+      expect(gate.outstanding()).toBe(1);
 
       if (login.abandon === "quit") {
         // Same tick as the latch, no await between: a latch landing a tick
@@ -1135,6 +1131,95 @@ describe("a sign-out during finishWithSession", () => {
       expect(loadSettings(home).relayCredential).toBe("");
       expect(loadSettings(home).accountUid).toBe("");
       expect(onboarding.state().step).not.toBe("connected");
+    });
+  }
+
+  // The request that CARRIES a session token, not just the disposal of one that
+  // has arrived. Registering with the gate only once the request returns leaves
+  // the token in flight over an empty gate: a quit there snapshots nothing,
+  // exits, and the session is stranded on the account with no handle left.
+
+  /** Hold one API call open, and answer it with `reply` when released. */
+  function parkOn(method: "redeemActivation" | "verifyOtp", reply: () => unknown) {
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    let calls = 0;
+    (plow as unknown as Record<string, unknown>)[method] = async (...args: unknown[]) => {
+      calls += 1;
+      if (method === "redeemActivation") plow.redeemCalls.push(String(args[0]));
+      await onTheWire;
+      return reply();
+    };
+    return { release, calls: () => calls };
+  }
+
+  const verified = () => ({ status: "verified", token: SESSION_TOKEN });
+
+  // Each returns its handles BOXED: `await` unwraps a promise-returning promise
+  // twice, which would park the test inside the very call it means to observe.
+  const tokenProducers = [
+    {
+      name: "the activation redeem",
+      start: async (onboarding: Onboarding) => {
+        const parked = parkOn("redeemActivation", verified);
+        const begun = onboarding.begin();
+        await settle();
+        return { finished: begun, parked };
+      },
+    },
+    {
+      name: "the re-poll's redeem",
+      start: async (onboarding: Onboarding) => {
+        plow.redeems = [{ status: "pending" }];
+        await onboarding.begin();
+        await settle();
+        // Parked only now, so the first code is minted normally and it is the
+        // re-poll — the one that can complete a login — left on the wire.
+        const parked = parkOn("redeemActivation", verified);
+        const asked = onboarding.newActivationCode();
+        await settle();
+        return { finished: asked, parked };
+      },
+    },
+    {
+      name: "the OTP verification",
+      start: async (onboarding: Onboarding) => {
+        onboarding.usePhoneCode();
+        await onboarding.requestCode("+15551234567");
+        const parked = parkOn("verifyOtp", () => OTP_TOKEN);
+        const submitted = onboarding.submitCode("12345678");
+        await settle();
+        return { finished: submitted, parked };
+      },
+    },
+  ];
+
+  for (const producer of tokenProducers) {
+    it(`${producer.name} is tracked while the request is still on the wire`, async () => {
+      const gate = spanWatcher();
+      const onboarding = build({ critical: gate.critical });
+      const { finished, parked } = await producer.start(onboarding);
+
+      // The token may already exist server-side; the gate must be holding this.
+      expect(parked.calls()).toBe(1);
+      expect(gate.outstanding()).toBe(1);
+
+      // Quit right here. Because the gate is holding the whole transaction, the
+      // quit waits for it instead of exiting over a live session.
+      onboarding.quitting();
+      parked.release();
+
+      await finished;
+      await settle();
+
+      // Minted — so `revoke_calling_session` fired and the session is dead —
+      // and the credential it produced was handed straight back.
+      expect(plow.minted).toHaveLength(1);
+      expect(plow.revoked).toEqual([DEVICE_TOKEN]);
+      expect(loadSettings(home).relayCredential).toBe("");
+      expect(gate.outstanding()).toBe(0);
     });
   }
 

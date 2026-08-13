@@ -18,7 +18,7 @@
  * credential shown exactly once. The activation *secret* and the device
  * credential never appear in it at all.
  */
-import { PlowApi, PlowApiError } from "./plowApi.js";
+import { ActivationRedeem, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected" | "agent";
@@ -227,7 +227,7 @@ export class Onboarding {
     const previous = this.activationSecret;
     this.cancelPolling();
     return this.run(async () => {
-      if (previous && (await this.tryFinish(previous))) return;
+      if (previous && (await this.deps.critical(this.tryFinish(previous)))) return;
       this.activation = null;
       this.activationSecret = null;
       this.activationStale = false;
@@ -277,9 +277,7 @@ export class Onboarding {
       this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
       return true;
     }
-    // Tracked from here: a quit between now and the mint would strand the
-    // session token this redeem just delivered.
-    await this.deps.critical(this.finishWithSession(result.token));
+    await this.finishWithSession(result.token);
     return true;
   }
 
@@ -332,6 +330,47 @@ export class Onboarding {
     });
   }
 
+  /**
+   * One redeem, and the login it may complete, as a single unit of work.
+   *
+   * The split matters only to the shutdown gate: everything a delivered session
+   * token needs — the request that carries it and the mint that retires it —
+   * has to sit inside ONE registration, so a quit either waits for all of it or
+   * arrives before any of it. The loop's own bookkeeping stays in the loop.
+   */
+  private async redeemAndDispose(
+    secret: string,
+  ): Promise<{ finished: true } | { finished: false; error: unknown } | { finished: false; result: ActivationRedeem }> {
+    let result;
+    try {
+      result = await this.deps.api.redeemActivation(secret);
+    } catch (error) {
+      return { finished: false, error };
+    }
+    // A verified answer is acted on even if this loop was cancelled while the
+    // call was in flight: dropping it would strand an activation the user
+    // actually completed, and the token it carries is the only handle that can
+    // retire the session. That is why a stale generation is not enough to
+    // refuse it — see the note in `finishWithSession`.
+    //
+    // What decides instead is whether this is still OUR activation.
+    // `activationSecret` is nulled by every path that abandons an activation
+    // for good — sign-out, the phone-code fallback, a completed login — and
+    // deliberately KEPT by `giveUp`, which is the case this exists for.
+    const stillOurs = secret === this.activationSecret;
+    if (
+      result.status === "verified" &&
+      result.token &&
+      stillOurs &&
+      !this.settings().relayCredential.trim()
+    ) {
+      this.cancelPolling();
+      await this.run(() => this.finishWithSession(result.token as string));
+      return { finished: true };
+    }
+    return { finished: false, result };
+  }
+
   private cancelPolling(): void {
     this.pollGeneration += 1;
   }
@@ -341,10 +380,17 @@ export class Onboarding {
       await this.wait(ACTIVATION_POLL_INTERVAL_MS);
       if (generation !== this.pollGeneration) return;
 
-      let result;
-      try {
-        result = await this.deps.api.redeemActivation(secret);
-      } catch (error) {
+      // ONE tracked transaction: the request that may deliver a session token,
+      // and the disposal of whatever it delivers. Registering only once the
+      // request RETURNS leaves the token in flight over an empty gate — a quit
+      // there snapshots nothing, exits, and the session is stranded. Two spans
+      // back to back do not fix it either: the first settles before the second
+      // registers, and a quit already waiting on the first is released by that
+      // settle with the second nowhere in its snapshot.
+      const attempt = await this.deps.critical(this.redeemAndDispose(secret));
+      if (attempt.finished) return;
+      if ("error" in attempt) {
+        const error = attempt.error;
         if (generation !== this.pollGeneration) return;
         if (error instanceof PlowApiError && error.kind === "expired") {
           // 410 only ever gates a code nobody completed — the server returns the
@@ -357,6 +403,7 @@ export class Onboarding {
         this.publish();
         continue;
       }
+      const result = attempt.result;
       // A verified answer carries the ONLY copy of the session token — the
       // server hands it to the first redeem that sees the completion and omits
       // the key entirely ever after. So it is acted on even if this loop was
@@ -376,19 +423,6 @@ export class Onboarding {
       // for good — sign-out, the phone-code fallback, a completed login — and
       // deliberately KEPT by `giveUp`, which is the case this late accept exists
       // for. So it says what "already holding a credential" was only guessing at.
-      const stillOurs = secret === this.activationSecret;
-      if (
-        result.status === "verified" &&
-        result.token &&
-        stillOurs &&
-        !this.settings().relayCredential.trim()
-      ) {
-        this.cancelPolling();
-        await this.run(() =>
-          this.deps.critical(this.finishWithSession(result.token as string)),
-        );
-        return;
-      }
       if (generation !== this.pollGeneration) return;
 
       if (result.status === "verified") {
@@ -494,7 +528,7 @@ export class Onboarding {
     if (this.codeExpiresAt !== null && this.now() > this.codeExpiresAt) {
       return this.fail("That code has expired. Send a new one.");
     }
-    return this.run(() => this.completeOtpLogin(trimmed));
+    return this.run(() => this.deps.critical(this.completeOtpLogin(trimmed)));
   }
 
   // MARK: after either path
@@ -598,7 +632,7 @@ export class Onboarding {
       }
       throw error;
     }
-    await this.deps.critical(this.finishWithSession(otpToken));
+    await this.finishWithSession(otpToken);
   }
 
   /**
