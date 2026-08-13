@@ -250,7 +250,10 @@ def main():
 
     from camoufox.sync_api import Camoufox
 
-    kwargs = {"headless": not args.headed}
+    # Always present a macOS fingerprint: this device IS a Mac, and the pin is
+    # what lets the packaged app drop Camoufox's bundled Windows/Linux spoofing
+    # fonts (~360 MB/arch) — a macOS fingerprint renders with the system fonts.
+    kwargs = {"headless": not args.headed, "os": "macos"}
     if args.executable:
         kwargs["executable_path"] = args.executable
     if args.profile_dir:

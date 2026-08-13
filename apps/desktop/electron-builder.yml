@@ -9,21 +9,33 @@ directories:
   buildResources: build
 
 # dist/ is the tsc output plus renderer assets; node_modules is collected
-# automatically from the workspace root by electron-builder.
+# automatically from the workspace root by electron-builder. The node_modules
+# ignores drop what only tooling reads (type declarations, source maps, docs);
+# LICENSE/NOTICE files are deliberately shipped — redistribution requires them.
 files:
   - dist/**/*
   - "!dist/**/*.d.ts"
   - "!dist/**/*.d.cts"
   - "!dist/**/*.map"
+  - "!node_modules/**/*.d.ts"
+  - "!node_modules/**/*.d.mts"
+  - "!node_modules/**/*.d.cts"
+  - "!node_modules/**/*.map"
+  - "!node_modules/**/{README,Readme,readme,CHANGELOG,Changelog,changelog,HISTORY,History,history}*"
+
+# Keep only English in Electron's own locale payload (~55 lproj dirs, ~40 MB);
+# the app UI ships no other localization.
+electronLanguages:
+  - en
 
 # No asarUnpack: it existed so a plain `node` could run the domo-mcp shim for
 # "Start agent". The shim and that feature went with the broker — the MCP server
 # now runs inside this process and is reached through the relay.
 
-# The browser stack: universal Python runtime + vendored server + both
-# Camoufox arches. Built by scripts/build-browser-runtime.mjs (a `just
-# package` dependency) and byte-identical in both electron-builder arch
-# passes, so the universal merge copies it through untouched. Runtime code
+# The browser stack: universal Python runtime + vendored server + the
+# lipo-fused universal Camoufox tree. Built by scripts/build-browser-runtime.mjs
+# (a `just package` dependency) and byte-identical in both electron-builder
+# arch passes, so the universal merge copies it through untouched. Runtime code
 # resolves it via process.resourcesPath ("browser-runtime/...").
 extraResources:
   - from: ../../vendor/python-runtime
@@ -31,9 +43,9 @@ extraResources:
     filter: ["**/*", "!.stamp"]
   - from: ../../vendor/browser-server
     to: browser-runtime/server
-  - from: ../../vendor/camoufox-browser
+  - from: ../../vendor/camoufox-browser/universal
     to: browser-runtime/camoufox
-    filter: ["**/*", "!*/.sha256"]
+    filter: ["**/*", "!.sha256"]
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png
@@ -55,13 +67,9 @@ mac:
   # hardened-runtime + timestamped signatures on them.
   signIgnore:
     - "browser-runtime/.*"
-  # Camoufox ships as two THIN per-arch trees (camoufox/arm64, camoufox/x86_64),
-  # each copied identically into both the x64 and arm64 electron slices. The
-  # universal merger would try to lipo a thin arm64 binary against its identical
-  # twin and fail; this pattern tells it to pass those through untouched (both
-  # arch trees survive intact in the universal app). The Python runtime is fully
-  # universal2, so it's merged normally and not covered here.
-  x64ArchFiles: "**/browser-runtime/camoufox/**"
+  # No x64ArchFiles needed: every Mach-O under browser-runtime/ (Python runtime
+  # and the fused Camoufox tree alike) is universal2 — build-browser-runtime.mjs
+  # fails the build otherwise — so the universal merge passes it all through.
   notarize: true
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested
@@ -70,6 +78,10 @@ afterPack: build/afterPack.cjs
 
 dmg:
   artifactName: ${productName}-${version}.${ext}
+  # lzfse instead of the default zlib — meaningfully smaller download, needs
+  # macOS 10.11+ to mount (well below the app's own floor). ULMO (lzma, a bit
+  # smaller still) isn't in electron-builder 26's schema yet.
+  format: ULFO
   # Explicit Finder-window geometry: the defaults sit the icons low enough
   # that the window shows a scrollbar. Icons up at mid-height, roomier window.
   # The window ALWAYS matches the background image's size (window.width/height
