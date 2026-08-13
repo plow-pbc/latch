@@ -61,6 +61,13 @@ class FakePlow {
     return OTP_TOKEN;
   }
 
+  /** Credentials handed back with `/self/revoke`. */
+  revoked: string[] = [];
+
+  async revokeDeviceCredential(token: string): Promise<void> {
+    this.revoked.push(token);
+  }
+
   async relayInfo(token: string) {
     // The login session, whichever path minted it — never the device credential.
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
@@ -674,84 +681,297 @@ describe("signing out", () => {
     expect(loadSettings(home).relayCredential).toBe(credential);
   });
 
-  it("a 'Get a New Code' in flight across the sign-out cannot mint either", async () => {
-    // The same race one caller over. `newActivationCode` re-polls the previous
-    // secret before minting a fresh code — the recovery for a user who texted
-    // after we stopped watching — and that redeem is a call in flight too.
-    const onboarding = await signedIn();
-    expect((await onboarding.useActivation()).step).toBe("activate");
+  // The two ways a redeem can be on the wire when the user signs out. Both end
+  // in `finishWithSession`, and both must refuse — but they arrive by different
+  // callers, so each is driven on its own.
+  const inFlightRedeems = [
+    {
+      name: "the poll loop's own redeem",
+      // The loop is already running from `useActivation()`; nothing to start.
+      start: (_o: Onboarding) => null as Promise<unknown> | null,
+    },
+    {
+      name: "the re-poll 'Get a New Code' makes before minting",
+      start: (o: Onboarding) => o.newActivationCode(),
+    },
+  ];
 
-    const inFlight = `${ACTIVATION_SECRET}_1`;
+  for (const entry of inFlightRedeems) {
+    it(`${entry.name}, in flight across the sign-out, cannot mint`, async () => {
+      // A verified answer is deliberately acted on even when its poll loop has
+      // been cancelled — the server hands the session token to the first redeem
+      // that sees the completion and never again, so dropping it would strand an
+      // activation the user really completed. The only thing that used to make
+      // it moot was already holding a credential, and SIGN-OUT CLEARS THE
+      // CREDENTIAL.
+      const onboarding = await signedIn();
+      expect((await onboarding.useActivation()).step).toBe("activate");
+
+      // Hold THIS activation's redeem mid-call — and only this one, so the
+      // fresh code the sign-out mints behaves like the untexted code it is.
+      const inFlight = `${ACTIVATION_SECRET}_1`;
+      let release = () => {};
+      const onTheWire = new Promise<void>((r) => {
+        release = () => r();
+      });
+      plow.redeemActivation = async (secret: string) => {
+        plow.redeemCalls.push(secret);
+        if (secret !== inFlight) return { status: "pending" };
+        await onTheWire;
+        return { status: "verified", token: SESSION_TOKEN };
+      };
+
+      const started = entry.start(onboarding);
+      await settle();
+      expect(plow.redeemCalls).toContain(inFlight);
+
+      // The user signs out while that call is still on the wire.
+      signOutOfPlow(home);
+      await onboarding.signedOut();
+      const mintedBefore = plow.minted.length;
+
+      // …and only now does the server answer "verified".
+      release();
+      if (started) await started;
+      await settle();
+
+      // Nothing was minted, nothing was persisted, and the window did not slide
+      // back to the account the user just left.
+      expect(plow.minted.length).toBe(mintedBefore);
+      expect(loadSettings(home).relayCredential).toBe("");
+      expect(loadSettings(home).accountUid).toBe("");
+      expect(onboarding.state().step).not.toBe("connected");
+    });
+  }
+});
+
+/**
+ * The sixth defect, and the one the generation counter exists for: an
+ * activation that passes every ownership check, ENTERS `finishWithSession()`,
+ * and then yields — after which sign-out can clear and revoke the old
+ * credential before the continuation persists and reconnects a fresh one.
+ *
+ * Each earlier fix moved the window later. This asks a different question — is
+ * the login this belongs to still the one we are running? — so it does not
+ * matter WHERE the work paused. Both yields are driven separately, because a
+ * guard on one of them is not a guard on the other, and the consequences
+ * differ: before the mint nothing exists yet; after it, a live credential does.
+ */
+describe("a sign-out during finishWithSession", () => {
+  /** Sign in, then park inside `finishWithSession` at the named call. */
+  async function parkedInside(where: "relayInfo" | "mintDeviceCredential") {
     let release = () => {};
     const onTheWire = new Promise<void>((r) => {
       release = () => r();
     });
-    plow.redeemActivation = async (secret: string) => {
-      plow.redeemCalls.push(secret);
-      if (secret !== inFlight) return { status: "pending" };
-      await onTheWire;
-      return { status: "verified", token: SESSION_TOKEN };
-    };
+    const realRelayInfo = plow.relayInfo.bind(plow);
+    const realMint = plow.mintDeviceCredential.bind(plow);
+    if (where === "relayInfo") {
+      plow.relayInfo = async (token: string) => {
+        await onTheWire;
+        return realRelayInfo(token);
+      };
+    } else {
+      plow.mintDeviceCredential = async (token: string, name: string) => {
+        await onTheWire;
+        return realMint(token, name);
+      };
+    }
 
-    // The user asks for a new code; its retry of the old secret parks mid-call.
-    const newCode = onboarding.newActivationCode();
+    // Verified once — this login — then pending forever, so the fresh code the
+    // sign-out mints behaves like the untexted code it is.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = build();
+    const begun = onboarding.begin();
     await settle();
-    expect(plow.redeemCalls).toContain(inFlight);
+    return { onboarding, release, begun };
+  }
 
-    signOutOfPlow(home);
+  it("yielding in relayInfo — before the mint — creates nothing at all", async () => {
+    const { onboarding, release, begun } = await parkedInside("relayInfo");
+    // Nothing has been created yet, so the cheapest exit is the right one.
     await onboarding.signedOut();
     const mintedBefore = plow.minted.length;
 
     release();
-    await newCode;
+    await begun;
     await settle();
 
     expect(plow.minted.length).toBe(mintedBefore);
+    expect(plow.revoked).toEqual([]); // nothing to hand back
     expect(loadSettings(home).relayCredential).toBe("");
     expect(onboarding.state().step).not.toBe("connected");
   });
 
-  it("a redeem already IN FLIGHT across the sign-out cannot mint a credential", async () => {
-    // The worst of it. A verified answer is deliberately acted on even when the
-    // poll loop has been cancelled — dropping it would strand an activation the
-    // user really completed. The only thing that used to make it moot was
-    // already holding a credential, and SIGN-OUT CLEARS THE CREDENTIAL. So a
-    // redeem in flight when the user signed out minted and persisted a fresh
-    // spend-capable device credential that the sign-out's revoke never saw.
-    const onboarding = await signedIn();
-    const live = await onboarding.useActivation();
-    expect(live.step).toBe("activate");
+  it("yielding in mintDeviceCredential — after it returns — hands the credential back", async () => {
+    // The credential EXISTS on the account by now, and the sign-out's revoke
+    // went out against a different one. Returning quietly would leave the
+    // account holding a live, spend-capable credential its owner just retired.
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");
+    await onboarding.signedOut();
 
-    // Hold THIS activation's redeem mid-call — and only this one, so the fresh
-    // code the sign-out mints behaves like the untexted code it is.
-    const inFlight = `${ACTIVATION_SECRET}_1`;
+    release();
+    await begun;
+    await settle();
+
+    expect(plow.minted).toHaveLength(1); // it really was minted
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]); // …and handed straight back
+    // Never persisted, and the relay was never brought up on it.
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(loadSettings(home).accountUid).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+
+  /**
+   * Park inside the mint on the ONE caller that awaits `finishWithSession` all
+   * the way out: `newActivationCode` → `tryFinish` → here. The poll loop is
+   * detached, so its promise says nothing about whether the login finished;
+   * this one does, which is what makes "did not block" observable.
+   */
+  async function parkedInsideAwaitable() {
+    plow.redeems = [{ status: "pending" }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
     let release = () => {};
     const onTheWire = new Promise<void>((r) => {
       release = () => r();
     });
-    plow.redeemActivation = async (secret: string) => {
-      plow.redeemCalls.push(secret);
-      if (secret !== inFlight) return { status: "pending" };
+    const realMint = plow.mintDeviceCredential.bind(plow);
+    plow.mintDeviceCredential = async (token: string, name: string) => {
       await onTheWire;
-      return { status: "verified", token: SESSION_TOKEN };
+      return realMint(token, name);
     };
+    // The old code turns out to have been texted after all — the recovery this
+    // re-poll exists for — so `newActivationCode` finishes the login instead of
+    // minting a new code.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const finishing = onboarding.newActivationCode();
     await settle();
-    expect(plow.redeemCalls).toContain(inFlight);
+    return { onboarding, release, finishing };
+  }
 
-    // The user signs out while that call is still on the wire.
-    signOutOfPlow(home);
+  /** Did `finishing` resolve on its own, or is it still parked? */
+  async function resolvedWithoutBlocking(finishing: Promise<unknown>): Promise<boolean> {
+    return (
+      (await Promise.race([finishing.then(() => "done"), settle().then(() => "parked")])) === "done"
+    );
+  }
+
+  it("a HUNG hand-back does not block the login it belongs to", async () => {
+    // PlowApi waits 15 seconds for an answer. Awaiting the hand-back would hold
+    // the whole login open for all of it, on a sign-out the user has already
+    // been told succeeded.
+    const { onboarding, release, finishing } = await parkedInsideAwaitable();
+    plow.revokeDeviceCredential = (token: string) => {
+      plow.revoked.push(token);
+      return new Promise(() => {}); // never answers
+    };
     await onboarding.signedOut();
-    const mintedBefore = plow.minted.length;
 
-    // …and only now does the server answer "verified".
+    release();
+
+    expect(await resolvedWithoutBlocking(finishing)).toBe(true);
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]); // started, just not waited on
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("a FAILING hand-back is absorbed, and never reported to the user", async () => {
+    // The login it belonged to is gone, so there is nobody to report to — and
+    // the message it would set belongs to a screen the user has already left.
+    // Failing to hand the credential back leaves exactly what we had before
+    // this existed, so best effort is strictly better and never worse.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");
+    plow.revokeDeviceCredential = async () => {
+      throw new PlowApiError("network", "Couldn't reach Plow.");
+    };
+    await onboarding.signedOut();
+
+    release();
+    await begun;
+    await settle();
+    // Let a stray rejection surface before we look.
+    await new Promise((r) => setTimeout(r, 10));
+    process.off("unhandledRejection", onUnhandled);
+
+    // Neither route out: not onto the screen through `run()`'s catch, and not
+    // into the process as an unhandled rejection. A best-effort cleanup that
+    // can crash the app is worse than no cleanup.
+    expect(unhandled).toEqual([]);
+    expect(onboarding.state().message).not.toContain("Couldn't reach Plow");
+    expect(onboarding.state().busy).toBe(false);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("switching to the phone-code path abandons the login in flight too", async () => {
+    // The other path that abandons a login rather than retrying it: the OTP
+    // fallback can sign in a different account entirely, so an activation still
+    // finishing must not persist a credential underneath it.
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");
+
+    expect(onboarding.usePhoneCode().step).toBe("phone");
+    release();
+    await begun;
+    await settle();
+
+    expect(plow.minted).toHaveLength(1);
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(onboarding.state().step).toBe("phone");
+  });
+
+  it("a slow mint that outlives the poll window still signs you in", async () => {
+    // The counterpart to all of the above: nothing has abandoned this login, so
+    // however long it takes, it lands. `giveUp` cannot even run here — the loop
+    // left its `while` the moment it entered `finishWithSession` — which is why
+    // `giveUp` needs no bump of its own.
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");
+    await begun;
+    clock += ACTIVATION_POLL_WINDOW_MS + 1;
+    await settle();
+
     release();
     await settle();
 
-    // Nothing was minted, nothing was persisted, and the window did not slide
-    // back to the account the user just left.
-    expect(plow.minted.length).toBe(mintedBefore);
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(loadSettings(home).accountUid).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
+    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(plow.revoked).toEqual([]);
+    expect(onboarding.state().step).toBe("connected");
+  });
+
+  it("asking for a new code does NOT abandon a login already finishing", async () => {
+    // `newActivationCode` re-polls the previous secret precisely because a user
+    // who texted late has already succeeded. Treating it as an abandonment
+    // would invalidate the finish already in flight, hand back the credential
+    // it had just minted, and then find the token consumed — stranding a user
+    // whose activation genuinely worked. Retry, not abandon.
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");
+    await begun;
+
+    // The user gets impatient and asks for a new code while the mint is out.
+    const asked = onboarding.newActivationCode();
+    release();
+    await asked;
+    await settle();
+
+    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(plow.revoked).toEqual([]);
+    expect(onboarding.state().step).toBe("connected");
+  });
+
+  it("an UNINTERRUPTED login still signs in, and hands nothing back", async () => {
+    // The guard must cost the ordinary path nothing.
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");
+    release();
+    await begun;
+    await settle();
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(plow.revoked).toEqual([]);
   });
 });

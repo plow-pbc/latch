@@ -135,6 +135,29 @@ export class Onboarding {
   /** Bumped whenever an activation stops being the one we care about. A poll
    * loop whose generation is stale returns instead of writing state. */
   private pollGeneration = 0;
+  /**
+   * Bumped whenever a LOGIN is abandoned — not merely a poll loop.
+   *
+   * The difference is the point. Five fixes in this chain each moved a window
+   * later: refuse a late redeem, refuse a stale secret, reset earlier. A yield
+   * inside `finishWithSession` then opened the window again one layer down,
+   * because the check had always been about WHERE the work paused. This is
+   * about WHETHER the login it belongs to still exists, so it invalidates
+   * in-flight work wherever it happened to yield.
+   *
+   * Two paths abandon a login, and they are the only two: `signedOut()` and
+   * `usePhoneCode()` — a sign-out, and a switch to a method that may sign in a
+   * different account entirely.
+   *
+   * Two more deliberately do NOT, and the distinction is retry vs abandon.
+   * `giveUp()` stops watching, but the code stays live for the rest of its
+   * thirty minutes and re-polling it is the recovery. `newActivationCode()`
+   * re-polls that very secret before it mints anything — bumping there would
+   * throw away a login the user had actually completed and then find the token
+   * already consumed, stranding them on "didn't hand back a login" with a
+   * credential that had been minted and handed back.
+   */
+  private loginGeneration = 0;
   private agent: OnboardingAgent | null = null;
 
   constructor(private readonly deps: OnboardingDeps) {
@@ -252,6 +275,9 @@ export class Onboarding {
   /** The quiet fallback: sign in with a phone code instead. */
   usePhoneCode(): OnboardingState {
     this.cancelPolling();
+    // Leaving for the OTP path abandons the activation login — a different
+    // account may be signed in from here.
+    this.loginGeneration += 1;
     this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
@@ -502,6 +528,10 @@ export class Onboarding {
    * no test could tell the two apart.
    */
   async signedOut(): Promise<OnboardingState> {
+    // First, and synchronously: no yield separates the settings clear in
+    // `revokeAndSignOut` from this bump, so any login already in flight is
+    // invalidated before it can get a turn.
+    this.loginGeneration += 1;
     this.step = "activate";
     this.activation = null;
     // SECRETS, both of them, and both belonging to the account just left: the
@@ -558,9 +588,29 @@ export class Onboarding {
    * server-side, in the same transaction as the mint.
    */
   private async finishWithSession(sessionToken: string): Promise<void> {
-    const info = await this.deps.api.relayInfo(sessionToken);
-    const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
+    // Captured before the first yield. Everything below asks the same question
+    // — is the login this belongs to still the one we are running? — rather
+    // than asking where we paused.
+    const login = this.loginGeneration;
 
+    const info = await this.deps.api.relayInfo(sessionToken);
+    // Nothing has been created yet, so a lost race here is a plain exit.
+    if (login !== this.loginGeneration) return;
+
+    const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
+    // …and again the instant the mint returns. This exit CANNOT just return:
+    // the credential now exists on the account, and the sign-out that beat us
+    // to it revoked a different one. Persisting it would leave the account
+    // holding a live, spend-capable credential its owner had just retired, so
+    // it is handed back instead.
+    if (login !== this.loginGeneration) {
+      this.discardLostCredential(minted.token);
+      return;
+    }
+
+    // From here to `save` there is NO await, so the check above and the write
+    // below cannot be separated by a sign-out. That is what makes the pair a
+    // guard rather than another slightly-later window.
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
@@ -580,6 +630,19 @@ export class Onboarding {
     this.step = "connected";
     this.codeExpiresAt = null;
     this.message = "";
+  }
+
+  /**
+   * Hand back a credential minted into a race we lost.
+   *
+   * Not awaited and unable to throw, both deliberately: the login it belonged
+   * to is gone, so there is nobody to report a failure to, and a revoke that
+   * hangs must not hold the screen — `PlowApi` waits 15 seconds for an answer.
+   * Failing to hand it back leaves exactly what we had before this existed, so
+   * best-effort is strictly better and never worse.
+   */
+  private discardLostCredential(token: string): void {
+    void this.deps.api.revokeDeviceCredential(token).catch(() => {});
   }
 
   // MARK: plumbing
