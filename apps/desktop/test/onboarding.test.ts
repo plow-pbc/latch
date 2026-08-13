@@ -763,7 +763,7 @@ describe("a sign-out during finishWithSession", () => {
   /** Sign in, then park inside `finishWithSession` at the named call. */
   async function parkedInside(
     where: "relayInfo" | "mintDeviceCredential",
-    critical?: <T>(work: Promise<T>) => Promise<T>,
+    extra: Partial<OnboardingDeps> = {},
   ) {
     let release = () => {};
     const onTheWire = new Promise<void>((r) => {
@@ -786,7 +786,7 @@ describe("a sign-out during finishWithSession", () => {
     // Verified once — this login — then pending forever, so the fresh code the
     // sign-out mints behaves like the untexted code it is.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
-    const onboarding = critical ? build({ critical }) : build();
+    const onboarding = build(extra);
     const begun = onboarding.begin();
     await settle();
     return { onboarding, release, begun };
@@ -964,23 +964,48 @@ describe("a sign-out during finishWithSession", () => {
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
   });
 
-  it("the hand-back is critical shutdown work too", async () => {
-    // The cleanup half of the same lifecycle. A quit during it strands exactly
-    // the credential this exists to hand back.
+  it("the hand-back is INSIDE the tracked span, not beside it", async () => {
+    // The bug this pins: the hand-back used to register with the gate on its
+    // own account, after the span it belonged to had already settled. A quit
+    // snapshots the outstanding work, so one that had already looked never saw
+    // the late registration and exited with the credential still live.
     const tracked: Promise<unknown>[] = [];
-    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential", (work) => {
-      tracked.push(work);
-      return work;
+    let releaseRevoke = () => {};
+    const revokeOnTheWire = new Promise<void>((r) => {
+      releaseRevoke = () => r();
     });
+    const { onboarding, release, begun } = await parkedInside("mintDeviceCredential", {
+      critical: (work) => {
+        tracked.push(work);
+        return work;
+      },
+    });
+    plow.revokeDeviceCredential = async (token: string) => {
+      plow.revoked.push(token);
+      await revokeOnTheWire;
+    };
     await onboarding.signedOut();
 
     release();
     await begun;
     await settle();
 
-    // The mint-to-commit span, and the hand-back that followed it.
-    expect(tracked).toHaveLength(2);
+    // ONE registration — the mint-to-commit span — and no second one to be
+    // missed by a snapshot already taken.
+    expect(tracked).toHaveLength(1);
     expect(plow.revoked).toEqual([DEVICE_TOKEN]);
+
+    // …and that one span is still outstanding while the revoke is on the wire.
+    let spanSettled = false;
+    void tracked[0].then(() => {
+      spanSettled = true;
+    });
+    await settle();
+    expect(spanSettled).toBe(false);
+
+    releaseRevoke();
+    await settle();
+    expect(spanSettled).toBe(true);
   });
 
   /**
@@ -1020,10 +1045,13 @@ describe("a sign-out during finishWithSession", () => {
     );
   }
 
-  it("a HUNG hand-back does not block the login it belongs to", async () => {
-    // PlowApi waits 15 seconds for an answer. Awaiting the hand-back would hold
-    // the whole login open for all of it, on a sign-out the user has already
-    // been told succeeded.
+  it("a HUNG hand-back holds the span open — the quit's bound is what releases it", async () => {
+    // This reverses what an earlier round pinned here, deliberately. Keeping the
+    // login unblocked meant the span settled while the revoke was still on the
+    // wire, and a quit that had already snapshotted the outstanding work never
+    // saw it. The span must stay open for exactly as long as the credential is
+    // still live; what stops that becoming a hung app is the quit's own two
+    // seconds, which `shutdownGate.test.ts` pins.
     const { onboarding, release, finishing } = await parkedInsideAwaitable();
     plow.revokeDeviceCredential = (token: string) => {
       plow.revoked.push(token);
@@ -1033,16 +1061,20 @@ describe("a sign-out during finishWithSession", () => {
 
     release();
 
-    expect(await resolvedWithoutBlocking(finishing)).toBe(true);
-    expect(plow.revoked).toEqual([DEVICE_TOKEN]); // started, just not waited on
+    expect(await resolvedWithoutBlocking(finishing)).toBe(false);
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]); // started, and still waited on
     expect(loadSettings(home).relayCredential).toBe("");
   });
 
   it("a FAILING hand-back is absorbed, and never reported to the user", async () => {
-    // The login it belonged to is gone, so there is nobody to report to — and
-    // the message it would set belongs to a screen the user has already left.
-    // Failing to hand the credential back leaves exactly what we had before
-    // this existed, so best effort is strictly better and never worse.
+    // The login it belonged to is gone, so there is nobody to report to. A
+    // rejection here must not reach `run()`'s catch, which maps whatever it
+    // sees to a generic apology and paints it on the screen the user moved to.
+    //
+    // The login is abandoned with `usePhoneCode()` rather than a sign-out on
+    // purpose: it bumps the same generation but starts no replacement
+    // activation, so `message` is a clean read rather than a race with a fresh
+    // poll loop's own give-up text.
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
@@ -1051,7 +1083,7 @@ describe("a sign-out during finishWithSession", () => {
     plow.revokeDeviceCredential = async () => {
       throw new PlowApiError("network", "Couldn't reach Plow.");
     };
-    await onboarding.signedOut();
+    expect(onboarding.usePhoneCode().step).toBe("phone");
 
     release();
     await begun;
@@ -1064,8 +1096,8 @@ describe("a sign-out during finishWithSession", () => {
     // into the process as an unhandled rejection. A best-effort cleanup that
     // can crash the app is worse than no cleanup.
     expect(unhandled).toEqual([]);
-    expect(onboarding.state().message).not.toContain("Couldn't reach Plow");
-    expect(onboarding.state().busy).toBe(false);
+    expect(onboarding.state().message).toBe("");
+    expect(onboarding.state().step).toBe("phone");
     expect(loadSettings(home).relayCredential).toBe("");
   });
 

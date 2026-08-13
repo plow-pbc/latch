@@ -623,7 +623,11 @@ export class Onboarding {
     // live, spend-capable credential its owner had just retired, so it is
     // handed back instead.
     if (login !== this.loginGeneration) {
-      this.discardLostCredential(minted.token);
+      // Awaited, so the hand-back is INSIDE this span rather than beside it.
+      // Registering it separately meant this span settled while the revoke was
+      // still pending, and a quit that had already snapshotted the outstanding
+      // work never saw it — the credential outlived the process.
+      await this.discardLostCredential(minted.token);
       return;
     }
 
@@ -673,17 +677,17 @@ export class Onboarding {
   /**
    * Hand back a credential minted into a race we lost.
    *
-   * Not awaited and unable to throw, both deliberately: the login it belonged
-   * to is gone, so there is nobody to report a failure to, and a revoke that
-   * hangs must not hold the screen — `PlowApi` waits 15 seconds for an answer.
-   * Failing to hand it back leaves exactly what we had before this existed, so
-   * best-effort is strictly better and never worse.
+   * AWAITED by its caller and unable to throw. Awaited because the credential
+   * is live until this lands, so the span a quit waits on has to still be open
+   * while it is on the wire — the earlier shape registered it with the gate
+   * separately, and a quit that had already snapshotted the outstanding work
+   * never saw it. Unable to throw because the login it belonged to is gone and
+   * there is nobody to report a failure to; failing to hand it back leaves
+   * exactly what we had before this existed, so best-effort is strictly better
+   * and never worse. A hang is bounded by the quit's own two seconds.
    */
-  private discardLostCredential(token: string): void {
-    // Tracked, but still not awaited: a quit must wait for the hand-back to
-    // land — it is the only thing standing between the account and a live
-    // credential nobody knows about — while the login it belonged to must not.
-    void this.critical(this.deps.api.revokeDeviceCredential(token)).catch(() => {});
+  private discardLostCredential(token: string): Promise<void> {
+    return this.deps.api.revokeDeviceCredential(token).catch(() => {});
   }
 
   // MARK: plumbing
