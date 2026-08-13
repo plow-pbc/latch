@@ -199,12 +199,15 @@ function parseVerdict(text: string): { verdict: Verdict; reason: string } | null
  * the promise but not the request: the reviewer returned `ask` at 30s while the
  * HTTP request stayed open and, on a paid endpoint, went on spending.
  */
+/** Our own giving-up, told apart from anything a provider threw. */
+class ReviewTimeout extends Error {}
+
 function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       onTimeout?.();
-      reject(new Error("reviewer timed out"));
+      reject(new ReviewTimeout("reviewer timed out"));
     }, ms);
     timer.unref?.();
   });
@@ -440,7 +443,21 @@ export async function adversarialReview(
     }
     return parsed;
   } catch (error: unknown) {
-    return { verdict: "ask", reason: `reviewer error: ${error instanceof Error ? error.message : error}` };
+    // Both branches are FIXED strings, for the same reason `parseVerdict`
+    // returns null rather than throwing. This catch also sees whatever the
+    // Anthropic SDK threw, and an SDK error message can carry the request it
+    // failed on — including the pasted key in the `Authorization` header it was
+    // building. That string is persisted to audit.ndjson and drawn in the
+    // Activity view, which is the one place a credential must never reach. The
+    // provider boundary redacts what it RETURNS; nothing may route around it by
+    // way of an exception.
+    //
+    // The timeout is named because we constructed it ourselves and it tells the
+    // human something true. It is still a literal, not the error's own text.
+    return {
+      verdict: "ask",
+      reason: error instanceof ReviewTimeout ? "reviewer timed out" : "reviewer error",
+    };
   }
 }
 

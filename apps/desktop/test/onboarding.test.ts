@@ -607,11 +607,16 @@ describe("signing out", () => {
     expect(after.connected).toBe(false);
     // An open window is told to re-read.
     expect(changes).toBeGreaterThan(changesBefore);
-    // Reopening the window is a fresh `onboarding:get` plus the `begin()` the
-    // renderer fires on load — exactly what the Sign In button produces.
+    // …and it has nothing to draw yet: the reset mints no code, so a window
+    // left open would sit on "Getting a code from Plow…" until something asks
+    // for one. That is what `settings:signOut` calls `begin()` for when the
+    // window IS open, and what the renderer's own startup `begin()` does when
+    // it is reopened. Either way, this is the call and this is its answer.
+    expect(after.activation).toBeNull();
     const reopened = await onboarding.begin();
     expect(reopened.step).toBe("activate");
     expect(reopened.activation?.displayCode).toBeTruthy();
+    expect(plow.activations).toHaveLength(2); // one per sign-in attempt, not more
     // Create Agent still refuses if it is reached, but it is not on this screen.
     expect((await onboarding.createAgent("Claude Code")).message).toContain("isn't signed in");
   });

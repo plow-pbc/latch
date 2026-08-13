@@ -79,13 +79,11 @@ export function signOutOfPlow(home: string): void {
 /**
  * Sign out: forget the credential here, and ask Plow to retire it.
  *
- * LOCAL FIRST, and that ordering is the point. Erasing the on-disk copy is the
- * only half of this the app can guarantee on its own; revoking is a network
- * round-trip. Putting the round-trip in front would make "signed out" depend on
- * reaching a server, and a Mac that cannot reach Plow is the one whose owner
- * most wants the local copy gone. So the token is captured into a local, the
- * on-disk copy goes, and Plow is asked with the captured value — which does not
- * need the file to still exist.
+ * LOCAL FIRST, and synchronously, before this function's first `await`. Erasing
+ * the on-disk copy is the only half the app can guarantee on its own; revoking
+ * is a network round-trip. Putting the round-trip in front would make "signed
+ * out" depend on reaching a server, and a Mac that cannot reach Plow is the one
+ * whose owner most wants the local copy gone.
  *
  * The revoke is BEST EFFORT, deliberately. Offline, API down, route not
  * deployed, any error at all: the local clear has already happened and sign-out
@@ -94,27 +92,25 @@ export function signOutOfPlow(home: string): void {
  * live on the account until it is retired by other means. That is an accepted
  * risk for this stage, not an oversight; it is tracked in domo-desktop#21.
  *
- * Nothing is sequenced after the clear: `afterClear` drops the relay socket and
- * `RelayClient.stop()` waits for in-flight requests, which is unbounded, so the
- * revoke is started alongside it rather than behind it.
- *
- * `revoke` and `afterClear` are injected so this path is reachable by a test
- * without a network or an Electron app.
+ * `revoke` is injected for one reason: it is what makes "sign-out always clears
+ * locally, even when the revoke fails" executable by a test. `main.ts` cannot
+ * be imported under vitest, so that property is only provable while this lives
+ * here.
  */
 export async function revokeAndSignOut(
   home: string,
   revoke: (credential: string) => Promise<unknown>,
-  afterClear: () => Promise<unknown> = async () => {},
 ): Promise<void> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
   signOutOfPlow(home);
-  // Both STARTED before either is awaited. Calling them here is what makes
-  // that true; awaiting neither until both are running is what keeps it true.
-  const pending = [afterClear()];
-  if (credential) pending.push(revoke(credential));
-  // Failures are deliberately swallowed and deliberately not logged: neither is
-  // actionable here, and the only interesting value in scope is the credential.
-  await Promise.allSettled(pending);
+  if (!credential) return;
+  try {
+    await revoke(credential);
+  } catch {
+    // Deliberately swallowed, and deliberately not logged: the failure is not
+    // actionable here, and the only interesting value in scope is the
+    // credential itself.
+  }
 }
 
 /**

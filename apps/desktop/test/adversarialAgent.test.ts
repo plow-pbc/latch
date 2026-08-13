@@ -168,7 +168,29 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
     };
     const result = await review();
     await failsClosed(result);
-    expect(result.reason).toContain("500 overloaded");
+    // Fixed text, not the SDK's. See below for why.
+    expect(result.reason).toBe("reviewer error");
+  });
+
+  it("an SDK error carrying the API key does not put it in the reason", async () => {
+    // The one route around the provider boundary: this catch sees whatever the
+    // Anthropic SDK threw, and an SDK error can quote the request it failed on
+    // — headers included. The reason is persisted to audit.ndjson and drawn in
+    // the Activity view, so a dynamic message here is a credential leak with
+    // extra steps.
+    const key = "sk-ant-api03-do-not-leak-me-0123456789";
+    createImpl = async () => {
+      throw new Error(`connect ECONNREFUSED (authorization: Bearer ${key})`);
+    };
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "anthropic",
+      apiKey: key,
+    });
+    await failsClosed(result);
+    expect(JSON.stringify(result)).not.toContain(key);
+    expect(JSON.stringify(result)).not.toContain(key.slice(0, 20));
   });
 
   it("the API rejects with a non-Error", async () => {

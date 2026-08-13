@@ -281,17 +281,21 @@ ipcMain.handle("settings:getRelay", async () => {
 // socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
 // cannot reach Plow still signs out locally.
 ipcMain.handle("settings:signOut", async () => {
-  await revokeAndSignOut(
-    home,
-    (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
-    // Dropping the socket and resetting the setup window are both part of
-    // "signed out": the onboarding instance outlives the sign-out and would
-    // otherwise still report `connected` for the account just left.
-    async () => {
-      onboarding?.signedOut();
-      await startRelay();
-    },
+  // Started first: it clears the stored credential synchronously, before its
+  // own first await, so everything below already sees a signed-out Mac. What it
+  // returns is only the best-effort revoke, which nothing else waits on.
+  const revoking = revokeAndSignOut(home, (credential) =>
+    new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
   );
+  onboarding?.signedOut();
+  // A window that is ALREADY OPEN has nothing to draw: `signedOut` resets it to
+  // the activation screen but mints no code, and the renderer's own `begin()`
+  // runs once at startup — so it would sit on "Getting a code from Plow…"
+  // forever. Only when it is open: minting a code nobody is looking at burns an
+  // activation on the account for nothing.
+  if (onboardingWindow) void onboarding?.begin();
+  await startRelay();
+  await revoking;
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 

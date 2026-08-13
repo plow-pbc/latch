@@ -277,110 +277,28 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(stored(home).relayCredential).toBe("");
   });
 
-  it("the credential is off disk and the socket down BEFORE the revoke is awaited", async () => {
-    // The quit-during-revoke window. `app.quit()` does not wait for a pending
-    // IPC handler, so anything still awaiting when the user picks Quit simply
-    // never happens. With the revoke in front, the process exits holding a
-    // spend-capable credential that reconnects on the next launch — the user
-    // asked to sign out and, from the app's next boot, never did.
+  it("the credential is off disk BEFORE the revoke is even asked", async () => {
+    // Position 1 of the sign-out contract: the local erase is the half this app
+    // guarantees, so it happens synchronously, before the first await, and does
+    // not depend on the network call that follows it. A revoke that never
+    // settles is exactly what a hung network looks like.
     const home = homeSignedIn();
-    let relayStopped = false;
+    let onDiskWhenAsked: string | null = null;
 
-    // A revoke that never settles: exactly what a hung network looks like, and
-    // the window a quit lands in.
-    const signOut = revokeAndSignOut(
-      home,
-      () => new Promise(() => {}),
-      async () => {
-        relayStopped = true;
-      },
-    );
-    // Let everything that does NOT depend on the network run to completion.
-    await Promise.race([signOut, Promise.resolve()]);
+    // Observed inside the callback, asserted OUTSIDE it: an expect() in there
+    // would be swallowed by the best-effort catch this very function relies on.
+    void revokeAndSignOut(home, async () => {
+      onDiskWhenAsked = stored(home).relayCredential;
+      await new Promise(() => {}); // never settles
+    });
     await new Promise((r) => setImmediate(r));
 
-    // Quit here and this is the state that survives to the next launch.
+    expect(onDiskWhenAsked).toBe("");
     const after = stored(home);
     expect(after.relayCredential).toBe("");
     expect(after.accountUid).toBe("");
     expect(after.mcpUrl).toBe("");
     expect(after.approvalMode).toBe("ask");
-    expect(relayStopped).toBe(true);
-  });
-
-  it("the revoke is INITIATED even while the relay is still draining", async () => {
-    // The third window in this area, and the one the two tests above do not
-    // reach: production passes `startRelay` as `afterClear`, and
-    // `RelayClient.stop()` deliberately waits for in-flight requests so a
-    // shutdown never strands an agent mid-call. Awaiting that before starting
-    // the revoke parks the one call that matters behind a drain as long as an
-    // agent's slowest tool — and a quit in there means `/self/revoke` never
-    // began at all. Nothing that can block arbitrarily long may sit in front
-    // of it.
-    const home = homeSignedIn();
-    const seen: string[] = [];
-    let drainStarted = false;
-    let signOutSettled = false;
-
-    // A drain that never finishes: an agent mid-call at the moment of sign-out.
-    void revokeAndSignOut(
-      home,
-      async (credential) => {
-        seen.push(credential);
-      },
-      () => {
-        drainStarted = true;
-        return new Promise(() => {});
-      },
-    ).then(() => {
-      signOutSettled = true;
-    });
-    await new Promise((r) => setImmediate(r));
-
-    // Quit here — mid-drain — and the revoke has still gone out.
-    expect(drainStarted).toBe(true);
-    expect(signOutSettled).toBe(false); // still parked on the drain, as it should be
-    expect(seen).toEqual([PLOW_CREDENTIAL]);
-    expect(stored(home).relayCredential).toBe("");
-  });
-
-  it("waits for both the drain and the revoke before it resolves", async () => {
-    // Started together, but the caller's promise still covers both: a sign-out
-    // that resolved while either was outstanding would report a completion it
-    // has no evidence for.
-    const home = homeSignedIn();
-    let revokeDone = false;
-    let drainDone = false;
-    let settled = false;
-
-    const signOut = revokeAndSignOut(
-      home,
-      () =>
-        new Promise((r) => {
-          setTimeout(() => {
-            revokeDone = true;
-            r(null);
-          }, 20);
-        }),
-      () =>
-        new Promise((r) => {
-          setTimeout(() => {
-            drainDone = true;
-            r(null);
-          }, 40);
-        }),
-    ).then(() => {
-      settled = true;
-    });
-
-    await new Promise((r) => setTimeout(r, 30));
-    expect(revokeDone).toBe(true);
-    expect(drainDone).toBe(false);
-    expect(settled).toBe(false); // the drain is still out
-
-    await signOut;
-    expect(drainDone).toBe(true);
-    expect(settled).toBe(true);
   });
 
   it("clears locally even when the revoke FAILS", async () => {
