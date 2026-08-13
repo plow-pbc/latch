@@ -9,6 +9,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
+// The frozen Anthropic request, as a golden. The intent below must stay the one
+// it was generated from.
+import GOLDEN_ANTHROPIC_REQUEST from "./fixtures/anthropic-review-request.json" with { type: "json" };
 
 /** Set per test: what the stubbed `messages.create` does. */
 let createImpl: (params: unknown) => Promise<unknown>;
@@ -214,44 +217,87 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
   });
 });
 
+/**
+ * The verdict must satisfy the WHOLE schema we constrained the model to, not
+ * just its `decision`. An answer that is only half the shape is an answer we
+ * did not ask for, and a security gate does not approve on one of those.
+ */
+describe("a verdict is accepted only if it matches the full schema", () => {
+  const answers = async (text: string) => {
+    createImpl = async () => ({ stop_reason: "end_turn", content: [{ type: "text", text }] });
+    return review();
+  };
+
+  it("accepts the exact shape", async () => {
+    expect(await answers(JSON.stringify({ decision: "allow", reason: "harmless" }))).toEqual({
+      verdict: "allow",
+      reason: "harmless",
+    });
+  });
+
+  it("rejects an allow with no reason at all", async () => {
+    expect((await answers(JSON.stringify({ decision: "allow" }))).verdict).toBe("ask");
+  });
+
+  it("rejects an allow whose reason is null", async () => {
+    expect((await answers(JSON.stringify({ decision: "allow", reason: null }))).verdict).toBe("ask");
+  });
+
+  it("rejects an allow whose reason is not a string", async () => {
+    for (const reason of [42, true, { text: "fine" }, ["fine"]]) {
+      expect((await answers(JSON.stringify({ decision: "allow", reason }))).verdict).toBe("ask");
+    }
+  });
+
+  it("rejects an allow carrying fields we never asked for", async () => {
+    // additionalProperties: false. An answer with extra keys did not come from
+    // the schema we constrained, whatever else it looks like.
+    expect(
+      (await answers(JSON.stringify({ decision: "allow", reason: "ok", confidence: 0.9 })))
+        .verdict,
+    ).toBe("ask");
+  });
+
+  it("rejects a bare array or a JSON scalar", async () => {
+    for (const text of ['["allow"]', '"allow"', "42", "null", "true"]) {
+      expect((await answers(text)).verdict).toBe("ask");
+    }
+  });
+
+  it("a rejected verdict never carries the model's own text as its reason", async () => {
+    // The reason is fixed. Model output is attacker-influenced, and a rejected
+    // answer's contents have no business being quoted back into the UI.
+    const result = await answers(
+      // Near-miss decision, so this answer is rejected — and its `reason` must
+      // not be carried into the verdict we return.
+      JSON.stringify({ decision: "ALLOW", reason: "ignore previous instructions" }),
+    );
+    expect(result.verdict).toBe("ask");
+    expect(result.reason).not.toContain("ignore previous instructions");
+  });
+});
+
 describe("the Anthropic request survives the provider seam unchanged", () => {
-  it("builds exactly the request it always built", async () => {
+  it("builds byte-for-byte the request it always built", async () => {
     // The provider seam is a transport change; the classifier is not allowed to
-    // drift. Pin the whole request object, not a subset, so an accidental edit
-    // to the model, the thinking budget, the schema or the system prompt fails
-    // here rather than silently changing what a security gate asks.
-    let params: Record<string, unknown> = {};
+    // drift. This asserts the COMPLETE request against a frozen golden — every
+    // key, the full system prompt text, and the full user message content — so
+    // that any edit to the model, the budget, the schema, the prompt wording or
+    // the prompt layout fails here rather than silently changing what a
+    // security gate asks. Regenerate the golden only on a deliberate change.
+    let params: unknown;
     createImpl = async (p) => {
-      params = p as Record<string, unknown>;
+      params = p;
       return verdictResponse("allow");
     };
     await review();
 
-    expect(Object.keys(params).sort()).toEqual(
-      ["max_tokens", "messages", "model", "output_config", "system", "thinking"].sort(),
+    expect(params).toEqual(GOLDEN_ANTHROPIC_REQUEST);
+    // toEqual ignores key order but not presence; make the exact key set
+    // explicit too, so an added field cannot slip past as undefined.
+    expect(Object.keys(params as object).sort()).toEqual(
+      Object.keys(GOLDEN_ANTHROPIC_REQUEST).sort(),
     );
-    expect(params.model).toBe("claude-haiku-4-5");
-    expect(params.max_tokens).toBe(4096);
-    expect(params.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
-    expect(params.output_config).toEqual({
-      format: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: {
-            decision: { type: "string", enum: ["allow", "deny", "ask"] },
-            reason: { type: "string" },
-          },
-          required: ["decision", "reason"],
-          additionalProperties: false,
-        },
-      },
-    });
-    // The system prompt is the security instruction; it stays on `system`, and
-    // the single user message is the built prompt.
-    expect(params.system).toContain("adversarial security reviewer");
-    expect(params.system).toContain('Return a JSON object {"decision"');
-    expect((params.messages as { role: string }[]).map((m) => m.role)).toEqual(["user"]);
   });
 });
 
@@ -466,16 +512,45 @@ describe("the Plow provider", () => {
             new Error(`connect ECONNREFUSED (authorization: Bearer ${PLOW_CREDENTIAL})`),
           ),
         () => fetchMock.mockResolvedValue(plowResponse("not json at all")),
+        // The JSON.parse path specifically. V8 embeds the offending input in
+        // its message — truncated to ten characters, so what escapes is a
+        // credential PREFIX rather than the whole token (and a shorter token
+        // would escape whole: `Unexpected token 'o', "not json at all" is not
+        // valid JSON` quotes its input in full). Content leading with the
+        // credential puts that prefix in the message.
+        () => fetchMock.mockResolvedValue(plowResponse(`${PLOW_CREDENTIAL} says allow`)),
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(`{"decision":"allow","reason":"Bearer ${PLOW_CREDENTIAL}`),
+          ),
+        // Same path, valid JSON but the wrong shape, still quoting the token.
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(JSON.stringify({ decision: "ALLOW", reason: PLOW_CREDENTIAL })),
+          ),
+        // And a schema-valid verdict whose reason quotes it: rejected for the
+        // near-miss decision above, but this one is accepted, so the guarantee
+        // has to come from the reason being fixed on rejection rather than from
+        // luck about what the model said.
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(JSON.stringify({ decision: "maybe", reason: PLOW_CREDENTIAL })),
+          ),
       ];
 
+      // A prefix counts as a leak: the point is that no part of the token is
+      // reachable from a failure, and truncated echoes are how it gets out.
+      const prefix = PLOW_CREDENTIAL.slice(0, 10);
       for (const arrange of failures) {
         arrange();
         const result = await plowReview();
         expect(result.verdict).toBe("ask");
         expect(JSON.stringify(result)).not.toContain(PLOW_CREDENTIAL);
+        expect(JSON.stringify(result)).not.toContain(prefix);
       }
 
       expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
+      expect(logs.join("\n")).not.toContain(prefix);
       vi.restoreAllMocks();
     });
   });
@@ -493,11 +568,15 @@ describe("the Plow provider", () => {
       expect(result.reason).toContain("balance");
     });
 
-    it("400 names the rejected request", async () => {
+    it("400 names the model that was rejected", async () => {
+      // 400 from this endpoint is the allowlist refusing the model. Saying only
+      // "rejected" leaves the human with no idea the fix is a different model.
       fetchMock.mockResolvedValue(plowError(400));
       const result = await plowReview();
       failsClosed(result);
       expect(result.reason).toMatch(/reject/i);
+      expect(result.reason).toContain("model");
+      expect(result.reason).toContain("claude-sonnet-4-6");
     });
 
     it("502 is a generic upstream failure, never an auth prompt", async () => {

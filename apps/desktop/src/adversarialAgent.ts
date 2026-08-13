@@ -108,6 +108,39 @@ function buildPrompt(intent: Intent, history: JSONValue[]): string {
   );
 }
 
+/**
+ * Accept an answer only if it is EXACTLY the shape `VERDICT_SCHEMA` describes.
+ *
+ * The schema is what we asked the model for, so anything else is a reviewer
+ * that did not answer — including the shapes that look close enough to be
+ * tempting: a verdict with no `reason`, a `null` reason, a numeric one, or an
+ * object carrying fields we never asked for (`additionalProperties: false`).
+ * Every one of those returns null and the caller falls closed to `ask`.
+ *
+ * Returns null rather than throwing, because the *reason* for the rejection can
+ * never be shown: `JSON.parse` embeds the offending input in its message, and
+ * that input is model output on the Plow path, which is transported alongside
+ * a credential. A fixed string is the only safe thing to report.
+ */
+function parseVerdict(text: string): { verdict: Verdict; reason: string } | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+
+  const keys = Object.keys(value);
+  if (keys.length !== 2 || !keys.includes("decision") || !keys.includes("reason")) return null;
+
+  const { decision, reason } = value as { decision: unknown; reason: unknown };
+  if (decision !== "allow" && decision !== "deny" && decision !== "ask") return null;
+  if (typeof reason !== "string") return null;
+
+  return { verdict: decision, reason };
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeout = new Promise<never>((_, reject) => {
@@ -161,7 +194,10 @@ function anthropicProvider(apiKey: string): ProviderCall {
  */
 function plowHttpReason(status: number): string {
   if (status === 402) return "insufficient Plow balance";
-  if (status === 400) return "Plow rejected the review request";
+  // 400 from this endpoint is the model allowlist rejecting the model, so the
+  // reason names it — otherwise the human sees "rejected" with no idea that the
+  // fix is a model that Plow actually serves.
+  if (status === 400) return `Plow rejected the model ${PLOW_REVIEWER_MODEL}`;
   // The API masks provider 401/403/408 behind an opaque 502. It specifically
   // does NOT mean "these credentials are wrong" — do not send anyone to
   // re-authenticate over it.
@@ -280,12 +316,9 @@ export async function adversarialReview(
     );
     if (!result.ok) return { verdict: "ask", reason: result.reason };
 
-    const parsed = JSON.parse(result.text) as { decision?: string; reason?: string };
-    const verdict: Verdict =
-      parsed.decision === "allow" || parsed.decision === "deny" || parsed.decision === "ask"
-        ? parsed.decision
-        : "ask";
-    return { verdict, reason: parsed.reason ?? "" };
+    // A fixed reason on purpose — see parseVerdict. Nothing derived from the
+    // model's output reaches this string.
+    return parseVerdict(result.text) ?? { verdict: "ask", reason: "reviewer returned no usable verdict" };
   } catch (error: unknown) {
     return { verdict: "ask", reason: `reviewer error: ${error instanceof Error ? error.message : error}` };
   }
