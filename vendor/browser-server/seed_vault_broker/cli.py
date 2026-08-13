@@ -10,9 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Iterable
 
 import tldextract
@@ -30,7 +28,6 @@ _VAULT_URL = os.environ.get("SEED_VAULT_URL", "")
 _PERSON = os.environ.get("SEED_VAULT_PERSON", "")
 _VAULT_USER = os.environ.get("SEED_VAULT_USER", "")
 _VAULT_CA = os.environ.get("SEED_VAULT_CA", "")  # the server has a real certificate
-_KEYCHAIN_SERVICE = os.environ.get("SEED_VAULT_KEYCHAIN", "vaultwarden-agent")
 
 _STATE_DIR = os.environ.get("SEED_VAULT_STATE", os.path.expanduser("~/.local/state/vault-broker"))
 _BW_DATA_DIR = os.path.join(_STATE_DIR, "bw")
@@ -207,59 +204,6 @@ def _write_session(session: str) -> None:
     os.chmod(_SESSION_PATH, stat.S_IRUSR | stat.S_IWUSR)
 
 
-def _keychain_read(account: str) -> str:
-    try:
-        p = subprocess.run(["security", "find-generic-password", "-a", account,
-                            "-s", _KEYCHAIN_SERVICE, "-w"],
-                           capture_output=True, text=True, check=False,
-                           timeout=_BW_TIMEOUT_S)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return p.stdout.strip() if p.returncode == 0 else ""
-
-
-def _keychain_write(account: str, secret: str) -> None:
-    # Guarded like the read above: an uncaught traceback here would break the
-    # one-JSON-line-on-stderr contract every caller parses.
-    try:
-        subprocess.run(["security", "add-generic-password", "-a", account,
-                        "-s", _KEYCHAIN_SERVICE, "-w", secret, "-U"],
-                       capture_output=True, timeout=_BW_TIMEOUT_S)
-    except (OSError, subprocess.TimeoutExpired):
-        pass  # not remembering it costs a re-derivation, not the call
-
-
-def _fetch_credential() -> tuple[str, str]:
-    """Collect this person's agent credential from the vault host, once.
-
-    The person never carries anything across: this machine proves it is ours with a
-    token kept in its own keychain, asks for the agent that belongs to its person, and
-    remembers the answer locally.
-    """
-    fleet = _keychain_read("fleet-token")
-    if not fleet:
-        raise _VaultToolError(_ERR_VAULT_LOCKED, "this machine has no fleet token")
-    body = urllib.parse.urlencode({"person": _PERSON}).encode()
-    req = urllib.request.Request(_VAULT_URL + "/fleet/agent-credential", data=body,
-                                 method="POST",
-                                 headers={"Authorization": "Bearer " + fleet,
-                                          "Content-Type": "application/x-www-form-urlencoded"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            data = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        raise _VaultToolError(_ERR_VAULT_LOCKED,
-                              "the vault host would not release the agent credential (%s)" % e.code)
-    except urllib.error.URLError as e:
-        raise _VaultToolError(_ERR_VAULT_UNAVAILABLE, "cannot reach the vault host")
-    email, password = data.get("agent_email", ""), data.get("agent_password", "")
-    if not email or not password:
-        raise _VaultToolError(_ERR_VAULT_LOCKED, "the vault host returned no credential")
-    _keychain_write(email, password)
-    _keychain_write("agent-address-for-" + _PERSON, email)
-    return email, password
-
-
 def _forget_local_state(reason: str) -> None:
     """Drop the vault tool's local copy when the identity changes, or it keeps answering
     as whoever was signed in last."""
@@ -288,30 +232,24 @@ def _remember_identity(email: str) -> None:
 def _agent_identity() -> tuple[str, str]:
     """The address and password this machine signs into the vault with.
 
-    Domo hands both in the environment: the vault lives in the app now, so the app
-    owns that account and keeps its password in its own secure storage. The keychain
-    path below is what a standalone install still uses.
+    One source: whoever starts the broker. Domo owns the account -- it creates it
+    on the vault it ships and keeps the password in its own secure storage -- and
+    hands both in per call. There is deliberately no second way in: a keychain
+    fallback and a fleet-token pairing call existed for a hosted vault nothing
+    provisions, which is an unexercised path to a live credential.
     """
     supplied = os.environ.get("SEED_VAULT_PASSWORD", "")
-    if _VAULT_USER and supplied:
-        # Same as every other path: if this is a different account than last
-        # time, the tool's local copy belongs to the old one and has to go, or
-        # it keeps answering for whoever was signed in before.
-        _remember_identity(_VAULT_USER)
-        return _VAULT_USER, supplied
-    if _VAULT_USER:                        # an explicit override still wins
-        pw = _keychain_read(_VAULT_USER)
-        if pw:
-            return _VAULT_USER, pw
-    remembered = _keychain_read("agent-address-for-" + _PERSON)
-    if remembered:
-        pw = _keychain_read(remembered)
-        if pw:
-            _remember_identity(remembered)
-            return remembered, pw
-    email, password = _fetch_credential()
-    _remember_identity(email)
-    return email, password
+    if not _VAULT_USER or not supplied:
+        raise _VaultToolError(
+            _ERR_VAULT_LOCKED,
+            "This broker was started without an account to sign in as "
+            "(SEED_VAULT_USER and SEED_VAULT_PASSWORD).",
+        )
+    # If this is a different account than last time, the tool's local copy
+    # belongs to the old one and has to go, or it keeps answering for whoever
+    # was signed in before.
+    _remember_identity(_VAULT_USER)
+    return _VAULT_USER, supplied
 
 
 def _raw_bw(args: list[str], session: str | None) -> subprocess.CompletedProcess:
@@ -782,10 +720,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
                      "person": _PERSON}
     if info.get("userEmail"):
         payload["account"] = info["userEmail"]
-    else:
-        remembered = _keychain_read("agent-address-for-" + _PERSON)
-        if remembered:
-            payload["account"] = remembered
     sys.stdout.write(json.dumps(payload) + "\n")
     return 0
 

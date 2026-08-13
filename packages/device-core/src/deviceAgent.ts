@@ -134,7 +134,6 @@ export class DeviceAgent {
         // 15s, so the broker has to fail inside that or the session dies.
         timeoutMs: 12_000,
         person: vaultPerson,
-        fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);

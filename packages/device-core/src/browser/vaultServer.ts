@@ -30,9 +30,23 @@ export interface VaultServerConfig {
   startTimeoutMs?: number;
 }
 
+/** Resolves once the process is gone, or after `timeoutMs` if it will not go. */
+function exited(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 export class VaultServer {
   private child: ChildProcess | null = null;
   private starting: Promise<void> | null = null;
+  /** Whether the RUNNING process was started with registration open. */
+  private acceptingSignups = false;
   /** Up AND holding this machine's account. Liveness alone is not enough: a
    *  vault that started but failed to bootstrap has nothing to sign in to. */
   private ready = false;
@@ -98,6 +112,7 @@ export class VaultServer {
     if (this.starting) return this.starting;
     if (this.ready) return Promise.resolve();
     this.starting = this.launch()
+      .then(() => this.closeSignups())
       .then(() => {
         this.ready = true;
       })
@@ -117,6 +132,8 @@ export class VaultServer {
   private async launch(): Promise<void> {
     fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const { cert, key } = this.ensureCert();
+    const openForSignup = this.needsAccount();
+    this.acceptingSignups = openForSignup;
 
     const child = spawn(this.cfg.binary, [], {
       env: {
@@ -132,7 +149,7 @@ export class VaultServer {
         // Open only while this machine still needs its one account, and only
         // ever on loopback. Left open, anything running as the user could add
         // accounts to the vault.
-        SIGNUPS_ALLOWED: this.needsAccount() ? "true" : "false",
+        SIGNUPS_ALLOWED: openForSignup ? "true" : "false",
       },
       stdio: ["ignore", "ignore", "pipe"],
       detached: true,
@@ -163,6 +180,25 @@ export class VaultServer {
     }
     this.stop();
     throw new Error(`vault server did not open ${this.url} in time`);
+  }
+
+  /**
+   * Registration is open only while this machine is getting its one account —
+   * a window of a few hundred milliseconds on first run, not the rest of the
+   * session. Left open, anything running as the user could add accounts to the
+   * vault, so the process that created the account is replaced by one that
+   * refuses to create any more.
+   */
+  private async closeSignups(): Promise<void> {
+    if (!this.acceptingSignups) return;
+    const dying = this.child;
+    this.stop();
+    // Wait for it to actually go. SIGTERM is asynchronous, and the replacement
+    // decides it is up by finding the port open — which the process being
+    // replaced is still holding, so without this the "closed" vault can report
+    // itself started while the one accepting signups is the one still serving.
+    if (dying) await exited(dying);
+    await this.launch(); // needsAccount() is false now, so this one is closed
   }
 
   private needsAccount(): boolean {

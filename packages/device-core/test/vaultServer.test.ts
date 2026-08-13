@@ -108,12 +108,22 @@ async function makeServer(mode: "registers" | "silent" = "registers", registerDe
   });
   servers.push(server);
   const lines = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim().split("\n") : []);
-  return { server, port, launches: () => lines(envLog), registrations: () => lines(hits), envLog };
+  return {
+    server,
+    port,
+    // NOTE: a FIRST start is two processes by design — one open to registration
+    // to make the account, immediately replaced by one that refuses to make any
+    // more (see "stops accepting new accounts"). Later starts are one each.
+    launches: () => lines(envLog),
+    signups: () => lines(envLog).map((l) => (JSON.parse(l) as Record<string, string>).SIGNUPS_ALLOWED),
+    envOf: (nth: number) => JSON.parse(lines(envLog).at(nth)!) as Record<string, string>,
+    registrations: () => lines(hits),
+  };
 }
 
 describe("the vault process", () => {
   it("makes every concurrent caller wait for the account, not just for the process", async () => {
-    const { server, launches, registrations } = await makeServer();
+    const { server, launches, signups, registrations } = await makeServer();
 
     // Every credential lookup calls start(); a cold launch has several in
     // flight at once. What each one must NOT do is return as soon as a process
@@ -128,11 +138,14 @@ describe("the vault process", () => {
       true,
       true,
     ]);
-    expect(launches(), "one vault, not one per caller").toHaveLength(1);
     expect(registrations(), "one account, made once").toEqual(["/identity/accounts/register"]);
+    expect(signups(), "one startup's worth of processes, not one per caller").toEqual([
+      "true",
+      "false",
+    ]);
 
     await server.start(); // already up: no relaunch, no second account
-    expect(launches()).toHaveLength(1);
+    expect(launches()).toHaveLength(2);
     expect(registrations()).toHaveLength(1);
   }, 30_000);
 
@@ -165,7 +178,8 @@ describe("the vault process", () => {
 
     await expect(starting, "a vault that was stopped did not start").rejects.toThrow();
     await server.start();
-    expect(launches(), "the next caller really relaunched").toHaveLength(2);
+    // 1 abandoned + the retry's 2 (open to register, then closed).
+    expect(launches(), "the next caller really relaunched").toHaveLength(3);
     expect(server.account, "and it made the account this time").not.toBeNull();
   }, 30_000);
 
@@ -179,7 +193,9 @@ describe("the vault process", () => {
     await server.start();
     await new Promise((r) => setTimeout(r, 750)); // let the first one's exit arrive
 
-    expect(launches(), "the replacement really is a second process").toHaveLength(2);
+    // 2 for the first start, 1 for the replacement — the account already exists
+    // by then, so the replacement has no signup window to close.
+    expect(launches(), "the replacement really is a second process").toHaveLength(3);
     expect(
       await portAnswers(port),
       "the replacement is actually serving, so the next assertion means something",
@@ -192,14 +208,30 @@ describe("the vault process", () => {
     expect(await portFreesUp(port), "nothing was left holding the port").toBe(true);
   }, 30_000);
 
+  it("stops accepting new accounts as soon as it has the one it needed", async () => {
+    // Registration is open only for the window in which this machine gets its
+    // account. Left open for the session, anything running as the user could
+    // add accounts to the vault.
+    const { server, launches, registrations } = await makeServer();
+    await server.start();
+
+    const signups = launches().map((l) => (JSON.parse(l) as Record<string, string>).SIGNUPS_ALLOWED);
+    expect(signups, "open to make the account, then replaced by one that is not").toEqual([
+      "true",
+      "false",
+    ]);
+    expect(registrations(), "still exactly one account").toHaveLength(1);
+    expect(server.account, "and it survived the replacement").not.toBeNull();
+  }, 30_000);
+
   it("is never given the vault variables it has no use for", async () => {
     process.env.DOMO_VAULT_TOKEN = "bootstrap-token";
     process.env.SEED_VAULT_PASSWORD = "the-account-password";
     try {
-      const { server, port, envLog } = await makeServer();
+      const { server, port, envOf } = await makeServer();
       await server.start();
 
-      const seen = JSON.parse(fs.readFileSync(envLog, "utf8").trim()) as Record<string, string>;
+      const seen = envOf(-1); // the process still running once startup settled
       const leaked = Object.keys(seen).filter(
         (k) => k.startsWith("SEED_VAULT_") || k.startsWith("DOMO_VAULT_"),
       );

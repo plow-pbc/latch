@@ -53,7 +53,10 @@ export async function ensureVaultAccount(
   }
 
   // One account for this machine: the human signs into it on the vault's page
-  // and the agent signs into it to read what is there.
+  // and the agent signs into it to read what is there. Both, deliberately —
+  // Domo does not own a separate identity, and the password below is the only
+  // copy it has, so the owner changing it in the vault is the one thing that
+  // strands it. The Vault tab says so where the password is shown.
   const email = `${person.split("@")[0]}-${crypto.randomBytes(3).toString("hex")}@local`;
   const password = crypto.randomBytes(32).toString("base64url");
 

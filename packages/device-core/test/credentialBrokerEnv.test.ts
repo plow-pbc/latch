@@ -21,7 +21,7 @@ function echoBroker(): string {
     `process.stdout.write(JSON.stringify([{
       id: process.env.SEED_VAULT_USER ?? "",
       title: process.env.SEED_VAULT_PASSWORD ?? "",
-      username: process.env.SEED_VAULT_TOKEN ?? "",
+      username: process.env.SEED_VAULT_PERSON ?? "",
       category: "LOGIN", urls: [], matches_this_page: false,
     }]));
     `,
@@ -51,24 +51,16 @@ describe("what the broker is given", () => {
     expect(after[0].title).toBe("the-real-password");
   });
 
-  it("hands the bootstrap token to the broker, and to nothing that outlives it", async () => {
-    const broker = new CredentialBroker({
-      command: ["node", echoBroker()],
-      fleetToken: "the-fleet-token",
-    });
-    const items = await broker.whatsHere("https://example.com");
-    expect(items[0].username, "the broker is what the token is for").toBe("the-fleet-token");
-
-    // The browser server and the vault are long-lived and inherit the
-    // environment; a compromise of either must not hand over vault bootstrap.
+  it("keeps the vault family out of what a long-lived child inherits", async () => {
+    // The browser server and the vault outlive any broker call and have no use
+    // for these; a compromise of either must not hand over the vault account.
     const stripped = withoutVaultSecrets({
-      DOMO_VAULT_TOKEN: "the-fleet-token",
-      SEED_VAULT_TOKEN: "the-fleet-token",
+      SEED_VAULT_PASSWORD: "the-account-password",
+      SEED_VAULT_USER: "someone@local",
+      DOMO_VAULT_URL: "https://vault.example",
       PATH: "/usr/bin",
     });
-    expect(stripped.DOMO_VAULT_TOKEN).toBeUndefined();
-    expect(stripped.SEED_VAULT_TOKEN).toBeUndefined();
-    expect(stripped.PATH, "everything else still travels").toBe("/usr/bin");
+    expect(Object.keys(stripped)).toEqual(["PATH"]);
   });
 
   it("still passes a fixed env, for callers that have one", async () => {

@@ -498,7 +498,9 @@ function fieldRow(value) {
 
 async function renderVault() {
   const creds = await window.domo.vaultGet();
-  const HINT = "Sign in on that page with these two to add what Domo may use.";
+  const HINT =
+    "Sign in on that page with these two to add what Domo may use. They are also how Domo " +
+    "signs in, so changing them in the vault will stop it reading your items.";
   const note = el("p", { class: "faint", text: creds ? HINT : "Opening it will start it." });
 
   // Anchors go nowhere inside Electron; the main process opens the browser —

@@ -23,10 +23,9 @@ export interface CredentialBrokerConfig {
   env?: Record<string, string>;
   /** Where the broker writes its own audit lines. */
   auditPath?: string;
-  /** Whose vault this machine reads, and the token that fetches that agent's
-   * access. Both come from the app's settings, not from a file next to the code. */
+  /** Whose machine this is. Names the account created on first run and labels
+   * the broker's audit lines; it is not a credential. */
   person?: string;
-  fleetToken?: string;
   timeoutMs?: number;
   /** Extra environment resolved AT CALL TIME. A plain object cannot carry the
    * vault account, because it does not exist yet when this is constructed. */
@@ -62,7 +61,6 @@ export class CredentialBroker {
             ...(this.cfg.envFor?.() ?? {}),
             ...(this.cfg.auditPath ? { SEED_VAULT_AUDIT: this.cfg.auditPath } : {}),
             ...(this.cfg.person ? { SEED_VAULT_PERSON: this.cfg.person } : {}),
-            ...(this.cfg.fleetToken ? { SEED_VAULT_TOKEN: this.cfg.fleetToken } : {}),
           },
           timeout: timeoutMs ?? this.cfg.timeoutMs ?? 45_000,
           maxBuffer: 4 * 1024 * 1024,
