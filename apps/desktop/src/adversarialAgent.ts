@@ -121,12 +121,21 @@ function buildPrompt(intent: Intent, history: JSONValue[]): string {
  * audit.ndjson and rendered in the sandboxed activity view, and the credential
  * belongs in neither.
  *
+ * **This runs on the DECODED `reason`, never on the answer text.** Scanning the
+ * raw body was checked three times and bypassed a fourth: a schema-valid answer
+ * can spell the token in `\uXXXX` escapes, so the body contains no fragment of
+ * it and `JSON.parse` puts it back together on the other side. Encodings of a
+ * string are unbounded and the decoded value is one, so the only place a scan
+ * can be complete is after the parse — the string that actually reaches
+ * audit.ndjson, checked as it will be written. Narrowing the raw scan again
+ * would only have named the next encoding.
+ *
  * `headLength` opts into matching a leading fragment as well as the whole
  * token, because a partial echo is still an echo — ten characters is what V8
  * quotes when it reports offending input.
  *
- * It is opt-in per provider, and the LENGTH is the whole argument: a head is
- * evidence of a leak only once it reaches past the public part of the token.
+ * It is per provider, and the LENGTH is the whole argument: a head is evidence
+ * of a leak only once it reaches past the public part of the token.
  *
  *   - Plow credentials are opaque, so ten characters already carry entropy.
  *   - Anthropic keys begin `sk-ant-api03-` — thirteen characters of published
@@ -136,12 +145,9 @@ function buildPrompt(intent: Intent, history: JSONValue[]): string {
  *     audit.ndjson and the activity view. Twenty is past the prefix by seven
  *     characters of the secret tail, which is a leak either way you read it.
  */
-/**
- * `sk-ant-api03-` is 13 characters of public format; 20 reaches 7 characters
- * into the secret tail. Long enough that a match means a leak, short enough to
- * catch a truncation.
- */
 const ANTHROPIC_SECRET_HEAD = 20;
+/** Opaque from the first character, so ten of them are already secret. */
+const PLOW_SECRET_HEAD = 10;
 
 function echoesSecret(text: string, secret: string, headLength = 0): boolean {
   const trimmed = secret.trim();
@@ -218,8 +224,20 @@ type ProviderResult = { ok: true; text: string } | { ok: false; reason: string }
  */
 type ProviderCall = (prompt: string, signal: AbortSignal) => Promise<ProviderResult>;
 
+/**
+ * A chosen provider: how to call it, and the secret it sent — which is what the
+ * decoded verdict has to be checked against once the answer comes back.
+ */
+interface Provider {
+  call: ProviderCall;
+  /** The credential this provider puts on the wire. */
+  secret: string;
+  /** How much of a leading fragment already counts as a leak. */
+  headLength: number;
+}
+
 /** The Anthropic SDK path: a pasted key, `claude-haiku-4-5`. */
-function anthropicProvider(apiKey: string): ProviderCall {
+function anthropicCall(apiKey: string): ProviderCall {
   // The SDK bounds itself with `timeout` below, so it does not need the budget
   // signal to avoid an orphaned request.
   return async (prompt) => {
@@ -240,9 +258,6 @@ function anthropicProvider(apiKey: string): ProviderCall {
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
       return { ok: false, reason: "reviewer returned no verdict" };
-    }
-    if (echoesSecret(textBlock.text, apiKey, ANTHROPIC_SECRET_HEAD)) {
-      return { ok: false, reason: "reviewer answer discarded: it repeated a credential" };
     }
     return { ok: true, text: textBlock.text };
   };
@@ -300,7 +315,7 @@ function plowHttpReason(status: number, body: unknown = null): string {
  * The credential rides in the `Authorization` header and nowhere else — not in
  * the URL, not in a thrown message, not in anything this returns.
  */
-function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
+function plowCall(credential: string, apiBaseUrl: string): ProviderCall {
   return async (prompt, signal) => {
     const api = new PlowApi(normalizeApiBaseUrl(apiBaseUrl));
     let status: number;
@@ -348,11 +363,6 @@ function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
     if (typeof content !== "string" || !content.trim()) {
       return { ok: false, reason: "reviewer returned no verdict" };
     }
-    // A schema-valid answer that repeats our own bearer token is discarded
-    // whole — before it is parsed, so no part of it can reach a reason string.
-    if (echoesSecret(content, credential, 10)) {
-      return { ok: false, reason: "reviewer answer discarded: it repeated a credential" };
-    }
     return { ok: true, text: content };
   };
 }
@@ -361,17 +371,21 @@ function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
  * Pick the provider, or explain why there isn't one. A missing credential is a
  * configuration answer, not a network one — nothing is dialled.
  */
-function selectProvider(args: ReviewArgs): ProviderCall | { reason: string } {
+function selectProvider(args: ReviewArgs): Provider | { reason: string } {
   if (args.provider === "plow") {
     const credential = (args.plowCredential ?? "").trim();
     if (!credential) return { reason: "not signed in to Plow" };
     const base = normalizeApiBaseUrl(args.apiBaseUrl ?? "");
     if (!base) return { reason: "no Plow API URL configured" };
-    return plowProvider(credential, base);
+    return {
+      call: plowCall(credential, base),
+      secret: credential,
+      headLength: PLOW_SECRET_HEAD,
+    };
   }
   const apiKey = (args.apiKey ?? "").trim();
   if (!apiKey) return { reason: "no API key configured" };
-  return anthropicProvider(apiKey);
+  return { call: anthropicCall(apiKey), secret: apiKey, headLength: ANTHROPIC_SECRET_HEAD };
 }
 
 export interface ReviewArgs {
@@ -399,7 +413,7 @@ export async function adversarialReview(
   args: ReviewArgs,
 ): Promise<{ verdict: Verdict; reason: string }> {
   const provider = selectProvider(args);
-  if (typeof provider !== "function") return { verdict: "ask", reason: provider.reason };
+  if (!("call" in provider)) return { verdict: "ask", reason: provider.reason };
 
   // One budget, one timer: the same timeout that gives up on the review aborts
   // the request it gave up on, so nothing is left running (or billing) behind a
@@ -407,7 +421,7 @@ export async function adversarialReview(
   const budget = new AbortController();
   try {
     const result = await withTimeout(
-      provider(buildPrompt(args.intent, args.history), budget.signal),
+      provider.call(buildPrompt(args.intent, args.history), budget.signal),
       REVIEWER_TIMEOUT_MS,
       () => budget.abort(),
     );
@@ -415,7 +429,16 @@ export async function adversarialReview(
 
     // A fixed reason on purpose — see parseVerdict. Nothing derived from the
     // model's output reaches this string.
-    return parseVerdict(result.text) ?? { verdict: "ask", reason: "reviewer returned no usable verdict" };
+    const parsed = parseVerdict(result.text);
+    if (!parsed) return { verdict: "ask", reason: "reviewer returned no usable verdict" };
+    // The credential check, on the decoded string and after the only decode
+    // there is. `decision` is an enum the parser already pinned, so `reason` is
+    // the entire surface by which the answer can carry anything out of here —
+    // and this is the value itself, not a serialisation of it. See echoesSecret.
+    if (echoesSecret(parsed.reason, provider.secret, provider.headLength)) {
+      return { verdict: "ask", reason: "reviewer answer discarded: it repeated a credential" };
+    }
+    return parsed;
   } catch (error: unknown) {
     return { verdict: "ask", reason: `reviewer error: ${error instanceof Error ? error.message : error}` };
   }

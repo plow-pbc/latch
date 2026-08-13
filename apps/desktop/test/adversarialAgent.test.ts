@@ -53,6 +53,22 @@ function verdictResponse(decision: unknown, reason = "because") {
   };
 }
 
+/**
+ * A schema-valid verdict whose `reason` is the secret written entirely in JSON
+ * `\uXXXX` escapes.
+ *
+ * The point is that the two texts differ: no substring of this JSON is the
+ * credential, or any fragment of it, so a scan of the raw answer sees nothing —
+ * and `JSON.parse` hands back the credential in full. Any check that runs
+ * before the parse is looking at the wrong string.
+ */
+function escapedVerdict(decision: string, secret: string): string {
+  const escaped = [...secret]
+    .map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .join("");
+  return `{"decision":"${decision}","reason":"${escaped}"}`;
+}
+
 function review(apiKey = "sk-test") {
   return adversarialReview({ intent: intent(), history: [], provider: "anthropic", apiKey });
 }
@@ -261,6 +277,24 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
     // actually secret. Direction (b) must keep holding while (a) is fixed.
     const key = "sk-ant-api03-do-not-leak-me-0123456789";
     createImpl = async () => verdictResponse("allow", `your key is ${key}`);
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "anthropic",
+      apiKey: key,
+    });
+    await failsClosed(result);
+    expect(JSON.stringify(result)).not.toContain(key);
+  });
+
+  it("a JSON-ESCAPED key in the reason is discarded too", async () => {
+    // The bypass the raw-text scan could never see: the answer body contains no
+    // fragment of the key, and the parser puts it back together.
+    const key = "sk-ant-api03-do-not-leak-me-0123456789";
+    createImpl = async () => ({
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: escapedVerdict("allow", key) }],
+    });
     const result = await adversarialReview({
       intent: intent(),
       history: [],
@@ -628,6 +662,11 @@ describe("the Plow provider", () => {
               JSON.stringify({ decision: "ask", reason: `token ${PLOW_CREDENTIAL.slice(0, 10)}…` }),
             ),
           ),
+        // And the escape hatch out of both of those: a schema-valid answer whose
+        // reason spells the credential in `\uXXXX`. Scanning the answer text
+        // finds nothing — not the token, not its prefix — because the token only
+        // exists once the parser has decoded it.
+        () => fetchMock.mockResolvedValue(plowResponse(escapedVerdict("allow", PLOW_CREDENTIAL))),
       ];
 
       // A prefix counts as a leak: the point is that no part of the token is
