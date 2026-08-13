@@ -162,6 +162,41 @@ describe("session lifecycle", () => {
     expect(r.get("error").str).toContain("in use");
   });
 
+  it("a second open under the SAME agent id is refused while the holder is active", async () => {
+    // The relay hands every agent on one Mac the same client id, so this is
+    // two callers, not one reopening. Evicting here is what made them fight.
+    await openSession(["pizza.example"]);
+    const r = jv(await ctx.sessions.open("int-2", AGENT, ["a.example"], false));
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toContain("in use");
+    expect(eventNames()).not.toContain("browser_session_closed");
+  });
+
+  it("a quiet session is still reopenable, and the evicted handle says why", async () => {
+    const ctx2 = makeCtx();
+    // busyMs 0: the holder counts as idle immediately, so open may take over.
+    const sessions = new BrowserSessions(ctx2.host, null, (e, f) => ctx2.events.push({ event: e, fields: f }), 60_000, 0);
+    const first = jv(await sessions.open("int-1", AGENT, ["pizza.example"], false));
+    const stale = first.get("session").str!;
+    const second = jv(await sessions.open("int-2", AGENT, ["a.example"], false));
+    expect(second.get("status").str).toBe("completed");
+
+    const r = jv(await sessions.command(AGENT, stale, { action: "url" }));
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toContain("closed (reopened)");
+    expect(r.get("error").str).not.toContain("unknown session");
+    await sessions.closeAll("test");
+  });
+
+  it("audits the agent that opened and closed a session", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.close(s, "agent");
+    const opened = ctx.events.find((e) => e.event === "browser_session_opened");
+    const closed = ctx.events.find((e) => e.event === "browser_session_closed");
+    expect(opened?.fields.agent).toBe(AGENT);
+    expect(closed?.fields.agent).toBe(AGENT);
+  });
+
   it("open warms the browser up front (so no later action pays the cold start)", async () => {
     // The fake server's ready line audits browser_started; it must land at open,
     // before any browser command runs.

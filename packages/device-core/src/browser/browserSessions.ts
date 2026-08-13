@@ -57,6 +57,19 @@ function hostOf(url: string): string | null {
 const DEFAULT_IDLE_MS = 15 * 60_000;
 
 /**
+ * How recently a session must have acted to count as still in use, so that a
+ * second `open` is refused rather than silently taking the browser.
+ *
+ * The agent id cannot be relied on to tell two callers apart: it is the
+ * relay's client id, so every agent on one Mac can arrive under a single id and
+ * sail past the different-agent check below. Two of them then evict each other
+ * on every open and neither finishes. Recent activity is the signal that
+ * survives that, and 60s is long enough to cover an agent thinking between
+ * actions while still releasing a browser somebody walked away from.
+ */
+const DEFAULT_BUSY_MS = 60_000;
+
+/**
  * Longest a single `wait` action may park an exchange. The relay abandons a
  * tunnelled call at ~20s and `browser` is non-deferrable, so every action must
  * answer well inside that; `wait` and `goto` are the only ones that can run
@@ -78,12 +91,16 @@ export interface BrowserSessionInfo {
 export class BrowserSessions {
   private session: Session | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
+  /** Why the last session ended, so a caller holding its handle is told what
+   * happened instead of the bare "unknown session". */
+  private lastClosed: { handle: string; reason: string } | null = null;
 
   constructor(
     private readonly host: BrowserHost,
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
+    private readonly busyMs: number = DEFAULT_BUSY_MS,
   ) {}
 
   /** True when a page URL is inside the session's approved origins.
@@ -118,7 +135,22 @@ export class BrowserSessions {
     if (this.session && this.session.agentId !== agentId) {
       return { status: "error", error: "browser is in use by another agent" };
     }
-    if (this.session) await this.close(this.session.handle, "reopened");
+    if (this.session) {
+      // Same agent id — which may still be a different caller (see
+      // DEFAULT_BUSY_MS). Take the browser only if the holder has gone quiet.
+      const idleFor = Date.now() - this.session.lastActivity;
+      if (idleFor < this.busyMs) {
+        const secs = Math.round(idleFor / 1000);
+        return {
+          status: "error",
+          error:
+            `browser is in use by a session opened for ` +
+            `[${this.session.origins.join(", ")}], last active ${secs}s ago — ` +
+            `close that session or retry once it is idle`,
+        };
+      }
+      await this.close(this.session.handle, "reopened");
+    }
 
     // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
     // start (~30s) absorbs into the deferred handle; every later `browser`
@@ -147,6 +179,7 @@ export class BrowserSessions {
     this.audit("browser_session_opened", {
       intentId,
       session: session.handle,
+      agent: agentId,
       origins: session.origins,
       credential_metadata: credentialMetadata,
       headed: this.host.headed,
@@ -196,10 +229,11 @@ export class BrowserSessions {
     const s = this.session;
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
+    this.lastClosed = { handle, reason };
     if (this.idleTimer) clearTimeout(this.idleTimer);
     await this.host.shutdown();
     this.host.resetBreaker();
-    this.audit("browser_session_closed", { session: handle, reason });
+    this.audit("browser_session_closed", { session: handle, agent: s.agentId, reason });
     return { status: "completed" };
   }
 
@@ -227,7 +261,16 @@ export class BrowserSessions {
 
   private validate(agentId: string, handle: string): Session | string {
     const s = this.session;
-    if (!s || s.handle !== handle) return "unknown session (open one with plow_browser_open)";
+    if (!s || s.handle !== handle) {
+      // Say what actually happened. A caller whose session was ended out from
+      // under it otherwise sees "unknown session" (or, if it raced the
+      // shutdown, the host's exit signal) and reads a deliberate close as a
+      // crash — which is exactly the wrong thing to go debugging.
+      if (this.lastClosed?.handle === handle) {
+        return `session was closed (${this.lastClosed.reason}) — open a new one with plow_browser_open`;
+      }
+      return "unknown session (open one with plow_browser_open)";
+    }
     if (s.agentId !== agentId) return "session belongs to a different agent";
     return s;
   }
