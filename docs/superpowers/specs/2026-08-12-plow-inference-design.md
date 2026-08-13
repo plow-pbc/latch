@@ -53,8 +53,11 @@ Researched and cited; do not re-derive.
 - Forwards only the fields in `_OPTIONAL_FIELDS` (`llm/router.py:49`);
   everything else is silently dropped. `output_config` and `thinking` are
   currently dropped.
-- Model allowlist `api/plow/config.py:12-21`. Default is
-  `anthropic/claude-sonnet-5`, which is already allowlisted.
+- Model allowlist `api/plow/config.py:12-21`. Entries are **provider-prefixed**
+  (`anthropic/claude-sonnet-5`, `anthropic/claude-sonnet-4-6`), and
+  `chat_completions` strips only a leading `plow/` before the membership test
+  (`llm/router.py:135-141`). A bare `claude-sonnet-4-6` is therefore **rejected
+  with 400**. The client must send the provider-prefixed id.
 - Errors: `402` insufficient balance; `400` model not allowed; provider `401`/
   `403`/`408` are masked as an opaque `502` — **a 502 does not mean "retry with
   different credentials"**. Streaming errors arrive as HTTP 200 with an error
