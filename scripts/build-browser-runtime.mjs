@@ -750,8 +750,12 @@ function signCamoufox(arch, identity) {
 function fetchVaultServer(arch) {
   const { repo, commit, version } = lock.vaultServer;
   const installRoot = path.join(vaultServerDir, arch);
+  // Keyed by the recipe as well as the commit: the same source built the old
+  // way produced a binary linked against the build machine's OpenSSL, and a
+  // marker that only knew the commit would keep serving it from cache.
   const marker = path.join(installRoot, ".commit");
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === commit) {
+  const stamp = `${commit}:vendored-openssl`;
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
     log(`vault server ${arch} up to date`);
     return;
   }
@@ -765,10 +769,22 @@ function fetchVaultServer(arch) {
   run("git", ["-C", srcDir, "checkout", "--quiet", commit], { quiet: true });
 
   const triple = arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  // Their tree pins its own toolchain, and a target added to the default one is
+  // invisible to it — the build then fails deep in the dependency graph with
+  // "can't find crate for `core`". Run from their directory and rustup applies
+  // that pin itself; a no-op once the target is present.
+  run("rustup", ["target", "add", triple], { cwd: srcDir, quiet: true });
   log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
-  run("cargo", ["build", "--release", "--locked", "--features", "sqlite", "--target", triple], {
-    cwd: srcDir,
-  });
+  // vendored_openssl builds OpenSSL from source and links it statically. Two
+  // reasons, and the second is the important one: cross-compiling to x86_64
+  // finds no OpenSSL for that arch on an arm64 Mac, and without it the binary
+  // links whatever OpenSSL the BUILD machine had — /opt/homebrew/... — which is
+  // not on the machine of anyone we ship to.
+  run("cargo", [
+    "build", "--release", "--locked",
+    "--features", "sqlite,vendored_openssl",
+    "--target", triple,
+  ], { cwd: srcDir });
   const built = path.join(srcDir, "target", triple, "release", "vaultwarden");
   if (!fs.existsSync(built)) throw new Error(`cargo produced no binary at ${built}`);
 
@@ -776,7 +792,7 @@ function fetchVaultServer(arch) {
   fs.mkdirSync(installRoot, { recursive: true });
   fs.copyFileSync(built, path.join(installRoot, "vaultwarden"));
   fs.chmodSync(path.join(installRoot, "vaultwarden"), 0o755);
-  fs.writeFileSync(marker, commit);
+  fs.writeFileSync(marker, stamp);
   log(`vault server ${arch} ready at ${installRoot}`);
 }
 
