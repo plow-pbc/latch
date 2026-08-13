@@ -1067,6 +1067,87 @@ describe("a sign-out during finishWithSession", () => {
     expect(onboarding.state().step).toBe("connected");
   });
 
+  it("quitting during relayInfo — before the gate has anything to hold — starts no mint", async () => {
+    // The window the shutdown gate structurally cannot cover. A login registers
+    // its first critical work around the MINT, so while `relayInfo` is on the
+    // wire the gate is empty: `deferQuit` finds nothing, allows the quit, and a
+    // continuation resuming during teardown would start a server-side mint the
+    // exiting process neither persists nor revokes.
+    const tracked: Promise<unknown>[] = [];
+    const { onboarding, release, begun } = await parkedInside("relayInfo", {
+      critical: (work) => {
+        tracked.push(work);
+        return work;
+      },
+    });
+
+    // Exactly what `before-quit` does, and in the same order: nothing has been
+    // registered, so this is all that stands between the login and a mint.
+    expect(tracked).toHaveLength(0);
+    onboarding.quitting();
+
+    release();
+    await begun;
+    await settle();
+
+    expect(plow.minted).toEqual([]); // never even asked
+    expect(tracked).toHaveLength(0);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+
+  it("the latch is synchronous — nothing runs between it and the gate being read", async () => {
+    // An async latch, or one that set its flag a tick later, would let the
+    // parked continuation through: `before-quit` is one synchronous run, and
+    // anything that has not taken effect by the end of it has not taken effect
+    // at all. Released in the SAME tick as the latch, with no await between.
+    const { onboarding, release, begun } = await parkedInside("relayInfo");
+
+    onboarding.quitting();
+    release(); // no `await` above this line
+
+    await begun;
+    await settle();
+
+    expect(plow.minted).toEqual([]);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("a login that has not started yet is refused too", async () => {
+    // The generation bump only kills logins already RUNNING. A poll loop can
+    // still land a verified answer while the window is closing, and that login
+    // captures the already-bumped generation — so every check that only
+    // compares generations waves it straight through.
+    //
+    // The redeem is held mid-call so the loop is genuinely alive at the latch
+    // and the text lands after it. Letting the loop run to its five-minute
+    // give-up instead would leave nothing to refuse.
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeemActivation = async (secret: string) => {
+      plow.redeemCalls.push(secret);
+      await onTheWire;
+      return { status: "verified", token: SESSION_TOKEN };
+    };
+    const onboarding = build();
+    const begun = onboarding.begin();
+    await settle();
+    expect(plow.redeemCalls).toHaveLength(1); // parked, not given up
+
+    onboarding.quitting();
+
+    // Only now does the text land.
+    release();
+    await begun;
+    await settle();
+
+    expect(plow.minted).toEqual([]);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+
   it("an UNINTERRUPTED login still signs in, and hands nothing back", async () => {
     // The guard must cost the ordinary path nothing.
     const { onboarding, release, begun } = await parkedInside("mintDeviceCredential");

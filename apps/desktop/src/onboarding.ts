@@ -166,6 +166,11 @@ export class Onboarding {
    * credential that had been minted and handed back.
    */
   private loginGeneration = 0;
+  /**
+   * The app is going away. Set synchronously by `quitting()`, and never unset —
+   * a process that has begun exiting does not come back.
+   */
+  private isQuitting = false;
   private agent: OnboardingAgent | null = null;
 
   constructor(private readonly deps: OnboardingDeps) {
@@ -595,7 +600,34 @@ export class Onboarding {
    * cleanup to get wrong: `mintDeviceCredential` retires the session
    * server-side, in the same transaction as the mint.
    */
+  /**
+   * The app is quitting. Abandon every login, in flight or not yet started.
+   *
+   * SYNCHRONOUS on purpose, and `main.ts` calls it before the shutdown gate is
+   * read. The gate can only hold work that has been registered, and the first
+   * registration a login makes is around the MINT — so between `relayInfo()`
+   * starting and that registration the gate is empty, `deferQuit` finds nothing
+   * to wait for, and the quit is allowed. If that continuation then resumed
+   * during teardown it would start a server-side mint the exiting process would
+   * neither persist nor revoke. Nothing the gate can do closes that; the login
+   * has to already be dead by the time the gate is asked.
+   *
+   * The generation bump kills the logins that are already running. The flag
+   * kills the ones that have not started — a poll loop can still land a
+   * verified answer while the window is closing, and it would capture the bumped
+   * generation and sail past every check that only compares it.
+   *
+   * Registering nothing with the gate is deliberate: a quit with no onboarding
+   * work in flight must not be delayed by this at all.
+   */
+  quitting(): void {
+    this.isQuitting = true;
+    this.loginGeneration += 1;
+  }
+
   private async finishWithSession(sessionToken: string): Promise<void> {
+    // The login that has not started yet. See `quitting()`.
+    if (this.isQuitting) return;
     // Captured before the first yield. Everything below asks the same question
     // — is the login this belongs to still the one we are running? — rather
     // than asking where we paused.

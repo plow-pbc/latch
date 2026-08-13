@@ -476,6 +476,10 @@ app.on("before-quit", (event) => {
   // hostage. The decision and the bound live in shutdownGate.ts; this is the
   // Electron-shaped adapter around them and nothing else.
   if (quitDeferred) return;
+  // BEFORE the gate is read, and synchronously. A login between `relayInfo` and
+  // its mint has registered nothing yet, so the gate has nothing to wait for —
+  // the login has to be dead by the time we ask, not merely waited on.
+  onboarding?.quitting();
   const deferring = shutdown.deferQuit(() => {
     quitDeferred = true;
     app.quit();
