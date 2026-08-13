@@ -764,6 +764,10 @@ function fetchVaultServer(arch) {
   // exists — build logic changing has to bust the stamp too.
   const stamp = `${commit} ${VAULT_FEATURES}`;
   if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
+    // Checked on the cached path too — that is the path most packaging runs
+    // take, so an assertion that only fires after a compile is an assertion
+    // that mostly does not fire.
+    assertNoForeignLinks(path.join(installRoot, "vaultwarden"));
     log(`vault server ${arch} up to date`);
     return;
   }
@@ -873,6 +877,7 @@ function fetchVaultCli(arch) {
   const installRoot = path.join(vaultCliDir, arch);
   const marker = path.join(installRoot, ".sha256");
   if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
+    assertNoForeignLinks(path.join(installRoot, "bw"));
     log(`vault cli ${arch} up to date`);
     return;
   }
@@ -885,6 +890,9 @@ function fetchVaultCli(arch) {
   const bw = path.join(installRoot, "bw");
   if (!fs.existsSync(bw)) throw new Error(`no bw binary in ${asset.url}`);
   fs.chmodSync(bw, 0o755); // the zip is built on CI; don't trust its mode bits
+  // Upstream's build, so this is a check on THEM: a `bw` that grew a dependency
+  // outside the OS would fail the same way the vault did, on a user's Mac only.
+  assertNoForeignLinks(bw);
   fs.writeFileSync(marker, asset.sha256);
   log(`vault cli ${arch} ready at ${installRoot}`);
 }
