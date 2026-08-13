@@ -290,15 +290,13 @@ ipcMain.handle("settings:signOut", async () => {
     // it. `track` hands back the same promise, so what is awaited here is
     // unchanged.
     (credential) => shutdown.track(new PlowApi(apiBaseUrl).revokeDeviceCredential(credential)),
-    // Dropping the socket is part of "signed out". It runs ALONGSIDE the
-    // revoke, not in front of it: `stop()` waits for in-flight requests, which
-    // is unbounded, and the revoke must not queue behind that.
-    startRelay,
+    // The other two owners of this transition, both started here. Dropping the
+    // socket runs ALONGSIDE the revoke rather than in front of it: `stop()`
+    // waits for in-flight requests, which is unbounded, and neither the revoke
+    // nor the onboarding reset may queue behind that. A shown-once agent token
+    // stayed on screen for the length of a drain when this ran afterwards.
+    () => Promise.all([startRelay(), onboarding?.signedOut()]),
   );
-  // The third owner of this transition. Settings has forgotten the credential
-  // and the relay is down; the onboarding instance outlives both and would
-  // otherwise still be reporting `connected` for the account just left.
-  await onboarding?.signedOut();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 

@@ -221,6 +221,13 @@ export class Onboarding {
     } catch {
       return false;
     }
+    // The same test the poll loop makes, for the same reason and against the
+    // same race: this redeem is also a call in flight, and "Get a New Code"
+    // during a sign-out would otherwise mint and persist a credential out of an
+    // activation the sign-out had already abandoned. `activationSecret` is
+    // still `secret` for the whole legitimate call — `newActivationCode` does
+    // not clear it until this returns false.
+    if (secret !== this.activationSecret) return false;
     if (result.status !== "verified") return false;
     if (!result.token) {
       // The token is handed to the first redeem that sees the completion and
@@ -308,9 +315,28 @@ export class Onboarding {
       // server hands it to the first redeem that sees the completion and omits
       // the key entirely ever after. So it is acted on even if this loop was
       // cancelled while the call was in flight: dropping it on the floor would
-      // strand an activation the user actually completed, unrecoverably. The
-      // one thing that makes it moot is already holding a credential.
-      if (result.status === "verified" && result.token && !this.settings().relayCredential.trim()) {
+      // strand an activation the user actually completed, unrecoverably. That
+      // is why a stale generation is not enough to refuse it.
+      //
+      // What decides instead is whether this is still OUR activation. Refusing
+      // on "already holding a credential" alone was exactly backwards across a
+      // sign-out: sign-out CLEARS the credential, so a redeem in flight when the
+      // user signed out passed the test and minted — and persisted — a fresh
+      // spend-capable credential that the sign-out's revoke had never seen. The
+      // account was left holding a live device credential its owner had just
+      // retired.
+      //
+      // `activationSecret` is nulled by every path that abandons an activation
+      // for good — sign-out, the phone-code fallback, a completed login — and
+      // deliberately KEPT by `giveUp`, which is the case this late accept exists
+      // for. So it says what "already holding a credential" was only guessing at.
+      const stillOurs = secret === this.activationSecret;
+      if (
+        result.status === "verified" &&
+        result.token &&
+        stillOurs &&
+        !this.settings().relayCredential.trim()
+      ) {
         this.cancelPolling();
         await this.run(() => this.finishWithSession(result.token as string));
         return;
@@ -486,8 +512,8 @@ export class Onboarding {
     this.activationStale = false;
     this.codeExpiresAt = null;
     this.phone = "";
-    this.message = "";
-    this.publish();
+    // No `message = ""` and no `publish()` here: `begin()` reaches `run()`,
+    // which does both synchronously before it awaits anything.
     return this.begin();
   }
 

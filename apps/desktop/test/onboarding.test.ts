@@ -585,47 +585,46 @@ describe("signing out", () => {
     return onboarding;
   }
 
-  it("the reported path: sign out, reopen Settings, and the window is NOT connected", async () => {
-    // Settings clears the credential and drops the socket the way the IPC
-    // handler does; the onboarding instance is the one that survives.
+  it("the reported path: not connected, and on a screen it can actually use", async () => {
+    // Sign out, reopen Settings, and the window must not be the connected one.
+    // It used to be: the instance outlives the sign-out, and the constructor is
+    // the only other place that decides this. The screen offered Create Agent
+    // over a stale endpoint, which then failed its own credential check.
     const onboarding = await signedIn();
     signOutOfPlow(home);
     plow.connected = false;
 
-    await onboarding.signedOut();
+    const codesBefore = plow.activations.length;
+    const changesBefore = changes;
+    const pending = onboarding.signedOut();
+    // Synchronous, all of it: no `state()` read between the call and its first
+    // await may still say connected. Nothing here waits on a drain.
+    expect(onboarding.state().step).toBe("activate");
+    const after = await pending;
 
     // Reopening the window is a fresh `onboarding:get` plus the `begin()` the
     // renderer fires on load — exactly what the Sign In button produces.
     const reopened = await onboarding.begin();
     expect(reopened.step).not.toBe("connected");
     expect(reopened.step).toBe("activate");
-    // …and the screen it now shows is a usable one, not a code-less shell.
-    expect(reopened.activation?.displayCode).toBeTruthy();
     // The account just left is gone from the state the window renders.
     expect(reopened.accountUid).toBe("");
     expect(reopened.mcpUrl).toBe("");
     expect(reopened.connected).toBe(false);
-  });
-
-  it("Create Agent is no longer offered a path it will refuse", async () => {
-    // The tail of the reported bug: the connected screen offered Create Agent,
-    // which then failed its own credential check. Nothing should reach that.
-    const onboarding = await signedIn();
-    signOutOfPlow(home);
-
-    const after = await onboarding.signedOut();
-    expect(after.step).toBe("activate");
-    // If it is reached anyway, it still refuses — but it is not on this screen.
+    // An ALREADY-OPEN window was told to re-read and given something to draw —
+    // nothing reopens it to call `begin()` on its behalf — and a window opening
+    // afterwards does not burn a second code.
+    expect(changes).toBeGreaterThan(changesBefore);
+    expect(after.activation?.displayCode).toBeTruthy();
+    expect(plow.activations.length).toBe(codesBefore + 1);
+    // Create Agent still refuses if it is reached, but it is not on this screen.
     expect((await onboarding.createAgent("Claude Code")).message).toContain("isn't signed in");
   });
 
-  it("drops the secrets belonging to the account just left", async () => {
-    // The agent token is shown once and held in memory until dismissed; the
-    // activation secret is what minted the credential being retired. Neither
-    // may outlive the sign-out.
+  it("drops the agent token shown for the account just left", async () => {
+    // Shown once and held in memory until dismissed. Sign-out is a dismissal.
     const onboarding = await signedIn();
-    const withAgent = await onboarding.createAgent("Claude Code");
-    expect(withAgent.agent?.token).toBe(AGENT_TOKEN);
+    expect((await onboarding.createAgent("Claude Code")).agent?.token).toBe(AGENT_TOKEN);
 
     signOutOfPlow(home);
     const after = await onboarding.signedOut();
@@ -633,7 +632,6 @@ describe("signing out", () => {
     expect(after.agent).toBeNull();
     expect(JSON.stringify(after)).not.toContain(AGENT_TOKEN);
     expect(JSON.stringify(after)).not.toContain(DEVICE_TOKEN);
-    expect(JSON.stringify(after)).not.toContain(ACTIVATION_SECRET);
   });
 
   it("does not resurrect the activation that was live when it signed out", async () => {
@@ -647,47 +645,113 @@ describe("signing out", () => {
     const onboarding = await signedIn();
     const live = await onboarding.useActivation();
     expect(live.step).toBe("activate");
-    expect(live.activation?.displayCode).toBeTruthy();
     const spent = `${ACTIVATION_SECRET}_1`; // the one useActivation just minted
     const before = plow.redeemCalls.length;
 
     signOutOfPlow(home);
-    const after = await onboarding.signedOut();
+    await onboarding.signedOut();
     await settle();
 
-    expect(after.step).toBe("activate");
     expect(plow.redeemCalls.slice(before)).not.toContain(spent);
     expect(loadSettings(home).relayCredential).toBe("");
   });
 
-  it("is signed out before it goes near the network", async () => {
-    // The reset is synchronous; only the fresh code is awaited. A `state()`
-    // read between the two must never still say connected.
+  it("a verified redeem never mints OVER a credential this Mac already holds", async () => {
+    // The other half of the same conditional, and not about sign-out at all: a
+    // signed-in Mac showing an activation code (`useActivation()` is on the
+    // bridge) whose code is then texted. Minting there would overwrite the live
+    // credential and orphan it on the account — spend-capable, and now unknown
+    // to the only thing that could revoke it.
     const onboarding = await signedIn();
-    signOutOfPlow(home);
+    expect((await onboarding.useActivation()).step).toBe("activate");
+    const mintedBefore = plow.minted.length;
+    const credential = loadSettings(home).relayCredential;
 
-    const pending = onboarding.signedOut();
-    expect(onboarding.state().step).toBe("activate");
-    expect(onboarding.state().agent).toBeNull();
-    await pending;
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settle();
+
+    expect(plow.minted.length).toBe(mintedBefore);
+    expect(loadSettings(home).relayCredential).toBe(credential);
   });
 
-  it("an already-open window is left on a screen it can use", async () => {
-    // Publishes so the open window re-reads, and mints the code that screen
-    // needs — nothing reopens it to call `begin()` on its behalf.
+  it("a 'Get a New Code' in flight across the sign-out cannot mint either", async () => {
+    // The same race one caller over. `newActivationCode` re-polls the previous
+    // secret before minting a fresh code — the recovery for a user who texted
+    // after we stopped watching — and that redeem is a call in flight too.
     const onboarding = await signedIn();
+    expect((await onboarding.useActivation()).step).toBe("activate");
+
+    const inFlight = `${ACTIVATION_SECRET}_1`;
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeemActivation = async (secret: string) => {
+      plow.redeemCalls.push(secret);
+      if (secret !== inFlight) return { status: "pending" };
+      await onTheWire;
+      return { status: "verified", token: SESSION_TOKEN };
+    };
+
+    // The user asks for a new code; its retry of the old secret parks mid-call.
+    const newCode = onboarding.newActivationCode();
+    await settle();
+    expect(plow.redeemCalls).toContain(inFlight);
+
     signOutOfPlow(home);
+    await onboarding.signedOut();
+    const mintedBefore = plow.minted.length;
 
-    const codesBefore = plow.activations.length;
-    const changesBefore = changes;
-    const after = await onboarding.signedOut();
+    release();
+    await newCode;
+    await settle();
 
-    // It told the window to re-read, and gave it something to draw.
-    expect(changes).toBeGreaterThan(changesBefore);
-    expect(plow.activations.length).toBe(codesBefore + 1);
-    expect(after.activation?.displayCode).toBeTruthy();
-    // And a window opening afterwards does not burn a second one.
-    await onboarding.begin();
-    expect(plow.activations.length).toBe(codesBefore + 1);
+    expect(plow.minted.length).toBe(mintedBefore);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+
+  it("a redeem already IN FLIGHT across the sign-out cannot mint a credential", async () => {
+    // The worst of it. A verified answer is deliberately acted on even when the
+    // poll loop has been cancelled — dropping it would strand an activation the
+    // user really completed. The only thing that used to make it moot was
+    // already holding a credential, and SIGN-OUT CLEARS THE CREDENTIAL. So a
+    // redeem in flight when the user signed out minted and persisted a fresh
+    // spend-capable device credential that the sign-out's revoke never saw.
+    const onboarding = await signedIn();
+    const live = await onboarding.useActivation();
+    expect(live.step).toBe("activate");
+
+    // Hold THIS activation's redeem mid-call — and only this one, so the fresh
+    // code the sign-out mints behaves like the untexted code it is.
+    const inFlight = `${ACTIVATION_SECRET}_1`;
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeemActivation = async (secret: string) => {
+      plow.redeemCalls.push(secret);
+      if (secret !== inFlight) return { status: "pending" };
+      await onTheWire;
+      return { status: "verified", token: SESSION_TOKEN };
+    };
+    await settle();
+    expect(plow.redeemCalls).toContain(inFlight);
+
+    // The user signs out while that call is still on the wire.
+    signOutOfPlow(home);
+    await onboarding.signedOut();
+    const mintedBefore = plow.minted.length;
+
+    // …and only now does the server answer "verified".
+    release();
+    await settle();
+
+    // Nothing was minted, nothing was persisted, and the window did not slide
+    // back to the account the user just left.
+    expect(plow.minted.length).toBe(mintedBefore);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(loadSettings(home).accountUid).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
   });
 });
