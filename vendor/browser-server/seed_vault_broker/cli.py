@@ -588,6 +588,12 @@ def _read_field(item: dict, field: str) -> str | None:
     if card_key:
         value = (raw.get("card") or {}).get(card_key)
         return str(value) if value not in (None, "") else None
+    if field == "notes":
+        return raw.get("notes") or None
+    for custom in raw.get("fields") or []:
+        if custom.get("name") == field:
+            value = custom.get("value")
+            return str(value) if value not in (None, "") else None
     return None
 
 
@@ -600,8 +606,10 @@ def _cmd_whats_here(args: argparse.Namespace) -> int:
     matches_this_page so the agent can judge. No value of any field is returned
     here -- titles, usernames and urls only.
     """
-    page = _host_key(args.url)
-    if not page:
+    # Without a page there is nothing to compare against; the listing still
+    # stands on its own, which is how the vault tool asks for it.
+    page = _host_key(args.url) if args.url else None
+    if args.url and not page:
         return _emit_error(_ERR_INVALID_ARG, "could not read a host from %r" % args.url)
     try:
         items = _list_items()
@@ -620,7 +628,7 @@ def _cmd_whats_here(args: argparse.Namespace) -> int:
             # Whether this item's own site is the page on screen. Advice, not a
             # filter: the agent decides, and a login for another host is a valid
             # choice (a store checkout that hands off to PayPal).
-            "matches_this_page": page in _item_host_keys(item),
+            "matches_this_page": bool(page) and page in _item_host_keys(item),
         })
     sys.stdout.write(json.dumps(out) + "\n")
     return 0
@@ -670,11 +678,10 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
     # --url is optional by the owner's decision: without it there is NO origin check
     # and the caller takes that on. The audit line says SEM-URL so those releases are
     # obvious in the log rather than blending in.
-    if args.field not in _ALLOWED_FIELDS:
-        return _emit_error(
-            _ERR_INVALID_ARG,
-            "field %r is not releasable; allowed: %s" % (args.field, ", ".join(sorted(_ALLOWED_FIELDS))),
-        )
+    # Which fields exist depends on the item -- a note has notes, a card has a
+    # number, a login has a password, and custom fields are named by whoever
+    # made them. The check therefore happens against the item itself, below,
+    # rather than a fixed list that leaves half the vault unreadable.
     page = _host_key(args.url) if args.url else None
     if args.url and not page:
         return _emit_error(_ERR_INVALID_ARG, "could not read a host from %r" % args.url)
@@ -706,6 +713,14 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
                 _ERR_VAULT_DENIED,
                 "item belongs to %s, not to %s" % (", ".join(keys), page),
             )
+
+    releasable = set(_field_labels(item)) | _USERNAME_FIELDS | {_FIELD_PASSWORD, _FIELD_TOTP} | set(_CARD_FIELDS)
+    if args.field not in releasable:
+        _audit(args.item_id, args.field, page or "SEM-URL", "ERROR %s" % _ERR_INVALID_ARG)
+        return _emit_error(
+            _ERR_INVALID_ARG,
+            "this item has no %r; it has: %s" % (args.field, ", ".join(_field_labels(item)) or "nothing"),
+        )
 
     if args.field == _FIELD_TOTP:
         rc, stdout, stderr = _run_vault(["get", "totp", args.item_id])
@@ -829,7 +844,7 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog="Example:\n  seed-vault-broker whats-here --url https://example.com/checkout",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_here.add_argument("--url", required=True, help="URL currently open in the browser.")
+    p_here.add_argument("--url", help="URL currently open, when there is one. Without it the listing is just what the vault holds.")
     p_here.set_defaults(func=_cmd_whats_here)
 
     p_desc = sub.add_parser(

@@ -480,10 +480,10 @@ export const TOOLS: ToolSpec[] = [
     name: "browser",
     description:
       "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
-      "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages, " +
-      "credentials, describe_item. 'screenshot' returns an image of the page — take one after " +
-      "every navigation to see where you are. 'credentials' lists vault items relevant to " +
-      "the current page (metadata only); 'fill_secret' types an approved item's field into a form " +
+      "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
+      "'screenshot' returns an image of the page — take one after " +
+      "every navigation to see where you are. Ask the vault tool what is in the vault; " +
+      "'fill_secret' types an approved item's field into a form " +
       "field without ever showing you the value. Actions on pages outside the approved origins are " +
       "refused — use browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page).",
@@ -497,7 +497,6 @@ export const TOOLS: ToolSpec[] = [
           enum: [
             "goto", "click", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
             "screenshot", "text", "url", "title", "links", "forms", "tables", "pages",
-            "credentials", "describe_item",
           ],
         },
         url: { type: "string", description: "goto: target URL (within approved origins)" },
@@ -550,6 +549,32 @@ export const TOOLS: ToolSpec[] = [
       const out = { ...(r.obj ?? {}) };
       delete out.status;
       return out as JSONValue;
+    },
+  },
+  {
+    name: "vault",
+    description:
+      "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
+      "notes, custom fields — with titles, usernames and sites but never a value. 'describe' " +
+      "names the fields one item holds. No browser session is needed to ask. To USE a secret, " +
+      "open a browser session and call the browser tool's fill_secret: values are typed into the " +
+      "page and never returned to you.",
+    inputSchema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["list", "describe"] },
+        item: { type: "string", description: "Item id, for 'describe'." },
+      },
+      additionalProperties: false,
+    },
+    deferrable: false,
+    async run(args, ctx) {
+      const a = jv(args);
+      const action = a.get("action").str;
+      if (action === "list") return ctx.device.vaultList();
+      if (action === "describe") return ctx.device.vaultDescribe(a.get("item").str ?? "");
+      throw new ToolError("action must be 'list' or 'describe'");
     },
   },
   {

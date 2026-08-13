@@ -106,9 +106,13 @@ export class CredentialBroker {
     }
   }
 
-  /** Everything in the vault, metadata only. Never a secret value. */
-  async whatsHere(url: string): Promise<CredentialItemSummary[]> {
-    const out = await this.run(["whats-here", "--url", url]);
+  /**
+   * Everything in the vault, metadata only. Never a secret value. The page is
+   * optional: with one, each entry says whether it belongs to that page; without,
+   * this is simply what the vault holds.
+   */
+  async whatsHere(url?: string): Promise<CredentialItemSummary[]> {
+    const out = await this.run(["whats-here", ...(url ? ["--url", url] : [])]);
     const items = JSON.parse(out) as Array<{ [k: string]: JSONValue }>;
     return items.map((i) => ({
       id: String(i.id ?? ""),

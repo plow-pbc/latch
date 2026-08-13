@@ -141,6 +141,36 @@ export class DeviceAgent {
     }
   }
 
+  /**
+   * What is in the vault, and what one item holds — metadata only, no page and
+   * no browser session involved. Values are never returned here: releasing one
+   * only makes sense against the page it is being typed into, which stays in
+   * the browser's fill_secret.
+   */
+  async vaultList(): Promise<JSONValue> {
+    if (!this.credentialBroker) return { status: "error", error: "this machine has no vault" };
+    const items = await this.credentialBroker.whatsHere();
+    this.audit.record("credential_metadata", { op: "list", source: "vault" });
+    return {
+      status: "completed",
+      items: items.map((i) => ({
+        id: i.id,
+        title: i.title,
+        category: i.category,
+        username: i.username,
+        urls: i.urls,
+      })),
+    };
+  }
+
+  async vaultDescribe(itemId: string): Promise<JSONValue> {
+    if (!this.credentialBroker) return { status: "error", error: "this machine has no vault" };
+    if (!itemId) return { status: "error", error: "missing item" };
+    const item = await this.credentialBroker.describeItem(itemId);
+    this.audit.record("credential_metadata", { op: "describe", item: itemId, source: "vault" });
+    return { status: "completed", ...item };
+  }
+
   /** Close any live browser session, and the vault if we are running one. */
   async shutdown(): Promise<void> {
     await this.browserSessions?.closeAll("shutdown");

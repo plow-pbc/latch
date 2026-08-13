@@ -123,10 +123,17 @@ describe("browser tools (fake runtime)", () => {
     expect(ext.isError).toBe(false);
     expect((await act(server, session, "text")).isError).toBe(false);
 
-    // Credentials: metadata lists ids, no values; fill needs an approved item.
+    // The vault answers on its own tool now, with no session involved; filling
+    // still needs an approved item inside the session.
     await act(server, session, "use_page", { index: 0 });
-    const creds = await act(server, session, "credentials");
+    const creds = await callTool(server, "vault", { action: "list" }, AGENT);
     const ids = (creds.payload.items as { id: string }[]).map((i) => i.id);
+    // Asked without ever opening a session, which is the point of the split.
+    const cold = await callTool(server, "vault", { action: "list" }, AGENT);
+    expect((cold.payload.items as unknown[]).length).toBe(ids.length);
+    const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
+    expect(described.payload.fields).toContain("password");
+    expect(JSON.stringify(described.payload)).not.toContain("hunter2");
     expect(ids).toEqual(expect.arrayContaining(["L1", "C1"]));
     expect(JSON.stringify(creds.payload)).not.toContain("hunter2");
 

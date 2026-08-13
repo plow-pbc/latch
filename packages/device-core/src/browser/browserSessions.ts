@@ -232,10 +232,6 @@ export class BrowserSessions {
       }
 
       switch (action) {
-        case "credentials":
-          return await this.listCredentials(s);
-        case "describe_item":
-          return await this.describeItem(s, p.get("item").str ?? "");
         case "fill_secret":
           return await this.fillSecret(
             s,

@@ -36,7 +36,7 @@ secret values are typed into pages on the Mac and are NEVER shown to you.
 
 \`browser {device, session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
-url, title, links, forms, tables, pages, credentials, describe_item.
+url, title, links, forms, tables, pages.
 
 1. \`goto\` a URL → 2. \`wait\` 2–3 s → 3. \`screenshot\` (you receive the image — LOOK at it)
 → 4. decide → 5. \`click\`/\`fill\`/\`scroll\` → 6. screenshot again.
@@ -55,10 +55,15 @@ url, title, links, forms, tables, pages, credentials, describe_item.
 
 ## Credentials (logins, cards) — values never reach you
 
-1. Open the session with \`credentials_metadata: true\` (or add it later via browser_request).
-2. On a login/checkout page: \`browser {action: "credentials"}\` lists the owner's vault
-   items — titles, usernames, URLs, and whether each matches the current page. Metadata only.
-3. Pick the right item by reading the page. \`describe_item\` shows its field LABELS.
+**This machine has its own password vault — do not go looking for 1Password or ask the
+owner to paste anything.** \`vault {action: "list"}\` answers at any time, with no browser
+session: every item the owner keeps — logins, cards, secure notes, custom fields — with
+titles, usernames and sites, never a value.
+
+1. \`vault {action: "list"}\` to see what is there; \`vault {action: "describe", item: "<id>"}\`
+   names the fields that item holds.
+2. Open the session with \`credentials_metadata: true\` (or add it later via browser_request).
+3. Pick the right item by reading the page.
 4. Ask for fill rights: \`browser_request {session, credential_items: ["<item-id>"]}\` —
    the owner approves the named items.
 5. \`browser {action: "fill_secret", selector: "#password", item: "<item-id>", field: "password"}\`
@@ -69,8 +74,8 @@ url, title, links, forms, tables, pages, credentials, describe_item.
 
 ## Order of operations for a purchase
 
-open (merchant origins + credentials_metadata) → browse/choose items → at login:
-credentials → describe_item → browser_request (login item) → fill_secret → at checkout:
+vault list → open (merchant origins + credentials_metadata) → browse/choose items → at login:
+vault describe → browser_request (login item) → fill_secret → at checkout:
 browser_request (card item; plus payment-provider origins if a popup appears) →
 fill_secret each card field → confirm → screenshot the confirmation → browser_close.`,
 };
