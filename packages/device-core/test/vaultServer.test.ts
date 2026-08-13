@@ -26,6 +26,20 @@ function freePort(): Promise<number> {
   });
 }
 
+/** One connect attempt: is something serving right now? */
+function portAnswers(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: "127.0.0.1", port });
+    const done = (v: boolean) => {
+      sock.destroy();
+      resolve(v);
+    };
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+    sock.setTimeout(1_000, () => done(false));
+  });
+}
+
 /** True once nothing answers on the port; false if something still does. */
 async function portFreesUp(port: number, withinMs = 5_000): Promise<boolean> {
   const deadline = Date.now() + withinMs;
@@ -174,9 +188,9 @@ describe("the vault process", () => {
 
     expect(launches(), "the replacement really is a second process").toHaveLength(2);
     expect(
-      await portFreesUp(port, 1_000),
+      await portAnswers(port),
       "the replacement is actually serving, so the next assertion means something",
-    ).toBe(false);
+    ).toBe(true);
 
     // The whole point: `stop()` can still reach the live one. If the dead
     // predecessor had cleared the handle, this would kill nothing and the port

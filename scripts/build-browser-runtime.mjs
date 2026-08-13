@@ -49,6 +49,13 @@ const wantBoth = args.includes("--browser-both");
 // are keyed on the download pins) rebuild with the new slimming applied.
 const PRUNE_VERSION = "1";
 
+// `vendored_openssl` is not optional. Without it the build links against
+// whatever libssl the packaging machine has -- on a dev Mac that is
+// /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib, which does not exist on a
+// user's Mac, so the bundled vault would refuse to launch for everyone without
+// Homebrew. Statically linked, it needs nothing outside the OS.
+const VAULT_FEATURES = "sqlite,vendored_openssl";
+
 function log(msg) {
   process.stdout.write(`[browser-runtime] ${msg}\n`);
 }
@@ -751,7 +758,12 @@ function fetchVaultServer(arch) {
   const { repo, commit, version } = lock.vaultServer;
   const installRoot = path.join(vaultServerDir, arch);
   const marker = path.join(installRoot, ".commit");
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === commit) {
+  // Keyed on the FEATURES as well as the commit: a tree built before
+  // `vendored_openssl` is at the same commit but links Homebrew's libssl, and
+  // caching on the commit alone would ship it. Same reason `PRUNE_VERSION`
+  // exists — build logic changing has to bust the stamp too.
+  const stamp = `${commit} ${VAULT_FEATURES}`;
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
     log(`vault server ${arch} up to date`);
     return;
   }
@@ -778,20 +790,38 @@ function fetchVaultServer(arch) {
   // user's Mac, so the bundled vault would refuse to launch for everyone who
   // does not have Homebrew. Statically linked, it depends on nothing outside
   // the OS. It also removes the cross-compile's search for an x86_64 libssl.
-  run(
-    "cargo",
-    ["build", "--release", "--locked", "--features", "sqlite,vendored_openssl", "--target", triple],
-    { cwd: srcDir },
-  );
+  run("cargo", ["build", "--release", "--locked", "--features", VAULT_FEATURES, "--target", triple], {
+    cwd: srcDir,
+  });
   const built = path.join(srcDir, "target", triple, "release", "vaultwarden");
   if (!fs.existsSync(built)) throw new Error(`cargo produced no binary at ${built}`);
+  assertNoForeignLinks(built);
 
   fs.rmSync(installRoot, { recursive: true, force: true });
   fs.mkdirSync(installRoot, { recursive: true });
   fs.copyFileSync(built, path.join(installRoot, "vaultwarden"));
   fs.chmodSync(path.join(installRoot, "vaultwarden"), 0o755);
-  fs.writeFileSync(marker, commit);
+  fs.writeFileSync(marker, stamp);
   log(`vault server ${arch} ready at ${installRoot}`);
+}
+
+/**
+ * A bundled executable may depend on the OS and nothing else. The Homebrew
+ * libssl this caught would have failed only on a user's Mac, silently, long
+ * after the build said it was fine -- so it fails here instead.
+ */
+function assertNoForeignLinks(binary) {
+  const foreign = capture("otool", ["-L", binary])
+    .split("\n")
+    .slice(1)
+    .map((l) => l.trim().split(" ")[0])
+    .filter((p) => p && !p.startsWith("/usr/lib/") && !p.startsWith("/System/Library/"));
+  if (foreign.length) {
+    throw new Error(
+      `${path.basename(binary)} links libraries no user's Mac has:\n  ${foreign.join("\n  ")}`,
+    );
+  }
+  log(`${path.basename(binary)}: links only OS libraries`);
 }
 
 /** The web interface — prebuilt upstream, arch-independent, hash-pinned. */
