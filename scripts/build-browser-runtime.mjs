@@ -765,10 +765,23 @@ function fetchVaultServer(arch) {
   run("git", ["-C", srcDir, "checkout", "--quiet", commit], { quiet: true });
 
   const triple = arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  // Their tree pins its own toolchain, and a target added to the default one is
+  // invisible to it — the build then fails deep in the dependency graph with
+  // "can't find crate for `core`". Ask for the target on the pinned toolchain;
+  // it is a no-op once present.
+  const pinned = (fs.readFileSync(path.join(srcDir, "rust-toolchain.toml"), "utf8").match(/channel\s*=\s*"([^"]+)"/) ?? [])[1];
+  if (pinned) run("rustup", ["target", "add", triple, "--toolchain", pinned], { quiet: true });
   log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
-  run("cargo", ["build", "--release", "--locked", "--features", "sqlite", "--target", triple], {
-    cwd: srcDir,
-  });
+  // vendored_openssl builds OpenSSL from source and links it statically. Two
+  // reasons, and the second is the important one: cross-compiling to x86_64
+  // finds no OpenSSL for that arch on an arm64 Mac, and without it the binary
+  // links whatever OpenSSL the BUILD machine had — /opt/homebrew/... — which is
+  // not on the machine of anyone we ship to.
+  run("cargo", [
+    "build", "--release", "--locked",
+    "--features", "sqlite,vendored_openssl",
+    "--target", triple,
+  ], { cwd: srcDir });
   const built = path.join(srcDir, "target", triple, "release", "vaultwarden");
   if (!fs.existsSync(built)) throw new Error(`cargo produced no binary at ${built}`);
 
