@@ -7,10 +7,12 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   Onboarding,
+  OnboardingDeps,
   agentConfig,
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings } from "../src/settings.js";
+import { signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
 const OTP_TOKEN = "plow_OTPTOKEN_secret";
@@ -60,6 +62,13 @@ class FakePlow {
     return OTP_TOKEN;
   }
 
+  /** Credentials handed back with `/self/revoke`. */
+  revoked: string[] = [];
+
+  async revokeDeviceCredential(token: string): Promise<void> {
+    this.revoked.push(token);
+  }
+
   async relayInfo(token: string) {
     // The login session, whichever path minted it — never the device credential.
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
@@ -87,8 +96,10 @@ let started: number;
 let clock: number;
 /** Every `wait` the poll loop made, so a test can prove the interval. */
 let waits: number[];
+/** How many times the instance told the window to re-read. */
+let changes: number;
 
-function build(): Onboarding {
+function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
   return new Onboarding({
     api: plow.api(),
     home,
@@ -97,6 +108,8 @@ function build(): Onboarding {
       plow.connected = true;
     },
     isConnected: () => plow.connected,
+    // Identity by default; the tests that care pass their own and watch it.
+    critical: (work) => work,
     deviceName: "Domo Desktop (test)",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
@@ -106,7 +119,11 @@ function build(): Onboarding {
       waits.push(ms);
       clock += ms;
     },
+    onChange: () => {
+      changes += 1;
+    },
     warn: (m) => warnings.push(m),
+    ...extra,
   });
 }
 
@@ -128,6 +145,7 @@ beforeEach(() => {
   warnings = [];
   started = 0;
   waits = [];
+  changes = 0;
   clock = 1_700_000_000_000;
 });
 
@@ -511,16 +529,7 @@ describe("reading the state is a read", () => {
     // Asserting on renders-per-second would be a timing test. The invariant is
     // simpler and exact: reading must not notify.
     let notifications = 0;
-    const onboarding = new Onboarding({
-      api: plow.api(),
-      home,
-      startRelay: async () => {},
-      isConnected: () => false,
-      deviceName: "Domo Desktop (test)",
-      now: () => clock,
-      wait: async (ms) => {
-        clock += ms;
-      },
+    const onboarding = build({
       onChange: () => {
         notifications += 1;
       },
@@ -557,4 +566,169 @@ describe("agentConfig", () => {
     expect(config.mcpServers.domo.url).not.toContain("plow_tok");
     expect(config.mcpServers.domo.headers.Authorization).toBe("Bearer plow_tok");
   });
+});
+
+/**
+ * Sign-out is a transition three owners have to make: the stored settings, the
+ * relay socket, and this state machine. It had only ever been made by the first
+ * two, and this instance outlives both — so it went on reporting the account
+ * that had just been left.
+ */
+describe("signing out", () => {
+  /** A Mac signed in the ordinary way, sitting on the connected screen. */
+  async function signedIn(): Promise<Onboarding> {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    expect(onboarding.state().step).toBe("connected");
+    // Any activation minted from here on is a fresh code nobody has texted yet.
+    plow.redeems = [{ status: "pending" }];
+    return onboarding;
+  }
+
+  it("the reported path: signing out leaves a window that is NOT connected", async () => {
+    // The instance outlives the sign-out, and the constructor is the only other
+    // place that decides this — so it went on reporting the account just left.
+    // The screen offered Create Agent over a stale endpoint, which then failed
+    // its own credential check.
+    const onboarding = await signedIn();
+    signOutOfPlow(home);
+    plow.connected = false;
+
+    const changesBefore = changes;
+    const after = onboarding.signedOut();
+
+    expect(after.step).not.toBe("connected");
+    expect(after.step).toBe("activate");
+    // The account just left is gone from the state the window renders.
+    expect(after.accountUid).toBe("");
+    expect(after.mcpUrl).toBe("");
+    expect(after.connected).toBe(false);
+    // An open window is told to re-read.
+    expect(changes).toBeGreaterThan(changesBefore);
+    // Reopening the window is a fresh `onboarding:get` plus the `begin()` the
+    // renderer fires on load — exactly what the Sign In button produces.
+    const reopened = await onboarding.begin();
+    expect(reopened.step).toBe("activate");
+    expect(reopened.activation?.displayCode).toBeTruthy();
+    // Create Agent still refuses if it is reached, but it is not on this screen.
+    expect((await onboarding.createAgent("Claude Code")).message).toContain("isn't signed in");
+  });
+
+  it("drops the agent token shown for the account just left", async () => {
+    // Shown once and held in memory until dismissed. Sign-out is a dismissal.
+    const onboarding = await signedIn();
+    expect((await onboarding.createAgent("Claude Code")).agent?.token).toBe(AGENT_TOKEN);
+
+    signOutOfPlow(home);
+    const after = onboarding.signedOut();
+
+    expect(after.agent).toBeNull();
+    expect(JSON.stringify(after)).not.toContain(AGENT_TOKEN);
+    expect(JSON.stringify(after)).not.toContain(DEVICE_TOKEN);
+  });
+
+  it("does not resurrect the activation that was live when it signed out", async () => {
+    // `newActivationCode` deliberately retries the previous secret — a user who
+    // texted late has already succeeded, and one poll turns a pointless second
+    // code into an instant sign-in. After a SIGN-OUT that same retry would sign
+    // them straight back in to the account they just left.
+    //
+    // A signed-in Mac whose window is showing an activation code is a state the
+    // machine offers: `useActivation()` is on the bridge, and it mints one.
+    const onboarding = await signedIn();
+    const live = await onboarding.useActivation();
+    expect(live.step).toBe("activate");
+    const spent = `${ACTIVATION_SECRET}_1`; // the one useActivation just minted
+    const before = plow.redeemCalls.length;
+
+    signOutOfPlow(home);
+    onboarding.signedOut();
+    await settle();
+
+    expect(plow.redeemCalls.slice(before)).not.toContain(spent);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("a verified redeem never mints OVER a credential this Mac already holds", async () => {
+    // The other half of the same conditional, and not about sign-out at all: a
+    // signed-in Mac showing an activation code (`useActivation()` is on the
+    // bridge) whose code is then texted. Minting there would overwrite the live
+    // credential and orphan it on the account — spend-capable, and now unknown
+    // to the only thing that could revoke it.
+    const onboarding = await signedIn();
+    expect((await onboarding.useActivation()).step).toBe("activate");
+    const mintedBefore = plow.minted.length;
+    const credential = loadSettings(home).relayCredential;
+
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settle();
+
+    expect(plow.minted.length).toBe(mintedBefore);
+    expect(loadSettings(home).relayCredential).toBe(credential);
+  });
+
+  // The two ways a redeem can be on the wire when the user signs out. Both end
+  // in `finishWithSession`, and both must refuse — but they arrive by different
+  // callers, so each is driven on its own.
+  const inFlightRedeems = [
+    {
+      name: "the poll loop's own redeem",
+      // The loop is already running from `useActivation()`; nothing to start.
+      start: (_o: Onboarding) => null as Promise<unknown> | null,
+    },
+    {
+      name: "the re-poll 'Get a New Code' makes before minting",
+      start: (o: Onboarding) => o.newActivationCode(),
+    },
+  ];
+
+  for (const entry of inFlightRedeems) {
+    it(`${entry.name}, in flight across the sign-out, cannot mint`, async () => {
+      // A verified answer is deliberately acted on even when its poll loop has
+      // been cancelled — the server hands the session token to the first redeem
+      // that sees the completion and never again, so dropping it would strand an
+      // activation the user really completed. The only thing that used to make
+      // it moot was already holding a credential, and SIGN-OUT CLEARS THE
+      // CREDENTIAL.
+      const onboarding = await signedIn();
+      expect((await onboarding.useActivation()).step).toBe("activate");
+
+      // Hold THIS activation's redeem mid-call — and only this one, so the
+      // fresh code the sign-out mints behaves like the untexted code it is.
+      const inFlight = `${ACTIVATION_SECRET}_1`;
+      let release = () => {};
+      const onTheWire = new Promise<void>((r) => {
+        release = () => r();
+      });
+      plow.redeemActivation = async (secret: string) => {
+        plow.redeemCalls.push(secret);
+        if (secret !== inFlight) return { status: "pending" };
+        await onTheWire;
+        return { status: "verified", token: SESSION_TOKEN };
+      };
+
+      const started = entry.start(onboarding);
+      await settle();
+      expect(plow.redeemCalls).toContain(inFlight);
+
+      // The user signs out while that call is still on the wire.
+      signOutOfPlow(home);
+      onboarding.signedOut();
+      const mintedBefore = plow.minted.length;
+
+      // …and only now does the server answer "verified".
+      release();
+      if (started) await started;
+      await settle();
+
+      // Nothing was minted, nothing was persisted, and the window did not slide
+      // back to the account the user just left.
+      expect(plow.minted.length).toBe(mintedBefore);
+      expect(loadSettings(home).relayCredential).toBe("");
+      expect(loadSettings(home).accountUid).toBe("");
+      expect(onboarding.state().step).not.toBe("connected");
+    });
+  }
 });
