@@ -142,6 +142,10 @@ describe("the budget fires while persisting the approval is still in flight", ()
     expect(asked).toBe(false);
     openGate();
     await call;
+    // `call` is not the join point: under load the 40ms budget can fire first,
+    // in which case it answers with a handle and the human is asked just after.
+    // Either way the ask follows the write, which is what this is about.
+    for (let i = 0; i < 200 && !asked; i++) await new Promise((r) => setTimeout(r, 25));
     expect(asked).toBe(true);
   });
 });

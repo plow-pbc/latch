@@ -19,7 +19,7 @@ import { callTool, parse, rpc } from "./client.js";
 
 const fixtures = fileURLToPath(new URL("../../../e2e/fixtures", import.meta.url));
 const FAKE_SERVER = path.join(fixtures, "fakeBrowserServer.cjs");
-const FAKE_BROKER = path.join(fixtures, "fakeVaultBroker.cjs");
+const FAKE_BROKER = path.join(fixtures, "fake-broker", "seed-vault-broker.cjs");
 
 const AGENT: RelayAuth = { agent_id: "agent-1", agent_name: "Pizza Agent", scopes: ["relay:call"] };
 

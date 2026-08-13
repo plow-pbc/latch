@@ -34,16 +34,14 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     fs.writeFileSync(
       vaultPath,
       JSON.stringify([
-        { id: "L1", title: "Slice of Test", category: "LOGIN", additional_information: "jon@example.com",
-          urls: [{ href: `http://127.0.0.1:${site.port}/`, primary: true }],
-          fields: [{ label: "username", value: "jon@example.com" },
-                   { label: "password", value: "pizza-time-99", type: "CONCEALED" }] },
-        { id: "C1", title: "Visa", category: "CREDIT_CARD", additional_information: "", urls: [],
-          fields: [{ label: "number", value: "4111111111111111", type: "CONCEALED" },
-                   { label: "cvv", value: "123", type: "CONCEALED" }] },
-        { id: "X1", title: "Elsewhere", category: "LOGIN", additional_information: "x",
-          urls: [{ href: "https://elsewhere.example/" }],
-          fields: [{ label: "password", value: "do-not-release", type: "CONCEALED" }] },
+        { id: "L1", title: "Slice of Test", category: "LOGIN", username: "jon@example.com",
+          urls: [`http://127.0.0.1:${site.port}/`],
+          fields: { username: "jon@example.com", password: "pizza-time-99" } },
+        { id: "C1", title: "Visa", category: "CREDIT_CARD", username: "", urls: [],
+          fields: { number: "4111111111111111", cvv: "123" } },
+        { id: "X1", title: "Elsewhere", category: "LOGIN", username: "x",
+          urls: ["https://elsewhere.example/"],
+          fields: { password: "do-not-release" } },
       ]),
     );
 

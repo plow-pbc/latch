@@ -14,7 +14,9 @@ import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-cor
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
 );
-const FAKE_BROKER = fileURLToPath(new URL("../../../e2e/fixtures/fakeVaultBroker.cjs", import.meta.url));
+const FAKE_BROKER = fileURLToPath(
+  new URL("../../../e2e/fixtures/fake-broker/seed-vault-broker.cjs", import.meta.url),
+);
 
 interface Ctx {
   sessions: BrowserSessions;
