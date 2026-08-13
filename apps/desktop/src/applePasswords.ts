@@ -50,6 +50,9 @@ export interface ApplePasswordsOptions {
    * used to front-load macOS's AutoFill consent right after pairing. */
   loadWarmup?: () => ApwWarmup | null;
   saveWarmup?: (warmup: ApwWarmup | null) => void;
+  /** Domains probed (metadata-only) to find a warm-up entry when nothing is
+   * remembered yet. Test seam; defaults to WARMUP_PROBE_HOSTS. */
+  warmupProbeHosts?: string[];
   audit?: (event: string, fields: { [k: string]: JSONValue }) => void;
   /** Fired on every pairing-state change (push to the renderer). */
   onChange?: () => void;
@@ -61,9 +64,44 @@ export interface ApplePasswordsOptions {
   pairProbeIntervalMs?: number;
 }
 
+const WARMUP_DETAIL: Record<string, string> = {
+  warmed: "Paired — AutoFill access approved for this session.",
+  "first-fill":
+    "Paired — no saved password found to pre-approve AutoFill; macOS will ask on the " +
+    "first password use this session.",
+  failed: "Paired — AutoFill warm-up failed; the first password use will ask for approval.",
+};
+
+/**
+ * Apple's helper has no vault-wide listing — every query is site-scoped — so
+ * with nothing remembered yet, the warm-up finds an entry to release by
+ * probing common domains with metadata-only listings (silent; no consent
+ * dialog) and releasing the first match once. Sequential, stops at the first
+ * hit; a full miss costs ~a second and falls back to first-fill behavior.
+ */
+const WARMUP_PROBE_HOSTS = [
+  "google.com",
+  "apple.com",
+  "amazon.com",
+  "github.com",
+  "microsoft.com",
+  "facebook.com",
+  "instagram.com",
+  "x.com",
+  "twitter.com",
+  "netflix.com",
+  "paypal.com",
+  "ebay.com",
+  "reddit.com",
+  "linkedin.com",
+  "dropbox.com",
+];
+
 export class ApplePasswords {
   private daemon: ApwDaemon | null = null;
   private broker: ApwCredentialBroker | null = null;
+  /** Where this session's one-time AutoFill consent stands (see warmUp). */
+  private warmupState: "warmed" | "first-fill" | "failed" | null = null;
 
   constructor(private readonly opts: ApplePasswordsOptions) {}
 
@@ -73,7 +111,10 @@ export class ApplePasswords {
       available: this.opts.apwCommand !== null && this.opts.credentials !== null,
       enabled: this.opts.isEnabled(),
       state: status.state,
-      detail: status.detail,
+      detail:
+        status.state === "paired" && this.warmupState
+          ? WARMUP_DETAIL[this.warmupState]
+          : status.detail,
     };
   }
 
@@ -149,15 +190,33 @@ export class ApplePasswords {
   }
 
   private async warmUp(): Promise<void> {
-    const warmup = this.opts.loadWarmup?.();
-    if (!warmup || !this.broker) return;
+    if (!this.broker) return;
+    let warmup = this.opts.loadWarmup?.();
+    let source = "remembered";
+    if (!warmup) {
+      warmup = await this.probeForWarmup();
+      source = "probe";
+    }
+    if (!warmup) {
+      // Nothing remembered and no probe hit — the consent dialog will land on
+      // the first real fill instead. Say so, in the audit log and the Settings
+      // status line, rather than doing nothing silently.
+      this.warmupState = "first-fill";
+      this.opts.audit?.("apw_warmup", { skipped: true });
+      this.opts.onChange?.();
+      return;
+    }
     try {
       await this.broker.getField(warmup.username, "password", warmup.host);
-      this.opts.audit?.("apw_warmup", { host: warmup.host, ok: true });
+      this.warmupState = "warmed";
+      this.opts.saveWarmup?.(warmup); // future launches skip the probing
+      this.opts.audit?.("apw_warmup", { host: warmup.host, ok: true, source });
     } catch (error) {
-      this.opts.audit?.("apw_warmup", { host: warmup.host, ok: false });
-      // The remembered entry no longer exists — forget it; a later real fill
-      // will remember a fresh one. Transient errors keep the memory.
+      this.warmupState = "failed";
+      this.opts.audit?.("apw_warmup", { host: warmup.host, ok: false, source });
+      // The remembered entry no longer exists — forget it; the next warm-up
+      // re-probes and a later real fill remembers a fresh one. Transient
+      // errors keep the memory.
       if (
         error instanceof CredentialError &&
         (error.type === "ApwDenied" || error.type === "ApwNoResults")
@@ -165,6 +224,23 @@ export class ApplePasswords {
         this.opts.saveWarmup?.(null);
       }
     }
+    this.opts.onChange?.();
+  }
+
+  /** Find any existing entry via metadata-only listings of common domains.
+   * Silent — listings never trigger the consent dialog. */
+  private async probeForWarmup(): Promise<ApwWarmup | null> {
+    if (!this.broker) return null;
+    for (const host of this.opts.warmupProbeHosts ?? WARMUP_PROBE_HOSTS) {
+      try {
+        const items = await this.broker.whatsHere(`https://${host}/`);
+        if (items.length > 0) return { host, username: items[0].id };
+      } catch {
+        // Unpaired/daemon-down would fail every host identically — stop early.
+        return null;
+      }
+    }
+    return null;
   }
 
   /** Turn the feature off: persist, kill the daemon (unpairs), restore the

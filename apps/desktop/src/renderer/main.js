@@ -604,7 +604,8 @@ async function applePasswordsGroup() {
         rows.push(note, el("div", { class: "row" }, [pinInput, pairBtn, newPinBtn]));
         queueMicrotask(() => pinInput.focus());
       } else if (ap.state === "paired") {
-        rows.push(el("p", { class: "faint", text: "Paired — Apple Passwords is the credential source until quit." }));
+        // The detail says where this session's AutoFill consent stands.
+        rows.push(el("p", { class: "faint", text: ap.detail || "Paired — Apple Passwords is the credential source until quit." }));
       } else if (ap.state === "error") {
         const retry = el("button", { class: "btn", text: "Retry" });
         retry.addEventListener("click", async () => { await window.domo.applePasswordsSetEnabled(true); render(); });

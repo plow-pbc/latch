@@ -28,7 +28,7 @@ let changes: number;
 let warmup: ApwWarmup | null;
 let audits: { event: string; fields: Record<string, unknown> }[];
 
-function makeManager(): ApplePasswords {
+function makeManager(overrides: { warmupProbeHosts?: string[] } = {}): ApplePasswords {
   return new ApplePasswords({
     apwCommand: ["node", FAKE_APW],
     credentials,
@@ -36,6 +36,8 @@ function makeManager(): ApplePasswords {
     setEnabled: (on) => {
       enabled = on;
     },
+    // Empty by default so tests exercise probing only when they mean to.
+    warmupProbeHosts: overrides.warmupProbeHosts ?? [],
     loadWarmup: () => warmup,
     saveWarmup: (w) => {
       warmup = w;
@@ -178,6 +180,27 @@ describe("ApplePasswords", () => {
     const warmed = audits.find((a) => a.event === "apw_warmup");
     expect(warmed?.fields).toMatchObject({ host: "pizza.example", ok: true });
     expect(JSON.stringify(audits)).not.toContain("hunter2");
+    expect(ap.view().detail).toContain("approved for this session");
+  });
+
+  it("with nothing remembered, probing common domains finds an entry to warm with", async () => {
+    ap = makeManager({ warmupProbeHosts: ["nowhere.example", "pizza.example"] });
+    await ap.enable();
+    await ap.submitPin("123456");
+    await new Promise((r) => setTimeout(r, 400));
+    const warmed = audits.find((a) => a.event === "apw_warmup");
+    expect(warmed?.fields).toMatchObject({ host: "pizza.example", ok: true, source: "probe" });
+    // The probe hit is remembered, so future launches skip the probing.
+    expect(warmup).toEqual({ host: "pizza.example", username: "jon" });
+    expect(ap.view().detail).toContain("approved for this session");
+  });
+
+  it("with nothing remembered and no probe hit, the skip is visible in audit and status", async () => {
+    await ap.enable();
+    await ap.submitPin("123456");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(audits.find((a) => a.event === "apw_warmup")?.fields).toMatchObject({ skipped: true });
+    expect(ap.view().detail).toContain("first password use");
   });
 
   it("a stale warm-up memory (entry deleted) is forgotten, not fatal", async () => {
