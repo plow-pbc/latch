@@ -93,9 +93,13 @@ required: schema-constrained output degrades from a guarantee to a likelihood.
 
 ### Provider seam
 
-`adversarialReview()` keeps its signature and its contract: same inputs, same
-`Verdict` out, same fail-closed behavior. Internally it dispatches to one of
-two providers:
+`adversarialReview()` keeps its **contract**: same `Verdict` out, same
+fail-closed behavior, same prompt. Its argument type does change — `provider`
+is a required field, not a defaulted one, and provider credentials ride
+alongside it. A default of `"plow"` would silently switch the live reviewer
+onto an unwired path and a default of `"anthropic"` would contradict this
+spec, so requiring it makes the compiler find every call site. Internally it
+dispatches to one of two providers:
 
 - **`plow`** (default) — `POST {apiBase}/v1/chat/completions` with the stored
   `relayCredential` as a bearer token, model **`claude-sonnet-4-6`**, sending
