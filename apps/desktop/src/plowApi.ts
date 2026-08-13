@@ -231,6 +231,23 @@ export class PlowApi {
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
   }
 
+  /**
+   * Ask Plow to retire THIS Mac's own credential, authenticating with the
+   * credential being retired. Sign-out is the only caller.
+   *
+   * Best-effort by contract: the caller must clear locally whether or not this
+   * succeeds. A Mac that cannot reach Plow is exactly the Mac whose owner most
+   * wants the local copy gone, and the server-side route may not be deployed
+   * yet — a 404 must not strand a signed-out Mac still holding a credential.
+   *
+   * The token rides in the `Authorization` header, as everywhere else. It is
+   * never in the path, so this is not `/devices/{id}/revoke`: the server knows
+   * which credential is calling.
+   */
+  async revokeDeviceCredential(token: string): Promise<void> {
+    await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
+  }
+
   /** Mint an agent credential through the relay's own API (`relay:call` only,
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {

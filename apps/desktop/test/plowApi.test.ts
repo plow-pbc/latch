@@ -302,3 +302,41 @@ describe("chatCompletion returns outcomes instead of throwing them", () => {
     expect(init.body as string).not.toContain("plow_sk_do_not_leak_me");
   });
 });
+
+describe("revoking this Mac's own credential", () => {
+  it("POSTs to the self-revoke route with the credential as a bearer token", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200 }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await api.revokeDeviceCredential("plow_sk_do_not_leak_me");
+
+    const { url, init } = calls[0];
+    expect(url).toBe("https://api.plow.co/v1/relay/devices/self/revoke");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      "Bearer plow_sk_do_not_leak_me",
+    );
+    // The server knows which credential is calling, so the token is never in
+    // the path — and never in a body either.
+    expect(url).not.toContain("plow_sk_do_not_leak_me");
+    expect(String(init.body ?? "")).not.toContain("plow_sk_do_not_leak_me");
+  });
+
+  it("accepts an empty 204, which is what a revoke has to say", async () => {
+    // `recordingFetch` cannot build a null-body status, so this one is bespoke.
+    const fetchImpl = async () => new Response(null, { status: 204 });
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+    await expect(api.revokeDeviceCredential("plow_sk_do_not_leak_me")).resolves.toBeUndefined();
+  });
+
+  it("throws on a refusal, leaving it to the caller to decide that is survivable", async () => {
+    // Sign-out swallows this. The transport still reports it, so a future
+    // caller that DOES care is not silently lied to.
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Not Found" } }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.revokeDeviceCredential("plow_sk_do_not_leak_me")).rejects.toBeInstanceOf(
+      PlowApiError,
+    );
+  });
+});

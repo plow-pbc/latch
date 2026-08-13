@@ -34,9 +34,9 @@ import { ApprovalDecision, decideIntent } from "./reviewPolicy.js";
 import {
   readInference,
   setAnthropicApiKey,
+  revokeAndSignOut,
   setApprovalMode,
   setInferenceProvider,
-  signOutOfPlow,
 } from "./settingsActions.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
@@ -277,11 +277,13 @@ ipcMain.handle("settings:getRelay", async () => {
     connected,
   };
 });
-// Sign out: forget the device credential and drop the socket. The credential
-// itself is not revoked — that needs the account's own key list, which this Mac
-// deliberately cannot reach.
+// Sign out: retire the credential with Plow, forget it here, and drop the
+// socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
+// cannot reach Plow still signs out locally.
 ipcMain.handle("settings:signOut", async () => {
-  signOutOfPlow(home);
+  await revokeAndSignOut(home, (credential) =>
+    new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
+  );
   await startRelay();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());

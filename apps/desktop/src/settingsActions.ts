@@ -77,6 +77,35 @@ export function signOutOfPlow(home: string): void {
 }
 
 /**
+ * Sign out: retire the credential server-side if we can, then forget it here.
+ *
+ * The order is the point. Revocation is attempted FIRST, while the credential
+ * still exists to authenticate with — afterwards there is nothing left to ask
+ * with. And it is strictly best-effort: offline, API down, route not deployed,
+ * any error at all, the local clear still happens. Sign-out that fails because
+ * a server could not be reached would leave the Mac holding a live credential
+ * while telling its owner it had signed out, which is worse than not revoking.
+ *
+ * `revoke` is injected so this path is reachable by a test without a network.
+ */
+export async function revokeAndSignOut(
+  home: string,
+  revoke: (credential: string) => Promise<unknown>,
+): Promise<void> {
+  const credential = (loadSettings(home).relayCredential ?? "").trim();
+  if (credential) {
+    try {
+      await revoke(credential);
+    } catch {
+      // Deliberately swallowed, and deliberately not logged: the failure is
+      // not actionable here, and the only interesting value in scope is the
+      // credential itself.
+    }
+  }
+  signOutOfPlow(home);
+}
+
+/**
  * Set the approval mode. Adversarial is refused when the active provider has no
  * credential — the fourth door into the same interlock, and the one the UI also
  * guards. Anything unrecognised falls back to Ask, as it always has.

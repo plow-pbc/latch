@@ -9,13 +9,15 @@
  * guards and then re-read the settings **from disk**, because an interlock that
  * does not survive a relaunch is not an interlock.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Settings } from "../src/settings.js";
+import { PlowApiError } from "../src/plowApi.js";
 import {
   readInference,
+  revokeAndSignOut,
   setAnthropicApiKey,
   setApprovalMode,
   setInferenceProvider,
@@ -242,5 +244,96 @@ describe("the persisted file keeps its guarantees", () => {
     expect(serialized).not.toContain(ANTHROPIC_KEY);
     expect(serialized).not.toContain(PLOW_CREDENTIAL.slice(0, 10));
     expect(serialized).not.toContain(ANTHROPIC_KEY.slice(0, 10));
+  });
+});
+
+describe("signing out retires the credential server-side, best effort", () => {
+  const homeSignedIn = () =>
+    homeWith({
+      relayCredential: PLOW_CREDENTIAL,
+      accountUid: "u_someone",
+      mcpUrl: "https://api.plow.co/v1/relay/devices/u_someone/mcp",
+      approvalMode: "adversarial",
+      inferenceProvider: "plow",
+    });
+
+  it("asks Plow to revoke, using the credential being retired", async () => {
+    const home = homeSignedIn();
+    const seen: string[] = [];
+    // Observed inside the callback, asserted OUTSIDE it. An expect() in there
+    // would be swallowed by the best-effort catch this very function relies on,
+    // and the test would pass with the ordering reversed.
+    let onDiskWhenAsked: string | null = null;
+
+    await revokeAndSignOut(home, async (credential) => {
+      seen.push(credential);
+      onDiskWhenAsked = stored(home).relayCredential;
+    });
+
+    expect(seen).toEqual([PLOW_CREDENTIAL]);
+    // Revoking after the local clear would have nothing left to authenticate.
+    expect(onDiskWhenAsked).toBe(PLOW_CREDENTIAL);
+    expect(stored(home).relayCredential).toBe("");
+  });
+
+  it("clears locally even when the revoke FAILS", async () => {
+    // Offline, API down, route not deployed — the case that matters most,
+    // because a Mac that cannot reach Plow is the one whose owner most wants
+    // the local copy gone.
+    const home = homeSignedIn();
+
+    await expect(
+      revokeAndSignOut(home, async () => {
+        throw new Error("ENOTFOUND api.plow.co");
+      }),
+    ).resolves.toBeUndefined();
+
+    const after = stored(home);
+    expect(after.relayCredential).toBe("");
+    expect(after.accountUid).toBe("");
+    expect(after.mcpUrl).toBe("");
+    // …and the interlock still fires: no credential, no Adversarial mode.
+    expect(after.approvalMode).toBe("ask");
+  });
+
+  it("clears locally for every shape of failure", async () => {
+    for (const fail of [
+      () => Promise.reject(new Error("500")),
+      () => Promise.reject("a bare string"),
+      () => Promise.reject(new PlowApiError("http", "Plow returned 404.", 404)),
+      () => {
+        throw new Error("threw synchronously");
+      },
+    ]) {
+      const home = homeSignedIn();
+      await revokeAndSignOut(home, fail as () => Promise<unknown>);
+      expect(stored(home).relayCredential).toBe("");
+    }
+  });
+
+  it("does not call out at all when there is nothing to revoke", async () => {
+    const home = homeWith({ relayCredential: "" });
+    const revoke = vi.fn();
+    await revokeAndSignOut(home, revoke);
+    expect(revoke).not.toHaveBeenCalled();
+    expect(stored(home).relayCredential).toBe("");
+  });
+
+  it("a failing revoke leaks nothing about the credential", async () => {
+    const home = homeSignedIn();
+    const logs: string[] = [];
+    for (const m of ["log", "info", "warn", "error", "debug"] as const) {
+      vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
+        logs.push(args.map(String).join(" "));
+      });
+    }
+
+    await revokeAndSignOut(home, async () => {
+      throw new Error(`failed for Bearer ${PLOW_CREDENTIAL}`);
+    });
+
+    expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
+    expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL.slice(0, 10));
+    vi.restoreAllMocks();
   });
 });
