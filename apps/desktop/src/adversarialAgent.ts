@@ -111,6 +111,26 @@ function buildPrompt(intent: Intent, history: JSONValue[]): string {
 }
 
 /**
+ * Would repeating this text put the provider's own secret in front of a human,
+ * a log, or the renderer?
+ *
+ * The answer body is the one place a secret can come BACK from: we put the
+ * credential in the Authorization header, and whatever is on the other end can
+ * echo it into an otherwise perfectly valid verdict. That the counterparty
+ * already knows the token is not the point — `reason` is persisted to
+ * audit.ndjson and rendered in the sandboxed activity view, and the credential
+ * belongs in neither.
+ *
+ * A ten-character head counts: it is the length V8 exposes when it quotes
+ * offending input, so it is the shape a partial leak actually takes here.
+ */
+function echoesSecret(text: string, secret: string): boolean {
+  const trimmed = secret.trim();
+  if (trimmed.length < 10) return false;
+  return text.includes(trimmed) || text.includes(trimmed.slice(0, 10));
+}
+
+/**
  * Accept an answer only if it is EXACTLY the shape `VERDICT_SCHEMA` describes.
  *
  * The schema is what we asked the model for, so anything else is a reviewer
@@ -198,6 +218,9 @@ function anthropicProvider(apiKey: string): ProviderCall {
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
       return { ok: false, reason: "reviewer returned no verdict" };
+    }
+    if (echoesSecret(textBlock.text, apiKey)) {
+      return { ok: false, reason: "reviewer answer discarded: it repeated a credential" };
     }
     return { ok: true, text: textBlock.text };
   };
@@ -302,6 +325,11 @@ function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
       ?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
       return { ok: false, reason: "reviewer returned no verdict" };
+    }
+    // A schema-valid answer that repeats our own bearer token is discarded
+    // whole — before it is parsed, so no part of it can reach a reason string.
+    if (echoesSecret(content, credential)) {
+      return { ok: false, reason: "reviewer answer discarded: it repeated a credential" };
     }
     return { ok: true, text: content };
   };

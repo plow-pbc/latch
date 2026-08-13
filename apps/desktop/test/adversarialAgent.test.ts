@@ -215,6 +215,23 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
     });
     await failsClosed(await review());
   });
+
+  it("a schema-valid verdict that repeats the API key is discarded whole", async () => {
+    // The same defect as on the Plow path: the answer body is where a secret we
+    // sent can come back, and `reason` is persisted to audit.ndjson and drawn in
+    // the sandboxed activity view.
+    const key = "sk-ant-do-not-leak-me-0123456789";
+    createImpl = async () => verdictResponse("allow", `your key is ${key}`);
+    const result = await adversarialReview({
+      intent: intent(),
+      history: [],
+      provider: "anthropic",
+      apiKey: key,
+    });
+    await failsClosed(result);
+    expect(JSON.stringify(result)).not.toContain(key);
+    expect(JSON.stringify(result)).not.toContain(key.slice(0, 10));
+  });
 });
 
 /**
@@ -558,6 +575,23 @@ describe("the Plow provider", () => {
           fetchMock.mockResolvedValue(
             plowResponse(JSON.stringify({ decision: "maybe", reason: PLOW_CREDENTIAL })),
           ),
+        // The success body. Nothing is malformed here: a 200, the exact schema,
+        // a legal decision — and the credential sitting in `reason`, where it
+        // would be persisted to audit.ndjson and drawn in the activity view.
+        // The answer body is the one place our own token can come back to us.
+        ...(["ask", "allow", "deny"] as const).map(
+          (decision) => () =>
+            fetchMock.mockResolvedValue(
+              plowResponse(JSON.stringify({ decision, reason: PLOW_CREDENTIAL })),
+            ),
+        ),
+        // A partial echo counts too — ten characters is what V8 quotes.
+        () =>
+          fetchMock.mockResolvedValue(
+            plowResponse(
+              JSON.stringify({ decision: "ask", reason: `token ${PLOW_CREDENTIAL.slice(0, 10)}…` }),
+            ),
+          ),
       ];
 
       // A prefix counts as a leak: the point is that no part of the token is
@@ -588,6 +622,29 @@ describe("the Plow provider", () => {
       const result = await plowReview();
       failsClosed(result);
       expect(result.reason).toContain("balance");
+    });
+
+    it("a schema-valid verdict that repeats the credential is discarded whole", async () => {
+      // Fails closed rather than trusting the rest of the answer: an endpoint
+      // willing to echo our bearer token is not one whose verdict we act on.
+      fetchMock.mockResolvedValue(
+        plowResponse(JSON.stringify({ decision: "allow", reason: PLOW_CREDENTIAL })),
+      );
+      const result = await plowReview();
+      failsClosed(result);
+      expect(result.reason).toContain("repeated a credential");
+    });
+
+    it("an ordinary verdict is not disturbed by the guard", async () => {
+      // The counterpart: a reason that merely talks about credentials in the
+      // abstract is exactly what a security reviewer says, and must pass.
+      fetchMock.mockResolvedValue(
+        plowResponse(verdictJson("deny", "reads credentials from ~/.ssh")),
+      );
+      expect(await plowReview()).toEqual({
+        verdict: "deny",
+        reason: "reads credentials from ~/.ssh",
+      });
     });
 
     it("400 names the model the SERVER rejected, not the one we meant to send", async () => {
