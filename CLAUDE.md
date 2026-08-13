@@ -36,9 +36,12 @@ does not** — different repository, not built — so everything here is verifie
 against a stand-in speaking the same wire contract, and has never run against
 the real thing.
 
-- **A credential never goes in a URL, a log line, or an error string.** It rides
-  in the post-challenge `auth` frame and nowhere else. `settings.json` holds it
-  and is written `0600`; the renderer is never given it.
+- **A credential never goes in a URL, a log line, an error string, or the audit
+  log.** It rides in exactly two places: the post-challenge `auth` frame, and the
+  `Authorization` header of the reviewer's Plow inference calls. A response that
+  repeats it back is discarded before it is parsed, so it cannot return by way of
+  a verdict. `settings.json` holds it and is written `0600`; the renderer is
+  never given it.
 
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`
