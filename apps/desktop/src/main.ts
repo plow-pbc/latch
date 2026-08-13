@@ -295,6 +295,10 @@ ipcMain.handle("settings:signOut", async () => {
     // is unbounded, and the revoke must not queue behind that.
     startRelay,
   );
+  // The third owner of this transition. Settings has forgotten the credential
+  // and the relay is down; the onboarding instance outlives both and would
+  // otherwise still be reporting `connected` for the account just left.
+  await onboarding?.signedOut();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 

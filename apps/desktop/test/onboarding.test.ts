@@ -11,6 +11,7 @@ import {
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings } from "../src/settings.js";
+import { signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
 const OTP_TOKEN = "plow_OTPTOKEN_secret";
@@ -87,6 +88,8 @@ let started: number;
 let clock: number;
 /** Every `wait` the poll loop made, so a test can prove the interval. */
 let waits: number[];
+/** How many times the instance told the window to re-read. */
+let changes: number;
 
 function build(): Onboarding {
   return new Onboarding({
@@ -105,6 +108,9 @@ function build(): Onboarding {
     wait: async (ms) => {
       waits.push(ms);
       clock += ms;
+    },
+    onChange: () => {
+      changes += 1;
     },
     warn: (m) => warnings.push(m),
   });
@@ -128,6 +134,7 @@ beforeEach(() => {
   warnings = [];
   started = 0;
   waits = [];
+  changes = 0;
   clock = 1_700_000_000_000;
 });
 
@@ -556,5 +563,131 @@ describe("agentConfig", () => {
     const config = JSON.parse(agentConfig(MCP_URL, "plow_tok"));
     expect(config.mcpServers.domo.url).not.toContain("plow_tok");
     expect(config.mcpServers.domo.headers.Authorization).toBe("Bearer plow_tok");
+  });
+});
+
+/**
+ * Sign-out is a transition three owners have to make: the stored settings, the
+ * relay socket, and this state machine. It had only ever been made by the first
+ * two, and this instance outlives both — so it went on reporting the account
+ * that had just been left.
+ */
+describe("signing out", () => {
+  /** A Mac signed in the ordinary way, sitting on the connected screen. */
+  async function signedIn(): Promise<Onboarding> {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    expect(onboarding.state().step).toBe("connected");
+    // Any activation minted from here on is a fresh code nobody has texted yet.
+    plow.redeems = [{ status: "pending" }];
+    return onboarding;
+  }
+
+  it("the reported path: sign out, reopen Settings, and the window is NOT connected", async () => {
+    // Settings clears the credential and drops the socket the way the IPC
+    // handler does; the onboarding instance is the one that survives.
+    const onboarding = await signedIn();
+    signOutOfPlow(home);
+    plow.connected = false;
+
+    await onboarding.signedOut();
+
+    // Reopening the window is a fresh `onboarding:get` plus the `begin()` the
+    // renderer fires on load — exactly what the Sign In button produces.
+    const reopened = await onboarding.begin();
+    expect(reopened.step).not.toBe("connected");
+    expect(reopened.step).toBe("activate");
+    // …and the screen it now shows is a usable one, not a code-less shell.
+    expect(reopened.activation?.displayCode).toBeTruthy();
+    // The account just left is gone from the state the window renders.
+    expect(reopened.accountUid).toBe("");
+    expect(reopened.mcpUrl).toBe("");
+    expect(reopened.connected).toBe(false);
+  });
+
+  it("Create Agent is no longer offered a path it will refuse", async () => {
+    // The tail of the reported bug: the connected screen offered Create Agent,
+    // which then failed its own credential check. Nothing should reach that.
+    const onboarding = await signedIn();
+    signOutOfPlow(home);
+
+    const after = await onboarding.signedOut();
+    expect(after.step).toBe("activate");
+    // If it is reached anyway, it still refuses — but it is not on this screen.
+    expect((await onboarding.createAgent("Claude Code")).message).toContain("isn't signed in");
+  });
+
+  it("drops the secrets belonging to the account just left", async () => {
+    // The agent token is shown once and held in memory until dismissed; the
+    // activation secret is what minted the credential being retired. Neither
+    // may outlive the sign-out.
+    const onboarding = await signedIn();
+    const withAgent = await onboarding.createAgent("Claude Code");
+    expect(withAgent.agent?.token).toBe(AGENT_TOKEN);
+
+    signOutOfPlow(home);
+    const after = await onboarding.signedOut();
+
+    expect(after.agent).toBeNull();
+    expect(JSON.stringify(after)).not.toContain(AGENT_TOKEN);
+    expect(JSON.stringify(after)).not.toContain(DEVICE_TOKEN);
+    expect(JSON.stringify(after)).not.toContain(ACTIVATION_SECRET);
+  });
+
+  it("does not resurrect the activation that was live when it signed out", async () => {
+    // `newActivationCode` deliberately retries the previous secret — a user who
+    // texted late has already succeeded, and one poll turns a pointless second
+    // code into an instant sign-in. After a SIGN-OUT that same retry would sign
+    // them straight back in to the account they just left.
+    //
+    // A signed-in Mac whose window is showing an activation code is a state the
+    // machine offers: `useActivation()` is on the bridge, and it mints one.
+    const onboarding = await signedIn();
+    const live = await onboarding.useActivation();
+    expect(live.step).toBe("activate");
+    expect(live.activation?.displayCode).toBeTruthy();
+    const spent = `${ACTIVATION_SECRET}_1`; // the one useActivation just minted
+    const before = plow.redeemCalls.length;
+
+    signOutOfPlow(home);
+    const after = await onboarding.signedOut();
+    await settle();
+
+    expect(after.step).toBe("activate");
+    expect(plow.redeemCalls.slice(before)).not.toContain(spent);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("is signed out before it goes near the network", async () => {
+    // The reset is synchronous; only the fresh code is awaited. A `state()`
+    // read between the two must never still say connected.
+    const onboarding = await signedIn();
+    signOutOfPlow(home);
+
+    const pending = onboarding.signedOut();
+    expect(onboarding.state().step).toBe("activate");
+    expect(onboarding.state().agent).toBeNull();
+    await pending;
+  });
+
+  it("an already-open window is left on a screen it can use", async () => {
+    // Publishes so the open window re-reads, and mints the code that screen
+    // needs — nothing reopens it to call `begin()` on its behalf.
+    const onboarding = await signedIn();
+    signOutOfPlow(home);
+
+    const codesBefore = plow.activations.length;
+    const changesBefore = changes;
+    const after = await onboarding.signedOut();
+
+    // It told the window to re-read, and gave it something to draw.
+    expect(changes).toBeGreaterThan(changesBefore);
+    expect(plow.activations.length).toBe(codesBefore + 1);
+    expect(after.activation?.displayCode).toBeTruthy();
+    // And a window opening afterwards does not burn a second one.
+    await onboarding.begin();
+    expect(plow.activations.length).toBe(codesBefore + 1);
   });
 });

@@ -453,6 +453,44 @@ export class Onboarding {
     return this.publish();
   }
 
+  /**
+   * This Mac just signed out. Become a Mac that has never signed in.
+   *
+   * The constructor is the only other place that decides this, and it runs
+   * once — so an instance that outlives a sign-out went on reporting `connected`
+   * with a stale account and endpoint behind it. Reopening the window from
+   * Settings showed "Signed in — connecting…" and offered Create Agent, which
+   * then failed on its own credential check. Sign-out is a transition three
+   * owners have to make (settings, relay, this); this is the third one, stated
+   * rather than implied.
+   *
+   * Everything in front of the reset is synchronous, so the instant this
+   * returns to the event loop it is already signed out and there is no window
+   * in which a `state()` can still say otherwise. The activation that follows
+   * is a courtesy for a window that is ALREADY OPEN — resetting to `activate`
+   * without one would leave it on a code-less screen, because nothing reopens
+   * it to call `begin()`. `begin()` is idempotent, so a window opening
+   * afterwards does not mint a second code — and it cancels the poll loop on
+   * its way to minting the fresh one, which is why there is no
+   * `cancelPolling()` here: a second one does nothing the first does not, and
+   * no test could tell the two apart.
+   */
+  async signedOut(): Promise<OnboardingState> {
+    this.step = "activate";
+    this.activation = null;
+    // SECRETS, both of them, and both belonging to the account just left: the
+    // activation that minted the old credential, and the agent token shown once
+    // on the connected screen. Neither may outlive the sign-out in memory.
+    this.activationSecret = null;
+    this.agent = null;
+    this.activationStale = false;
+    this.codeExpiresAt = null;
+    this.phone = "";
+    this.message = "";
+    this.publish();
+    return this.begin();
+  }
+
   /*
    * There is deliberately no `refresh()` here.
    *
