@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import {
   readInference,
   setAnthropicApiKey,
+  setApprovalMode,
   setInferenceProvider,
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
@@ -48,7 +49,8 @@ ipcMain.handle("settings:getRelay", async () => ({
   hasCredential: true,
   connected: true,
 }));
-ipcMain.handle("settings:getApprovalMode", async () => "ask");
+ipcMain.handle("settings:getApprovalMode", async () => loadSettings(probeHome).approvalMode);
+ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 // These four are the real handlers, running the real guards against real
@@ -180,6 +182,59 @@ app.whenReady().then(async () => {
     startedAdversarial: before === "adversarial",
     retiredToAsk: loadSettings(probeHome).approvalMode === "ask",
   };
+
+  // A half-typed key must not persist anything. The pane re-renders on the
+  // committed value only, so drive it back to a known state first: Anthropic
+  // selected, a real stored key, Adversarial mode.
+  saveSettings(probeHome, {
+    ...loadSettings(probeHome),
+    relayCredential: "plow_sk_probe_credential",
+    anthropicApiKey: "sk-ant-a-real-committed-key",
+    inferenceProvider: "anthropic",
+    approvalMode: "adversarial",
+  });
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  await new Promise((r) => setTimeout(r, 300));
+  const modeBeforeTyping = loadSettings(probeHome).approvalMode;
+  // Clear the field the way someone does before pasting a replacement: `input`
+  // fires, `change` does not (no blur, no Enter). Nothing is committed, so
+  // nothing may be persisted.
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 300));
+  const afterTransientInput = loadSettings(probeHome);
+  const transientInput = {
+    startedAdversarial: modeBeforeTyping === "adversarial",
+    modeUntouched: afterTransientInput.approvalMode === "adversarial",
+    storedKeyUntouched: afterTransientInput.anthropicApiKey === "sk-ant-a-real-committed-key",
+  };
+
+  // An open Settings pane must re-read when main says the account changed —
+  // otherwise signing in leaves Plow showing as unavailable until a tab switch.
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "", inferenceProvider: "anthropic" });
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  await new Promise((r) => setTimeout(r, 300));
+  const plowDisabledWhileSignedOut = await win.webContents.executeJavaScript(`(() => {
+    const plow = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Plow account");
+    return !!plow && plow.classList.contains("disabled");
+  })()`);
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_now_signed_in" });
+  win.webContents.send("status:changed");
+  await new Promise((r) => setTimeout(r, 500));
+  const staleSettingsPane = {
+    disabledWhileSignedOut: plowDisabledWhileSignedOut,
+    enabledAfterStatusChanged: await win.webContents.executeJavaScript(`(() => {
+      const plow = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Plow account");
+      return !!plow && !plow.classList.contains("disabled");
+    })()`),
+  };
+
   fs.rmSync(probeHome, { recursive: true, force: true });
 
   const approvalWin = offscreen();
@@ -209,6 +264,11 @@ app.whenReady().then(async () => {
     !roundTrip.leaksCredential &&
     modeFallback.startedAdversarial &&
     modeFallback.retiredToAsk &&
+    transientInput.startedAdversarial &&
+    transientInput.modeUntouched &&
+    transientInput.storedKeyUntouched &&
+    staleSettingsPane.disabledWhileSignedOut &&
+    staleSettingsPane.enabledAfterStatusChanged &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
@@ -216,7 +276,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, roundTrip, modeFallback, settingsShot, approval, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, roundTrip, modeFallback, transientInput, staleSettingsPane, settingsShot, approval, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

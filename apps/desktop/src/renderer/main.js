@@ -524,7 +524,7 @@ async function renderSettings() {
       }, [el("span", { text: label })]);
       if (!disabled && inference.provider !== value) {
         chip.addEventListener("click", async () => {
-          inference = await window.domo.inferenceSet(value);
+          await window.domo.inferenceSet(value);
           await syncReviewerAvailability();
         });
       }
@@ -532,31 +532,28 @@ async function renderSettings() {
     }));
   };
 
-  // Anything that can change which credential the reviewer needs re-reads the
-  // status from main and re-applies the interlock.
+  // Re-read the reviewer's state from main and redraw.
+  //
+  // This only READS. Main owns the interlock — it retires Adversarial mode in
+  // the same write that takes a credential away — so the renderer's job is to
+  // show what main decided, never to decide it too. The renderer used to write
+  // the fallback itself from a half-typed field, which persisted Ask while the
+  // stored key was still there and never put it back.
   const syncReviewerAvailability = async () => {
+    inference = await window.domo.inferenceGet();
+    currentMode = await window.domo.approvalModeGet();
     hasKey =
       inference.provider === "plow" ? inference.plowAvailable : inference.anthropicAvailable;
-    // If the active provider has no credential while Adversarial mode is on,
-    // fall back to Ask — main does this too, so mirror its answer.
-    if (!hasKey && currentMode === "adversarial") {
-      currentMode = "ask";
-      await window.domo.approvalModeSet("ask");
-    }
     renderProviderChips();
     renderModeChips();
     updateSuggestEnabled();
   };
 
-  apiKeyInput.addEventListener("input", async () => {
-    // Typing a key can make the Anthropic provider selectable; it does not make
-    // it active, so availability comes back from main rather than being assumed.
-    inference = { ...inference, anthropicAvailable: !!apiKeyInput.value.trim() };
-    await syncReviewerAvailability();
-  });
+  // Only on `change` — on commit (blur or Enter), never per keystroke. An
+  // `input` handler sees every transient value on the way to the real one,
+  // including the empty field between clearing and pasting.
   apiKeyInput.addEventListener("change", async () => {
     await window.domo.apiKeySet(apiKeyInput.value.trim());
-    inference = await window.domo.inferenceGet();
     await syncReviewerAvailability();
   });
 
@@ -620,7 +617,13 @@ seg.addEventListener("mousedown", (e) => {
 });
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
-window.domo.onStatusChanged(() => refreshStatus());
+window.domo.onStatusChanged(() => {
+  refreshStatus();
+  // Signing in or out changes which providers Settings may offer, so an open
+  // Settings pane has to re-read — main fires this saying "Settings re-reads
+  // what changed", and until now only the header did.
+  if (currentTab === "settings") renderSettings();
+});
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {

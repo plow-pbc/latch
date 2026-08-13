@@ -23,7 +23,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
-import { normalizeApiBaseUrl } from "./plowApi.js";
+import { normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 import type { InferenceProvider } from "./settings.js";
 
 // The selection is a stored setting, so it is declared with the other settings
@@ -147,10 +147,21 @@ function parseVerdict(text: string): { verdict: Verdict; reason: string } | null
   return { verdict: decision, reason };
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+/**
+ * Race a call against the budget, and tell it to stop when the budget is spent.
+ *
+ * `onTimeout` fires from the SAME timer that rejects, so a call we have given
+ * up on is cancelled at the instant we give up. Without it the race abandons
+ * the promise but not the request: the reviewer returned `ask` at 30s while the
+ * HTTP request stayed open and, on a paid endpoint, went on spending.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("reviewer timed out")), ms);
+    timer = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error("reviewer timed out"));
+    }, ms);
     timer.unref?.();
   });
   return Promise.race([p.finally(() => clearTimeout(timer)), timeout]);
@@ -163,11 +174,16 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  */
 type ProviderResult = { ok: true; text: string } | { ok: false; reason: string };
 
-/** One review round-trip. Providers are the only part that touches a network. */
-type ProviderCall = (prompt: string) => Promise<ProviderResult>;
+/**
+ * One review round-trip. Providers are the only part that touches a network.
+ * `signal` is aborted when the review budget is spent.
+ */
+type ProviderCall = (prompt: string, signal: AbortSignal) => Promise<ProviderResult>;
 
 /** The Anthropic SDK path: a pasted key, `claude-haiku-4-5`. */
 function anthropicProvider(apiKey: string): ProviderCall {
+  // The SDK bounds itself with `timeout` below, so it does not need the budget
+  // signal to avoid an orphaned request.
   return async (prompt) => {
     const client = new Anthropic({ apiKey, maxRetries: 0, timeout: REVIEWER_TIMEOUT_MS });
     const response = await client.messages.create({
@@ -244,18 +260,16 @@ function plowHttpReason(status: number, body: unknown = null): string {
  * the URL, not in a thrown message, not in anything this returns.
  */
 function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
-  return async (prompt) => {
-    const url = `${normalizeApiBaseUrl(apiBaseUrl)}/v1/chat/completions`;
-    let response: Response;
+  return async (prompt, signal) => {
+    const api = new PlowApi(normalizeApiBaseUrl(apiBaseUrl));
+    let status: number;
+    let body: unknown;
     try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${credential}`,
-          "content-type": "application/json",
-          accept: "application/json",
-        },
-        body: JSON.stringify({
+      // `{status, body}`, never a thrown error carrying the server's `detail`.
+      // The mapping below is the reviewer's own, deliberately.
+      ({ status, body } = await api.chatCompletion(
+        credential,
+        {
           model: PLOW_REVIEWER_MODEL,
           // No `temperature`: litellm forwards it and Anthropic rejects a
           // non-default temperature alongside extended thinking.
@@ -272,36 +286,23 @@ function plowProvider(credential: string, apiBaseUrl: string): ProviderCall {
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: prompt },
           ],
-        }),
-      });
+        },
+        { signal },
+      ));
     } catch {
       // Deliberately not echoing the thrown error: a transport failure can
-      // carry the request (and so the header) in its message on some runtimes.
+      // carry the request (and so the header) in its message on some runtimes,
+      // and PlowApi's own network messages are written for onboarding.
       return { ok: false, reason: "could not reach Plow" };
     }
 
-    if (!response.ok) {
-      // A 400 carries which model was refused; read it so the reason can name
-      // the server's answer rather than our intention. An unreadable body just
-      // means the generic reason.
-      let errorBody: unknown = null;
-      if (response.status === 400) {
-        try {
-          errorBody = await response.json();
-        } catch {
-          errorBody = null;
-        }
-      }
-      return { ok: false, reason: plowHttpReason(response.status, errorBody) };
+    // A 400 carries which model was refused; the mapping reads it so the reason
+    // can name the server's answer rather than our intention.
+    if (status < 200 || status >= 300) {
+      return { ok: false, reason: plowHttpReason(status, body) };
     }
 
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      return { ok: false, reason: "reviewer returned no verdict" };
-    }
-    const content = (body as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]
+    const content = (body as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]
       ?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
       return { ok: false, reason: "reviewer returned no verdict" };
@@ -354,10 +355,15 @@ export async function adversarialReview(
   const provider = selectProvider(args);
   if (typeof provider !== "function") return { verdict: "ask", reason: provider.reason };
 
+  // One budget, one timer: the same timeout that gives up on the review aborts
+  // the request it gave up on, so nothing is left running (or billing) behind a
+  // verdict the human has already been handed.
+  const budget = new AbortController();
   try {
     const result = await withTimeout(
-      provider(buildPrompt(args.intent, args.history)),
+      provider(buildPrompt(args.intent, args.history), budget.signal),
       REVIEWER_TIMEOUT_MS,
+      () => budget.abort(),
     );
     if (!result.ok) return { verdict: "ask", reason: result.reason };
 

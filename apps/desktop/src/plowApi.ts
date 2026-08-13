@@ -239,23 +239,85 @@ export class PlowApi {
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
   }
 
+  /**
+   * One inference call, as `{status, body}` — **this deliberately does not go
+   * through `call()`**.
+   *
+   * `call()` throws `PlowApiError`s whose message carries the server's `detail`
+   * verbatim (see `errorFor`), which is right for onboarding, where `detail` is
+   * a sentence written for the person reading it. It is wrong here: the
+   * reviewer's failure reasons are shown to a human deciding whether to trust
+   * an operation, and an upstream body is not text we control. So this returns
+   * the status and the decoded body and lets the caller do its own mapping —
+   * the reviewer keeps `plowHttpReason`, and nothing from the body reaches a
+   * reason string except what that mapping deliberately extracts.
+   *
+   * What IS shared with `call()`: the bearer header, the bounded request, and
+   * the network-error sanitation in `request()`.
+   *
+   * `signal` is the caller's own budget. The reviewer runs on a 30s budget and
+   * passes the signal it aborts on timeout, so a call it has given up on does
+   * not keep running (and keep billing) after the verdict.
+   */
+  async chatCompletion(
+    token: string,
+    body: unknown,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<{ status: number; body: unknown }> {
+    const response = await this.request("POST", "/v1/chat/completions", {
+      token,
+      body,
+      signal: opts.signal,
+    });
+    let decoded: unknown = null;
+    try {
+      decoded = await response.json();
+    } catch {
+      // A body we cannot read is not an error here — the status still carries
+      // the outcome, and the caller decides what an unreadable body means.
+    }
+    return { status: response.status, body: decoded };
+  }
+
   private async call<T>(
     method: string,
     path: string,
     opts: { token?: string; body?: unknown } = {},
   ): Promise<T> {
+    const response = await this.request(method, path, opts);
+
+    if (!response.ok) throw await this.errorFor(response);
+    if (response.status === 204) return undefined as T;
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new PlowApiError("http", "Plow returned a response we couldn't read.", response.status);
+    }
+  }
+
+  /**
+   * The transport every call shares: bearer auth in the header and nowhere
+   * else, a bounded request, and a network failure turned into a message
+   * written here rather than forwarded. Returns the response whatever its
+   * status — deciding what a status *means* belongs to the caller.
+   */
+  private async request(
+    method: string,
+    path: string,
+    opts: { token?: string; body?: unknown; signal?: AbortSignal } = {},
+  ): Promise<Response> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (opts.body !== undefined) headers["content-type"] = "application/json";
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
 
-    let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      return await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        // No caller may wait forever. See REQUEST_TIMEOUT_MS.
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        // No caller may wait forever. A caller that owns a budget passes its
+        // own signal; everyone else gets REQUEST_TIMEOUT_MS.
+        signal: opts.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       // The cause carries a hostname at most, but it is not ours to vouch for,
@@ -270,14 +332,6 @@ export class PlowApi {
         throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
       }
       throw new PlowApiError("network", `Couldn't reach Plow at ${this.baseUrl}.`);
-    }
-
-    if (!response.ok) throw await this.errorFor(response);
-    if (response.status === 204) return undefined as T;
-    try {
-      return (await response.json()) as T;
-    } catch {
-      throw new PlowApiError("http", "Plow returned a response we couldn't read.", response.status);
     }
   }
 

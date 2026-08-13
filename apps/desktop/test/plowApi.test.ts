@@ -242,3 +242,80 @@ describe("PlowApi", () => {
     expect(minted.token).toBe("plow_agenttok");
   });
 });
+
+/**
+ * `chatCompletion` shares the transport with every other call but NOT the error
+ * policy, and that difference is the whole reason it exists.
+ *
+ * `errorFor` puts the server's `detail` verbatim into a thrown error's message.
+ * That is right for onboarding, where `detail` is a sentence written for the
+ * person reading it ("That code has expired"). It is wrong for the reviewer,
+ * whose failure reasons are shown to a human deciding whether to trust an
+ * operation — an upstream body is not text we control. So this one returns the
+ * status and lets the caller map it.
+ */
+describe("chatCompletion returns outcomes instead of throwing them", () => {
+  const HOSTILE = "Model '<script>alert(1)</script> plow_sk_leaked' is not allowed";
+
+  it("returns {status, body} for a non-2xx instead of throwing", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 400, body: { detail: HOSTILE } }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    const result = await api.chatCompletion("plow_sk_token", { model: "m" });
+
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ detail: HOSTILE });
+  });
+
+  it("does not throw a detail-bearing error on any error status", async () => {
+    // If this ever throws, the reviewer's catch renders the message as
+    // `reviewer error: <server detail>` and a hostile body lands in a
+    // user-visible reason.
+    for (const status of [400, 401, 402, 403, 410, 500, 502, 503]) {
+      const { fetchImpl } = recordingFetch([{ status, body: { detail: HOSTILE } }]);
+      const api = new PlowApi("https://api.plow.co", fetchImpl);
+      const result = await api.chatCompletion("plow_sk_token", {});
+      expect(result.status).toBe(status);
+    }
+  });
+
+  it("returns a null body rather than throwing when the body is unreadable", async () => {
+    const fetchImpl = async () =>
+      new Response("not json", { status: 200, headers: { "content-type": "text/plain" } });
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    expect(await api.chatCompletion("plow_sk_token", {})).toEqual({ status: 200, body: null });
+  });
+
+  it("carries the credential in the Authorization header and nowhere else", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { choices: [] } }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await api.chatCompletion("plow_sk_do_not_leak_me", { model: "m" });
+
+    const { url, init } = calls[0];
+    expect(url).toBe("https://api.plow.co/v1/chat/completions");
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      "Bearer plow_sk_do_not_leak_me",
+    );
+    expect(url).not.toContain("plow_sk_do_not_leak_me");
+    expect(init.body as string).not.toContain("plow_sk_do_not_leak_me");
+  });
+
+  it("uses the caller's budget signal when given one, and a default bound otherwise", async () => {
+    // The reviewer owns a 30s budget and must not silently inherit the 15s one.
+    const budget = new AbortController();
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: {} },
+      { status: 200, body: {} },
+    ]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await api.chatCompletion("t", {}, { signal: budget.signal });
+    expect(calls[0].init.signal).toBe(budget.signal);
+
+    await api.chatCompletion("t", {});
+    expect(calls[1].init.signal).toBeDefined();
+    expect(calls[1].init.signal).not.toBe(budget.signal);
+  });
+});

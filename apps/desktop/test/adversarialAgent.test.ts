@@ -664,6 +664,38 @@ describe("the Plow provider", () => {
       expect(result.reason).toContain("timed out");
     });
 
+    it("a timed-out call is ABORTED, not just abandoned", async () => {
+      // The orphan bug: the race gave up on the promise but nothing gave up on
+      // the request, so a slow review returned `ask` at 30s and left a paid
+      // call running behind it. The budget that ends the wait must also end the
+      // request.
+      vi.useFakeTimers();
+      let signal: AbortSignal | undefined;
+      fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+        signal = init.signal ?? undefined;
+        return new Promise(() => {}); // never settles
+      });
+
+      const pending = plowReview();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal, "the request must carry a signal at all").toBeDefined();
+      expect(signal!.aborted, "not aborted while still within budget").toBe(false);
+
+      await vi.advanceTimersByTimeAsync(REVIEWER_TIMEOUT_MS + 1);
+      await pending;
+      expect(signal!.aborted, "aborted once the budget is spent").toBe(true);
+    });
+
+    it("a call that answers in time is never aborted", async () => {
+      let signal: AbortSignal | undefined;
+      fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+        signal = init.signal ?? undefined;
+        return Promise.resolve(plowResponse(verdictJson("allow")));
+      });
+      expect((await plowReview()).verdict).toBe("allow");
+      expect(signal!.aborted).toBe(false);
+    });
+
     it("a body that is not JSON at all", async () => {
       fetchMock.mockResolvedValue({
         ok: true,
