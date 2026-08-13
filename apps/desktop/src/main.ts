@@ -29,7 +29,15 @@ import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
-import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
+import { adversarialReview } from "./adversarialAgent.js";
+import { ApprovalDecision, decideIntent } from "./reviewPolicy.js";
+import {
+  readInference,
+  setAnthropicApiKey,
+  revokeAndSignOut,
+  setApprovalMode,
+  setInferenceProvider,
+} from "./settingsActions.js";
 
 // Set the app name before the app is ready so the macOS app menu, About/Hide/
 // Quit items, and dock title read "Domo Desktop" instead of "Electron".
@@ -64,67 +72,23 @@ let onboardingWindow: BrowserWindow | null = null;
  * click.
  */
 class ElectronPolicy implements PolicyDelegate {
-  // Operations honor the configurable approval mode (settings.approvalMode).
-  // The returned `source` records HOW it was decided, for the audit log.
-  // The adversarial-agent features require an Anthropic API key; without one,
-  // adversarial mode falls back to Ask and suggestions are skipped.
-  async decideIntent(intent: Intent): Promise<{ decision: "allow_once" | "always_allow" | "deny"; source: string }> {
-    const settings = loadSettings(home);
-    const mode = settings.approvalMode ?? "ask";
-    const hasKey = !!(settings.anthropicApiKey ?? "").trim();
-
-    if (mode === "approve") return { decision: "allow_once", source: "approve" };
-    if (mode === "deny") return { decision: "deny", source: "policy" };
-
-    const key = (settings.anthropicApiKey ?? "").trim();
+  // The branching itself lives in reviewPolicy.ts so it is testable without a
+  // display; this only supplies the Electron-shaped pieces.
+  async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
-    // Run one review, recording its start and outcome onto the intent's audit
-    // timeline so the app shows "adversarial agent started" + its verdict
-    // between the request and the final decision.
-    const review = async () => {
-      const history = agentHistory(audit?.entries() ?? [], intent.agentId);
-      audit?.record("adversarial_review_started", {
-        intentId: intent.intentId,
-        agent: intent.agentId,
-        model: REVIEWER_MODEL,
-      });
-      const r = await adversarialReview({ intent, history, apiKey: key });
-      audit?.record("adversarial_review_result", {
-        intentId: intent.intentId,
-        verdict: r.verdict,
-        reason: r.reason,
-      });
-      return r;
-    };
-
-    if (mode === "adversarial" && hasKey) {
-      const { verdict } = await review();
-      if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
-      if (verdict === "deny") return { decision: "deny", source: "adversarial" };
-      // "ask" — the agent couldn't decide; hand it to the human (no suggestion).
-      const decision = await openApprovalWindow({ kind: "intent", view: approvalViewModel(intent) });
-      return { decision, source: "ask" };
-    }
-
-    // Ask mode (or adversarial with no key): show the dialog, optionally with a
-    // suggestion when both the toggle and a key are present.
-    const suggestion =
-      settings.showAgentSuggestions && hasKey
-        ? review().then((r) =>
-            r.verdict === "allow" ? "allow_once" : r.verdict === "deny" ? "deny" : null,
-          )
-        : null;
-    const decision = await openApprovalWindow(
-      { kind: "intent", view: approvalViewModel(intent) },
-      suggestion,
-    );
-    return { decision, source: "ask" };
+    return decideIntent(intent, {
+      settings: loadSettings(home),
+      apiBaseUrl,
+      auditEntries: () => audit?.entries() ?? [],
+      record: (event, fields) => audit?.record(event, fields),
+      review: adversarialReview,
+      openApproval: (suggestion) =>
+        openApprovalWindow({ kind: "intent", view: approvalViewModel(intent) }, suggestion),
+    });
   }
 }
 
 type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
-
-type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
 /** Serialize approval windows so two prompts never overlap. */
 let approvalChain: Promise<unknown> = Promise.resolve();
@@ -313,16 +277,21 @@ ipcMain.handle("settings:getRelay", async () => {
     connected,
   };
 });
-// Sign out: forget the device credential and drop the socket. The credential
-// itself is not revoked — that needs the account's own key list, which this Mac
-// deliberately cannot reach.
+// Sign out: retire the credential with Plow, forget it here, and drop the
+// socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
+// cannot reach Plow still signs out locally.
 ipcMain.handle("settings:signOut", async () => {
-  const settings = loadSettings(home);
-  settings.relayCredential = "";
-  settings.accountUid = "";
-  settings.mcpUrl = "";
-  saveSettings(home, settings);
-  await startRelay();
+  await revokeAndSignOut(
+    home,
+    (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
+    // Dropping the socket and resetting the setup window are both part of
+    // "signed out": the onboarding instance outlives the sign-out and would
+    // otherwise still report `connected` for the account just left.
+    async () => {
+      onboarding?.signedOut();
+      await startRelay();
+    },
+  );
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
@@ -358,25 +327,24 @@ ipcMain.handle("onboarding:finish", async () => {
   onboardingWindow?.close();
 });
 ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
-ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
-  const allowed = ["approve", "adversarial", "ask", "deny"];
-  const settings = loadSettings(home);
-  settings.approvalMode = (allowed.includes(mode) ? mode : "ask") as typeof settings.approvalMode;
-  saveSettings(home, settings);
-});
+ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
 ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).showAgentSuggestions ?? true);
 ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   const settings = loadSettings(home);
   settings.showAgentSuggestions = !!on;
   saveSettings(home, settings);
 });
-ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
-ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
-  const settings = loadSettings(home);
-  settings.anthropicApiKey = (key || "").trim();
-  saveSettings(home, settings);
-});
+ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
+/**
+ * Everything the renderer is allowed to know about inference: the selection,
+ * which providers are usable, and the active model. Deliberately booleans and
+ * not credentials — the relay credential never crosses this bridge.
+ */
+ipcMain.handle("settings:getInference", async () => readInference(home));
+ipcMain.handle("settings:setInference", async (_e, provider: string) =>
+  setInferenceProvider(home, provider),
+);
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
   name: device?.identity.name ?? "",

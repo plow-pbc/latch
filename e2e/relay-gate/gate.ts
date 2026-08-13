@@ -371,6 +371,18 @@ function mintDetail(result: HttpResult): string {
   return `key_prefix ${key_prefix} · scopes ${JSON.stringify(scopes)} · name ${JSON.stringify(name)}`;
 }
 
+/**
+ * Exact scope-set equality: same members, no extras, no omissions.
+ *
+ * NOT a subset test. Every scope bug this gate exists to catch was an
+ * over-broad mint, and a subset test passes those.
+ */
+function sameScopes(actual: unknown, expected: string[]): boolean {
+  if (!Array.isArray(actual)) return false;
+  const sort = (xs: string[]) => [...xs].sort();
+  return JSON.stringify(sort(actual as string[])) === JSON.stringify(sort(expected));
+}
+
 /** Read the URL and headers out of `mcp_config` verbatim. Never assembled. */
 function targetFromConfig(mcpConfig: string): McpTarget {
   const parsed = JSON.parse(mcpConfig);
@@ -520,9 +532,18 @@ async function main(): Promise<void> {
   );
   check("mint returns 200", minted.status === 200, mintDetail(minted));
   const deviceToken: string = minted.json.token;
+  // `llm:chat` is here because this same credential pays for adversarial-review
+  // inference: the Mac sends it as the bearer token on Plow's chat-completions
+  // endpoint, so the reviewer bills to the signed-in account instead of a
+  // pasted Anthropic key.
+  //
+  // EXACT set, deliberately. A subset check would still pass if the mint went
+  // over-broad, and catching an over-broad mint is the whole reason this gate
+  // exists. Order-insensitive only because scope order is not a contract —
+  // membership is.
   check(
-    "scope is exactly relay:device",
-    JSON.stringify(minted.json.scopes) === JSON.stringify(["relay:device"]),
+    "scope is exactly relay:device + llm:chat",
+    sameScopes(minted.json.scopes, ["relay:device", "llm:chat"]),
     JSON.stringify(minted.json.scopes),
   );
 
