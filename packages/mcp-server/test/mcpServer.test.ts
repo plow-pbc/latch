@@ -79,6 +79,7 @@ describe("the reduced tool surface (§4.5)", () => {
       "read_skill",
       "run_command",
       "use_tool",
+      "vault",
       "write_file",
     ]);
     // The concepts §4.5 deletes are gone…

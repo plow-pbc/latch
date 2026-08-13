@@ -26,7 +26,7 @@ export interface Capability {
   tool?: string; // tool
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
   access?: "metadata" | "fill"; // credential: list names/labels vs type values into pages
-  items?: string[]; // credential(fill): 1Password item ids
+  items?: string[]; // credential(fill): vault item ids
   reason?: string; // display-only justification
 }
 
@@ -63,7 +63,7 @@ export function capabilityDisplay(c: Capability): string {
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":
       return c.access === "metadata"
-        ? "Credentials: list 1Password item names & field labels (no secret values)"
+        ? "Credentials: list vault item names & field labels (no secret values)"
         : `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (values never leave this Mac)`;
   }
 }

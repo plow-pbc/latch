@@ -1,7 +1,7 @@
 /**
  * The heavy tier: REAL Python runtime + REAL Camoufox driving a local
- * pizza-checkout fixture site through the whole MCP server, with the real
- * seed_op_broker resolving credentials from a fake `op` binary.
+ * pizza-checkout fixture site through the whole MCP server, with a fake
+ * credential broker standing in for the bundled seed_vault_broker.
  *
  * Opt-in: skipped unless DOMO_BROWSER_RUNTIME and DOMO_CAMOUFOX are set (run via
  * `just test-browser` after `just fetch-browser-runtime fetch-browser`).
@@ -50,11 +50,11 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     const base = resolveBrowserRuntime()!;
     const runtime = {
       ...base,
-      env: {
-        ...base.env,
-        PATH: `${path.join(fixtures, "fake-op")}:${process.env.PATH ?? ""}`,
-        FAKE_OP_VAULT: vaultPath,
-      },
+      // The broker now ships inside the app and is run by absolute path, so a
+      // PATH shim can no longer stand in for it — name the fake outright, or
+      // this test would read the real vault.
+      credentialBrokerCommand: [path.join(fixtures, "fake-broker", "seed-vault-broker")],
+      env: { ...base.env, FAKE_BROKER_VAULT: vaultPath },
     };
     device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), undefined, runtime);
     server = createDomoMcpServer(device);
@@ -83,12 +83,13 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
 
     await act("goto", { url: site.url + "/" });
 
-    const creds = await act("credentials");
-    const login = (creds.payload.items as { id: string; matches_this_page: boolean }[]).find((i) => i.id === "L1")!;
-    expect(login.matches_this_page).toBe(true);
+    // The vault answers on its own tool, with no session involved.
+    const creds = await callTool(server, "vault", { action: "list" }, AGENT);
+    const login = (creds.payload.items as { id: string }[]).find((i) => i.id === "L1")!;
+    expect(login).toBeTruthy();
     expect(JSON.stringify(creds.payload)).not.toContain("pizza-time-99");
 
-    const described = await act("describe_item", { item: "L1" });
+    const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
     expect(described.payload.fields).toContain("password");
 
     await callTool(server, "browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
@@ -140,7 +141,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     }
     expect(auditRaw).not.toContain("pizza-time-99");
     expect(auditRaw).not.toContain("4111111111111111");
-    const opAudit = fs.readFileSync(path.join(device.home, "device/browser/op-audit.log"), "utf8");
+    const opAudit = fs.readFileSync(path.join(device.home, "device/browser/credential-audit.log"), "utf8");
     expect(opAudit).toContain("RELEASED");
     expect(opAudit).not.toContain("pizza-time-99");
   }, 300_000);
