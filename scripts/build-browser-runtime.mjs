@@ -23,6 +23,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { foreignLinks } from "./machoLinks.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const vendorDir = path.join(repoRoot, "vendor");
@@ -129,7 +130,12 @@ const stamp = crypto
   .digest("hex");
 
 function buildRuntime() {
-  if (fs.existsSync(stampPath) && fs.readFileSync(stampPath, "utf8") === stamp) {
+  if (fs.existsSync(stampPath) && fs.readFileSync(stampPath, "utf8") === stamp && fs.existsSync(pybin)) {
+    // Same reasoning as the vault payloads: the cached path is the one nearly
+    // every `just package` takes, so it gets the check too. One probe on the
+    // interpreter rather than the full per-Mach-O sweep below, which costs a
+    // spawn per file — enough to catch a payload that lost its relocation.
+    assertNoForeignLinks(pybin);
     log("runtime up to date (stamp matches)");
     return;
   }
@@ -763,11 +769,13 @@ function fetchVaultServer(arch) {
   // caching on the commit alone would ship it. Same reason `PRUNE_VERSION`
   // exists — build logic changing has to bust the stamp too.
   const vaultStamp = `${commit} ${VAULT_FEATURES}`;
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === vaultStamp) {
+  const cached = path.join(installRoot, "vaultwarden");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === vaultStamp && fs.existsSync(cached)) {
     // Checked on the cached path too — that is the path most packaging runs
     // take, so an assertion that only fires after a compile is an assertion
-    // that mostly does not fire.
-    assertNoForeignLinks(path.join(installRoot, "vaultwarden"));
+    // that mostly does not fire. A marker that outlived its binary falls
+    // through and rebuilds rather than dying in otool.
+    assertNoForeignLinks(cached);
     log(`vault server ${arch} up to date`);
     return;
   }
@@ -809,13 +817,7 @@ function fetchVaultServer(arch) {
  * after the build said it was fine -- so it fails here instead.
  */
 function assertNoForeignLinks(binary) {
-  const foreign = capture("otool", ["-L", binary])
-    .split("\n")
-    // A fat binary repeats a "<path> (architecture arm64):" header per slice;
-    // those name the file itself, not something it links.
-    .filter((l) => l.startsWith("\t"))
-    .map((l) => l.trim().split(" ")[0])
-    .filter((p) => p && !p.startsWith("/usr/lib/") && !p.startsWith("/System/Library/"));
+  const foreign = foreignLinks(capture("otool", ["-L", binary]));
   if (foreign.length) {
     throw new Error(
       `${path.basename(binary)} links libraries no user's Mac has:\n  ${foreign.join("\n  ")}`,
@@ -872,8 +874,9 @@ function fetchVaultCli(arch) {
   const asset = lock.vaultCli.assets[arch === "arm64" ? "arm64" : "x64"];
   const installRoot = path.join(vaultCliDir, arch);
   const marker = path.join(installRoot, ".sha256");
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
-    assertNoForeignLinks(path.join(installRoot, "bw"));
+  const cached = path.join(installRoot, "bw");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256 && fs.existsSync(cached)) {
+    assertNoForeignLinks(cached);
     log(`vault cli ${arch} up to date`);
     return;
   }
