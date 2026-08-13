@@ -64,6 +64,10 @@ export class DeviceAgent {
         this.audit.record(event, fields);
       this.browserHost = new BrowserHost({
         command: browserRuntime.serverCommand,
+        // Visible by default: the owner should be able to watch what is being
+        // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
+        // which is what the test tiers and any unattended run want.
+        headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
         profileDir: path.join(browserDir, "profile"),
