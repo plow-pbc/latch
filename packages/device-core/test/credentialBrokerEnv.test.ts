@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CredentialBroker } from "@domo/device-core";
+import { CredentialBroker, withoutVaultSecrets } from "@domo/device-core";
 
 /** A stand-in broker that answers `whats-here` with its own environment. */
 function echoBroker(): string {
@@ -18,11 +18,12 @@ function echoBroker(): string {
   const file = path.join(dir, "echo.cjs");
   fs.writeFileSync(
     file,
-    `const seen = {
+    `process.stdout.write(JSON.stringify([{
       id: process.env.SEED_VAULT_USER ?? "",
-      secret: process.env.SEED_VAULT_PASSWORD ?? "",
-    };
-    process.stdout.write(JSON.stringify([{ id: seen.id, title: seen.secret, category: "LOGIN", username: "", urls: [], matches_this_page: false }]));
+      title: process.env.SEED_VAULT_PASSWORD ?? "",
+      username: process.env.SEED_VAULT_TOKEN ?? "",
+      category: "LOGIN", urls: [], matches_this_page: false,
+    }]));
     `,
   );
   return file;
@@ -48,6 +49,26 @@ describe("what the broker is given", () => {
     const after = await broker.whatsHere("https://example.com");
     expect(after[0].id).toBe("someone@local");
     expect(after[0].title).toBe("the-real-password");
+  });
+
+  it("hands the bootstrap token to the broker, and to nothing that outlives it", async () => {
+    const broker = new CredentialBroker({
+      command: ["node", echoBroker()],
+      fleetToken: "the-fleet-token",
+    });
+    const items = await broker.whatsHere("https://example.com");
+    expect(items[0].username, "the broker is what the token is for").toBe("the-fleet-token");
+
+    // The browser server and the vault are long-lived and inherit the
+    // environment; a compromise of either must not hand over vault bootstrap.
+    const stripped = withoutVaultSecrets({
+      DOMO_VAULT_TOKEN: "the-fleet-token",
+      SEED_VAULT_TOKEN: "the-fleet-token",
+      PATH: "/usr/bin",
+    });
+    expect(stripped.DOMO_VAULT_TOKEN).toBeUndefined();
+    expect(stripped.SEED_VAULT_TOKEN).toBeUndefined();
+    expect(stripped.PATH, "everything else still travels").toBe("/usr/bin");
   });
 
   it("still passes a fixed env, for callers that have one", async () => {
