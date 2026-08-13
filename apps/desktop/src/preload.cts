@@ -27,7 +27,6 @@ contextBridge.exposeInMainWorld("domo", {
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
   vaultGet: () => ipcRenderer.invoke("vault:get"),
-  vaultSet: (email: string, password: string) => ipcRenderer.invoke("vault:set", email, password),
   vaultOpen: () => ipcRenderer.invoke("vault:open"),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),

@@ -480,12 +480,13 @@ function capText(c) {
 
 /**
  * The vault's own account. Shown, not hidden: this is what the owner types into
- * the vault's page to read their own secrets, and either half can be replaced
- * with something they choose — the account key is re-wrapped underneath, so
- * what is already stored stays readable.
+ * the vault's own page, which is where they add and change what it holds — and
+ * where they change these two, if they want to. Domo only reads them.
  */
-/** One editable value with a Copy button beside it — never two of the same. */
-function fieldRow(input) {
+/** One value with a Copy button beside it. */
+function fieldRow(value) {
+  const input = el("input", { class: "text mono", attrs: { type: "text", readonly: "", spellcheck: "false" } });
+  input.value = value;
   const copy = el("button", { class: "btn small", text: "Copy" });
   copy.addEventListener("click", async () => {
     await navigator.clipboard.writeText(input.value);
@@ -506,40 +507,19 @@ async function renderVault() {
   }
 
   // Anchors go nowhere inside Electron; the main process opens the browser.
+  const note = el("p", { class: "faint", text: "Sign in on that page with these two to add what Domo may use." });
   const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });
-  link.addEventListener("click", (e) => {
+  link.addEventListener("click", async (e) => {
     e.preventDefault();
-    window.domo.vaultOpen();
-  });
-
-  const emailInput = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
-  emailInput.value = creds.email;
-  const passwordInput = el("input", { class: "text mono", attrs: { type: "text", spellcheck: "false" } });
-  passwordInput.value = creds.password;
-
-  const note = el("p", { class: "faint", text: "Sign in on that page with these two." });
-  const save = el("button", { class: "btn primary", text: "Save changes" });
-  save.addEventListener("click", async () => {
-    save.disabled = true;
-    note.textContent = "Changing…";
-    try {
-      const updated = await window.domo.vaultSet(emailInput.value.trim(), passwordInput.value);
-      emailInput.value = updated.email;
-      passwordInput.value = updated.password;
-      note.textContent = "Saved. Sign in with these from now on.";
-    } catch (err) {
-      note.textContent = "Could not change it: " + (err && err.message ? err.message : String(err));
-    }
-    save.disabled = false;
+    if (!(await window.domo.vaultOpen())) note.textContent = "The vault did not start. Try again in a moment.";
   });
 
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "section-label", text: "Your vault" }),
     el("div", { class: "field" }, [el("label", { text: "Address" }), link]),
-    el("div", { class: "field" }, [el("label", { text: "Email" }), fieldRow(emailInput)]),
-    el("div", { class: "field" }, [el("label", { text: "Password" }), fieldRow(passwordInput)]),
+    el("div", { class: "field" }, [el("label", { text: "Email" }), fieldRow(creds.email)]),
+    el("div", { class: "field" }, [el("label", { text: "Password" }), fieldRow(creds.password)]),
     note,
-    el("div", { class: "row" }, [save]),
   ]));
 }
 

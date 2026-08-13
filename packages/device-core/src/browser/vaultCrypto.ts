@@ -1,7 +1,11 @@
 /**
- * The little bit of Bitwarden crypto the app needs to own an account on its own
- * vault: derive the keys from a password, wrap and unwrap the account key, and
- * talk to a server whose certificate this machine minted for itself.
+ * The little bit of Bitwarden crypto the app needs to CREATE its one account on
+ * its own vault: derive the keys from a password, wrap the account key, and talk
+ * to a server whose certificate this machine minted for itself.
+ *
+ * Creating that account is all Domo does with it. Everything after — signing in,
+ * changing the address or the password, reading what is stored — belongs to
+ * Vaultwarden's own page and to the vault CLI, which already implement it.
  *
  * The password never leaves the machine; the server only ever sees a hash of a
  * hash of it.
@@ -15,12 +19,18 @@ export const KDF_ITERATIONS = 600_000;
 export interface VaultHttp {
   url: string;
   ca?: Buffer;
-  token?: string;
 }
 
 export function httpCa(caPath?: string): Buffer | undefined {
   return caPath && fs.existsSync(caPath) ? fs.readFileSync(caPath) : undefined;
 }
+
+/**
+ * A vault that opened its port but does not answer must not hang the caller:
+ * `VaultServer.start()` is awaited before every credential lookup, and a browser
+ * action has ~15s before the relay gives up on the whole call.
+ */
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export function send(
   http: VaultHttp,
@@ -31,13 +41,22 @@ export function send(
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(body);
+    // A plain timer, not `req.setTimeout`: that one does not fire while a TLS
+    // handshake is still hanging, which is exactly how a half-started vault
+    // fails — the port answers, the handshake never finishes.
+    let timer: NodeJS.Timeout;
+    const settle = <T>(fn: (v: T) => void) => (value: T) => {
+      clearTimeout(timer);
+      fn(value);
+    };
+    const ok = settle(resolve);
+    const fail = settle(reject);
     const req = https.request(
       `${http.url}${urlPath}`,
       {
         method,
         headers: {
           ...(payload ? { "Content-Type": contentType, "Content-Length": payload.length } : {}),
-          ...(http.token ? { Authorization: `Bearer ${http.token}` } : {}),
         },
         ...(http.ca ? { ca: http.ca } : {}),
       },
@@ -45,11 +64,14 @@ export function send(
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.once("end", () =>
-          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
+          ok({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
         );
       },
     );
-    req.once("error", reject);
+    timer = setTimeout(() => {
+      req.destroy(new Error(`the vault did not answer ${method} ${urlPath} in time`));
+    }, REQUEST_TIMEOUT_MS);
+    req.once("error", fail);
     req.end(payload);
   });
 }
@@ -84,36 +106,3 @@ export function encString(plain: Buffer, encKey: Buffer, macKey: Buffer): string
   return `2.${iv.toString("base64")}|${ct.toString("base64")}|${mac.toString("base64")}`;
 }
 
-export function decString(enc: string, encKey: Buffer, macKey: Buffer): Buffer {
-  const dot = enc.indexOf(".");
-  if (enc.slice(0, dot) !== "2") throw new Error(`unexpected EncString type ${enc.slice(0, dot)}`);
-  const [ivB64, ctB64, macB64] = enc.slice(dot + 1).split("|");
-  const iv = Buffer.from(ivB64, "base64");
-  const ct = Buffer.from(ctB64, "base64");
-  const expect = crypto.createHmac("sha256", macKey).update(Buffer.concat([iv, ct])).digest();
-  if (!crypto.timingSafeEqual(expect, Buffer.from(macB64, "base64"))) {
-    throw new Error("EncString failed its integrity check");
-  }
-  const d = crypto.createDecipheriv("aes-256-cbc", encKey, iv);
-  return Buffer.concat([d.update(ct), d.final()]);
-}
-
-/** Sign in and unwrap the account key, which everything else is built on. */
-export async function signIn(http: VaultHttp, email: string, password: string) {
-  const { hash, stretchedEnc, stretchedMac } = masterKeyAndHash(email, password);
-  const form = new URLSearchParams({
-    grant_type: "password",
-    username: email,
-    password: hash,
-    scope: "api offline_access",
-    client_id: "cli",
-    deviceType: "8",
-    deviceIdentifier: crypto.randomUUID(),
-    deviceName: "domo",
-  }).toString();
-  const res = await send(http, "POST", "/identity/connect/token", form, "application/x-www-form-urlencoded");
-  if (res.status !== 200) throw new Error(`vault sign-in failed (HTTP ${res.status})`);
-  const t = JSON.parse(res.body) as { access_token: string; Key: string };
-  http.token = t.access_token;
-  return { userKey: decString(t.Key, stretchedEnc, stretchedMac), passwordHash: hash };
-}

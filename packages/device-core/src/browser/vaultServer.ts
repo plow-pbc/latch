@@ -14,7 +14,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { ensureVaultAccount, vaultAccount, vaultAccountExists } from "./vaultBootstrap.js";
-import { settlePendingChange } from "./vaultCredentials.js";
+import { withoutVaultSecrets } from "./credentialBroker.js";
 
 export interface VaultServerConfig {
   /** The bundled `vaultwarden` binary for this arch. */
@@ -32,6 +32,10 @@ export interface VaultServerConfig {
 
 export class VaultServer {
   private child: ChildProcess | null = null;
+  private starting: Promise<void> | null = null;
+  /** Up AND holding this machine's account. Liveness alone is not enough: a
+   *  vault that started but failed to bootstrap has nothing to sign in to. */
+  private ready = false;
   private readonly port: number;
   readonly dataDir: string;
 
@@ -84,15 +88,39 @@ export class VaultServer {
     });
   }
 
-  /** Start it and wait until the port answers. Idempotent. */
-  async start(): Promise<void> {
-    if (this.child) return;
+  /**
+   * Start it and wait until the port answers and this machine has its account.
+   * Idempotent, and every concurrent caller awaits the SAME startup: the first
+   * one used to set `child` before bootstrapping, so a second caller returned
+   * immediately and ran its broker against a vault with no account in it yet.
+   */
+  start(): Promise<void> {
+    if (this.starting) return this.starting;
+    if (this.ready) return Promise.resolve();
+    this.starting = this.launch()
+      .then(() => {
+        this.ready = true;
+      })
+      .catch((error: unknown) => {
+        // A live process that never got its account would otherwise be read as
+        // "already started" by the next caller, and the broker would run
+        // against an empty vault. Take it down so the next call retries.
+        this.stop();
+        throw error;
+      })
+      .finally(() => {
+        this.starting = null;
+      });
+    return this.starting;
+  }
+
+  private async launch(): Promise<void> {
     fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const { cert, key } = this.ensureCert();
 
     this.child = spawn(this.cfg.binary, [], {
       env: {
-        ...process.env,
+        ...withoutVaultSecrets(process.env),
         DATA_FOLDER: this.dataDir,
         WEB_VAULT_FOLDER: this.cfg.webVaultDir,
         WEB_VAULT_ENABLED: "true",
@@ -111,6 +139,7 @@ export class VaultServer {
     });
     this.child.once("exit", () => {
       this.child = null;
+      this.ready = false;
     });
 
     const deadline = Date.now() + (this.cfg.startTimeoutMs ?? 30_000);
@@ -142,18 +171,13 @@ export class VaultServer {
    */
   private async bootstrap(): Promise<void> {
     const person = this.cfg.person;
-    if (!person) return;
-    if (this.needsAccount()) {
-      await ensureVaultAccount(this.url, this.dataDir, person, this.certPath);
-      return;
-    }
-    // A change interrupted last time leaves two candidate pairs on disk; ask
-    // the vault which one it took before anything else uses them.
-    await settlePendingChange(this.url, this.dataDir, this.certPath);
+    if (!person || !this.needsAccount()) return;
+    await ensureVaultAccount(this.url, this.dataDir, person, this.certPath);
   }
 
   /** Kill the process group, so nothing it spawned outlives the app. */
   stop(): void {
+    this.ready = false;
     const pid = this.child?.pid;
     if (pid === undefined) return;
     try {

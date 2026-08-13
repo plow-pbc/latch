@@ -23,9 +23,8 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
-  changeCredentials,
-  readCredentials,
   resolveBrowserRuntime,
+  vaultAccount,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
@@ -462,28 +461,29 @@ ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   saveSettings(home, settings);
 });
 ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
-// The vault's own account: the owner reads it here to sign in on the vault's
-// page, and can replace either half with something of their own choosing.
+// The vault's own account, to read: this is what the owner signs in with on the
+// vault's own page, which is where items are added and changed. Domo does not
+// own that account beyond creating it — Vaultwarden's own UI does.
 ipcMain.handle("vault:get", async () => {
   const vault = device?.vaultServer;
   if (!vault) return null;
-  return readCredentials(vault.url, vault.dataDir);
+  const account = vaultAccount(vault.dataDir);
+  return account ? { url: vault.url, email: account.email, password: account.password } : null;
 });
 
 // A renderer anchor cannot open a browser from inside Electron, so the main
-// process does it — and only ever for this machine's own vault address.
+// process does it — and only ever for this machine's own vault address. The
+// vault has to be answering before the browser gets there, hence the await.
 ipcMain.handle("vault:open", async () => {
   const vault = device?.vaultServer;
   if (!vault) return false;
+  try {
+    await vault.start();
+  } catch {
+    return false; // a click that goes nowhere is worse than one that says so
+  }
   await shell.openExternal(vault.url);
   return true;
-});
-
-ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
-  const vault = device?.vaultServer;
-  if (!vault) throw new Error("this build has no vault");
-  await changeCredentials(vault.url, vault.dataDir, { email, password }, vault.certPath);
-  return readCredentials(vault.url, vault.dataDir);
 });
 
 ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
