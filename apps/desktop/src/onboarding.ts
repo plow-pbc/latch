@@ -219,6 +219,11 @@ export class Onboarding {
    * pointless second code into an instant sign-in.
    */
   async newActivationCode(): Promise<OnboardingState> {
+    // A fresh code starts a fresh poll loop, and that loop's whole job is to
+    // turn into a session token. No token exists yet, so there is nothing to
+    // dispose of by starting one — this is exactly what the quit latch forbids.
+    // `begin()` comes through here too, so this is the only door.
+    if (this.isQuitting) return this.publish();
     const previous = this.activationSecret;
     this.cancelPolling();
     return this.run(async () => {
@@ -272,7 +277,9 @@ export class Onboarding {
       this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
       return true;
     }
-    await this.finishWithSession(result.token);
+    // Tracked from here: a quit between now and the mint would strand the
+    // session token this redeem just delivered.
+    await this.deps.critical(this.finishWithSession(result.token));
     return true;
   }
 
@@ -377,7 +384,9 @@ export class Onboarding {
         !this.settings().relayCredential.trim()
       ) {
         this.cancelPolling();
-        await this.run(() => this.finishWithSession(result.token as string));
+        await this.run(() =>
+          this.deps.critical(this.finishWithSession(result.token as string)),
+        );
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -579,6 +588,7 @@ export class Onboarding {
    */
 
   private async completeOtpLogin(code: string): Promise<void> {
+    if (this.isQuitting) return; // see tryFinish
     let otpToken: string;
     try {
       otpToken = await this.deps.api.verifyOtp(this.phone, code);
@@ -588,7 +598,7 @@ export class Onboarding {
       }
       throw error;
     }
-    await this.finishWithSession(otpToken);
+    await this.deps.critical(this.finishWithSession(otpToken));
   }
 
   /**
@@ -623,25 +633,35 @@ export class Onboarding {
   quitting(): void {
     this.isQuitting = true;
     this.loginGeneration += 1;
+    // Stops the poll loop before its NEXT redeem. One already on the wire is
+    // deliberately left alone: it may be carrying a token, and the late accept
+    // below runs before the generation check for exactly that reason.
+    this.cancelPolling();
   }
 
+  /**
+   * Finish a login we already hold a session token for. **Callers must wrap
+   * this in `deps.critical`** — see the note on the token below.
+   *
+   * There is no early exit here, and that is the whole point. `sessionToken`
+   * carries `keys:manage` and `relay:*`: it can mint ANY credential on the
+   * account, and it is the single most dangerous thing this app ever holds. The
+   * ONLY thing that retires it is `mintDeviceCredential`, which sets
+   * `revoke_calling_session` and kills it in the same transaction as the mint.
+   *
+   * So once a token has been delivered, refusing to continue does not make the
+   * app safer — it strands a live `keys:manage` session on the account and
+   * throws away the only handle that could have retired it. Abandoning a login
+   * means minting a credential we do not want and handing it straight back,
+   * which `mintAndCommit`'s generation check already does. A device credential
+   * we can revoke is a far smaller liability than a session we cannot.
+   */
   private async finishWithSession(sessionToken: string): Promise<void> {
-    // The login that has not started yet. See `quitting()`.
-    if (this.isQuitting) return;
-    // Captured before the first yield. Everything below asks the same question
-    // — is the login this belongs to still the one we are running? — rather
-    // than asking where we paused.
+    // Captured before the first yield. What it decides is whether the minted
+    // credential is KEPT — never whether the mint happens.
     const login = this.loginGeneration;
-
     const info = await this.deps.api.relayInfo(sessionToken);
-    // Nothing has been created yet, so a lost race here is a plain exit.
-    if (login !== this.loginGeneration) return;
-
-    // From here a credential is about to EXIST, and a quit that lands before it
-    // is either saved or handed back leaves the account holding a live one this
-    // Mac has never heard of — unsaved, so unrevocable by anything here. The
-    // whole span is critical shutdown work, not just the request.
-    await this.deps.critical(this.mintAndCommit(sessionToken, info, login));
+    await this.mintAndCommit(sessionToken, info, login);
   }
 
   /** The half of a login that can create a credential. See finishWithSession. */
@@ -656,7 +676,14 @@ export class Onboarding {
     // revoked a different one. Persisting it would leave the account holding a
     // live, spend-capable credential its owner had just retired, so it is
     // handed back instead.
-    if (login !== this.loginGeneration) {
+    //
+    // `isQuitting` is asked as well as the generation, and it is not redundant:
+    // a login that ENTERS after the latch captures the already-bumped
+    // generation, so comparing generations alone waves it through and saves a
+    // credential on the way out the door. The mint still had to happen — it is
+    // what retires the session token — but keeping what it produced is a
+    // different question, and the answer during a quit is always no.
+    if (login !== this.loginGeneration || this.isQuitting) {
       // Awaited, so the hand-back is INSIDE this span rather than beside it.
       // Registering it separately meant this span settled while the revoke was
       // still pending, and a quit that had already snapshotted the outstanding

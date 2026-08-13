@@ -785,25 +785,26 @@ describe("a sign-out during finishWithSession", () => {
     return { onboarding, release, begun };
   }
 
-  // The two yield points, and the reason they cannot share an assertion: before
-  // the mint nothing exists yet, so the cheapest exit is right; after it a live
-  // credential does, so the exit has to hand it back.
-  const yieldPoints = [
-    { where: "relayInfo" as const, minted: 0, revoked: [] as string[] },
-    { where: "mintDeviceCredential" as const, minted: 1, revoked: [DEVICE_TOKEN] },
-  ];
-
-  for (const point of yieldPoints) {
-    it(`yielding in ${point.where} creates ${point.minted} credential(s) and hands back ${point.revoked.length}`, async () => {
-      const { onboarding, release, begun } = await parkedInside(point.where);
+  // The two yield points now share ONE outcome, and that is the change this
+  // round made. Yielding before the mint used to exit early and create nothing,
+  // which looked like the cheaper answer and was the wrong one: by then a
+  // session token exists, and `mintDeviceCredential` is the only call that
+  // retires it. So both schedules mint, and both hand the unwanted credential
+  // straight back. The schedules stay separate because they exercise different
+  // interleavings, not because they expect different things.
+  for (const where of ["relayInfo", "mintDeviceCredential"] as const) {
+    it(`yielding in ${where} still mints, and hands the credential back`, async () => {
+      const { onboarding, release, begun } = await parkedInside(where);
       await onboarding.signedOut();
 
       release();
       await begun;
       await settle();
 
-      expect(plow.minted).toHaveLength(point.minted);
-      expect(plow.revoked).toEqual(point.revoked);
+      // The mint happened — which is what killed the session token — and what
+      // it produced was returned rather than kept.
+      expect(plow.minted).toHaveLength(1);
+      expect(plow.revoked).toEqual([DEVICE_TOKEN]);
       // Never persisted, and the relay was never brought up on it.
       expect(loadSettings(home).relayCredential).toBe("");
       expect(loadSettings(home).accountUid).toBe("");
@@ -1067,61 +1068,100 @@ describe("a sign-out during finishWithSession", () => {
     expect(onboarding.state().step).toBe("connected");
   });
 
-  it("quitting during relayInfo — before the gate has anything to hold — starts no mint", async () => {
-    // The window the shutdown gate structurally cannot cover. A login registers
-    // its first critical work around the MINT, so while `relayInfo` is on the
-    // wire the gate is empty: `deferQuit` finds nothing, allows the quit, and a
-    // continuation resuming during teardown would start a server-side mint the
-    // exiting process neither persists nor revokes.
-    const tracked: Promise<unknown>[] = [];
-    const { onboarding, release, begun } = await parkedInside("relayInfo", {
-      critical: (work) => {
-        tracked.push(work);
-        return work;
+  // Every exchange that can deliver a session token, each parked inside
+  // `relayInfo` — after the token exists and before the mint that disposes of
+  // it. That gap is where a quit used to find an empty gate and outrun the
+  // login, and where refusing to continue stranded the session outright.
+  const tokenPaths = [
+    {
+      name: "the poll loop's late accept",
+      arrive: async (onboarding: Onboarding) => {
+        plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+        const begun = onboarding.begin();
+        await settle();
+        return { finished: begun };
       },
+    },
+    {
+      name: "the re-poll before a new code",
+      arrive: async (onboarding: Onboarding) => {
+        plow.redeems = [{ status: "pending" }];
+        await onboarding.begin();
+        await settle();
+        // The old code turns out to have been texted after all.
+        plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+        const asked = onboarding.newActivationCode();
+        await settle();
+        return { finished: asked };
+      },
+    },
+    {
+      name: "an OTP verification",
+      arrive: async (onboarding: Onboarding) => {
+        onboarding.usePhoneCode();
+        await onboarding.requestCode("+15551234567");
+        const submitted = onboarding.submitCode("12345678");
+        await settle();
+        return { finished: submitted };
+      },
+    },
+  ];
+
+  for (const path of tokenPaths) {
+    it(`a quit during ${path.name} still mints, because that is what kills the session`, async () => {
+      // The bug my own last round introduced. Refusing `finishWithSession`
+      // after the latch was right for an exchange that had not started and
+      // wrong once a token existed: `sessionToken` carries `keys:manage` and
+      // `relay:*`, and `mintDeviceCredential` — with `revoke_calling_session` —
+      // is the ONLY thing that retires it. Returning early stranded a live
+      // session that could mint anything on the account.
+      const tracked: Promise<unknown>[] = [];
+      let release = () => {};
+      const onTheWire = new Promise<void>((r) => {
+        release = () => r();
+      });
+      const realRelayInfo = plow.relayInfo.bind(plow);
+      plow.relayInfo = async (token: string) => {
+        await onTheWire;
+        return realRelayInfo(token);
+      };
+      const onboarding = build({
+        critical: (work) => {
+          tracked.push(work);
+          return work;
+        },
+      });
+      // Boxed: `await` unwraps a promise-returning promise twice, which would
+      // park the test itself inside the very call it means to observe.
+      const { finished } = await path.arrive(onboarding);
+
+      // Tracked while `relayInfo` is on the wire — before this round the span
+      // started at the mint, so a quit here found an empty gate and outran it.
+      expect(tracked).toHaveLength(1);
+
+      // Same tick as the latch, no await between: a latch landing a tick later
+      // would leave the credential SAVED rather than handed back.
+      onboarding.quitting();
+      release();
+
+      await finished;
+      await settle();
+
+      // Minted — so `revoke_calling_session` fired and the session is gone —
+      // and the device credential it produced was handed straight back.
+      expect(plow.minted).toHaveLength(1);
+      expect(plow.revoked).toEqual([DEVICE_TOKEN]);
+      expect(loadSettings(home).relayCredential).toBe("");
+      expect(onboarding.state().step).not.toBe("connected");
     });
+  }
 
-    // Exactly what `before-quit` does, and in the same order: nothing has been
-    // registered, so this is all that stands between the login and a mint.
-    expect(tracked).toHaveLength(0);
-    onboarding.quitting();
-
-    release();
-    await begun;
-    await settle();
-
-    expect(plow.minted).toEqual([]); // never even asked
-    expect(tracked).toHaveLength(0);
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
-  });
-
-  it("the latch is synchronous — nothing runs between it and the gate being read", async () => {
-    // An async latch, or one that set its flag a tick later, would let the
-    // parked continuation through: `before-quit` is one synchronous run, and
-    // anything that has not taken effect by the end of it has not taken effect
-    // at all. Released in the SAME tick as the latch, with no await between.
-    const { onboarding, release, begun } = await parkedInside("relayInfo");
-
-    onboarding.quitting();
-    release(); // no `await` above this line
-
-    await begun;
-    await settle();
-
-    expect(plow.minted).toEqual([]);
-    expect(loadSettings(home).relayCredential).toBe("");
-  });
-
-  it("a login that has not started yet is refused too", async () => {
-    // The generation bump only kills logins already RUNNING. A poll loop can
-    // still land a verified answer while the window is closing, and that login
-    // captures the already-bumped generation — so every check that only
-    // compares generations waves it straight through.
-    //
-    // The redeem is held mid-call so the loop is genuinely alive at the latch
-    // and the text lands after it. Letting the loop run to its five-minute
-    // give-up instead would leave nothing to refuse.
+  it("a token delivered AFTER the latch is still minted away", async () => {
+    // The exact bug, and the one the collapsed test above cannot reach: there
+    // the login had already entered `finishWithSession` before the latch. Here
+    // the redeem is in flight ACROSS it, so `finishWithSession` is entered
+    // afterwards — which is precisely where "refuse after the latch" fired and
+    // stranded a live `keys:manage` session on the account.
     let release = () => {};
     const onTheWire = new Promise<void>((r) => {
       release = () => r();
@@ -1134,18 +1174,84 @@ describe("a sign-out during finishWithSession", () => {
     const onboarding = build();
     const begun = onboarding.begin();
     await settle();
-    expect(plow.redeemCalls).toHaveLength(1); // parked, not given up
+    expect(plow.redeemCalls).toHaveLength(1); // on the wire, carrying a token
 
     onboarding.quitting();
 
-    // Only now does the text land.
     release();
     await begun;
     await settle();
 
-    expect(plow.minted).toEqual([]);
+    // The mint happened, so `revoke_calling_session` fired and the session is
+    // gone — and the device credential it produced was handed straight back.
+    expect(plow.minted).toHaveLength(1);
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]);
     expect(loadSettings(home).relayCredential).toBe("");
     expect(onboarding.state().step).not.toBe("connected");
+  });
+
+  it("the latch stops an exchange that has NOT started", async () => {
+    // The half of the latch that survives: with no token delivered there is
+    // nothing to dispose of, so starting a redeem would only create a liability
+    // on the way out.
+    let releaseWait = () => {};
+    const parkedInWait = new Promise<void>((r) => {
+      releaseWait = () => r();
+    });
+    const onboarding = build({
+      wait: async (ms: number) => {
+        waits.push(ms);
+        await parkedInWait;
+      },
+    });
+    const begun = onboarding.begin();
+    await settle();
+    expect(plow.redeemCalls).toHaveLength(0); // parked before its first redeem
+
+    onboarding.quitting();
+    releaseWait();
+    await begun;
+    await settle();
+
+    expect(plow.redeemCalls).toHaveLength(0); // and it never issued one
+    expect(plow.minted).toEqual([]);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("the latch stops a fresh code, and the login its poll loop would become", async () => {
+    // `newActivationCode` is the only door to an activation — `begin()` comes
+    // through it — and it re-polls the old secret before minting a new code.
+    // Both are exchanges that would produce a token on the way out.
+    plow.redeems = [{ status: "pending" }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    const codesBefore = plow.activations.length;
+
+    onboarding.quitting();
+    // The old code turns out to have been texted after all, so a re-poll would
+    // complete a login — and a fresh loop would too.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    await onboarding.newActivationCode();
+    await settle();
+
+    expect(plow.activations).toHaveLength(codesBefore); // no new code
+    expect(plow.minted).toEqual([]); // and no login completed on the way out
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("the latch stops an OTP code from being submitted", async () => {
+    // The third exchange. `verifyOtp` delivers the same `keys:manage` session
+    // the activation path does.
+    const onboarding = buildOnPhonePath();
+    await onboarding.requestCode("+15551234567");
+
+    onboarding.quitting();
+    await onboarding.submitCode("12345678");
+    await settle();
+
+    expect(plow.minted).toEqual([]);
+    expect(loadSettings(home).relayCredential).toBe("");
   });
 
   it("an UNINTERRUPTED login still signs in, and hands nothing back", async () => {
