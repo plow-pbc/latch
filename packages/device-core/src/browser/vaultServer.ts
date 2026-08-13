@@ -14,6 +14,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { ensureVaultAccount, vaultAccount, vaultAccountExists } from "./vaultBootstrap.js";
+import { settlePendingChange } from "./vaultCredentials.js";
 
 export interface VaultServerConfig {
   /** The bundled `vaultwarden` binary for this arch. */
@@ -141,8 +142,14 @@ export class VaultServer {
    */
   private async bootstrap(): Promise<void> {
     const person = this.cfg.person;
-    if (!person || !this.needsAccount()) return;
-    await ensureVaultAccount(this.url, this.dataDir, person, this.certPath);
+    if (!person) return;
+    if (this.needsAccount()) {
+      await ensureVaultAccount(this.url, this.dataDir, person, this.certPath);
+      return;
+    }
+    // A change interrupted last time leaves two candidate pairs on disk; ask
+    // the vault which one it took before anything else uses them.
+    await settlePendingChange(this.url, this.dataDir, this.certPath);
   }
 
   /** Kill the process group, so nothing it spawned outlives the app. */

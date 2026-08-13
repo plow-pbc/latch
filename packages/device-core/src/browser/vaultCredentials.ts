@@ -40,6 +40,11 @@ export async function changeCredentials(
   const password = next.password || current.password;
   if (email === current.email && password === current.password) return current;
 
+  // Written before the vault is touched, keeping the pair that still works.
+  // If this process dies mid-change, the old credentials are still on disk and
+  // the vault is still holding one of the two — neither is lost.
+  store.write({ email: current.email, password: current.password, pending: { email, password } });
+
   const http: VaultHttp = { url, ca: httpCa(caPath) };
   const { userKey, passwordHash } = await signIn(http, current.email, current.password);
   // The same account key, re-wrapped under whatever the owner chose.
@@ -90,9 +95,34 @@ export async function changeCredentials(
     }
   }
 
+  // The vault has accepted, so the new pair is the one that works and the old
+  // one is dropped.
   const account = { email, password };
   store.write(account);
   return account;
+}
+
+/**
+ * Settle a change that was interrupted: whichever pair the vault accepts is the
+ * real one. Runs at startup, costs nothing when there is nothing pending.
+ */
+export async function settlePendingChange(
+  url: string,
+  storeDir: string,
+  caPath?: string,
+): Promise<void> {
+  const store = new VaultSecretStore(storeDir);
+  const account = store.read();
+  if (!account?.pending) return;
+  const http: VaultHttp = { url, ca: httpCa(caPath) };
+  try {
+    await signIn(http, account.pending.email, account.pending.password);
+    store.write({ email: account.pending.email, password: account.pending.password });
+    return;
+  } catch {
+    /* the vault never took it */
+  }
+  store.write({ email: account.email, password: account.password });
 }
 
 export { KDF_ITERATIONS };

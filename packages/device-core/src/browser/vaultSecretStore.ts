@@ -14,6 +14,10 @@ import { createRequire } from "node:module";
 export interface VaultAccount {
   email: string;
   password: string;
+  /** A change that was started but not confirmed. Both pairs are kept until we
+   * know which one the vault took, so an interrupted change can never leave the
+   * vault holding one pair and this machine only the other. */
+  pending?: { email: string; password: string };
 }
 
 /** Electron's safeStorage when we are running inside the app, else null. */
