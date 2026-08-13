@@ -767,12 +767,22 @@ function fetchVaultServer(arch) {
   const triple = arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
   // The universal app needs both slices, so packaging on an arm64 Mac
   // cross-compiles for x86_64 — a target a fresh `rustup` install does not have.
+  // Run INSIDE the source tree: its rust-toolchain.toml pins the toolchain, and
+  // the target has to land on that one, not on whatever the default is.
   // A no-op once present, and a far better failure than 200 lines of E0463.
-  run("rustup", ["target", "add", triple], { quiet: true });
+  run("rustup", ["target", "add", triple], { cwd: srcDir, quiet: true });
   log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
-  run("cargo", ["build", "--release", "--locked", "--features", "sqlite", "--target", triple], {
-    cwd: srcDir,
-  });
+  // `vendored_openssl` is not optional here. Without it the build links against
+  // whatever libssl the packaging machine happens to have — on this one that is
+  // /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib, which does not exist on a
+  // user's Mac, so the bundled vault would refuse to launch for everyone who
+  // does not have Homebrew. Statically linked, it depends on nothing outside
+  // the OS. It also removes the cross-compile's search for an x86_64 libssl.
+  run(
+    "cargo",
+    ["build", "--release", "--locked", "--features", "sqlite,vendored_openssl", "--target", triple],
+    { cwd: srcDir },
+  );
   const built = path.join(srcDir, "target", triple, "release", "vaultwarden");
   if (!fs.existsSync(built)) throw new Error(`cargo produced no binary at ${built}`);
 

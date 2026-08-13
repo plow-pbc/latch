@@ -146,18 +146,20 @@ describe("the vault process", () => {
   }, 60_000);
 
   it("stopped mid-startup does not come back claiming it started", async () => {
-    // The stub holds the registration open, so stop() lands while the account
-    // is genuinely being made — not merely while the port is still opening.
+    // Covers the reachable half: a stop() during startup makes start() reject,
+    // and leaves nothing behind that would let the NEXT caller resolve instantly
+    // off a stale `ready`. (`launch()`'s post-bootstrap identity check guards a
+    // narrower race still — stop() landing while a registration that then
+    // SUCCEEDS is in flight — which needs sub-second timing to hit and is left
+    // uncovered rather than made flaky.)
     const { server, launches } = await makeServer("registers", 3_000);
     const starting = server.start();
     setTimeout(() => server.stop(), 900);
 
     await expect(starting, "a vault that was stopped did not start").rejects.toThrow();
-    // The contract that matters: the next caller gets a real launch, not an
-    // instant resolve off a `ready` flag the killed startup left behind.
     await server.start();
-    expect(launches()).toHaveLength(2);
-    expect(server.account, "and this one really did make the account").not.toBeNull();
+    expect(launches(), "the next caller really relaunched").toHaveLength(2);
+    expect(server.account, "and it made the account this time").not.toBeNull();
   }, 30_000);
 
   it("a dying predecessor does not orphan the vault that replaced it", async () => {
@@ -171,6 +173,10 @@ describe("the vault process", () => {
     await new Promise((r) => setTimeout(r, 750)); // let the first one's exit arrive
 
     expect(launches(), "the replacement really is a second process").toHaveLength(2);
+    expect(
+      await portFreesUp(port, 1_000),
+      "the replacement is actually serving, so the next assertion means something",
+    ).toBe(false);
 
     // The whole point: `stop()` can still reach the live one. If the dead
     // predecessor had cleared the handle, this would kill nothing and the port

@@ -16,8 +16,9 @@
  * "this item has no such label" (InvalidArgument) from "the label is empty";
  * and the origin key is the full hostname, where the real broker folds to the
  * registrable domain (so `login.example.com` and `www.example.com` match each
- * other there but not here). All three make this fake STRICTER than the real
- * one, which is the safe direction for a fixture to differ in.
+ * other there but not here) — that last one makes this fake STRICTER, which is
+ * the safe direction for a fixture to differ in. The other two differ in shape
+ * and in error typing, not in what they let through.
  */
 "use strict";
 const fs = require("node:fs");
@@ -76,7 +77,9 @@ if (cmd === "status") {
     category: item.category,
     username: item.username || "",
     urls: item.urls || [],
-    matches_this_page: (item.urls || []).some((u) => hostKey(u) === page),
+    // Without a page there is nothing to match, so nothing matches — the real
+    // broker answers false here rather than "every item belongs".
+    matches_this_page: page !== null && (item.urls || []).some((u) => hostKey(u) === page),
   }));
   process.stdout.write(JSON.stringify(out) + "\n");
 } else if (cmd === "describe-item") {

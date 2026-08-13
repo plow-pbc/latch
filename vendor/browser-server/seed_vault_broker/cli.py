@@ -461,6 +461,10 @@ def _normalize(raw: dict) -> dict:
 
 
 def _list_items(logins_only: bool = False) -> list[dict]:
+    # This is where the refresh lives, and where it can afford to: measured
+    # against the bundled vault on loopback, `whats-here` costs ~6.4s (probe +
+    # sync + list) inside the 12s the broker is given. It is also the only
+    # command that hands out item ids, so it is the one that has to be current.
     _sync()
     rc, stdout, stderr = _run_vault(["list", "items"])
     if rc != 0:
