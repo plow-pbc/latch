@@ -13,7 +13,9 @@
  *     is derived from — not the goal text.
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +37,7 @@ import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
+import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
 // One folder per instance (paths.ts): the home carries everything, including
@@ -52,6 +55,14 @@ app.setPath("sessionData", instance.electronData);
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
+
+// Say what this build IS, once, where a diagnostic transcript starts. The
+// stamped version + commit come from package.json (extraMetadata, `just
+// package`); a from-source run has neither and says so.
+const pkg = createRequire(import.meta.url)("../package.json") as { gitCommit?: string };
+console.log(
+  `[app] Domo Desktop ${app.getVersion()}${app.isPackaged ? ` (${pkg.gitCommit ?? "no commit stamp"})` : " (from source)"}`,
+);
 
 // setName above rebrands the menus and dock title, but a from-source run is
 // still the stock Electron.app bundle, so the Dock/Cmd-Tab icon stays
@@ -101,6 +112,7 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let onboardingWindow: BrowserWindow | null = null;
+let updates: UpdateController | null = null;
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -515,6 +527,43 @@ ipcMain.handle("status:get", async () => ({
   connected: connected,
 }));
 
+// MARK: IPC for software updates (banner + Software Updates settings section).
+// One whole-state shape per read, renderer-side composition-free. In a
+// from-source run there is no controller: supported=false and the section
+// explains itself instead of pretending.
+ipcMain.handle("updates:get", async () => {
+  const settings = loadSettings(home);
+  return {
+    supported: !!updates,
+    currentVersion: app.getVersion(),
+    autoCheck: settings.autoCheckUpdates,
+    autoInstall: settings.autoInstallUpdates,
+    ...(updates?.state() ?? {
+      phase: "idle",
+      availableVersion: null,
+      lastCheckAt: null,
+      error: null,
+      dismissed: false,
+      upToDate: false,
+    }),
+  };
+});
+ipcMain.handle("updates:check", async () => updates?.checkNow());
+ipcMain.handle("updates:restart", async () => updates?.restartAndInstall());
+ipcMain.handle("updates:dismiss", async () => updates?.dismiss());
+ipcMain.handle("updates:setAutoCheck", async (_e, on: boolean) => {
+  const settings = loadSettings(home);
+  settings.autoCheckUpdates = !!on;
+  saveSettings(home, settings);
+});
+ipcMain.handle("updates:setAutoInstall", async (_e, on: boolean) => {
+  const settings = loadSettings(home);
+  settings.autoInstallUpdates = !!on;
+  saveSettings(home, settings);
+  // Takes effect immediately — this is the flag Squirrel honors at quit.
+  if (updates) electronUpdater.autoUpdater.autoInstallOnAppQuit = !!on;
+});
+
 let connected = false;
 
 function notifyRenderer(channel: string): void {
@@ -627,6 +676,55 @@ app.whenReady().then(async () => {
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
 
+  // Only a packaged install updates: a from-source run has no app-update.yml
+  // (and Squirrel.Mac could not swap a checkout anyway), so worktree instances
+  // never poll the feed. Nothing here is modal: a downloaded update surfaces
+  // as a banner in the main window, a tray item, and the Software Updates
+  // settings section — the restart is always the human's call, and with the
+  // auto-install preference on, a staged update applies on the next natural
+  // quit anyway.
+  // UI-only testing seam: DOMO_SIMULATE_UPDATE=available|none|error swaps in
+  // a scripted fake updater — works from source, no packaging, no feed. The
+  // controller, IPC, banner, tray, and settings section are all real; only
+  // electron-updater is faked, and "Restart to Update" really relaunches.
+  const simulate = (process.env.DOMO_SIMULATE_UPDATE ?? "").trim();
+  if (app.isPackaged || simulate) {
+    if (simulate) console.log(`[updates] SIMULATED updater active (${simulate}) — not a real update`);
+    // Testing seam: point a packaged build at a feed that isn't production —
+    // `just serve-updates` + DOMO_UPDATE_FEED_URL=http://127.0.0.1:8043 is the
+    // whole local update loop. Safe to honor unconditionally: Squirrel.Mac
+    // only installs an update signed by the same Developer ID as the running
+    // app, so a hostile feed can offer nothing this app will accept.
+    const feedOverride = (process.env.DOMO_UPDATE_FEED_URL ?? "").trim();
+    if (feedOverride && !simulate) {
+      electronUpdater.autoUpdater.setFeedURL({ provider: "generic", url: feedOverride });
+      console.log(`[updates] feed overridden: ${feedOverride}`);
+    }
+    const settings = loadSettings(home);
+    if (!simulate) electronUpdater.autoUpdater.autoInstallOnAppQuit = settings.autoInstallUpdates;
+    updates = new UpdateController({
+      updater: simulate ? simulatedUpdater(simulate) : electronUpdater.autoUpdater,
+      // Read per tick, so the Settings toggle takes effect without a relaunch.
+      autoCheckEnabled: () => loadSettings(home).autoCheckUpdates,
+      initialLastCheckAt: settings.updatesLastCheckedAt ?? null,
+      onChange: (state) => {
+        // Persist the check time so "Last checked" survives a relaunch.
+        if (state.lastCheckAt) {
+          const s = loadSettings(home);
+          if (s.updatesLastCheckedAt !== state.lastCheckAt) {
+            s.updatesLastCheckedAt = state.lastCheckAt;
+            saveSettings(home, s);
+          }
+        }
+        refreshTray();
+        notifyRenderer("updates:changed");
+      },
+      log: (message) => console.log(`[updates] ${message}`),
+    });
+    updates.start();
+  }
+  setupAppMenu();
+
   createMainWindow();
   setupTray();
   // Swap the plain artwork set at startup for the DEV-ribboned version, so a
@@ -672,12 +770,98 @@ function setupTray(): void {
   const image = nativeImage.createEmpty();
   tray = new Tray(image);
   tray.setToolTip(instance.trayTooltip);
+  refreshTray();
+}
+
+/** (Re)build the tray menu — its update item tracks the controller's state. */
+function refreshTray(): void {
+  if (!tray) return;
+  const state = updates?.state();
   const menu = Menu.buildFromTemplate([
     { label: "Open Domo", click: () => createMainWindow() },
+    // Update items only when an updater exists (packaged runs) — a dead menu
+    // item in a from-source run would just be a lie.
+    ...(updates
+      ? [
+          state?.phase === "ready"
+            ? {
+                label: `Restart to Update (${state.availableVersion})`,
+                click: () => updates?.restartAndInstall(),
+              }
+            : { label: "Check for Updates…", click: () => checkForUpdatesFromMenu() },
+        ]
+      : []),
     { type: "separator" },
     { label: "Quit Domo", click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
+}
+
+/**
+ * The menu-bar/tray "Check for Updates…": start the check, then bring up the
+ * main window on the Settings tab, where the Software Updates section shows
+ * the outcome — the passive answer to what Sparkle does with a modal.
+ */
+function checkForUpdatesFromMenu(): void {
+  updates?.checkNow();
+  createMainWindow();
+  const send = () => mainWindow?.webContents.send("ui:showSettings");
+  if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
+  else send();
+}
+
+/**
+ * The macOS application menu. Replacing the default menu costs the stock
+ * items, so the standard roles (Edit for clipboard, Window) are declared
+ * explicitly — a sandboxed renderer still needs working Cmd-C/V. The View
+ * menu (reload, devtools) is dev-only noise and ships only from source.
+ */
+function setupAppMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        ...(updates
+          ? ([
+              { type: "separator" },
+              { label: "Check for Updates…", click: () => checkForUpdatesFromMenu() },
+            ] as Electron.MenuItemConstructorOptions[])
+          : []),
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    { role: "windowMenu" },
+    ...(!app.isPackaged ? ([{ role: "viewMenu" }] as Electron.MenuItemConstructorOptions[]) : []),
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/**
+ * Build the DOMO_SIMULATE_UPDATE fake: any value but "none"/"error" plays the
+ * happy path. The pretend update is the current version with its patch +1 —
+ * visibly newer, obviously fake. "Installing" it relaunches the app for real,
+ * so the whole banner → restart → fresh-launch arc is walkable in dev.
+ */
+function simulatedUpdater(value: string): SimulatedUpdater {
+  const scenario: SimulatedScenario =
+    value === "none" || value === "error" ? value : "available";
+  const [major = "0", minor = "0", patch = "0"] = app.getVersion().split(".");
+  return new SimulatedUpdater({
+    scenario,
+    version: `${major}.${minor}.${Number(patch) + 1 || 1}`,
+    onInstall: () => {
+      console.log("[updates] simulated install — relaunching");
+      app.relaunch();
+      app.quit();
+    },
+  });
 }
 
 function hostName(): string {

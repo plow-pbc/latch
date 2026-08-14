@@ -55,6 +55,15 @@ export interface Settings {
   showAgentSuggestions: boolean;
   /** Anthropic API key — required for the adversarial agent features. */
   anthropicApiKey: string;
+  /** Check the update feed in the background (default on). A manual
+   * "Check for Updates" always works regardless. */
+  autoCheckUpdates: boolean;
+  /** Apply a staged update on the next natural quit (default on). Off means
+   * updates only install when the human clicks "Restart to Update". Never a
+   * surprise restart either way. */
+  autoInstallUpdates: boolean;
+  /** When the last update check completed (ISO-8601) — display only. */
+  updatesLastCheckedAt?: string;
 }
 
 function settingsPath(home: string): string {
@@ -70,6 +79,8 @@ export function loadSettings(home: string): Settings {
     approvalMode: "ask",
     showAgentSuggestions: true,
     anthropicApiKey: "",
+    autoCheckUpdates: true,
+    autoInstallUpdates: true,
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };

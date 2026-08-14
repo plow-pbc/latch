@@ -1,12 +1,28 @@
 # Packaging config for `just package` — signed + notarized Domo Desktop.app + DMG.
 # Signing identity is pinned to the Plow Developer ID; notarization credentials
 # come from the keychain profile named by APPLE_KEYCHAIN_PROFILE (see justfile).
-appId: com.plowcollective.domo-desktop
+appId: co.plow.domo-desktop
 productName: Domo Desktop
+
+# Hyphenated artifact names: these become S3 keys and feed URLs, where spaces
+# (the productName default) mean %20-encoding everywhere a human pastes a link.
+artifactName: Domo-Desktop-${version}-${arch}.${ext}
 
 directories:
   output: release
   buildResources: build
+
+# Where installed apps poll for updates (electron-updater generic provider —
+# static files, no update server). electron-builder bakes this into the
+# packaged app as app-update.yml; electron-updater reads latest-mac.yml at this
+# URL and downloads the zip named inside it from the same directory. The
+# versioned-then-promote flow lives in `just release` / `just promote`: this
+# URL only ever serves what promote has copied to the stable keys. Uploads are
+# the release scripts' job — electron-builder never publishes to this provider
+# (the package recipe passes --publish never).
+publish:
+  provider: generic
+  url: https://s3.us-west-2.amazonaws.com/releases.plow.co/domo
 
 # dist/ is the tsc output plus renderer assets; node_modules is collected
 # automatically from the workspace root by electron-builder. The node_modules
@@ -56,8 +72,13 @@ extraResources:
 mac:
   icon: ../../artwork/domo-desktop-icon.png
   category: public.app-category.developer-tools
+  # The DMG is what humans download; the ZIP is what Squirrel.Mac (via
+  # electron-updater) applies as an update — auto-update on macOS cannot
+  # consume a DMG. Both come from the same signed, notarized pack.
   target:
     - target: dmg
+      arch: universal
+    - target: zip
       arch: universal
   identity: "The Plow Collective, Inc (3559PD337Z)"
   hardenedRuntime: true
@@ -87,7 +108,9 @@ mac:
 afterPack: build/afterPack.cjs
 
 dmg:
-  artifactName: ${productName}-${version}.${ext}
+  # No ${arch}: the only DMG is universal, and this name is the public
+  # download link (promote copies it to the stable domo/Domo-Desktop.dmg key).
+  artifactName: Domo-Desktop-${version}.${ext}
   # lzfse instead of the default zlib — meaningfully smaller download, needs
   # macOS 10.11+ to mount (well below the app's own floor). ULMO (lzma, a bit
   # smaller still) isn't in electron-builder 26's schema yet.

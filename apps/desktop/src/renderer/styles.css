@@ -57,6 +57,31 @@ body {
   flex-direction: column;
 }
 
+/* Passive update notice between the titlebar and the content. Uses the blue
+   status tokens: informational, not alarming. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--blue-bg);
+  color: var(--blue-fg);
+  border-bottom: 1px solid var(--blue-bd);
+  flex: 0 0 auto;
+}
+.update-banner[hidden] { display: none; }
+.banner-close {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.banner-close:hover { background: var(--blue-bd); }
+
 .titlebar {
   height: 44px;
   display: flex;
@@ -430,6 +455,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 
 /* Checkbox row (settings) */
 .check { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer; }
+/* One checkbox per line (the inline default lets several share one). */
+.check.block { display: flex; }
 .check.disabled { opacity: 0.45; cursor: default; }
 .check input { margin: 0; }
 
