@@ -55,8 +55,14 @@ contextBridge.exposeInMainWorld("domo", {
 
   // Approval window.
   approvalGet: () => ipcRenderer.invoke("approval:get"),
+  // Announces that the suggestion listener below is installed. Main holds the
+  // adversarial agent's say until this lands, so a review that finished before
+  // the window did is still delivered.
+  approvalReady: () => ipcRenderer.invoke("approval:ready"),
   approvalDecide: (id: string, decision: string) =>
     ipcRenderer.send("approval:decide", id, decision),
-  onApprovalSuggestion: (cb: (data: { id: string; decision: string | null }) => void) =>
+  onApprovalSuggestion: (
+    cb: (data: { id: string; decision: string | null; reason: string }) => void,
+  ) =>
     ipcRenderer.on("approval:suggestion", (_e, data) => cb(data)),
 });

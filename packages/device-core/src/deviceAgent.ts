@@ -18,6 +18,27 @@ import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 
+/**
+ * A delegate that denies because the adversarial reviewer could not run for
+ * want of Plow credits. Set as the decision's `source`, so it rides the channel
+ * that already exists rather than widening the frozen `Grant`.
+ */
+export const DENIAL_SOURCE_NO_CREDITS = "no_credits";
+
+/**
+ * Denial sources whose reason is worth telling the calling agent, and the exact
+ * sentence it gets.
+ *
+ * Fixed strings by construction: nothing here is derived from a response body,
+ * a credential, an account id, or an endpoint, so no amount of upstream
+ * misbehaviour can put any of those in front of a caller.
+ */
+const EXPLAINED_DENIALS: Record<string, string> = {
+  [DENIAL_SOURCE_NO_CREDITS]:
+    "inference unavailable: this Plow account is out of credits, so the " +
+    "adversarial reviewer could not run and the operation was denied",
+};
+
 export class DeviceAgent {
   readonly identity: DeviceIdentity;
   readonly audit: AuditLog;
@@ -79,7 +100,11 @@ export class DeviceAgent {
       source: grant.source,
     });
     if (grant.decision === "deny") {
-      return { status: "denied" };
+      // Most denials need no explanation — the owner said no, and why is
+      // between them and their Mac. A few are standing conditions the calling
+      // agent can actually act on, and those carry a fixed sentence.
+      const reason = EXPLAINED_DENIALS[grant.source];
+      return reason ? { status: "denied", reason } : { status: "denied" };
     }
     return this.execute(intent, payload);
   }

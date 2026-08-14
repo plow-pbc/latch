@@ -9,7 +9,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { canonicalize, JSONValue, jv } from "@domo/protocol";
-import { DeviceAgent, HeadlessPolicy, MAX_FILE_BYTES, PolicyDelegate } from "@domo/device-core";
+import {
+  DENIAL_SOURCE_NO_CREDITS,
+  DeviceAgent,
+  HeadlessPolicy,
+  MAX_FILE_BYTES,
+  PolicyDelegate,
+} from "@domo/device-core";
 import {
   CALL_BUDGET_MS,
   createDomoMcpServer,
@@ -41,10 +47,12 @@ class ScriptedPolicy implements PolicyDelegate {
   constructor(
     private readonly decision: "allow_once" | "always_allow" | "deny" = "allow_once",
     private readonly delayMs = 0,
+    /** How it decided. Some sources carry an explanation to the caller. */
+    private readonly source = "ask",
   ) {}
   async decideIntent() {
     if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
-    return { decision: this.decision, source: "ask" };
+    return { decision: this.decision, source: this.source };
   }
 }
 
@@ -176,8 +184,39 @@ describe("a tool call end to end, in process", () => {
     );
     expect(isError).toBe(true);
     expect(payload.status).toBe("denied");
+    // A human saying no is between them and their Mac: it explains nothing, and
+    // in particular must not read like an account problem.
+    expect(payload.reason).toBe("the owner of this Mac denied the request");
+    expect(JSON.stringify(payload)).not.toMatch(/credit|balance|plow/i);
     expect(events(device)).toEqual(["intent_received", "intent_decision"]);
     expect(events(device)).not.toContain("file_read");
+  });
+
+  it("out of credits is distinguishable by the calling agent, and still runs nothing", async () => {
+    // The ask: an agent must be able to tell "your account cannot pay for the
+    // review" from "the owner is thinking" — and it must still be a denial.
+    const { server, device } = makeServer(
+      new ScriptedPolicy("deny", 0, DENIAL_SOURCE_NO_CREDITS),
+    );
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "a.txt"), "x");
+    const { isError, payload } = await callTool(
+      server,
+      "read_file",
+      { path: path.join(dir, "a.txt") },
+      AGENT,
+    );
+    expect(isError).toBe(true);
+    expect(payload.status).toBe("denied");
+    expect(payload.reason).toMatch(/out of credits/);
+    expect(payload.reason).toMatch(/could not run/);
+    expect(events(device)).not.toContain("file_read");
+    // It is a fixed sentence for exactly this reason: nothing upstream, and
+    // nothing about the account, can reach a caller through it.
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toMatch(/plow_sk|sk-ant|Bearer/i);
+    expect(serialized).not.toMatch(/https?:\/\//);
+    expect(serialized).not.toMatch(/\bu_[a-z0-9]/i); // account uid shape
   });
 
 });

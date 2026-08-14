@@ -52,6 +52,16 @@ export const PLOW_REVIEWER_INFO = `${PLOW_REVIEWER_MODEL} · thinking budget ${R
 
 export type Verdict = "allow" | "deny" | "ask";
 
+/**
+ * Why a review could not produce a verdict, when the answer is one the caller
+ * can act on rather than merely read.
+ *
+ * `no_credits` is the only one so far: the Plow account cannot pay for
+ * inference, so the configured reviewer cannot run at all — a standing
+ * condition the operator has to fix, not a transient hiccup.
+ */
+export type ReviewFailureCause = "no_credits";
+
 const SYSTEM_PROMPT = `You are an adversarial security reviewer for "Domo", a system that lets a \
 remote AI agent operate a person's Mac through explicitly approved, sandboxed \
 capabilities. You review ONE operation (an "intent") and decide, on the owner's \
@@ -219,7 +229,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Prom
  * the review could not produce one. A provider never decides the verdict — it
  * only reports text or failure, and the shared code below maps both.
  */
-type ProviderResult = { ok: true; text: string } | { ok: false; reason: string };
+type ProviderResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: string; cause?: ReviewFailureCause };
 
 /**
  * One review round-trip. Providers are the only part that touches a network.
@@ -332,7 +344,13 @@ function plowCall(credential: string, apiBaseUrl: string): ProviderCall {
     }
 
     if (status < 200 || status >= 300) {
-      return { ok: false, reason: plowHttpReason(status) };
+      return {
+        ok: false,
+        reason: plowHttpReason(status),
+        // 402 is the one failure the calling agent can do something about, so
+        // it is reported as a cause and not only as prose.
+        ...(status === 402 ? { cause: "no_credits" as const } : {}),
+      };
     }
 
     const content = (body as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]
@@ -388,7 +406,7 @@ export interface ReviewArgs {
  */
 export async function adversarialReview(
   args: ReviewArgs,
-): Promise<{ verdict: Verdict; reason: string }> {
+): Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }> {
   const provider = selectProvider(args);
   if (!("call" in provider)) return { verdict: "ask", reason: provider.reason };
 
@@ -402,7 +420,13 @@ export async function adversarialReview(
       REVIEWER_TIMEOUT_MS,
       () => budget.abort(),
     );
-    if (!result.ok) return { verdict: "ask", reason: result.reason };
+    if (!result.ok) {
+      return {
+        verdict: "ask",
+        reason: result.reason,
+        ...(result.cause ? { cause: result.cause } : {}),
+      };
+    }
 
     // A fixed reason on purpose — see parseVerdict. Nothing derived from the
     // model's output reaches this string.

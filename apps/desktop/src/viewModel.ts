@@ -86,6 +86,9 @@ export function decidedByLabel(source: string | null): string | null {
     case "adversarial": return "Adversarial Agent";
     case "rule": return "Always-allow rule";
     case "policy": return "Policy (deny mode)";
+    // Not an internal label in the human's view: the operation was denied
+    // because the reviewer could not be paid for, not because anyone chose.
+    case "no_credits": return "Adversarial Agent (out of credits)";
     case "ask":
     case "prompt": return "You (asked)";
     default: return source;
@@ -322,9 +325,20 @@ function describeStep(e: JSONValue): AuditStep {
     case "adversarial_review_result": {
       const verdict = ev.get("verdict").str ?? "";
       const reason = ev.get("reason").str ?? "";
-      const label = verdict === "allow" ? "allow" : verdict === "deny" ? "deny" : "defer to you";
+      const cause = ev.get("cause").str;
+      // "defer to you" is only true when the agent ran and chose not to decide.
+      // A review that could not run at all defers to nobody — saying it did
+      // would misdescribe who decided the operation that follows.
+      const label =
+        cause === "no_credits"
+          ? "could not run"
+          : verdict === "allow"
+            ? "allow"
+            : verdict === "deny"
+              ? "deny"
+              : "defer to you";
       text = `Adversarial agent: ${label}${reason ? ` — ${reason}` : ""}`;
-      state = verdict === "deny" ? "bad" : verdict === "allow" ? "ok" : "neutral";
+      state = verdict === "deny" || cause ? "bad" : verdict === "allow" ? "ok" : "neutral";
       break;
     }
     case "intent_decision":
