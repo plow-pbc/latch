@@ -32,6 +32,7 @@ import { Onboarding } from "./onboarding.js";
 import { adversarialReview } from "./adversarialAgent.js";
 import { ApprovalDecision, decideIntent } from "./reviewPolicy.js";
 import {
+  isSignedIn,
   readInference,
   setAnthropicApiKey,
   revokeAndSignOut,
@@ -281,6 +282,10 @@ ipcMain.handle("settings:getRelay", async () => {
 // socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
 // cannot reach Plow still signs out locally.
 ipcMain.handle("settings:signOut", async () => {
+  // A second click, before the button re-rendered. The first already signed
+  // out; going round again would reset the setup window and mint a fresh code
+  // over the one the user may have just texted.
+  if (!isSignedIn(home)) return;
   // Started first: it clears the stored credential synchronously, before its
   // own first await, so everything below already sees a signed-out Mac. What it
   // returns is only the best-effort revoke, which nothing else waits on.

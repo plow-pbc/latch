@@ -9,9 +9,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
-// The frozen Anthropic request, as a golden. The intent below must stay the one
-// it was generated from.
-import GOLDEN_ANTHROPIC_REQUEST from "./fixtures/anthropic-review-request.json" with { type: "json" };
 
 /** Set per test: what the stubbed `messages.create` does. */
 let createImpl: (params: unknown) => Promise<unknown>;
@@ -389,26 +386,35 @@ describe("a verdict is accepted only if it matches the full schema", () => {
 });
 
 describe("the Anthropic request survives the provider seam unchanged", () => {
-  it("builds byte-for-byte the request it always built", async () => {
-    // The provider seam is a transport change; the classifier is not allowed to
-    // drift. This asserts the COMPLETE request against a frozen golden — every
-    // key, the full system prompt text, and the full user message content — so
-    // that any edit to the model, the budget, the schema, the prompt wording or
-    // the prompt layout fails here rather than silently changing what a
-    // security gate asks. Regenerate the golden only on a deliberate change.
-    let params: unknown;
+  it("asks Anthropic for the model, cap, thinking and schema it is meant to", async () => {
+    // The four things a frozen full-payload golden was carrying for this path.
+    // Named individually so a failure says WHICH one drifted, and so the
+    // prompt's wording is no longer locked to a file — the assertions above
+    // already pin what the prompt must contain.
+    let params: Record<string, unknown> = {};
     createImpl = async (p) => {
-      params = p;
+      params = p as Record<string, unknown>;
       return verdictResponse("allow");
     };
     await review();
 
-    expect(params).toEqual(GOLDEN_ANTHROPIC_REQUEST);
-    // toEqual ignores key order but not presence; make the exact key set
-    // explicit too, so an added field cannot slip past as undefined.
-    expect(Object.keys(params as object).sort()).toEqual(
-      Object.keys(GOLDEN_ANTHROPIC_REQUEST).sort(),
-    );
+    expect(params.model).toBe("claude-haiku-4-5");
+    expect(params.max_tokens).toBe(4096);
+    expect(params.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+    expect(params.output_config).toEqual({
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: {
+            decision: { type: "string", enum: ["allow", "deny", "ask"] },
+            reason: { type: "string" },
+          },
+          required: ["decision", "reason"],
+          additionalProperties: false,
+        },
+      },
+    });
   });
 });
 

@@ -16,6 +16,7 @@ import path from "node:path";
 import { loadSettings, saveSettings, Settings } from "../src/settings.js";
 import { PlowApiError } from "../src/plowApi.js";
 import {
+  isSignedIn,
   readInference,
   revokeAndSignOut,
   setAnthropicApiKey,
@@ -357,5 +358,32 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
     expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL.slice(0, 10));
     vi.restoreAllMocks();
+  });
+});
+
+describe("a second sign-out is a no-op, not a second sign-out", () => {
+  it("reports nothing left to sign out of once the credential is gone", () => {
+    // The double-click path. Two handlers dispatch before the button
+    // re-renders; the first clears the credential, and this is what stops the
+    // second from resetting the setup window and minting a code over one the
+    // user may already have texted.
+    const home = homeWith({ relayCredential: PLOW_CREDENTIAL, accountUid: "u_someone" });
+    expect(isSignedIn(home)).toBe(true);
+
+    signOutOfPlow(home);
+
+    expect(isSignedIn(home)).toBe(false);
+  });
+
+  it("treats a whitespace-only credential as signed out", () => {
+    expect(isSignedIn(homeWith({ relayCredential: "   " }))).toBe(false);
+  });
+
+  it("and the revoke half is already idempotent", async () => {
+    const home = homeWith({ relayCredential: PLOW_CREDENTIAL });
+    const revoke = vi.fn(async () => {});
+    await revokeAndSignOut(home, revoke);
+    await revokeAndSignOut(home, revoke); // the second click
+    expect(revoke).toHaveBeenCalledTimes(1);
   });
 });

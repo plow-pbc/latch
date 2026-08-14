@@ -600,7 +600,7 @@ async function renderSettings() {
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
     ]),
-    group("Reviewer inference", "Which account pays for the Adversarial Agent's model calls.", [
+    group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
       providerChips,
       reviewerNote,
     ]),

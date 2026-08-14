@@ -77,6 +77,21 @@ export function signOutOfPlow(home: string): void {
 }
 
 /**
+ * Is there still a credential to sign out of?
+ *
+ * The guard on a SECOND sign-out. Two clicks land before the button re-renders,
+ * and each handler resets the setup window and starts a fresh activation — so
+ * the second supersedes a code the user may already have texted, and the poll
+ * loop watching it. The first click did the work; the rest are no-ops.
+ *
+ * Here rather than in `main.ts` for the usual reason: main cannot be imported
+ * under vitest, and a decision that lives only there is one no test can make.
+ */
+export function isSignedIn(home: string): boolean {
+  return (loadSettings(home).relayCredential ?? "").trim().length > 0;
+}
+
+/**
  * Sign out: forget the credential here, and ask Plow to retire it.
  *
  * LOCAL FIRST, and synchronously, before this function's first `await`. Erasing
