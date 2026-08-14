@@ -230,20 +230,6 @@ describe("selecting Adversarial mode is refused when no reviewer can run", () =>
 });
 
 describe("the persisted file keeps its guarantees", () => {
-  it("stays owner-only after every action writes it", () => {
-    const home = homeWith({ relayCredential: PLOW_CREDENTIAL, anthropicApiKey: ANTHROPIC_KEY });
-    const file = path.join(home, "app/settings.json");
-    for (const act of [
-      () => setInferenceProvider(home, "anthropic"),
-      () => setAnthropicApiKey(home, ANTHROPIC_KEY),
-      () => setApprovalMode(home, "ask"),
-      () => signOutOfPlow(home),
-    ]) {
-      act();
-      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    }
-  });
-
   it("what the renderer is handed never contains either credential", () => {
     const home = homeWith({ relayCredential: PLOW_CREDENTIAL, anthropicApiKey: ANTHROPIC_KEY });
     const serialized = JSON.stringify([

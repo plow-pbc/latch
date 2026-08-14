@@ -762,3 +762,44 @@ describe("a sign-out while startRelay is dialling", () => {
     expect(loadSettings(home).relayCredential).toBe("");
   });
 });
+
+describe("a Create Agent still on the wire when the user signs out", () => {
+  it("does not put the agent screen back over the reset window", async () => {
+    // The request captures the device credential and goes; the user signs out
+    // before it answers. The continuation then published a freshly minted agent
+    // token — and the screen showing it — over a window that had already been
+    // reset, for an account this Mac had left.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    expect(onboarding.state().step).toBe("connected");
+
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.createAgent = async (token: string, name: string) => {
+      await onTheWire;
+      return { token: AGENT_TOKEN, keyPrefix: AGENT_TOKEN.slice(5, 13), name };
+    };
+    const creating = onboarding.createAgent("Claude Code");
+    await settle();
+
+    signOutOfPlow(home);
+    onboarding.signedOut();
+    expect(onboarding.state().step).toBe("activate");
+
+    release();
+    await creating;
+    await settle();
+
+    // The reset stands, and the minted token never reaches the renderer.
+    expect(onboarding.state().step).toBe("activate");
+    expect(onboarding.state().agent).toBeNull();
+    expect(JSON.stringify(onboarding.state())).not.toContain(AGENT_TOKEN);
+    // …and the late `run()` cleanup does not report the new screen as idle on
+    // work that was never its own.
+    expect(onboarding.state().busy).toBe(false);
+  });
+});

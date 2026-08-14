@@ -135,6 +135,20 @@ export class Onboarding {
   /** Bumped whenever an activation stops being the one we care about. A poll
    * loop whose generation is stale returns instead of writing state. */
   private pollGeneration = 0;
+  /**
+   * Bumped when a sign-out invalidates everything in flight.
+   *
+   * Narrow on purpose. It guards ONE thing: a mutation that started before the
+   * sign-out publishing its result afterwards. `createAgent` is the case —
+   * the request captures the credential, the user signs out, and the
+   * continuation then put the agent screen back over a window that had already
+   * been reset, with a token minted against an account this Mac has left.
+   *
+   * It does not try to stop that work, wait for it, or undo it. The agent key
+   * it minted is not revoked here; agent keys are never persisted and sign-out
+   * has never retired them. That is a separate product question.
+   */
+  private stateGeneration = 0;
   private agent: OnboardingAgent | null = null;
 
   constructor(private readonly deps: OnboardingDeps) {
@@ -460,8 +474,12 @@ export class Onboarding {
     if (!trimmed) return this.fail("Give the agent a name.");
     const settings = this.settings();
     if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
+    const generation = this.stateGeneration;
     return this.run(async () => {
       const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed);
+      // Signed out while this was on the wire: the window has already been
+      // reset, and the token belongs to an account this Mac has left.
+      if (generation !== this.stateGeneration) return;
       this.agent = {
         name: minted.name || trimmed,
         token: minted.token,
@@ -503,6 +521,7 @@ export class Onboarding {
    */
   signedOut(): OnboardingState {
     this.cancelPolling();
+    this.stateGeneration += 1;
     this.step = "activate";
     this.activation = null;
     // SECRETS, both of them, and both belonging to the account just left: the
@@ -514,6 +533,10 @@ export class Onboarding {
     this.codeExpiresAt = null;
     this.phone = "";
     this.message = "";
+    // The reset owns this too. Work started before the sign-out no longer
+    // clears it — see `stateGeneration` — so leaving it set would strand the
+    // window on a spinner belonging to an account it has left.
+    this.busy = false;
     return this.publish();
   }
 
@@ -609,17 +632,22 @@ export class Onboarding {
 
   /** Run one step with a busy flag, turning any failure into readable text. */
   private async run(body: () => Promise<void>): Promise<OnboardingState> {
+    const generation = this.stateGeneration;
     this.busy = true;
     this.message = "";
     this.publish();
     try {
       await body();
     } catch (error) {
-      this.message = messageOf(error);
+      // A stale failure belongs to a screen the user has left; reporting it
+      // would put the old account's error over the new activation.
+      if (generation === this.stateGeneration) this.message = messageOf(error);
     } finally {
-      this.busy = false;
+      // Only ours to clear. A sign-out starts its own work, and this `finally`
+      // arriving late would report that work as finished.
+      if (generation === this.stateGeneration) this.busy = false;
     }
-    return this.publish();
+    return generation === this.stateGeneration ? this.publish() : this.state();
   }
 
   private fail(message: string): OnboardingState {
