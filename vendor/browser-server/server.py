@@ -28,6 +28,23 @@ import time
 _RESP = os.fdopen(os.dup(1), "w", buffering=1)
 os.dup2(2, 1)
 
+# camoufox's launcher calls screeninfo.get_monitors(), whose macOS backend goes
+# through AppKit; the first window-server connection registers this python
+# process with LaunchServices, and a Foreground registration puts a Python
+# rocket in the Dock. The bundled runtime's Python.app carries LSUIElement in
+# its Info.plist (build-browser-runtime.mjs patches it), which is the real fix
+# — LaunchServices reads the on-disk plist, so this in-process copy runs too
+# late to prevent a brief flash. Kept as a backstop for unbundled interpreters
+# (DOMO_BROWSER_CMD dev runs against a stock python). Firefox itself is a
+# separate process with its own bundle, unaffected either way.
+if sys.platform == "darwin":
+    try:
+        from Foundation import NSBundle
+
+        NSBundle.mainBundle().infoDictionary()["LSUIElement"] = "1"
+    except Exception:  # noqa: BLE001 — cosmetic; never block startup on it
+        pass
+
 MAX_ERROR_LEN = 500
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {

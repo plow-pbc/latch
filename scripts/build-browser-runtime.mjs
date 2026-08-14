@@ -450,6 +450,64 @@ function buildRuntime() {
 }
 
 /**
+ * Mark an app bundle LSUIElement so LaunchServices never gives it a Dock tile.
+ * Idempotent and not gated by the build cache, so already-built trees get
+ * patched without a rebuild. `resign` re-seals the bundle ad-hoc afterward:
+ * needed when the bundle shipped with a real bundle signature (its code
+ * directory seals the Info.plist, and arm64 kills invalid signatures), and
+ * wrong when it didn't — Camoufox ships linker-signed/unsigned, carries no
+ * plist seal to break, and its unsigned x86_64 dylibs make a bundle re-sign
+ * impossible anyway. The re-sign only happens on first patch, so a Developer
+ * ID signature is never clobbered.
+ */
+function patchDockPolicy(appBundle, { resign }) {
+  const plist = path.join(appBundle, "Contents", "Info.plist");
+  if (!fs.existsSync(plist)) return;
+  const probe = spawnSync("plutil", ["-extract", "LSUIElement", "raw", "-o", "-", plist]);
+  if (probe.status === 0 && probe.stdout.toString().trim() === "true") return;
+  log(`patching ${path.basename(appBundle)} Info.plist (LSUIElement) to keep it out of the Dock`);
+  run("plutil", ["-replace", "LSUIElement", "-bool", "true", plist], { quiet: true });
+  if (resign) run("codesign", ["--force", "--sign", "-", appBundle], { quiet: true });
+}
+
+/**
+ * Keep the browser server out of the Dock. `bin/python3.12` is a stub that
+ * execs Resources/Python.app/Contents/MacOS/Python, and that bundle's
+ * Info.plist is what LaunchServices reads when the process first connects to
+ * the window server (camoufox → screeninfo → AppKit). Without LSUIElement the
+ * registration is Foreground and a Python rocket appears in the Dock — the
+ * in-process mitigation in server.py runs too late to stop a brief flash.
+ */
+function patchPythonAppDockPolicy() {
+  patchDockPolicy(path.join(fw, "Versions", PYVER, "Resources", "Python.app"), { resign: true });
+}
+
+/**
+ * Keep Camoufox out of the Dock. Even headless, Firefox launches with a
+ * regular activation policy for the first ~20ms before Gecko's headless
+ * startup demotes it to prohibited — and the Dock animates a tile in and back
+ * out, turning those milliseconds into a visible icon flash every time a
+ * browsing session starts. LSUIElement makes the initial registration
+ * accessory, so no tile ever appears. A `--headed` debug run still shows its
+ * window; it just never occupies the Dock. Patches every install dir present
+ * (arm64 / x86_64 / universal), whether built this run or earlier.
+ */
+function patchCamoufoxDockPolicies() {
+  if (!fs.existsSync(browserDir)) return;
+  for (const arch of fs.readdirSync(browserDir)) {
+    const official = path.join(browserDir, arch, "browsers");
+    if (!fs.existsSync(official)) continue;
+    for (const repo of fs.readdirSync(official)) {
+      const repoDir = path.join(official, repo);
+      if (!fs.statSync(repoDir).isDirectory()) continue;
+      for (const folder of fs.readdirSync(repoDir)) {
+        patchDockPolicy(path.join(repoDir, folder, "Camoufox.app"), { resign: false });
+      }
+    }
+  }
+}
+
+/**
  * Sign the Python runtime with the Developer ID. Runs as its own pass (not
  * gated by the build cache) so a rebuild-less `just package` still signs.
  * Every Mach-O gets the helper entitlements; electron-builder is told to skip
@@ -879,6 +937,7 @@ try {
   const builtArches = [];
   const vaultArches = [];
   buildRuntime(); // stamp-cached: fast no-op once built
+  patchPythonAppDockPolicy();
   if (wantBrowser) {
     const hostArch = process.arch === "arm64" ? "arm64" : "x86_64";
     // The vault and its CLI stay per-arch: unlike Camoufox they are single
@@ -902,6 +961,8 @@ try {
       builtArches.push(hostArch);
     }
   }
+  // After the fetch/merge so freshly extracted trees are covered too.
+  patchCamoufoxDockPolicies();
 
   // Signing is its own pass, cache-independent: a `just package` on an already
   // built tree must still produce Developer ID signatures, or notarization
