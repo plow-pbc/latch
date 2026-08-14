@@ -9,12 +9,24 @@
  * Vault file (env FAKE_BROKER_VAULT):
  *   [{ "id", "title", "category", "username", "urls": ["https://..."],
  *      "fields": { "password": "hunter2", ... } }]
+ *
+ * Like the real broker, appends release/denial lines (never values) to
+ * SEED_VAULT_AUDIT when set.
  */
 "use strict";
 const fs = require("node:fs");
+const pathmod = require("node:path");
 
 function vault() {
   return JSON.parse(fs.readFileSync(process.env.FAKE_BROKER_VAULT, "utf8"));
+}
+
+function audit(itemId, field, page, outcome) {
+  const file = process.env.SEED_VAULT_AUDIT;
+  if (!file) return;
+  fs.mkdirSync(pathmod.dirname(file), { recursive: true, mode: 0o700 });
+  const stamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+  fs.appendFileSync(file, `${stamp}  item=${itemId}  field=${field}  page=${page}  -> ${outcome}\n`);
 }
 
 function hostKey(url) {
@@ -69,15 +81,17 @@ if (cmd === "status") {
   const url = argValue(args, "--url");
   const item = vault().find((i) => i.id === id);
   if (!item) fail("VaultNotFound", "No such item in the vault.");
+  const page = url ? hostKey(url) : null;
   if (url && item.category !== "CREDIT_CARD") {
-    const page = hostKey(url);
     const keys = (item.urls || []).map(hostKey).filter(Boolean);
     if (keys.length && !keys.includes(page)) {
+      audit(id, field, page, "DENIED origin mismatch");
       fail("VaultDenied", `item belongs to ${keys.join(", ")}, not to ${page}`);
     }
   }
   const value = (item.fields || {})[field];
   if (value === undefined) fail("OpNotFound", `no field ${field}`);
+  audit(id, field, page || "SEM-URL", "RELEASED");
   process.stdout.write(value); // no trailing newline, like the real one
 } else {
   fail("InvalidArgument", "unknown command: " + cmd);
