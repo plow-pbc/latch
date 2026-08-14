@@ -75,7 +75,7 @@ ipcMain.handle("settings:setInference", async (_e, provider) =>
 // produces from an intent.
 ipcMain.handle("approval:get", async () => ({
   kind: "intent",
-  suggesting: false,
+  suggesting: true,
   view: {
     intentId: "probe-intent",
     agentDisplay: "Probe Agent",
@@ -148,6 +148,15 @@ app.whenReady().then(async () => {
       plowChipActive: !!plow && plow.classList.contains("active"),
       anthropicChipDisabled: !!anthropic && anthropic.classList.contains("disabled"),
       showsActiveModel: document.body.innerText.includes("anthropic/claude-sonnet-4-6"),
+      // Settings has a `.reviewer-note` of its own. The approval window's
+      // advice-card styling must not reach it — same class name, different
+      // window, and the card rule is scoped through `.approve`.
+      settingsNoteNotRestyled: (() => {
+        const note = document.querySelector(".reviewer-note");
+        if (!note) return false;
+        const style = getComputedStyle(note);
+        return style.padding === "0px" && style.display !== "flex";
+      })(),
     };
   }})()`);
 
@@ -313,6 +322,20 @@ app.whenReady().then(async () => {
   fs.rmSync(probeHome, { recursive: true, force: true });
 
   const approvalWin = offscreen();
+  // The defect this guards: an adversarial fallback hands over an ALREADY
+  // RESOLVED hint, so main used to send it before the renderer had installed
+  // its listener and it was lost outright. Resolve it here, before loadFile is
+  // even called, and register the real handshake the way main does.
+  const hint = Promise.resolve({ decision: null, reason: "insufficient Plow balance" });
+  let markReady = () => {};
+  const ready = new Promise((r) => {
+    markReady = r;
+  });
+  ipcMain.handle("approval:ready", async () => markReady());
+  void Promise.all([hint, ready]).then(([said]) =>
+    approvalWin.webContents.send("approval:suggestion", { id: "probe-intent", ...said }),
+  );
+
   await approvalWin.loadFile(path.join(dist, "renderer/approval.html"));
   await new Promise((r) => setTimeout(r, 400));
   const approval = await approvalWin.webContents.executeJavaScript(`(${() => {
@@ -325,6 +348,28 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
+  const reviewerNote = await approvalWin.webContents.executeJavaScript(`(${() => {
+    const note = document.querySelector(".reviewer-note");
+    const fine = document.querySelector(".fine");
+    return {
+      showsReason: (note?.textContent ?? "").includes("insufficient Plow balance"),
+      // Advice, and labelled as such.
+      labelledAsAdvice: (note?.textContent ?? "").includes("advice only"),
+      // …and OUTSIDE the enforceable-bound block, which must still show only
+      // the capability set.
+      outsideEnforcedBlock: !!fine && !fine.contains(note),
+      enforcedBlockUnchanged: (fine?.textContent ?? "").includes("run ls"),
+      // Inserted as text, never markup.
+      noMarkupInjected: !(note?.innerHTML ?? "").includes("<script"),
+      // …and the "Reviewing…" spinner is gone, not spinning forever.
+      spinnerCleared: !document.querySelector(".reviewing-spinner"),
+      // End of the chain: whatever a reason says, nothing credential-shaped may
+      // be drawn here. The guard is upstream in the provider; this is the last
+      // place to notice if it ever stops holding.
+      leaksCredential: /plow_sk|sk-ant|Bearer /i.test(note?.textContent ?? ""),
+    };
+  }})()`);
+
   const ok =
     settings.hasAccountGroup &&
     settings.offersNoRelayKeyField &&
@@ -333,6 +378,7 @@ app.whenReady().then(async () => {
     settings.plowChipActive &&
     settings.anthropicChipDisabled &&
     settings.showsActiveModel &&
+    settings.settingsNoteNotRestyled &&
     transientInput.startedAdversarial &&
     transientInput.modeUntouched &&
     transientInput.storedKeyUntouched &&
@@ -348,10 +394,17 @@ app.whenReady().then(async () => {
     main.viewChildren > 0 &&
     approval.showsCapability &&
     approval.buttons.length > 0 &&
+    reviewerNote.showsReason &&
+    reviewerNote.labelledAsAdvice &&
+    reviewerNote.outsideEnforcedBlock &&
+    reviewerNote.enforcedBlockUnchanged &&
+    reviewerNote.noMarkupInjected &&
+    reviewerNote.spinnerCleared &&
+    !reviewerNote.leaksCredential &&
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

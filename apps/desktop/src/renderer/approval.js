@@ -67,6 +67,10 @@ async function render() {
     ? el("div", { class: "reviewing-spinner" })
     : null;
 
+  // Filled in when the reviewer answers. Empty until then, so the window never
+  // reserves space for advice that may never arrive.
+  const reviewerNote = el("div", { class: "reviewer-note" });
+
   root.replaceChildren(
     el("div", { class: "who" }, [
       el("span", { class: "name", text: v.agentDisplay }),
@@ -83,6 +87,7 @@ async function render() {
       v.planContext ? el("div", { class: "lbl", text: "Session context" }) : null,
       v.planContext ? el("div", { class: "faint", text: v.planContext }) : null,
     ]),
+    reviewerNote,
     el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
   );
   if (reviewing) document.body.appendChild(reviewing);
@@ -96,7 +101,23 @@ async function render() {
     if (reviewing) reviewing.remove();
     const target = data.decision ? slotByDecision[data.decision] : null;
     if (target) target.classList.add("suggested");
+    // What the reviewer said, in its own words — including when it could not
+    // answer at all, which is when a prompt otherwise arrives unexplained.
+    //
+    // Display-only and inserted as textContent: it sits OUTSIDE the "will be
+    // allowed to (enforced)" block on purpose, because the enforceable bound is
+    // the capability set and nothing written here may look like part of it.
+    if (data.reason) {
+      reviewerNote.replaceChildren(
+        el("span", { class: "lbl", text: "Adversarial agent (advice only)" }),
+        el("span", { text: data.reason }),
+      );
+    }
   });
+
+  // Listener installed — tell main, which has been holding anything the
+  // reviewer already said.
+  window.domo.approvalReady();
 }
 
 function button(label, cls, onClick) {
