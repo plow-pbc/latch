@@ -592,7 +592,7 @@ async function main(): Promise<void> {
   check("mint returns 200", agent.status === 200, mintDetail(agent));
   check(
     "scope is exactly relay:call",
-    JSON.stringify(agent.json.scopes) === JSON.stringify(["relay:call"]),
+    sameScopes(agent.json.scopes, ["relay:call"]),
     JSON.stringify(agent.json.scopes),
   );
   const target = targetFromConfig(agent.json.mcp_config);

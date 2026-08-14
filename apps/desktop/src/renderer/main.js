@@ -507,8 +507,11 @@ async function renderSettings() {
       }, [el("span", { text: label })]);
       if (!disabled) {
         chip.addEventListener("click", async () => {
-          currentMode = value;
-          await window.domo.approvalModeSet(value);
+          // What MAIN stored, not what was asked for. Adversarial is refused
+          // when the active provider has no credential, and the credential can
+          // go between this render and this click — so assuming the request
+          // succeeded leaves the pane claiming a mode disk never took.
+          currentMode = await window.domo.approvalModeSet(value);
           renderModeChips();
           updateSuggestEnabled();
         });

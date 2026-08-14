@@ -43,8 +43,13 @@ ipcMain.handle("ui:setTab", async () => {});
 // A signed-in Mac: the credential itself is deliberately absent from this
 // shape, because the main process never hands it to the renderer.
 let relayGate = null; // when set, `settings:getRelay` blocks until released
+/** Resolved BY the handler the moment a refresh actually parks on the gate. */
+let relayEntered = () => {};
 ipcMain.handle("settings:getRelay", async () => {
-  if (relayGate) await relayGate;
+  if (relayGate) {
+    relayEntered();
+    await relayGate;
+  }
   const s = loadSettings(probeHome);
   return {
     apiBaseUrl: "https://api.plow.co",
@@ -233,9 +238,15 @@ app.whenReady().then(async () => {
   relayGate = new Promise((r) => {
     releaseRelay = r;
   });
+  // Waited on, not slept through: the handler resolves this the instant the
+  // refresh reaches the gate, so the keystroke below lands mid-flight by
+  // construction rather than by betting on 200ms being enough.
+  const entered = new Promise((r) => {
+    relayEntered = r;
+  });
   saveSettings(probeHome, { ...loadSettings(probeHome), accountUid: "u_mid_flight" });
   win.webContents.send("status:changed"); // refresh starts, parks on relayGet
-  await new Promise((r) => setTimeout(r, 200)); // …it is now definitely in flight
+  await entered;
   await win.webContents.executeJavaScript(`(() => {
     const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
     input.value = "sk-ant-typed-mid-refresh";
@@ -265,6 +276,39 @@ app.whenReady().then(async () => {
     ...midFlight,
     // The keystroke that arrived mid-refresh is what got committed.
     committed: loadSettings(probeHome).anthropicApiKey === "sk-ant-typed-mid-refresh",
+  };
+
+  // REPRO (c): the renderer's optimistic mode. Adversarial is offered while a
+  // credential is present, so the chip is enabled and clickable — but the
+  // credential can go between the render and the click, and main REFUSES. The
+  // renderer assigned `currentMode` before asking, so it kept a selection main
+  // had already turned down: the pane says Adversarial while disk says Ask.
+  saveSettings(probeHome, {
+    ...loadSettings(probeHome),
+    relayCredential: "plow_sk_probe_credential",
+    anthropicApiKey: "",
+    inferenceProvider: "plow",
+    approvalMode: "ask",
+  });
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  await new Promise((r) => setTimeout(r, 300));
+  // The credential goes AFTER the pane rendered, with no notification — so the
+  // chip is still enabled and the renderer still believes it can select this.
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
+  await win.webContents.executeJavaScript(`(() => {
+    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Adversarial Agent");
+    chip.click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 400));
+  const optimisticMode = {
+    storedIsAsk: loadSettings(probeHome).approvalMode === "ask",
+    // What the pane claims, after main said no.
+    chipAgrees: await win.webContents.executeJavaScript(`(() => {
+      const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Adversarial Agent");
+      return !!chip && !chip.classList.contains("active");
+    })()`),
   };
 
   fs.rmSync(probeHome, { recursive: true, force: true });
@@ -299,6 +343,8 @@ app.whenReady().then(async () => {
     raceDuringRefresh.sameNode &&
     raceDuringRefresh.accountRefreshed &&
     raceDuringRefresh.committed &&
+    optimisticMode.storedIsAsk &&
+    optimisticMode.chipAgrees &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
@@ -306,7 +352,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, transientInput, staleSettingsPane, raceDuringRefresh, settingsShot, approval, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

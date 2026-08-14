@@ -728,3 +728,37 @@ describe("signing out", () => {
     });
   }
 });
+
+describe("a sign-out while startRelay is dialling", () => {
+  it("is not overwritten by the continuation's connected state", async () => {
+    // `startRelay` is a network round-trip, and a sign-out landing inside it
+    // resets this instance to `activate`. The continuation then set
+    // `connected` on top, leaving a window reporting the session it had just
+    // been signed out of — with a credential the sign-out had already erased.
+    let release = () => {};
+    const dialing = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }, { status: "pending" }];
+    const onboarding = build({
+      startRelay: async () => {
+        started += 1;
+        await dialing;
+        plow.connected = true;
+      },
+    });
+    const begun = onboarding.begin();
+    await settle();
+
+    signOutOfPlow(home);
+    onboarding.signedOut();
+    expect(onboarding.state().step).toBe("activate");
+
+    release();
+    await begun;
+    await settle();
+
+    expect(onboarding.state().step).not.toBe("connected");
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+});

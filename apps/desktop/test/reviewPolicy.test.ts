@@ -188,23 +188,24 @@ describe("decideIntent — adversarial mode", () => {
   const adversarial = (over: Partial<Settings> = {}) =>
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
 
-  it("an allow verdict decides, and is sourced to the agent", async () => {
-    const h = harness(adversarial(), { verdict: "allow" });
-    expect(await h.run()).toEqual({ decision: "allow_once", source: "adversarial" });
-    expect(h.openApproval).not.toHaveBeenCalled();
-  });
+  // One review, three verdicts, three outcomes. The `ask` row is the one that
+  // must not be read as an approval: it hands over to the human with no
+  // suggestion, rather than deciding.
+  const decisionCases = [
+    { verdict: "allow" as const, decision: "allow_once", source: "adversarial", dialogs: 0 },
+    { verdict: "deny" as const, decision: "deny", source: "adversarial", dialogs: 0 },
+    { verdict: "ask" as const, decision: "allow_once", source: "ask", dialogs: 1 },
+  ];
 
-  it("a deny verdict decides", async () => {
-    const h = harness(adversarial(), { verdict: "deny" });
-    expect(await h.run()).toEqual({ decision: "deny", source: "adversarial" });
-    expect(h.openApproval).not.toHaveBeenCalled();
-  });
-
-  it("an ask verdict hands over to the human, with no suggestion", async () => {
-    const h = harness(adversarial(), { verdict: "ask", decision: "allow_once" });
-    expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
-    expect(h.dialogs).toEqual([null]);
-  });
+  for (const c of decisionCases) {
+    it(`a ${c.verdict} verdict is sourced to ${c.source}`, async () => {
+      const h = harness(adversarial(), { verdict: c.verdict, decision: "allow_once" });
+      expect(await h.run()).toEqual({ decision: c.decision, source: c.source });
+      expect(h.openApproval).toHaveBeenCalledTimes(c.dialogs);
+      // Only the handover carries a dialog, and it carries no suggestion.
+      if (c.dialogs) expect(h.dialogs).toEqual([null]);
+    });
+  }
 
   it("records the review's start and its verdict, in that order", async () => {
     const h = harness(adversarial(), { verdict: "deny", reason: "reads credentials" });
@@ -216,33 +217,33 @@ describe("decideIntent — adversarial mode", () => {
     expect(h.records[1].fields).toMatchObject({ verdict: "deny", reason: "reads credentials" });
   });
 
-  it("with no credential for the active provider it asks the human instead", async () => {
-    // The security property: an unusable reviewer degrades to the dialog, never
-    // to an approval.
-    const h = harness(
-      settings({ approvalMode: "adversarial", inferenceProvider: "plow", relayCredential: "" }),
-      { decision: "deny" },
-    );
-    expect(await h.run()).toEqual({ decision: "deny", source: "ask" });
-    expect(h.review).not.toHaveBeenCalled();
-    expect(h.openApproval).toHaveBeenCalledOnce();
-  });
+  // The security property, per shape of "the active provider cannot run": an
+  // unusable reviewer degrades to the dialog, never to an approval — and a
+  // credential belonging to the OTHER provider does not quietly stand in for
+  // the one that was selected.
+  const providerCredentialCases = [
+    { name: "no credential at all", over: {} },
+    { name: "only the other provider's credential", over: { anthropicApiKey: ANTHROPIC_KEY } },
+  ];
 
-  it("a pasted Anthropic key does not silently power the Plow reviewer", async () => {
-    const h = harness(
-      settings({
-        approvalMode: "adversarial",
-        inferenceProvider: "plow",
-        relayCredential: "",
-        anthropicApiKey: ANTHROPIC_KEY,
-      }),
-      { verdict: "allow" },
-    );
-    const result = await h.run();
-    expect(h.review).not.toHaveBeenCalled();
-    expect(result.source).toBe("ask");
-    expect(result.decision).not.toBe("allow_once");
-  });
+  for (const c of providerCredentialCases) {
+    it(`falls to the human when the Plow reviewer has ${c.name}`, async () => {
+      const h = harness(
+        settings({
+          approvalMode: "adversarial",
+          inferenceProvider: "plow",
+          relayCredential: "",
+          ...c.over,
+        }),
+        { verdict: "allow", decision: "deny" },
+      );
+      const result = await h.run();
+      expect(h.review).not.toHaveBeenCalled();
+      expect(h.openApproval).toHaveBeenCalledOnce();
+      expect(result.source).toBe("ask");
+      expect(result.decision).not.toBe("allow_once");
+    });
+  }
 });
 
 describe("decideIntent — ask mode and suggestions", () => {

@@ -557,16 +557,6 @@ export class Onboarding {
    * cleanup to get wrong: `mintDeviceCredential` retires the session
    * server-side, in the same transaction as the mint.
    */
-
-  /**
-   * Learn the account → mint this Mac's credential → connect.
-   *
-   * `sessionToken` never leaves this function. It carries `keys:manage` and
-   * `relay:*` — it can mint *any* credential on the account — so the app holds
-   * it for the two calls it needs and not one longer. There is no client-side
-   * cleanup to get wrong: `mintDeviceCredential` retires the session
-   * server-side, in the same transaction as the mint.
-   */
   private async finishWithSession(sessionToken: string): Promise<void> {
     const info = await this.deps.api.relayInfo(sessionToken);
     const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
@@ -579,10 +569,14 @@ export class Onboarding {
     settings.mcpUrl = info.mcpUrl;
     this.save(settings);
 
-    await this.deps.startRelay();
-
     // The activation is spent: drop the code and the secret rather than leave
     // either sitting in memory or on a screen behind this one.
+    //
+    // BEFORE the dial, not after. `startRelay` is a network round-trip, and a
+    // sign-out landing inside it resets this instance to `activate` — which the
+    // continuation then overwrote with `connected`, leaving a window reporting
+    // a session that had just been signed out of. Everything here is derived
+    // from the save above; none of it needs the socket to be up.
     this.cancelPolling();
     this.activation = null;
     this.activationSecret = null;
@@ -590,6 +584,8 @@ export class Onboarding {
     this.step = "connected";
     this.codeExpiresAt = null;
     this.message = "";
+
+    await this.deps.startRelay();
   }
 
   // MARK: plumbing
