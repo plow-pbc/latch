@@ -475,8 +475,9 @@ async function renderSettings() {
   // and whether each is usable, comes from main.
   const PROVIDER_LABELS = { plow: "Plow account", anthropic: "Anthropic API key" };
 
-  // Approval mode for operations.
-  let currentMode = await window.domo.approvalModeGet();
+  // Approval mode for operations — read from the SAME snapshot as availability,
+  // because main decides both in one write.
+  let currentMode = inference.approvalMode;
   const showSuggestions = await window.domo.showSuggestionsGet();
   // Adversarial mode needs a credential for the ACTIVE provider — a pasted
   // Anthropic key does not enable it while Plow is selected, and vice versa.
@@ -540,8 +541,9 @@ async function renderSettings() {
       }, [el("span", { text: label })]);
       if (!disabled && inference.provider !== value) {
         chip.addEventListener("click", async () => {
-          await window.domo.inferenceSet(value);
-          await syncReviewerAvailability();
+          // What main stored, not what was asked for: an unavailable provider
+          // is refused there, and the answer is the refusal.
+          applyInference(await window.domo.inferenceSet(value));
         });
       }
       return chip;
@@ -555,10 +557,10 @@ async function renderSettings() {
   // show what main decided, never to decide it too. The renderer used to write
   // the fallback itself from a half-typed field, which persisted Ask while the
   // stored key was still there and never put it back.
-  const syncReviewerAvailability = async () => {
-    inference = await window.domo.inferenceGet();
-    currentMode = await window.domo.approvalModeGet();
-    hasKey = inference.available[inference.provider];
+  const applyInference = (next) => {
+    inference = next;
+    currentMode = next.approvalMode;
+    hasKey = next.available[next.provider];
     renderProviderChips();
     renderModeChips();
     updateSuggestEnabled();
@@ -569,7 +571,7 @@ async function renderSettings() {
   // including the empty field between clearing and pasting.
   apiKeyInput.addEventListener("change", async () => {
     await window.domo.apiKeySet(apiKeyInput.value.trim());
-    await syncReviewerAvailability();
+    applyInference(await window.domo.inferenceGet());
   });
 
   renderProviderChips();
@@ -582,7 +584,7 @@ async function renderSettings() {
   settingsMounted = {
     refresh: async () => {
       await refreshAccount();
-      await syncReviewerAvailability();
+      applyInference(await window.domo.inferenceGet());
     },
   };
 

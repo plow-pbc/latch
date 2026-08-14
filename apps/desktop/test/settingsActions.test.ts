@@ -105,50 +105,60 @@ describe("selecting a provider is refused by main, not merely hidden in the UI",
 });
 
 describe("clearing the active provider's credential persists the fallback to ask", () => {
-  it("clearing the Anthropic key while Anthropic is active", () => {
-    const home = homeWith({
-      approvalMode: "adversarial",
-      inferenceProvider: "anthropic",
-      anthropicApiKey: ANTHROPIC_KEY,
+  // What a key change does depends on TWO things: whether the new value counts
+  // as a credential at all, and whether the provider it belongs to is the one
+  // doing the reviewing. Every row carries both, and its own expectations.
+  const credentialChangeCases = [
+    {
+      name: "clearing the key while Anthropic is active",
+      over: { inferenceProvider: "anthropic" as const, anthropicApiKey: ANTHROPIC_KEY },
+      mode: "adversarial" as const,
+      set: "",
+      key: "",
+      expected: "ask" as const,
+    },
+    {
+      name: "a whitespace-only key counts as cleared",
+      over: { inferenceProvider: "anthropic" as const, anthropicApiKey: ANTHROPIC_KEY },
+      mode: "adversarial" as const,
+      set: "   ",
+      key: "",
+      expected: "ask" as const,
+    },
+    {
+      // Plow is doing the reviewing; the Anthropic key going away changes
+      // nothing about whether the reviewer can run.
+      name: "clearing the INACTIVE provider's key leaves the mode alone",
+      over: {
+        inferenceProvider: "plow" as const,
+        relayCredential: PLOW_CREDENTIAL,
+        anthropicApiKey: ANTHROPIC_KEY,
+      },
+      mode: "adversarial" as const,
+      set: "",
+      key: "",
+      expected: "adversarial" as const,
+    },
+    {
+      name: "storing a key does not resurrect Adversarial mode on its own",
+      over: { inferenceProvider: "anthropic" as const },
+      mode: "ask" as const,
+      set: ANTHROPIC_KEY,
+      key: ANTHROPIC_KEY,
+      expected: "ask" as const,
+    },
+  ];
+
+  for (const c of credentialChangeCases) {
+    it(c.name, () => {
+      const home = homeWith({ approvalMode: c.mode, ...c.over });
+
+      setAnthropicApiKey(home, c.set);
+
+      expect(stored(home).anthropicApiKey).toBe(c.key);
+      expect(stored(home).approvalMode).toBe(c.expected);
     });
-
-    setAnthropicApiKey(home, "");
-
-    expect(stored(home).anthropicApiKey).toBe("");
-    expect(stored(home).approvalMode).toBe("ask");
-  });
-
-  it("a whitespace-only key counts as cleared", () => {
-    const home = homeWith({
-      approvalMode: "adversarial",
-      inferenceProvider: "anthropic",
-      anthropicApiKey: ANTHROPIC_KEY,
-    });
-    setAnthropicApiKey(home, "   ");
-    expect(stored(home).anthropicApiKey).toBe("");
-    expect(stored(home).approvalMode).toBe("ask");
-  });
-
-  it("clearing the INACTIVE provider's key leaves the mode alone", () => {
-    // Plow is doing the reviewing; the Anthropic key going away changes nothing
-    // about whether the reviewer can run.
-    const home = homeWith({
-      approvalMode: "adversarial",
-      inferenceProvider: "plow",
-      relayCredential: PLOW_CREDENTIAL,
-      anthropicApiKey: ANTHROPIC_KEY,
-    });
-
-    setAnthropicApiKey(home, "");
-
-    expect(stored(home).approvalMode).toBe("adversarial");
-  });
-
-  it("storing a key does not resurrect Adversarial mode on its own", () => {
-    const home = homeWith({ approvalMode: "ask", inferenceProvider: "anthropic" });
-    setAnthropicApiKey(home, ANTHROPIC_KEY);
-    expect(stored(home).approvalMode).toBe("ask");
-  });
+  }
 });
 
 describe("Plow sign-out retires Adversarial mode the same way clearing the key does", () => {

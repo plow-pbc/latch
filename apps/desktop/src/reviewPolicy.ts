@@ -35,6 +35,13 @@ export interface InferenceStatus {
   available: ProviderAvailability;
   /** Model + limits of the *active* provider, for display. */
   info: string;
+  /**
+   * The stored approval mode, in the SAME snapshot. It is decided by the same
+   * write that takes a credential away — `update` re-applies the interlock —
+   * so reading it separately gave the renderer two async views of one decision
+   * and a window where they disagreed.
+   */
+  approvalMode: Settings["approvalMode"];
 }
 
 /**
@@ -71,7 +78,12 @@ export function reviewerInfo(provider: InferenceProvider): string {
 /** The renderer-facing shape. Built here so there is one definition of "safe". */
 export function inferenceStatus(settings: Settings): InferenceStatus {
   const provider = activeProvider(settings);
-  return { provider, available: providerAvailability(settings), info: reviewerInfo(provider) };
+  return {
+    provider,
+    available: providerAvailability(settings),
+    info: reviewerInfo(provider),
+    approvalMode: settings.approvalMode ?? "ask",
+  };
 }
 
 /** Can the reviewer run at all right now? */

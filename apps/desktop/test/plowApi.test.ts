@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   API_BASE_URL_ENV,
   DEVELOPMENT_API_BASE_URL,
@@ -84,19 +84,30 @@ describe("PlowApi", () => {
         });
       });
 
-    const started = Date.now();
-    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+    // Driven rather than waited out. Vitest's fake timers cannot move
+    // `AbortSignal.timeout` — it runs on a timer internal to Node, not the
+    // global `setTimeout` sinon patches — so the clock is faked by standing in
+    // for the call itself. That keeps what this test is for: the request must
+    // carry a timeout of REQUEST_TIMEOUT_MS, and firing it must land as
+    // "didn't answer in time".
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+
+    const pending = new PlowApi("https://api.plow.co", fetchImpl)
       .createAgent("plow_device", "Claude Code")
       .catch((e) => e);
+    controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
+    const error = await pending;
 
+    expect(timeout).toHaveBeenCalledWith(REQUEST_TIMEOUT_MS);
+    timeout.mockRestore();
     expect(aborted).toBe(true);
     expect(error).toBeInstanceOf(PlowApiError);
     expect((error as PlowApiError).kind).toBe("network");
     // Honest about which failure it was: "didn't answer" sends you somewhere
     // different from "couldn't reach".
     expect((error as PlowApiError).message).toBe("Plow didn't answer in time. Try again.");
-    expect(Date.now() - started).toBeLessThan(REQUEST_TIMEOUT_MS + 5_000);
-  }, 30_000);
+  });
 
   it("passes a timeout signal on every request, not just the ones we remembered", async () => {
     const seen: Array<string | undefined> = [];

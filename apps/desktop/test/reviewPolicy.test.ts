@@ -349,11 +349,12 @@ describe("the renderer's view of inference carries no credentials", () => {
     anthropicApiKey: ANTHROPIC_KEY,
   });
 
-  it("is booleans, a selection, and a model string", () => {
+  it("is booleans, a selection, a model string and the stored mode", () => {
     expect(inferenceStatus(full)).toEqual({
       provider: "plow",
       available: { plow: true, anthropic: true },
       info: reviewerInfo("plow"),
+      approvalMode: full.approvalMode,
     });
   });
 

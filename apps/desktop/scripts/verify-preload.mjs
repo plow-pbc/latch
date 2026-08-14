@@ -59,7 +59,6 @@ ipcMain.handle("settings:getRelay", async () => {
     connected: true,
   };
 });
-ipcMain.handle("settings:getApprovalMode", async () => loadSettings(probeHome).approvalMode);
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 // These four are the real handlers, running the real guards against real

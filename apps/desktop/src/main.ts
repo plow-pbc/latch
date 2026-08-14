@@ -335,7 +335,6 @@ ipcMain.handle("onboarding:dismissAgent", async () => onboarding?.dismissAgent()
 ipcMain.handle("onboarding:finish", async () => {
   onboardingWindow?.close();
 });
-ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
 ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).showAgentSuggestions ?? true);
 ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {

@@ -22,7 +22,6 @@ contextBridge.exposeInMainWorld("domo", {
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),
   relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
   onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
-  approvalModeGet: () => ipcRenderer.invoke("settings:getApprovalMode"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
