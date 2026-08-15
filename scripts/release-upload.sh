@@ -50,6 +50,9 @@ release_dir="$root/apps/desktop/release"
 
 aws_args=()
 [[ -n "$profile" ]] && aws_args+=(--profile "$profile")
+# ${aws_args[@]+…}: on the macOS runners' bash 3.2, `set -u` treats expanding
+# an EMPTY array as an unbound variable, and CI passes --profile "" so the
+# array is empty there. The +-expansion is the 3.2-safe idiom.
 
 # Everything the feed and the download page need. latest-mac.yml names the zip;
 # the blockmap enables differential downloads; the DMG is the human download.
@@ -81,7 +84,7 @@ shasum -a 256 "$release_dir/$dmg_name" | awk '{print $1}' > "$release_dir/$dmg_n
 
 dest="s3://${bucket}/${prefix}/releases/${version}-${build}"
 for f in "${artifacts[@]}" "$dmg_name.sha256"; do
-  aws "${aws_args[@]}" s3 cp "$release_dir/$f" "$dest/$f"
+  aws ${aws_args[@]+"${aws_args[@]}"} s3 cp "$release_dir/$f" "$dest/$f"
 done
 
 echo "Uploaded release candidate ${version} (${build}):"
