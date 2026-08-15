@@ -33,10 +33,6 @@ const browserDir = path.join(vendorDir, "camoufox-browser");
 const vaultCliDir = path.join(vendorDir, "vault-cli");
 const vaultServerDir = path.join(vendorDir, "vault-server");
 
-// TEMP(feature/software-updates) — REVERT BEFORE MERGING TO MAIN.
-// See the guarded block in fetchVaultServer.
-const SKIP_VAULT_SERVER_BUILD = true;
-
 const lock = JSON.parse(fs.readFileSync(path.join(serverDir, "runtime.lock.json"), "utf8"));
 const requirementsPath = path.join(serverDir, "requirements.txt");
 
@@ -819,25 +815,6 @@ function fetchVaultServer(arch) {
   const stamp = `${commit}:vendored-openssl`;
   if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
     log(`vault server ${arch} up to date`);
-    return;
-  }
-  // TEMP(feature/software-updates) — REVERT BEFORE MERGING TO MAIN.
-  // Skip the slow cargo build (Vaultwarden + a vendored OpenSSL, per arch) and
-  // ship a stub in its place, so update-pipeline test builds package fast.
-  // Vault features are dead in such a build: the stub exits 1 on launch.
-  // Placed AFTER the cache check, so an already-built real vault keeps being
-  // used; no .commit marker is written, so removing this block (or an existing
-  // stub) always forces a real build.
-  if (SKIP_VAULT_SERVER_BUILD) {
-    fs.rmSync(installRoot, { recursive: true, force: true });
-    fs.mkdirSync(installRoot, { recursive: true });
-    const stub = path.join(installRoot, "vaultwarden");
-    fs.writeFileSync(
-      stub,
-      "#!/bin/sh\necho 'vaultwarden stub — vault build skipped on this branch (TEMP)' >&2\nexit 1\n",
-    );
-    fs.chmodSync(stub, 0o755);
-    log(`vault server ${arch}: STUB shipped, cargo build skipped (TEMP, this branch only)`);
     return;
   }
   const srcDir = path.join(downloadsDir, "vaultwarden-src");
