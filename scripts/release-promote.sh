@@ -48,6 +48,9 @@ done
 
 aws_args=()
 [[ -n "$profile" ]] && aws_args+=(--profile "$profile")
+# ${aws_args[@]+…}: on the macOS runners' bash 3.2, `set -u` treats expanding
+# an EMPTY array as an unbound variable, and CI passes --profile "" so the
+# array is empty there. The +-expansion is the 3.2-safe idiom.
 
 src="${prefix}/releases/${version}-${build}"
 zip_name="Domo-Desktop-${version}-universal.zip"
@@ -55,7 +58,7 @@ dmg_name="Domo-Desktop-${version}.dmg"
 
 # Fail before touching anything if the candidate is incomplete.
 for key in "$zip_name" "$zip_name.blockmap" "$dmg_name" "$dmg_name.sha256" "latest-mac.yml"; do
-  aws "${aws_args[@]}" s3api head-object --bucket "$bucket" --key "$src/$key" >/dev/null 2>&1 || {
+  aws ${aws_args[@]+"${aws_args[@]}"} s3api head-object --bucket "$bucket" --key "$src/$key" >/dev/null 2>&1 || {
     echo "error: candidate artifact missing: s3://${bucket}/${src}/${key}" >&2
     echo "hint: was this version+build uploaded by 'just release'?" >&2
     exit 1
@@ -63,7 +66,7 @@ for key in "$zip_name" "$zip_name.blockmap" "$dmg_name" "$dmg_name.sha256" "late
 done
 
 copy() {
-  aws "${aws_args[@]}" s3 cp "s3://${bucket}/${src}/$1" "s3://${bucket}/${prefix}/$2"
+  aws ${aws_args[@]+"${aws_args[@]}"} s3 cp "s3://${bucket}/${src}/$1" "s3://${bucket}/${prefix}/$2"
 }
 
 # Artifacts first, feed last (see header). The zip keeps its versioned name —
