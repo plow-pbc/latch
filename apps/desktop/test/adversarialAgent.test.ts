@@ -715,15 +715,25 @@ describe("the Plow provider", () => {
   });
 
   describe("every failure falls back to ask, never allow", () => {
-    const failsClosed = (result: { verdict: string; reason: string }) => {
+    // `cause` defaults to undefined, so every failure below asserts it has NO
+    // machine-readable cause unless it is the one that does. That is the
+    // property worth holding: only out-of-credits may claim to be actionable.
+    const failsClosed = (
+      result: { verdict: string; reason: string; cause?: string },
+      expectedCause?: string,
+    ) => {
       expect(result.verdict).toBe("ask");
       expect(result.verdict).not.toBe("allow");
+      expect(result.cause).toBe(expectedCause);
     };
 
-    it("402 names the balance, so the human knows why it abstained", async () => {
+    it("402 names the balance, and reports it as an actionable cause", async () => {
+      // Out of credits is the one failure the calling agent can act on, so it
+      // is distinguishable without parsing a sentence. Every other failure in
+      // this suite asserts the absence of a cause through the same helper.
       fetchMock.mockResolvedValue(plowError(402));
       const result = await plowReview();
-      failsClosed(result);
+      failsClosed(result, "no_credits");
       expect(result.reason).toContain("balance");
     });
 

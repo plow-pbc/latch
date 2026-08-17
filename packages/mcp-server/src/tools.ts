@@ -114,7 +114,10 @@ async function decideAndRun(
   const r = jv(response);
   switch (r.get("status").str) {
     case "denied":
-      throw new DeniedError("the owner of this Mac denied the request");
+      // Most denials say only that they happened. When the device supplies a
+      // reason it is a standing condition the caller can act on — forward it
+      // verbatim rather than flattening every denial to the same sentence.
+      throw new DeniedError(r.get("reason").str ?? "the owner of this Mac denied the request");
     case "rejected":
       throw new ToolError(`rejected: ${r.get("reason").str ?? "unknown"}`);
     case "error":

@@ -534,6 +534,23 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .onboard .linkbtn:hover { color: var(--fg); }
 
+/* The adversarial agent's own words in the approval window. Deliberately not
+   inside `.fine` — that block is the enforceable bound, this is advice.
+   Scoped through the `.approve` seam like every other rule for that window:
+   Settings has a `.reviewer-note` too (its reviewer-model status line), and an
+   unscoped rule restyled that quiet line into an advice card. */
+.approve > .reviewer-note:not(:empty) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--sel);
+  font-size: 12px;
+  color: var(--fg);
+}
+
 /* ---- Connect a client -----------------------------------------------------
    Numbered steps, one card each, on the same tokens as the settings groups.
    The URL and the config block reuse `.copyrow`/`.copybox` from the setup

@@ -97,6 +97,9 @@ describe("auditActivities (grouping)", () => {
       ])[0]!;
     expect(mk("approve").decidedBy).toBe("Auto-approved");
     expect(mk("adversarial").decidedBy).toBe("Adversarial Agent");
+    // Not the raw source string: the human's view says what happened, and
+    // "no_credits" is a label for us, not for them.
+    expect(mk("no_credits").decidedBy).toBe("Adversarial Agent (out of credits)");
     expect(mk("ask").decidedBy).toBe("You (asked)");
     expect(mk("policy", "deny").decidedBy).toBe("Policy (deny mode)");
     // A rule-matched decision (source set by the engine) reads as the rule.
