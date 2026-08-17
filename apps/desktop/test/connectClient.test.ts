@@ -22,16 +22,40 @@ const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 /** A stand-in Plow that records who asked for what. */
 class FakePlow {
   minted: Array<{ token: string; name: string }> = [];
+  /** Every credential handed back, in order. Distinct, like the real ones. */
+  issued: string[] = [];
   fails: PlowApiError | null = null;
+  /** Set to hold every mint open until `release()`, the way a slow API does. */
+  private gate: Promise<void> | null = null;
+  private open: (() => void) | null = null;
 
   api(): PlowApi {
     return this as unknown as PlowApi;
   }
 
+  /** Make mints hang, so a test can act while one is in flight. */
+  hold(): void {
+    this.gate = new Promise((resolve) => {
+      this.open = resolve;
+    });
+  }
+
+  release(): void {
+    this.open?.();
+    this.gate = null;
+    this.open = null;
+  }
+
   async createAgent(token: string, name: string) {
+    if (this.gate) await this.gate;
     if (this.fails) throw this.fails;
+    // Each mint is a distinct long-lived credential on the account, exactly as
+    // the real endpoint is — so a test can see a second one that nobody asked
+    // for rather than two copies of the same string.
+    const issued = `${CLIENT_TOKEN}_${this.minted.length + 1}`;
     this.minted.push({ token, name });
-    return { token: CLIENT_TOKEN, keyPrefix: CLIENT_TOKEN.slice(5, 13), name };
+    this.issued.push(issued);
+    return { token: issued, keyPrefix: issued.slice(5, 13), name };
   }
 }
 
@@ -108,7 +132,7 @@ describe("the static-credential fallback", () => {
 
     const config = JSON.parse(state.credential!.config);
     expect(config.mcpServers.domo.url).toBe(MCP_URL);
-    expect(config.mcpServers.domo.headers.Authorization).toBe(`Bearer ${CLIENT_TOKEN}`);
+    expect(config.mcpServers.domo.headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
     // A URL ends up in shell history, logs and stored registrations.
     expect(config.mcpServers.domo.url).not.toContain(CLIENT_TOKEN);
   });
@@ -174,6 +198,114 @@ describe("the static-credential fallback", () => {
     expect(connect.state().busy).toBe(false);
     // Busy on, busy off: the screen is notified both times.
     expect(changes).toBe(2);
+  });
+});
+
+describe("one click, one credential", () => {
+  it("does not mint twice when the button is hit twice before the screen catches up", async () => {
+    // The renderer disables the button a round trip later, so a double-tap or a
+    // held Enter lands two calls in that window. Every extra mint is a
+    // long-lived credential live on the account that nobody was ever shown.
+    signIn();
+    plow.hold();
+    const connect = build();
+
+    const first = connect.createCredential("Claude Code");
+    const second = connect.createCredential("Claude Code");
+    const third = connect.createCredential("Claude Code");
+    plow.release();
+    const [a, b, c] = await Promise.all([first, second, third]);
+
+    expect(plow.minted).toHaveLength(1);
+    // And all three callers get the one credential that was minted.
+    for (const state of [a, b, c]) expect(state.credential?.config).toContain(plow.issued[0]);
+  });
+
+  it("lets the next one through once the first has landed", async () => {
+    signIn();
+    const connect = build();
+    await connect.createCredential("Claude Code");
+    connect.dismissCredential();
+    await connect.createCredential("ChatGPT");
+
+    expect(plow.minted.map((m) => m.name)).toEqual(["Claude Code", "ChatGPT"]);
+  });
+
+  it("lets the next one through after a failed mint, rather than wedging", async () => {
+    signIn();
+    plow.fails = new PlowApiError("network", "Couldn't reach Plow.");
+    const connect = build();
+    await connect.createCredential("Claude Code");
+
+    plow.fails = null;
+    const state = await connect.createCredential("Claude Code");
+    expect(state.credential).not.toBeNull();
+  });
+});
+
+describe("signing out takes the credential with it", () => {
+  it("drops a shown-once credential rather than carrying it into the next session", async () => {
+    // It belongs to the account that just went away — and the next sign-in may
+    // be a different account entirely.
+    signIn();
+    const connect = build();
+    await connect.createCredential("Claude Code");
+    expect(connect.state().credential).not.toBeNull();
+
+    const after = connect.signedOut();
+    expect(after.credential).toBeNull();
+    expect(JSON.stringify(after)).not.toContain(CLIENT_TOKEN);
+    expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
+  });
+
+  it("never shows a mint that was in the air when the account went away", async () => {
+    signIn();
+    plow.hold();
+    const connect = build();
+    const inFlight = connect.createCredential("Claude Code");
+
+    connect.signedOut();
+    plow.release();
+    const state = await inFlight;
+
+    // The mint did reach Plow — that credential is live on the old account
+    // until it is revoked there — but it never reaches this session's screen.
+    expect(plow.minted).toHaveLength(1);
+    expect(state.credential).toBeNull();
+    expect(connect.state().credential).toBeNull();
+    expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
+  });
+
+  it("clears the busy flag, so the next session is not stuck on 'Talking to Plow'", async () => {
+    signIn();
+    plow.hold();
+    const connect = build();
+    const inFlight = connect.createCredential("Claude Code");
+    expect(connect.state().busy).toBe(true);
+
+    expect(connect.signedOut().busy).toBe(false);
+    plow.release();
+    await inFlight;
+    expect(connect.state().busy).toBe(false);
+  });
+
+  it("does not leave the next account joining the old account's mint", async () => {
+    signIn();
+    plow.hold();
+    const connect = build();
+    const abandoned = connect.createCredential("Claude Code");
+    connect.signedOut();
+
+    // Signed in again — a fresh mint must be its own, not the one still in the
+    // air from before.
+    const next = connect.createCredential("ChatGPT");
+    plow.release();
+    await abandoned;
+    const state = await next;
+
+    expect(plow.minted.map((m) => m.name)).toEqual(["Claude Code", "ChatGPT"]);
+    expect(state.credential?.name).toBe("ChatGPT");
+    expect(state.credential?.config).toContain(plow.issued[1]);
   });
 });
 

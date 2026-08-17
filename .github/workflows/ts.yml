@@ -27,27 +27,26 @@ jobs:
       # Protocol + transport are platform-independent (golden vectors, crypto,
       # the WebSocket client) and run everywhere.
       - run: npx vitest run packages/protocol packages/transport
-      # The device sandbox needs macOS seatbelt (sandbox-exec); mcp-server's and
-      # relay-client's end-to-end cases run real sandboxed commands through it.
+      # The device sandbox needs macOS seatbelt (sandbox-exec); mcp-server's
+      # cases run real sandboxed commands through it. relay-client's own tests
+      # are pure wire-contract checks now — its end-to-end cases went with the
+      # stand-in relay (see docs/TESTING-THE-APP.md), and so did `e2e/`, which
+      # is why nothing here runs `vitest run e2e` any more.
       - if: runner.os == 'macOS'
         run: npx vitest run packages/device-core packages/mcp-server packages/relay-client apps/desktop
-      # The end-to-end transcripts. They are what caught the binary-framing bug
-      # that every unit test missed, so CI runs them rather than trusting that
-      # somebody remembered to.
-      - if: runner.os == 'macOS'
-        run: npx vitest run e2e
       # The Electron-hosted evidence: the preload bridge, the approval dialog,
       # and every first-run screen. Offscreen, but they still need a windowing
       # environment, so macOS only.
+      #
+      # The real-input first-run harness used to run here too. It went with the
+      # stand-in Plow it drove; there is no automated substitute, and the
+      # whole-flow walk is a manual run against a locally running plow API.
       - if: runner.os == 'macOS'
         run: |
           node apps/desktop/scripts/copy-renderer.mjs
           npx electron apps/desktop/scripts/verify-preload.mjs
           npx electron apps/desktop/scripts/approval-screenshot.mjs
           npx electron apps/desktop/scripts/onboarding-screenshot.mjs
-          # The real-input harness: drives the whole first run with synthesized
-          # key and mouse events. This is the one that can catch a panel that
-          # renders perfectly and accepts nothing.
-          npx electron apps/desktop/scripts/first-run-drive.mjs
+          npx electron apps/desktop/scripts/connect-screenshot.mjs
         env:
           DOMO_HOME: ${{ runner.temp }}/domo-ci

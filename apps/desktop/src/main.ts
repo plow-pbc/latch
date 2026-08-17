@@ -336,9 +336,12 @@ ipcMain.handle("settings:signOut", async () => {
   settings.mcpUrl = "";
   saveSettings(home, settings);
   await startRelay();
-  // The wizard outlives a sign-out, and it last saw itself on "connected".
-  // Reset it before the gate reopens it, or the login screen is a stale one.
+  // Both of these outlive a sign-out and both are holding the old account's
+  // state — the wizard its "connected" step, Connect-a-client possibly a
+  // shown-once credential. Reset them before the gate reopens anything, or the
+  // next sign-in inherits them.
   onboarding?.signedOut();
+  connectClient?.signedOut();
   gate.sync();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());

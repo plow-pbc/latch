@@ -34,9 +34,11 @@ dials *out* to the Plow relay, which authenticates the calling agent and forward
 MCP to `@domo/mcp-server`. Both halves of this side exist. **The relay itself
 does not** — different repository, not built — and the in-repo stand-in that
 used to verify this side against the wire contract has been deleted (head
-chef's call: a locally running plow API simulates plow). So the relay leg has
-**no automated coverage at all**: it is verified only by running the app against
-a locally running plow API, by hand. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+chef's call: a locally running plow API simulates plow). The scripts that drove
+a *live* stack went with it, so there is **no automated live-stack path either**
+— not here, not in CI. The relay leg is verified **by hand**: bring up a plow
+stack, run the app against it, drive it. `packages/relay-client/test` keeps only
+the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 - **A credential never goes in a URL, a log line, or an error string.** It rides
   in the post-challenge `auth` frame and nowhere else. `settings.json` holds it

@@ -61,6 +61,19 @@ export class ConnectClient {
   /** SECRET while it is set: the only copy of a freshly minted credential.
    * It is in memory, in this field, and on the user's screen — nowhere else. */
   private credential: ClientCredential | null = null;
+  /**
+   * The mint in flight, if any. Held so a second request joins it rather than
+   * starting another — see `createCredential`. `pendingId` says which flight it
+   * is, so a finishing mint only clears the handle if it is still its own.
+   */
+  private pending: Promise<ConnectClientState> | null = null;
+  private pendingId = 0;
+  private flights = 0;
+  /**
+   * Bumped by `signedOut`. A mint that was in the air when the account changed
+   * belongs to the old one, and its result is dropped rather than shown.
+   */
+  private generation = 0;
 
   constructor(private readonly deps: ConnectClientDeps) {}
 
@@ -85,25 +98,74 @@ export class ConnectClient {
    * session was retired server-side the moment it was used.
    */
   async createCredential(name: string): Promise<ConnectClientState> {
+    // SINGLE-FLIGHT. Every mint is a long-lived credential on the account, and
+    // the screen can only ever show one of them — so a second Enter before the
+    // busy re-render lands would leave a credential live on the account that
+    // nobody ever saw and nobody can revoke by name. Disabling the button is
+    // not enough: the renderer disables it a round trip later, which is exactly
+    // the window a double-tap or a held Enter key fits through. Joining the
+    // flight in progress is the only place this can be closed.
+    if (this.pending) return this.pending;
+
     const trimmed = (name ?? "").trim();
     if (!trimmed) return this.fail("Give this connection a name.");
     const settings = this.settings();
     if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
 
+    const generation = this.generation;
+    const flightId = ++this.flights;
     this.busy = true;
     this.message = "";
     this.publish();
-    try {
-      const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed);
-      this.credential = {
-        name: minted.name || trimmed,
-        config: agentConfig(settings.mcpUrl, minted.token),
-      };
-    } catch (error) {
-      this.message = messageOf(error);
-    } finally {
-      this.busy = false;
-    }
+    const flight = (async () => {
+      try {
+        const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed);
+        // A sign-out while this was in the air: the credential belongs to an
+        // account this Mac is no longer on, so it is dropped rather than shown.
+        // It stays live on that account until revoked there — nothing this app
+        // can reach — but it never crosses into the next session.
+        if (generation !== this.generation) return this.state();
+        this.credential = {
+          name: minted.name || trimmed,
+          config: agentConfig(settings.mcpUrl, minted.token),
+        };
+      } catch (error) {
+        if (generation === this.generation) this.message = messageOf(error);
+      } finally {
+        if (generation === this.generation) this.busy = false;
+        // Only if this flight still owns the handle: a sign-out mid-flight
+        // drops it, and a mint started after that may already own it.
+        if (this.pendingId === flightId) {
+          this.pending = null;
+          this.pendingId = 0;
+        }
+      }
+      return this.publish();
+    })();
+    this.pending = flight;
+    this.pendingId = flightId;
+    return flight;
+  }
+
+  /**
+   * This Mac signed out. Everything here belonged to the account that just
+   * went away.
+   *
+   * A copy-once credential sitting on screen is the whole reason this exists:
+   * without it the main process keeps holding one across a sign-out, and the
+   * next sign-in — possibly a different account — opens on the previous
+   * account's credential. A mint still in flight is invalidated the same way.
+   */
+  signedOut(): ConnectClientState {
+    this.generation += 1;
+    this.credential = null;
+    this.message = "";
+    this.busy = false;
+    // Whatever is still in the air belongs to the old account. Dropping the
+    // handle means the next mint starts a flight of its own rather than joining
+    // one whose result will be thrown away.
+    this.pending = null;
+    this.pendingId = 0;
     return this.publish();
   }
 

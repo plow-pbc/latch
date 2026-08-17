@@ -13,11 +13,17 @@ head chef wants that kept as prose, not as a maintained script.
 ## What changed, and why this file is short now
 
 There used to be a stand-in Plow in this repo — a fake HTTP API plus a `FakeRelay` WebSocket server
-— and four drivers that ran the real Electron app against it end to end. They are deleted. The head
-chef's call: a locally running plow API already simulates plow, and the PR should stay small and
-targeted.
+— and drivers that ran the real Electron app against it end to end. They are deleted. The head
+chef's call: a locally running plow API already simulates plow, the PR should stay small and
+targeted, and procedures belong in prose rather than in scripts somebody has to maintain.
 
-What went with them:
+Two of the deleted scripts (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`)
+pointed at a **live** plow stack rather than at the stand-in. They went too, deliberately and by the
+same ruling — so **be clear about what that leaves: there is no automated live-stack path any more,
+in this repo or in CI.** The whole-flow walk against a real plow is a manual run, start to finish,
+by a person following the sections below.
+
+What went, and what it did:
 
 | Deleted | What it did |
 |---|---|
@@ -30,9 +36,11 @@ What went with them:
 | `apps/desktop/scripts/slow-approval-transcript.mjs` | The slow-approval / long-command round trip with timings. |
 | `apps/desktop/scripts/approve-drive.mjs` | The app half of an acceptance run: seeded credential, real clicks. |
 
-**What this costs, so nobody rediscovers it the hard way:** `@domo/relay-client` now has no tests at
-all, and nothing in `npx vitest run` exercises the socket, the auth frame, reconnection, or a
-tunnelled MCP call. Those paths are verified only by running the app against a real plow.
+**What this costs, so nobody rediscovers it the hard way:** `@domo/relay-client` keeps only pure
+wire-contract tests (`test/wire.test.ts` — `stripHopByHop`, `Host` preservation, frame validation).
+Nothing in `npx vitest run` opens a socket, sends the auth frame, reconnects, or tunnels an MCP
+call, and nothing in CI does either. Those paths are verified **by hand**, by running the app
+against a locally running plow API and watching what happens.
 
 ---
 
@@ -159,6 +167,9 @@ And wiping `DOMO_HOME` between runs wipes the rule with it.
 ---
 
 ## Run against a stack nobody else is editing
+
+This is a manual procedure — there is no script left that does it, and by ruling there will not be
+one. Bring up the stack yourself, run `just app` against it, and drive the app.
 
 The dev API runs `fastapi dev`, which reloads on every file change in the worktree it is mounted
 from. A colleague saving `ws.py` mid-run drops the device socket and stalls requests for tens of

@@ -252,11 +252,16 @@ against a stand-in relay built to the wire contract — and that stand-in has no
 been deleted too, along with the drivers and the relay+MCP gate that ran against
 it (head chef's call: a locally running plow API already simulates plow).
 
-So there is **no automated integration coverage of the relay leg at all** today:
-nothing in `npx vitest run` opens a socket, sends the auth frame, reconnects, or
-tunnels an MCP call. That path is verified by running the app against a locally
-running plow API, by hand — the procedure is in
-[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+So there is **no automated integration coverage of the relay leg at all** today,
+and no automated live-stack path either — the two scripts that drove a real plow
+stack (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
+deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket, sends
+the auth frame, reconnects, or tunnels an MCP call. That whole path is verified
+**manually**: bring up a plow stack, run the app against it, drive it by hand.
+The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+
+What `packages/relay-client/test` still holds is the pure part of the wire
+contract — `stripHopByHop`, `Host` preservation, frame validation.
 
 ## Running the desktop app
 
