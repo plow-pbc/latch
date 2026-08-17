@@ -534,6 +534,27 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .onboard .linkbtn:hover { color: var(--fg); }
 
+/* ---- Connect a client -----------------------------------------------------
+   Numbered steps, one card each, on the same tokens as the settings groups.
+   The URL and the config block reuse `.copyrow`/`.copybox` from the setup
+   window — it is the same job, and the user should recognise it. */
+.connect .conn-status { margin: 0 0 16px; }
+.connect .stephead { align-items: baseline; gap: 10px; margin-bottom: 0; }
+.connect .stephead .group-title { flex: 1; margin: 0 0 12px; }
+.connect .stepnum {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--sel); color: var(--blue-fg);
+  font-size: 12px; font-weight: 600;
+}
+.connect .conn-actions { margin-top: 14px; }
+.connect .item.quiet { padding: 12px 18px; }
+/* A quiet secondary route — present, never competing with what's above it. */
+.connect .linkbtn {
+  background: none; border: none; padding: 0;
+  color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
+}
+.connect .linkbtn:hover { color: var(--fg); }
 /* ---------- Live browser thumbnail (audit detail pane) ---------- */
 
 .live-corner {

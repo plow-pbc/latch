@@ -7,7 +7,6 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   Onboarding,
-  agentConfig,
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
@@ -15,7 +14,6 @@ import { loadSettings, saveSettings } from "../src/settings.js";
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
 const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
-const AGENT_TOKEN = "plow_AGENTtok_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 
@@ -37,7 +35,25 @@ class FakePlow {
     return this as unknown as PlowApi;
   }
 
+  /** Set to hold every mint open until `release()`, the way a slow API does. */
+  private mintGate: Promise<void> | null = null;
+  private openMintGate: (() => void) | null = null;
+
+  /** Make `/v1/auth/activate` hang, so a test can act while a mint is in air. */
+  holdActivations(): void {
+    this.mintGate = new Promise((resolve) => {
+      this.openMintGate = resolve;
+    });
+  }
+
+  releaseActivations(): void {
+    this.openMintGate?.();
+    this.mintGate = null;
+    this.openMintGate = null;
+  }
+
   async createActivation(name: string) {
+    if (this.mintGate) await this.mintGate;
     const secret = `${ACTIVATION_SECRET}_${this.activations.length}`;
     this.activations.push(name);
     return { displayCode: `CODE${this.activations.length}`, activationSecret: secret, sendTo: "+15550001111" };
@@ -70,12 +86,6 @@ class FakePlow {
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
     this.minted.push({ token, name });
     return { token: DEVICE_TOKEN, keyPrefix: DEVICE_TOKEN.slice(5, 13), name };
-  }
-
-  async createAgent(token: string, name: string) {
-    // The device credential mints agents — the OTP session is long gone.
-    expect(token).toBe(DEVICE_TOKEN);
-    return { token: AGENT_TOKEN, keyPrefix: AGENT_TOKEN.slice(5, 13), name };
   }
 
 }
@@ -363,6 +373,73 @@ describe("activation — the path a brand-new user takes", () => {
   });
 });
 
+describe("one code, however many callers ask for it", () => {
+  it("does not burn a second code when two callers ask while the API is slow", async () => {
+    // A display code IS a credential: whoever texts it gets the account. A
+    // second one minted behind the first is live on the account, shown to
+    // nobody, and revocable by nobody — the screen only ever displays one.
+    plow.holdActivations();
+    const onboarding = build();
+
+    const first = onboarding.begin();
+    const second = onboarding.begin();
+    const third = onboarding.newActivationCode();
+    plow.releaseActivations();
+    const [a, b, c] = await Promise.all([first, second, third]);
+
+    expect(plow.activations).toHaveLength(1);
+    // ...and all three callers are looking at the one code that exists.
+    for (const state of [a, b, c]) expect(state.activation?.displayCode).toBe("CODE1");
+    onboarding.reset(); // stop the poll loop this started
+  });
+
+  it("survives the sequence sign-out actually produces", async () => {
+    // `settings:signOut` resets, syncs the gate — which opens the setup window,
+    // whose renderer calls `begin` on boot — and calls `begin` itself. On a slow
+    // `/v1/auth/activate` both of those are in flight at once.
+    plow.holdActivations();
+    const onboarding = build();
+    onboarding.reset();
+    const fromSignOut = onboarding.begin();
+    const fromRenderer = onboarding.begin();
+    plow.releaseActivations();
+    await Promise.all([fromSignOut, fromRenderer]);
+
+    expect(plow.activations).toHaveLength(1);
+    onboarding.reset();
+  });
+
+  it("still mints a fresh one once the first has landed", async () => {
+    // Single-flight must not wedge the button: "Get a New Code" after the mint
+    // returns is a different ask, and gets a different code.
+    const onboarding = build();
+    await onboarding.begin();
+    expect(plow.activations).toHaveLength(1);
+
+    const state = await onboarding.newActivationCode();
+    expect(plow.activations).toHaveLength(2);
+    expect(state.activation?.displayCode).toBe("CODE2");
+    onboarding.reset();
+  });
+
+  it("does not wedge after a mint that failed", async () => {
+    const onboarding = build();
+    const boom = new PlowApiError("network", "Couldn't reach Plow.");
+    const original = plow.createActivation.bind(plow);
+    plow.createActivation = async () => {
+      throw boom;
+    };
+    const failed = await onboarding.begin();
+    expect(failed.message).toBe("Couldn't reach Plow.");
+    expect(failed.activation).toBeNull();
+
+    plow.createActivation = original;
+    const state = await onboarding.begin();
+    expect(state.activation?.displayCode).toBeTruthy();
+    onboarding.reset();
+  });
+});
+
 describe("signing out", () => {
   it("returns to the activation screen without needing a restart", async () => {
     // Reported live: Sign Out blanked the credential in settings but left the
@@ -389,12 +466,53 @@ describe("signing out", () => {
     expect(state.activation).toBeNull();
     expect(state.accountUid).toBe("");
     expect(state.mcpUrl).toBe("");
-    expect(state.agent).toBeNull();
     expect(state.busy).toBe(false);
 
     // From there the normal path works: it mints a code, no restart involved.
     const begun = await onboarding.begin();
     expect(begun.activation?.displayCode).toBeTruthy();
+  });
+
+  /** Sign in by the phone path, then blank the credential the way sign-out does. */
+  async function signedInThenOut(): Promise<Onboarding> {
+    const onboarding = buildOnPhonePath();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+    expect(onboarding.state().step).toBe("connected");
+
+    const settings = loadSettings(home);
+    settings.relayCredential = "";
+    settings.accountUid = "";
+    settings.mcpUrl = "";
+    saveSettings(home, settings);
+    plow.connected = false; // signing out restarts the relay, which drops the socket
+    return onboarding;
+  }
+
+  it("mints a fresh code when the user starts again", async () => {
+    const onboarding = await signedInThenOut();
+    onboarding.reset();
+    const state = await onboarding.begin();
+    expect(state.step).toBe("activate");
+    expect(state.activation?.displayCode).toBeTruthy();
+    expect(plow.activations.length).toBe(1); // the first login used the OTP path
+
+    // `begin` starts a detached poll loop, and its injected `wait` advances the
+    // clock every test in this file shares. Left running it drifts the next
+    // test's deadlines — so stop it, the way every other exit from that screen
+    // does.
+    onboarding.reset();
+  });
+
+  it("keeps nothing from the session that ended", async () => {
+    const onboarding = await signedInThenOut();
+    const state = onboarding.reset();
+    expect(state.phone).toBe("");
+    expect(state.connected).toBe(false);
+    expect(state.activation).toBeNull();
+    expect(state.codeExpiresAt).toBeNull();
+    expect(JSON.stringify(state)).not.toContain(DEVICE_TOKEN);
+    expect(JSON.stringify(state)).not.toContain(OTP_TOKEN);
   });
 
   it("stays on the connected screen if a credential is somehow still there", () => {
@@ -521,29 +639,6 @@ describe("honest messages instead of a spinner", () => {
   });
 });
 
-describe("creating an agent", () => {
-  it("yields a credential and a pasteable config, shown once", async () => {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    const state = await onboarding.createAgent("Claude Code");
-    expect(state.step).toBe("agent");
-    expect(state.agent?.token).toBe(AGENT_TOKEN);
-    // The credential is a header, never part of a URL.
-    expect(JSON.parse(state.agent!.config).mcpServers.domo.url).toBe(MCP_URL);
-    expect(JSON.parse(state.agent!.config).mcpServers.domo.headers.Authorization).toBe(
-      `Bearer ${AGENT_TOKEN}`,
-    );
-
-    // Dismissing drops it: the app cannot show it a second time.
-    const after = onboarding.dismissAgent();
-    expect(after.agent).toBeNull();
-    expect(after.step).toBe("connected");
-    expect(JSON.stringify(loadSettings(home))).not.toContain(AGENT_TOKEN);
-  });
-});
-
 describe("reading the state is a read", () => {
   it("never notifies, because the renderer re-reads on every notification", async () => {
     // The bug this pins: `onboarding:get` was wired to a `refresh()` that
@@ -586,20 +681,9 @@ describe("what the renderer is allowed to see", () => {
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
     const connectedState = await onboarding.submitCode("12345678");
-    const agentState = await onboarding.createAgent("Claude Code");
 
-    for (const state of [connectedState, agentState]) {
-      const serialized = JSON.stringify(state);
-      expect(serialized).not.toContain(DEVICE_TOKEN);
-      expect(serialized).not.toContain(OTP_TOKEN);
-    }
-  });
-});
-
-describe("agentConfig", () => {
-  it("puts the credential in a header, because URLs end up in logs", () => {
-    const config = JSON.parse(agentConfig(MCP_URL, "plow_tok"));
-    expect(config.mcpServers.domo.url).not.toContain("plow_tok");
-    expect(config.mcpServers.domo.headers.Authorization).toBe("Bearer plow_tok");
+    const serialized = JSON.stringify(connectedState);
+    expect(serialized).not.toContain(DEVICE_TOKEN);
+    expect(serialized).not.toContain(OTP_TOKEN);
   });
 });

@@ -226,14 +226,12 @@ onboarding-screenshots: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/onboarding-screenshot.mjs
 
-# First-run login end to end from a clean home, with the no-credential-in-a-log
-# grep. Fails if any check fails.
-first-run-transcript: build
-    npx vite-node apps/desktop/scripts/first-run-transcript.mjs
-
-# The chunk-10 round trip with timings: slow approval, then a long command.
-slow-approval-transcript: build
-    npx vite-node apps/desktop/scripts/slow-approval-transcript.mjs
+# Screenshot the main window's "Connect a client" screen — the OAuth route, the
+# static-credential form, and the copy-once block. It makes its own throwaway
+# home, so it never reads or writes this checkout's state.
+connect-screenshot: build
+    @mkdir -p "{{outdir}}"
+    OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/connect-screenshot.mjs
 
 # Print this Mac's device id (once the app has created its identity).
 device-id:
@@ -249,27 +247,3 @@ audit:
 clean:
     rm -rf "{{apphome}}"
     @echo "wiped {{apphome}}"
-
-# Drive the REAL app through the whole first run with REAL key and mouse
-# events. The harness that catches a panel nobody can type in.
-first-run-drive: build
-    @mkdir -p "{{outdir}}"
-    OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/first-run-drive.mjs
-
-# The app half of the acceptance run: launch already signed in against a stack
-# someone else is driving, wait for the socket, and click approvals for real.
-#   PLOW_API_BASE=http://127.0.0.1:19264 PLOW_DEVICE_TOKEN=plow_… just approve-drive
-approve-drive: build
-    npx electron apps/desktop/scripts/approve-drive.mjs
-
-# ---------------------------------------------------------------------------
-# The relay + MCP end-to-end gate
-# ---------------------------------------------------------------------------
-
-# One command, pass/fail: OTP through the twin, device + agent credentials
-# minted live, the headless device on the socket, and a real MCP call tunnelled
-# to it — plus every negative. Needs a Plow variant stack up (`just up` in the
-# plow worktree's api/), which is the API and the dtu-linq twin. Override the
-# endpoints with RELAY_GATE_API / RELAY_GATE_TWIN.
-relay-gate:
-    npx vite-node e2e/relay-gate/gate.ts

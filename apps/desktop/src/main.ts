@@ -37,6 +37,8 @@ import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
+import { ConnectClient } from "./connectClient.js";
+import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
@@ -111,6 +113,7 @@ let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
+let connectClient: ConnectClient | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 
@@ -305,9 +308,14 @@ function createMainWindow(): void {
   void mainWindow.loadFile(path.join(rendererDir, "index.html"));
   // Persist size + position so relaunches match. 'resized'/'moved' fire once
   // after the gesture ends, so no debounce is needed.
+  //
+  // Bound to THIS window rather than to the module global: the gate clears the
+  // global before it closes the window on sign-out, and a persist that reads
+  // the global would find null there and quietly stop saving bounds.
+  const win = mainWindow;
   const persist = () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    const b = mainWindow.getBounds();
+    if (win.isDestroyed()) return;
+    const b = win.getBounds();
     const settings = loadSettings(home);
     settings.windowBounds = b;
     saveSettings(home, settings);
@@ -315,8 +323,10 @@ function createMainWindow(): void {
   mainWindow.on("resized", persist);
   mainWindow.on("moved", persist);
   mainWindow.on("close", persist);
+  // Only if it is still the current one: 'closed' can arrive after the gate has
+  // already dropped the reference and opened a replacement.
   mainWindow.on("closed", () => {
-    mainWindow = null;
+    if (mainWindow === win) mainWindow = null;
   });
 }
 
@@ -416,10 +426,15 @@ function signOut(): void {
   settings.mcpUrl = "";
   saveSettings(home, settings);
   onboarding?.reset();
+  // Connect-a-client holds the old account's state too — possibly a shown-once
+  // credential still on screen, or a mint in flight.
+  connectClient?.signedOut();
+  // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
+  // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots the renderer, which calls `begin` and mints the code the
   // activation screen needs. `begin` covers the already-open case; it is
   // idempotent, so between them exactly one code is minted.
-  openOnboardingWindow();
+  gate.sync();
   void onboarding?.begin();
 }
 
@@ -428,6 +443,15 @@ ipcMain.handle("settings:signOut", async () => {
   await startRelay();
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
+
+// MARK: IPC for "Connect a client" (main window)
+//
+// A pure read, like `onboarding:get` and for the same reason: the renderer
+// re-reads on every change notification, so a getter that notifies is an
+// unbroken re-render loop.
+ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
+ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
+ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());
 
 // MARK: IPC for the first-run setup window
 
@@ -455,10 +479,11 @@ ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding
 ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
 ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
 ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.submitCode(code));
-ipcMain.handle("onboarding:createAgent", async (_e, name: string) => onboarding?.createAgent(name));
-ipcMain.handle("onboarding:dismissAgent", async () => onboarding?.dismissAgent());
+// The last step of the wizard. It does not just close the setup window — it
+// hands the user over to the app, which is the whole point of the gate: the
+// main window has not existed until now.
 ipcMain.handle("onboarding:finish", async () => {
-  onboardingWindow?.close();
+  gate.sync();
 });
 ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
@@ -572,13 +597,14 @@ function notifyRenderer(channel: string): void {
 }
 
 /**
- * The first-run setup window: show a code → the user texts it → connected, and
- * where "create an agent" lives afterwards. Opened automatically when this Mac
- * holds no credential, and on demand from Settings.
+ * The first-run setup window: show a code → the user texts it → connected.
+ * While this Mac holds no credential it is the ONLY window there is — see
+ * `windowGate.ts`. It is also openable from Settings once signed in.
  */
 function openOnboardingWindow(): void {
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {
     onboardingWindow.show();
+    onboardingWindow.focus();
     return;
   }
   onboardingWindow = new BrowserWindow({
@@ -594,12 +620,43 @@ function openOnboardingWindow(): void {
       sandbox: true,
     },
   });
+  const win = onboardingWindow;
   onboardingWindow.on("closed", () => {
-    onboardingWindow = null;
+    if (onboardingWindow === win) onboardingWindow = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
+    // Closing the gate quits; closing the confirmation behind it hands over to
+    // the app, the same as Continue. See WindowGate.setupClosed.
+    gate.setupClosed();
   });
   void onboardingWindow.loadFile(path.join(rendererDir, "onboarding.html"));
 }
+
+/**
+ * The login gate. Every path that changes whether this Mac holds a credential —
+ * launch, the end of the wizard, sign-out, a credential the relay refuses —
+ * ends in `gate.sync()`, and nothing else decides which window is open.
+ */
+const gate = new WindowGate({
+  hasCredential: () => loadSettings(home).relayCredential.trim().length > 0,
+  isMainOpen: () => !!mainWindow && !mainWindow.isDestroyed(),
+  isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
+  openMain: () => createMainWindow(),
+  openSetup: () => openOnboardingWindow(),
+  // Drop the reference before closing, so `isMainOpen`/`isSetupOpen` answer
+  // truthfully straight away: 'closed' is not guaranteed to have fired by the
+  // time `close()` returns.
+  closeMain: () => {
+    const win = mainWindow;
+    mainWindow = null;
+    if (win && !win.isDestroyed()) win.close();
+  },
+  closeSetup: () => {
+    const win = onboardingWindow;
+    onboardingWindow = null;
+    if (win && !win.isDestroyed()) win.close();
+  },
+  quit: () => app.quit(),
+});
 
 /**
  * (Re)start the outbound relay connection from saved settings. Stopping first
@@ -676,6 +733,13 @@ app.whenReady().then(async () => {
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
 
+  connectClient = new ConnectClient({
+    api: new PlowApi(apiBaseUrl),
+    home,
+    isConnected: () => connected,
+    onChange: () => notifyRenderer("connect:changed"),
+  });
+
   // Only a packaged install updates: a from-source run has no app-update.yml
   // (and Squirrel.Mac could not swap a checkout anyway), so worktree instances
   // never poll the feed. Nothing here is modal: a downloaded update surfaces
@@ -725,7 +789,6 @@ app.whenReady().then(async () => {
   }
   setupAppMenu();
 
-  createMainWindow();
   setupTray();
   // Swap the plain artwork set at startup for the DEV-ribboned version, so a
   // from-source Dock icon can't be mistaken for the packaged install. Purely
@@ -736,12 +799,15 @@ app.whenReady().then(async () => {
       (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
     );
   }
-  // A Mac with no credential cannot do anything until it has one, so first run
-  // opens straight into login rather than an empty audit log.
-  if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
+  // The gate decides what opens. A Mac with no credential cannot do anything
+  // until it has one, so it gets the setup window and nothing else — not the
+  // main window with a setup window floating beside it.
+  gate.sync();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    // Whichever window is the right one — never the main window on a Mac that
+    // is not signed in.
+    gate.sync();
   });
 });
 
@@ -778,7 +844,9 @@ function refreshTray(): void {
   if (!tray) return;
   const state = updates?.state();
   const menu = Menu.buildFromTemplate([
-    { label: "Open Domo", click: () => createMainWindow() },
+    // Through the gate, so the tray cannot hand back a main window this Mac is
+    // not entitled to.
+    { label: "Open Domo", click: () => gate.sync() },
     // Update items only when an updater exists (packaged runs) — a dead menu
     // item in a from-source run would just be a lie.
     ...(updates
@@ -804,7 +872,10 @@ function refreshTray(): void {
  */
 function checkForUpdatesFromMenu(): void {
   updates?.checkNow();
-  createMainWindow();
+  // Through the gate: a Mac that is not signed in has no main window to show
+  // the outcome in, and must not be given one from here. `mainWindow` is null
+  // in that case and the send below is a no-op.
+  gate.sync();
   const send = () => mainWindow?.webContents.send("ui:showSettings");
   if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
   else send();

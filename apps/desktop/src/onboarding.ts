@@ -13,15 +13,21 @@
  * Electron and rendered offscreen for screenshots.
  *
  * **Nothing here puts a credential in a message.** `state()` is what the
- * sandboxed renderer sees; the only secrets it ever carries are the two the user
- * is meant to read — the activation display code, and a freshly minted *agent*
- * credential shown exactly once. The activation *secret* and the device
- * credential never appear in it at all.
+ * sandboxed renderer sees, and the only secret it ever carries is the one the
+ * user is meant to read: the activation display code. The activation *secret*
+ * and the device credential never appear in it at all.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
-export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected" | "agent";
+/**
+ * The wizard ends at `connected`, a confirmation with one button into the app.
+ *
+ * There is no step for minting a client credential. Logging in happens once per
+ * Mac; connecting a client happens once per client, is repeatable and is
+ * optional — see `connectClient.ts`, which is reached from the main window.
+ */
+export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected";
 
 /** Codes are 8 digits with a 5-minute life (`api/plow/auth_routes/otp.py`). */
 export const CODE_LENGTH = 8;
@@ -76,14 +82,6 @@ export interface OnboardingActivation {
   pollUntil: number;
 }
 
-export interface OnboardingAgent {
-  name: string;
-  /** Shown once. The app does not store it and cannot show it again. */
-  token: string;
-  /** A ready-to-paste MCP client config containing that token. */
-  config: string;
-}
-
 export interface OnboardingState {
   step: OnboardingStep;
   phone: string;
@@ -100,7 +98,6 @@ export interface OnboardingState {
   accountUid: string;
   mcpUrl: string;
   connected: boolean;
-  agent: OnboardingAgent | null;
 }
 
 export interface OnboardingDeps {
@@ -135,11 +132,18 @@ export class Onboarding {
   /** Bumped whenever an activation stops being the one we care about. A poll
    * loop whose generation is stale returns instead of writing state. */
   private pollGeneration = 0;
-  private agent: OnboardingAgent | null = null;
+  /**
+   * The mint in flight, if any. Held so a second request joins it rather than
+   * burning a second code — see `newActivationCode`. `pendingMintId` says which
+   * flight it is, so a finishing mint only drops the handle if it is its own.
+   */
+  private pendingMint: Promise<OnboardingState> | null = null;
+  private pendingMintId = 0;
+  private mints = 0;
 
   constructor(private readonly deps: OnboardingDeps) {
-    // A Mac that already holds a credential is past all of this; it opens on the
-    // connected screen, which is also where "create an agent" lives.
+    // A Mac that already holds a credential is past all of this; it opens on
+    // the connected screen, whose one button hands over to the app.
     this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
   }
 
@@ -156,7 +160,6 @@ export class Onboarding {
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
-      agent: this.agent,
     };
   }
 
@@ -166,7 +169,10 @@ export class Onboarding {
    * Mint the code the user texts, and start polling immediately.
    *
    * Idempotent: opening the window twice must not burn a second code and leave
-   * two live activations on the account.
+   * two live activations on the account. The check below covers a second call
+   * once a code is on screen; the window *before* that — where the API has been
+   * asked and has not answered — is covered by the single flight in
+   * `newActivationCode`, which is the only thing here that mints.
    */
   async begin(): Promise<OnboardingState> {
     if (this.step !== "activate" || this.activation) return this.publish();
@@ -183,27 +189,54 @@ export class Onboarding {
    * pointless second code into an instant sign-in.
    */
   async newActivationCode(): Promise<OnboardingState> {
+    // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
+    // account — so a second mint nobody is shown is a live credential loose on
+    // the account, and the screen can only ever show one of them. Two callers
+    // race here for real: `settings:signOut` calls `begin` and, in the same
+    // breath, opens the setup window whose renderer calls `begin` on boot.
+    // `activation` is not set until the API answers, so on a slow
+    // `/v1/auth/activate` both sail past that check. Joining the flight in
+    // progress is the only place this can be closed.
+    if (this.pendingMint) return this.pendingMint;
+
     const previous = this.activationSecret;
     this.cancelPolling();
-    return this.run(async () => {
-      if (previous && (await this.tryFinish(previous))) return;
-      this.activation = null;
-      this.activationSecret = null;
-      this.activationStale = false;
-      this.step = "activate";
-      const created = await this.deps.api.createActivation(this.deps.deviceName);
-      this.activationSecret = created.activationSecret;
-      this.activation = {
-        displayCode: created.displayCode,
-        sendTo: created.sendTo,
-        smsBody: activationSmsBody(created.displayCode),
-        smsUrl: activationSmsUrl(created.sendTo, created.displayCode),
-        pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS,
-      };
-      // Polling starts here, not when the user taps the button: a user who
-      // types the message by hand never taps it, and must still get in.
-      this.startPolling(created.activationSecret);
+    const mintId = ++this.mints;
+    // The handle is dropped inside the body rather than by chaining `.finally`
+    // onto the result: a chained one adds a turn before the caller resumes, and
+    // `wait` here is injectable — under a test clock that extra turn lets the
+    // detached poll loop run ahead of the caller. Same guarantee, no new tick.
+    const flight = this.run(async () => {
+      try {
+        if (previous && (await this.tryFinish(previous))) return;
+        this.activation = null;
+        this.activationSecret = null;
+        this.activationStale = false;
+        this.step = "activate";
+        const created = await this.deps.api.createActivation(this.deps.deviceName);
+        this.activationSecret = created.activationSecret;
+        this.activation = {
+          displayCode: created.displayCode,
+          sendTo: created.sendTo,
+          smsBody: activationSmsBody(created.displayCode),
+          smsUrl: activationSmsUrl(created.sendTo, created.displayCode),
+          pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS,
+        };
+        // Polling starts here, not when the user taps the button: a user who
+        // types the message by hand never taps it, and must still get in.
+        this.startPolling(created.activationSecret);
+      } finally {
+        // Only if this flight still owns the handle: nothing else clears it,
+        // but a later mint may already own it by the time this one lands.
+        if (this.pendingMintId === mintId) {
+          this.pendingMint = null;
+          this.pendingMintId = 0;
+        }
+      }
     });
+    this.pendingMint = flight;
+    this.pendingMintId = mintId;
+    return flight;
   }
 
   /**
@@ -426,30 +459,28 @@ export class Onboarding {
   // MARK: after either path
 
   /**
-   * Mint an agent credential with the *device* credential — the login session
-   * is long gone by now, and `relay:device` is allowed to do exactly this.
+   * Return to the state a fresh launch would be in.
+   *
+   * The opening step is decided once, in the constructor, and this object
+   * outlives a sign-out. Without this the window keeps rendering the connected
+   * screen against empty settings — "Signed in — connecting…", a blank
+   * endpoint, a blank account — and offers a Continue button into a main window
+   * the gate has just taken away. Quitting and relaunching was the only escape,
+   * which is not a thing to ask of someone who just clicked Sign Out.
+   *
+   * The step is re-derived from settings rather than forced to `activate`, so
+   * this is honest whichever way the credential went.
    */
-  async createAgent(name: string): Promise<OnboardingState> {
-    const trimmed = (name ?? "").trim();
-    if (!trimmed) return this.fail("Give the agent a name.");
-    const settings = this.settings();
-    if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
-    return this.run(async () => {
-      const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed);
-      this.agent = {
-        name: minted.name || trimmed,
-        token: minted.token,
-        config: agentConfig(settings.mcpUrl, minted.token),
-      };
-      this.step = "agent";
-    });
-  }
-
-  /** Drop the shown-once credential from memory and go back. */
-  dismissAgent(): OnboardingState {
-    this.agent = null;
-    this.step = "connected";
+  reset(): OnboardingState {
+    this.cancelPolling();
+    this.activation = null;
+    this.activationSecret = null;
+    this.activationStale = false;
+    this.phone = "";
+    this.codeExpiresAt = null;
     this.message = "";
+    this.busy = false;
+    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
     return this.publish();
   }
 
@@ -470,30 +501,6 @@ export class Onboarding {
    * settings and the live connection flag, which is all `refresh()` was
    * documented to do. Publishing belongs to the methods that change something.
    */
-
-  /**
-   * Return to the state a fresh launch would be in.
-   *
-   * Signing out blanks the credential in settings, but `step` is decided once
-   * in the constructor — so without this the window keeps rendering the
-   * connected screen against empty settings ("Signed in — connecting…", blank
-   * endpoint, blank account) and never offers a way back. Quitting and
-   * relaunching the app was the only escape, which is not a thing to ask of
-   * someone who just clicked Sign Out.
-   */
-  reset(): OnboardingState {
-    this.cancelPolling();
-    this.activation = null;
-    this.activationSecret = null;
-    this.activationStale = false;
-    this.agent = null;
-    this.phone = "";
-    this.message = "";
-    this.codeExpiresAt = null;
-    this.busy = false;
-    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
-    return this.publish();
-  }
 
   private async completeOtpLogin(code: string): Promise<void> {
     let otpToken: string;
@@ -585,24 +592,6 @@ export class Onboarding {
     this.deps.onChange?.();
     return this.state();
   }
-}
-
-/** What to paste into an MCP client. The credential is a header, never part of
- * the URL — a URL ends up in shell history, logs and stored registrations. */
-export function agentConfig(mcpUrl: string, token: string): string {
-  return JSON.stringify(
-    {
-      mcpServers: {
-        domo: {
-          type: "http",
-          url: mcpUrl,
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      },
-    },
-    null,
-    2,
-  );
 }
 
 function messageOf(error: unknown): string {
