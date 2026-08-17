@@ -483,7 +483,7 @@ function copyRow(value, label) {
  *
  * A card exists only for a client whose link lands the user where they paste;
  * see `CLIENT_CONNECTOR_URLS` in main.ts. It is a shortcut past the clicks, not
- * the supported-client list — the step's copy names the others.
+ * the supported-client list — the group's subtitle names the others.
  *
  * From the designer's mock, minus the brand logo: an approximated or borrowed
  * mark is worse than none, so this is the name and the mock's ↗ until real
@@ -498,14 +498,13 @@ function clientCard(key, name) {
   return card;
 }
 
-/** A numbered step: the number, a title, and whatever the step needs. */
-function step(n, title, body) {
-  return el("div", { class: "item step" }, [
-    el("div", { class: "row stephead" }, [
-      el("span", { class: "stepnum", text: String(n) }),
-      el("div", { class: "group-title", text: title }),
-    ]),
-    ...body.filter(Boolean),
+/** One titled card: a prominent title, an optional description, then the body.
+    Shared by Settings' groups and the Agents pane, which is one of them. */
+function group(title, desc, body) {
+  return el("div", { class: "item" }, [
+    el("div", { class: "group-title", text: title }),
+    desc ? el("p", { class: "faint group-desc", text: desc }) : null,
+    ...body,
   ]);
 }
 
@@ -544,7 +543,8 @@ function connectNodes(s, redraw) {
   // the server will not hand it back.
   const shown = s.credential
     ? [
-        step(3, `Paste this into ${s.credential.name}`, [
+        el("div", { class: "item" }, [
+          el("div", { class: "group-title", text: `Paste this into ${s.credential.name}` }),
           el("p", { class: "warn conn-note", text: "Copy it now — it is shown once and cannot be shown again." }),
           copyRow(s.credential.config, "Copy Config"),
           el("div", { class: "row conn-actions" }, [
@@ -563,8 +563,9 @@ function connectNodes(s, redraw) {
       ]
     : [];
 
-  // The fallback, behind a quiet link: OAuth is the recommended route and a
-  // long-lived credential is the thing you reach for when it is not available.
+  // The alternative to the whole flow, behind a quiet link: the OAuth handshake
+  // above is the route, and a long-lived credential is what you reach for when
+  // a client cannot do it.
   let fallback = [];
   if (!s.credential) {
     if (!staticOpen) {
@@ -593,19 +594,20 @@ function connectNodes(s, redraw) {
     }
   }
 
+  // One flow, not a checklist: copy the URL, paste it in your client, done.
+  // Signing in is NOT a step — it is what the client does on first connect, so
+  // it is said once as reassurance in the same breath as the paste, and never
+  // as an instruction to carry out. The static credential comes last because it
+  // is the alternative to all of this, not the end of it.
   const box = el("div", { class: "connect" }, [
-    step(1, "Add this MCP server to your client", [
-      copyRow(s.mcpUrl || "—"),
-      // One card. The mock's two-up grid is not kept for a single card — a
-      // half-empty grid reads as a tile that failed to load.
-      el("div", { class: "client-cards" }, [clientCard("claude", "Claude")]),
-    ]),
-    step(2, "Sign in with OAuth", [
-      el("p", {
-        class: "faint conn-note",
-        text: "Your client walks you through Plow sign-in the first time it connects to that URL. Recommended: there is no token to copy, store, or leak.",
-      }),
-    ]),
+    copyRow(s.mcpUrl || "—"),
+    el("p", {
+      class: "faint flow-note",
+      text: "Paste it into your client's custom MCP server setting. Your client signs in with OAuth the first time it connects — no token to copy, store, or rotate.",
+    }),
+    // One card. The mock's two-up grid is not kept for a single card — a
+    // half-empty grid reads as a tile that failed to load.
+    el("div", { class: "client-cards" }, [clientCard("claude", "Claude")]),
     ...shown,
     ...fallback,
     note,
@@ -616,6 +618,43 @@ function connectNodes(s, redraw) {
   for (const b of box.querySelectorAll("button")) if (s.busy) b.disabled = true;
   return [box];
 }
+/**
+ * The mounted Agents pane, while that tab is up. Holds the one refresh
+ * `connect:changed` calls, so a mint or a dismissal redraws the flow and
+ * nothing else.
+ */
+let agentsMounted = null;
+
+/**
+ * The Agents tab — first in the bar, and a place rather than an action.
+ *
+ * It was a "Connect a client" tab once, and that was the problem: a setup verb
+ * makes an odd permanent home. Agents is what has access to this Mac, and
+ * giving something access is one thing you do here. The roster of what already
+ * has access is meant to join it in this pane once the app can ask for it.
+ */
+async function renderAgents() {
+  const connectBox = el("div");
+  const refreshConnect = async () => {
+    const s = await window.domo.connectGet();
+    connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
+  };
+  await refreshConnect();
+  agentsMounted = { refreshConnect };
+
+  // `settings` alongside `agents` on purpose: the group card, its title and its
+  // description are the same furniture Settings uses, and this pane is one of
+  // those groups that outgrew the pane it was in.
+  view.replaceChildren(el("div", { class: "panel agents settings" }, [
+    group(
+      // The designer's title and subtitle.
+      "Connect an MCP client",
+      "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
+      [connectBox],
+    ),
+  ]));
+}
+
 /** One honest line about the relay link, from what the main process reports. */
 function relayStatusText(relay) {
   if (!relay.hasCredential) return "Not signed in.";
@@ -765,13 +804,6 @@ async function renderSettings() {
   // A stable container the account rows are drawn into, so signing in or out
   // rewrites its contents rather than the pane.
   const accountBox = el("div", { class: "account" });
-  // The connect-a-client group's body, in its own stable container for the same
-  // reason: a status change redraws it without touching the API-key field.
-  const connectBox = el("div");
-  const refreshConnect = async () => {
-    const s = await window.domo.connectGet();
-    connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
-  };
   const refreshAccount = async () => {
     const relay = await window.domo.relayGet();
     relayNote.textContent = relayStatusText(relay);
@@ -796,7 +828,6 @@ async function renderSettings() {
     );
   };
   await refreshAccount();
-  await refreshConnect();
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
@@ -960,32 +991,9 @@ async function renderSettings() {
       await refreshAccount();
       applyInference(await window.domo.inferenceGet());
     },
-    // What `connect:changed` calls. Separate from `refresh` so a relay
-    // reconnect and a credential mint each redraw only what they changed.
-    refreshConnect,
   };
 
-  // Build one settings group: a prominent title, an optional description, then
-  // the group's body nodes.
-  const group = (title, desc, body) =>
-    el("div", { class: "item" }, [
-      el("div", { class: "group-title", text: title }),
-      desc ? el("p", { class: "faint group-desc", text: desc }) : null,
-      ...body,
-    ]);
-
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    // First, deliberately: this is what someone opens Settings to do. The
-    // account below is what makes it possible, not what you came for.
-    group(
-      // The designer's title and subtitle. The subtitle replaces a paragraph
-      // the sous invented from a dictation that cut off mid-sentence — it
-      // answers the same question in the designer's words, and names more of
-      // the clients that work.
-      "Connect an MCP client",
-      "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
-      [connectBox],
-    ),
     group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
@@ -1013,7 +1021,8 @@ async function renderSettings() {
 }
 
 function render() {
-  if (currentTab === "audit") renderAudit();
+  if (currentTab === "agents") renderAgents();
+  else if (currentTab === "audit") renderAudit();
   else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
   else if (currentTab === "vault") renderVault();
@@ -1022,11 +1031,12 @@ function render() {
 
 function selectTab(tab) {
   currentTab = tab;
-  // Leaving Settings closes the fallback: it is a disclosure, and coming back
-  // to a form you did not open is a surprise.
-  if (tab !== "settings") staticOpen = false;
+  // Leaving Agents closes the fallback: it is a disclosure, and coming back to
+  // a form you did not open is a surprise.
+  if (tab !== "agents") staticOpen = false;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
+  if (tab !== "agents") agentsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
@@ -1052,9 +1062,11 @@ window.domo.onStatusChanged(() => {
   // person typing a key did not ask for and must not be punished by — so this
   // updates the account and provider nodes and leaves the field alone.
   if (currentTab === "settings") settingsMounted?.refresh();
+  // Signing in or out changes whether the flow has a URL to show at all.
+  if (currentTab === "agents") agentsMounted?.refreshConnect();
 });
-// Minting or dismissing a credential redraws only the connect subsection.
-window.domo.onConnectChanged(() => { settingsMounted?.refreshConnect(); });
+// Minting or dismissing a credential redraws only the Agents flow.
+window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
   if (currentTab === "settings") renderSettings();
@@ -1067,7 +1079,7 @@ async function boot() {
   refreshStatus();
   refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
-  const known = ["goals", "audit", "rules", "vault", "settings"];
+  const known = ["agents", "goals", "audit", "rules", "vault", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
 }
 boot();

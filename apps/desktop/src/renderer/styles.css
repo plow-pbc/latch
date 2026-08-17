@@ -547,27 +547,23 @@ textarea.text { min-height: 70px; resize: vertical; }
   color: var(--fg);
 }
 
-/* ---- Connect a client -----------------------------------------------------
-   The FIRST settings group, so every rule here is scoped under `.settings` —
-   the steps are no longer a panel of their own. Numbered steps, one inset row
-   each. The URL and the config block reuse `.copyrow`/`.copybox` from the setup
-   window — it is the same job, and the user should recognise it. */
-/* Steps sit inside the group's card already, so they drop the card chrome and
-   sit on an inset surface instead — nested cards read as a mistake. */
+/* ---- Connect an MCP client ------------------------------------------------
+   The Agents pane, which carries `.settings` alongside `.agents` because it
+   reuses the same group card — so every rule here stays scoped under it.
+   One continuous flow — no numbered steps — with the URL and the config block
+   reusing `.copyrow`/`.copybox` from the setup window: it is the same job, and
+   the user should recognise it. */
+/* The blocks that remain (the static-credential form, the shown-once
+   credential) sit inside the group's card already, so they drop the card chrome
+   for an inset surface — nested cards read as a mistake. */
 .settings .connect .item {
   background: var(--bg); box-shadow: none; padding: 12px 14px; margin-bottom: 10px;
 }
 .settings .connect .item:last-child { margin-bottom: 0; }
-.settings .connect .stephead { align-items: baseline; gap: 10px; margin-bottom: 0; }
-.settings .connect .stephead .group-title {
-  flex: 1; margin: 0 0 10px; font-size: 13px; padding-bottom: 8px;
-}
-.settings .connect .stepnum {
-  flex: none; width: 22px; height: 22px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--sel); color: var(--blue-fg);
-  font-size: 12px; font-weight: 600;
-}
+/* One flow, so the rhythm is vertical spacing rather than numbered cards: the
+   URL, the line that says what to do with it, the client shortcut. */
+.settings .connect .flow-note { margin: 12px 0 0; }
+.settings .connect .item .group-title { font-size: 13px; margin: 0 0 10px; padding-bottom: 8px; }
 /* Client card — the designer's mock, adapted: a rounded panel with the client
    name and an external-link arrow. The mock's two-up grid is NOT kept, because
    there is one card: a card stretched across the row, or sat in half a grid,
@@ -588,7 +584,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .settings .connect .client-name { font-weight: 600; }
 .settings .connect .client-arrow { color: var(--faint); font-size: 13px; }
 .settings .connect .conn-actions { margin-top: 14px; }
-.settings .connect .item.quiet { padding: 12px 14px; }
+/* The alternative to the flow, not the next thing in it — so it gets air above
+   it rather than sitting flush against the client card. */
+.settings .connect .item.quiet { padding: 12px 14px; margin-top: 18px; }
 /* A quiet secondary route — present, never competing with what's above it. */
 .settings .connect .linkbtn {
   background: none; border: none; padding: 0;

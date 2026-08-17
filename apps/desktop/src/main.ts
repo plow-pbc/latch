@@ -375,10 +375,10 @@ ipcMain.handle("rules:remove", async (_e, key: string) => {
 });
 ipcMain.handle("ui:getTab", async () => {
   const tab = loadSettings(home).selectedTab;
-  // "connect" was a tab until it became a subsection of Settings > Plow
-  // Account. Anyone who left the app on it gets taken to where that content
-  // now lives, rather than silently landing on the default tab.
-  return tab === "connect" ? "settings" : tab;
+  // "connect" was this tab's key before the content went to Settings and came
+  // back as "agents". Anyone who left the app on it lands where that content
+  // lives now, rather than silently on the default tab.
+  return tab === "connect" ? "agents" : tab;
 });
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);

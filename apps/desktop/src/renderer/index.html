@@ -17,12 +17,15 @@
       <span class="status-dot" id="statusDot"></span>
       <span class="faint" id="statusText">…</span>
       <div class="seg" id="seg">
+        <!-- First, and a place rather than an action: Agents is what has access
+             to this Mac. The tab this replaces was called "Connect a client",
+             and a setup verb made an odd permanent home; giving something
+             access is one thing you do here, and the roster of what already has
+             it belongs in the same pane once the app can ask for it. -->
+        <button data-tab="agents">Agents</button>
         <button data-tab="goals">Goals</button>
         <button data-tab="audit" class="active">Audit</button>
         <button data-tab="rules">Rules</button>
-        <!-- Connecting a client is a subsection of Settings > Plow Account, not
-             a tab: it is one of the two ways something reaches this Mac, and it
-             reads as a choice only next to the account that is the other way. -->
         <button data-tab="vault">Vault</button>
         <button data-tab="settings">Settings</button>
       </div>

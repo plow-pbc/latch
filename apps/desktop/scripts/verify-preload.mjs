@@ -354,40 +354,28 @@ app.whenReady().then(async () => {
     })()`),
   };
 
-  // Connect a client is Settings' FIRST group now, not a tab of its own — so
-  // the probe reaches it through Settings, and also checks the ordering rather
-  // than merely that the text is somewhere on the pane.
+  // Connecting a client lives in the Agents tab — first in the bar — and no
+  // longer in Settings at all. Two checks, one per pane: Settings must be clean
+  // of it, and Agents must render the whole flow.
   //
   // Sign back in first: the optimistic-mode repro above deliberately left the
-  // account signed OUT, and this subsection is about a signed-in Mac (it is
-  // what `connect:get` stubs). Probing it signed out would assert nothing.
+  // account signed OUT, and this flow is about a signed-in Mac (it is what
+  // `connect:get` stubs). Probing it signed out would assert nothing.
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_probe_credential" });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await new Promise((r) => setTimeout(r, 300));
-  const connect = await win.webContents.executeJavaScript(`(${() => {
-    const text = document.body.innerText;
+  const settingsPane = await win.webContents.executeJavaScript(`(${() => {
     const titles = [...document.querySelectorAll(".settings .item > .group-title")].map((t) =>
       t.textContent.trim(),
     );
-    const group = [...document.querySelectorAll(".settings .item")].find(
-      (i) => i.querySelector(".group-title")?.textContent.trim() === "Connect an MCP client",
-    );
     return {
-      showsUrl: text.includes("https://api.plow.co/v1/relay/devices/u_probe/mcp"),
-      showsOauth: text.includes("Sign in with OAuth"),
-      offersFallback: text.includes("Can't use OAuth"),
-      // The move itself: the content is its own FIRST group, Plow Account
-      // follows it, and the tab it used to have is gone from the titlebar.
-      inOwnGroup: !!group?.querySelector(".connect"),
-      groupOrder: titles.slice(0, 2).join(" > ") === "Connect an MCP client > Plow Account",
+      // Settings went back to what it was: Plow Account first, and not a trace
+      // of the connect flow — no stub, no duplicate, no pointer.
+      firstGroupIsAccount: titles[0] === "Plow Account",
+      noConnectBlock: !document.querySelector("#view .connect"),
+      noConnectText: !document.body.innerText.includes("Connect an MCP client"),
       groupTitles: titles,
-      noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
-      // The client shortcut. Exactly one: a card exists only for a client whose
-      // link lands the user where they paste, and ChatGPT has no such link.
-      clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
-        n.textContent.trim(),
-      ),
       // The probe's account IS signed in, so Sign In must not be on screen.
       // `hidden` alone does not hide a `display: inline-flex` button, and the
       // result is a Sign In sitting beside Sign Out on a live account.
@@ -396,6 +384,42 @@ app.whenReady().then(async () => {
       ),
     };
   }})()`);
+
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await new Promise((r) => setTimeout(r, 300));
+  const connect = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    const tabs = [...document.querySelectorAll("#seg button")].map((b) => b.dataset.tab);
+    return {
+      showsUrl: text.includes("https://api.plow.co/v1/relay/devices/u_probe/mcp"),
+      // OAuth is no longer a numbered step — it is a reassurance inside the
+      // flow's own prose. Same coverage, retargeted at the sentence.
+      showsOauth: text.includes("signs in with OAuth the first time it connects"),
+      // One flow: no numbered step markup anywhere in the pane.
+      noSteps: !document.querySelector("#view .stepnum, #view .step"),
+      offersFallback: text.includes("Can't use OAuth"),
+      // The move itself: its own tab, FIRST in the bar, under the new key.
+      agentsTabFirst: tabs[0] === "agents",
+      tabOrder: tabs,
+      hasAgentsPane: !!document.querySelector("#view .panel.agents .connect"),
+      showsTitle: text.includes("Connect an MCP client"),
+      noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
+      // The client shortcut. Exactly one: a card exists only for a client whose
+      // link lands the user where they paste, and ChatGPT has no such link.
+      clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
+        n.textContent.trim(),
+      ),
+    };
+  }})()`);
+
+  // The Agents pane gets an image of its own, for the same reason Settings does:
+  // every UI change gets one, and this one moved panes. Two frames first, so the
+  // capture is what was just asserted rather than the pane painted before it.
+  const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
 
   fs.rmSync(probeHome, { recursive: true, force: true });
 
@@ -451,12 +475,17 @@ app.whenReady().then(async () => {
   const ok =
     connect.showsUrl &&
     connect.showsOauth &&
+    connect.noSteps &&
     connect.offersFallback &&
-    connect.inOwnGroup &&
-    connect.groupOrder &&
+    connect.agentsTabFirst &&
+    connect.hasAgentsPane &&
+    connect.showsTitle &&
+    settingsPane.firstGroupIsAccount &&
+    settingsPane.noConnectBlock &&
+    settingsPane.noConnectText &&
+    settingsPane.noSignInWhileSignedIn &&
     connect.clientCards.join(",") === "Claude" &&
     connect.noConnectTab &&
-    connect.noSignInWhileSignedIn &&
     settings.hasAccountGroup &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
@@ -490,7 +519,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, connect, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

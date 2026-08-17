@@ -59,8 +59,8 @@ export interface Settings {
   accountUid: string;
   mcpUrl: string;
   /** The last-selected main-window tab, restored across launches. A stored
-   * "connect" predates that tab becoming a Settings subsection and is mapped
-   * to "settings" on read (`ui:getTab`) rather than rewritten on disk. */
+   * "connect" predates the Agents tab and is mapped to "agents" on read
+   * (`ui:getTab`) rather than rewritten on disk. */
   selectedTab: string;
   /** The main window's last size + position, restored across launches. */
   windowBounds?: WindowBounds;
