@@ -62,6 +62,36 @@ describe("settings storage", () => {
     expect(reloaded.mcpUrl).toBe("https://api.plow.co/v1/relay/devices/u_123/mcp");
   });
 
+  /**
+   * The default tab is the first launch's landing, and only that. Everything in
+   * this app is unreachable until a client can talk to this Mac, so a new home
+   * opens on Agents — and an existing one must not be dragged there, because
+   * the tab someone left the app on is theirs, not ours.
+   */
+  it("lands a new home on the Agents tab", () => {
+    expect(loadSettings(tempHome()).selectedTab).toBe("agents");
+  });
+
+  it("leaves a home that already chose a tab exactly where it was", () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.selectedTab = "audit";
+    saveSettings(home, settings);
+    expect(loadSettings(home).selectedTab).toBe("audit");
+  });
+
+  /** The one case that is NOT "keep what you chose": a file written before the
+   * field existed has nothing to keep, so it takes the new default. */
+  it("gives a settings file that predates the field the new default", () => {
+    const home = tempHome();
+    const file = path.join(home, "app/settings.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ relayCredential: "plow_sk_secret" }));
+    const settings = loadSettings(home);
+    expect(settings.selectedTab).toBe("agents");
+    expect(settings.relayCredential).toBe("plow_sk_secret");
+  });
+
   it("no longer carries a connection string or a certificate pin", () => {
     const home = tempHome();
     const settings = loadSettings(home);
