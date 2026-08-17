@@ -37,9 +37,13 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 connection-string/pinning concepts and pairing flow) has been removed. A Mac
 dials *out* to the Plow relay, which authenticates the calling agent and forwards
 MCP to `@domo/mcp-server`. Both halves of this side exist. **The relay itself
-does not** — different repository, not built — so everything here is verified
-against a stand-in speaking the same wire contract, and has never run against
-the real thing.
+does not** — different repository, not built — and the in-repo stand-in that
+used to verify this side against the wire contract has been deleted (head
+chef's call: a locally running plow API simulates plow). The scripts that drove
+a *live* stack went with it, so there is **no automated live-stack path either**
+— not here, not in CI. The relay leg is verified **by hand**: bring up a plow
+stack, run the app against it, drive it. `packages/relay-client/test` keeps only
+the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's
@@ -74,9 +78,15 @@ the real thing.
 
 ## Rules of the road
 
-- **Testing is a deliverable.** Every behavior must be reachable by
-  `npx vitest run` with no UI and no human. The scripted `HeadlessPolicy` exists
-  for this. Add tests with new behavior.
+- **Testing is a deliverable.** Every behavior that *can* be reached by
+  `npx vitest run` with no UI and no human must be. The scripted `HeadlessPolicy`
+  exists for this. Add tests with new behavior. Mocking is function- and
+  fixture-level only — a test that stands a server up is the kind that was just
+  removed, so anything needing one is a manual run instead.
+- **Never launch the app on this Mac.** Windows flash on the head chef's screen.
+  Electron runs — the app, the screenshot scripts, `verify-preload` — happen on
+  the M4:
+  `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md`.
 - **The audit log is the test oracle.** Assert on `audit.ndjson` events rather
   than internal state where possible. Keep events append-only and one-per-line.
 - **`fixtures/` is the frozen protocol spec.** The golden vectors (canonical

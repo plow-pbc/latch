@@ -144,7 +144,10 @@ pending when the app next starts is marked `abandoned` — the call it belonged 
 died with the process, so nothing can answer it, and the directory should not
 claim otherwise.
 
-`just slow-approval-transcript` prints the whole round trip with timings.
+That round trip used to be printed with timings by a transcript script; it and
+the rest of the stand-in-relay harnesses are gone (see
+[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md)). It is now exercised by
+running the app against a locally running plow API.
 
 Note how those two compose, because it is not what you would guess: a command
 that outruns the budget does **not** hand back a job handle directly. The budget
@@ -207,12 +210,19 @@ draws whatever state the main process hands it and owns no copy of its own.
   `GET /v1/relay/info` → mint the device credential → open the socket. Then
   "create an agent" is `POST /v1/relay/agents`, which the device credential may
   call.
-- **The OTP session is thrown away the moment the device credential exists.** It
-  carries `keys:manage` and `relay:*` — it can mint *any* credential on the
-  account — so the app holds it for the seconds it needs and revokes it. It is
-  never written to disk. (The revoke is best-effort: `DELETE /v1/api-keys/{id}`
-  requires `keys:manage` and refuses self-revoke, so it cannot succeed against
-  the API as it stands today.)
+- **The login session is retired server-side the moment the device credential
+  exists.** It carries `keys:manage` and `relay:*` — it can mint *any*
+  credential on the account — so the app holds it for the two calls it needs and
+  not one longer, and never writes it to disk. The retirement is **not** a
+  best-effort client-side revoke: `mintDeviceCredential` sends
+  `revoke_calling_session: true` on `POST /v1/relay/devices`
+  (`apps/desktop/src/plowApi.ts`), and the server retires the calling session in
+  the same transaction as the mint. So there is no client-side cleanup to get
+  wrong, no window where both credentials are live, and nothing for the app to
+  report when it fails — either the mint happened and the session is gone, or
+  neither did. (An earlier note here described a `DELETE /v1/api-keys/{id}` call
+  that could not succeed against its own key; that approach is not what the code
+  does.)
 - **`/otp/request` answers `200 {"ok": true}` for an unknown number, an
   unparseable number and a failed SMS send alike**, so it cannot be used to
   probe whether an account exists. The app therefore cannot tell "sent" from
@@ -233,19 +243,32 @@ draws whatever state the main process hands it and owns no copy of its own.
 Evidence, both reproducible and both failing loudly rather than quietly:
 
 ```
-just onboarding-screenshots   # all four screens, real window + real preload
-just first-run-transcript     # the flow end to end + the no-credential grep
+just onboarding-screenshots   # every Set Up screen, real window + real preload
+just connect-screenshot       # Connect a client, including the copy-once block
+npx vitest run                # the state machines, including the credential-never-in-state checks
 ```
+
+Launch anything Electron on the M4, not locally — see
+[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Integration coverage
 
 The `e2e/` suite booted real broker + device processes and was removed with the
-broker. `packages/relay-client/test` now covers the full path in process — an
-agent's MCP request in at the relay's agent leg, down a real WebSocket, through
-the MCP server, the policy engine and the sandbox, and back — against a stand-in
-relay built to the wire contract. **It has never been run against the real
-relay**, which does not exist yet. A harness that boots both for real is still
-outstanding.
+broker. `packages/relay-client/test` then covered the full path in process
+against a stand-in relay built to the wire contract — and that stand-in has now
+been deleted too, along with the drivers and the relay+MCP gate that ran against
+it (head chef's call: a locally running plow API already simulates plow).
+
+So there is **no automated integration coverage of the relay leg at all** today,
+and no automated live-stack path either — the two scripts that drove a real plow
+stack (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
+deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket, sends
+the auth frame, reconnects, or tunnels an MCP call. That whole path is verified
+**manually**: bring up a plow stack, run the app against it, drive it by hand.
+The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+
+What `packages/relay-client/test` still holds is the pure part of the wire
+contract — `stripHopByHop`, `Host` preservation, frame validation.
 
 ## Running the desktop app
 
