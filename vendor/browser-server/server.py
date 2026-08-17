@@ -284,10 +284,8 @@ def main():
         # A persistent context is handed over with a page ALREADY open, so
         # calling new_page() there leaves that first one abandoned: the owner
         # watches two windows and cannot tell which is being driven, and
-        # anything reading pages[0] drives the wrong one. Take the page that is
-        # already there; only make one when there is none (the Browser case).
-        existing = list(getattr(browser, "pages", None) or ())
-        page = existing[0] if existing else browser.new_page()
+        # anything reading pages[0] drives the wrong one.
+        page = browser.pages[0] if args.profile_dir else browser.new_page()
         session = Session(page)
 
         version = ""
