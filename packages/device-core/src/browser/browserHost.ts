@@ -42,6 +42,7 @@ export interface BrowserHostConfig {
   camoufoxInstallDir?: string | null;
   /** The app-scoped $HOME for the server (required with camoufoxInstallDir). */
   isolatedHome?: string;
+  /** Default window mode when a session does not ask for one (ensureReady). */
   headed?: boolean;
   audit?: (event: string, fields: { [k: string]: JSONValue }) => void;
   /** Cold start is ~30 s (Camoufox unpack + launch); default 90 s. */
@@ -69,10 +70,20 @@ export class BrowserHost {
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
 
-  constructor(private readonly cfg: BrowserHostConfig) {}
+  /** Window mode of the current (or next) browser — a session may switch it. */
+  private headedNow: boolean;
+
+  constructor(private readonly cfg: BrowserHostConfig) {
+    this.headedNow = cfg.headed === true;
+  }
 
   get running(): boolean {
     return this.child !== null;
+  }
+
+  /** Whether the next (or current) browser shows a window. */
+  get headed(): boolean {
+    return this.headedNow;
   }
 
   /** Send one action to the server, lazily starting it. */
@@ -130,8 +141,22 @@ export class BrowserHost {
    * Called from browser_open (a deferrable tool) so the ~30s cold start is paid
    * there, absorbed by the deferred handle, rather than by a later
    * non-deferrable action that would blow the relay's per-exchange ceiling.
+   *
+   * `headed` is the session's choice; a session that says nothing gets the app
+   * default back, so one agent's hidden window never becomes everybody's.
+   * Camoufox fixes the window mode at launch, so asking for the other one
+   * replaces the browser — free between sessions, since closing a session
+   * already shuts the server down.
    */
-  ensureReady(): Promise<void> {
+  async ensureReady(headed?: boolean): Promise<void> {
+    const want = headed ?? this.cfg.headed === true;
+    if (want !== this.headedNow) {
+      if (this.child) {
+        await this.shutdown();
+        this.resetBreaker();
+      }
+      this.headedNow = want;
+    }
     return this.ensureStarted();
   }
 
@@ -179,7 +204,7 @@ export class BrowserHost {
       "--screenshots-dir",
       this.cfg.screenshotsDir,
       ...(this.cfg.profileDir ? ["--profile-dir", this.cfg.profileDir] : []),
-      ...(this.cfg.headed ? ["--headed"] : []),
+      ...(this.headedNow ? ["--headed"] : []),
     ];
     const child = spawn(argv[0], argv.slice(1), {
       env: { ...process.env, ...extraEnv },

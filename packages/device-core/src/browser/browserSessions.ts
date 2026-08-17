@@ -113,6 +113,7 @@ export class BrowserSessions {
     agentId: string,
     origins: string[],
     credentialMetadata: boolean,
+    headed?: boolean,
   ): Promise<JSONValue> {
     if (this.session && this.session.agentId !== agentId) {
       return { status: "error", error: "browser is in use by another agent" };
@@ -125,7 +126,7 @@ export class BrowserSessions {
     // per-exchange ceiling, which it can only do against an already-running
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
     try {
-      await this.host.ensureReady();
+      await this.host.ensureReady(headed);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { status: "error", error: `browser failed to start: ${message}` };
@@ -148,8 +149,14 @@ export class BrowserSessions {
       session: session.handle,
       origins: session.origins,
       credential_metadata: credentialMetadata,
+      headed: this.host.headed,
     });
-    return { status: "completed", session: session.handle, origins: session.origins };
+    return {
+      status: "completed",
+      session: session.handle,
+      origins: session.origins,
+      headed: this.host.headed,
+    };
   }
 
   /** Widen an existing session (called only after an approved intent). */
