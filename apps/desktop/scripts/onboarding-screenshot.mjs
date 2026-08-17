@@ -19,10 +19,6 @@ const dist = path.join(dir, "../dist");
 const outDir = process.env.OUT_DIR ?? "/tmp";
 
 const MCP_URL = "https://api.plow.co/v1/relay/devices/u_7Qk2p9/mcp";
-// A credential shaped like a real one, minted by nothing. The point of the
-// create-agent screen is that this is shown exactly once, so the screenshot has
-// to show one.
-const AGENT_TOKEN = "plow_EXAMPLEonlyNOTreal_0000000";
 
 const DISPLAY_CODE = "Z1SWY";
 const SEND_TO = "+1 555 987 6543";
@@ -44,7 +40,6 @@ const base = {
   accountUid: "u_7Qk2p9",
   mcpUrl: MCP_URL,
   connected: true,
-  agent: null,
 };
 
 /** Before the account exists: no uid, no endpoint, no socket. */
@@ -115,30 +110,12 @@ const SCREENS = [
     expect: ["Check your phone", "If +1 555 123 4567 is on a Plow account", "Expires in 4:", "Resend"],
   },
   {
+    // The end of the wizard, and the door into the app: past this button the
+    // main window exists for the first time. Connecting an MCP client is NOT
+    // here — it is per-client and repeatable, so it lives in the main window.
     name: "connected",
     state: { ...base, step: "connected" },
-    expect: ["This Mac is connected", MCP_URL, "u_7Qk2p9", "Create Agent"],
-  },
-  {
-    name: "agent",
-    state: {
-      ...base,
-      step: "agent",
-      agent: {
-        name: "Claude Code",
-        token: AGENT_TOKEN,
-        config: JSON.stringify(
-          {
-            mcpServers: {
-              domo: { type: "http", url: MCP_URL, headers: { Authorization: `Bearer ${AGENT_TOKEN}` } },
-            },
-          },
-          null,
-          2,
-        ),
-      },
-    },
-    expect: ["Credential for Claude Code", "shown once", AGENT_TOKEN, MCP_URL],
+    expect: ["This Mac is connected", "u_7Qk2p9", "Connect a client", "Continue"],
   },
 ];
 

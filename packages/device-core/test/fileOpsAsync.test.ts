@@ -43,8 +43,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const { FileOps } = await import("@domo/device-core");
 
 const cleanups: (() => void)[] = [];
-afterEach(() => {
+afterEach(async () => {
+  // Open the gate and let the read it was holding actually finish before the
+  // directory goes: deleting underneath an in-flight read hands it an ENOENT
+  // nobody is waiting for any more, which surfaces as an unhandled rejection
+  // and fails whichever test happens to be running when it lands.
   openGate();
+  await new Promise((r) => setImmediate(r));
   while (cleanups.length) cleanups.pop()!();
   closeGate();
 });
@@ -55,15 +60,32 @@ function tempDir(): string {
   return dir;
 }
 
+/** How many times the interval must fire while the read is outstanding. */
+const REQUIRED_TICKS = 3;
+
 describe("FileOps does not block the event loop", () => {
   it("timers keep firing while a read is in flight", async () => {
     const dir = tempDir();
     const file = path.join(dir, "gated.txt");
     fs.writeFileSync(file, "data");
 
+    // Wait for the TICKS, not for a wall-clock deadline.
+    //
+    // This used to sleep 60ms and then assert three 10ms ticks had happened.
+    // Under load — the whole suite running in parallel — two is a perfectly
+    // ordinary number of times a 10ms interval fires in 60ms, and the test
+    // failed for being on a busy machine rather than for anything about
+    // FileOps. Counting to three and waiting however long that takes measures
+    // the same property and cannot lose that race: the only way it does not
+    // reach three is a loop that is genuinely stuck, which is the regression.
     let ticks = 0;
+    let reached = () => {};
+    const ticked = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
     const interval = setInterval(() => {
       ticks += 1;
+      if (ticks >= REQUIRED_TICKS) reached();
     }, 10);
     cleanups.push(() => clearInterval(interval));
 
@@ -72,14 +94,20 @@ describe("FileOps does not block the event loop", () => {
       done = true;
       return buf;
     });
+    // Observed below — but if an assertion throws first, nothing ever awaits
+    // this, and cleanup deleting the file under it would turn a readable
+    // failure into an unhandled ENOENT in some other test.
+    read.catch(() => {});
 
+    // A synchronous read blocks the process before the mock is ever reached, so
+    // that regression hangs here and vitest's own timeout names this line.
     await entered;
-    await new Promise((r) => setTimeout(r, 60));
-    // The read is still outstanding…
+    await ticked;
+
+    // The read is still outstanding — the gate has not been opened…
     expect(done).toBe(false);
-    // …and the loop was never blocked: a synchronous read would have starved
-    // this interval for the whole duration.
-    expect(ticks).toBeGreaterThanOrEqual(3);
+    // …and the loop kept running the whole time it was.
+    expect(ticks).toBeGreaterThanOrEqual(REQUIRED_TICKS);
 
     openGate();
     expect((await read).toString()).toBe("data");

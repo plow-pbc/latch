@@ -70,6 +70,17 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 ipcMain.handle("settings:setInference", async (_e, provider) =>
   setInferenceProvider(probeHome, provider),
 );
+// Connect a client: the same shape `ConnectClient.state()` returns, with no
+// credential minted — the screen this probe renders is the OAuth one.
+ipcMain.handle("connect:get", async () => ({
+  mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
+  accountUid: "u_probe",
+  connected: true,
+  hasCredential: true,
+  busy: false,
+  message: "",
+  credential: null,
+}));
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -334,6 +345,18 @@ app.whenReady().then(async () => {
     })()`),
   };
 
+  // Connect a client is a nav item of its own now, so the probe renders it too.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("connect")`);
+  await new Promise((r) => setTimeout(r, 300));
+  const connect = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    return {
+      showsUrl: text.includes("https://api.plow.co/v1/relay/devices/u_probe/mcp"),
+      showsOauth: text.includes("Sign in with OAuth"),
+      offersFallback: text.includes("Can't use OAuth"),
+    };
+  }})()`);
+
   fs.rmSync(probeHome, { recursive: true, force: true });
 
   const approvalWin = offscreen();
@@ -350,6 +373,9 @@ app.whenReady().then(async () => {
   }})()`);
 
   const ok =
+    connect.showsUrl &&
+    connect.showsOauth &&
+    connect.offersFallback &&
     settings.hasAccountGroup &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
@@ -375,7 +401,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, connect, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });
