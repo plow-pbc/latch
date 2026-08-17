@@ -445,11 +445,9 @@ function openOnboardingWindow(): void {
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
-    // Closing the gate is quitting. There is no main window behind it and no
-    // way to get one without signing in, so staying resident would leave a Mac
-    // with a tray icon, no windows and nothing it can do — a dead app that
-    // still looks alive. Signed in, this is just a window closing.
-    if (!loadSettings(home).relayCredential.trim()) app.quit();
+    // Closing the gate quits; closing the confirmation behind it hands over to
+    // the app, the same as Continue. See WindowGate.setupClosed.
+    gate.setupClosed();
   });
   void onboardingWindow.loadFile(path.join(rendererDir, "onboarding.html"));
 }
@@ -478,6 +476,7 @@ const gate = new WindowGate({
     onboardingWindow = null;
     if (win && !win.isDestroyed()) win.close();
   },
+  quit: () => app.quit(),
 });
 
 /**

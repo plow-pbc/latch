@@ -33,6 +33,8 @@ export interface GateHost {
   openSetup(): void;
   closeMain(): void;
   closeSetup(): void;
+  /** Quit the whole app. Only ever called for a gate closed with no credential. */
+  quit(): void;
 }
 
 export class WindowGate {
@@ -60,5 +62,32 @@ export class WindowGate {
       if (this.host.isMainOpen()) this.host.closeMain();
     }
     return target;
+  }
+
+  /**
+   * The setup window closed. What that means depends on which side of the gate
+   * the Mac is on, and getting it wrong strands the user either way.
+   *
+   * **No credential — closing the gate is quitting.** There is no window behind
+   * it and no way to get one without signing in, so staying resident would
+   * leave a tray icon attached to an app that can do nothing.
+   *
+   * **Signed in — hand over to the app**, exactly as the Continue button does.
+   * The window that just closed was the "This Mac is connected" confirmation:
+   * the credential is already saved and the socket is already up, so the user
+   * is past the gate and the main window is what they should be looking at.
+   *
+   * The third possibility — do nothing — is what shipped in the first cut, and
+   * it leaves a Mac that has just been set up showing no window at all. Quitting
+   * instead would be worse than either: Domo is a menu-bar agent, closing a
+   * window is not quitting it, and an exit here would take the relay socket down
+   * with it and quietly make the Mac the user just connected unreachable.
+   */
+  setupClosed(): "quit" | GateWindow {
+    if (!this.host.hasCredential()) {
+      this.host.quit();
+      return "quit";
+    }
+    return this.sync();
   }
 }

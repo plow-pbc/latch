@@ -41,6 +41,11 @@ class FakeWindows implements GateHost {
     this.log.push("close setup");
     this.setup = false;
   }
+  quit(): void {
+    this.log.push("quit");
+    this.quit_ = true;
+  }
+  quit_ = false;
 }
 
 function build(): { host: FakeWindows; gate: WindowGate } {
@@ -125,6 +130,44 @@ describe("the login gate", () => {
     expect(gate.sync()).toBe("setup");
     host.credential = "plow_DEVICEtok_secret";
     expect(gate.sync()).toBe("main");
+  });
+
+  it("quits when the gate itself is closed — there is nothing behind it", () => {
+    const { host, gate } = build();
+    gate.sync();
+    host.setup = false; // the user closed the window
+
+    expect(gate.setupClosed()).toBe("quit");
+    expect(host.quit_).toBe(true);
+    expect(host.main).toBe(false);
+  });
+
+  it("hands over to the app when the confirmation is closed instead of Continue", () => {
+    // The window that just closed said "This Mac is connected". The credential
+    // is saved and the socket is up, so this is the Continue path by another
+    // route — not a quit, which would take the socket down with it, and not
+    // nothing, which leaves a freshly set-up Mac showing no window at all.
+    const { host, gate } = build();
+    gate.sync();
+    host.credential = "plow_DEVICEtok_secret"; // login completed on that screen
+    host.setup = false; // the user closed it rather than clicking Continue
+
+    expect(gate.setupClosed()).toBe("main");
+    expect(host.quit_).toBe(false);
+    expect({ main: host.main, setup: host.setup }).toEqual({ main: true, setup: false });
+  });
+
+  it("does not quit when the gate closes as part of the handover", () => {
+    // `sync` closes the setup window itself once the main one is open, and that
+    // close fires the same handler. It must not be read as the user quitting.
+    const { host, gate } = build();
+    gate.sync();
+    host.credential = "plow_DEVICEtok_secret";
+    gate.sync(); // opens main, closes setup
+
+    expect(gate.setupClosed()).toBe("main");
+    expect(host.quit_).toBe(false);
+    expect(host.main).toBe(true);
   });
 
   it("decides on the credential and nothing else", () => {

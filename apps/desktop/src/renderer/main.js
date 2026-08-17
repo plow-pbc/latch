@@ -554,8 +554,19 @@ async function renderSettings() {
   // the environment that minted it, so an editable origin could only be wrong).
   const relay = await window.domo.relayGet();
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
-  const setUp = el("button", { class: "btn primary", text: relay.hasCredential ? "Create Agent" : "Sign In" });
-  setUp.addEventListener("click", () => window.domo.onboardingOpen());
+  // Signed in, this goes to Connect a client — it used to say "Create Agent"
+  // and open the setup window, which since the wizard lost its agent step
+  // promised something that window could no longer do. Signed out is
+  // unreachable from here (the gate means this window would not exist), but it
+  // still points somewhere real rather than nowhere.
+  const setUp = relay.hasCredential
+    ? el("button", { class: "btn primary", text: "Connect a Client" })
+    : el("button", { class: "btn primary", text: "Sign In" });
+  setUp.addEventListener("click", () => {
+    if (!relay.hasCredential) return void window.domo.onboardingOpen();
+    selectTab("connect");
+    window.domo.uiSetTab("connect"); // the same persistence a nav click does
+  });
   const signOut = el("button", { class: "btn danger", text: "Sign Out" });
   signOut.disabled = !relay.hasCredential;
   signOut.addEventListener("click", async () => {
