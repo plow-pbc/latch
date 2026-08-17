@@ -23,9 +23,13 @@
         <!-- A peer of Settings, not something buried inside it: connecting a
              client is a thing you come back and do again per client. -->
         <button data-tab="connect">Connect a client</button>
+        <button data-tab="vault">Vault</button>
         <button data-tab="settings">Settings</button>
       </div>
     </div>
+    <!-- Passive update notice: shown only when an update is staged and not
+         dismissed (main.js drives it from updates:get). Never modal. -->
+    <div id="updateBanner" class="update-banner" hidden></div>
     <div id="view"></div>
     <script type="module" src="main.js"></script>
   </body>

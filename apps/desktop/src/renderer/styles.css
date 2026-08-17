@@ -57,6 +57,31 @@ body {
   flex-direction: column;
 }
 
+/* Passive update notice between the titlebar and the content. Uses the blue
+   status tokens: informational, not alarming. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--blue-bg);
+  color: var(--blue-fg);
+  border-bottom: 1px solid var(--blue-bd);
+  flex: 0 0 auto;
+}
+.update-banner[hidden] { display: none; }
+.banner-close {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.banner-close:hover { background: var(--blue-bd); }
+
 .titlebar {
   height: 44px;
   display: flex;
@@ -204,7 +229,10 @@ td { padding: 9px 12px; vertical-align: middle; }
 }
 .ico { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-.detail { flex: none; overflow: auto; padding: 16px; }
+/* A column: the activity info scrolls in .detail-scroll; the live browser
+   thumbnail (.live-corner) sits pinned below it, outside the scroll. */
+.detail { flex: none; display: flex; flex-direction: column; min-height: 0; }
+.detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 16px; }
 .detail h3 { margin: 0 0 10px; }
 .cmd {
   font-family: var(--mono);
@@ -427,6 +455,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 
 /* Checkbox row (settings) */
 .check { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer; }
+/* One checkbox per line (the inline default lets several share one). */
+.check.block { display: flex; }
 .check.disabled { opacity: 0.45; cursor: default; }
 .check input { margin: 0; }
 
@@ -525,3 +555,27 @@ textarea.text { min-height: 70px; resize: vertical; }
   color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
 }
 .connect .linkbtn:hover { color: var(--fg); }
+/* ---------- Live browser thumbnail (audit detail pane) ---------- */
+
+.live-corner {
+  flex: none; align-self: flex-end;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  padding: 0 12px 12px; max-width: 100%;
+}
+.live-corner.hidden { display: none; }
+.live-corner img {
+  display: block; width: 220px; max-width: 100%;
+  border: 1px solid var(--border-strong); border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+/* Caption: a live dot + the page's host (or the out-of-scope warning). */
+.live-cap {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--faint);
+  max-width: 220px; overflow: hidden;
+}
+.live-cap span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-cap .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-fg); flex: none; }
+.live-corner.offscope img { border-color: var(--red-bd); }
+.live-corner.offscope .live-cap { color: var(--red-fg); }
+.live-corner.offscope .live-cap .dot { background: var(--red-fg); }

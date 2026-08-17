@@ -230,9 +230,9 @@ draws whatever state the main process hands it and owns no copy of its own.
   check your phone, and offers a resend. The one distinguishable failure is
   `503`. Codes are 8 digits with a 5-minute life; the screen counts down and
   tells an expired code apart from a wrong one, which the server cannot.
-- **The API origin is baked into the build, not a setting.** A dev build points
-  at the local API, everything else at `https://api.plow.co`, with
-  `DOMO_API_BASE_URL` as a developer override. A credential is only valid
+- **The API origin is baked into the build, not a setting.** *Every* build
+  points at `https://api.plow.co`, including a run from source, with
+  `DOMO_API_BASE_URL` as an override a developer exports. A credential is only valid
   against the environment that minted it, so an editable origin could only ever
   be wrong. The device socket derives from that base by swapping the scheme; the
   **agent endpoint is not derived at all** — `GET /v1/relay/info` returns it and

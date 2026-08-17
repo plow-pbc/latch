@@ -23,11 +23,43 @@ export interface ApprovalViewModel {
   needsNetwork: boolean;
   writesFiles: boolean;
   runsCommand: boolean;
+  usesBrowser: boolean;
+  fillsCredentials: boolean;
+  /** browser capability origins, for the card. */
+  origins: string[];
+  /** credential(fill) items with titles resolved ON-DEVICE (never from the
+   * intent — agent-supplied titles would be spoofable). Title null = the
+   * local vault could not resolve the id: a deny signal for humans. */
+  credentialItems: { id: string; title: string | null; category: string | null }[];
 }
 
+/** Locally-resolved vault item titles, keyed by item id. */
+export type CredentialTitles = Map<string, { title: string; category: string }>;
+
 /** Build the approval card model from an already-verified intent. */
-export function approvalViewModel(intent: Intent): ApprovalViewModel {
+export function approvalViewModel(
+  intent: Intent,
+  credentialTitles?: CredentialTitles,
+): ApprovalViewModel {
   const caps: Capability[] = intent.capabilities ?? [];
+  const fillItems = caps.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+  const credentialItems = fillItems.map((id) => {
+    const resolved = credentialTitles?.get(id) ?? null;
+    return {
+      id,
+      title: resolved?.title ?? null,
+      category: resolved?.category ?? null,
+    };
+  });
+  const display = (c: Capability): string => {
+    if (c.kind === "credential" && c.access === "fill" && credentialItems.length > 0) {
+      const names = credentialItems.map((i) =>
+        i.title !== null ? `'${i.title}' (${i.category ?? "?"})` : `${i.id} (unknown item)`,
+      );
+      return `Credentials: fill ${names.join(", ")} into approved sites (values never leave this Mac)`;
+    }
+    return capabilityDisplay(c);
+  };
   return {
     intentId: intent.intentId,
     agentDisplay: intent.agentDisplay,
@@ -35,10 +67,14 @@ export function approvalViewModel(intent: Intent): ApprovalViewModel {
     goal: intent.goal ?? "",
     request: intent.request,
     planContext: intent.planContext ?? null,
-    capabilities: caps.map((c) => ({ kind: c.kind, display: capabilityDisplay(c) })),
+    capabilities: caps.map((c) => ({ kind: c.kind, display: display(c) })),
     needsNetwork: caps.some((c) => c.kind === "network" && c.allowed === true),
     writesFiles: caps.some((c) => c.kind === "fs.write"),
     runsCommand: caps.some((c) => c.kind === "process.exec"),
+    usesBrowser: caps.some((c) => c.kind === "browser"),
+    fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
+    origins: caps.find((c) => c.kind === "browser")?.origins ?? [],
+    credentialItems,
   };
 }
 
@@ -117,8 +153,12 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
     // "Device started" is noise — never surface it as an activity.
     if (event === "device_started") continue;
     const intentId = ev.get("intentId").str;
+    const session = ev.get("session").str;
     if (intentId !== null) {
       push(`intent:${intentId}`, e);
+    } else if (session !== null) {
+      // One activity per browser session, not one per command.
+      push(`browser:${session}`, e);
     } else if (event === "access_request") {
       counter += 1;
       const id = `access:${counter}`;
@@ -194,6 +234,13 @@ function activityTitle(
 ): string {
   const request = value("intent_received", "request");
   if (request !== null) return request;
+  if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
+    const lastNav = [...events]
+      .reverse()
+      .find((e) => jv(e).get("event").str === "browser_navigated");
+    const url = lastNav ? (jv(lastNav).get("url").str ?? "") : "";
+    return url ? `Browsing — ${url}` : "Browser session";
+  }
   if (has("access_request") || has("access_decision")) {
     return `Access — ${value("access_request", "display") ?? "agent"}`;
   }
@@ -219,6 +266,16 @@ function activityStatus(
   }
   if (has("device_started")) return { status: "Info", tone: "zinc" };
   if (has("agent_spawned")) return { status: "Spawned", tone: "blue" };
+  if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
+    if (has("credential_denied") || has("browser_scope_violation")) {
+      return has("browser_session_closed")
+        ? { status: "Closed · scope blocks", tone: "amber" }
+        : { status: "Scope blocked", tone: "amber" };
+    }
+    if (has("browser_session_closed")) return { status: "Closed", tone: "zinc" };
+    if (has("browser_crashed")) return { status: "Crashed", tone: "red" };
+    return { status: "Browsing", tone: "green" };
+  }
   const dec = entry("intent_decision");
   if (dec) {
     const decision = jv(dec).get("decision").str ?? "";
@@ -247,6 +304,14 @@ function activityKind(
   if (has("device_started")) return "info";
   if (has("agent_spawned")) return "agent";
   if (has("access_request") || has("access_decision")) return "access";
+  if (
+    events.some((e) => {
+      const name = jv(e).get("event").str ?? "";
+      return name.startsWith("browser_") || name.startsWith("credential_");
+    })
+  ) {
+    return "browser";
+  }
   const request = value("intent_received", "request") ?? "";
   if (has("tool_invoked") || request.startsWith("use ")) return "command";
   if (
@@ -343,6 +408,40 @@ function describeStep(e: JSONValue): AuditStep {
     case "denied_operation": text = `Blocked: ${ev.get("path").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
     case "tool_invoked": text = `Tool used: ${ev.get("tool").str ?? ""}`; state = "ok"; break;
     case "tool_error": text = `Tool error: ${ev.get("tool").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
+    case "browser_session_opened":
+      text = `Browser session opened — ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ")}`;
+      state = "ok";
+      break;
+    case "browser_session_extended":
+      text = `Session widened — origins: ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ") || "—"}; items: ${(ev.get("items").arr ?? []).filter((i): i is string => typeof i === "string").join(", ") || "—"}`;
+      state = "ok";
+      break;
+    case "browser_session_closed": text = `Browser session closed (${ev.get("reason").str ?? ""})`; break;
+    case "browser_command":
+      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}`;
+      state = ev.get("error").str ? "bad" : "neutral";
+      break;
+    case "browser_navigated": text = `Page: ${ev.get("url").str ?? ""}`; break;
+    case "browser_scope_violation":
+      text = `Out of scope: ${ev.get("origin").str ?? ""} (${ev.get("action").str ?? ""}) — content locked`;
+      state = "bad";
+      break;
+    case "credential_metadata":
+      text = ev.get("op").str === "describe"
+        ? `Credential fields listed: ${ev.get("item").str ?? ""} (labels only)`
+        : "Credential list read (names only)";
+      break;
+    case "credential_filled":
+      text = `Credential typed into page: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} on ${ev.get("origin").str ?? ""}`;
+      state = "ok";
+      break;
+    case "credential_denied":
+      text = `Credential refused: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} — ${ev.get("reason").str ?? ""}`;
+      state = "bad";
+      break;
+    case "browser_started": text = "Browser launched"; break;
+    case "browser_stopped": text = "Browser stopped"; break;
+    case "browser_crashed": text = "Browser crashed"; state = "bad"; break;
     default: text = event;
   }
   return { time: clock(ev.get("ts").str ?? ""), text, state };

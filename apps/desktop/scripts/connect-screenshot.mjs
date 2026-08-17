@@ -61,6 +61,20 @@ async function setUp() {
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("ui:getTab", async () => "connect");
   ipcMain.handle("ui:setTab", async () => {});
+  // The main window's boot also asks for the update banner's state; without a
+  // handler the invoke rejects and the renderer never finishes booting.
+  ipcMain.handle("updates:get", async () => ({
+    supported: false,
+    currentVersion: "0.0.0-shot",
+    autoCheck: false,
+    autoInstall: false,
+    phase: "idle",
+    availableVersion: null,
+    lastCheckAt: null,
+    error: null,
+    dismissed: false,
+    upToDate: false,
+  }));
   return connect;
 }
 

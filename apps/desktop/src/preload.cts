@@ -26,12 +26,26 @@ contextBridge.exposeInMainWorld("domo", {
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
+  vaultGet: () => ipcRenderer.invoke("vault:get"),
+  vaultSet: (email: string, password: string) => ipcRenderer.invoke("vault:set", email, password),
+  vaultOpen: () => ipcRenderer.invoke("vault:open"),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
   reviewerInfoGet: () => ipcRenderer.invoke("settings:getReviewerInfo"),
   statusGet: () => ipcRenderer.invoke("status:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
+
+  // Software updates: one whole-state shape per read (see updates:get).
+  updatesGet: () => ipcRenderer.invoke("updates:get"),
+  updatesCheck: () => ipcRenderer.invoke("updates:check"),
+  updatesRestart: () => ipcRenderer.invoke("updates:restart"),
+  updatesDismiss: () => ipcRenderer.invoke("updates:dismiss"),
+  updatesSetAutoCheck: (on: boolean) => ipcRenderer.invoke("updates:setAutoCheck", on),
+  updatesSetAutoInstall: (on: boolean) => ipcRenderer.invoke("updates:setAutoInstall", on),
+  onUpdatesChanged: (cb: () => void) => ipcRenderer.on("updates:changed", cb),
+  // The menu-bar "Check for Updates…" lands the window on the Settings tab.
+  onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
 
   // First-run setup window. Every call returns the whole state, so the screen
   // renders from one shape and never has to reconcile two.
@@ -57,6 +71,10 @@ contextBridge.exposeInMainWorld("domo", {
   connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
+
+  // Live browser thumbnail (audit detail pane). One whole-state shape per
+  // poll; no push channel — the renderer's own interval is the clock.
+  viewerState: () => ipcRenderer.invoke("viewer:state"),
 
   // Approval window.
   approvalGet: () => ipcRenderer.invoke("approval:get"),

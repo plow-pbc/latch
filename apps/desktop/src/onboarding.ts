@@ -421,16 +421,19 @@ export class Onboarding {
   // MARK: after either path
 
   /**
-   * This Mac signed out: put the wizard back where a Mac with no credential
-   * belongs.
+   * Return to the state a fresh launch would be in.
    *
-   * The opening step is chosen in the constructor, and this object outlives a
-   * sign-out — so without this, signing out reopens the setup window on "This
-   * Mac is connected", which is a lie, and offers a Continue button that hands
-   * back a main window the gate has just taken away. Everything the old session
-   * left behind goes with it.
+   * The opening step is decided once, in the constructor, and this object
+   * outlives a sign-out. Without this the window keeps rendering the connected
+   * screen against empty settings — "Signed in — connecting…", a blank
+   * endpoint, a blank account — and offers a Continue button into a main window
+   * the gate has just taken away. Quitting and relaunching was the only escape,
+   * which is not a thing to ask of someone who just clicked Sign Out.
+   *
+   * The step is re-derived from settings rather than forced to `activate`, so
+   * this is honest whichever way the credential went.
    */
-  signedOut(): OnboardingState {
+  reset(): OnboardingState {
     this.cancelPolling();
     this.activation = null;
     this.activationSecret = null;
@@ -438,7 +441,8 @@ export class Onboarding {
     this.phone = "";
     this.codeExpiresAt = null;
     this.message = "";
-    this.step = "activate";
+    this.busy = false;
+    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
     return this.publish();
   }
 

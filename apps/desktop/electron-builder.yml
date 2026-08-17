@@ -1,40 +1,120 @@
 # Packaging config for `just package` — signed + notarized Domo Desktop.app + DMG.
 # Signing identity is pinned to the Plow Developer ID; notarization credentials
 # come from the keychain profile named by APPLE_KEYCHAIN_PROFILE (see justfile).
-appId: com.plowcollective.domo-desktop
+appId: co.plow.domo-desktop
 productName: Domo Desktop
+
+# Hyphenated artifact names: these become S3 keys and feed URLs, where spaces
+# (the productName default) mean %20-encoding everywhere a human pastes a link.
+artifactName: Domo-Desktop-${version}-${arch}.${ext}
 
 directories:
   output: release
   buildResources: build
 
+# Where installed apps poll for updates (electron-updater generic provider —
+# static files, no update server). electron-builder bakes this into the
+# packaged app as app-update.yml; electron-updater reads latest-mac.yml at this
+# URL and downloads the zip named inside it from the same directory. The
+# versioned-then-promote flow lives in `just release` / `just promote`: this
+# URL only ever serves what promote has copied to the stable keys. Uploads are
+# the release scripts' job — electron-builder never publishes to this provider
+# (the package recipe passes --publish never).
+publish:
+  provider: generic
+  url: https://s3.us-west-2.amazonaws.com/releases.plow.co/domo
+
 # dist/ is the tsc output plus renderer assets; node_modules is collected
-# automatically from the workspace root by electron-builder.
+# automatically from the workspace root by electron-builder. The node_modules
+# ignores drop what only tooling reads (type declarations, source maps, docs);
+# LICENSE/NOTICE files are deliberately shipped — redistribution requires them.
 files:
   - dist/**/*
   - "!dist/**/*.d.ts"
   - "!dist/**/*.d.cts"
   - "!dist/**/*.map"
+  - "!node_modules/**/*.d.ts"
+  - "!node_modules/**/*.d.mts"
+  - "!node_modules/**/*.d.cts"
+  - "!node_modules/**/*.map"
+  - "!node_modules/**/{README,Readme,readme,CHANGELOG,Changelog,changelog,HISTORY,History,history}*"
+
+# Keep only English in Electron's own locale payload (~55 lproj dirs, ~40 MB);
+# the app UI ships no other localization.
+electronLanguages:
+  - en
 
 # No asarUnpack: it existed so a plain `node` could run the domo-mcp shim for
 # "Start agent". The shim and that feature went with the broker — the MCP server
 # now runs inside this process and is reached through the relay.
 
+# The browser stack: universal Python runtime + vendored server + the
+# lipo-fused universal Camoufox tree. Built by scripts/build-browser-runtime.mjs
+# (a `just package` dependency) and byte-identical in both electron-builder
+# arch passes, so the universal merge copies it through untouched. Runtime code
+# resolves it via process.resourcesPath ("browser-runtime/...").
+extraResources:
+  - from: ../../vendor/python-runtime
+    to: browser-runtime/python
+    filter: ["**/*", "!.stamp"]
+  - from: ../../vendor/browser-server
+    to: browser-runtime/server
+  - from: ../../vendor/camoufox-browser/universal
+    to: browser-runtime/camoufox
+    filter: ["**/*", "!.sha256"]
+  - from: ../../vendor/vault-cli
+    to: browser-runtime/vault-cli
+    filter: ["**/*", "!*/.sha256"]
+  - from: ../../vendor/vault-server
+    to: browser-runtime/vault-server
+    filter: ["**/*", "!*/.commit", "!.web-vault.sha256"]
+
 mac:
   icon: ../../artwork/domo-desktop-icon.png
   category: public.app-category.developer-tools
+  # The DMG is what humans download; the ZIP is what Squirrel.Mac (via
+  # electron-updater) applies as an update — auto-update on macOS cannot
+  # consume a DMG. Both come from the same signed, notarized pack.
   target:
     - target: dmg
+      arch: universal
+    - target: zip
       arch: universal
   identity: "The Plow Collective, Inc (3559PD337Z)"
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # The browser runtime (Python + Camoufox) is already Developer-ID signed by
+  # scripts/build-browser-runtime.mjs with its OWN entitlements (Python: JIT +
+  # unsigned-exec-memory; Camoufox: Mozilla's full set incl. library-validation
+  # off). Tell electron-builder's signer to leave it alone — a re-sign would
+  # stamp the app's minimal entitlements onto Firefox and break it at runtime.
+  # The outer app signature still seals these files; notarization sees our
+  # hardened-runtime + timestamped signatures on them.
+  signIgnore:
+    - "browser-runtime/.*"
+  # The Python runtime and the fused Camoufox tree are universal2, so the merge
+  # passes them through untouched. The vault and its CLI are not: each ships as
+  # two THIN per-arch trees (<payload>/arm64, <payload>/x86_64) copied
+  # identically into both electron slices, and the merger would try to lipo a
+  # thin binary against its identical twin and fail. This pattern passes those
+  # two through instead. Fusing them the way Camoufox is fused is issue #15.
+  x64ArchFiles: "**/browser-runtime/{vault-cli,vault-server}/**"
   notarize: true
 
+# Re-sign browser-runtime after the universal merge (which rewrites nested
+# Info.plists and breaks their seals) and before signing/notarization.
+afterPack: build/afterPack.cjs
+
 dmg:
-  artifactName: ${productName}-${version}.${ext}
+  # No ${arch}: the only DMG is universal, and this name is the public
+  # download link (promote copies it to the stable domo/Domo-Desktop.dmg key).
+  artifactName: Domo-Desktop-${version}.${ext}
+  # lzfse instead of the default zlib — meaningfully smaller download, needs
+  # macOS 10.11+ to mount (well below the app's own floor). ULMO (lzma, a bit
+  # smaller still) isn't in electron-builder 26's schema yet.
+  format: ULFO
   # Explicit Finder-window geometry: the defaults sit the icons low enough
   # that the window shows a scrollbar. Icons up at mid-height, roomier window.
   # The window ALWAYS matches the background image's size (window.width/height

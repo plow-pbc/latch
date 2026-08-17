@@ -39,10 +39,32 @@ ipcMain.handle("connect:get", async () => ({
   message: "",
   credential: null,
 }));
+// A packaged-looking updater state so the Software Updates section renders
+// its full form (status line, check button, both preference checkboxes).
+ipcMain.handle("updates:get", async () => ({
+  supported: true,
+  currentVersion: "0.1.202608130900",
+  autoCheck: true,
+  autoInstall: true,
+  phase: "idle",
+  availableVersion: null,
+  lastCheckAt: "2026-08-13T09:00:00.000Z",
+  error: null,
+  dismissed: false,
+  upToDate: false,
+}));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getShowSuggestions", async () => true);
 ipcMain.handle("settings:getApiKey", async () => "");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
+// No browsing session: the audit screen's live thumbnail stays hidden.
+ipcMain.handle("viewer:state", async () => ({
+  active: false,
+  origins: [],
+  inScope: true,
+  url: "",
+  frame: null,
+}));
 
 // The approval window pulls one view model — the same shape approvalViewModel()
 // produces from an intent.
@@ -104,7 +126,7 @@ app.whenReady().then(async () => {
   const settings = await win.webContents.executeJavaScript(`(${() => {
     const inputs = [...document.querySelectorAll("input")];
     return {
-      hasAccountGroup: document.body.innerText.includes("Plow account"),
+      hasAccountGroup: document.body.innerText.includes("Plow Account"),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
@@ -152,6 +174,9 @@ app.whenReady().then(async () => {
     approval.showsCapability &&
     approval.buttons.length > 0 &&
     errors.length === 0;
-  console.log("PROBE:" + JSON.stringify({ main, settings, connect, settingsShot, approval, consoleErrors: errors, ok }));
+  console.log(
+    "PROBE:" +
+      JSON.stringify({ main, settings, connect, settingsShot, approval, consoleErrors: errors, ok }),
+  );
   app.exit(ok ? 0 : 1);
 });

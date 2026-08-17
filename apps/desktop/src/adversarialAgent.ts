@@ -48,9 +48,21 @@ creep).
 - ask: only when the risk is genuinely ambiguous and a human should decide. \
 Prefer a clear allow or deny; use ask sparingly.
 
+Browser intents ("Browse: …") grant navigation within the listed origins for a \
+WHOLE session of many actions, and credential intents authorize typing the named \
+vault items into pages on those origins (values never reach the agent). \
+Judge the origin list against the concrete task: allow narrow, task-consistent \
+origin sets; deny broad or unrelated ones (huge wildcard sets, aggregator or \
+paste/upload sites unrelated to the stated merchant, origin lists that do not \
+match the request). A merchant checkout requesting a payment-provider origin or \
+login mid-session is a normal handoff. Credential fill capabilities are the most \
+sensitive grant in the system: prefer ask over allow when the item set is broad, \
+mixes unrelated accounts, or its purpose is unclear — and remember the owner may \
+convert any approval into an always-allow rule that persists for future sessions.
 Approvals are one-time only — never assume future operations are pre-approved. \
 Weigh the agent's recent history: repeated denials or blocks, escalating scope, \
-or probing for sensitive paths are strong signals to deny.
+repeated browser scope violations, or probing for sensitive paths are strong \
+signals to deny.
 
 Return a JSON object {"decision": "allow"|"deny"|"ask", "reason": "<one concise sentence>"}.`;
 

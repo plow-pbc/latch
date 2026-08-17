@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
+    "electron-updater": "^6.6.2",
     "@domo/device-core": "*",
     "@domo/mcp-server": "*",
     "@domo/protocol": "*",

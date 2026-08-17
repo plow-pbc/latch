@@ -36,6 +36,12 @@ export interface RelayClientOptions {
   /** Where a tunnelled request goes. */
   serve: ServeRequest;
   onStatusChange?: (connected: boolean) => void;
+  /**
+   * The relay refused this credential. Terminal: it will not become valid by
+   * waiting, so the client has stopped and the owner has to sign in again.
+   * `reason` is the relay's text and never contains the credential.
+   */
+  onAuthFailed?: (reason: string) => void;
   /** Diagnostics. Never receives the credential — see `redact`. */
   log?: (message: string) => void;
   /** Injectable for tests. */
@@ -51,6 +57,8 @@ export class RelayClient {
   private connected = false;
   private running = false;
   private attempt = 0;
+  /** Set when the relay refused the credential — stops all reconnection. */
+  private credentialRejected = false;
   private heartbeat: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
@@ -96,6 +104,7 @@ export class RelayClient {
     if (this.running) return;
     this.running = true;
     this.attempt = 0;
+    this.credentialRejected = false;
     await this.connectOnce().catch((error: unknown) => {
       this.sayFailure(error);
       this.scheduleReconnect();
@@ -184,12 +193,24 @@ export class RelayClient {
         return;
       }
 
-      case "auth.error":
+      case "auth.error": {
         // `reason` is the relay's text. Redacted anyway — an error string is
         // exactly where a credential must never appear.
-        this.say(`relay rejected the credential: ${String(msg.reason ?? "")}`);
+        const reason = String(msg.reason ?? "");
+        this.say(`relay rejected the credential: ${reason}`);
+        // TERMINAL, not a retryable failure. A refused credential does not
+        // become valid by waiting, so reconnecting only hammers the relay with
+        // a token it has already rejected — which is exactly what a revoked key
+        // did: an endless 4001 flap, and a user with no idea why. Stop, and let
+        // the app drop them back to signing in.
+        this.credentialRejected = true;
+        this.running = false;
+        this.clearTimers();
         conn.close();
+        this.setConnected(false);
+        this.options.onAuthFailed?.(reason);
         return;
+      }
 
       case "ping":
         this.send(conn, { type: "pong" });
@@ -286,7 +307,7 @@ export class RelayClient {
    * instant and knocks it over again.
    */
   private scheduleReconnect(): void {
-    if (!this.running || this.reconnectTimer) return;
+    if (this.credentialRejected || !this.running || this.reconnectTimer) return;
     const ceiling = Math.min(BASE_BACKOFF_MS * 2 ** this.attempt, MAX_BACKOFF_MS);
     const random = this.options.random ?? Math.random;
     const delay = Math.round(random() * ceiling);

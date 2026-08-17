@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   API_BASE_URL_ENV,
-  DEVELOPMENT_API_BASE_URL,
   PRODUCTION_API_BASE_URL,
   PlowApi,
   REQUEST_TIMEOUT_MS,
@@ -25,16 +24,32 @@ function recordingFetch(answers: Array<{ status: number; body?: unknown }>) {
 }
 
 describe("the API base URL is baked into the build", () => {
-  it("points a dev build at the local API and everything else at production", () => {
-    expect(resolveApiBaseUrl({ isDevBuild: true, env: {} })).toBe(DEVELOPMENT_API_BASE_URL);
-    expect(resolveApiBaseUrl({ isDevBuild: false, env: {} })).toBe(PRODUCTION_API_BASE_URL);
+  it("points EVERY build at production, including a run from source", () => {
+    // Production is live, so it is the useful default and the one that matches
+    // what a user gets. A from-source run that quietly talked to localhost was
+    // a standing way to "test" against nothing.
+    expect(resolveApiBaseUrl({ env: {} })).toBe(PRODUCTION_API_BASE_URL);
+    expect(resolveApiBaseUrl({})).toBe(PRODUCTION_API_BASE_URL);
+    expect(resolveApiBaseUrl({ env: { SOMETHING_ELSE: "http://localhost:1" } })).toBe(
+      PRODUCTION_API_BASE_URL,
+    );
   });
 
   it("lets a developer retarget with an environment variable", () => {
     const env = { [API_BASE_URL_ENV]: "https://staging.example/" };
-    expect(resolveApiBaseUrl({ isDevBuild: false, env })).toBe("https://staging.example");
+    expect(resolveApiBaseUrl({ env })).toBe("https://staging.example");
   });
 
+  it("still reaches a local relay through that override", () => {
+    // There is no local default any more; a developer who wants one exports it.
+    // This is the whole mechanism, so it is worth pinning on a real local URL.
+    const env = { [API_BASE_URL_ENV]: "http://localhost:4242" };
+    expect(resolveApiBaseUrl({ env })).toBe("http://localhost:4242");
+  });
+
+  it("ignores an override that is only whitespace", () => {
+    expect(resolveApiBaseUrl({ env: { [API_BASE_URL_ENV]: "   " } })).toBe(PRODUCTION_API_BASE_URL);
+  });
 });
 
 describe("the device socket derives from that one base URL", () => {
@@ -43,7 +58,7 @@ describe("the device socket derives from that one base URL", () => {
   });
 
   it("swaps http for ws, keeping the port a local API runs on", () => {
-    expect(relaySocketUrl("http://localhost:18804")).toBe("ws://localhost:18804/v1/relay/ws");
+    expect(relaySocketUrl("http://localhost:4242")).toBe("ws://localhost:4242/v1/relay/ws");
   });
 
 });
@@ -119,12 +134,12 @@ describe("PlowApi", () => {
     const fetchImpl = async () => {
       throw new TypeError("fetch failed");
     };
-    const error = await new PlowApi("http://localhost:18804", fetchImpl)
+    const error = await new PlowApi("http://localhost:4242", fetchImpl)
       .requestOtp("+15551110000")
       .catch((e) => e);
 
     expect((error as PlowApiError).kind).toBe("network");
-    expect((error as PlowApiError).message).toBe("Couldn't reach Plow at http://localhost:18804.");
+    expect((error as PlowApiError).message).toBe("Couldn't reach Plow at http://localhost:4242.");
   });
 
   it("returns the token from verify and flags a bad code as unauthorized", async () => {

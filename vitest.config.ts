@@ -15,7 +15,11 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts"],
+    // `e2e/` is back in scope for main's own suites (worktree naming, and the
+    // browser fixtures its package tests import). What went with the stand-in
+    // Plow were the two files under it that needed one — the relay+MCP gate and
+    // the transcript runner — not the directory.
+    include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts", "e2e/**/*.test.ts"],
     testTimeout: 30_000,
     hookTimeout: 30_000,
   },

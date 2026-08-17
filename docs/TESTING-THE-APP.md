@@ -30,7 +30,7 @@ What went, and what it did:
 | `packages/relay-client/test/fakeRelay.ts` | The stand-in relay: plow's channel handshake, tunnelled HTTP exchanges. |
 | `packages/relay-client/test/relayClient.test.ts` | The relay client's integration tests, which stood one up. |
 | `e2e/relay-gate/gate.ts` | The relay + MCP end-to-end gate against a live plow variant stack. |
-| `e2e/transcripts.test.ts` | Ran the transcript scripts under vitest. |
+| `e2e/transcripts.test.ts` | Ran the transcript scripts under vitest. (The rest of `e2e/` stays: the worktree-naming test and the browser fixtures the package tests import.) |
 | `apps/desktop/scripts/first-run-drive.mjs` | Drove the whole first run with real key and mouse events. |
 | `apps/desktop/scripts/first-run-transcript.mjs` | The state machine end to end, plus a no-credential-in-a-log grep. |
 | `apps/desktop/scripts/slow-approval-transcript.mjs` | The slow-approval / long-command round trip with timings. |
@@ -70,8 +70,9 @@ app by hand, drive it by hand — keyboard and mouse, not the inspector.
 | `just connect-screenshot` | The Connect-a-client screen: the OAuth route, the static-credential form, the copy-once block. |
 | `just approval-screenshot` | The approval dialog names the calling agent. |
 | `just verify-preload` | The sandboxed preload bridge and both renderers still work. |
+| `just viewer-screenshot` | The audit screen's live-browser thumbnail. |
 
-The four `just` recipes above launch Electron. **Run them on the M4, never on the head chef's Mac** —
+Every `just` recipe above except `npx vitest run` launches Electron. **Run them on the M4, never on the head chef's Mac** —
 windows flash on screen otherwise. The wiki page has the rsync/build/capture procedure, including the
 two traps that waste an hour: exclude `*.tsbuildinfo` (or `tsc -b` emits nothing and you get blank
 PNGs), and repair Electron's binary when `node_modules/electron/path.txt` is missing.
@@ -81,35 +82,46 @@ PNGs), and repair Electron's binary when `node_modules/electron/path.txt` is mis
 ## Driving the app by hand
 
 **Point a build at a local API.** Baked in, deliberately — there is no Settings field, because a
-credential is only valid against the environment that minted it. The developer override:
+credential is only valid against the environment that minted it. **Every build defaults to
+production** (`https://api.plow.co`), including a run from source, so targeting a local relay is a
+deliberate act:
 
 ```bash
-DOMO_API_BASE_URL=http://localhost:18804 just app
+just app                                          # production, ~/Library/Application Support/Domo-<branch>
+DOMO_API_BASE_URL=http://localhost:4242 just app  # that relay, …/Domo-<branch>-local
+DOMO_HOME=/tmp/domo-x just app                    # an explicit home always wins
 ```
 
-An unpackaged run already defaults to `http://localhost:18804`; a packaged one to
-`https://api.plow.co`.
+There is no local default and no flag — you export the URL you want.
 
-**Reset to first-run state.** State lives under `DOMO_HOME` (default `~/.domo`). With no
-`relayCredential` in `app/settings.json` the app is behind the login gate: the Set Up window is the
-only window there is.
+`<branch>` is this checkout's normalized branch name (`scripts/worktree-name.sh --branch`), so every
+checkout — main included — has its own home, and none of them is the packaged install's unsuffixed
+`~/Library/Application Support/Domo`.
+
+**Setting the override moves the home too**, to `…/Domo-<branch>-local`, unless you set `DOMO_HOME`
+yourself. A credential is only valid against the environment that minted it, so a local one landing
+in the production-facing home would overwrite the credential there and cost you a re-onboarding.
+Plain `just app` against production still uses `…/Domo-<branch>`.
+
+Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
+production-facing state:
 
 ```bash
-DOMO_HOME=$(mktemp -d) just app          # a clean first run, your real state untouched
-rm ~/.domo/app/settings.json             # or reset the real one
+DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
 ```
 
-`just` recipes default `DOMO_HOME` to `~/.domo` — your *real* one. Always pass a throwaway to
-anything that writes state.
+**Reset to first-run state.** State lives under `DOMO_HOME` (default
+`~/Library/Application Support/Domo-<branch>` under `just`). With no `relayCredential` in
+`app/settings.json` the app is behind the login gate: the Set Up window is the only window there
+is, and there is no main window until the wizard's last button hands over:
 
-**Where the app reads its two values** — the answer to the question every integration asks:
+```bash
+DOMO_HOME=$(mktemp -d) just app                                    # a clean first run, your real state untouched
+rm ~/Library/Application\ Support/Domo-<branch>/app/settings.json  # or reset the real one
+```
 
-| | |
-|---|---|
-| Relay socket URL | **Not configurable.** Derived from `DOMO_API_BASE_URL`: same origin, `http`→`ws`, path `/v1/relay/ws`. |
-| Device credential | `${DOMO_HOME}/app/settings.json`, key `relayCredential`, mode 0600. |
-
-With `relayCredential` present at launch the app skips onboarding entirely and dials at boot.
+`just` recipes default `DOMO_HOME` to this checkout's `Domo-<branch>` home — your *real* dev one.
+Always pass a throwaway to anything that writes state.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:

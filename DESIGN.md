@@ -294,6 +294,156 @@ repo can prove they broke nothing.
 | `domo-mcp` | exec | stdio↔socket MCP shim for Claude Code |
 | `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Goals/Rules/Audit window, agent spin-up |
 
+## 11a. Local browsing (Camoufox + self-hosted vault)
+
+The device can host a real anti-detection Firefox (Camoufox, driven by
+Playwright through a vendored Python server — `vendor/browser-server/`,
+provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
+user**: local IP, local cookies, and local credentials that never leave the
+Mac. The pieces:
+
+**Session grants.** Browser work is hundreds of small actions; per-action
+intents would be approval spam and "always allow browser_goto" would be an
+unbounded rule. Instead one signed intent opens a **session** whose capability
+is the enforceable bound — a `browser` capability with an origin allowlist
+(`origins: ["dominos.com", "*.dominos.com"]`, explicit patterns, no PSL
+logic) and optionally `credential` capabilities. Subsequent commands ride the
+session handle over the `browser_command` RPC with no new intent — the same
+trust model as `get_output`. Widening scope mid-session (a checkout popup
+lands on a payment provider) is a new intent with the identical capability
+shape, so always-allow rules are meaningful and reusable; a fully-ruled task
+runs unattended end to end (the e2e suite asserts a second session is decided
+entirely by `source: "rule"`).
+
+**Enforcement** lives in `packages/device-core/src/browser/browserSessions.ts`
+— trusted TS between the agent and Playwright, because seatbelt cannot cage a
+browser (network is all-or-nothing). Navigation targets are checked before
+`goto`; the observed URL is re-checked after every action; popups are swept
+and audited; on an out-of-scope page the session locks — nothing can be
+observed or interacted with except finding the way back. **Stated limit:** the
+origin bound governs what the agent observes/interacts with and where
+credentials get typed. It is *not* network egress control — page JS (the
+site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted:
+eval can't exfiltrate anything `screenshot`/`text` couldn't already carry over
+MCP.
+
+**Credentials.** A `credential` capability is separate and explicit on the
+approval card: `access: "metadata"` (list vault item names/field labels —
+never values) or `access: "fill"` with item ids. The vendored
+`seed_vault_broker` CLI wraps the bundled `bw` (an agent account scoped to one
+vault's collections). `fill_secret`
+is the strongest gate, in order: item ∈ approved set → the selector is located
+to its owning frame → the frame's origin ∈ session scope → `seed-vault-broker
+get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
+check applies; credit cards deliberately pass — they are meant for any
+merchant) → a frame-targeted fill → the value is dropped. Secret values never
+traverse MCP, never appear in results, and never appear in either audit log.
+Item ids on the approval card are resolved to titles **locally** (agent-supplied
+titles would be spoofable).
+
+**The owner's live view.** While a browsing session is open, the audit
+screen's detail pane shows a small near-live mirror of what Camoufox is
+showing, pinned in the pane's bottom-right corner outside the timeline scroll
+(~1 frame/s, a `view` server action that never touches disk). Frames ride
+`BrowserHost.viewFrame()` — deliberately *outside* `BrowserSessions`: session
+scope bounds what the **agent** observes, and the owner watching an
+out-of-scope page is exactly the oversight the view exists for (the caption
+flags "Out of approved scope"). `viewFrame` is strictly best-effort — it never
+starts the browser, never throws, and a ~1/s poll writes nothing to the audit
+log. The thumbnail appears only while a session is active and disappears when
+it closes.
+
+**Skills.** Devices publish skills (name/description/markdown body,
+`SkillRegistry`) in their register manifest; agents discover them via
+`list_device_tools` and read them with `read_skill`. The built-in
+`camoufox-browsing` skill is the operator manual for this tool surface.
+
+**Runtime & packaging.** The stack ships inside the app: a relocated
+python.org universal2 Python 3.12 + lipo-merged (delocate) universal
+site-packages + one lipo-fused universal Camoufox tree (both arches' Mach-Os
+fused, the arch-independent payload shipped once), built deterministically by
+`scripts/build-browser-runtime.mjs` from hash pins in
+`vendor/browser-server/runtime.lock.json` (version coupling
+camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
+build prunes what can never load at runtime (Camoufox's bundled Windows/Linux
+spoofing fonts — the vendored server pins the fingerprint to macOS — plus
+Python test suites, dSYMs, headers, bytecode caches). The payload is
+byte-identical in both electron-builder arch passes so the universal merge
+copies it through. The Camoufox payload is a complete
+`camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
+app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
+user's shared cache is never touched and no fetch happens at launch. Audit
+events (`browser_*`, `credential_*`) are the test oracle; the fake browser
+server + fake `op` fixtures make the whole flow CI-testable without Python,
+and `just test-browser` runs the real browser against a local checkout
+fixture site.
+
+## 11b. Software updates
+
+The packaged app self-updates via **electron-updater** (generic provider — no
+update server). electron-builder bakes the feed URL into the app; the feed is
+static files on the same S3 bucket Phoenix's Sparkle appcast uses:
+`https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/latest-mac.yml`, with
+the update zip beside it. Auto-update needs the `zip` target (Squirrel.Mac
+cannot consume a DMG); both artifacts come from the one signed, notarized pack.
+
+Decisions and their reasons:
+
+- **Only the packaged install updates.** `main.ts` constructs the
+  `UpdateController` behind `app.isPackaged`, so from-source/worktree runs
+  never poll the feed. This composes with the worktree state model (§13): only
+  the packaged install uses the unsuffixed `Domo` home.
+- **Nothing about updates is modal.** Downloads are automatic and silent; a
+  staged update surfaces as a passive banner in the main window, a tray item
+  ("Restart to Update"), and the Software Updates settings section — never a
+  dialog, which could interrupt an approval decision. A restart tears down
+  live agent sessions, so it happens only on the human's click or at a
+  natural quit. Two preferences, both default-on: "automatically check"
+  (gates the 4-hour background cadence; a manual check always works) and
+  "install when quitting" (`autoInstallOnAppQuit` — the VS Code/Slack
+  pattern). The menu-bar and tray "Check for Updates…" land the window on
+  Settings, where version, last-check time, and the outcome are visible;
+  background outcomes are never surfaced anywhere louder than that section.
+- **Versions are minted by `just package`, never committed.** electron-updater
+  updates on a SEMVER comparison of the feed's version — the build number
+  plays no part (the opposite of Sparkle, which compares `CFBundleVersion`).
+  So `package` stamps `major.minor.<UTC yyyymmddHHMM>` into the app via
+  `extraMetadata` (same stamp as `CFBundleVersion`), making every packaged
+  build — local ones included — semver-newer than everything packaged before
+  it. A locally installed package is never yanked back by the stable feed, any
+  candidate is promotable, and no version-bump commit gates a release.
+  package.json owns only `major.minor` (bump it when the release deserves it);
+  its patch digit is dead. Cost: user-visible versions are long and
+  date-shaped, Chrome-style — accepted for the zero-commit pipeline. The git
+  commit is stamped alongside (`DomoGitCommit` in Info.plist, `gitCommit` in
+  the app's package.json, `-dirty` when the tree isn't clean), because the
+  artifact travels alone: CI builds are tagged in git, local builds aren't,
+  and either way a DMG on a desk should answer what it was built from.
+- **Versioned-then-promote, human-gated** (mirrors Plow's Phoenix pipeline):
+  `just release` uploads to `domo/releases/<version>-<build>/` where nobody's
+  app looks; a human publishing the draft GitHub release fires the promote
+  workflow, which copies artifacts onto the stable keys — feed last, because
+  writing `latest-mac.yml` is the ship moment. `just promote` is the manual
+  equivalent. Trust comes from the sha512 in the feed plus the Developer ID
+  signature; there is no Sparkle-style appcast key.
+- The update controller is pure over injected seams (`updates.ts`,
+  `updates.test.ts`) per the testing rule — updater, dialogs, and clock are
+  all injectable.
+- **The whole loop is testable locally, no S3.** `DOMO_UPDATE_FEED_URL`
+  points a packaged build at any feed (honored unconditionally — Squirrel.Mac
+  only installs updates signed by the same Developer ID, so a hostile feed
+  can offer nothing the app accepts), and `just serve-updates` serves this
+  checkout's `apps/desktop/release/` as that feed. Package twice, install A,
+  serve B, launch A with the override + a throwaway `DOMO_HOME` — the recipe
+  comment in the justfile walks through it.
+
+Known cost: the DMG and zip each carry the full browser runtime (the fused
+universal Camoufox tree + Python — the DMG-halving work in §11a shrank it,
+but it still dominates the artifact), so updates are large. Blockmap
+differential downloads may soften this; shipping the browser runtime
+out-of-band (it is already pinned by `runtime.lock.json`) is the eventual fix
+if update size becomes a problem.
+
 ## 12. Roadmap
 
 1. **v1 (this repo, now):** everything above, local, tested.

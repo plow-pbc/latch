@@ -1,0 +1,42 @@
+{
+  "python": {
+    "version": "3.12.10",
+    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg",
+    "sha256": "8373e58da4ea146b3eb1c1f9834f19a319440b6b679b06050b1f9ee3237aa8e4"
+  },
+  "camoufox": {
+    "browserVersion": "official/152.0.4-beta.28",
+    "assets": {
+      "arm64": {
+        "url": "https://github.com/daijro/camoufox/releases/download/v152.0.4-beta.28/camoufox-152.0.4-beta.28-mac.arm64.zip",
+        "sha256": "8b7680a61818245cf4eb0150edab811d4ed937b6723514569e74c3e7df9685bd"
+      },
+      "x64": {
+        "url": "https://github.com/daijro/camoufox/releases/download/v152.0.4-beta.28/camoufox-152.0.4-beta.28-mac.x86_64.zip",
+        "sha256": "6e0efd66f6db46bece072827cb2c5a4851bca822ff4fed95b8a0c2fb6f61a3d4"
+      }
+    }
+  },
+  "vaultServer": {
+    "version": "1.37.1",
+    "repo": "https://github.com/dani-garcia/vaultwarden.git",
+    "commit": "2629bcbe1380c894e3a7f52cafcac3988edb8fbb",
+    "webVault": {
+      "url": "https://github.com/dani-garcia/bw_web_builds/releases/download/v2026.6.4/bw_web_v2026.6.4.tar.gz",
+      "sha256": "d47f16ed4e756c73c88143047281f8881f1a6fb680d9bf0dd24c8adae6799592"
+    }
+  },
+  "vaultCli": {
+    "version": "2026.7.0",
+    "assets": {
+      "arm64": {
+        "url": "https://github.com/bitwarden/clients/releases/download/cli-v2026.7.0/bw-oss-macos-arm64-2026.7.0.zip",
+        "sha256": "b07673ed1364df5843d7a02b1fdb58472e67cd4ef45d877fc057c36165007be0"
+      },
+      "x64": {
+        "url": "https://github.com/bitwarden/clients/releases/download/cli-v2026.7.0/bw-oss-macos-2026.7.0.zip",
+        "sha256": "3013eee9970ca2f3e6a54ddbe7ffd377e61bc6dd81f272ff660d6850529dc012"
+      }
+    }
+  }
+}
