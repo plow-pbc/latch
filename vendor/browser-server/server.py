@@ -281,7 +281,11 @@ def main():
 
     with Camoufox(**kwargs) as browser:
         # Camoufox yields a Browser normally, a BrowserContext when persistent.
-        page = browser.new_page()
+        # A persistent context is handed over with a page ALREADY open, so
+        # calling new_page() there leaves that first one abandoned: the owner
+        # watches two windows and cannot tell which is being driven, and
+        # anything reading pages[0] drives the wrong one.
+        page = browser.pages[0] if args.profile_dir else browser.new_page()
         session = Session(page)
 
         version = ""
