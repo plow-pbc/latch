@@ -354,17 +354,117 @@ app.whenReady().then(async () => {
     })()`),
   };
 
-  // Connect a client is a nav item of its own now, so the probe renders it too.
-  await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("connect")`);
+  // Connecting a client lives in the Agents tab — first in the bar — and no
+  // longer in Settings at all. Two checks, one per pane: Settings must be clean
+  // of it, and Agents must render the whole flow.
+  //
+  // Sign back in first: the optimistic-mode repro above deliberately left the
+  // account signed OUT, and this flow is about a signed-in Mac (it is what
+  // `connect:get` stubs). Probing it signed out would assert nothing.
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_probe_credential" });
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  await new Promise((r) => setTimeout(r, 300));
+  const settingsPane = await win.webContents.executeJavaScript(`(${() => {
+    const titles = [...document.querySelectorAll(".settings .item > .group-title")].map((t) =>
+      t.textContent.trim(),
+    );
+    return {
+      // Settings went back to what it was: Plow Account first, and not a trace
+      // of the connect flow — no stub, no duplicate, no pointer.
+      firstGroupIsAccount: titles[0] === "Plow Account",
+      noConnectBlock: !document.querySelector("#view .connect"),
+      noConnectText: !document.body.innerText.includes("Connect an MCP client"),
+      groupTitles: titles,
+      // The probe's account IS signed in, so Sign In must not be on screen.
+      // `hidden` alone does not hide a `display: inline-flex` button, and the
+      // result is a Sign In sitting beside Sign Out on a live account.
+      noSignInWhileSignedIn: ![...document.querySelectorAll("button")].some(
+        (b) => b.textContent.trim() === "Sign In" && getComputedStyle(b).display !== "none",
+      ),
+    };
+  }})()`);
+
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await new Promise((r) => setTimeout(r, 300));
   const connect = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
+    const tabs = [...document.querySelectorAll("#seg button")].map((b) => b.dataset.tab);
     return {
       showsUrl: text.includes("https://api.plow.co/v1/relay/devices/u_probe/mcp"),
-      showsOauth: text.includes("Sign in with OAuth"),
+      // OAuth is no longer a numbered step — it is a reassurance inside the
+      // flow's own prose. Same coverage, retargeted at the sentence.
+      showsOauth: text.includes("signs in with OAuth the first time it connects"),
+      // One flow: no numbered step markup anywhere in the pane.
+      noSteps: !document.querySelector("#view .stepnum, #view .step"),
       offersFallback: text.includes("Can't use OAuth"),
+      // The move itself: its own tab, FIRST in the bar, under the new key.
+      agentsTabFirst: tabs[0] === "agents",
+      tabOrder: tabs,
+      hasAgentsPane: !!document.querySelector("#view .panel.agents .connect"),
+      showsTitle: text.includes("Connect an MCP client"),
+      noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
+      // The client shortcut. Exactly one: a card exists only for a client whose
+      // link lands the user where they paste, and ChatGPT has no such link.
+      clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
+        n.textContent.trim(),
+      ),
     };
   }})()`);
+
+  // The Agents pane gets an image of its own, for the same reason Settings does:
+  // every UI change gets one, and this one moved panes. Two frames first, so the
+  // capture is what was just asserted rather than the pane painted before it.
+  const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
+
+  // …and the same pane with the static-credential fallback EXPANDED. It is the
+  // busiest this pane ever gets, and the state whose spacing has to hold: the
+  // form must read as the quiet alternative, not the main event.
+  await win.webContents.executeJavaScript(`(() => {
+    const link = [...document.querySelectorAll(".linkbtn")].find((b) =>
+      b.textContent.includes("static credential"),
+    );
+    link.click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 300));
+  const agentsOpen = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".modal-backdrop .modal");
+    return {
+      // The form is IN a modal, and nowhere in the pane.
+      opensModal: !!modal,
+      formInModal: !!modal && modal.innerText.includes("Name this connection"),
+      noInlineForm: !document.querySelector("#view").innerText.includes("Name this connection"),
+      // The pane behind it is switched off while it is up.
+      paneInert: document.querySelector("#view")?.hasAttribute("inert") === true,
+      // Focus went into the dialog rather than staying on the trigger.
+      focusInModal: !!modal && modal.contains(document.activeElement),
+      buttons: [...(modal?.querySelectorAll("button") ?? [])].map((b) => b.textContent.trim()),
+    };
+  }})()`);
+  const agentsOpenShot = process.env.AGENTS_OPEN_OUT ?? "/tmp/agents-open.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(agentsOpenShot, (await win.webContents.capturePage()).toPNG());
+
+  // Esc is a courtesy the FORM gets. (The credential state refuses it, but this
+  // probe has no minted credential to test that with — `connect:get` is stubbed
+  // with `credential: null` — so this covers the safe half only.)
+  await win.webContents.executeJavaScript(`(() => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 250));
+  const modalClosed = await win.webContents.executeJavaScript(`(${() => ({
+    gone: !document.querySelector(".modal-backdrop"),
+    paneLive: document.querySelector("#view")?.hasAttribute("inert") === false,
+    focusBackOnTrigger: (document.activeElement?.textContent ?? "").includes("static credential"),
+  })})()`);
 
   fs.rmSync(probeHome, { recursive: true, force: true });
 
@@ -418,9 +518,27 @@ app.whenReady().then(async () => {
   }})()`);
 
   const ok =
+    agentsOpen.opensModal &&
+    agentsOpen.formInModal &&
+    agentsOpen.noInlineForm &&
+    agentsOpen.paneInert &&
+    agentsOpen.focusInModal &&
+    modalClosed.gone &&
+    modalClosed.paneLive &&
+    modalClosed.focusBackOnTrigger &&
     connect.showsUrl &&
     connect.showsOauth &&
+    connect.noSteps &&
     connect.offersFallback &&
+    connect.agentsTabFirst &&
+    connect.hasAgentsPane &&
+    connect.showsTitle &&
+    settingsPane.firstGroupIsAccount &&
+    settingsPane.noConnectBlock &&
+    settingsPane.noConnectText &&
+    settingsPane.noSignInWhileSignedIn &&
+    connect.clientCards.join(",") === "Claude" &&
+    connect.noConnectTab &&
     settings.hasAccountGroup &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
@@ -454,7 +572,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, connect, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, agentsOpen, modalClosed, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

@@ -58,7 +58,16 @@ export interface Settings {
    * the app never constructs the MCP URL itself. Cached only for display. */
   accountUid: string;
   mcpUrl: string;
-  /** The last-selected main-window tab, restored across launches. */
+  /** The last-selected main-window tab, restored across launches.
+   *
+   * The default is the FIRST launch's landing, not a fallback anyone returns
+   * to: a home that has ever stored a tab keeps it, because the file's value
+   * wins over the default. So moving this to "agents" points a new Mac at the
+   * one screen it has to visit — nothing else in the app works until a client
+   * can reach it — and leaves every existing home where its owner left it.
+   *
+   * A stored "connect" predates the Agents tab and is mapped to "agents" on
+   * read (`ui:getTab`) rather than rewritten on disk. */
   selectedTab: string;
   /** The main window's last size + position, restored across launches. */
   windowBounds?: WindowBounds;
@@ -90,7 +99,7 @@ export function loadSettings(home: string): Settings {
     relayCredential: "",
     accountUid: "",
     mcpUrl: "",
-    selectedTab: "audit",
+    selectedTab: "agents",
     approvalMode: "ask",
     showAgentSuggestions: true,
     anthropicApiKey: "",

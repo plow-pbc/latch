@@ -339,10 +339,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .item .group-desc { margin: -4px 0 14px; }
 .settings .chips { flex-wrap: wrap; }
-/* Connection mode segmented control — .seg is styled for the titlebar
-   (margin-left: auto); inside settings it sits flush left, with air below it
-   and below the local-mode description so the status line doesn't crowd. */
-.conn-seg { margin-left: 0; margin-bottom: 16px; align-self: flex-start; }
 .item p.conn-note { margin-bottom: 16px; }
 .item p.reviewer-note { margin-top: 14px; }
 
@@ -551,27 +547,89 @@ textarea.text { min-height: 70px; resize: vertical; }
   color: var(--fg);
 }
 
-/* ---- Connect a client -----------------------------------------------------
-   Numbered steps, one card each, on the same tokens as the settings groups.
-   The URL and the config block reuse `.copyrow`/`.copybox` from the setup
-   window — it is the same job, and the user should recognise it. */
-.connect .conn-status { margin: 0 0 16px; }
-.connect .stephead { align-items: baseline; gap: 10px; margin-bottom: 0; }
-.connect .stephead .group-title { flex: 1; margin: 0 0 12px; }
-.connect .stepnum {
-  flex: none; width: 22px; height: 22px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--sel); color: var(--blue-fg);
-  font-size: 12px; font-weight: 600;
+/* ---- Connect an MCP client ------------------------------------------------
+   The Agents pane, which carries `.settings` alongside `.agents` because it
+   reuses the same group card — so every rule here stays scoped under it.
+
+   `styles.css` had no spacing tokens (only --radius/--shadow/colours), so this
+   pane defines a small 8px scale of its own rather than inventing global ones
+   for one screen: 8 / 16 / 24, sitting inside the 10–18px range the rest of the
+   app already uses. Every gap below is one of the three. */
+.settings .connect {
+  --flow-xs: 8px;
+  --flow-sm: 16px;
+  --flow-md: 24px;
 }
-.connect .conn-actions { margin-top: 14px; }
-.connect .item.quiet { padding: 12px 18px; }
-/* A quiet secondary route — present, never competing with what's above it. */
-.connect .linkbtn {
+/* One flow, so the rhythm is vertical spacing rather than numbered cards: the
+   URL, the line that says what to do with it, the client shortcut. */
+.settings .connect .flow-note {
+  margin: var(--flow-sm) 0 0;
+  /* A readable measure, not a hand-tuned width to fix one wrap: long lines are
+     hard to track back, and the orphaned last word went with it. */
+  max-width: 68ch;
+}
+.settings .connect .item .group-title { font-size: 13px; margin: 0 0 10px; padding-bottom: 8px; }
+
+/* Client card — the designer's mock, adapted: a rounded panel with the client
+   name and an external-link arrow. The mock's two-up grid is NOT kept, because
+   there is one card: a card stretched across the row, or sat in half a grid,
+   both read as a tile that failed to load. It is sized to its content and
+   left-aligned, so it reads as the shortcut it is. The logo tile the mock shows
+   is deliberately absent until real brand assets land. */
+.settings .connect .client-cards {
+  display: flex; flex-wrap: wrap; gap: var(--flow-xs); margin-top: var(--flow-sm);
+}
+.settings .connect .client-card {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card); color: var(--fg);
+  padding: 10px 14px; font: inherit; cursor: pointer; text-align: left;
+}
+.settings .connect .client-card:hover { background: var(--hover); }
+.settings .connect .client-name { font-weight: 600; }
+.settings .connect .client-arrow { color: var(--faint); font-size: 13px; }
+.settings .connect .conn-actions { margin-top: 14px; }
+
+/* The alternative to the flow, not the next thing in it. It is a bare link on
+   its own line now: the filled box it used to sit in gave the fallback more
+   presence than the route above it, and welded it to the card. */
+.settings .connect .alt {
+  margin-top: var(--flow-md);
+  padding-top: var(--flow-sm);
+  border-top: 1px solid var(--border);
+}
+.settings .connect .linkbtn {
   background: none; border: none; padding: 0;
   color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
 }
-.connect .linkbtn:hover { color: var(--fg); }
+.settings .connect .linkbtn:hover { color: var(--fg); }
+
+/* ---------- Static-credential modal ----------
+   Plain DOM over the pane, which is `inert` while this is up. The panel reuses
+   the card tokens so it reads as the same family as everything else. */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.35);
+}
+.modal {
+  width: 100%; max-width: 460px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+  max-height: 100%; overflow: auto;
+}
+.modal .group-title { font-size: 15px; }
+.modal .field { margin-bottom: 0; }
+.modal .modal-note:empty { display: none; }
+.modal .modal-note { margin-top: 10px; }
+.modal .conn-actions { margin-top: 18px; }
+.modal .copyrow { margin-top: 4px; }
+
 /* ---------- Live browser thumbnail (audit detail pane) ---------- */
 
 .live-corner {

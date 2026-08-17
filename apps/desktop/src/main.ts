@@ -373,7 +373,13 @@ ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
   return device?.policy.allRules() ?? [];
 });
-ipcMain.handle("ui:getTab", async () => loadSettings(home).selectedTab);
+ipcMain.handle("ui:getTab", async () => {
+  const tab = loadSettings(home).selectedTab;
+  // "connect" was this tab's key before the content went to Settings and came
+  // back as "agents". Anyone who left the app on it lands where that content
+  // lives now, rather than silently on the default tab.
+  return tab === "connect" ? "agents" : tab;
+});
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
   settings.selectedTab = tab;
@@ -451,6 +457,31 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 // A pure read, like `onboarding:get` and for the same reason: the renderer
 // re-reads on every change notification, so a getter that notifies is an
 // unbroken re-render loop.
+/**
+ * Deep links into a client's "add a custom MCP connector" screen.
+ *
+ * The renderer names a CLIENT, never a URL. `openExternal` is pinned to URLs
+ * the app composed itself — the `sms:` one and this table — because a renderer
+ * that can hand main an arbitrary URL to open is a renderer that can open
+ * anything. An unknown key opens nothing.
+ *
+ * One entry, on purpose. A card earns its place by landing the user where they
+ * paste the URL, and Claude's link opens the add-custom-connector modal
+ * directly. ChatGPT has no equivalent deep link — the nearest target is a help
+ * article about enabling developer mode — so it gets no card rather than a card
+ * that promises one click and delivers a document. The step's own copy stays
+ * client-agnostic, so this table growing is the only change a new client needs.
+ */
+const CLIENT_CONNECTOR_URLS: Readonly<Record<string, string>> = Object.freeze({
+  claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
+});
+
+ipcMain.handle("connect:openClient", async (_e, client: string) => {
+  const url = CLIENT_CONNECTOR_URLS[client];
+  if (!url) return false;
+  await shell.openExternal(url);
+  return true;
+});
 ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
 ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
 ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());

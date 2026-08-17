@@ -1,11 +1,13 @@
 /**
  * Connecting an MCP client — Claude Code, ChatGPT, a headless server.
  *
- * This used to be the last screen of the login wizard, which was the wrong
- * home for it: logging in happens once per Mac, connecting a client happens
- * once per *client*, is repeatable, and is optional — a Mac can be signed in
- * and reachable with no client attached at all. So it lives in the main
- * window now, and this is its state.
+ * This has moved more than once — the login wizard's last screen, a "Connect a
+ * client" tab, a group inside Settings — and now lives in the Agents tab. The
+ * lesson of the round trip is that the content is a place, not a step: Agents
+ * is what has access to this Mac, and handing something access is one thing you
+ * do there, repeatable and optional (a Mac can be signed in and reachable with
+ * no client attached at all). This file is its state, and it has been
+ * indifferent to where the screen sits through every one of those moves.
  *
  * The recommended route needs nothing from this file: the MCP URL is enough,
  * and the client walks the user through OAuth on first connect. What is here

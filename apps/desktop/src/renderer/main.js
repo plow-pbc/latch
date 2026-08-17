@@ -477,119 +477,282 @@ function copyRow(value, label) {
   return el("div", { class: "copyrow" }, [box, copy]);
 }
 
-/** A numbered step: the number, a title, and whatever the step needs. */
-function step(n, title, body) {
-  return el("div", { class: "item step" }, [
-    el("div", { class: "row stephead" }, [
-      el("span", { class: "stepnum", text: String(n) }),
-      el("div", { class: "group-title", text: title }),
-    ]),
-    ...body.filter(Boolean),
+/**
+ * A shortcut into one client's connector setup, opened in the user's real
+ * browser — the place the URL above gets pasted.
+ *
+ * A card exists only for a client whose link lands the user where they paste;
+ * see `CLIENT_CONNECTOR_URLS` in main.ts. It is a shortcut past the clicks, not
+ * the supported-client list — the group's subtitle names the others.
+ *
+ * From the designer's mock, minus the brand logo: an approximated or borrowed
+ * mark is worse than none, so this is the name and the mock's ↗ until real
+ * assets arrive.
+ */
+function clientCard(key, name) {
+  const card = el("button", { class: "client-card" }, [
+    el("span", { class: "client-name", text: name }),
+    el("span", { class: "client-arrow", text: "↗" }),
+  ]);
+  card.addEventListener("click", () => window.domo.connectOpenClient(key));
+  return card;
+}
+
+/** One titled card: a prominent title, an optional description, then the body.
+    Shared by Settings' groups and the Agents pane, which is one of them. */
+function group(title, desc, body) {
+  return el("div", { class: "item" }, [
+    el("div", { class: "group-title", text: title }),
+    desc ? el("p", { class: "faint group-desc", text: desc }) : null,
+    ...body,
   ]);
 }
 
-/** Whether the static-credential fallback is expanded. Renderer-local: it is a
+/** Whether the static-credential modal is up. Renderer-local: it is a
     disclosure, not app state, and nothing outside this window cares. */
 let staticOpen = false;
 
-async function renderConnect() {
-  const s = await window.domo.connectGet();
-  if (!s) return;
+/**
+ * The static-credential modal, while it is up.
+ *
+ * Lives on `document.body`, not inside `#view`: the pane behind it is made
+ * `inert` while it is open, and a dialog nested inside the thing it disables
+ * would disable itself.
+ *
+ * `nameInput` is held here and reused across refreshes for the reason the
+ * API-key field is: a relay reconnect can redraw this while someone is halfway
+ * through typing a name, and rebuilding the field would take the name with it.
+ */
+let staticModal = null;
 
-  // Not signed in should be unreachable — the gate means the main window does
-  // not exist without a credential — but a screen that assumes it and renders
-  // a blank URL would be worse than one that says so.
-  if (!s.hasCredential) {
-    view.replaceChildren(el("div", { class: "panel connect" }, [
-      el("div", { class: "empty", text: "This Mac isn't signed in to Plow yet." }),
-    ]));
-    return;
+/** Everything the modal switched off, switched back on. */
+function closeStaticModal() {
+  if (!staticModal) return;
+  const { backdrop, trigger, onKeydown } = staticModal;
+  document.removeEventListener("keydown", onKeydown, true);
+  backdrop.remove();
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.removeAttribute("inert");
   }
+  staticModal = null;
+  // Focus goes back where it came from, not to the top of the document.
+  if (trigger && trigger.isConnected) trigger.focus();
+}
 
-  const statusLine = el("div", { class: "row conn-status" }, [
-    el("span", { class: `status-dot${s.connected ? " on" : ""}` }),
-    el("span", { text: s.connected ? "This Mac is connected" : "Not connected — retrying." }),
-  ]);
+/**
+ * Open the modal over the Agents pane.
+ *
+ * **The shown-once credential is the hazard here.** Once minted, the token is
+ * in this modal and nowhere else — the app never wrote it down and the server
+ * will not hand it back — and `connectDismiss` destroys that only copy. So the
+ * escapes that are ordinary courtesies while the form is up (Esc, a click on
+ * the backdrop, Cancel) are all refused once a credential is displayed: the
+ * ONLY way out of that state is the explicit "I've Saved It", which is the
+ * button that does the destroying and says so. A modal that vanished on a
+ * stray Esc and took a live credential with it would be a data-loss bug with a
+ * polite name.
+ */
+function openStaticModal(trigger, redraw) {
+  if (staticModal) return;
+  const panel = el("div", { class: "modal", attrs: { role: "dialog", "aria-modal": "true" } });
+  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
+  const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
+  const onKeydown = (e) => {
+    // Esc closes the form. It does NOT close a displayed credential.
+    if (e.key !== "Escape" || staticModal?.holdingCredential) return;
+    e.preventDefault();
+    e.stopPropagation();
+    staticOpen = false;
+    closeStaticModal();
+    redraw();
+  };
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target !== backdrop || staticModal?.holdingCredential) return;
+    staticOpen = false;
+    closeStaticModal();
+    redraw();
+  });
+  document.addEventListener("keydown", onKeydown, true);
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.setAttribute("inert", "");
+  }
+  document.body.appendChild(backdrop);
+  staticModal = { backdrop, panel, nameInput, trigger, onKeydown, kind: null, holdingCredential: false };
+  nameInput.focus();
+}
 
-  const note = s.busy
-    ? el("p", { class: "faint", text: "Talking to Plow…" })
-    : s.message
-      ? el("p", { class: "faint", text: s.message })
-      : null;
+/**
+ * Draw the modal from the same state the pane draws from.
+ *
+ * Rebuilds the panel only when the KIND changes (form → credential); within a
+ * kind it updates the note and the disabled flags in place, so `nameInput`
+ * survives every refresh that is not a state change.
+ */
+function syncStaticModal(s, redraw) {
+  if (!staticModal) return;
+  staticModal.holdingCredential = !!s.credential;
+  const kind = s.credential ? "credential" : "form";
+  const note =
+    staticModal.note ?? el("p", { class: "faint modal-note", text: "" });
+  staticModal.note = note;
+  note.textContent = s.busy ? "Talking to Plow…" : (s.message ?? "");
 
-  // The credential, if one was just minted. This is the only place it exists
-  // outside the client the user pastes it into: the app never wrote it down and
-  // the server will not hand it back.
-  const shown = s.credential
-    ? [
-        step(3, `Paste this into ${s.credential.name}`, [
-          el("p", { class: "warn conn-note", text: "Copy it now — it is shown once and cannot be shown again." }),
-          copyRow(s.credential.config, "Copy Config"),
-          el("div", { class: "row conn-actions" }, [
-            el("div", { class: "spacer" }),
-            (() => {
-              const done = el("button", { class: "btn primary", text: "I've Saved It" });
-              done.addEventListener("click", async () => {
-                await window.domo.connectDismiss();
-                staticOpen = false;
-                renderConnect();
-              });
-              return done;
-            })(),
-          ]),
-        ]),
-      ]
-    : [];
-
-  // The fallback, behind a quiet link: OAuth is the recommended route and a
-  // long-lived credential is the thing you reach for when it is not available.
-  let fallback = [];
-  if (!s.credential) {
-    if (!staticOpen) {
-      const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
-      link.addEventListener("click", () => { staticOpen = true; renderConnect(); });
-      fallback = [el("div", { class: "item quiet" }, [link])];
+  if (staticModal.kind !== kind) {
+    staticModal.kind = kind;
+    if (kind === "credential") {
+      const done = el("button", { class: "btn primary", text: "I've Saved It" });
+      done.addEventListener("click", async () => {
+        await window.domo.connectDismiss();
+        staticOpen = false;
+        closeStaticModal();
+        redraw();
+      });
+      staticModal.panel.replaceChildren(
+        el("div", { class: "group-title", text: `Paste this into ${s.credential.name}` }),
+        el("p", { class: "warn conn-note", text: "Copy it now — it is shown once and cannot be shown again. Saving it is the only way to close this." }),
+        copyRow(s.credential.config, "Copy Config"),
+        note,
+        el("div", { class: "row conn-actions" }, [el("div", { class: "spacer" }), done]),
+      );
+      done.focus();
     } else {
-      const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
-      const create = async () => { await window.domo.connectCreate(nameInput.value); renderConnect(); };
-      nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
+      const create = async () => {
+        await window.domo.connectCreate(staticModal.nameInput.value);
+        redraw();
+      };
+      staticModal.nameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") create();
+      });
       const createBtn = el("button", { class: "btn primary", text: "Create Credential" });
       createBtn.addEventListener("click", create);
       const cancel = el("button", { class: "btn", text: "Cancel" });
-      cancel.addEventListener("click", () => { staticOpen = false; renderConnect(); });
-      fallback = [
-        el("div", { class: "item" }, [
-          el("div", { class: "group-title", text: "Static credential" }),
-          el("p", {
-            class: "faint conn-note",
-            text: "For a client that can't do OAuth. It is long-lived, shown once, and can be revoked from your Plow account.",
-          }),
-          el("div", { class: "field" }, [el("label", { text: "Name this connection" }), nameInput]),
-          el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
-        ]),
-      ];
+      cancel.addEventListener("click", () => {
+        staticOpen = false;
+        closeStaticModal();
+        redraw();
+      });
+      staticModal.actions = [cancel, createBtn];
+      staticModal.panel.replaceChildren(
+        el("div", { class: "group-title", text: "Static credential" }),
+        el("p", {
+          class: "faint conn-note",
+          text: "For a client that can't do OAuth. It is long-lived, shown once, and can be revoked from your Plow account.",
+        }),
+        el("div", { class: "field" }, [el("label", { text: "Name this connection" }), staticModal.nameInput]),
+        note,
+        el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
+      );
+      staticModal.nameInput.focus();
     }
   }
+  // In-place, every refresh: the field is never rebuilt, so nothing typed is
+  // ever taken away by one.
+  staticModal.nameInput.disabled = !!s.busy;
+  for (const b of staticModal.panel.querySelectorAll("button")) b.disabled = !!s.busy;
+}
 
-  view.replaceChildren(el("div", { class: "panel connect settings" }, [
-    statusLine,
-    step(1, "Add this MCP server to your client", [
-      el("p", { class: "faint conn-note", text: "Claude Code, ChatGPT, or anything else that speaks MCP over HTTP." }),
-      copyRow(s.mcpUrl || "—"),
-    ]),
-    step(2, "Sign in with OAuth", [
-      el("p", {
-        class: "faint conn-note",
-        text: "Your client walks you through Plow sign-in the first time it connects to that URL. Recommended: there is no token to copy, store, or leak.",
-      }),
-    ]),
-    ...shown,
+/**
+ * The body of the "Connect a client" settings group — the FIRST group on the
+ * pane, above the account it depends on: connecting a client is the thing you
+ * come here to do, and burying it under the account read as optional.
+ *
+ * Returns nodes instead of painting the view: it is no longer a screen of its
+ * own. `redraw` repaints only this group — the pane around it holds a
+ * half-typed API-key field that must never be replaced under the user.
+ */
+function connectNodes(s, redraw) {
+  // Not signed in should be unreachable — the gate means the main window does
+  // not exist without a credential — but showing a blank URL would be worse
+  // than saying so. Folded in rather than early-returning off the screen: this
+  // is a group that renders in both states.
+  if (!s.hasCredential) {
+    return [
+      el("p", { class: "faint conn-note", text: "Sign in below — a client reaches this Mac through your Plow account." }),
+    ];
+  }
+
+  // Only when the modal is closed: while it is up, its own note says this, and
+  // the same sentence behind an overlay is noise.
+  const note =
+    staticModal || !(s.busy || s.message)
+      ? null
+      : el("p", { class: "faint", text: s.busy ? "Talking to Plow…" : s.message });
+
+  // The alternative to the whole flow, behind a quiet link. It opens a MODAL
+  // rather than expanding in place: the form is the heaviest thing this pane
+  // can show, and inline it out-shouted the OAuth path it is the fallback to.
+  let fallback = [];
+  if (!s.credential) {
+    const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
+    link.addEventListener("click", () => {
+      staticOpen = true;
+      openStaticModal(link, redraw);
+      redraw();
+    });
+    fallback = [el("div", { class: "alt" }, [link])];
+  }
+
+  // One flow, not a checklist: copy the URL, paste it in your client, done.
+  // Signing in is NOT a step — it is what the client does on first connect, so
+  // it is said once as reassurance in the same breath as the paste, and never
+  // as an instruction to carry out. The static credential comes last because it
+  // is the alternative to all of this, not the end of it.
+  const box = el("div", { class: "connect" }, [
+    copyRow(s.mcpUrl || "—"),
+    el("p", {
+      class: "faint flow-note",
+      text: "Paste it into your client's custom MCP server setting. Your client signs in with OAuth the first time it connects — no token to copy, store, or rotate.",
+    }),
+    // One card. The mock's two-up grid is not kept for a single card — a
+    // half-empty grid reads as a tile that failed to load.
+    el("div", { class: "client-cards" }, [clientCard("claude", "Claude")]),
     ...fallback,
     note,
-  ].filter(Boolean)));
+  ].filter(Boolean));
 
-  for (const b of view.querySelectorAll("button")) if (s.busy) b.disabled = true;
+  // Scoped to this subsection: the account rows above it (Sign Out) are not
+  // this subsection's to disable while it is mid-call.
+  for (const b of box.querySelectorAll("button")) if (s.busy) b.disabled = true;
+  return [box];
 }
+/**
+ * The mounted Agents pane, while that tab is up. Holds the one refresh
+ * `connect:changed` calls, so a mint or a dismissal redraws the flow and
+ * nothing else.
+ */
+let agentsMounted = null;
+
+/**
+ * The Agents tab — first in the bar, and a place rather than an action.
+ *
+ * It was a "Connect a client" tab once, and that was the problem: a setup verb
+ * makes an odd permanent home. Agents is what has access to this Mac, and
+ * giving something access is one thing you do here. The roster of what already
+ * has access is meant to join it in this pane once the app can ask for it.
+ */
+async function renderAgents() {
+  const connectBox = el("div");
+  const refreshConnect = async () => {
+    const s = await window.domo.connectGet();
+    connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
+    if (s) syncStaticModal(s, refreshConnect);
+  };
+  await refreshConnect();
+  agentsMounted = { refreshConnect };
+
+  // `settings` alongside `agents` on purpose: the group card, its title and its
+  // description are the same furniture Settings uses, and this pane is one of
+  // those groups that outgrew the pane it was in.
+  view.replaceChildren(el("div", { class: "panel agents settings" }, [
+    group(
+      // The designer's title and subtitle.
+      "Connect an MCP client",
+      "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
+      [connectBox],
+    ),
+  ]));
+}
+
 /** One honest line about the relay link, from what the main process reports. */
 function relayStatusText(relay) {
   if (!relay.hasCredential) return "Not signed in.";
@@ -725,19 +888,13 @@ async function renderSettings() {
   // the environment that minted it, so an editable origin could only be wrong).
   const relay = await window.domo.relayGet();
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
-  // Signed in, this goes to Connect a client — it used to say "Create Agent"
-  // and open the setup window, which since the wizard lost its agent step
-  // promised something that window could no longer do. Signed out is
-  // unreachable from here (the gate means this window would not exist), but it
-  // still points somewhere real rather than nowhere.
-  const setUp = relay.hasCredential
-    ? el("button", { class: "btn primary", text: "Connect a Client" })
-    : el("button", { class: "btn primary", text: "Sign In" });
-  setUp.addEventListener("click", () => {
-    if (!relay.hasCredential) return void window.domo.onboardingOpen();
-    selectTab("connect");
-    window.domo.uiSetTab("connect"); // the same persistence a nav click does
-  });
+  // The "Connect a Client" button that used to sit here is gone: connecting a
+  // client is now a subsection of this same group, so a button navigating to it
+  // would only point at itself. Signing in is still a real action — unreachable
+  // in practice (the gate means this window would not exist signed out), but it
+  // goes somewhere real rather than nowhere.
+  const signIn = el("button", { class: "btn primary", text: "Sign In" });
+  signIn.addEventListener("click", () => window.domo.onboardingOpen());
   const signOut = el("button", { class: "btn danger", text: "Sign Out" });
   // No explicit refresh: signing out restarts the relay, which publishes
   // `status:changed`, which is already the one thing that redraws this pane.
@@ -748,10 +905,10 @@ async function renderSettings() {
   const refreshAccount = async () => {
     const relay = await window.domo.relayGet();
     relayNote.textContent = relayStatusText(relay);
-    // The label #34 gave this button, re-applied on every refresh — otherwise
-    // the first status change silently renames it back to "Create Agent", the
-    // screen the setup window no longer has.
-    setUp.textContent = relay.hasCredential ? "Connect a Client" : "Sign In";
+    // `hidden` is not enough: `.btn` is `display: inline-flex`, which outranks
+    // the user-agent `[hidden] { display: none }` rule and leaves a Sign In
+    // button sitting next to Sign Out on an account that is already signed in.
+    signIn.style.display = relay.hasCredential ? "none" : "";
     signOut.disabled = !relay.hasCredential;
     accountBox.replaceChildren(
       ...(relay.hasCredential
@@ -934,19 +1091,10 @@ async function renderSettings() {
     },
   };
 
-  // Build one settings group: a prominent title, an optional description, then
-  // the group's body nodes.
-  const group = (title, desc, body) =>
-    el("div", { class: "item" }, [
-      el("div", { class: "group-title", text: title }),
-      desc ? el("p", { class: "faint group-desc", text: desc }) : null,
-      ...body,
-    ]);
-
   view.replaceChildren(el("div", { class: "panel settings" }, [
     group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
       accountBox,
-      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
+      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
     ]),
     group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
       providerChips,
@@ -971,21 +1119,22 @@ async function renderSettings() {
 }
 
 function render() {
-  if (currentTab === "audit") renderAudit();
+  if (currentTab === "agents") renderAgents();
+  else if (currentTab === "audit") renderAudit();
   else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
-  else if (currentTab === "connect") renderConnect();
   else if (currentTab === "vault") renderVault();
   else if (currentTab === "settings") renderSettings();
 }
 
 function selectTab(tab) {
   currentTab = tab;
-  // Leaving the screen closes the fallback: it is a disclosure, and coming back
-  // to a form you did not open is a surprise.
-  if (tab !== "connect") staticOpen = false;
+  // Leaving Agents closes the fallback: it is a disclosure, and coming back to
+  // a form you did not open is a surprise.
+  if (tab !== "agents") { staticOpen = false; closeStaticModal(); }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
+  if (tab !== "agents") agentsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
@@ -1011,10 +1160,11 @@ window.domo.onStatusChanged(() => {
   // person typing a key did not ask for and must not be punished by — so this
   // updates the account and provider nodes and leaves the field alone.
   if (currentTab === "settings") settingsMounted?.refresh();
-  // The connect screen leads with the socket's state, so it follows it.
-  if (currentTab === "connect") renderConnect();
+  // Signing in or out changes whether the flow has a URL to show at all.
+  if (currentTab === "agents") agentsMounted?.refreshConnect();
 });
-window.domo.onConnectChanged(() => { if (currentTab === "connect") renderConnect(); });
+// Minting or dismissing a credential redraws only the Agents flow.
+window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
   if (currentTab === "settings") renderSettings();
@@ -1027,7 +1177,7 @@ async function boot() {
   refreshStatus();
   refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
-  const known = ["goals", "audit", "rules", "connect", "vault", "settings"];
+  const known = ["agents", "goals", "audit", "rules", "vault", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
 }
 boot();
