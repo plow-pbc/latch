@@ -35,7 +35,25 @@ class FakePlow {
     return this as unknown as PlowApi;
   }
 
+  /** Set to hold every mint open until `release()`, the way a slow API does. */
+  private mintGate: Promise<void> | null = null;
+  private openMintGate: (() => void) | null = null;
+
+  /** Make `/v1/auth/activate` hang, so a test can act while a mint is in air. */
+  holdActivations(): void {
+    this.mintGate = new Promise((resolve) => {
+      this.openMintGate = resolve;
+    });
+  }
+
+  releaseActivations(): void {
+    this.openMintGate?.();
+    this.mintGate = null;
+    this.openMintGate = null;
+  }
+
   async createActivation(name: string) {
+    if (this.mintGate) await this.mintGate;
     const secret = `${ACTIVATION_SECRET}_${this.activations.length}`;
     this.activations.push(name);
     return { displayCode: `CODE${this.activations.length}`, activationSecret: secret, sendTo: "+15550001111" };
@@ -352,6 +370,73 @@ describe("activation — the path a brand-new user takes", () => {
     expect(warnings.join(" ")).not.toContain(ACTIVATION_SECRET);
     // The display code is a credential too — it is shown, never logged.
     expect(warnings.join(" ")).not.toContain("CODE1");
+  });
+});
+
+describe("one code, however many callers ask for it", () => {
+  it("does not burn a second code when two callers ask while the API is slow", async () => {
+    // A display code IS a credential: whoever texts it gets the account. A
+    // second one minted behind the first is live on the account, shown to
+    // nobody, and revocable by nobody — the screen only ever displays one.
+    plow.holdActivations();
+    const onboarding = build();
+
+    const first = onboarding.begin();
+    const second = onboarding.begin();
+    const third = onboarding.newActivationCode();
+    plow.releaseActivations();
+    const [a, b, c] = await Promise.all([first, second, third]);
+
+    expect(plow.activations).toHaveLength(1);
+    // ...and all three callers are looking at the one code that exists.
+    for (const state of [a, b, c]) expect(state.activation?.displayCode).toBe("CODE1");
+    onboarding.reset(); // stop the poll loop this started
+  });
+
+  it("survives the sequence sign-out actually produces", async () => {
+    // `settings:signOut` resets, syncs the gate — which opens the setup window,
+    // whose renderer calls `begin` on boot — and calls `begin` itself. On a slow
+    // `/v1/auth/activate` both of those are in flight at once.
+    plow.holdActivations();
+    const onboarding = build();
+    onboarding.reset();
+    const fromSignOut = onboarding.begin();
+    const fromRenderer = onboarding.begin();
+    plow.releaseActivations();
+    await Promise.all([fromSignOut, fromRenderer]);
+
+    expect(plow.activations).toHaveLength(1);
+    onboarding.reset();
+  });
+
+  it("still mints a fresh one once the first has landed", async () => {
+    // Single-flight must not wedge the button: "Get a New Code" after the mint
+    // returns is a different ask, and gets a different code.
+    const onboarding = build();
+    await onboarding.begin();
+    expect(plow.activations).toHaveLength(1);
+
+    const state = await onboarding.newActivationCode();
+    expect(plow.activations).toHaveLength(2);
+    expect(state.activation?.displayCode).toBe("CODE2");
+    onboarding.reset();
+  });
+
+  it("does not wedge after a mint that failed", async () => {
+    const onboarding = build();
+    const boom = new PlowApiError("network", "Couldn't reach Plow.");
+    const original = plow.createActivation.bind(plow);
+    plow.createActivation = async () => {
+      throw boom;
+    };
+    const failed = await onboarding.begin();
+    expect(failed.message).toBe("Couldn't reach Plow.");
+    expect(failed.activation).toBeNull();
+
+    plow.createActivation = original;
+    const state = await onboarding.begin();
+    expect(state.activation?.displayCode).toBeTruthy();
+    onboarding.reset();
   });
 });
 
