@@ -115,9 +115,12 @@ const SCREENS = [
     expect: ["Check your phone", "If +1 555 123 4567 is on a Plow account", "Expires in 4:", "Resend"],
   },
   {
+    // The end of the wizard, and the door into the app: past this button the
+    // main window exists for the first time. Connecting an MCP client is NOT
+    // here — it is per-client and repeatable, so it lives in the main window.
     name: "connected",
     state: { ...base, step: "connected" },
-    expect: ["This Mac is connected", MCP_URL, "u_7Qk2p9", "Create Agent"],
+    expect: ["This Mac is connected", "u_7Qk2p9", "Connect a client", "Continue"],
   },
   {
     name: "agent",

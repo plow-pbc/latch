@@ -38,8 +38,10 @@ const DISPLAY_CODE = "Z1SWY";
 const SEND_TO = "+15559998888";
 const SESSION_TOKEN = "plow_SESSION_from_activation";
 const DEVICE_TOKEN = "plow_DEVICEcredential_from_login";
+// The stand-in Plow still serves `POST /v1/relay/agents` — the endpoint did not
+// move, only the screen that calls it. Nothing in this run drives it now that
+// the wizard ends at Continue; Chunk 2 drives it from the main window.
 const AGENT_TOKEN = "plow_AGENTcredential_shown_once";
-const AGENT_NAME = "Claude Code";
 /** `PROTOCOL_REVISION` from @domo/mcp-server — the server rejects a call that
  *  does not name one, so the harness must speak it like any real client. */
 const MCP_PROTOCOL = "2026-07-28";
@@ -135,6 +137,27 @@ async function setupWindow() {
   throw new Error("the Set Up window never appeared");
 }
 
+/** Every window the app currently has, by title. The gate is a claim about
+ *  this list and nothing else, so it is what the gate checks assert on. */
+const windowTitles = () =>
+  BrowserWindow.getAllWindows()
+    .filter((w) => !w.isDestroyed())
+    .map((w) => w.getTitle())
+    .sort();
+
+/** Wait until the window list matches — window teardown and creation are not
+ *  instant, and a gate check racing them would be a coin flip. */
+async function waitForWindows(predicate, ms = 10_000) {
+  for (let i = 0; i < ms / 100; i += 1) {
+    if (predicate(windowTitles())) return true;
+    await sleep(100);
+  }
+  return false;
+}
+
+const onlySetup = (titles) => titles.length === 1 && titles[0].includes("Set Up");
+const onlyMain = (titles) => titles.length === 1 && titles[0].includes("Domo Desktop");
+
 const js = (src) => win.webContents.executeJavaScript(src);
 
 /** Hit-test: the centre of the element, and what actually sits on top there. */
@@ -160,7 +183,8 @@ async function click(where) {
   await sleep(200);
 }
 
-/** Real keystrokes, one triple per character. */
+/** Real keystrokes, one triple per character. Unused while the wizard has no
+ *  text field of its own; the Connect-a-client screen brings one back. */
 async function type(text) {
   for (const ch of text) {
     win.webContents.sendInputEvent({ type: "keyDown", keyCode: ch });
@@ -179,10 +203,12 @@ const waitForText = async (needle, ms = 20_000) => {
   }
   return false;
 };
-const shot = async (name) => {
+/** Capture a window — the setup window by default, since that is what most of
+ *  this run drives. The gate hands over to another one, so it is a parameter. */
+const shot = async (name, target = null) => {
   fs.mkdirSync(outDir, { recursive: true });
   const file = path.join(outDir, `drive-${name}.png`);
-  fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(file, (await (target ?? win).webContents.capturePage()).toPNG());
   console.log(`SHOT: ${file}`);
 };
 
@@ -224,6 +250,14 @@ async function main() {
     //    element. Everything after this check depends on it.
     say("first run opens on the activation screen");
     check("the app opened the Set Up window by itself", true);
+    // THE GATE (a): a Mac with no credential gets the setup window and nothing
+    // else. Not "the main window with a setup window in front of it" — the main
+    // window must not exist, because nothing in it would work.
+    check(
+      "no main window exists on a Mac that is not signed in",
+      onlySetup(windowTitles()),
+      JSON.stringify(windowTitles()),
+    );
     await js(`
       window.__churn = 0;
       new MutationObserver(() => { window.__churn++; })
@@ -269,41 +303,30 @@ async function main() {
     check("settings hold the credential the server issued", loadCredential() === DEVICE_TOKEN);
     await shot("2-connected");
 
-    // 4. THE PART THAT WAS DEAD. Real click, real keys, and an assertion on what
-    //    the app received — never on the value we wrote.
-    say("the user clicks the agent-name field and types");
-    const field = await locate(`document.querySelector('input[placeholder="Claude Code"]')`);
-    check("the field is reachable at its own coordinates", field?.reachable === true, field?.onTop);
-    await click({ x: field.x, y: field.y });
+    // 4. THE HANDOVER. The wizard's last button is the only way into the app —
+    //    the main window has not existed until this click. Real click at real
+    //    coordinates, and the assertion is on the app's window list.
+    //
+    //    (Minting a client credential used to be driven from here. It is not on
+    //    this screen any more: connecting an MCP client is per-client and
+    //    repeatable, so it belongs in the main window, and Chunk 2 drives it
+    //    there.)
+    say("the user clicks Continue");
+    const cont = await locate(
+      `[...document.querySelectorAll("button")].find(b => /Continue/.test(b.textContent))`,
+    );
+    check("Continue is reachable at its own coordinates", cont?.reachable === true, cont?.onTop);
+    await click({ x: cont.x, y: cont.y });
+
+    // THE GATE (b): signed in, the main window is the only window — the setup
+    // window closed itself rather than lingering behind it.
     check(
-      "clicking it moves focus into it",
-      (await js("document.activeElement.tagName")) === "INPUT",
-      await js("document.activeElement.tagName"),
+      "Continue hands over to the main window, and the setup window is gone",
+      await waitForWindows(onlyMain),
+      JSON.stringify(windowTitles()),
     );
 
-    await type(AGENT_NAME);
-    say("the user clicks Create Agent");
-    const create = await locate(
-      `[...document.querySelectorAll("button")].find(b => /Create Agent/.test(b.textContent))`,
-    );
-    check("Create Agent is reachable at its own coordinates", create?.reachable === true, create?.onTop);
-    await click({ x: create.x, y: create.y });
-
-    // The assertion that matters: what reached the server. If typing had not
-    // worked, this is empty or wrong — the app cannot fake it.
-    check("the request reached Plow", await waitFor(() => seen.agents === 1));
-    check(
-      "carrying the name that was actually typed",
-      agentsBody?.name === AGENT_NAME,
-      JSON.stringify(agentsBody?.name),
-    );
-
-    // 5. And the result comes back to the screen.
-    check("the credential is shown once, on screen", await waitForText(AGENT_TOKEN));
-    check("with a pasteable config", (await bodyText()).includes("mcpServers"));
-    await shot("3-agent");
-
-    // 6. The same sweep on the MAIN window. Its tab bar lives inside
+    // 5. The same sweep on the MAIN window. Its tab bar lives inside
     //    `.titlebar`, which IS a drag region — `.seg` carries `no-drag` to get
     //    the buttons back, and reading that off the stylesheet is exactly the
     //    kind of proof that failed here before. So click one for real.
@@ -350,6 +373,7 @@ async function main() {
       // The side effect, not the class we clicked: the app persisted the tab.
       const stored = JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).selectedTab;
       check("clicking it actually switches tabs", stored === "goals", `selectedTab=${stored}`);
+      await shot("3-main-window", main);
     }
 
     // 7. A REAL agent call, through the relay, into the app that is hosting the
@@ -450,6 +474,57 @@ async function main() {
     // normalized capabilities (packages/protocol/src/capability.ts:58). Same
     // agent, same device, same exact capability shape, or it prompts again.
     say(`rule key (stable only for this agent + device + capability shape): ${rules[0]?.ruleKey}`);
+
+    // 8. THE GATE (c): signing out puts this Mac back behind it. Driven the way
+    //    a person does it — Settings tab, Sign Out button, real clicks — because
+    //    the interesting part is what the app does to its own windows, and an
+    //    IPC call would prove only that the handler runs.
+    say("the user signs out from Settings");
+    if (main && !main.isDestroyed()) {
+      const mainJs = (src) => main.webContents.executeJavaScript(src);
+      const at = async (selector) =>
+        mainJs(`
+          (() => {
+            const el = ${selector};
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+            const top = document.elementFromPoint(x, y);
+            return { x, y, reachable: top === el || el.contains(top) };
+          })()
+        `);
+      const clickMain = async (where) => {
+        main.webContents.sendInputEvent({ type: "mouseDown", ...where, button: "left", clickCount: 1 });
+        await sleep(40);
+        main.webContents.sendInputEvent({ type: "mouseUp", ...where, button: "left", clickCount: 1 });
+        await sleep(400);
+      };
+
+      const settingsTab = await at(`document.querySelector('#seg button[data-tab="settings"]')`);
+      check("the Settings tab is reachable at its own coordinates", settingsTab?.reachable === true);
+      await clickMain(settingsTab);
+
+      const signOut = await at(
+        `[...document.querySelectorAll("button")].find(b => /Sign Out/i.test(b.textContent))`,
+      );
+      check("Sign Out is reachable at its own coordinates", signOut?.reachable === true);
+      await shot("5-settings-signed-in", main);
+      await clickMain(signOut);
+
+      check(
+        "signing out takes the main window away and puts the gate back",
+        await waitForWindows(onlySetup),
+        JSON.stringify(windowTitles()),
+      );
+      check("the credential is gone from settings", loadCredential() === "");
+      check("and the device socket went down with it", await waitFor(() => !relay.deviceOnline));
+      const gateWin = BrowserWindow.getAllWindows().find((w) => w.getTitle().includes("Set Up"));
+      if (gateWin) {
+        gateWin.show();
+        await sleep(400);
+        await shot("6-gate-after-signout", gateWin);
+      }
+    }
 } catch (error) {
     check(`the run completed without throwing`, false, String(error));
 }

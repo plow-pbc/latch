@@ -445,6 +445,29 @@ export class Onboarding {
     });
   }
 
+  /**
+   * This Mac signed out: put the wizard back where a Mac with no credential
+   * belongs.
+   *
+   * The opening step is chosen in the constructor, and this object outlives a
+   * sign-out — so without this, signing out reopens the setup window on "This
+   * Mac is connected", which is a lie, and offers a Continue button that hands
+   * back a main window the gate has just taken away. Everything the old session
+   * left behind goes with it, including any shown-once agent credential.
+   */
+  signedOut(): OnboardingState {
+    this.cancelPolling();
+    this.activation = null;
+    this.activationSecret = null;
+    this.activationStale = false;
+    this.agent = null;
+    this.phone = "";
+    this.codeExpiresAt = null;
+    this.message = "";
+    this.step = "activate";
+    return this.publish();
+  }
+
   /** Drop the shown-once credential from memory and go back. */
   dismissAgent(): OnboardingState {
     this.agent = null;

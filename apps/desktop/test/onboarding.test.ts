@@ -499,6 +499,60 @@ describe("creating an agent", () => {
   });
 });
 
+describe("signing out puts the wizard back behind the gate", () => {
+  /** Sign in fully, then blank the credential the way `settings:signOut` does. */
+  async function signedInThenOut(): Promise<Onboarding> {
+    const onboarding = buildOnPhonePath();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+    expect(onboarding.state().step).toBe("connected");
+
+    const settings = loadSettings(home);
+    settings.relayCredential = "";
+    settings.accountUid = "";
+    settings.mcpUrl = "";
+    fs.writeFileSync(path.join(home, "app/settings.json"), JSON.stringify(settings));
+    plow.connected = false; // signing out restarts the relay, which drops the socket
+    return onboarding;
+  }
+
+  it("reopens on the login screen, not on a connected screen that is no longer true", async () => {
+    // The bug this pins: the opening step is chosen in the constructor and this
+    // object outlives a sign-out, so the setup window came back saying "This
+    // Mac is connected" with a Continue button into a main window the gate had
+    // just taken away.
+    const onboarding = await signedInThenOut();
+    const state = onboarding.signedOut();
+    expect(state.step).toBe("activate");
+    expect(state.connected).toBe(false);
+    expect(state.accountUid).toBe("");
+    expect(state.mcpUrl).toBe("");
+  });
+
+  it("mints a fresh code when the user starts again", async () => {
+    const onboarding = await signedInThenOut();
+    onboarding.signedOut();
+    const state = await onboarding.begin();
+    expect(state.step).toBe("activate");
+    expect(state.activation?.displayCode).toBeTruthy();
+    expect(plow.activations.length).toBe(1); // the first login used the OTP path
+  });
+
+  it("keeps nothing from the session that ended", async () => {
+    const onboarding = buildOnPhonePath();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+    await onboarding.createAgent("Claude Code");
+    expect(onboarding.state().agent?.token).toBe(AGENT_TOKEN);
+
+    const state = onboarding.signedOut();
+    expect(state.agent).toBeNull();
+    expect(state.phone).toBe("");
+    expect(JSON.stringify(state)).not.toContain(AGENT_TOKEN);
+    expect(JSON.stringify(state)).not.toContain(DEVICE_TOKEN);
+  });
+});
+
 describe("reading the state is a read", () => {
   it("never notifies, because the renderer re-reads on every notification", async () => {
     // The bug this pins: `onboarding:get` was wired to a `refresh()` that

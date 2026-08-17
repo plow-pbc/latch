@@ -229,30 +229,26 @@ function codeScreen() {
   ];
 }
 
+/** The end of the wizard: a confirmation, and the way into the app.
+    Connecting an MCP client is per-client, repeatable and optional, so it is
+    not here — it lives in the main window, behind that one button. */
 function connectedScreen() {
-  const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
-  const create = async () => apply(await window.domo.onboardingCreateAgent(nameInput.value));
-  nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
-
   return [
     el("div", { class: "orow" }, [
       el("span", { class: `status-dot${state.connected ? " on" : ""}` }),
       el("h2", { text: state.connected ? "This Mac is connected" : "Signed in — connecting…" }),
     ]),
-    el("p", { class: "faint lede", text: "Agents reach this Mac at the endpoint below. Give each agent its own credential." }),
-    el("div", { class: "field" }, [
-      el("label", { text: "Agent endpoint" }),
-      copyRow(state.mcpUrl || "—"),
-    ]),
+    el("p", {
+      class: "faint lede",
+      text: "Domo is signed in to Plow and this Mac is reachable. Connect an MCP client whenever you're ready — it's in the app, under Connect a client.",
+    }),
     el("div", { class: "field" }, [
       el("label", { text: "Account" }),
       el("div", { class: "faint mono", text: state.accountUid || "—" }),
     ]),
-    el("div", { class: "field" }, [el("label", { text: "New agent name" }), nameInput]),
     el("div", { class: "oactions" }, [
-      button("Done", "btn", () => window.domo.onboardingFinish()),
       el("div", { class: "spacer" }),
-      button("Create Agent", "btn primary", create),
+      button("Continue", "btn primary", () => window.domo.onboardingFinish()),
     ]),
     note(state),
   ];
