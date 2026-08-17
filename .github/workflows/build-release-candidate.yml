@@ -1,0 +1,181 @@
+name: Build release candidate
+
+run-name: Manual build — ${{ github.ref_name }}@${{ github.sha }}
+
+# Domo's port of Plow's build-release-candidate workflow: build, sign,
+# notarize, upload versioned artifacts to S3, and open a DRAFT GitHub release.
+# Publishing the draft is the human approval gate — it fires promote-app.yml,
+# which copies the artifacts to the stable keys installed apps poll.
+#
+# Manual dispatch only (no nightly cron): the relay this app dials is still
+# verified against a stand-in, so releases are cut deliberately, not on a timer.
+#
+# Setup this workflow assumes (shared with Plow's release pipeline):
+#   - repo secret OP_SERVICE_ACCOUNT_TOKEN for the 1Password service account
+#   - the "GitHub Actions Release Secrets" 1Password item (same cert + notary
+#     credentials — both apps sign as The Plow Collective, 3559PD337Z)
+#   - AWS_RELEASE_ROLE_ARN's OIDC trust policy extended to THIS repository,
+#     with S3 write access covering releases.plow.co/domo/*
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  macOS:
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@just
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # The browser stack `just package` bundles: universal Python runtime +
+      # the lipo-fused universal Camoufox tree (both arches downloaded cold,
+      # then fused). Everything is pinned by runtime.lock.json and the build
+      # script is stamp-cached, so restoring vendor/ turns the fetch into a
+      # no-op.
+      - name: Cache browser runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/python-runtime
+            vendor/camoufox-browser
+          key: browser-runtime-${{ runner.arch }}-${{ hashFiles('vendor/browser-server/runtime.lock.json', 'scripts/build-browser-runtime.mjs') }}
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          APPLE_CERTIFICATE_P12_BASE64: op://terraform/GitHub Actions Release Secrets/APPLE_CERTIFICATE_P12_BASE64
+          APPLE_CERTIFICATE_PASSWORD: op://terraform/GitHub Actions Release Secrets/APPLE_CERTIFICATE_PASSWORD  # pragma: allowlist secret
+          APPLE_NOTARY_APPLE_ID: op://terraform/GitHub Actions Release Secrets/APPLE_NOTARY_APPLE_ID
+          APPLE_NOTARY_TEAM_ID: op://terraform/GitHub Actions Release Secrets/APPLE_NOTARY_TEAM_ID
+          APPLE_NOTARY_PASSWORD: op://terraform/GitHub Actions Release Secrets/APPLE_NOTARY_PASSWORD  # pragma: allowlist secret
+          AWS_RELEASE_ROLE_ARN: op://terraform/GitHub Actions Release Secrets/AWS_RELEASE_ROLE_ARN
+
+      - name: Import code signing certificate
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+          echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          rm "$CERT_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      # `just package` notarizes via this keychain profile (APPLE_KEYCHAIN_PROFILE).
+      - name: Store notarization credentials
+        run: |
+          xcrun notarytool store-credentials domo-notary \
+            --apple-id "$APPLE_NOTARY_APPLE_ID" \
+            --team-id "$APPLE_NOTARY_TEAM_ID" \
+            --password "$APPLE_NOTARY_PASSWORD"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The DMG is universal, but electron-builder's universal merge and the
+      # browser-runtime re-sign have only ever been exercised on Apple Silicon.
+      - name: Assert runner is Apple Silicon
+        run: |
+          host_arch="$(uname -m)"
+          if [[ "$host_arch" != "arm64" ]]; then
+            echo "error: release runner must be Apple Silicon (got uname -m: $host_arch)" >&2
+            exit 1
+          fi
+
+      # Packages (signed + notarized), then uploads the versioned artifacts to
+      # s3://releases.plow.co/domo/releases/<version>-<build>/. Stable keys are
+      # untouched until a human publishes the draft release below.
+      - name: Run release
+        id: release
+        run: just release domo-notary ""
+
+      - name: Read version and build from the packaged app
+        id: version
+        run: |
+          APP_BUNDLE="apps/desktop/release/mac-universal/Domo Desktop.app"
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_BUNDLE/Contents/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_BUNDLE/Contents/Info.plist")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-build.${BUILD}" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft GitHub Release
+        id: draft_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.version.outputs.build }}"
+          DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Domo-Desktop-${VERSION}.dmg"
+
+          git tag "$TAG"
+          git push origin "$TAG"
+
+          RELEASE_URL=$(gh release create "$TAG" \
+            --draft \
+            --title "Domo Desktop ${VERSION} (${BUILD})" \
+            --notes "**Download:** [Domo-Desktop-${VERSION}.dmg](${DMG_URL})
+
+          Built from \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`")
+
+          echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+          echo "Created draft release: $TAG ($RELEASE_URL)"
+
+      - name: Job summary
+        if: always()
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.version.outputs.build }}"
+          RELEASE_URL="${{ steps.draft_release.outputs.release_url }}"
+          if [[ -n "$VERSION" && -n "$BUILD" ]]; then
+            DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Domo-Desktop-${VERSION}.dmg"
+            {
+              echo "### Domo Desktop ${VERSION} (${BUILD})"
+              echo ""
+              echo "- [Download DMG](${DMG_URL})"
+              if [[ -n "$RELEASE_URL" ]]; then
+                echo "- [GitHub release draft](${RELEASE_URL})"
+                echo ""
+                echo "#### How to ship this build to existing installs"
+                echo ""
+                echo "1. Open the [release draft](${RELEASE_URL}) and review it."
+                echo "2. Confirm **Set as the latest release** is checked, then **Publish release**."
+                echo ""
+                echo "Publishing triggers \`promote-app.yml\`, which copies the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Domo-Desktop.dmg\` keys — that's the moment installed apps start updating."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

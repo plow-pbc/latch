@@ -79,25 +79,33 @@ const NONCE_ARGV = ["/bin/sh", "-c", `cat ${NONCE_FILE}; hostname`];
 const EXTERNAL_DEVICE = process.env.RELAY_GATE_DEVICE === "external";
 
 /**
- * The app home the acceptance run seeds — DELIBERATELY NOT `~/.domo`, and
- * never `~/.domo-relay-public`.
+ * The app home the acceptance run seeds — DELIBERATELY NOT a live app home.
  *
- * Those are live app instances: `~/.domo-relay-public` is the head chef's,
- * running against https://plow-api.plucas.dev on his own credential. Writing
- * `relayCredential` into either replaces the session he is using, and the
+ * Live homes hold credentials someone is using: the packaged install's plain
+ * "Domo" in Application Support, every per-branch "Domo-<branch>" dev home,
+ * and the retired `~/.domo` / `~/.domo-relay-public` dotfolders (the latter is
+ * the head chef's, running against https://plow-api.plucas.dev on his own
+ * credential — old homes may still hold live sessions). Writing
+ * `relayCredential` into one replaces the session its owner is using, and the
  * settings.json backup this harness takes does not undo an app that has
  * already read the new value and re-registered. So the acceptance run gets its
  * own home, and the app under test must be launched with the SAME
  * `DOMO_HOME` — otherwise it dials with whatever credential its own home holds
  * and the run is measuring someone else's device.
  */
-const DEFAULT_GATE_HOME = path.join(os.homedir(), ".domo-relay-gate");
+const APP_SUPPORT = path.join(os.homedir(), "Library", "Application Support");
+const DEFAULT_GATE_HOME = path.join(APP_SUPPORT, "Domo (relay-gate)");
 const DOMO_HOME = process.env.RELAY_GATE_DOMO_HOME ?? DEFAULT_GATE_HOME;
 
 /** Homes this harness refuses to write to, whatever it is told. */
-const PROTECTED_HOMES = new Set(
-  [".domo", ".domo-relay-public"].map((name) => path.join(os.homedir(), name)),
-);
+const PROTECTED_HOMES = new Set([
+  ...[".domo", ".domo-relay-public"].map((name) => path.join(os.homedir(), name)),
+  path.join(APP_SUPPORT, "Domo"),
+]);
+function isProtectedHome(home: string): boolean {
+  // "Domo-" catches every per-branch dev home without knowing the branches.
+  return PROTECTED_HOMES.has(home) || home.startsWith(path.join(APP_SUPPORT, "Domo-"));
+}
 
 // ---------------------------------------------------------------------------
 // Reporting
@@ -486,10 +494,10 @@ async function settle(target: McpTarget): Promise<void> {
  */
 function seedRealApp(credential: string, uid: string, mcpUrl: string): string {
   const home = path.resolve(DOMO_HOME);
-  if (PROTECTED_HOMES.has(home)) {
+  if (isProtectedHome(home)) {
     missing(
       `refusing to seed a live app home: ${home}`,
-      "point RELAY_GATE_DOMO_HOME somewhere of its own (default ~/.domo-relay-gate) and launch the app with DOMO_HOME set to the same path",
+      'point RELAY_GATE_DOMO_HOME somewhere of its own (default "~/Library/Application Support/Domo (relay-gate)") and launch the app with DOMO_HOME set to the same path',
     );
   }
   const file = path.join(home, "app", "settings.json");
@@ -605,8 +613,8 @@ async function main(): Promise<void> {
   const toolNames: string[] = (listed.json?.result?.tools ?? []).map((t: any) => t.name);
   check("200 through the relay", listed.status === 200, `status ${listed.status}`);
   check(
-    "the seven Mac tools are advertised",
-    toolNames.length === 7 && toolNames.includes("run_command"),
+    "the Mac tools are advertised (core + browser)",
+    toolNames.includes("run_command") && toolNames.includes("browser_open"),
     toolNames.join(", "),
   );
 

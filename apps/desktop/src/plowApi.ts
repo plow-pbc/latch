@@ -15,9 +15,6 @@ export type ApiBaseUrl = string;
 
 export const PRODUCTION_API_BASE_URL = "https://api.plow.co";
 
-/** `compose.yaml` publishes the local API on `${PLOW_API_PORT:-18804}`. */
-export const DEVELOPMENT_API_BASE_URL = "http://localhost:18804";
-
 /** Developer-only escape hatch, so retargeting does not need a rebuild. */
 export const API_BASE_URL_ENV = "DOMO_API_BASE_URL";
 
@@ -41,14 +38,19 @@ export const REQUEST_TIMEOUT_MS = 15_000;
  * user-editable origin would mean a stored token silently becoming meaningless
  * and an auth error nobody could explain. If it cannot be changed, it cannot be
  * changed wrongly. The env var is a developer affordance, not a user setting.
+ *
+ * **Every build defaults to production**, including a run from source. Prod is
+ * live, so pointing at it is the useful default and the one that matches what a
+ * user gets; a build that quietly talked to localhost was a standing way to
+ * "test" against nothing. A developer who wants another relay exports
+ * `DOMO_API_BASE_URL` themselves — there is no second default to keep in step.
  */
 export function resolveApiBaseUrl(opts: {
-  isDevBuild: boolean;
   env?: Record<string, string | undefined>;
 }): ApiBaseUrl {
   const override = normalizeApiBaseUrl((opts.env ?? {})[API_BASE_URL_ENV] ?? "");
   if (override) return override;
-  return opts.isDevBuild ? DEVELOPMENT_API_BASE_URL : PRODUCTION_API_BASE_URL;
+  return PRODUCTION_API_BASE_URL;
 }
 
 /** Trim a base URL to a bare origin+path with no trailing slash. */

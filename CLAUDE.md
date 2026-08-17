@@ -17,11 +17,16 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   This Mac only ever dials out, so there is no listener.
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
   `FileOps`, `Executor` (+ generated seatbelt profile), `BlessedToolRegistry`,
-  `AuditLog`, `GoalsLibrary`, identity/key store.
+  `AuditLog`, `GoalsLibrary`, identity/key store; `src/browser/` is the local
+  browsing subsystem (session grants, origin enforcement, credential gate —
+  DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
+  Camoufox server + 1Password broker (pins in `runtime.lock.json`;
+  `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
+  tests use fake servers and need no Python).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
-  (revision 2026-07-28): the reduced tool surface, capability construction from
-  tool arguments, and the deferred-result contract. Binds no port; takes a
-  `Request`, returns a `Response`.
+  (revision 2026-07-28): the reduced tool surface (including the `browser_*`
+  tools), capability construction from tool arguments, and the deferred-result
+  contract. Binds no port; takes a `Request`, returns a `Response`.
 - `packages/relay-client` (`@domo/relay-client`) — dials the Plow relay, speaks
   plow's channel handshake, and serves the HTTP exchanges it tunnels. `wire.ts`
   is the cross-repo interface.
@@ -90,7 +95,6 @@ the real thing.
   `realpath(3)` and preserves `/private` — don't swap in anything that
   normalizes differently.
 - **Everything honors `DOMO_HOME`** so tests use throwaway roots.
-- Unix socket paths are capped ~104 chars; keep test `DOMO_HOME` short.
 - `DOMO_DEBUG_SANDBOX=1` dumps generated seatbelt profiles to stderr.
 - **Canonical JSON is signature-critical.** Object keys sort by code unit (ASCII
   only — never introduce non-ASCII keys), slashes are not escaped, integral
@@ -125,3 +129,17 @@ Use `just` (run `just` to list recipes):
   checks.
 - `just app` — launch the desktop app. `just verify-preload` is the headless
   check that the sandboxed preload bridge and the renderer still render.
+
+**Git worktrees run side by side with main.** After `git worktree add`, run
+`./scripts/worktree-setup.sh` in the new checkout: it clones the gitignored browser
+runtime from the main checkout (APFS clones, no re-download), then installs and
+builds. All per-checkout state is keyed on the normalized branch name
+(`scripts/worktree-name.sh --branch`) — for **every** checkout, main included:
+one folder per instance, `~/Library/Application Support/Domo-<branch>`, which
+holds everything including Electron's userData (`<home>/electron`); the app
+name gains a `(<branch>)` suffix on screen. Only the packaged install uses the
+unsuffixed `Domo` home, so no from-source run can touch its state. Each
+checkout signs in for its own relay credential — never copy
+`settings.json` between homes (the relay does not support two devices on one
+credential). `just package` refuses to run from a worktree; package from main
+(`just package-unnotarized`, the local-check build, runs from any checkout).

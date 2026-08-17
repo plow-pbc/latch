@@ -20,9 +20,13 @@
         <button data-tab="goals">Goals</button>
         <button data-tab="audit" class="active">Audit</button>
         <button data-tab="rules">Rules</button>
+        <button data-tab="vault">Vault</button>
         <button data-tab="settings">Settings</button>
       </div>
     </div>
+    <!-- Passive update notice: shown only when an update is staged and not
+         dismissed (main.js drives it from updates:get). Never modal. -->
+    <div id="updateBanner" class="update-banner" hidden></div>
     <div id="view"></div>
     <script type="module" src="main.js"></script>
   </body>

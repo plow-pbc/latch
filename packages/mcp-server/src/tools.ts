@@ -314,12 +314,39 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "list_tools",
     description:
-      "List the blessed tools this Mac offers, with their JSON input schemas. " +
-      "These are trusted in-process capabilities, distinct from the tools in this list.",
+      "List the blessed tools this Mac offers, with their JSON input schemas, and any skills " +
+      "it publishes (how-to guides for a task — read one with read_skill before starting). " +
+      "Blessed tools are trusted in-process capabilities, distinct from the tools in this list.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     deferrable: false,
     async run(_args, ctx) {
-      return { tools: ctx.device.blessedTools.manifest() };
+      return {
+        tools: ctx.device.blessedTools.manifest(),
+        skills: (jv(ctx.device.skills.manifest()).arr ?? []).map((s) => ({
+          name: jv(s).get("name").str,
+          description: jv(s).get("description").str,
+        })),
+      };
+    },
+  },
+  {
+    name: "read_skill",
+    description:
+      "Read a skill this Mac publishes (listed by list_tools): a how-to guide for a task. " +
+      "Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the browser tools).",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: { name: { type: "string", description: "Skill name from list_tools" } },
+      additionalProperties: false,
+    },
+    deferrable: false,
+    async run(args, ctx) {
+      const name = jv(args).get("name").str;
+      if (name === null) throw new ToolError("missing 'name'");
+      const skill = ctx.device.skills.skill(name);
+      if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
+      return { name: skill.name, description: skill.description, body: skill.body };
     },
   },
   {
@@ -348,6 +375,226 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "browser_open",
+    description:
+      "Open a supervised anti-detection browser session on this Mac, scoped to the listed site " +
+      "origins. The owner approves the origin list — include every domain you expect (apex AND " +
+      "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
+      "permission to list the owner's vault item names (never values). Returns a session " +
+      "handle for the 'browser' tool. Read the camoufox-browsing skill first.",
+    inputSchema: {
+      type: "object",
+      required: ["origins"],
+      properties: {
+        origins: {
+          type: "array",
+          items: { type: "string" },
+          description: "Host patterns: 'example.com' or '*.example.com'",
+        },
+        credentials_metadata: {
+          type: "boolean",
+          description: "Also request vault metadata listing (default false)",
+        },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      const a = jv(args);
+      const origins = strings(a.get("origins").arr);
+      if (origins.length === 0) throw new ToolError("missing 'origins'");
+      const capabilities: Capability[] = [{ kind: "browser", origins }];
+      if (a.get("credentials_metadata").bool === true) {
+        capabilities.push({ kind: "credential", access: "metadata" });
+      }
+      const response = await decideAndRun(
+        ctx,
+        progress,
+        `browse: ${origins.join(", ")}`,
+        a.get("goal").str ?? undefined,
+        capabilities,
+      );
+      const r = jv(response);
+      return {
+        session: r.get("session").str,
+        origins: r.get("origins").value ?? origins,
+        note: "use the 'browser' tool with this session handle; screenshot after every navigation",
+      };
+    },
+  },
+  {
+    name: "browser_request",
+    description:
+      "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
+      "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
+      "(find item ids via the browser tool's 'credentials' action). Secret values are never " +
+      "revealed to you; they are typed into the page on this Mac.",
+    inputSchema: {
+      type: "object",
+      required: ["session"],
+      properties: {
+        session: { type: "string" },
+        origins: { type: "array", items: { type: "string" } },
+        credential_items: {
+          type: "array",
+          items: { type: "string" },
+          description: "vault item ids to make fillable",
+        },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      const a = jv(args);
+      const session = a.get("session").str;
+      if (session === null) throw new ToolError("missing 'session'");
+      const origins = strings(a.get("origins").arr);
+      const items = strings(a.get("credential_items").arr);
+      const capabilities: Capability[] = [];
+      if (origins.length > 0) capabilities.push({ kind: "browser", origins });
+      if (items.length > 0) capabilities.push({ kind: "credential", access: "fill", items });
+      if (capabilities.length === 0) {
+        throw new ToolError("browser_request needs origins and/or credential_items");
+      }
+      const parts = [
+        ...(origins.length ? [`browse: ${origins.join(", ")}`] : []),
+        ...(items.length ? [`fill credentials: ${items.join(", ")}`] : []),
+      ];
+      const response = await decideAndRun(
+        ctx,
+        progress,
+        `widen browser session — ${parts.join("; ")}`,
+        a.get("goal").str ?? undefined,
+        capabilities,
+        // The handle is delivery detail (like wait_ms); the approved bound is
+        // entirely in the signed-off capabilities.
+        { session },
+      );
+      const r = jv(response);
+      return { session, origins: r.get("origins").value ?? null, items: r.get("items").value ?? null };
+    },
+  },
+  {
+    name: "browser",
+    description:
+      "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
+      "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
+      "'screenshot' returns an image of the page — take one after " +
+      "every navigation to see where you are. Ask the vault tool what is in the vault; " +
+      "'fill_secret' types an approved item's field into a form " +
+      "field without ever showing you the value. Actions on pages outside the approved origins are " +
+      "refused — use browser_request to widen scope. Every result includes the current url and " +
+      "page_count (watch it for popups; switch with use_page).",
+    inputSchema: {
+      type: "object",
+      required: ["session", "action"],
+      properties: {
+        session: { type: "string" },
+        action: {
+          type: "string",
+          enum: [
+            "goto", "click", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
+            "screenshot", "text", "url", "title", "links", "forms", "tables", "pages",
+          ],
+        },
+        url: { type: "string", description: "goto: target URL (within approved origins)" },
+        selector: { type: "string", description: "click / fill / fill_secret: CSS selector" },
+        value: { type: "string", description: "fill: literal text to type (non-secret)" },
+        expression: { type: "string", description: "eval: JS expression (top frame)" },
+        index: { type: "integer", description: "use_page: page index from 'pages'" },
+        item: { type: "string", description: "fill_secret / describe_item: vault item id" },
+        field: { type: "string", description: "fill_secret: field label from describe_item (or 'totp')" },
+        direction: { type: "string", description: "scroll: down|up|bottom|top" },
+        seconds: { type: "number", description: "wait: seconds" },
+        frame: { type: "integer", description: "click/fill: target a specific frame index" },
+        max_chars: { type: "integer", description: "text: truncate to this many chars" },
+      },
+      additionalProperties: false,
+    },
+    // Rides the session grant — no new intent, no approval. Non-deferrable so a
+    // screenshot's image block reaches the agent directly (a deferred result
+    // would be re-serialized as text by get_result).
+    deferrable: false,
+    async run(args, ctx) {
+      const a = jv(args);
+      const session = a.get("session").str;
+      if (session === null) throw new ToolError("missing 'session'");
+      const action = a.get("action").str;
+      if (action === null) throw new ToolError("missing 'action'");
+      const params: { [k: string]: JSONValue } = { action };
+      for (const key of ["url", "selector", "value", "expression", "index", "item", "field", "direction", "seconds", "frame"]) {
+        const v = a.get(key).value;
+        if (v !== null && v !== undefined) params[key] = v;
+      }
+      const maxChars = a.get("max_chars").int;
+      if (maxChars !== null) params.max = maxChars;
+
+      const response = await ctx.device.browserCommand(ctx.agent.agentId, session, params);
+      const r = jv(response);
+      if (r.get("status").str === "error") throw new ToolError(r.get("error").str ?? "browser error");
+
+      // Screenshot becomes an MCP image block so the agent can SEE the page.
+      const imageB64 = r.get("data_b64").str;
+      if (action === "screenshot" && imageB64 !== null) {
+        const meta = { url: r.get("url").str ?? "", page_count: r.get("page_count").int ?? 1 };
+        return {
+          __mcpContent: [
+            { type: "image", data: imageB64, mimeType: r.get("mime").str ?? "image/jpeg" },
+            { type: "text", text: canonicalJSON(meta as JSONValue) },
+          ],
+        };
+      }
+      const out = { ...(r.obj ?? {}) };
+      delete out.status;
+      return out as JSONValue;
+    },
+  },
+  {
+    name: "vault",
+    description:
+      "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
+      "notes, custom fields — with titles, usernames and sites but never a value. 'describe' " +
+      "names the fields one item holds. No browser session is needed to ask. To USE a secret, " +
+      "open a browser session and call the browser tool's fill_secret: values are typed into the " +
+      "page and never returned to you.",
+    inputSchema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["list", "describe"] },
+        item: { type: "string", description: "Item id, for 'describe'." },
+      },
+      additionalProperties: false,
+    },
+    deferrable: false,
+    async run(args, ctx) {
+      const a = jv(args);
+      const action = a.get("action").str;
+      if (action === "list") return ctx.device.vaultList();
+      if (action === "describe") return ctx.device.vaultDescribe(a.get("item").str ?? "");
+      throw new ToolError("action must be 'list' or 'describe'");
+    },
+  },
+  {
+    name: "browser_close",
+    description: "Close a browser session when the task is done.",
+    inputSchema: {
+      type: "object",
+      required: ["session"],
+      properties: { session: { type: "string" } },
+      additionalProperties: false,
+    },
+    deferrable: false,
+    async run(args, ctx) {
+      const session = jv(args).get("session").str;
+      if (session === null) throw new ToolError("missing 'session'");
+      await ctx.device.browserCommand(ctx.agent.agentId, session, { action: "close" });
+      return { closed: true };
+    },
+  },
+  {
     name: "get_result",
     description:
       "Retrieve the result of any call that returned a pending handle — whichever tool created it. " +
@@ -368,7 +615,34 @@ export const TOOLS: ToolSpec[] = [
   },
 ];
 
-/** The MCP content block a tool result becomes. */
+/** An MCP content block a tool result can become. */
+export type ToolBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+/** The single text block a plain tool result becomes. */
 export function toolContent(value: JSONValue): { type: "text"; text: string } {
   return { type: "text", text: canonicalJSON(value) };
+}
+
+/**
+ * The content blocks a tool result becomes. Most results are one JSON text
+ * block; a result carrying `__mcpContent` (a screenshot) is expanded into its
+ * prebuilt image + text blocks so the agent SEES the page instead of a base64
+ * string it cannot render.
+ */
+export function toolBlocks(value: JSONValue): ToolBlock[] {
+  const mc = jv(value).get("__mcpContent").arr;
+  if (mc === null) return [toolContent(value)];
+  return mc.map((block) => {
+    const b = jv(block);
+    if (b.get("type").str === "image") {
+      return {
+        type: "image",
+        data: b.get("data").str ?? "",
+        mimeType: b.get("mimeType").str ?? "image/jpeg",
+      };
+    }
+    return { type: "text", text: b.get("text").str ?? "" };
+  });
 }

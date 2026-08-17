@@ -1,0 +1,13 @@
+version: 1
+scripts:
+  setup: scripts/worktree-setup.sh
+  run: just app
+  archive: scripts/worktree-cleanup.sh
+  preview_url: ''
+  files_to_copy: []
+  run_scripts: []
+sandbox:
+  enabled_by_default: false
+  allowed_hosts: []
+  allowed_paths: []
+exclude: []

@@ -70,6 +70,15 @@ export interface Settings {
   anthropicApiKey: string;
   /** Which backend runs the reviewer. An absent field reads as `plow`. */
   inferenceProvider: InferenceProvider;
+  /** Check the update feed in the background (default on). A manual
+   * "Check for Updates" always works regardless. */
+  autoCheckUpdates: boolean;
+  /** Apply a staged update on the next natural quit (default on). Off means
+   * updates only install when the human clicks "Restart to Update". Never a
+   * surprise restart either way. */
+  autoInstallUpdates: boolean;
+  /** When the last update check completed (ISO-8601) — display only. */
+  updatesLastCheckedAt?: string;
 }
 
 function settingsPath(home: string): string {
@@ -86,6 +95,8 @@ export function loadSettings(home: string): Settings {
     showAgentSuggestions: true,
     anthropicApiKey: "",
     inferenceProvider: "plow",
+    autoCheckUpdates: true,
+    autoInstallUpdates: true,
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
