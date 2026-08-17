@@ -144,7 +144,10 @@ pending when the app next starts is marked `abandoned` — the call it belonged 
 died with the process, so nothing can answer it, and the directory should not
 claim otherwise.
 
-`just slow-approval-transcript` prints the whole round trip with timings.
+That round trip used to be printed with timings by a transcript script; it and
+the rest of the stand-in-relay harnesses are gone (see
+[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md)). It is now exercised by
+running the app against a locally running plow API.
 
 Note how those two compose, because it is not what you would guess: a command
 that outruns the budget does **not** hand back a job handle directly. The budget
@@ -233,19 +236,27 @@ draws whatever state the main process hands it and owns no copy of its own.
 Evidence, both reproducible and both failing loudly rather than quietly:
 
 ```
-just onboarding-screenshots   # all four screens, real window + real preload
-just first-run-transcript     # the flow end to end + the no-credential grep
+just onboarding-screenshots   # every Set Up screen, real window + real preload
+just connect-screenshot       # Connect a client, including the copy-once block
+npx vitest run                # the state machines, including the credential-never-in-state checks
 ```
+
+Launch anything Electron on the M4, not locally — see
+[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Integration coverage
 
 The `e2e/` suite booted real broker + device processes and was removed with the
-broker. `packages/relay-client/test` now covers the full path in process — an
-agent's MCP request in at the relay's agent leg, down a real WebSocket, through
-the MCP server, the policy engine and the sandbox, and back — against a stand-in
-relay built to the wire contract. **It has never been run against the real
-relay**, which does not exist yet. A harness that boots both for real is still
-outstanding.
+broker. `packages/relay-client/test` then covered the full path in process
+against a stand-in relay built to the wire contract — and that stand-in has now
+been deleted too, along with the drivers and the relay+MCP gate that ran against
+it (head chef's call: a locally running plow API already simulates plow).
+
+So there is **no automated integration coverage of the relay leg at all** today:
+nothing in `npx vitest run` opens a socket, sends the auth frame, reconnects, or
+tunnels an MCP call. That path is verified by running the app against a locally
+running plow API, by hand — the procedure is in
+[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Running the desktop app
 
