@@ -493,21 +493,22 @@ function step(n, title, body) {
 let staticOpen = false;
 
 /**
- * The "Connect a client" subsection of the Plow Account settings group.
+ * The body of the "Connect a client" settings group — the FIRST group on the
+ * pane, above the account it depends on: connecting a client is the thing you
+ * come here to do, and burying it under the account read as optional.
  *
- * Returns nodes instead of painting the view: this is no longer a screen of its
- * own, it is the part of Plow Account that says how something else reaches this
- * Mac. `redraw` repaints only this subsection — the settings pane around it
- * holds a half-typed API-key field that must never be replaced under the user.
+ * Returns nodes instead of painting the view: it is no longer a screen of its
+ * own. `redraw` repaints only this group — the pane around it holds a
+ * half-typed API-key field that must never be replaced under the user.
  */
 function connectNodes(s, redraw) {
   // Not signed in should be unreachable — the gate means the main window does
   // not exist without a credential — but showing a blank URL would be worse
   // than saying so. Folded in rather than early-returning off the screen: this
-  // is a subsection of a group that renders in both states.
+  // is a group that renders in both states.
   if (!s.hasCredential) {
     return [
-      el("p", { class: "faint conn-note", text: "Sign in first — a client connects to this Mac through your Plow account." }),
+      el("p", { class: "faint conn-note", text: "Sign in below — a client reaches this Mac through your Plow account." }),
     ];
   }
 
@@ -572,14 +573,6 @@ function connectNodes(s, redraw) {
   }
 
   const box = el("div", { class: "connect" }, [
-    el("div", { class: "sub-title", text: "Connect a client" }),
-    // Why you would do this at all. The account above already makes this Mac
-    // reachable; this is the other route, and the difference is the whole
-    // reason the subsection needs a sentence rather than just steps.
-    el("p", {
-      class: "faint conn-note",
-      text: "Your Plow account above is how an agent reaches this Mac with nothing to configure. Connect a client instead when you want an MCP client — Claude Code, ChatGPT — to talk to this Mac directly at its own MCP URL. You can do this once per client, whenever you add one.",
-    }),
     step(1, "Add this MCP server to your client", [
       el("p", { class: "faint conn-note", text: "Claude Code, ChatGPT, or anything else that speaks MCP over HTTP." }),
       copyRow(s.mcpUrl || "—"),
@@ -749,9 +742,9 @@ async function renderSettings() {
   // A stable container the account rows are drawn into, so signing in or out
   // rewrites its contents rather than the pane.
   const accountBox = el("div", { class: "account" });
-  // The connect-a-client subsection, in its own stable container for the same
+  // The connect-a-client group's body, in its own stable container for the same
   // reason: a status change redraws it without touching the API-key field.
-  const connectBox = el("div", { class: "connect-sub" });
+  const connectBox = el("div");
   const refreshConnect = async () => {
     const s = await window.domo.connectGet();
     connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
@@ -959,10 +952,16 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
+    // First, deliberately: this is what someone opens Settings to do. The
+    // account below is what makes it possible, not what you came for.
+    group(
+      "Connect a client",
+      "Your Plow account below is how an agent reaches this Mac with nothing to configure. Connect a client instead when you want an MCP client — Claude Code, ChatGPT — to talk to this Mac directly at its own MCP URL. You can do this once per client, whenever you add one.",
+      [connectBox],
+    ),
     group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
-      connectBox,
     ]),
     group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
       providerChips,

@@ -548,17 +548,12 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 
 /* ---- Connect a client -----------------------------------------------------
-   A subsection INSIDE the Plow Account settings group, so every rule here is
-   scoped under `.settings` — the steps are no longer a panel of their own.
-   Numbered steps, one inset row each. The URL and the config block reuse
-   `.copyrow`/`.copybox` from the setup window — it is the same job, and the
-   user should recognise it. */
-.settings .connect-sub:not(:empty) {
-  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
-}
-.settings .connect .sub-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-/* Steps sit inside a card already, so they drop the card chrome and sit on an
-   inset surface instead — nested cards read as a mistake. */
+   The FIRST settings group, so every rule here is scoped under `.settings` —
+   the steps are no longer a panel of their own. Numbered steps, one inset row
+   each. The URL and the config block reuse `.copyrow`/`.copybox` from the setup
+   window — it is the same job, and the user should recognise it. */
+/* Steps sit inside the group's card already, so they drop the card chrome and
+   sit on an inset surface instead — nested cards read as a mistake. */
 .settings .connect .item {
   background: var(--bg); box-shadow: none; padding: 12px 14px; margin-bottom: 10px;
 }

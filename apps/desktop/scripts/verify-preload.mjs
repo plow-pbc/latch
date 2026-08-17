@@ -354,9 +354,9 @@ app.whenReady().then(async () => {
     })()`),
   };
 
-  // Connect a client is a subsection of Settings > Plow Account now, not a tab
-  // of its own — so the probe reaches it through Settings, and also checks it
-  // landed INSIDE that group rather than merely somewhere on the pane.
+  // Connect a client is Settings' FIRST group now, not a tab of its own — so
+  // the probe reaches it through Settings, and also checks the ordering rather
+  // than merely that the text is somewhere on the pane.
   //
   // Sign back in first: the optimistic-mode repro above deliberately left the
   // account signed OUT, and this subsection is about a signed-in Mac (it is
@@ -367,16 +367,21 @@ app.whenReady().then(async () => {
   await new Promise((r) => setTimeout(r, 300));
   const connect = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
+    const titles = [...document.querySelectorAll(".settings .item > .group-title")].map((t) =>
+      t.textContent.trim(),
+    );
     const group = [...document.querySelectorAll(".settings .item")].find(
-      (i) => i.querySelector(".group-title")?.textContent.trim() === "Plow Account",
+      (i) => i.querySelector(".group-title")?.textContent.trim() === "Connect a client",
     );
     return {
       showsUrl: text.includes("https://api.plow.co/v1/relay/devices/u_probe/mcp"),
       showsOauth: text.includes("Sign in with OAuth"),
       offersFallback: text.includes("Can't use OAuth"),
-      // The move itself: the content is nested in Plow Account, and the tab it
-      // used to have is gone from the titlebar.
-      insidePlowAccount: !!group?.querySelector(".connect"),
+      // The move itself: the content is its own FIRST group, Plow Account
+      // follows it, and the tab it used to have is gone from the titlebar.
+      inOwnGroup: !!group?.querySelector(".connect"),
+      groupOrder: titles.slice(0, 2).join(" > ") === "Connect a client > Plow Account",
+      groupTitles: titles,
       noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
       // The probe's account IS signed in, so Sign In must not be on screen.
       // `hidden` alone does not hide a `display: inline-flex` button, and the
@@ -442,7 +447,8 @@ app.whenReady().then(async () => {
     connect.showsUrl &&
     connect.showsOauth &&
     connect.offersFallback &&
-    connect.insidePlowAccount &&
+    connect.inOwnGroup &&
+    connect.groupOrder &&
     connect.noConnectTab &&
     connect.noSignInWhileSignedIn &&
     settings.hasAccountGroup &&
