@@ -508,9 +508,148 @@ function group(title, desc, body) {
   ]);
 }
 
-/** Whether the static-credential fallback is expanded. Renderer-local: it is a
+/** Whether the static-credential modal is up. Renderer-local: it is a
     disclosure, not app state, and nothing outside this window cares. */
 let staticOpen = false;
+
+/**
+ * The static-credential modal, while it is up.
+ *
+ * Lives on `document.body`, not inside `#view`: the pane behind it is made
+ * `inert` while it is open, and a dialog nested inside the thing it disables
+ * would disable itself.
+ *
+ * `nameInput` is held here and reused across refreshes for the reason the
+ * API-key field is: a relay reconnect can redraw this while someone is halfway
+ * through typing a name, and rebuilding the field would take the name with it.
+ */
+let staticModal = null;
+
+/** Everything the modal switched off, switched back on. */
+function closeStaticModal() {
+  if (!staticModal) return;
+  const { backdrop, trigger, onKeydown } = staticModal;
+  document.removeEventListener("keydown", onKeydown, true);
+  backdrop.remove();
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.removeAttribute("inert");
+  }
+  staticModal = null;
+  // Focus goes back where it came from, not to the top of the document.
+  if (trigger && trigger.isConnected) trigger.focus();
+}
+
+/**
+ * Open the modal over the Agents pane.
+ *
+ * **The shown-once credential is the hazard here.** Once minted, the token is
+ * in this modal and nowhere else — the app never wrote it down and the server
+ * will not hand it back — and `connectDismiss` destroys that only copy. So the
+ * escapes that are ordinary courtesies while the form is up (Esc, a click on
+ * the backdrop, Cancel) are all refused once a credential is displayed: the
+ * ONLY way out of that state is the explicit "I've Saved It", which is the
+ * button that does the destroying and says so. A modal that vanished on a
+ * stray Esc and took a live credential with it would be a data-loss bug with a
+ * polite name.
+ */
+function openStaticModal(trigger, redraw) {
+  if (staticModal) return;
+  const panel = el("div", { class: "modal", attrs: { role: "dialog", "aria-modal": "true" } });
+  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
+  const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
+  const onKeydown = (e) => {
+    // Esc closes the form. It does NOT close a displayed credential.
+    if (e.key !== "Escape" || staticModal?.holdingCredential) return;
+    e.preventDefault();
+    e.stopPropagation();
+    staticOpen = false;
+    closeStaticModal();
+    redraw();
+  };
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target !== backdrop || staticModal?.holdingCredential) return;
+    staticOpen = false;
+    closeStaticModal();
+    redraw();
+  });
+  document.addEventListener("keydown", onKeydown, true);
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.setAttribute("inert", "");
+  }
+  document.body.appendChild(backdrop);
+  staticModal = { backdrop, panel, nameInput, trigger, onKeydown, kind: null, holdingCredential: false };
+  nameInput.focus();
+}
+
+/**
+ * Draw the modal from the same state the pane draws from.
+ *
+ * Rebuilds the panel only when the KIND changes (form → credential); within a
+ * kind it updates the note and the disabled flags in place, so `nameInput`
+ * survives every refresh that is not a state change.
+ */
+function syncStaticModal(s, redraw) {
+  if (!staticModal) return;
+  staticModal.holdingCredential = !!s.credential;
+  const kind = s.credential ? "credential" : "form";
+  const note =
+    staticModal.note ?? el("p", { class: "faint modal-note", text: "" });
+  staticModal.note = note;
+  note.textContent = s.busy ? "Talking to Plow…" : (s.message ?? "");
+
+  if (staticModal.kind !== kind) {
+    staticModal.kind = kind;
+    if (kind === "credential") {
+      const done = el("button", { class: "btn primary", text: "I've Saved It" });
+      done.addEventListener("click", async () => {
+        await window.domo.connectDismiss();
+        staticOpen = false;
+        closeStaticModal();
+        redraw();
+      });
+      staticModal.panel.replaceChildren(
+        el("div", { class: "group-title", text: `Paste this into ${s.credential.name}` }),
+        el("p", { class: "warn conn-note", text: "Copy it now — it is shown once and cannot be shown again. Saving it is the only way to close this." }),
+        copyRow(s.credential.config, "Copy Config"),
+        note,
+        el("div", { class: "row conn-actions" }, [el("div", { class: "spacer" }), done]),
+      );
+      done.focus();
+    } else {
+      const create = async () => {
+        await window.domo.connectCreate(staticModal.nameInput.value);
+        redraw();
+      };
+      staticModal.nameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") create();
+      });
+      const createBtn = el("button", { class: "btn primary", text: "Create Credential" });
+      createBtn.addEventListener("click", create);
+      const cancel = el("button", { class: "btn", text: "Cancel" });
+      cancel.addEventListener("click", () => {
+        staticOpen = false;
+        closeStaticModal();
+        redraw();
+      });
+      staticModal.actions = [cancel, createBtn];
+      staticModal.panel.replaceChildren(
+        el("div", { class: "group-title", text: "Static credential" }),
+        el("p", {
+          class: "faint conn-note",
+          text: "For a client that can't do OAuth. It is long-lived, shown once, and can be revoked from your Plow account.",
+        }),
+        el("div", { class: "field" }, [el("label", { text: "Name this connection" }), staticModal.nameInput]),
+        note,
+        el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
+      );
+      staticModal.nameInput.focus();
+    }
+  }
+  // In-place, every refresh: the field is never rebuilt, so nothing typed is
+  // ever taken away by one.
+  staticModal.nameInput.disabled = !!s.busy;
+  for (const b of staticModal.panel.querySelectorAll("button")) b.disabled = !!s.busy;
+}
 
 /**
  * The body of the "Connect a client" settings group — the FIRST group on the
@@ -532,66 +671,25 @@ function connectNodes(s, redraw) {
     ];
   }
 
-  const note = s.busy
-    ? el("p", { class: "faint", text: "Talking to Plow…" })
-    : s.message
-      ? el("p", { class: "faint", text: s.message })
-      : null;
+  // Only when the modal is closed: while it is up, its own note says this, and
+  // the same sentence behind an overlay is noise.
+  const note =
+    staticModal || !(s.busy || s.message)
+      ? null
+      : el("p", { class: "faint", text: s.busy ? "Talking to Plow…" : s.message });
 
-  // The credential, if one was just minted. This is the only place it exists
-  // outside the client the user pastes it into: the app never wrote it down and
-  // the server will not hand it back.
-  const shown = s.credential
-    ? [
-        el("div", { class: "item" }, [
-          el("div", { class: "group-title", text: `Paste this into ${s.credential.name}` }),
-          el("p", { class: "warn conn-note", text: "Copy it now — it is shown once and cannot be shown again." }),
-          copyRow(s.credential.config, "Copy Config"),
-          el("div", { class: "row conn-actions" }, [
-            el("div", { class: "spacer" }),
-            (() => {
-              const done = el("button", { class: "btn primary", text: "I've Saved It" });
-              done.addEventListener("click", async () => {
-                await window.domo.connectDismiss();
-                staticOpen = false;
-                redraw();
-              });
-              return done;
-            })(),
-          ]),
-        ]),
-      ]
-    : [];
-
-  // The alternative to the whole flow, behind a quiet link: the OAuth handshake
-  // above is the route, and a long-lived credential is what you reach for when
-  // a client cannot do it.
+  // The alternative to the whole flow, behind a quiet link. It opens a MODAL
+  // rather than expanding in place: the form is the heaviest thing this pane
+  // can show, and inline it out-shouted the OAuth path it is the fallback to.
   let fallback = [];
   if (!s.credential) {
-    if (!staticOpen) {
-      const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
-      link.addEventListener("click", () => { staticOpen = true; redraw(); });
-      fallback = [el("div", { class: "item quiet" }, [link])];
-    } else {
-      const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
-      const create = async () => { await window.domo.connectCreate(nameInput.value); redraw(); };
-      nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
-      const createBtn = el("button", { class: "btn primary", text: "Create Credential" });
-      createBtn.addEventListener("click", create);
-      const cancel = el("button", { class: "btn", text: "Cancel" });
-      cancel.addEventListener("click", () => { staticOpen = false; redraw(); });
-      fallback = [
-        el("div", { class: "item" }, [
-          el("div", { class: "group-title", text: "Static credential" }),
-          el("p", {
-            class: "faint conn-note",
-            text: "For a client that can't do OAuth. It is long-lived, shown once, and can be revoked from your Plow account.",
-          }),
-          el("div", { class: "field" }, [el("label", { text: "Name this connection" }), nameInput]),
-          el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
-        ]),
-      ];
-    }
+    const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
+    link.addEventListener("click", () => {
+      staticOpen = true;
+      openStaticModal(link, redraw);
+      redraw();
+    });
+    fallback = [el("div", { class: "alt" }, [link])];
   }
 
   // One flow, not a checklist: copy the URL, paste it in your client, done.
@@ -608,7 +706,6 @@ function connectNodes(s, redraw) {
     // One card. The mock's two-up grid is not kept for a single card — a
     // half-empty grid reads as a tile that failed to load.
     el("div", { class: "client-cards" }, [clientCard("claude", "Claude")]),
-    ...shown,
     ...fallback,
     note,
   ].filter(Boolean));
@@ -638,6 +735,7 @@ async function renderAgents() {
   const refreshConnect = async () => {
     const s = await window.domo.connectGet();
     connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
+    if (s) syncStaticModal(s, refreshConnect);
   };
   await refreshConnect();
   agentsMounted = { refreshConnect };
@@ -1033,7 +1131,7 @@ function selectTab(tab) {
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
-  if (tab !== "agents") staticOpen = false;
+  if (tab !== "agents") { staticOpen = false; closeStaticModal(); }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
   if (tab !== "agents") agentsMounted = null;

@@ -550,20 +550,26 @@ textarea.text { min-height: 70px; resize: vertical; }
 /* ---- Connect an MCP client ------------------------------------------------
    The Agents pane, which carries `.settings` alongside `.agents` because it
    reuses the same group card — so every rule here stays scoped under it.
-   One continuous flow — no numbered steps — with the URL and the config block
-   reusing `.copyrow`/`.copybox` from the setup window: it is the same job, and
-   the user should recognise it. */
-/* The blocks that remain (the static-credential form, the shown-once
-   credential) sit inside the group's card already, so they drop the card chrome
-   for an inset surface — nested cards read as a mistake. */
-.settings .connect .item {
-  background: var(--bg); box-shadow: none; padding: 12px 14px; margin-bottom: 10px;
+
+   `styles.css` had no spacing tokens (only --radius/--shadow/colours), so this
+   pane defines a small 8px scale of its own rather than inventing global ones
+   for one screen: 8 / 16 / 24, sitting inside the 10–18px range the rest of the
+   app already uses. Every gap below is one of the three. */
+.settings .connect {
+  --flow-xs: 8px;
+  --flow-sm: 16px;
+  --flow-md: 24px;
 }
-.settings .connect .item:last-child { margin-bottom: 0; }
 /* One flow, so the rhythm is vertical spacing rather than numbered cards: the
    URL, the line that says what to do with it, the client shortcut. */
-.settings .connect .flow-note { margin: 12px 0 0; }
+.settings .connect .flow-note {
+  margin: var(--flow-sm) 0 0;
+  /* A readable measure, not a hand-tuned width to fix one wrap: long lines are
+     hard to track back, and the orphaned last word went with it. */
+  max-width: 68ch;
+}
 .settings .connect .item .group-title { font-size: 13px; margin: 0 0 10px; padding-bottom: 8px; }
+
 /* Client card — the designer's mock, adapted: a rounded panel with the client
    name and an external-link arrow. The mock's two-up grid is NOT kept, because
    there is one card: a card stretched across the row, or sat in half a grid,
@@ -571,7 +577,7 @@ textarea.text { min-height: 70px; resize: vertical; }
    left-aligned, so it reads as the shortcut it is. The logo tile the mock shows
    is deliberately absent until real brand assets land. */
 .settings .connect .client-cards {
-  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px;
+  display: flex; flex-wrap: wrap; gap: var(--flow-xs); margin-top: var(--flow-sm);
 }
 .settings .connect .client-card {
   -webkit-app-region: no-drag;
@@ -584,15 +590,46 @@ textarea.text { min-height: 70px; resize: vertical; }
 .settings .connect .client-name { font-weight: 600; }
 .settings .connect .client-arrow { color: var(--faint); font-size: 13px; }
 .settings .connect .conn-actions { margin-top: 14px; }
-/* The alternative to the flow, not the next thing in it — so it gets air above
-   it rather than sitting flush against the client card. */
-.settings .connect .item.quiet { padding: 12px 14px; margin-top: 18px; }
-/* A quiet secondary route — present, never competing with what's above it. */
+
+/* The alternative to the flow, not the next thing in it. It is a bare link on
+   its own line now: the filled box it used to sit in gave the fallback more
+   presence than the route above it, and welded it to the card. */
+.settings .connect .alt {
+  margin-top: var(--flow-md);
+  padding-top: var(--flow-sm);
+  border-top: 1px solid var(--border);
+}
 .settings .connect .linkbtn {
   background: none; border: none; padding: 0;
   color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
 }
 .settings .connect .linkbtn:hover { color: var(--fg); }
+
+/* ---------- Static-credential modal ----------
+   Plain DOM over the pane, which is `inert` while this is up. The panel reuses
+   the card tokens so it reads as the same family as everything else. */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.35);
+}
+.modal {
+  width: 100%; max-width: 460px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+  max-height: 100%; overflow: auto;
+}
+.modal .group-title { font-size: 15px; }
+.modal .field { margin-bottom: 0; }
+.modal .modal-note:empty { display: none; }
+.modal .modal-note { margin-top: 10px; }
+.modal .conn-actions { margin-top: 18px; }
+.modal .copyrow { margin-top: 4px; }
+
 /* ---------- Live browser thumbnail (audit detail pane) ---------- */
 
 .live-corner {

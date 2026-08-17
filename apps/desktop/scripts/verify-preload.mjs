@@ -421,6 +421,51 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
 
+  // …and the same pane with the static-credential fallback EXPANDED. It is the
+  // busiest this pane ever gets, and the state whose spacing has to hold: the
+  // form must read as the quiet alternative, not the main event.
+  await win.webContents.executeJavaScript(`(() => {
+    const link = [...document.querySelectorAll(".linkbtn")].find((b) =>
+      b.textContent.includes("static credential"),
+    );
+    link.click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 300));
+  const agentsOpen = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".modal-backdrop .modal");
+    return {
+      // The form is IN a modal, and nowhere in the pane.
+      opensModal: !!modal,
+      formInModal: !!modal && modal.innerText.includes("Name this connection"),
+      noInlineForm: !document.querySelector("#view").innerText.includes("Name this connection"),
+      // The pane behind it is switched off while it is up.
+      paneInert: document.querySelector("#view")?.hasAttribute("inert") === true,
+      // Focus went into the dialog rather than staying on the trigger.
+      focusInModal: !!modal && modal.contains(document.activeElement),
+      buttons: [...(modal?.querySelectorAll("button") ?? [])].map((b) => b.textContent.trim()),
+    };
+  }})()`);
+  const agentsOpenShot = process.env.AGENTS_OPEN_OUT ?? "/tmp/agents-open.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(agentsOpenShot, (await win.webContents.capturePage()).toPNG());
+
+  // Esc is a courtesy the FORM gets. (The credential state refuses it, but this
+  // probe has no minted credential to test that with — `connect:get` is stubbed
+  // with `credential: null` — so this covers the safe half only.)
+  await win.webContents.executeJavaScript(`(() => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 250));
+  const modalClosed = await win.webContents.executeJavaScript(`(${() => ({
+    gone: !document.querySelector(".modal-backdrop"),
+    paneLive: document.querySelector("#view")?.hasAttribute("inert") === false,
+    focusBackOnTrigger: (document.activeElement?.textContent ?? "").includes("static credential"),
+  })})()`);
+
   fs.rmSync(probeHome, { recursive: true, force: true });
 
   const approvalWin = offscreen();
@@ -473,6 +518,14 @@ app.whenReady().then(async () => {
   }})()`);
 
   const ok =
+    agentsOpen.opensModal &&
+    agentsOpen.formInModal &&
+    agentsOpen.noInlineForm &&
+    agentsOpen.paneInert &&
+    agentsOpen.focusInModal &&
+    modalClosed.gone &&
+    modalClosed.paneLive &&
+    modalClosed.focusBackOnTrigger &&
     connect.showsUrl &&
     connect.showsOauth &&
     connect.noSteps &&
@@ -519,7 +572,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, agentsOpen, modalClosed, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });
