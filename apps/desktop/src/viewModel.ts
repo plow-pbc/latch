@@ -270,6 +270,11 @@ function activityStatus(
   if (has("device_started")) return { status: "Info", tone: "zinc" };
   if (has("agent_spawned")) return { status: "Spawned", tone: "blue" };
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
+    if (has("credential_fill_failed")) {
+      return has("browser_session_closed")
+        ? { status: "Closed · fill failed", tone: "amber" }
+        : { status: "Fill failed", tone: "amber" };
+    }
     if (has("credential_denied") || has("browser_scope_violation")) {
       return has("browser_session_closed")
         ? { status: "Closed · scope blocks", tone: "amber" }
@@ -448,6 +453,12 @@ function describeStep(e: JSONValue): AuditStep {
     case "credential_filled":
       text = `Credential typed into page: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} on ${ev.get("origin").str ?? ""}`;
       state = "ok";
+      break;
+    case "credential_fill_failed":
+      text = `Credential not typed: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} into `
+        + `${ev.get("selector").str ?? ""} on ${ev.get("origin").str ?? ""} — `
+        + `${ev.get("reason").str ?? ""}`;
+      state = "bad";
       break;
     case "credential_denied":
       text = `Credential refused: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} — ${ev.get("reason").str ?? ""}`;

@@ -54,17 +54,6 @@ function hostOf(url: string): string | null {
   }
 }
 
-/**
- * Remove a secret from text that is about to be recorded. Best effort by
- * nature — a truncated or escaped copy would not match — which is why the
- * error handed to the agent is constructed rather than scrubbed. This is for
- * the audit line, where the original wording is worth keeping.
- */
-function redactValue(text: string, secret: string): string {
-  if (secret === "") return text;
-  return text.split(secret).join("[redacted]");
-}
-
 const DEFAULT_IDLE_MS = 15 * 60_000;
 
 /**
@@ -494,16 +483,17 @@ export class BrowserSessions {
       // or a slow render is the common case, not an exotic one. So the error the
       // agent sees is written here, never forwarded, and the audit copy is
       // scrubbed too: the secret is toxic everywhere, not only in model context.
-      const scrubbed = redactValue(
-        error instanceof Error ? error.message : String(error),
-        secret,
-      );
+      // The reason is written here too, not scrubbed from the browser's text:
+      // that text is truncated to MAX_ERROR_LEN before it reaches us, so a long
+      // enough secret loses its tail and an exact-match scrub leaves the prefix
+      // behind in audit.ndjson. Nothing derived from the failure text is kept.
       this.audit("credential_fill_failed", {
         session: s.handle,
         item: itemId,
         field,
         origin: frameHost,
-        reason: scrubbed,
+        selector,
+        reason: "the browser could not type it into that field",
       });
       return {
         status: "error",
