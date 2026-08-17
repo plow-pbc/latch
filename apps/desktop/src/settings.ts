@@ -58,7 +58,9 @@ export interface Settings {
    * the app never constructs the MCP URL itself. Cached only for display. */
   accountUid: string;
   mcpUrl: string;
-  /** The last-selected main-window tab, restored across launches. */
+  /** The last-selected main-window tab, restored across launches. A stored
+   * "connect" predates that tab becoming a Settings subsection and is mapped
+   * to "settings" on read (`ui:getTab`) rather than rewritten on disk. */
   selectedTab: string;
   /** The main window's last size + position, restored across launches. */
   windowBounds?: WindowBounds;

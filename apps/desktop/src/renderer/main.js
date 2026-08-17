@@ -492,24 +492,24 @@ function step(n, title, body) {
     disclosure, not app state, and nothing outside this window cares. */
 let staticOpen = false;
 
-async function renderConnect() {
-  const s = await window.domo.connectGet();
-  if (!s) return;
-
+/**
+ * The "Connect a client" subsection of the Plow Account settings group.
+ *
+ * Returns nodes instead of painting the view: this is no longer a screen of its
+ * own, it is the part of Plow Account that says how something else reaches this
+ * Mac. `redraw` repaints only this subsection — the settings pane around it
+ * holds a half-typed API-key field that must never be replaced under the user.
+ */
+function connectNodes(s, redraw) {
   // Not signed in should be unreachable — the gate means the main window does
-  // not exist without a credential — but a screen that assumes it and renders
-  // a blank URL would be worse than one that says so.
+  // not exist without a credential — but showing a blank URL would be worse
+  // than saying so. Folded in rather than early-returning off the screen: this
+  // is a subsection of a group that renders in both states.
   if (!s.hasCredential) {
-    view.replaceChildren(el("div", { class: "panel connect" }, [
-      el("div", { class: "empty", text: "This Mac isn't signed in to Plow yet." }),
-    ]));
-    return;
+    return [
+      el("p", { class: "faint conn-note", text: "Sign in first — a client connects to this Mac through your Plow account." }),
+    ];
   }
-
-  const statusLine = el("div", { class: "row conn-status" }, [
-    el("span", { class: `status-dot${s.connected ? " on" : ""}` }),
-    el("span", { text: s.connected ? "This Mac is connected" : "Not connected — retrying." }),
-  ]);
 
   const note = s.busy
     ? el("p", { class: "faint", text: "Talking to Plow…" })
@@ -532,7 +532,7 @@ async function renderConnect() {
               done.addEventListener("click", async () => {
                 await window.domo.connectDismiss();
                 staticOpen = false;
-                renderConnect();
+                redraw();
               });
               return done;
             })(),
@@ -547,16 +547,16 @@ async function renderConnect() {
   if (!s.credential) {
     if (!staticOpen) {
       const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
-      link.addEventListener("click", () => { staticOpen = true; renderConnect(); });
+      link.addEventListener("click", () => { staticOpen = true; redraw(); });
       fallback = [el("div", { class: "item quiet" }, [link])];
     } else {
       const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
-      const create = async () => { await window.domo.connectCreate(nameInput.value); renderConnect(); };
+      const create = async () => { await window.domo.connectCreate(nameInput.value); redraw(); };
       nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
       const createBtn = el("button", { class: "btn primary", text: "Create Credential" });
       createBtn.addEventListener("click", create);
       const cancel = el("button", { class: "btn", text: "Cancel" });
-      cancel.addEventListener("click", () => { staticOpen = false; renderConnect(); });
+      cancel.addEventListener("click", () => { staticOpen = false; redraw(); });
       fallback = [
         el("div", { class: "item" }, [
           el("div", { class: "group-title", text: "Static credential" }),
@@ -571,8 +571,15 @@ async function renderConnect() {
     }
   }
 
-  view.replaceChildren(el("div", { class: "panel connect settings" }, [
-    statusLine,
+  const box = el("div", { class: "connect" }, [
+    el("div", { class: "sub-title", text: "Connect a client" }),
+    // Why you would do this at all. The account above already makes this Mac
+    // reachable; this is the other route, and the difference is the whole
+    // reason the subsection needs a sentence rather than just steps.
+    el("p", {
+      class: "faint conn-note",
+      text: "Your Plow account above is how an agent reaches this Mac with nothing to configure. Connect a client instead when you want an MCP client — Claude Code, ChatGPT — to talk to this Mac directly at its own MCP URL. You can do this once per client, whenever you add one.",
+    }),
     step(1, "Add this MCP server to your client", [
       el("p", { class: "faint conn-note", text: "Claude Code, ChatGPT, or anything else that speaks MCP over HTTP." }),
       copyRow(s.mcpUrl || "—"),
@@ -586,9 +593,12 @@ async function renderConnect() {
     ...shown,
     ...fallback,
     note,
-  ].filter(Boolean)));
+  ].filter(Boolean));
 
-  for (const b of view.querySelectorAll("button")) if (s.busy) b.disabled = true;
+  // Scoped to this subsection: the account rows above it (Sign Out) are not
+  // this subsection's to disable while it is mid-call.
+  for (const b of box.querySelectorAll("button")) if (s.busy) b.disabled = true;
+  return [box];
 }
 /** One honest line about the relay link, from what the main process reports. */
 function relayStatusText(relay) {
@@ -725,19 +735,13 @@ async function renderSettings() {
   // the environment that minted it, so an editable origin could only be wrong).
   const relay = await window.domo.relayGet();
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
-  // Signed in, this goes to Connect a client — it used to say "Create Agent"
-  // and open the setup window, which since the wizard lost its agent step
-  // promised something that window could no longer do. Signed out is
-  // unreachable from here (the gate means this window would not exist), but it
-  // still points somewhere real rather than nowhere.
-  const setUp = relay.hasCredential
-    ? el("button", { class: "btn primary", text: "Connect a Client" })
-    : el("button", { class: "btn primary", text: "Sign In" });
-  setUp.addEventListener("click", () => {
-    if (!relay.hasCredential) return void window.domo.onboardingOpen();
-    selectTab("connect");
-    window.domo.uiSetTab("connect"); // the same persistence a nav click does
-  });
+  // The "Connect a Client" button that used to sit here is gone: connecting a
+  // client is now a subsection of this same group, so a button navigating to it
+  // would only point at itself. Signing in is still a real action — unreachable
+  // in practice (the gate means this window would not exist signed out), but it
+  // goes somewhere real rather than nowhere.
+  const signIn = el("button", { class: "btn primary", text: "Sign In" });
+  signIn.addEventListener("click", () => window.domo.onboardingOpen());
   const signOut = el("button", { class: "btn danger", text: "Sign Out" });
   // No explicit refresh: signing out restarts the relay, which publishes
   // `status:changed`, which is already the one thing that redraws this pane.
@@ -745,13 +749,20 @@ async function renderSettings() {
   // A stable container the account rows are drawn into, so signing in or out
   // rewrites its contents rather than the pane.
   const accountBox = el("div", { class: "account" });
+  // The connect-a-client subsection, in its own stable container for the same
+  // reason: a status change redraws it without touching the API-key field.
+  const connectBox = el("div", { class: "connect-sub" });
+  const refreshConnect = async () => {
+    const s = await window.domo.connectGet();
+    connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
+  };
   const refreshAccount = async () => {
     const relay = await window.domo.relayGet();
     relayNote.textContent = relayStatusText(relay);
-    // The label #34 gave this button, re-applied on every refresh — otherwise
-    // the first status change silently renames it back to "Create Agent", the
-    // screen the setup window no longer has.
-    setUp.textContent = relay.hasCredential ? "Connect a Client" : "Sign In";
+    // `hidden` is not enough: `.btn` is `display: inline-flex`, which outranks
+    // the user-agent `[hidden] { display: none }` rule and leaves a Sign In
+    // button sitting next to Sign Out on an account that is already signed in.
+    signIn.style.display = relay.hasCredential ? "none" : "";
     signOut.disabled = !relay.hasCredential;
     accountBox.replaceChildren(
       ...(relay.hasCredential
@@ -769,6 +780,7 @@ async function renderSettings() {
     );
   };
   await refreshAccount();
+  await refreshConnect();
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
@@ -932,6 +944,9 @@ async function renderSettings() {
       await refreshAccount();
       applyInference(await window.domo.inferenceGet());
     },
+    // What `connect:changed` calls. Separate from `refresh` so a relay
+    // reconnect and a credential mint each redraw only what they changed.
+    refreshConnect,
   };
 
   // Build one settings group: a prominent title, an optional description, then
@@ -946,7 +961,8 @@ async function renderSettings() {
   view.replaceChildren(el("div", { class: "panel settings" }, [
     group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
       accountBox,
-      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
+      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
+      connectBox,
     ]),
     group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
       providerChips,
@@ -974,16 +990,15 @@ function render() {
   if (currentTab === "audit") renderAudit();
   else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
-  else if (currentTab === "connect") renderConnect();
   else if (currentTab === "vault") renderVault();
   else if (currentTab === "settings") renderSettings();
 }
 
 function selectTab(tab) {
   currentTab = tab;
-  // Leaving the screen closes the fallback: it is a disclosure, and coming back
+  // Leaving Settings closes the fallback: it is a disclosure, and coming back
   // to a form you did not open is a surprise.
-  if (tab !== "connect") staticOpen = false;
+  if (tab !== "settings") staticOpen = false;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
@@ -1011,10 +1026,9 @@ window.domo.onStatusChanged(() => {
   // person typing a key did not ask for and must not be punished by — so this
   // updates the account and provider nodes and leaves the field alone.
   if (currentTab === "settings") settingsMounted?.refresh();
-  // The connect screen leads with the socket's state, so it follows it.
-  if (currentTab === "connect") renderConnect();
 });
-window.domo.onConnectChanged(() => { if (currentTab === "connect") renderConnect(); });
+// Minting or dismissing a credential redraws only the connect subsection.
+window.domo.onConnectChanged(() => { settingsMounted?.refreshConnect(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
   if (currentTab === "settings") renderSettings();
@@ -1027,7 +1041,7 @@ async function boot() {
   refreshStatus();
   refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
-  const known = ["goals", "audit", "rules", "connect", "vault", "settings"];
+  const known = ["goals", "audit", "rules", "vault", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
 }
 boot();

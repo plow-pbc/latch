@@ -339,10 +339,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .item .group-desc { margin: -4px 0 14px; }
 .settings .chips { flex-wrap: wrap; }
-/* Connection mode segmented control — .seg is styled for the titlebar
-   (margin-left: auto); inside settings it sits flush left, with air below it
-   and below the local-mode description so the status line doesn't crowd. */
-.conn-seg { margin-left: 0; margin-bottom: 16px; align-self: flex-start; }
 .item p.conn-note { margin-bottom: 16px; }
 .item p.reviewer-note { margin-top: 14px; }
 
@@ -552,26 +548,39 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 
 /* ---- Connect a client -----------------------------------------------------
-   Numbered steps, one card each, on the same tokens as the settings groups.
-   The URL and the config block reuse `.copyrow`/`.copybox` from the setup
-   window — it is the same job, and the user should recognise it. */
-.connect .conn-status { margin: 0 0 16px; }
-.connect .stephead { align-items: baseline; gap: 10px; margin-bottom: 0; }
-.connect .stephead .group-title { flex: 1; margin: 0 0 12px; }
-.connect .stepnum {
+   A subsection INSIDE the Plow Account settings group, so every rule here is
+   scoped under `.settings` — the steps are no longer a panel of their own.
+   Numbered steps, one inset row each. The URL and the config block reuse
+   `.copyrow`/`.copybox` from the setup window — it is the same job, and the
+   user should recognise it. */
+.settings .connect-sub:not(:empty) {
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
+}
+.settings .connect .sub-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+/* Steps sit inside a card already, so they drop the card chrome and sit on an
+   inset surface instead — nested cards read as a mistake. */
+.settings .connect .item {
+  background: var(--bg); box-shadow: none; padding: 12px 14px; margin-bottom: 10px;
+}
+.settings .connect .item:last-child { margin-bottom: 0; }
+.settings .connect .stephead { align-items: baseline; gap: 10px; margin-bottom: 0; }
+.settings .connect .stephead .group-title {
+  flex: 1; margin: 0 0 10px; font-size: 13px; padding-bottom: 8px;
+}
+.settings .connect .stepnum {
   flex: none; width: 22px; height: 22px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--sel); color: var(--blue-fg);
   font-size: 12px; font-weight: 600;
 }
-.connect .conn-actions { margin-top: 14px; }
-.connect .item.quiet { padding: 12px 18px; }
+.settings .connect .conn-actions { margin-top: 14px; }
+.settings .connect .item.quiet { padding: 12px 14px; }
 /* A quiet secondary route — present, never competing with what's above it. */
-.connect .linkbtn {
+.settings .connect .linkbtn {
   background: none; border: none; padding: 0;
   color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
 }
-.connect .linkbtn:hover { color: var(--fg); }
+.settings .connect .linkbtn:hover { color: var(--fg); }
 /* ---------- Live browser thumbnail (audit detail pane) ---------- */
 
 .live-corner {

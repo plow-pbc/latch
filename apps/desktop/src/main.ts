@@ -373,7 +373,13 @@ ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
   return device?.policy.allRules() ?? [];
 });
-ipcMain.handle("ui:getTab", async () => loadSettings(home).selectedTab);
+ipcMain.handle("ui:getTab", async () => {
+  const tab = loadSettings(home).selectedTab;
+  // "connect" was a tab until it became a subsection of Settings > Plow
+  // Account. Anyone who left the app on it gets taken to where that content
+  // now lives, rather than silently landing on the default tab.
+  return tab === "connect" ? "settings" : tab;
+});
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
   settings.selectedTab = tab;
