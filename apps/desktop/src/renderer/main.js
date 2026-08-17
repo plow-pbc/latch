@@ -29,6 +29,7 @@ const ICONS = {
   access: "M12 3 4 6v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V6z",
   agent: "M4 8h16v12H4z M12 8V4",
   info: "M12 2v10 M18.4 6.6a9 9 0 1 1-12.8 0",
+  browser: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M3 12h18 M12 3a14 14 0 0 1 0 18 M12 3a14 14 0 0 0 0 18",
 };
 function icon(kind) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -92,7 +93,17 @@ async function renderAudit() {
   ]);
 
   const listBox = el("div", { class: "list" });
-  const detailBox = el("aside", { class: "detail" });
+  // The detail pane is a column: the activity info scrolls in .detail-scroll;
+  // the live browser thumbnail sits pinned below it, outside the scroll.
+  const detailScroll = el("div", { class: "detail-scroll" });
+  const liveImg = el("img", { attrs: { alt: "Live browser view" } });
+  const liveDot = el("span", { class: "dot" });
+  const liveCapText = el("span");
+  const liveBox = el("div", { class: "live-corner hidden" }, [
+    liveImg,
+    el("div", { class: "live-cap" }, [liveDot, liveCapText]),
+  ]);
+  const detailBox = el("aside", { class: "detail" }, [detailScroll, liveBox]);
   detailBox.style.width = detailWidth + "px";
   const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
   wireSplitter(splitter, detailBox);
@@ -109,8 +120,12 @@ async function renderAudit() {
     tbody,
   ]);
 
-  auditMounted = { listBox, detailBox, count, chipsBox, clearBtn, table, tbody, rows: new Map() };
+  auditMounted = {
+    listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows: new Map(),
+    liveBox, liveImg, liveDot, liveCapText, liveHasFrame: false,
+  };
   await refreshAudit();
+  refreshLiveThumb();
   searchInput.focus();
   const len = searchInput.value.length;
   searchInput.setSelectionRange(len, len);
@@ -143,7 +158,7 @@ function wireSplitter(splitter, detailBox) {
 // newest row when it was pinned to the top, so streaming activity stays in view.
 async function refreshAudit(opts = {}) {
   if (!auditMounted) return;
-  const { listBox, detailBox, count, chipsBox, clearBtn, table, tbody, rows } = auditMounted;
+  const { listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows } = auditMounted;
   const activities = await window.domo.auditActivities();
   clearBtn.disabled = activities.length === 0;
   const q = auditSearch.trim().toLowerCase();
@@ -181,7 +196,7 @@ async function refreshAudit(opts = {}) {
     rows.clear();
     tbody.replaceChildren();
     listBox.replaceChildren(el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }));
-    detailBox.replaceChildren(detailFor(selected));
+    detailScroll.replaceChildren(detailFor(selected));
     return;
   }
   if (listBox.firstChild !== table) listBox.replaceChildren(table);
@@ -219,11 +234,55 @@ async function refreshAudit(opts = {}) {
     else tbody.insertBefore(node, expected);
   }
 
-  detailBox.replaceChildren(detailFor(selected));
+  detailScroll.replaceChildren(detailFor(selected));
 
   // Rows are in the DOM now (natural size measurable) — play the insert
   // animation for any freshly arrived rows.
   enterRows.forEach(animateRowEnter);
+}
+
+// ---- Live browser thumbnail ----
+// While an agent has a browsing session open, a small near-live view of the
+// Camoufox browser sits pinned in the detail pane's bottom-right corner —
+// outside the timeline scroll, so it stays put. Polls the whole viewer state
+// about once a second; between frames (or while the browser is mid-action) the
+// last image simply stays. Frames are for the owner's eyes and are shown even
+// when the page is out of the approved scope — that state is flagged red.
+
+let liveThumbBusy = false;
+
+async function refreshLiveThumb() {
+  if (liveThumbBusy || currentTab !== "audit" || !auditMounted) return;
+  liveThumbBusy = true;
+  try {
+    const s = await window.domo.viewerState();
+    const m = auditMounted;
+    if (!m) return;
+    if (!s.active) m.liveHasFrame = false; // next session starts with a fresh frame
+    if (s.active && s.frame && /^image\/(jpeg|png|webp)$/.test(s.frame.mime)) {
+      m.liveImg.src = `data:${s.frame.mime};base64,${s.frame.dataB64}`;
+      m.liveHasFrame = true;
+    }
+    m.liveBox.classList.toggle("hidden", !(s.active && m.liveHasFrame));
+    m.liveBox.classList.toggle("offscope", s.active && !s.inScope);
+    if (s.active) {
+      m.liveCapText.textContent = s.inScope ? hostOf(s.url) || "Live" : "Out of approved scope";
+      m.liveImg.title = s.url; // full URL on hover; the caption shows the host
+    }
+  } catch {
+    /* main is busy — keep the last render */
+  } finally {
+    liveThumbBusy = false;
+  }
+}
+setInterval(refreshLiveThumb, 1000);
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
 }
 
 // Build a reusable audit row. Cell content is wrapped in a `.cw` so a new row
@@ -412,11 +471,120 @@ function capText(c) {
     case "process.exec": return "run " + (c.argv || []).join(" ");
     case "network": return c.allowed ? "network: allowed" : "network: denied";
     case "tool": return "tool: " + (c.tool || "?");
+    case "browser": return "browse: " + (c.origins || []).join(", ");
+    case "credential":
+      return c.access === "metadata"
+        ? "credentials: list names/labels"
+        : "credentials: fill " + (c.items || []).join(", ");
     default: return c.kind;
   }
 }
 
+// ---- Software updates (banner + settings section) ----
+
+const updateBanner = document.getElementById("updateBanner");
+
+/** One honest status line from the updater's whole-state shape. */
+function updateStatusText(u) {
+  if (!u.supported) return "This build updates with git, not the feed — only the packaged app self-updates.";
+  if (u.phase === "checking") return "Checking for updates…";
+  if (u.phase === "downloading") return `Downloading Domo Desktop ${u.availableVersion}…`;
+  if (u.phase === "ready")
+    return `Domo Desktop ${u.availableVersion} is downloaded — restart to install${u.autoInstall ? ", or it installs when you quit" : ""}.`;
+  if (u.phase === "error") return `Last check failed: ${u.error}`;
+  // "You're up to date" only when a check THIS session confirmed it; a
+  // timestamp persisted from an earlier launch only proves we once looked.
+  if (u.upToDate) return `You're up to date. Last checked ${new Date(u.lastCheckAt).toLocaleString()}.`;
+  return u.lastCheckAt ? `Last checked ${new Date(u.lastCheckAt).toLocaleString()}.` : "Not checked yet.";
+}
+
+/** The passive banner: visible only while an update is staged and undismissed. */
+async function refreshUpdateBanner() {
+  const u = await window.domo.updatesGet();
+  const show = u.supported && u.phase === "ready" && !u.dismissed;
+  updateBanner.hidden = !show;
+  if (!show) return;
+  const restart = el("button", { class: "btn primary", text: "Restart to Update" });
+  restart.addEventListener("click", () => window.domo.updatesRestart());
+  const later = el("button", { class: "btn", text: "Later" });
+  later.addEventListener("click", () => window.domo.updatesDismiss());
+  const close = el("button", { class: "banner-close", text: "×", attrs: { "aria-label": "Dismiss" } });
+  close.addEventListener("click", () => window.domo.updatesDismiss());
+  updateBanner.replaceChildren(
+    close,
+    el("span", { text: `Domo Desktop ${u.availableVersion} is ready to install.` }),
+    el("div", { class: "spacer" }),
+    later,
+    restart,
+  );
+}
+
 // ---- Settings ----
+
+/**
+ * The vault's own account. Shown, not hidden: this is what the owner types into
+ * the vault's page to read their own secrets, and either half can be replaced
+ * with something they choose — the account key is re-wrapped underneath, so
+ * what is already stored stays readable.
+ */
+/** One editable value with a Copy button beside it — never two of the same. */
+function fieldRow(input) {
+  const copy = el("button", { class: "btn small", text: "Copy" });
+  copy.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(input.value);
+    copy.textContent = "Copied";
+    setTimeout(() => { copy.textContent = "Copy"; }, 1200);
+  });
+  return el("div", { class: "copyrow" }, [input, copy]);
+}
+
+async function renderVault() {
+  const creds = await window.domo.vaultGet();
+  if (!creds) {
+    view.replaceChildren(el("div", { class: "panel" }, [
+      el("div", { class: "section-label", text: "Your vault" }),
+      el("div", { class: "empty", text: "The vault has not started yet." }),
+    ]));
+    return;
+  }
+
+  // Anchors go nowhere inside Electron; the main process opens the browser.
+  const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    window.domo.vaultOpen();
+  });
+
+  const emailInput = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
+  emailInput.value = creds.email;
+  const passwordInput = el("input", { class: "text mono", attrs: { type: "text", spellcheck: "false" } });
+  passwordInput.value = creds.password;
+
+  const note = el("p", { class: "faint", text: "Sign in on that page with these two." });
+  const save = el("button", { class: "btn primary", text: "Save changes" });
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    note.textContent = "Changing…";
+    try {
+      const updated = await window.domo.vaultSet(emailInput.value.trim(), passwordInput.value);
+      emailInput.value = updated.email;
+      passwordInput.value = updated.password;
+      note.textContent = "Saved. Sign in with these from now on.";
+    } catch (err) {
+      note.textContent = "Could not change it: " + (err && err.message ? err.message : String(err));
+    }
+    save.disabled = false;
+  });
+
+  view.replaceChildren(el("div", { class: "panel" }, [
+    el("div", { class: "section-label", text: "Your vault" }),
+    el("div", { class: "field" }, [el("label", { text: "Address" }), link]),
+    el("div", { class: "field" }, [el("label", { text: "Email" }), fieldRow(emailInput)]),
+    el("div", { class: "field" }, [el("label", { text: "Password" }), fieldRow(passwordInput)]),
+    note,
+    el("div", { class: "row" }, [save]),
+  ]));
+}
 
 async function renderSettings() {
   // The Plow account. There is no credential field and no URL field here: the
@@ -454,6 +622,37 @@ async function renderSettings() {
     );
   };
   await refreshAccount();
+
+  // Software updates: version + status + a check/restart action + the two
+  // automation preferences. Everything renders from one updates:get shape.
+  const u = await window.domo.updatesGet();
+  const updateStatus = el("p", { class: "faint", text: updateStatusText(u) });
+  const updateAction =
+    u.phase === "ready"
+      ? el("button", { class: "btn primary", text: "Restart to Update" })
+      : el("button", { class: "btn", text: "Check for Updates" });
+  updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+  updateAction.addEventListener("click", async () => {
+    if (u.phase === "ready") await window.domo.updatesRestart();
+    else await window.domo.updatesCheck();
+    // The controller's change events re-render this screen as the check runs.
+  });
+  const autoCheckBox = el("input", { attrs: { type: "checkbox" } });
+  autoCheckBox.checked = u.autoCheck;
+  autoCheckBox.disabled = !u.supported;
+  autoCheckBox.addEventListener("change", () => window.domo.updatesSetAutoCheck(autoCheckBox.checked));
+  const autoCheckLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+    autoCheckBox,
+    el("span", { text: "Automatically check for updates" }),
+  ]);
+  const autoInstallBox = el("input", { attrs: { type: "checkbox" } });
+  autoInstallBox.checked = u.autoInstall;
+  autoInstallBox.disabled = !u.supported;
+  autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
+  const autoInstallLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+    autoInstallBox,
+    el("span", { text: "Install downloaded updates when quitting Domo" }),
+  ]);
 
   const restoreNote = el("p", { class: "faint", text: "" });
   const restore = el("button", { class: "btn", text: "Restore Default Goals" });
@@ -598,7 +797,7 @@ async function renderSettings() {
     ]);
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Plow account", "Sign in with your phone number to let agents reach this Mac.", [
+    group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
     ]),
@@ -606,15 +805,20 @@ async function renderSettings() {
       providerChips,
       reviewerNote,
     ]),
-    group("Anthropic API key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
+    group("Anthropic API Key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
       apiKeyInput,
     ]),
-    group("Approval mode", "How operations are decided.", [
+    group("Approval Mode", "How operations are decided.", [
       modeChips,
       suggestLabel,
     ]),
     group("Goals", "Re-add any default goals you've removed.", [
       el("div", { class: "row" }, [restore, restoreNote]),
+    ]),
+    group("Software Updates", `Version ${u.currentVersion}`, [
+      el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
+      autoCheckLabel,
+      autoInstallLabel,
     ]),
   ]));
 }
@@ -623,6 +827,7 @@ function render() {
   if (currentTab === "audit") renderAudit();
   else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
+  else if (currentTab === "vault") renderVault();
   else if (currentTab === "settings") renderSettings();
 }
 
@@ -656,10 +861,17 @@ window.domo.onStatusChanged(() => {
   // updates the account and provider nodes and leaves the field alone.
   if (currentTab === "settings") settingsMounted?.refresh();
 });
+window.domo.onUpdatesChanged(() => {
+  refreshUpdateBanner();
+  if (currentTab === "settings") renderSettings();
+});
+// The menu-bar "Check for Updates…" lands here so its outcome is visible.
+window.domo.onShowSettings(() => selectTab("settings"));
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {
   refreshStatus();
+  refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
   const known = ["goals", "audit", "rules", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");

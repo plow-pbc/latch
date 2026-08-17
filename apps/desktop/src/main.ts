@@ -13,6 +13,9 @@
  *     is derived from — not the goal text.
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import electronUpdater from "electron-updater";
+import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,14 +25,20 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
+  changeCredentials,
+  readCredentials,
+  resolveBrowserRuntime,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import { approvalViewModel, auditActivities } from "./viewModel.js";
+import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { devIconScript } from "./devIcon.js";
+import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
-import { adversarialReview } from "./adversarialAgent.js";
+import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
+import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
@@ -38,24 +47,71 @@ import {
   revokeAndSignOut,
   setApprovalMode,
   setInferenceProvider,
+  signOutOfPlow,
 } from "./settingsActions.js";
 
-// Set the app name before the app is ready so the macOS app menu, About/Hide/
-// Quit items, and dock title read "Domo Desktop" instead of "Electron".
-app.setName("Domo Desktop");
+// One folder per instance (paths.ts): the home carries everything, including
+// Chromium's userData/sessionData at <home>/electron — never a second
+// name-keyed "Domo Desktop*" folder. Two instances sharing one userData
+// contend on Chromium's LevelDB locks, so per-branch homes also keep
+// from-source runs from tripping over each other or the packaged install.
+// All of it must be set before the app is ready: the name so the macOS app
+// menu, About/Hide/Quit items, and dock title read "Domo Desktop" instead of
+// "Electron", the paths so Chromium never opens the default locations.
+const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
+app.setName(instance.appName);
+app.setPath("userData", instance.electronData);
+app.setPath("sessionData", instance.electronData);
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
 
-const home = process.env.DOMO_HOME ?? path.join(app.getPath("appData"), "Domo");
+// Say what this build IS, once, where a diagnostic transcript starts. The
+// stamped version + commit come from package.json (extraMetadata, `just
+// package`); a from-source run has neither and says so.
+const pkg = createRequire(import.meta.url)("../package.json") as { gitCommit?: string };
+console.log(
+  `[app] Domo Desktop ${app.getVersion()}${app.isPackaged ? ` (${pkg.gitCommit ?? "no commit stamp"})` : " (from source)"}`,
+);
+
+// setName above rebrands the menus and dock title, but a from-source run is
+// still the stock Electron.app bundle, so the Dock/Cmd-Tab icon stays
+// Electron's. Repoint it at the repo artwork — dev only: the packaged app
+// gets its icon from electron-builder (`mac.icon`) and doesn't ship the PNG.
+// Once the app is ready, a DEV-ribboned version replaces it (see whenReady).
+const devIconPath = path.join(dirname, "..", "..", "..", "artwork", "domo-desktop-icon.png");
+if (!app.isPackaged) {
+  app.dock?.setIcon(devIconPath);
+}
 
 /**
- * Which Plow this build talks to. Baked in — an unpackaged run is a dev build
- * and points at the local API; anything else points at production. There is no
- * Settings field for it on purpose (a credential is only valid against the
- * environment that minted it), just a developer env-var override.
+ * The badged icon: the artwork with a diagonal DEV ribbon (devIcon.ts).
+ * Composited in a hidden sandboxed window because the main process can't
+ * draw; only callable once the app is ready.
  */
-const apiBaseUrl = resolveApiBaseUrl({ isDevBuild: !app.isPackaged, env: process.env });
+async function devBadgedDockIcon(iconPath: string): Promise<Electron.NativeImage> {
+  const png = await fs.readFile(iconPath);
+  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  try {
+    await win.loadURL("about:blank");
+    const dataUrl: string = await win.webContents.executeJavaScript(
+      devIconScript(png.toString("base64"), "DEV"),
+    );
+    return nativeImage.createFromDataURL(dataUrl);
+  } finally {
+    win.destroy();
+  }
+}
+
+const home = instance.home;
+
+/**
+ * Which Plow this build talks to. Baked in — every build points at production,
+ * including a run from source. There is no Settings field for it on purpose (a
+ * credential is only valid against the environment that minted it), just a
+ * developer env-var override a developer exports when they want another relay.
+ */
+const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -66,6 +122,7 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let onboardingWindow: BrowserWindow | null = null;
+let updates: UpdateController | null = null;
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -83,10 +140,38 @@ class ElectronPolicy implements PolicyDelegate {
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
-      openApproval: (hint) =>
-        openApprovalWindow({ kind: "intent", view: approvalViewModel(intent) }, hint),
+      openApproval: async (hint) =>
+        openApprovalWindow(
+          { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
+          hint,
+        ),
     });
   }
+}
+
+/**
+ * Resolve credential item ids to titles via the LOCAL vault broker so the
+ * approval card can show what the ids actually are. Never taken from the
+ * intent — agent-supplied titles would be spoofable. Unresolvable ids render
+ * as raw ids flagged "unknown item" (a deny signal for the human).
+ */
+async function resolveCredentialTitles(intent: Intent): Promise<CredentialTitles> {
+  const titles: CredentialTitles = new Map();
+  const broker = device?.credentialBroker;
+  if (!broker) return titles;
+  const items =
+    intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+  await Promise.all(
+    items.map(async (id) => {
+      try {
+        const item = await broker.describeItem(id);
+        titles.set(id, { title: item.title, category: item.category });
+      } catch {
+        /* unresolved — the card shows the raw id */
+      }
+    }),
+  );
+  return titles;
 }
 
 type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
@@ -298,6 +383,28 @@ ipcMain.handle("settings:getRelay", async () => {
     connected,
   };
 });
+/**
+ * Forget this Mac's credential and put the user back at the start.
+ *
+ * The relay's `onAuthFailed` path only. Nobody clicked anything here: the
+ * credential was retired on the account and the relay refused it, so there is
+ * nothing to revoke and the window has to be OPENED — otherwise the app sits
+ * silently disconnected with no way forward but quitting.
+ *
+ * `signOutOfPlow` rather than blanking the fields inline: losing the Plow
+ * credential takes the Plow reviewer with it, and retiring Adversarial mode is
+ * part of that same write.
+ */
+function signOut(): void {
+  signOutOfPlow(home);
+  onboarding?.signedOut();
+  // Opening it boots the renderer, which calls `begin` and mints the code the
+  // activation screen needs. `begin` covers the already-open case; it is
+  // idempotent, so between them exactly one code is minted.
+  openOnboardingWindow();
+  void onboarding?.begin();
+}
+
 // Sign out: retire the credential with Plow, forget it here, and drop the
 // socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
 // cannot reach Plow still signs out locally.
@@ -373,11 +480,90 @@ ipcMain.handle("settings:getInference", async () => readInference(home));
 ipcMain.handle("settings:setInference", async (_e, provider: string) =>
   setInferenceProvider(home, provider),
 );
+ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
+// The vault's own account: the owner reads it here to sign in on the vault's
+// page, and can replace either half with something of their own choosing.
+ipcMain.handle("vault:get", async () => {
+  const vault = device?.vaultServer;
+  if (!vault) return null;
+  return readCredentials(vault.url, vault.dataDir);
+});
+
+// A renderer anchor cannot open a browser from inside Electron, so the main
+// process does it — and only ever for this machine's own vault address.
+ipcMain.handle("vault:open", async () => {
+  const vault = device?.vaultServer;
+  if (!vault) return false;
+  await shell.openExternal(vault.url);
+  return true;
+});
+
+ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
+  const vault = device?.vaultServer;
+  if (!vault) throw new Error("this build has no vault");
+  await changeCredentials(vault.url, vault.dataDir, { email, password }, vault.certPath);
+  return readCredentials(vault.url, vault.dataDir);
+});
+
+// The live-browser thumbnail's whole state, one shape per poll (like
+// onboarding:get). Frames come from the browser host directly, bypassing
+// session scope: they are for the device owner's own eyes, and the owner
+// watching an out-of-scope page is exactly the oversight the thumbnail exists
+// for. `frame` is null while the browser is busy or restarting — the renderer
+// keeps showing the frame it already has rather than flickering.
+ipcMain.handle("viewer:state", async () => {
+  const session = device?.browserSessions?.current() ?? null;
+  const frame = session ? await device!.browserViewFrame() : null;
+  return {
+    active: session !== null,
+    origins: session?.origins ?? [],
+    inScope: session?.inScope ?? true,
+    url: frame?.url ?? session?.lastUrl ?? "",
+    frame: frame ? { dataB64: frame.dataB64, mime: frame.mime } : null,
+  };
+});
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
   name: device?.identity.name ?? "",
   connected: connected,
 }));
+
+// MARK: IPC for software updates (banner + Software Updates settings section).
+// One whole-state shape per read, renderer-side composition-free. In a
+// from-source run there is no controller: supported=false and the section
+// explains itself instead of pretending.
+ipcMain.handle("updates:get", async () => {
+  const settings = loadSettings(home);
+  return {
+    supported: !!updates,
+    currentVersion: app.getVersion(),
+    autoCheck: settings.autoCheckUpdates,
+    autoInstall: settings.autoInstallUpdates,
+    ...(updates?.state() ?? {
+      phase: "idle",
+      availableVersion: null,
+      lastCheckAt: null,
+      error: null,
+      dismissed: false,
+      upToDate: false,
+    }),
+  };
+});
+ipcMain.handle("updates:check", async () => updates?.checkNow());
+ipcMain.handle("updates:restart", async () => updates?.restartAndInstall());
+ipcMain.handle("updates:dismiss", async () => updates?.dismiss());
+ipcMain.handle("updates:setAutoCheck", async (_e, on: boolean) => {
+  const settings = loadSettings(home);
+  settings.autoCheckUpdates = !!on;
+  saveSettings(home, settings);
+});
+ipcMain.handle("updates:setAutoInstall", async (_e, on: boolean) => {
+  const settings = loadSettings(home);
+  settings.autoInstallUpdates = !!on;
+  saveSettings(home, settings);
+  // Takes effect immediately — this is the flag Squirrel honors at quit.
+  if (updates) electronUpdater.autoUpdater.autoInstallOnAppQuit = !!on;
+});
 
 let connected = false;
 
@@ -441,6 +627,15 @@ async function startRelay(): Promise<void> {
       connected = isConnected;
       notifyRenderer("status:changed");
     },
+    // The relay refused the credential — revoked in the console, or minted
+    // against a different environment. It will never work again, so the app
+    // signs itself out rather than reconnecting forever with a dead token.
+    onAuthFailed: (reason) => {
+      console.log(`[relay] credential rejected (${reason}); signing out`);
+      connected = false;
+      signOut();
+      notifyRenderer("status:changed");
+    },
     // RelayClient redacts the credential from everything it emits; this is the
     // only place its diagnostics reach a log at all.
     log: (message) => console.log(`[relay] ${message}`),
@@ -454,7 +649,15 @@ app.whenReady().then(async () => {
   // in memory. It also bounds the wait: an approval nobody answers expires and
   // fails closed instead of pending forever.
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
-  device = new DeviceAgent(home, hostName(), approvals);
+  // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
+  // (extraResources). In dev the resolver falls back to the repo's vendor/.
+  device = new DeviceAgent(
+    home,
+    hostName(),
+    approvals,
+    undefined,
+    resolveBrowserRuntime(process.resourcesPath),
+  );
   goals = new GoalsLibrary(path.join(home, "device/goals.json"));
 
   // Live-refresh the audit view whenever a new event is recorded.
@@ -474,8 +677,66 @@ app.whenReady().then(async () => {
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
 
+  // Only a packaged install updates: a from-source run has no app-update.yml
+  // (and Squirrel.Mac could not swap a checkout anyway), so worktree instances
+  // never poll the feed. Nothing here is modal: a downloaded update surfaces
+  // as a banner in the main window, a tray item, and the Software Updates
+  // settings section — the restart is always the human's call, and with the
+  // auto-install preference on, a staged update applies on the next natural
+  // quit anyway.
+  // UI-only testing seam: DOMO_SIMULATE_UPDATE=available|none|error swaps in
+  // a scripted fake updater — works from source, no packaging, no feed. The
+  // controller, IPC, banner, tray, and settings section are all real; only
+  // electron-updater is faked, and "Restart to Update" really relaunches.
+  const simulate = (process.env.DOMO_SIMULATE_UPDATE ?? "").trim();
+  if (app.isPackaged || simulate) {
+    if (simulate) console.log(`[updates] SIMULATED updater active (${simulate}) — not a real update`);
+    // Testing seam: point a packaged build at a feed that isn't production —
+    // `just serve-updates` + DOMO_UPDATE_FEED_URL=http://127.0.0.1:8043 is the
+    // whole local update loop. Safe to honor unconditionally: Squirrel.Mac
+    // only installs an update signed by the same Developer ID as the running
+    // app, so a hostile feed can offer nothing this app will accept.
+    const feedOverride = (process.env.DOMO_UPDATE_FEED_URL ?? "").trim();
+    if (feedOverride && !simulate) {
+      electronUpdater.autoUpdater.setFeedURL({ provider: "generic", url: feedOverride });
+      console.log(`[updates] feed overridden: ${feedOverride}`);
+    }
+    const settings = loadSettings(home);
+    if (!simulate) electronUpdater.autoUpdater.autoInstallOnAppQuit = settings.autoInstallUpdates;
+    updates = new UpdateController({
+      updater: simulate ? simulatedUpdater(simulate) : electronUpdater.autoUpdater,
+      // Read per tick, so the Settings toggle takes effect without a relaunch.
+      autoCheckEnabled: () => loadSettings(home).autoCheckUpdates,
+      initialLastCheckAt: settings.updatesLastCheckedAt ?? null,
+      onChange: (state) => {
+        // Persist the check time so "Last checked" survives a relaunch.
+        if (state.lastCheckAt) {
+          const s = loadSettings(home);
+          if (s.updatesLastCheckedAt !== state.lastCheckAt) {
+            s.updatesLastCheckedAt = state.lastCheckAt;
+            saveSettings(home, s);
+          }
+        }
+        refreshTray();
+        notifyRenderer("updates:changed");
+      },
+      log: (message) => console.log(`[updates] ${message}`),
+    });
+    updates.start();
+  }
+  setupAppMenu();
+
   createMainWindow();
   setupTray();
+  // Swap the plain artwork set at startup for the DEV-ribboned version, so a
+  // from-source Dock icon can't be mistaken for the packaged install. Purely
+  // cosmetic: on any failure the plain icon just stays.
+  if (!app.isPackaged && process.platform === "darwin") {
+    void devBadgedDockIcon(devIconPath).then(
+      (icon) => app.dock?.setIcon(icon),
+      (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
+    );
+  }
   // A Mac with no credential cannot do anything until it has one, so first run
   // opens straight into login rather than an empty audit log.
   if (!loadSettings(home).relayCredential.trim()) openOnboardingWindow();
@@ -487,6 +748,8 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   void relay?.stop();
+  // Kill any live Camoufox session/process group so Firefox children don't outlive us.
+  void device?.shutdown();
 });
 
 app.on("window-all-closed", () => {
@@ -507,13 +770,99 @@ function setupTray(): void {
   // pipeline; a real template image ships with the packaged app.
   const image = nativeImage.createEmpty();
   tray = new Tray(image);
-  tray.setToolTip("Domo");
+  tray.setToolTip(instance.trayTooltip);
+  refreshTray();
+}
+
+/** (Re)build the tray menu — its update item tracks the controller's state. */
+function refreshTray(): void {
+  if (!tray) return;
+  const state = updates?.state();
   const menu = Menu.buildFromTemplate([
     { label: "Open Domo", click: () => createMainWindow() },
+    // Update items only when an updater exists (packaged runs) — a dead menu
+    // item in a from-source run would just be a lie.
+    ...(updates
+      ? [
+          state?.phase === "ready"
+            ? {
+                label: `Restart to Update (${state.availableVersion})`,
+                click: () => updates?.restartAndInstall(),
+              }
+            : { label: "Check for Updates…", click: () => checkForUpdatesFromMenu() },
+        ]
+      : []),
     { type: "separator" },
     { label: "Quit Domo", click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
+}
+
+/**
+ * The menu-bar/tray "Check for Updates…": start the check, then bring up the
+ * main window on the Settings tab, where the Software Updates section shows
+ * the outcome — the passive answer to what Sparkle does with a modal.
+ */
+function checkForUpdatesFromMenu(): void {
+  updates?.checkNow();
+  createMainWindow();
+  const send = () => mainWindow?.webContents.send("ui:showSettings");
+  if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
+  else send();
+}
+
+/**
+ * The macOS application menu. Replacing the default menu costs the stock
+ * items, so the standard roles (Edit for clipboard, Window) are declared
+ * explicitly — a sandboxed renderer still needs working Cmd-C/V. The View
+ * menu (reload, devtools) is dev-only noise and ships only from source.
+ */
+function setupAppMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        ...(updates
+          ? ([
+              { type: "separator" },
+              { label: "Check for Updates…", click: () => checkForUpdatesFromMenu() },
+            ] as Electron.MenuItemConstructorOptions[])
+          : []),
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    { role: "windowMenu" },
+    ...(!app.isPackaged ? ([{ role: "viewMenu" }] as Electron.MenuItemConstructorOptions[]) : []),
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/**
+ * Build the DOMO_SIMULATE_UPDATE fake: any value but "none"/"error" plays the
+ * happy path. The pretend update is the current version with its patch +1 —
+ * visibly newer, obviously fake. "Installing" it relaunches the app for real,
+ * so the whole banner → restart → fresh-launch arc is walkable in dev.
+ */
+function simulatedUpdater(value: string): SimulatedUpdater {
+  const scenario: SimulatedScenario =
+    value === "none" || value === "error" ? value : "available";
+  const [major = "0", minor = "0", patch = "0"] = app.getVersion().split(".");
+  return new SimulatedUpdater({
+    scenario,
+    version: `${major}.${minor}.${Number(patch) + 1 || 1}`,
+    onInstall: () => {
+      console.log("[updates] simulated install — relaunching");
+      app.relaunch();
+      app.quit();
+    },
+  });
 }
 
 function hostName(): string {

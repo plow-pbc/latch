@@ -10,13 +10,21 @@
  * there is no signature to verify and no agent public key to pin.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import os from "node:os";
 import path from "node:path";
 import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
+import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
+import { BrowserSessions } from "./browser/browserSessions.js";
+import { CredentialBroker } from "./browser/credentialBroker.js";
+import { VaultServer } from "./browser/vaultServer.js";
+import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
+import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { Executor } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
+import { SkillRegistry } from "./skills.js";
 
 /**
  * A delegate that denies because the adversarial reviewer could not run for
@@ -45,6 +53,15 @@ export class DeviceAgent {
   readonly policy: PolicyEngine;
   readonly blessedTools: BlessedToolRegistry;
   readonly executor: Executor;
+  /** Owner-published skills (how-to guides), surfaced via list_tools/read_skill. */
+  readonly skills: SkillRegistry;
+  /** Null when no browser runtime is installed — browser tools report so. */
+  readonly browserSessions: BrowserSessions | null = null;
+  /** Exposed so the approval UI can resolve credential item titles locally. */
+  readonly credentialBroker: CredentialBroker | null = null;
+  /** The vault this machine runs, when this build ships one. */
+  readonly vaultServer: VaultServer | null = null;
+  private readonly browserHost: BrowserHost | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
@@ -52,12 +69,141 @@ export class DeviceAgent {
     name: string,
     private readonly delegate: PolicyDelegate,
     blessedTools?: BlessedToolRegistry,
+    browserRuntime?: ResolvedBrowserRuntime | null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
     this.blessedTools = blessedTools ?? BlessedToolRegistry.standard();
+    this.skills = new SkillRegistry();
+    this.skills.loadDir(path.join(home, "device/skills"));
+    if (browserRuntime) {
+      this.skills.register(BROWSING_SKILL);
+      const browserDir = path.join(home, "device/browser");
+      const auditFn = (event: string, fields: { [k: string]: JSONValue }) =>
+        this.audit.record(event, fields);
+      this.browserHost = new BrowserHost({
+        command: browserRuntime.serverCommand,
+        // Visible by default: the owner should be able to watch what is being
+        // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
+        // which is what the test tiers and any unattended run want.
+        headed: process.env.DOMO_BROWSER_HEADED !== "0",
+        env: browserRuntime.env,
+        screenshotsDir: path.join(browserDir, "screenshots"),
+        profileDir: path.join(browserDir, "profile"),
+        camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
+        isolatedHome: path.join(browserDir, "pyhome"),
+        // Every `browser` action is non-deferrable and must answer inside the
+        // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
+        // a hung page/eval returns an error in time instead of a torn 504. The
+        // cold start is separate (startTimeoutMs) and paid by the deferrable
+        // browser_open, so it does not need to fit this bound.
+        actionTimeoutMs: 15_000,
+        audit: auditFn,
+      });
+      // Launched from Finder there is no environment to speak of, so the vault
+      // and the broker agree on one identity for this machine rather than each
+      // falling back to a different default.
+      const vaultPerson = process.env.DOMO_VAULT_PERSON ?? `${os.userInfo().username}@local`;
+      // When this build ships its own vault, run it here rather than talking to
+      // one we host: same broker, same CLI, just pointed at 127.0.0.1 with the
+      // cert this machine minted for itself.
+      const vault = browserRuntime.vaultServer
+        ? new VaultServer({
+            binary: browserRuntime.vaultServer.binary,
+            webVaultDir: browserRuntime.vaultServer.webVaultDir,
+            dataDir: path.join(browserDir, "vault"),
+            person: vaultPerson,
+          })
+        : null;
+      this.vaultServer = vault;
+      // Up with the app, not on first use: the owner has to be able to open
+      // the vault's own page whenever Domo is running, not only after an agent
+      // happens to ask for a credential.
+      void vault
+        ?.start()
+        .then(() => this.credentialBroker?.warm())
+        .catch(() => {
+          /* the broker surfaces this as a locked vault when it next runs */
+        });
+      const credentials = new CredentialBroker({
+        command: browserRuntime.credentialBrokerCommand,
+        env: browserRuntime.env,
+        // Resolved per call: the account is created by the vault's first run,
+        // which happens after this object exists. Getters in a spread would be
+        // read once, right here, and freeze an empty account in place.
+        envFor: vault
+          ? () => ({
+              SEED_VAULT_URL: vault.url,
+              SEED_VAULT_CA: vault.certPath,
+              SEED_VAULT_USER: vault.account?.email ?? "",
+              SEED_VAULT_PASSWORD: vault.account?.password ?? "",
+              // Its own client state, beside its own vault. Sharing the
+              // standalone default means inheriting whatever server and
+              // account a previous install was pointed at.
+              SEED_VAULT_STATE: path.join(vault.dataDir, "client"),
+              // Below the per-action ceiling on purpose: an unreachable vault
+              // must come back as an error the agent can report, not as a call
+              // that never returns and takes the session down with it.
+              SEED_VAULT_TIMEOUT: "10",
+            })
+          : undefined,
+        beforeRun: vault ? () => vault.start() : undefined,
+        auditPath: path.join(browserDir, "credential-audit.log"),
+        // The relay gives up around 20s and every browser action is capped at
+        // 15s, so the broker has to fail inside that or the session dies.
+        timeoutMs: 12_000,
+        person: vaultPerson,
+        fleetToken: process.env.DOMO_VAULT_TOKEN,
+      });
+      this.credentialBroker = credentials;
+      this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
+    }
+  }
+
+  /**
+   * What is in the vault, and what one item holds — metadata only, no page and
+   * no browser session involved. Values are never returned here: releasing one
+   * only makes sense against the page it is being typed into, which stays in
+   * the browser's fill_secret.
+   */
+  async vaultList(): Promise<JSONValue> {
+    if (!this.credentialBroker) return { status: "error", error: "this machine has no vault" };
+    const items = await this.credentialBroker.whatsHere();
+    this.audit.record("credential_metadata", { op: "list", source: "vault" });
+    return {
+      status: "completed",
+      items: items.map((i) => ({
+        id: i.id,
+        title: i.title,
+        category: i.category,
+        username: i.username,
+        urls: i.urls,
+      })),
+    };
+  }
+
+  async vaultDescribe(itemId: string): Promise<JSONValue> {
+    if (!this.credentialBroker) return { status: "error", error: "this machine has no vault" };
+    if (!itemId) return { status: "error", error: "missing item" };
+    const item = await this.credentialBroker.describeItem(itemId);
+    this.audit.record("credential_metadata", { op: "describe", item: itemId, source: "vault" });
+    return { status: "completed", ...item };
+  }
+
+  /** Close any live browser session, and the vault if we are running one. */
+  async shutdown(): Promise<void> {
+    await this.browserSessions?.closeAll("shutdown");
+    this.vaultServer?.stop();
+  }
+
+  /**
+   * One frame for the owner's browser-viewer window. Best-effort and local:
+   * null when no browser is running (it is never started for a viewer poll).
+   */
+  async browserViewFrame(): Promise<ViewerFrame | null> {
+    return this.browserHost?.viewFrame() ?? null;
   }
 
   /**
@@ -120,6 +266,11 @@ export class DeviceAgent {
   // MARK: Execution
 
   private async execute(intent: Intent, payload: JSONValue): Promise<JSONValue> {
+    // Browser/credential intents contain only those kinds; dispatch them first
+    // so they can never fall into the exec path.
+    if (intent.capabilities.some((c) => c.kind === "browser" || c.kind === "credential")) {
+      return this.executeBrowserIntent(intent, payload);
+    }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
     const toolCap = intent.capabilities.find((c) => c.kind === "tool");
@@ -240,6 +391,54 @@ export class DeviceAgent {
   }
 
   /** Read more output from a still-running (or finished) command. */
+  /**
+   * A browser/credential intent either opens a session (no `session` in the
+   * payload) or widens an existing one (payload carries the handle — delivery
+   * detail, like wait_ms; the approved bound is entirely in the capabilities).
+   */
+  private async executeBrowserIntent(intent: Intent, payload: JSONValue): Promise<JSONValue> {
+    if (!this.browserSessions) {
+      return { status: "error", error: "no browser runtime installed on this device" };
+    }
+    const origins = intent.capabilities.find((c) => c.kind === "browser")?.origins ?? [];
+    const metadata = intent.capabilities.some(
+      (c) => c.kind === "credential" && c.access === "metadata",
+    );
+    const items =
+      intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+
+    const session = jv(payload).get("session").str;
+    if (session !== null) {
+      return this.browserSessions.extend(
+        intent.intentId,
+        intent.agentId,
+        session,
+        origins,
+        items,
+        metadata,
+      );
+    }
+    if (origins.length === 0) {
+      return { status: "error", error: "browser_open requires at least one origin" };
+    }
+    return this.browserSessions.open(intent.intentId, intent.agentId, origins, metadata);
+  }
+
+  /**
+   * A command inside an already-approved browser session. Rides the session
+   * grant — no new intent, no approval — exactly like getOutput binds to an
+   * already-approved run. Called in-process by the mcp-server's `browser` tool.
+   */
+  async browserCommand(agentId: string, session: string, params: JSONValue): Promise<JSONValue> {
+    if (!this.browserSessions) {
+      return { status: "error", error: "no browser runtime installed on this device" };
+    }
+    if (jv(params).get("action").str === "close") {
+      return this.browserSessions.close(session, "agent");
+    }
+    return this.browserSessions.command(agentId, session, params);
+  }
+
   getOutput(handle: string, since = 0): JSONValue {
     const result = this.executor.output(handle, since);
     if (!result.running && result.exitCode !== null) {

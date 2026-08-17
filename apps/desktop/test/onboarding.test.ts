@@ -11,7 +11,7 @@ import {
   agentConfig,
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
-import { loadSettings } from "../src/settings.js";
+import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -19,7 +19,7 @@ const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const AGENT_TOKEN = "plow_AGENTtok_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
-const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
+const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
@@ -334,13 +334,13 @@ describe("activation — the path a brand-new user takes", () => {
 
   it("says so when the very first call cannot reach Plow", async () => {
     plow.createActivation = async () => {
-      throw new PlowApiError("network", "Couldn't reach Plow at http://localhost:18804.");
+      throw new PlowApiError("network", "Couldn't reach Plow at http://localhost:4242.");
     };
     const state = await build().begin();
 
     expect(state.busy).toBe(false);
     expect(state.activation).toBeNull();
-    expect(state.message).toBe("Couldn't reach Plow at http://localhost:18804.");
+    expect(state.message).toBe("Couldn't reach Plow at http://localhost:4242.");
   });
 
   it("stops polling when the user switches to the phone-code fallback", async () => {
@@ -369,6 +369,51 @@ describe("activation — the path a brand-new user takes", () => {
     expect(warnings.join(" ")).not.toContain(ACTIVATION_SECRET);
     // The display code is a credential too — it is shown, never logged.
     expect(warnings.join(" ")).not.toContain("CODE1");
+  });
+});
+
+describe("signing out", () => {
+  it("returns to the activation screen without needing a restart", async () => {
+    // Reported live: Sign Out blanked the credential in settings but left the
+    // state machine on "connected", because `step` is decided in the
+    // constructor. The window kept rendering the connected screen against empty
+    // settings — "Signed in — connecting…", blank endpoint, blank account — and
+    // the only way back to signing in was quitting the app.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    expect(onboarding.state().step).toBe("connected");
+
+    // What `settings:signOut` does to disk, then the reset it must also do.
+    const settings = loadSettings(home);
+    settings.relayCredential = "";
+    settings.accountUid = "";
+    settings.mcpUrl = "";
+    saveSettings(home, settings);
+
+    const state = onboarding.reset();
+    expect(state.step).toBe("activate");
+    // ...and nothing from the old session is left behind.
+    expect(state.activation).toBeNull();
+    expect(state.accountUid).toBe("");
+    expect(state.mcpUrl).toBe("");
+    expect(state.agent).toBeNull();
+    expect(state.busy).toBe(false);
+
+    // From there the normal path works: it mints a code, no restart involved.
+    const begun = await onboarding.begin();
+    expect(begun.activation?.displayCode).toBeTruthy();
+  });
+
+  it("stays on the connected screen if a credential is somehow still there", () => {
+    // reset() re-derives from settings rather than assuming; a reset with a
+    // live credential must not throw the user back to activation.
+    const onboarding = build();
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    expect(onboarding.reset().step).toBe("connected");
   });
 });
 

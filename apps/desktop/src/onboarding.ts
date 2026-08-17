@@ -558,6 +558,30 @@ export class Onboarding {
    * documented to do. Publishing belongs to the methods that change something.
    */
 
+  /**
+   * Return to the state a fresh launch would be in.
+   *
+   * Signing out blanks the credential in settings, but `step` is decided once
+   * in the constructor — so without this the window keeps rendering the
+   * connected screen against empty settings ("Signed in — connecting…", blank
+   * endpoint, blank account) and never offers a way back. Quitting and
+   * relaunching the app was the only escape, which is not a thing to ask of
+   * someone who just clicked Sign Out.
+   */
+  reset(): OnboardingState {
+    this.cancelPolling();
+    this.activation = null;
+    this.activationSecret = null;
+    this.activationStale = false;
+    this.agent = null;
+    this.phone = "";
+    this.message = "";
+    this.codeExpiresAt = null;
+    this.busy = false;
+    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
+    return this.publish();
+  }
+
   private async completeOtpLogin(code: string): Promise<void> {
     let otpToken: string;
     try {
