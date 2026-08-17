@@ -210,12 +210,19 @@ draws whatever state the main process hands it and owns no copy of its own.
   `GET /v1/relay/info` → mint the device credential → open the socket. Then
   "create an agent" is `POST /v1/relay/agents`, which the device credential may
   call.
-- **The OTP session is thrown away the moment the device credential exists.** It
-  carries `keys:manage` and `relay:*` — it can mint *any* credential on the
-  account — so the app holds it for the seconds it needs and revokes it. It is
-  never written to disk. (The revoke is best-effort: `DELETE /v1/api-keys/{id}`
-  requires `keys:manage` and refuses self-revoke, so it cannot succeed against
-  the API as it stands today.)
+- **The login session is retired server-side the moment the device credential
+  exists.** It carries `keys:manage` and `relay:*` — it can mint *any*
+  credential on the account — so the app holds it for the two calls it needs and
+  not one longer, and never writes it to disk. The retirement is **not** a
+  best-effort client-side revoke: `mintDeviceCredential` sends
+  `revoke_calling_session: true` on `POST /v1/relay/devices`
+  (`apps/desktop/src/plowApi.ts`), and the server retires the calling session in
+  the same transaction as the mint. So there is no client-side cleanup to get
+  wrong, no window where both credentials are live, and nothing for the app to
+  report when it fails — either the mint happened and the session is gone, or
+  neither did. (An earlier note here described a `DELETE /v1/api-keys/{id}` call
+  that could not succeed against its own key; that approach is not what the code
+  does.)
 - **`/otp/request` answers `200 {"ok": true}` for an unknown number, an
   unparseable number and a failed SMS send alike**, so it cannot be used to
   probe whether an account exists. The app therefore cannot tell "sent" from
