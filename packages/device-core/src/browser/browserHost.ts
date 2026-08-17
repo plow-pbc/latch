@@ -144,19 +144,12 @@ export class BrowserHost {
    *
    * `headed` is the session's choice; a session that says nothing gets the app
    * default back, so one agent's hidden window never becomes everybody's.
-   * Camoufox fixes the window mode at launch, so asking for the other one
-   * replaces the browser — free between sessions, since closing a session
-   * already shuts the server down.
+   * Camoufox fixes the window mode at launch, and this is the only caller, so
+   * the mode is simply chosen for the next start — closing a session already
+   * shut the previous browser down.
    */
-  async ensureReady(headed?: boolean): Promise<void> {
-    const want = headed ?? this.cfg.headed === true;
-    if (want !== this.headedNow) {
-      if (this.child) {
-        await this.shutdown();
-        this.resetBreaker();
-      }
-      this.headedNow = want;
-    }
+  ensureReady(headed?: boolean): Promise<void> {
+    this.headedNow = headed ?? this.cfg.headed === true;
     return this.ensureStarted();
   }
 
