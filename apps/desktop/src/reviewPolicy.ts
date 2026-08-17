@@ -8,6 +8,7 @@
  * device. `main.ts` keeps only the Electron-shaped adapter around it.
  */
 import { Intent, JSONValue } from "@domo/protocol";
+import { DENIAL_SOURCE_NO_CREDITS } from "@domo/device-core";
 import {
   agentHistory,
   PLOW_REVIEWER_INFO,
@@ -15,11 +16,26 @@ import {
   REVIEWER_INFO,
   REVIEWER_MODEL,
   ReviewArgs,
+  ReviewFailureCause,
   Verdict,
 } from "./adversarialAgent.js";
 import { INFERENCE_PROVIDERS, InferenceProvider, Settings } from "./settings.js";
 
 export type ApprovalDecision = "allow_once" | "always_allow" | "deny";
+
+/**
+ * What the reviewer has to say to the human, when a human is being asked.
+ *
+ * **Display-only, both halves.** `decision` highlights a button and `reason`
+ * is text to read; neither touches the capability set, which is what the
+ * sandbox is built from and the only thing the dialog presents as enforceable.
+ */
+export interface ReviewHint {
+  /** The button to highlight, or null when the reviewer reached no verdict. */
+  decision: ApprovalDecision | null;
+  /** Why — in the reviewer's words, or ours when it could not answer. */
+  reason: string;
+}
 
 /** Which providers this Mac currently holds a credential for. */
 export type ProviderAvailability = Record<InferenceProvider, boolean>;
@@ -113,11 +129,11 @@ export interface DecideDeps {
   /** The audit log's current entries, for the reviewer's history context. */
   auditEntries: () => JSONValue[];
   record: (event: string, fields: Record<string, JSONValue>) => void;
-  review: (args: ReviewArgs) => Promise<{ verdict: Verdict; reason: string }>;
-  /** Show the human the approval dialog, optionally hinting a button. */
-  openApproval: (
-    suggestion: Promise<ApprovalDecision | null> | null,
-  ) => Promise<ApprovalDecision>;
+  review: (
+    args: ReviewArgs,
+  ) => Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }>;
+  /** Show the human the approval dialog, optionally with the reviewer's say. */
+  openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
 }
 
 /**
@@ -168,25 +184,47 @@ export async function decideIntent(
       intentId: intent.intentId,
       verdict: r.verdict,
       reason: r.reason,
+      // The verdict alone says "ask", which reads as the agent deferring to the
+      // human — untrue when it never ran. The cause is what tells the timeline
+      // the difference between deferring and being unable to answer.
+      ...(r.cause ? { cause: r.cause } : {}),
     });
     return r;
   };
 
   if (mode === "adversarial" && available) {
-    const { verdict } = await review();
+    const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
-    // "ask" — the agent couldn't decide; hand it to the human (no suggestion).
-    return { decision: await deps.openApproval(null), source: "ask" };
+    // The account cannot pay for inference, so the reviewer the user chose can
+    // never run. Deny — and say why, in a form the calling agent can read.
+    // Quietly reverting to prompting a human would change the mode the user
+    // configured, and would hide a standing condition behind one more dialog.
+    if (cause === "no_credits") {
+      return { decision: "deny", source: DENIAL_SOURCE_NO_CREDITS };
+    }
+    // Any other "ask" — the reviewer could not decide; hand it to the human,
+    // telling them what it said rather than prompting them out of nowhere.
+    return {
+      decision: await deps.openApproval(Promise.resolve({ decision: null, reason })),
+      source: "ask",
+    };
   }
 
   // Ask mode (or adversarial with no credential): show the dialog, optionally
-  // with a suggestion when both the toggle and a credential are present.
-  const suggestion =
+  // with the reviewer's hint when both the toggle and a credential are present.
+  // A 402 here costs only the hint — the human was always the decider.
+  const hint =
     settings.showAgentSuggestions && available
-      ? review().then((r) =>
-          r.verdict === "allow" ? "allow_once" : r.verdict === "deny" ? "deny" : null,
-        )
+      ? review().then((r) => ({
+          decision:
+            r.verdict === "allow"
+              ? ("allow_once" as const)
+              : r.verdict === "deny"
+                ? ("deny" as const)
+                : null,
+          reason: r.reason,
+        }))
       : null;
-  return { decision: await deps.openApproval(suggestion), source: "ask" };
+  return { decision: await deps.openApproval(hint), source: "ask" };
 }

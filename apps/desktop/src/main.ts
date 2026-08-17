@@ -41,7 +41,7 @@ import { ConnectClient } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
-import { ApprovalDecision, decideIntent } from "./reviewPolicy.js";
+import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
   readInference,
@@ -143,10 +143,10 @@ class ElectronPolicy implements PolicyDelegate {
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
-      openApproval: async (suggestion) =>
+      openApproval: async (hint) =>
         openApprovalWindow(
           { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
-          suggestion,
+          hint,
         ),
     });
   }
@@ -184,8 +184,9 @@ let approvalChain: Promise<unknown> = Promise.resolve();
 
 function openApprovalWindow(
   request: ApprovalRequest,
-  // Resolves to the button the adversarial agent suggests, or null for no hint.
-  suggestion: Promise<ApprovalDecision | null> | null = null,
+  // Resolves to what the adversarial agent had to say, or null when it is not
+  // being consulted at all.
+  hint: Promise<ReviewHint> | null = null,
 ): Promise<ApprovalDecision> {
   const run = () =>
     new Promise<ApprovalDecision>((resolve) => {
@@ -203,17 +204,32 @@ function openApprovalWindow(
         },
       });
       let settled = false;
+      // The renderer subscribes only after it has built its DOM, and Electron
+      // IPC has no replay — so a hint that resolved first would land on nobody.
+      // An adversarial fallback hands over an ALREADY-RESOLVED promise, so that
+      // is the common case, not a rare race. Waiting on both is what makes the
+      // ordering stop mattering.
+      let markReady = () => {};
+      const ready = new Promise<void>((r) => {
+        markReady = r;
+      });
       const finish = (decision: ApprovalDecision) => {
         if (settled) return;
         settled = true;
         ipcMain.removeHandler("approval:get");
+        ipcMain.removeHandler("approval:ready");
         win.close();
         resolve(decision);
       };
       // The renderer pulls its model (never pushed with executable content).
       // `suggesting` tells it whether an adversarial review is in flight, so it
       // can show an indeterminate "reviewing…" indicator until the hint lands.
-      ipcMain.handleOnce("approval:get", async () => ({ ...request, suggesting: !!suggestion }));
+      ipcMain.handleOnce("approval:get", async () => ({ ...request, suggesting: !!hint }));
+      // The renderer calls this once its suggestion listener is installed.
+      // `handle`, not `handleOnce`: a second call must be a harmless no-op
+      // rather than a rejected invoke in the renderer. Resolving twice is
+      // already one. Both exits below remove it.
+      ipcMain.handle("approval:ready", async () => markReady());
       const onDecision = (_e: unknown, id: string, decision: ApprovalDecision) => {
         if (id !== approvalId(request)) return;
         ipcMain.removeListener("approval:decide", onDecision);
@@ -223,17 +239,21 @@ function openApprovalWindow(
       // When the adversarial agent responds, tell the window which button to
       // highlight (or that there's no hint) so it can clear the "reviewing…"
       // indicator. Only meaningful while the window is still open and unanswered.
-      if (suggestion) {
-        void suggestion
-          .catch(() => null)
-          .then((decision) => {
-            if (!settled && !win.isDestroyed()) {
-              win.webContents.send("approval:suggestion", { id: approvalId(request), decision });
-            }
+      // Display-only, both fields. The enforceable bound the window shows is
+      // the capability set in the view model, never this.
+      if (hint) {
+        void Promise.all([hint.catch(() => null), ready]).then(([said]) => {
+          if (settled || win.isDestroyed()) return;
+          win.webContents.send("approval:suggestion", {
+            id: approvalId(request),
+            decision: said?.decision ?? null,
+            reason: said?.reason ?? "",
           });
+        });
       }
       // Closing the window without a choice is a denial (fail safe).
       win.on("closed", () => {
+        ipcMain.removeHandler("approval:ready");
         ipcMain.removeListener("approval:decide", onDecision);
         if (!settled) {
           settled = true;

@@ -11,11 +11,14 @@
  * Nothing here touches a network or a display: the reviewer and the approval
  * dialog are both injected.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
-import type { ReviewArgs, Verdict } from "../src/adversarialAgent.js";
+import { adversarialReview } from "../src/adversarialAgent.js";
+import type { ReviewArgs, ReviewFailureCause, Verdict } from "../src/adversarialAgent.js";
 import { Settings } from "../src/settings.js";
+import { auditActivities, decidedByLabel } from "../src/viewModel.js";
 import {
+  ReviewHint,
   activeProvider,
   decideIntent,
   inferenceStatus,
@@ -57,17 +60,26 @@ function intent(): Intent {
 /** A harness capturing what the policy asked of the world. */
 function harness(
   s: Settings,
-  opts: { verdict?: Verdict; reason?: string; decision?: "allow_once" | "always_allow" | "deny" } = {},
+  opts: {
+    verdict?: Verdict;
+    reason?: string;
+    cause?: ReviewFailureCause;
+    decision?: "allow_once" | "always_allow" | "deny";
+  } = {},
 ) {
   const records: { event: string; fields: Record<string, JSONValue> }[] = [];
   const reviewCalls: ReviewArgs[] = [];
-  const dialogs: (Promise<string | null> | null)[] = [];
+  const dialogs: (Promise<ReviewHint> | null)[] = [];
   const review = vi.fn(async (args: ReviewArgs) => {
     reviewCalls.push(args);
-    return { verdict: opts.verdict ?? "ask", reason: opts.reason ?? "because" };
+    return {
+      verdict: opts.verdict ?? "ask",
+      reason: opts.reason ?? "because",
+      ...(opts.cause ? { cause: opts.cause } : {}),
+    };
   });
-  const openApproval = vi.fn(async (suggestion: Promise<"allow_once" | "always_allow" | "deny" | null> | null) => {
-    dialogs.push(suggestion);
+  const openApproval = vi.fn(async (hint: Promise<ReviewHint> | null) => {
+    dialogs.push(hint);
     return opts.decision ?? ("deny" as const);
   });
   const run = () =>
@@ -189,8 +201,8 @@ describe("decideIntent — adversarial mode", () => {
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
 
   // One review, three verdicts, three outcomes. The `ask` row is the one that
-  // must not be read as an approval: it hands over to the human with no
-  // suggestion, rather than deciding.
+  // must not be read as an approval: it hands over to the human without
+  // highlighting a button, rather than deciding.
   const decisionCases = [
     { verdict: "allow" as const, decision: "allow_once", source: "adversarial", dialogs: 0 },
     { verdict: "deny" as const, decision: "deny", source: "adversarial", dialogs: 0 },
@@ -199,13 +211,39 @@ describe("decideIntent — adversarial mode", () => {
 
   for (const c of decisionCases) {
     it(`a ${c.verdict} verdict is sourced to ${c.source}`, async () => {
-      const h = harness(adversarial(), { verdict: c.verdict, decision: "allow_once" });
+      const h = harness(adversarial(), {
+        verdict: c.verdict,
+        reason: "genuinely ambiguous",
+        decision: "allow_once",
+      });
       expect(await h.run()).toEqual({ decision: c.decision, source: c.source });
       expect(h.openApproval).toHaveBeenCalledTimes(c.dialogs);
-      // Only the handover carries a dialog, and it carries no suggestion.
-      if (c.dialogs) expect(h.dialogs).toEqual([null]);
+      // Only the handover carries a dialog. It highlights no button — the
+      // reviewer reached no verdict — but it does tell the human what was
+      // said, rather than prompting them out of nowhere.
+      if (c.dialogs) {
+        expect(h.dialogs).toHaveLength(1);
+        await expect(h.dialogs[0]).resolves.toEqual({
+          decision: null,
+          reason: "genuinely ambiguous",
+        });
+      }
     });
   }
+
+  it("out of credits denies, and says so through the decision's source", async () => {
+    // The reviewer the user configured can never run, so falling back to a
+    // human would quietly change the mode they chose. Deny, and label it in a
+    // way the device can turn into an answer the calling agent can read.
+    //
+    // Fails closed whatever the dialog would have said: there is no dialog, and
+    // neither an allow_once nor an always_allow can turn this into execution.
+    for (const decision of ["allow_once", "always_allow", "deny"] as const) {
+      const h = harness(adversarial(), { verdict: "ask", cause: "no_credits", decision });
+      expect(await h.run()).toEqual({ decision: "deny", source: "no_credits" });
+      expect(h.openApproval).not.toHaveBeenCalled();
+    }
+  });
 
   it("records the review's start and its verdict, in that order", async () => {
     const h = harness(adversarial(), { verdict: "deny", reason: "reads credentials" });
@@ -254,7 +292,10 @@ describe("decideIntent — ask mode and suggestions", () => {
     );
     expect(await h.run()).toEqual({ decision: "always_allow", source: "ask" });
     expect(h.dialogs).toHaveLength(1);
-    await expect(h.dialogs[0]).resolves.toBe("allow_once");
+    await expect(h.dialogs[0]).resolves.toEqual({
+      decision: "allow_once",
+      reason: "because",
+    });
   });
 
   it("maps a deny verdict to the deny button, and ask to no hint", async () => {
@@ -264,7 +305,7 @@ describe("decideIntent — ask mode and suggestions", () => {
     ] as const) {
       const h = harness(settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }), { verdict });
       await h.run();
-      await expect(h.dialogs[0]).resolves.toBe(hint);
+      await expect(h.dialogs[0]).resolves.toMatchObject({ decision: hint });
     }
   });
 
@@ -282,6 +323,18 @@ describe("decideIntent — ask mode and suggestions", () => {
     await h.run();
     expect(h.review).not.toHaveBeenCalled();
     expect(h.dialogs).toEqual([null]);
+  });
+
+  it("out of credits in ASK mode costs only the hint — the human still decides", async () => {
+    // The user did not delegate the decision here, so a billing problem must
+    // not turn into a denial. The dialog opens exactly as it always does.
+    const h = harness(
+      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      { verdict: "ask", cause: "no_credits", reason: "insufficient Plow balance", decision: "allow_once" },
+    );
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
+    expect(h.openApproval).toHaveBeenCalledOnce();
+    await expect(h.dialogs[0]).resolves.toMatchObject({ decision: null });
   });
 
   it("a suggestion is only ever a hint — the human's click is the decision", async () => {
@@ -339,6 +392,58 @@ describe("decideIntent — what reaches the reviewer", () => {
     const serialized = JSON.stringify(h.records);
     expect(serialized).not.toContain(PLOW_CREDENTIAL);
     expect(serialized).not.toContain(ANTHROPIC_KEY);
+  });
+});
+
+describe("the approval dialog's advice note carries no credential either", () => {
+  // The FOURTH surface a credential-bearing `reason` reaches — after the
+  // reviewer's return value, audit.ndjson, and the activity view. Every other
+  // test in this file injects a fake reviewer, so none of them exercise the
+  // provider's guard; this one runs the REAL reviewer against a hostile body.
+  const hostileBody = (reason: string) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [{ message: { content: JSON.stringify({ decision: "deny", reason }) } }],
+    }),
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const hintFor = async (reason: string) => {
+    vi.stubGlobal("fetch", async () => hostileBody(reason));
+    const dialogs: (Promise<ReviewHint> | null)[] = [];
+    await decideIntent(intent(), {
+      settings: settings({
+        approvalMode: "ask",
+        relayCredential: PLOW_CREDENTIAL,
+        showAgentSuggestions: true,
+      }),
+      apiBaseUrl: "https://api.plow.co",
+      auditEntries: () => [],
+      record: () => {},
+      review: adversarialReview, // the REAL one, guard included
+      openApproval: async (hint) => {
+        dialogs.push(hint);
+        return "deny";
+      },
+    });
+    return dialogs[0] === null ? null : await dialogs[0];
+  };
+
+  it("a verdict repeating the credential never reaches the note", async () => {
+    const said = await hintFor(PLOW_CREDENTIAL);
+    expect(JSON.stringify(said)).not.toContain(PLOW_CREDENTIAL);
+    expect(JSON.stringify(said)).not.toContain(PLOW_CREDENTIAL.slice(0, 10));
+    // Discarded, so there is no button to highlight either.
+    expect(said?.decision).toBeNull();
+  });
+
+  it("an ordinary verdict still reaches the note, in the reviewer's words", async () => {
+    const said = await hintFor("reads credentials from ~/.ssh");
+    expect(said).toEqual({ decision: "deny", reason: "reads credentials from ~/.ssh" });
   });
 });
 
@@ -405,5 +510,60 @@ describe("settings defaults", () => {
     const s = loadSettings("/nonexistent-domo-home");
     expect(s.inferenceProvider).toBe("plow");
     expect(activeProvider(s)).toBe("plow");
+  });
+});
+
+describe("the audit tells one coherent story about who decided", () => {
+  /**
+   * The timeline a human actually reads: the recorded events run through the
+   * same view model the activity pane renders from.
+   */
+  const narrative = (
+    records: { event: string; fields: Record<string, JSONValue> }[],
+    decision: { decision: string; source: string },
+    intentId: string,
+  ) => {
+    const ts = (i: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
+    const events: JSONValue[] = [
+      { ts: ts(0), event: "intent_received", intentId, agent: "agent-1", agent_name: "Agent One",
+        request: "run: ls", goal: "", capabilities: ["Run: ls"] },
+      ...records.map((r, i) => ({ ts: ts(i + 1), event: r.event, ...r.fields })),
+      { ts: ts(records.length + 1), event: "intent_decision", intentId,
+        decision: decision.decision, source: decision.source },
+    ];
+    return auditActivities(events).flatMap((a) => a.timeline.map((s) => s.text));
+  };
+
+  it("out of credits reads as 'could not run', never 'defer to you'", async () => {
+    // The incoherence this pins: an `ask` verdict recorded, then an automatic
+    // deny with no dialog in between. Read back, that said the agent handed the
+    // decision to the owner and then something else silently denied it.
+    const h = harness(
+      settings({
+        approvalMode: "adversarial",
+        relayCredential: PLOW_CREDENTIAL,
+        inferenceProvider: "plow",
+      }),
+      { verdict: "ask", cause: "no_credits", reason: "insufficient Plow balance" },
+    );
+    const decision = await h.run();
+    const lines = narrative(h.records, decision, intent().intentId);
+
+    expect(lines.some((l) => l.includes("could not run"))).toBe(true);
+    expect(lines.some((l) => l.includes("defer to you"))).toBe(false);
+    // …and the decision that follows names the same thing, in human words.
+    expect(decidedByLabel(decision.source)).toBe("Adversarial Agent (out of credits)");
+    expect(decidedByLabel(decision.source)).not.toContain("no_credits");
+  });
+
+  it("a genuine abstention still reads as deferring, because it is one", async () => {
+    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
+      verdict: "ask",
+      reason: "genuinely ambiguous",
+    });
+    const decision = await h.run();
+    const lines = narrative(h.records, decision, intent().intentId);
+    expect(lines.some((l) => l.includes("defer to you"))).toBe(true);
+    expect(lines.some((l) => l.includes("could not run"))).toBe(false);
   });
 });
