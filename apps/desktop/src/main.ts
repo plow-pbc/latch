@@ -29,6 +29,7 @@ import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
+import { ConnectClient } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
 
@@ -57,6 +58,7 @@ let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
+let connectClient: ConnectClient | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 
 /**
@@ -341,6 +343,15 @@ ipcMain.handle("settings:signOut", async () => {
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
+// MARK: IPC for "Connect a client" (main window)
+//
+// A pure read, like `onboarding:get` and for the same reason: the renderer
+// re-reads on every change notification, so a getter that notifies is an
+// unbroken re-render loop.
+ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
+ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
+ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());
+
 // MARK: IPC for the first-run setup window
 
 // A pure read. It must NOT publish: the renderer re-reads on every change
@@ -367,8 +378,6 @@ ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding
 ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
 ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
 ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.submitCode(code));
-ipcMain.handle("onboarding:createAgent", async (_e, name: string) => onboarding?.createAgent(name));
-ipcMain.handle("onboarding:dismissAgent", async () => onboarding?.dismissAgent());
 // The last step of the wizard. It does not just close the setup window — it
 // hands the user over to the app, which is the whole point of the gate: the
 // main window has not existed until now.
@@ -527,6 +536,13 @@ app.whenReady().then(async () => {
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.
     warn: (message) => console.log(`[onboarding] ${message}`),
+  });
+
+  connectClient = new ConnectClient({
+    api: new PlowApi(apiBaseUrl),
+    home,
+    isConnected: () => connected,
+    onChange: () => notifyRenderer("connect:changed"),
   });
 
   setupTray();

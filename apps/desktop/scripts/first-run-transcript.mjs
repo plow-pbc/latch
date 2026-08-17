@@ -28,6 +28,7 @@ import { createDomoMcpServer } from "../../../packages/mcp-server/dist/index.js"
 import { RelayClient } from "../../../packages/relay-client/dist/index.js";
 import { FakeRelay } from "../../../packages/relay-client/test/fakeRelay.ts";
 import { Onboarding } from "../dist/onboarding.js";
+import { ConnectClient } from "../dist/connectClient.js";
 import { PlowApi, relaySocketUrl } from "../dist/plowApi.js";
 import { loadSettings } from "../dist/settings.js";
 
@@ -329,17 +330,23 @@ check(`the credential is stored owner-only (0${mode.toString(8)})`, mode === 0o6
 check("the login session was retired server-side by the mint itself", revokedSessions.length === 1);
 check("...so the app has no revoke to get wrong, and warned about nothing", !log.join("\n").includes("could not revoke"));
 
-say("user", 'creates an agent named "Claude Code"');
-state = await onboarding.createAgent("Claude Code");
-show("agent", state);
-check("the credential is shown once", state.agent?.token === AGENT_TOKEN);
-check(
-  "the config carries it in a header, not a URL",
-  !JSON.parse(state.agent.config).mcpServers.domo.url.includes(AGENT_TOKEN) &&
-    JSON.parse(state.agent.config).mcpServers.domo.headers.Authorization === `Bearer ${AGENT_TOKEN}`,
-);
-state = onboarding.dismissAgent();
-check("and cannot be shown again", state.agent === null);
+// Connecting a client is not part of logging in — it happens in the main
+// window, per client, whenever the user wants one. Same run, different module.
+say("user", 'later, in the app, creates a static credential for "Claude Code"');
+const connect = new ConnectClient({
+  api: new PlowApi(API_BASE),
+  home,
+  isConnected: () => connected,
+});
+let connectState = await connect.createCredential("Claude Code");
+say("screen", `connect a client → credential for ${connectState.credential?.name}`);
+const clientConfig = JSON.parse(connectState.credential.config);
+check("the credential is shown once", clientConfig.mcpServers.domo.headers.Authorization === `Bearer ${AGENT_TOKEN}`);
+check("the config carries it in a header, not a URL", !clientConfig.mcpServers.domo.url.includes(AGENT_TOKEN));
+check("it points at the endpoint the server gave us", clientConfig.mcpServers.domo.url === state.mcpUrl);
+connectState = connect.dismissCredential();
+check("and cannot be shown again", connectState.credential === null);
+check("the app never wrote it down", !fs.readFileSync(settingsFile, "utf8").includes(AGENT_TOKEN));
 
 // FAILURE 4 — a 410, and an API that is not there at all.
 say("user", "on another Mac, leaves a code until the server itself expires it");

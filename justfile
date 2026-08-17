@@ -63,6 +63,11 @@ approval-screenshot: build
 onboarding-screenshots: build
     DOMO_HOME="{{nethome}}" npx electron apps/desktop/scripts/onboarding-screenshot.mjs
 
+# Screenshot the main window's "Connect a client" screen — the OAuth route, the
+# static-credential form, and the copy-once block. Uses its own throwaway home.
+connect-screenshot: build
+    npx electron apps/desktop/scripts/connect-screenshot.mjs
+
 # First-run login end to end from a clean home, with the no-credential-in-a-log
 # grep. Fails if any check fails.
 first-run-transcript: build

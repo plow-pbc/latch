@@ -395,6 +395,139 @@ async function renderRules() {
   ]));
 }
 
+// ---- Connect a client ----
+//
+// Screens 2–4 of the design: the URL, what to do with it, and the fallback for
+// a client that cannot do OAuth. The main process owns the state; every call
+// returns the whole of it and this just draws it.
+
+/** A value the user must copy, with the button that does it. Shared shape with
+    the setup window — same `.copyrow`/`.copybox` styles. */
+function copyRow(value, label) {
+  const box = el("div", { class: "copybox mono", text: value });
+  const copy = el("button", { class: "btn small", text: label ?? "Copy" });
+  copy.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(value);
+    copy.textContent = "Copied";
+    setTimeout(() => { copy.textContent = label ?? "Copy"; }, 1200);
+  });
+  return el("div", { class: "copyrow" }, [box, copy]);
+}
+
+/** A numbered step: the number, a title, and whatever the step needs. */
+function step(n, title, body) {
+  return el("div", { class: "item step" }, [
+    el("div", { class: "row stephead" }, [
+      el("span", { class: "stepnum", text: String(n) }),
+      el("div", { class: "group-title", text: title }),
+    ]),
+    ...body.filter(Boolean),
+  ]);
+}
+
+/** Whether the static-credential fallback is expanded. Renderer-local: it is a
+    disclosure, not app state, and nothing outside this window cares. */
+let staticOpen = false;
+
+async function renderConnect() {
+  const s = await window.domo.connectGet();
+  if (!s) return;
+
+  // Not signed in should be unreachable — the gate means the main window does
+  // not exist without a credential — but a screen that assumes it and renders
+  // a blank URL would be worse than one that says so.
+  if (!s.hasCredential) {
+    view.replaceChildren(el("div", { class: "panel connect" }, [
+      el("div", { class: "empty", text: "This Mac isn't signed in to Plow yet." }),
+    ]));
+    return;
+  }
+
+  const statusLine = el("div", { class: "row conn-status" }, [
+    el("span", { class: `status-dot${s.connected ? " on" : ""}` }),
+    el("span", { text: s.connected ? "This Mac is connected" : "Not connected — retrying." }),
+  ]);
+
+  const note = s.busy
+    ? el("p", { class: "faint", text: "Talking to Plow…" })
+    : s.message
+      ? el("p", { class: "faint", text: s.message })
+      : null;
+
+  // The credential, if one was just minted. This is the only place it exists
+  // outside the client the user pastes it into: the app never wrote it down and
+  // the server will not hand it back.
+  const shown = s.credential
+    ? [
+        step(3, `Paste this into ${s.credential.name}`, [
+          el("p", { class: "warn conn-note", text: "Copy it now — it is shown once and cannot be shown again." }),
+          copyRow(s.credential.config, "Copy Config"),
+          el("div", { class: "row conn-actions" }, [
+            el("div", { class: "spacer" }),
+            (() => {
+              const done = el("button", { class: "btn primary", text: "I've Saved It" });
+              done.addEventListener("click", async () => {
+                await window.domo.connectDismiss();
+                staticOpen = false;
+                renderConnect();
+              });
+              return done;
+            })(),
+          ]),
+        ]),
+      ]
+    : [];
+
+  // The fallback, behind a quiet link: OAuth is the recommended route and a
+  // long-lived credential is the thing you reach for when it is not available.
+  let fallback = [];
+  if (!s.credential) {
+    if (!staticOpen) {
+      const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
+      link.addEventListener("click", () => { staticOpen = true; renderConnect(); });
+      fallback = [el("div", { class: "item quiet" }, [link])];
+    } else {
+      const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
+      const create = async () => { await window.domo.connectCreate(nameInput.value); renderConnect(); };
+      nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
+      const createBtn = el("button", { class: "btn primary", text: "Create Credential" });
+      createBtn.addEventListener("click", create);
+      const cancel = el("button", { class: "btn", text: "Cancel" });
+      cancel.addEventListener("click", () => { staticOpen = false; renderConnect(); });
+      fallback = [
+        el("div", { class: "item" }, [
+          el("div", { class: "group-title", text: "Static credential" }),
+          el("p", {
+            class: "faint conn-note",
+            text: "For a client that can't do OAuth. It is long-lived, shown once, and can be revoked from your Plow account.",
+          }),
+          el("div", { class: "field" }, [el("label", { text: "Name this connection" }), nameInput]),
+          el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
+        ]),
+      ];
+    }
+  }
+
+  view.replaceChildren(el("div", { class: "panel connect settings" }, [
+    statusLine,
+    step(1, "Add this MCP server to your client", [
+      el("p", { class: "faint conn-note", text: "Claude Code, ChatGPT, or anything else that speaks MCP over HTTP." }),
+      copyRow(s.mcpUrl || "—"),
+    ]),
+    step(2, "Sign in with OAuth", [
+      el("p", {
+        class: "faint conn-note",
+        text: "Your client walks you through Plow sign-in the first time it connects to that URL. Recommended: there is no token to copy, store, or leak.",
+      }),
+    ]),
+    ...shown,
+    ...fallback,
+    note,
+  ].filter(Boolean)));
+
+  for (const b of view.querySelectorAll("button")) if (s.busy) b.disabled = true;
+}
+
 /** One honest line about the relay link, from what the main process reports. */
 function relayStatusText(relay) {
   if (!relay.hasCredential) return "Not signed in.";
@@ -546,11 +679,15 @@ function render() {
   if (currentTab === "audit") renderAudit();
   else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
+  else if (currentTab === "connect") renderConnect();
   else if (currentTab === "settings") renderSettings();
 }
 
 function selectTab(tab) {
   currentTab = tab;
+  // Leaving the screen closes the fallback: it is a disclosure, and coming back
+  // to a form you did not open is a surprise.
+  if (tab !== "connect") staticOpen = false;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
@@ -567,13 +704,18 @@ seg.addEventListener("mousedown", (e) => {
 });
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
-window.domo.onStatusChanged(() => refreshStatus());
+window.domo.onStatusChanged(() => {
+  refreshStatus();
+  // The connect screen leads with the socket's state, so it follows it.
+  if (currentTab === "connect") renderConnect();
+});
+window.domo.onConnectChanged(() => { if (currentTab === "connect") renderConnect(); });
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {
   refreshStatus();
   const saved = await window.domo.uiGetTab();
-  const known = ["goals", "audit", "rules", "settings"];
+  const known = ["goals", "audit", "rules", "connect", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
 }
 boot();

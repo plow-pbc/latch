@@ -7,7 +7,6 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   Onboarding,
-  agentConfig,
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings } from "../src/settings.js";
@@ -15,7 +14,6 @@ import { loadSettings } from "../src/settings.js";
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
 const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
-const AGENT_TOKEN = "plow_AGENTtok_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
@@ -70,12 +68,6 @@ class FakePlow {
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
     this.minted.push({ token, name });
     return { token: DEVICE_TOKEN, keyPrefix: DEVICE_TOKEN.slice(5, 13), name };
-  }
-
-  async createAgent(token: string, name: string) {
-    // The device credential mints agents — the OTP session is long gone.
-    expect(token).toBe(DEVICE_TOKEN);
-    return { token: AGENT_TOKEN, keyPrefix: AGENT_TOKEN.slice(5, 13), name };
   }
 
 }
@@ -476,29 +468,6 @@ describe("honest messages instead of a spinner", () => {
   });
 });
 
-describe("creating an agent", () => {
-  it("yields a credential and a pasteable config, shown once", async () => {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    const state = await onboarding.createAgent("Claude Code");
-    expect(state.step).toBe("agent");
-    expect(state.agent?.token).toBe(AGENT_TOKEN);
-    // The credential is a header, never part of a URL.
-    expect(JSON.parse(state.agent!.config).mcpServers.domo.url).toBe(MCP_URL);
-    expect(JSON.parse(state.agent!.config).mcpServers.domo.headers.Authorization).toBe(
-      `Bearer ${AGENT_TOKEN}`,
-    );
-
-    // Dismissing drops it: the app cannot show it a second time.
-    const after = onboarding.dismissAgent();
-    expect(after.agent).toBeNull();
-    expect(after.step).toBe("connected");
-    expect(JSON.stringify(loadSettings(home))).not.toContain(AGENT_TOKEN);
-  });
-});
-
 describe("signing out puts the wizard back behind the gate", () => {
   /** Sign in fully, then blank the credential the way `settings:signOut` does. */
   async function signedInThenOut(): Promise<Onboarding> {
@@ -539,17 +508,13 @@ describe("signing out puts the wizard back behind the gate", () => {
   });
 
   it("keeps nothing from the session that ended", async () => {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-    await onboarding.createAgent("Claude Code");
-    expect(onboarding.state().agent?.token).toBe(AGENT_TOKEN);
-
+    const onboarding = await signedInThenOut();
     const state = onboarding.signedOut();
-    expect(state.agent).toBeNull();
     expect(state.phone).toBe("");
-    expect(JSON.stringify(state)).not.toContain(AGENT_TOKEN);
+    expect(state.activation).toBeNull();
+    expect(state.codeExpiresAt).toBeNull();
     expect(JSON.stringify(state)).not.toContain(DEVICE_TOKEN);
+    expect(JSON.stringify(state)).not.toContain(OTP_TOKEN);
   });
 });
 
@@ -595,20 +560,9 @@ describe("what the renderer is allowed to see", () => {
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
     const connectedState = await onboarding.submitCode("12345678");
-    const agentState = await onboarding.createAgent("Claude Code");
 
-    for (const state of [connectedState, agentState]) {
-      const serialized = JSON.stringify(state);
-      expect(serialized).not.toContain(DEVICE_TOKEN);
-      expect(serialized).not.toContain(OTP_TOKEN);
-    }
-  });
-});
-
-describe("agentConfig", () => {
-  it("puts the credential in a header, because URLs end up in logs", () => {
-    const config = JSON.parse(agentConfig(MCP_URL, "plow_tok"));
-    expect(config.mcpServers.domo.url).not.toContain("plow_tok");
-    expect(config.mcpServers.domo.headers.Authorization).toBe("Bearer plow_tok");
+    const serialized = JSON.stringify(connectedState);
+    expect(serialized).not.toContain(DEVICE_TOKEN);
+    expect(serialized).not.toContain(OTP_TOKEN);
   });
 });

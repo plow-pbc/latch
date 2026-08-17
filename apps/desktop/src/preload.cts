@@ -47,10 +47,16 @@ contextBridge.exposeInMainWorld("domo", {
   onboardingResendCode: () => ipcRenderer.invoke("onboarding:resendCode"),
   onboardingEditPhone: () => ipcRenderer.invoke("onboarding:editPhone"),
   onboardingSubmitCode: (code: string) => ipcRenderer.invoke("onboarding:submitCode", code),
-  onboardingCreateAgent: (name: string) => ipcRenderer.invoke("onboarding:createAgent", name),
-  onboardingDismissAgent: () => ipcRenderer.invoke("onboarding:dismissAgent"),
   onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
+
+  // Connect a client (main window). Like the wizard, every call returns the
+  // whole state so the screen renders from one shape. The minted credential
+  // lives in that state for exactly as long as it is on screen.
+  connectGet: () => ipcRenderer.invoke("connect:get"),
+  connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
+  connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
+  onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Approval window.
   approvalGet: () => ipcRenderer.invoke("approval:get"),

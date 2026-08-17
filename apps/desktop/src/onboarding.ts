@@ -13,15 +13,21 @@
  * Electron and rendered offscreen for screenshots.
  *
  * **Nothing here puts a credential in a message.** `state()` is what the
- * sandboxed renderer sees; the only secrets it ever carries are the two the user
- * is meant to read — the activation display code, and a freshly minted *agent*
- * credential shown exactly once. The activation *secret* and the device
- * credential never appear in it at all.
+ * sandboxed renderer sees, and the only secret it ever carries is the one the
+ * user is meant to read: the activation display code. The activation *secret*
+ * and the device credential never appear in it at all.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
-export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected" | "agent";
+/**
+ * The wizard ends at `connected`, a confirmation with one button into the app.
+ *
+ * There is no step for minting a client credential. Logging in happens once per
+ * Mac; connecting a client happens once per client, is repeatable and is
+ * optional — see `connectClient.ts`, which is reached from the main window.
+ */
+export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected";
 
 /** Codes are 8 digits with a 5-minute life (`api/plow/auth_routes/otp.py`). */
 export const CODE_LENGTH = 8;
@@ -76,14 +82,6 @@ export interface OnboardingActivation {
   pollUntil: number;
 }
 
-export interface OnboardingAgent {
-  name: string;
-  /** Shown once. The app does not store it and cannot show it again. */
-  token: string;
-  /** A ready-to-paste MCP client config containing that token. */
-  config: string;
-}
-
 export interface OnboardingState {
   step: OnboardingStep;
   phone: string;
@@ -100,7 +98,6 @@ export interface OnboardingState {
   accountUid: string;
   mcpUrl: string;
   connected: boolean;
-  agent: OnboardingAgent | null;
 }
 
 export interface OnboardingDeps {
@@ -135,11 +132,10 @@ export class Onboarding {
   /** Bumped whenever an activation stops being the one we care about. A poll
    * loop whose generation is stale returns instead of writing state. */
   private pollGeneration = 0;
-  private agent: OnboardingAgent | null = null;
 
   constructor(private readonly deps: OnboardingDeps) {
-    // A Mac that already holds a credential is past all of this; it opens on the
-    // connected screen, which is also where "create an agent" lives.
+    // A Mac that already holds a credential is past all of this; it opens on
+    // the connected screen, whose one button hands over to the app.
     this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
   }
 
@@ -156,7 +152,6 @@ export class Onboarding {
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
-      agent: this.agent,
     };
   }
 
@@ -426,26 +421,6 @@ export class Onboarding {
   // MARK: after either path
 
   /**
-   * Mint an agent credential with the *device* credential — the login session
-   * is long gone by now, and `relay:device` is allowed to do exactly this.
-   */
-  async createAgent(name: string): Promise<OnboardingState> {
-    const trimmed = (name ?? "").trim();
-    if (!trimmed) return this.fail("Give the agent a name.");
-    const settings = this.settings();
-    if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
-    return this.run(async () => {
-      const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed);
-      this.agent = {
-        name: minted.name || trimmed,
-        token: minted.token,
-        config: agentConfig(settings.mcpUrl, minted.token),
-      };
-      this.step = "agent";
-    });
-  }
-
-  /**
    * This Mac signed out: put the wizard back where a Mac with no credential
    * belongs.
    *
@@ -453,26 +428,17 @@ export class Onboarding {
    * sign-out — so without this, signing out reopens the setup window on "This
    * Mac is connected", which is a lie, and offers a Continue button that hands
    * back a main window the gate has just taken away. Everything the old session
-   * left behind goes with it, including any shown-once agent credential.
+   * left behind goes with it.
    */
   signedOut(): OnboardingState {
     this.cancelPolling();
     this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
-    this.agent = null;
     this.phone = "";
     this.codeExpiresAt = null;
     this.message = "";
     this.step = "activate";
-    return this.publish();
-  }
-
-  /** Drop the shown-once credential from memory and go back. */
-  dismissAgent(): OnboardingState {
-    this.agent = null;
-    this.step = "connected";
-    this.message = "";
     return this.publish();
   }
 
@@ -584,24 +550,6 @@ export class Onboarding {
     this.deps.onChange?.();
     return this.state();
   }
-}
-
-/** What to paste into an MCP client. The credential is a header, never part of
- * the URL — a URL ends up in shell history, logs and stored registrations. */
-export function agentConfig(mcpUrl: string, token: string): string {
-  return JSON.stringify(
-    {
-      mcpServers: {
-        domo: {
-          type: "http",
-          url: mcpUrl,
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      },
-    },
-    null,
-    2,
-  );
 }
 
 function messageOf(error: unknown): string {

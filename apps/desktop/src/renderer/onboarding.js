@@ -1,5 +1,6 @@
-/* First-run setup renderer — show a code → the user texts it → connected, plus
-   the create-agent result, and the phone-code fallback behind a quiet link.
+/* First-run setup renderer — show a code → the user texts it → connected, with
+   the phone-code fallback behind a quiet link. It ends at the confirmation:
+   connecting an MCP client lives in the main window, not in this wizard.
    Sandboxed like every other window: no Node, no ipcRenderer, only the narrow
    `window.domo` bridge, and every string inserted with textContent.
 
@@ -254,23 +255,6 @@ function connectedScreen() {
   ];
 }
 
-function agentScreen() {
-  const agent = state.agent;
-  return [
-    el("h2", { text: `Credential for ${agent.name}` }),
-    el("p", { class: "warn lede", text: "Copy this now — it is shown once and cannot be shown again." }),
-    el("div", { class: "field" }, [
-      el("label", { text: "MCP client config" }),
-      copyRow(agent.config, "Copy Config"),
-    ]),
-    el("div", { class: "oactions" }, [
-      el("div", { class: "spacer" }),
-      button("I've Saved It", "btn primary", async () => apply(await window.domo.onboardingDismissAgent())),
-    ]),
-    note(state),
-  ];
-}
-
 function render() {
   if (!state) return;
   const screen =
@@ -278,7 +262,6 @@ function render() {
     : state.step === "waiting" ? waitingScreen()
     : state.step === "phone" ? phoneScreen()
     : state.step === "code" ? codeScreen()
-    : state.step === "agent" ? agentScreen()
     : connectedScreen();
   root.replaceChildren(...screen.filter(Boolean));
   const focus = root.querySelector("input[autofocus]");
