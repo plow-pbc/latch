@@ -8,6 +8,10 @@ apps/*/dist/
 
 # electron-builder output (signed app + DMG)
 apps/desktop/release/
+
+# Design specs live outside the repo (see PR descriptions for rationale)
+docs/superpowers/specs/
+
 vendor/python-runtime/
 vendor/camoufox-browser/
 vendor/vault-cli/

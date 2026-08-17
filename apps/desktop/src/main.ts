@@ -40,7 +40,17 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
-import { adversarialReview, agentHistory, REVIEWER_INFO, REVIEWER_MODEL } from "./adversarialAgent.js";
+import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
+import { ApprovalDecision, decideIntent } from "./reviewPolicy.js";
+import {
+  isSignedIn,
+  readInference,
+  setAnthropicApiKey,
+  revokeAndSignOut,
+  setApprovalMode,
+  setInferenceProvider,
+  signOutOfPlow,
+} from "./settingsActions.js";
 
 // One folder per instance (paths.ts): the home carries everything, including
 // Chromium's userData/sessionData at <home>/electron — never a second
@@ -123,64 +133,22 @@ let updates: UpdateController | null = null;
  * click.
  */
 class ElectronPolicy implements PolicyDelegate {
-  // Operations honor the configurable approval mode (settings.approvalMode).
-  // The returned `source` records HOW it was decided, for the audit log.
-  // The adversarial-agent features require an Anthropic API key; without one,
-  // adversarial mode falls back to Ask and suggestions are skipped.
-  async decideIntent(intent: Intent): Promise<{ decision: "allow_once" | "always_allow" | "deny"; source: string }> {
-    const settings = loadSettings(home);
-    const mode = settings.approvalMode ?? "ask";
-    const hasKey = !!(settings.anthropicApiKey ?? "").trim();
-
-    if (mode === "approve") return { decision: "allow_once", source: "approve" };
-    if (mode === "deny") return { decision: "deny", source: "policy" };
-
-    const key = (settings.anthropicApiKey ?? "").trim();
+  // The branching itself lives in reviewPolicy.ts so it is testable without a
+  // display; this only supplies the Electron-shaped pieces.
+  async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
-    // Run one review, recording its start and outcome onto the intent's audit
-    // timeline so the app shows "adversarial agent started" + its verdict
-    // between the request and the final decision.
-    const review = async () => {
-      const history = agentHistory(audit?.entries() ?? [], intent.agentId);
-      audit?.record("adversarial_review_started", {
-        intentId: intent.intentId,
-        agent: intent.agentId,
-        model: REVIEWER_MODEL,
-      });
-      const r = await adversarialReview({ intent, history, apiKey: key });
-      audit?.record("adversarial_review_result", {
-        intentId: intent.intentId,
-        verdict: r.verdict,
-        reason: r.reason,
-      });
-      return r;
-    };
-
-    if (mode === "adversarial" && hasKey) {
-      const { verdict } = await review();
-      if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
-      if (verdict === "deny") return { decision: "deny", source: "adversarial" };
-      // "ask" — the agent couldn't decide; hand it to the human (no suggestion).
-      const decision = await openApprovalWindow({
-        kind: "intent",
-        view: approvalViewModel(intent, await resolveCredentialTitles(intent)),
-      });
-      return { decision, source: "ask" };
-    }
-
-    // Ask mode (or adversarial with no key): show the dialog, optionally with a
-    // suggestion when both the toggle and a key are present.
-    const suggestion =
-      settings.showAgentSuggestions && hasKey
-        ? review().then((r) =>
-            r.verdict === "allow" ? "allow_once" : r.verdict === "deny" ? "deny" : null,
-          )
-        : null;
-    const decision = await openApprovalWindow(
-      { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
-      suggestion,
-    );
-    return { decision, source: "ask" };
+    return decideIntent(intent, {
+      settings: loadSettings(home),
+      apiBaseUrl,
+      auditEntries: () => audit?.entries() ?? [],
+      record: (event, fields) => audit?.record(event, fields),
+      review: adversarialReview,
+      openApproval: async (suggestion) =>
+        openApprovalWindow(
+          { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
+          suggestion,
+        ),
+    });
   }
 }
 
@@ -210,8 +178,6 @@ async function resolveCredentialTitles(intent: Intent): Promise<CredentialTitles
 }
 
 type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
-
-type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
 /** Serialize approval windows so two prompts never overlap. */
 let approvalChain: Promise<unknown> = Promise.resolve();
@@ -407,24 +373,23 @@ ipcMain.handle("settings:getRelay", async () => {
     connected,
   };
 });
-// Sign out: forget the device credential and drop the socket. The credential
-// itself is not revoked — that needs the account's own key list, which this Mac
-// deliberately cannot reach.
-
 /**
  * Forget this Mac's credential and put the user back at the start.
  *
- * Blanking the settings is only half of it: `Onboarding` decides its step in
- * its constructor, so without the reset the window sits on the connected
- * screen against empty settings — "Signed in — connecting…" with a blank
- * endpoint and no way forward but quitting the app.
+ * The relay's `onAuthFailed` path only. Nobody clicked anything here: the
+ * credential was retired on the account and the relay refused it, so there is
+ * nothing to revoke and the window has to be OPENED — otherwise the app sits
+ * silently disconnected with no way forward but quitting.
+ *
+ * `signOutOfPlow` rather than blanking the fields inline: losing the Plow
+ * credential takes the Plow reviewer with it, and retiring Adversarial mode is
+ * part of that same write.
  */
 function signOut(): void {
-  const settings = loadSettings(home);
-  settings.relayCredential = "";
-  settings.accountUid = "";
-  settings.mcpUrl = "";
-  saveSettings(home, settings);
+  // `signOutOfPlow` rather than blanking the fields inline: losing the Plow
+  // credential takes the Plow reviewer with it, and retiring Adversarial mode
+  // is part of that same write.
+  signOutOfPlow(home);
   onboarding?.reset();
   // Connect-a-client holds the old account's state too — possibly a shown-once
   // credential still on screen, or a mint in flight.
@@ -438,9 +403,26 @@ function signOut(): void {
   void onboarding?.begin();
 }
 
+// Sign out: retire the credential with Plow, forget it here, and drop the
+// socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
+// cannot reach Plow still signs out locally.
 ipcMain.handle("settings:signOut", async () => {
+  // A second click, before the button re-rendered. The first already signed
+  // out; going round again would reset the setup window and mint a fresh code
+  // over the one the user may have just texted.
+  if (!isSignedIn(home)) return;
+  // Started first: it clears the stored credential synchronously, before its
+  // own first await, so everything below already sees a signed-out Mac. What it
+  // returns is only the best-effort revoke, which nothing else waits on.
+  const revoking = revokeAndSignOut(home, (credential) =>
+    new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
+  );
+  // The one place that resets the app's state, shared with the relay's
+  // auth-failed path. It also drops connect-a-client's shown-once credential,
+  // which a click has exactly as much reason to clear as a revocation does.
   signOut();
   await startRelay();
+  await revoking;
 });
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
@@ -485,19 +467,24 @@ ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.
 ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
-ipcMain.handle("settings:getApprovalMode", async () => loadSettings(home).approvalMode ?? "ask");
-ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
-  const allowed = ["approve", "adversarial", "ask", "deny"];
-  const settings = loadSettings(home);
-  settings.approvalMode = (allowed.includes(mode) ? mode : "ask") as typeof settings.approvalMode;
-  saveSettings(home, settings);
-});
+ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
 ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).showAgentSuggestions ?? true);
 ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   const settings = loadSettings(home);
   settings.showAgentSuggestions = !!on;
   saveSettings(home, settings);
 });
+ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
+ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
+/**
+ * Everything the renderer is allowed to know about inference: the selection,
+ * which providers are usable, and the active model. Deliberately booleans and
+ * not credentials — the relay credential never crosses this bridge.
+ */
+ipcMain.handle("settings:getInference", async () => readInference(home));
+ipcMain.handle("settings:setInference", async (_e, provider: string) =>
+  setInferenceProvider(home, provider),
+);
 ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 // The vault's own account: the owner reads it here to sign in on the vault's
 // page, and can replace either half with something of their own choosing.
@@ -523,12 +510,6 @@ ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
   return readCredentials(vault.url, vault.dataDir);
 });
 
-ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
-ipcMain.handle("settings:setApiKey", async (_e, key: string) => {
-  const settings = loadSettings(home);
-  settings.anthropicApiKey = (key || "").trim();
-  saveSettings(home, settings);
-});
 // The live-browser thumbnail's whole state, one shape per poll (like
 // onboarding:get). Frames come from the browser host directly, bypassing
 // session scope: they are for the device owner's own eyes, and the owner

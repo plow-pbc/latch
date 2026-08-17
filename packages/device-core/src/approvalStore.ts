@@ -108,7 +108,16 @@ export class ApprovalStore implements PolicyDelegate {
     const file = this.file(record.intentId);
     await fs.writeFile(file, JSON.stringify(record, null, 2) + "\n", { mode: 0o600 });
     // mode applies only on creation, so re-apply for a record we are updating.
-    await fs.chmod(file, 0o600);
+    // ENOENT here means the record was removed between the two calls — a
+    // directory swept while a write was still in flight, which is what a test
+    // teardown does and what a user emptying the approvals dir would do. The
+    // file is already gone, so there is no mode left to enforce; anything else
+    // is a real permissions problem and still throws.
+    try {
+      await fs.chmod(file, 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    }
   }
 
   /** Every approval on disk, newest last. */

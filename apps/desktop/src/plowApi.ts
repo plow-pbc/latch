@@ -211,8 +211,11 @@ export class PlowApi {
   }
 
   /**
-   * Mint this Mac's credential. `relay:device` and nothing else: it holds the
-   * socket and may create agents, and can touch nothing else on the account.
+   * Mint this Mac's credential: `relay:device` + `llm:chat`, and nothing else.
+   * It holds the socket, may create agents, and — because of `llm:chat` — **it
+   * can spend the account's Plow credits**: it is the bearer token on the
+   * `chatCompletion` calls that fund adversarial-reviewer inference. It can
+   * touch nothing else on the account.
    *
    * `revoke_calling_session` retires the session that authorised this call — the
    * activation or OTP session — in the same transaction as the mint. That
@@ -230,6 +233,23 @@ export class PlowApi {
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
   }
 
+  /**
+   * Ask Plow to retire THIS Mac's own credential, authenticating with the
+   * credential being retired. Sign-out is the only caller.
+   *
+   * Best-effort by contract: the caller must clear locally whether or not this
+   * succeeds. A Mac that cannot reach Plow is exactly the Mac whose owner most
+   * wants the local copy gone, and the server-side route may not be deployed
+   * yet — a 404 must not strand a signed-out Mac still holding a credential.
+   *
+   * The token rides in the `Authorization` header, as everywhere else. It is
+   * never in the path, so this is not `/devices/{id}/revoke`: the server knows
+   * which credential is calling.
+   */
+  async revokeDeviceCredential(token: string): Promise<void> {
+    await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
+  }
+
   /** Mint an agent credential through the relay's own API (`relay:call` only,
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {
@@ -241,23 +261,85 @@ export class PlowApi {
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
   }
 
+  /**
+   * One inference call, as `{status, body}` — **this deliberately does not go
+   * through `call()`**.
+   *
+   * `call()` throws `PlowApiError`s whose message carries the server's `detail`
+   * verbatim (see `errorFor`), which is right for onboarding, where `detail` is
+   * a sentence written for the person reading it. It is wrong here: the
+   * reviewer's failure reasons are shown to a human deciding whether to trust
+   * an operation, and an upstream body is not text we control. So this returns
+   * the status and the decoded body and lets the caller do its own mapping —
+   * the reviewer keeps `plowHttpReason`, and nothing from the body reaches a
+   * reason string except what that mapping deliberately extracts.
+   *
+   * What IS shared with `call()`: the bearer header, the bounded request, and
+   * the network-error sanitation in `request()`.
+   *
+   * `signal` is the caller's own budget. The reviewer runs on a 30s budget and
+   * passes the signal it aborts on timeout, so a call it has given up on does
+   * not keep running (and keep billing) after the verdict.
+   */
+  async chatCompletion(
+    token: string,
+    body: unknown,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<{ status: number; body: unknown }> {
+    const response = await this.request("POST", "/v1/chat/completions", {
+      token,
+      body,
+      signal: opts.signal,
+    });
+    let decoded: unknown = null;
+    try {
+      decoded = await response.json();
+    } catch {
+      // A body we cannot read is not an error here — the status still carries
+      // the outcome, and the caller decides what an unreadable body means.
+    }
+    return { status: response.status, body: decoded };
+  }
+
   private async call<T>(
     method: string,
     path: string,
     opts: { token?: string; body?: unknown } = {},
   ): Promise<T> {
+    const response = await this.request(method, path, opts);
+
+    if (!response.ok) throw await this.errorFor(response);
+    if (response.status === 204) return undefined as T;
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new PlowApiError("http", "Plow returned a response we couldn't read.", response.status);
+    }
+  }
+
+  /**
+   * The transport every call shares: bearer auth in the header and nowhere
+   * else, a bounded request, and a network failure turned into a message
+   * written here rather than forwarded. Returns the response whatever its
+   * status — deciding what a status *means* belongs to the caller.
+   */
+  private async request(
+    method: string,
+    path: string,
+    opts: { token?: string; body?: unknown; signal?: AbortSignal } = {},
+  ): Promise<Response> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (opts.body !== undefined) headers["content-type"] = "application/json";
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
 
-    let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      return await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        // No caller may wait forever. See REQUEST_TIMEOUT_MS.
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        // No caller may wait forever. A caller that owns a budget passes its
+        // own signal; everyone else gets REQUEST_TIMEOUT_MS.
+        signal: opts.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       // The cause carries a hostname at most, but it is not ours to vouch for,
@@ -272,14 +354,6 @@ export class PlowApi {
         throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
       }
       throw new PlowApiError("network", `Couldn't reach Plow at ${this.baseUrl}.`);
-    }
-
-    if (!response.ok) throw await this.errorFor(response);
-    if (response.status === 204) return undefined as T;
-    try {
-      return (await response.json()) as T;
-    } catch {
-      throw new PlowApiError("http", "Plow returned a response we couldn't read.", response.status);
     }
   }
 

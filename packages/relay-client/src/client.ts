@@ -144,6 +144,16 @@ export class RelayClient {
   private async connectOnce(): Promise<void> {
     this.say(`connecting to ${this.options.url}`);
     const conn = await this.dialer().connect();
+    // The dial can outlive a `stop()`. Sign-out drops the socket while this is
+    // still in flight, and installing it here would leave an authenticated,
+    // READING connection nobody owns — one that finishes the handshake and goes
+    // on serving agents after the app believes it signed out, with a credential
+    // it has already erased. `stop()` cannot close what it cannot see, so the
+    // check belongs here, at the moment there is something to close.
+    if (!this.running) {
+      conn.close();
+      return;
+    }
     this.conn = conn;
 
     conn.onLine = (line) => this.onFrame(conn, line);

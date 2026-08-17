@@ -22,7 +22,6 @@ contextBridge.exposeInMainWorld("domo", {
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),
   relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
   onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
-  approvalModeGet: () => ipcRenderer.invoke("settings:getApprovalMode"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
@@ -31,7 +30,9 @@ contextBridge.exposeInMainWorld("domo", {
   vaultOpen: () => ipcRenderer.invoke("vault:open"),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
-  reviewerInfoGet: () => ipcRenderer.invoke("settings:getReviewerInfo"),
+  // Availability booleans and the active model — never a credential.
+  inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
+  inferenceSet: (provider: string) => ipcRenderer.invoke("settings:setInference", provider),
   statusGet: () => ipcRenderer.invoke("status:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),

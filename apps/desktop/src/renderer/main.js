@@ -9,6 +9,10 @@ const statusText = document.getElementById("statusText");
 
 let currentTab = "audit";
 let filter = "all";
+// The mounted Settings pane, while that tab is up. Holds a `refresh` that
+// updates the display nodes in place — the editable key field is never rebuilt,
+// so no amount of re-reading can take a half-typed key with it.
+let settingsMounted = null;
 
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
@@ -735,23 +739,36 @@ async function renderSettings() {
     window.domo.uiSetTab("connect"); // the same persistence a nav click does
   });
   const signOut = el("button", { class: "btn danger", text: "Sign Out" });
-  signOut.disabled = !relay.hasCredential;
-  signOut.addEventListener("click", async () => {
-    await window.domo.relaySignOut();
-    renderSettings();
-  });
-  const accountRows = relay.hasCredential
-    ? [
-        el("div", { class: "field" }, [
-          el("label", { text: "Agent endpoint" }),
-          el("div", { class: "mono faint", text: relay.mcpUrl || "—" }),
-        ]),
-        el("div", { class: "field" }, [
-          el("label", { text: "Account" }),
-          el("div", { class: "mono faint", text: relay.accountUid || "—" }),
-        ]),
-      ]
-    : [];
+  // No explicit refresh: signing out restarts the relay, which publishes
+  // `status:changed`, which is already the one thing that redraws this pane.
+  signOut.addEventListener("click", () => window.domo.relaySignOut());
+  // A stable container the account rows are drawn into, so signing in or out
+  // rewrites its contents rather than the pane.
+  const accountBox = el("div", { class: "account" });
+  const refreshAccount = async () => {
+    const relay = await window.domo.relayGet();
+    relayNote.textContent = relayStatusText(relay);
+    // The label #34 gave this button, re-applied on every refresh — otherwise
+    // the first status change silently renames it back to "Create Agent", the
+    // screen the setup window no longer has.
+    setUp.textContent = relay.hasCredential ? "Connect a Client" : "Sign In";
+    signOut.disabled = !relay.hasCredential;
+    accountBox.replaceChildren(
+      ...(relay.hasCredential
+        ? [
+            el("div", { class: "field" }, [
+              el("label", { text: "Agent endpoint" }),
+              el("div", { class: "mono faint", text: relay.mcpUrl || "—" }),
+            ]),
+            el("div", { class: "field" }, [
+              el("label", { text: "Account" }),
+              el("div", { class: "mono faint", text: relay.accountUid || "—" }),
+            ]),
+          ]
+        : []),
+    );
+  };
+  await refreshAccount();
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
@@ -791,15 +808,26 @@ async function renderSettings() {
     restoreNote.textContent = "Default goals restored.";
   });
 
-  // Anthropic API key — gates the adversarial-agent features.
+  // Anthropic API key — one of the two ways to power the adversarial agent.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
-  const reviewerInfo = await window.domo.reviewerInfoGet();
 
-  // Approval mode for operations.
-  let currentMode = await window.domo.approvalModeGet();
+  // Which backend runs the reviewer. `inference` carries a per-provider
+  // availability map and the active model — never a credential.
+  let inference = await window.domo.inferenceGet();
+  const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
+  const providerChips = el("div", { class: "chips" });
+  // Labels are the only provider knowledge left here; which providers exist,
+  // and whether each is usable, comes from main.
+  const PROVIDER_LABELS = { plow: "Plow account", anthropic: "Anthropic API key" };
+
+  // Approval mode for operations — read from the SAME snapshot as availability,
+  // because main decides both in one write.
+  let currentMode = inference.approvalMode;
   const showSuggestions = await window.domo.showSuggestionsGet();
-  let hasKey = !!apiKeyInput.value.trim();
+  // Adversarial mode needs a credential for the ACTIVE provider — a pasted
+  // Anthropic key does not enable it while Plow is selected, and vice versa.
+  let hasKey = inference.available[inference.provider];
   const modeChips = el("div", { class: "chips" });
   const MODES = [
     ["approve", "Approve"],
@@ -826,8 +854,11 @@ async function renderSettings() {
       }, [el("span", { text: label })]);
       if (!disabled) {
         chip.addEventListener("click", async () => {
-          currentMode = value;
-          await window.domo.approvalModeSet(value);
+          // What MAIN stored, not what was asked for. Adversarial is refused
+          // when the active provider has no credential, and the credential can
+          // go between this render and this click — so assuming the request
+          // succeeded leaves the pane claiming a mode disk never took.
+          currentMode = await window.domo.approvalModeSet(value);
           renderModeChips();
           updateSuggestEnabled();
         });
@@ -841,20 +872,67 @@ async function renderSettings() {
     suggestLabel.classList.toggle("disabled", !on);
   };
 
-  apiKeyInput.addEventListener("input", async () => {
-    hasKey = !!apiKeyInput.value.trim();
-    // If the key is removed while Adversarial mode is active, fall back to Ask.
-    if (!hasKey && currentMode === "adversarial") {
-      currentMode = "ask";
-      await window.domo.approvalModeSet("ask");
-    }
+  // A provider with no credential is disabled and cannot be selected; the main
+  // process enforces the same rule, this only keeps the UI honest.
+  const renderProviderChips = () => {
+    reviewerNote.textContent = `Reviewer: ${inference.info}`;
+    providerChips.replaceChildren(...Object.entries(inference.available).map(([value, usable]) => {
+      const label = PROVIDER_LABELS[value] ?? value;
+      const disabled = !usable;
+      const chip = el("span", {
+        class:
+          "chip" +
+          (inference.provider === value ? " active" : "") +
+          (disabled ? " disabled" : ""),
+      }, [el("span", { text: label })]);
+      if (!disabled && inference.provider !== value) {
+        chip.addEventListener("click", async () => {
+          // What main stored, not what was asked for: an unavailable provider
+          // is refused there, and the answer is the refusal.
+          applyInference(await window.domo.inferenceSet(value));
+        });
+      }
+      return chip;
+    }));
+  };
+
+  // Re-read the reviewer's state from main and redraw.
+  //
+  // This only READS. Main owns the interlock — it retires Adversarial mode in
+  // the same write that takes a credential away — so the renderer's job is to
+  // show what main decided, never to decide it too. The renderer used to write
+  // the fallback itself from a half-typed field, which persisted Ask while the
+  // stored key was still there and never put it back.
+  const applyInference = (next) => {
+    inference = next;
+    currentMode = next.approvalMode;
+    hasKey = next.available[next.provider];
+    renderProviderChips();
     renderModeChips();
     updateSuggestEnabled();
-  });
-  apiKeyInput.addEventListener("change", () => window.domo.apiKeySet(apiKeyInput.value.trim()));
+  };
 
+  // Only on `change` — on commit (blur or Enter), never per keystroke. An
+  // `input` handler sees every transient value on the way to the real one,
+  // including the empty field between clearing and pasting.
+  apiKeyInput.addEventListener("change", async () => {
+    await window.domo.apiKeySet(apiKeyInput.value.trim());
+    applyInference(await window.domo.inferenceGet());
+  });
+
+  renderProviderChips();
   renderModeChips();
   updateSuggestEnabled();
+
+  // What a status change re-reads. Display nodes only: `apiKeyInput` is not
+  // among them and is never replaced, so there is no window in which a keystroke
+  // can be lost — no flag, no deferral, nothing to get the ordering wrong.
+  settingsMounted = {
+    refresh: async () => {
+      await refreshAccount();
+      applyInference(await window.domo.inferenceGet());
+    },
+  };
 
   // Build one settings group: a prominent title, an optional description, then
   // the group's body nodes.
@@ -867,12 +945,15 @@ async function renderSettings() {
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
     group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
-      ...accountRows,
+      accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, setUp]),
     ]),
-    group("Anthropic API Key", "Required for the Adversarial Agent features. Stored locally.", [
+    group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
+      providerChips,
+      reviewerNote,
+    ]),
+    group("Anthropic API Key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
       apiKeyInput,
-      el("p", { class: "faint reviewer-note", text: `Reviewer: ${reviewerInfo}` }),
     ]),
     group("Approval Mode", "How operations are decided.", [
       modeChips,
@@ -904,6 +985,7 @@ function selectTab(tab) {
   // to a form you did not open is a surprise.
   if (tab !== "connect") staticOpen = false;
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
+  if (tab !== "settings") settingsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
 }
@@ -921,6 +1003,14 @@ seg.addEventListener("mousedown", (e) => {
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
 window.domo.onStatusChanged(() => {
   refreshStatus();
+  // Signing in or out changes which providers Settings may offer, so an open
+  // Settings pane has to re-read — main fires this saying "Settings re-reads
+  // what changed", and until now only the header did.
+  //
+  // `status:changed` also fires on an ordinary relay reconnect, which the
+  // person typing a key did not ask for and must not be punished by — so this
+  // updates the account and provider nodes and leaves the field alone.
+  if (currentTab === "settings") settingsMounted?.refresh();
   // The connect screen leads with the socket's state, so it follows it.
   if (currentTab === "connect") renderConnect();
 });

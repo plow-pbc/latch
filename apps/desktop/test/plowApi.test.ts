@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   API_BASE_URL_ENV,
   PRODUCTION_API_BASE_URL,
@@ -99,19 +99,30 @@ describe("PlowApi", () => {
         });
       });
 
-    const started = Date.now();
-    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+    // Driven rather than waited out. Vitest's fake timers cannot move
+    // `AbortSignal.timeout` — it runs on a timer internal to Node, not the
+    // global `setTimeout` sinon patches — so the clock is faked by standing in
+    // for the call itself. That keeps what this test is for: the request must
+    // carry a timeout of REQUEST_TIMEOUT_MS, and firing it must land as
+    // "didn't answer in time".
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+
+    const pending = new PlowApi("https://api.plow.co", fetchImpl)
       .createAgent("plow_device", "Claude Code")
       .catch((e) => e);
+    controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
+    const error = await pending;
 
+    expect(timeout).toHaveBeenCalledWith(REQUEST_TIMEOUT_MS);
+    timeout.mockRestore();
     expect(aborted).toBe(true);
     expect(error).toBeInstanceOf(PlowApiError);
     expect((error as PlowApiError).kind).toBe("network");
     // Honest about which failure it was: "didn't answer" sends you somewhere
     // different from "couldn't reach".
     expect((error as PlowApiError).message).toBe("Plow didn't answer in time. Try again.");
-    expect(Date.now() - started).toBeLessThan(REQUEST_TIMEOUT_MS + 5_000);
-  }, 30_000);
+  });
 
   it("passes a timeout signal on every request, not just the ones we remembered", async () => {
     const seen: Array<string | undefined> = [];
@@ -255,5 +266,103 @@ describe("PlowApi", () => {
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
     expect(minted.token).toBe("plow_agenttok");
+  });
+});
+
+/**
+ * `chatCompletion` shares the transport with every other call but NOT the error
+ * policy, and that difference is the whole reason it exists.
+ *
+ * `errorFor` puts the server's `detail` verbatim into a thrown error's message.
+ * That is right for onboarding, where `detail` is a sentence written for the
+ * person reading it ("That code has expired"). It is wrong for the reviewer,
+ * whose failure reasons are shown to a human deciding whether to trust an
+ * operation — an upstream body is not text we control. So this one returns the
+ * status and lets the caller map it.
+ */
+describe("chatCompletion returns outcomes instead of throwing them", () => {
+  const HOSTILE = "Model '<script>alert(1)</script> plow_sk_leaked' is not allowed";
+
+  it("returns {status, body} for a non-2xx instead of throwing", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 400, body: { detail: HOSTILE } }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    const result = await api.chatCompletion("plow_sk_token", { model: "m" });
+
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ detail: HOSTILE });
+  });
+
+  it("does not throw a detail-bearing error on any error status", async () => {
+    // If this ever throws, the reviewer's catch renders the message as
+    // `reviewer error: <server detail>` and a hostile body lands in a
+    // user-visible reason.
+    for (const status of [400, 401, 402, 403, 410, 500, 502, 503]) {
+      const { fetchImpl } = recordingFetch([{ status, body: { detail: HOSTILE } }]);
+      const api = new PlowApi("https://api.plow.co", fetchImpl);
+      const result = await api.chatCompletion("plow_sk_token", {});
+      expect(result.status).toBe(status);
+    }
+  });
+
+  it("returns a null body rather than throwing when the body is unreadable", async () => {
+    const fetchImpl = async () =>
+      new Response("not json", { status: 200, headers: { "content-type": "text/plain" } });
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    expect(await api.chatCompletion("plow_sk_token", {})).toEqual({ status: 200, body: null });
+  });
+
+  it("carries the credential in the Authorization header and nowhere else", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { choices: [] } }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await api.chatCompletion("plow_sk_do_not_leak_me", { model: "m" });
+
+    const { url, init } = calls[0];
+    expect(url).toBe("https://api.plow.co/v1/chat/completions");
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      "Bearer plow_sk_do_not_leak_me",
+    );
+    expect(url).not.toContain("plow_sk_do_not_leak_me");
+    expect(init.body as string).not.toContain("plow_sk_do_not_leak_me");
+  });
+});
+
+describe("revoking this Mac's own credential", () => {
+  it("POSTs to the self-revoke route with the credential as a bearer token", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200 }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await api.revokeDeviceCredential("plow_sk_do_not_leak_me");
+
+    const { url, init } = calls[0];
+    expect(url).toBe("https://api.plow.co/v1/relay/devices/self/revoke");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      "Bearer plow_sk_do_not_leak_me",
+    );
+    // The server knows which credential is calling, so the token is never in
+    // the path — and never in a body either.
+    expect(url).not.toContain("plow_sk_do_not_leak_me");
+    expect(String(init.body ?? "")).not.toContain("plow_sk_do_not_leak_me");
+  });
+
+  it("accepts an empty 204, which is what a revoke has to say", async () => {
+    // `recordingFetch` cannot build a null-body status, so this one is bespoke.
+    const fetchImpl = async () => new Response(null, { status: 204 });
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+    await expect(api.revokeDeviceCredential("plow_sk_do_not_leak_me")).resolves.toBeUndefined();
+  });
+
+  it("throws on a refusal, leaving it to the caller to decide that is survivable", async () => {
+    // Sign-out swallows this. The transport still reports it, so a future
+    // caller that DOES care is not silently lied to.
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Not Found" } }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.revokeDeviceCredential("plow_sk_do_not_leak_me")).rejects.toBeInstanceOf(
+      PlowApiError,
+    );
   });
 });

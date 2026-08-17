@@ -45,9 +45,17 @@ a *live* stack went with it, so there is **no automated live-stack path either**
 stack, run the app against it, drive it. `packages/relay-client/test` keeps only
 the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
-- **A credential never goes in a URL, a log line, or an error string.** It rides
-  in the post-challenge `auth` frame and nowhere else. `settings.json` holds it
-  and is written `0600`; the renderer is never given it.
+- **A credential never goes in a URL, a log line, an error string, or the audit
+  log.** Two transports carry it, and no third kind: the relay socket's
+  post-challenge `auth` frame, and the `Authorization` header of an
+  authenticated Plow API call — today agent creation and reviewer inference,
+  and anything else added the same way. **A response that repeats it back never
+  becomes a verdict, an audit record, or anything the renderer is shown — in any
+  encoding.** That is the guarantee; the means is a check on the decoded
+  `reason` after the single parse. Describe the guarantee here and leave the
+  mechanism to the code — naming the mechanism of the day is how this line goes
+  stale. `settings.json` holds it and is
+  written `0600`; the renderer is never given it.
 
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`
