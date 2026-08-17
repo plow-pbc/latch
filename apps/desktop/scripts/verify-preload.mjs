@@ -371,7 +371,7 @@ app.whenReady().then(async () => {
       t.textContent.trim(),
     );
     const group = [...document.querySelectorAll(".settings .item")].find(
-      (i) => i.querySelector(".group-title")?.textContent.trim() === "Connect a client",
+      (i) => i.querySelector(".group-title")?.textContent.trim() === "Connect an MCP client",
     );
     return {
       showsUrl: text.includes("https://api.plow.co/v1/relay/devices/u_probe/mcp"),
@@ -380,9 +380,14 @@ app.whenReady().then(async () => {
       // The move itself: the content is its own FIRST group, Plow Account
       // follows it, and the tab it used to have is gone from the titlebar.
       inOwnGroup: !!group?.querySelector(".connect"),
-      groupOrder: titles.slice(0, 2).join(" > ") === "Connect a client > Plow Account",
+      groupOrder: titles.slice(0, 2).join(" > ") === "Connect an MCP client > Plow Account",
       groupTitles: titles,
       noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
+      // The client shortcut. Exactly one: a card exists only for a client whose
+      // link lands the user where they paste, and ChatGPT has no such link.
+      clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
+        n.textContent.trim(),
+      ),
       // The probe's account IS signed in, so Sign In must not be on screen.
       // `hidden` alone does not hide a `display: inline-flex` button, and the
       // result is a Sign In sitting beside Sign Out on a live account.
@@ -449,6 +454,7 @@ app.whenReady().then(async () => {
     connect.offersFallback &&
     connect.inOwnGroup &&
     connect.groupOrder &&
+    connect.clientCards.join(",") === "Claude" &&
     connect.noConnectTab &&
     connect.noSignInWhileSignedIn &&
     settings.hasAccountGroup &&

@@ -568,6 +568,25 @@ textarea.text { min-height: 70px; resize: vertical; }
   background: var(--sel); color: var(--blue-fg);
   font-size: 12px; font-weight: 600;
 }
+/* Client card — the designer's mock, adapted: a rounded panel with the client
+   name and an external-link arrow. The mock's two-up grid is NOT kept, because
+   there is one card: a card stretched across the row, or sat in half a grid,
+   both read as a tile that failed to load. It is sized to its content and
+   left-aligned, so it reads as the shortcut it is. The logo tile the mock shows
+   is deliberately absent until real brand assets land. */
+.settings .connect .client-cards {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px;
+}
+.settings .connect .client-card {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card); color: var(--fg);
+  padding: 10px 14px; font: inherit; cursor: pointer; text-align: left;
+}
+.settings .connect .client-card:hover { background: var(--hover); }
+.settings .connect .client-name { font-weight: 600; }
+.settings .connect .client-arrow { color: var(--faint); font-size: 13px; }
 .settings .connect .conn-actions { margin-top: 14px; }
 .settings .connect .item.quiet { padding: 12px 14px; }
 /* A quiet secondary route — present, never competing with what's above it. */

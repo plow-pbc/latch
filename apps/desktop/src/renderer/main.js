@@ -477,6 +477,27 @@ function copyRow(value, label) {
   return el("div", { class: "copyrow" }, [box, copy]);
 }
 
+/**
+ * A shortcut into one client's connector setup, opened in the user's real
+ * browser — the place the URL above gets pasted.
+ *
+ * A card exists only for a client whose link lands the user where they paste;
+ * see `CLIENT_CONNECTOR_URLS` in main.ts. It is a shortcut past the clicks, not
+ * the supported-client list — the step's copy names the others.
+ *
+ * From the designer's mock, minus the brand logo: an approximated or borrowed
+ * mark is worse than none, so this is the name and the mock's ↗ until real
+ * assets arrive.
+ */
+function clientCard(key, name) {
+  const card = el("button", { class: "client-card" }, [
+    el("span", { class: "client-name", text: name }),
+    el("span", { class: "client-arrow", text: "↗" }),
+  ]);
+  card.addEventListener("click", () => window.domo.connectOpenClient(key));
+  return card;
+}
+
 /** A numbered step: the number, a title, and whatever the step needs. */
 function step(n, title, body) {
   return el("div", { class: "item step" }, [
@@ -574,8 +595,10 @@ function connectNodes(s, redraw) {
 
   const box = el("div", { class: "connect" }, [
     step(1, "Add this MCP server to your client", [
-      el("p", { class: "faint conn-note", text: "Claude Code, ChatGPT, or anything else that speaks MCP over HTTP." }),
       copyRow(s.mcpUrl || "—"),
+      // One card. The mock's two-up grid is not kept for a single card — a
+      // half-empty grid reads as a tile that failed to load.
+      el("div", { class: "client-cards" }, [clientCard("claude", "Claude")]),
     ]),
     step(2, "Sign in with OAuth", [
       el("p", {
@@ -955,8 +978,12 @@ async function renderSettings() {
     // First, deliberately: this is what someone opens Settings to do. The
     // account below is what makes it possible, not what you came for.
     group(
-      "Connect a client",
-      "Your Plow account below is how an agent reaches this Mac with nothing to configure. Connect a client instead when you want an MCP client — Claude Code, ChatGPT — to talk to this Mac directly at its own MCP URL. You can do this once per client, whenever you add one.",
+      // The designer's title and subtitle. The subtitle replaces a paragraph
+      // the sous invented from a dictation that cut off mid-sentence — it
+      // answers the same question in the designer's words, and names more of
+      // the clients that work.
+      "Connect an MCP client",
+      "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
       [connectBox],
     ),
     group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
