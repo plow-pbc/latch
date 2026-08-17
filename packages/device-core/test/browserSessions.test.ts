@@ -253,6 +253,30 @@ describe("credentials", () => {
     expect(eventNames()).toContain("credential_denied");
   });
 
+  it("fill_secret keeps the value out of a FAILED fill too", async () => {
+    // The failure path is the common one — wrong element, hidden field, slow
+    // render — and Playwright's message quotes what it tried to type. If that
+    // reaches the agent, the secret is in model context, transcripts and any
+    // provider that sees them.
+    const s = await openSession(["pizza.example"]);
+    ctx.sessions.extend("int-3", AGENT, s, [], ["L1"], false);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
+    const r = jv(
+      await ctx.sessions.command(AGENT, s, {
+        action: "fill_secret",
+        selector: "#nofill",
+        item: "L1",
+        field: "password",
+      }),
+    );
+    expect(r.get("status").str).toBe("error");
+    expect(JSON.stringify(r.value)).not.toContain("hunter2");
+    expect(JSON.stringify(ctx.events)).not.toContain("hunter2");
+    // Still says enough to fix the call.
+    expect(r.get("error").str).toContain("#nofill");
+    expect(eventNames()).toContain("credential_fill_failed");
+  });
+
   it("fill_secret types the value on-device and never returns it", async () => {
     const s = await openSession(["pizza.example"]);
     ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);
