@@ -226,8 +226,8 @@ onboarding-screenshots: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/onboarding-screenshot.mjs
 
-# Screenshot the main window's "Connect a client" screen — the OAuth route, the
-# static-credential form, and the copy-once block. It makes its own throwaway
+# Screenshot the main window's Agents tab — the connect flow, the
+# static-credential modal, and the copy-once block. It makes its own throwaway
 # home, so it never reads or writes this checkout's state.
 connect-screenshot: build
     @mkdir -p "{{outdir}}"

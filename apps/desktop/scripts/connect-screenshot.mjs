@@ -1,7 +1,12 @@
-// Render the REAL main window's "Connect a client" screen offscreen, with the
-// REAL preload and the REAL `ConnectClient` state machine, and capture one PNG
-// per state. Like onboarding-screenshot.mjs, it EXITS NON-ZERO if a screen is
-// missing the content it exists to show.
+// Render the REAL main window's Agents tab offscreen, with the REAL preload and
+// the REAL `ConnectClient` state machine, and capture one PNG per state. Like
+// onboarding-screenshot.mjs, it EXITS NON-ZERO if a screen is missing the
+// content it exists to show.
+//
+// The flow this shoots has moved (a "Connect a client" tab, a Settings group,
+// now the Agents tab) and its copy has been rewritten with it. That is what
+// this script is for: the expectations below are the copy, so a change to it
+// that nobody meant fails here rather than shipping.
 //
 //   just connect-screenshot              → /tmp/connect-*.png
 //   OUT_DIR=/path just connect-screenshot
@@ -59,7 +64,7 @@ async function setUp() {
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
-  ipcMain.handle("ui:getTab", async () => "connect");
+  ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});
   // The main window's boot also asks for the update banner's state; without a
   // handler the invoke rejects and the renderer never finishes booting.
@@ -84,16 +89,21 @@ const SCREENS = [
     name: "oauth",
     prepare: async () => {},
     expect: [
-      "This Mac is connected",
+      "Connect an MCP client",
+      "Add this server URL to Claude Code, Codex, Cursor",
       MCP_URL,
-      "Add this MCP server to your client",
-      // OAuth is the recommended route, and the reason has to be on screen.
-      "Sign in with OAuth",
-      "no token to copy, store, or leak",
+      // Signing in is not a step any more, but the reassurance still has to be
+      // on screen — it is the reason OAuth is the route.
+      "signs in with OAuth the first time it connects",
+      "no token to copy, store, or rotate",
+      // The shortcut to where the URL gets pasted.
+      "Claude",
       "Can't use OAuth? Create a static credential",
     ],
   },
   {
+    // The form is a MODAL now, not an inline expander — same click, same
+    // fields, over the pane instead of inside it.
     name: "static-form",
     prepare: async (win) => clickText(win, "Can't use OAuth"),
     expect: ["Static credential", "Name this connection", "Create Credential", "Cancel"],
@@ -106,8 +116,9 @@ const SCREENS = [
       await clickText(win, "Create Credential");
     },
     // The credential and its "I've Saved It" button are the point of this
-    // screen, and they sit below the fold in a 620pt window. Scroll to them,
-    // or the picture shows everything except the thing it is evidence of.
+    // screen, and they can sit below the fold in a 620pt window. Scroll to
+    // them, or the picture shows everything except the thing it is evidence of.
+    // The modal scrolls itself now, so that is what gets scrolled when it is up.
     scrollToBottom: true,
     expect: [
       "Paste this into Claude Code",
@@ -168,13 +179,14 @@ app.whenReady().then(async () => {
 
   let failures = 0;
   for (const screen of SCREENS) {
-    // A reload re-runs the renderer's boot, which restores the connect tab.
+    // A reload re-runs the renderer's boot, which restores the Agents tab — and
+    // drops any modal left standing by the screen before it.
     await win.loadFile(path.join(dist, "renderer/index.html"));
     await new Promise((r) => setTimeout(r, 400));
     await screen.prepare(win);
     if (screen.scrollToBottom) {
       await win.webContents.executeJavaScript(
-        `(() => { const p = document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
+        `(() => { const p = document.querySelector(".modal") ?? document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
       );
       await new Promise((r) => setTimeout(r, 200));
     }
