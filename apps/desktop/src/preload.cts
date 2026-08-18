@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld("domo", {
   connectGet: () => ipcRenderer.invoke("connect:get"),
   connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
+  // Revoke one roster row. Resolves on the refreshed whole state, like the rest.
+  connectRevoke: (id: number) => ipcRenderer.invoke("connect:revoke", id),
   // A client NAME, not a URL: main owns the table of what may be opened.
   connectOpenClient: (client: string) => ipcRenderer.invoke("connect:openClient", client),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),

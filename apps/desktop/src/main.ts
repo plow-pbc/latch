@@ -38,7 +38,7 @@ import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
-import { ConnectClient } from "./connectClient.js";
+import { ConnectClient, isRosterId } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
@@ -490,9 +490,33 @@ ipcMain.handle("connect:openClient", async (_e, client: string) => {
   await shell.openExternal(url);
   return true;
 });
-ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
+/**
+ * The read is still a read — it returns what is already known and never waits
+ * on the network — but it also kicks the roster re-read off behind it.
+ *
+ * That is deliberate, and it is why there is no polling and no second channel:
+ * the renderer asks for this state exactly when the roster can have changed —
+ * activating the tab, after a mint, after a revoke, and on its own retry after
+ * a failed list. `refreshRoster` publishes only when the answer differs from
+ * what the screen already has, so the publish -> re-read -> publish loop this
+ * file warns about settles instead of spinning.
+ */
+ipcMain.handle("connect:get", async () => {
+  const state = connectClient?.state() ?? null;
+  void connectClient?.refreshRoster();
+  return state;
+});
 ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
 ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());
+// Resolves once the refreshed roster is in the state it hands back, so the
+// screen never has to render the row it just removed.
+ipcMain.handle("connect:revoke", async (_e, id: unknown) => {
+  // Untrusted across the bridge, and it becomes part of a request path. Refused
+  // here as well as inside `revokeCredential`, so the bad value never gets past
+  // the boundary it arrived at.
+  if (!isRosterId(id)) return connectClient?.state() ?? null;
+  return connectClient?.revokeCredential(id);
+});
 
 // MARK: IPC for the first-run setup window
 

@@ -18,6 +18,7 @@
  * part with states worth testing, and a state machine that can only be reached
  * by launching a window is one nobody tests.
  */
+import { AgentRosterRow, agentRosterRows } from "./agentRoster.js";
 import { PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, Settings } from "./settings.js";
 
@@ -48,6 +49,21 @@ export interface ConnectClientState {
   message: string;
   /** The shown-once credential, present only between minting and dismissal. */
   credential: ClientCredential | null;
+  /**
+   * What else can reach this Mac's relay, as display rows.
+   *
+   * `[]` means "nothing to show" and covers both an account with no agents and
+   * a roster we have not managed to read — `rosterError` is what tells those
+   * apart. Never `null`, so the screen has one shape to render.
+   *
+   * These rows are the projection from `agentRoster.ts`: id, name, kind, and
+   * two timestamps. The token prefix, the raw scopes and the usage counters
+   * stop in the main process.
+   */
+  roster: AgentRosterRow[];
+  /** Why the roster is empty, if it is empty because the read failed. Written
+   * for a human, and — like every message here — never carries a credential. */
+  rosterError: string | null;
 }
 
 export interface ConnectClientDeps {
@@ -76,6 +92,12 @@ export class ConnectClient {
    * belongs to the old one, and its result is dropped rather than shown.
    */
   private generation = 0;
+  /** The last roster read that landed. Survives a failed read: a stale list is
+   * more use than an empty one, and `rosterError` says it is stale. */
+  private roster: AgentRosterRow[] = [];
+  private rosterError: string | null = null;
+  /** The list in flight, if any. A second reader joins it — see `refreshRoster`. */
+  private rosterPending: Promise<ConnectClientState> | null = null;
 
   constructor(private readonly deps: ConnectClientDeps) {}
 
@@ -89,7 +111,91 @@ export class ConnectClient {
       busy: this.busy,
       message: this.message,
       credential: this.credential,
+      roster: this.roster,
+      rosterError: this.rosterError,
     };
+  }
+
+  /**
+   * Re-read what can reach this Mac's relay.
+   *
+   * Read-triggered rather than polled: the main process calls this when the
+   * renderer asks for the state, which is exactly tab activation, a mint, a
+   * revoke, and the renderer's own retry after a failure — the four moments
+   * the list can have changed, and no clock.
+   *
+   * That only works because it publishes *on change*. A getter that notifies
+   * unconditionally is the re-render loop this file warns about elsewhere:
+   * publish -> renderer re-reads -> publish. Comparing against what the screen
+   * already has breaks it — a steady roster settles after one extra round trip,
+   * and a failing one settles on its first error message.
+   */
+  async refreshRoster(): Promise<ConnectClientState> {
+    if (this.rosterPending) return this.rosterPending;
+
+    const generation = this.generation;
+    const settings = this.settings();
+    if (!settings.relayCredential.trim()) {
+      // Not signed in: there is no authority to ask with, and an empty roster
+      // is the honest answer rather than an error the user cannot act on.
+      return this.setRoster([], null);
+    }
+
+    const flight = (async () => {
+      try {
+        const keys = await this.deps.api.listApiKeys(settings.relayCredential);
+        if (generation !== this.generation) return this.state();
+        return this.setRoster(agentRosterRows(keys), null);
+      } catch (error) {
+        if (generation !== this.generation) return this.state();
+        // The rows already on screen stay: the connect card above them, and
+        // everything else in this state, is untouched by a failed list.
+        return this.setRoster(this.roster, messageOf(error));
+      } finally {
+        this.rosterPending = null;
+      }
+    })();
+    this.rosterPending = flight;
+    return flight;
+  }
+
+  /**
+   * Revoke one listed credential.
+   *
+   * Safe by construction: this Mac's own device credential holds `relay:device`
+   * and so is never one of these rows — there is no way to revoke the app you
+   * are clicking in. The refresh is awaited so the caller's state already
+   * reflects the row being gone.
+   */
+  async revokeCredential(id: number): Promise<ConnectClientState> {
+    // The id arrives across the bridge from a sandboxed renderer, and it is
+    // pasted straight into a request path. Anything that is not a plain row id
+    // is refused here, before `plowApi` is called at all — a float, a negative,
+    // a NaN or a string can only be a bug or an attempt at something else, and
+    // neither should reach the network.
+    if (!isRosterId(id)) return this.fail("That isn't something this Mac can revoke.");
+    const generation = this.generation;
+    const settings = this.settings();
+    if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
+
+    this.busy = true;
+    this.rosterError = null;
+    this.publish();
+    try {
+      await this.deps.api.revokeApiKey(settings.relayCredential, id);
+    } catch (error) {
+      if (generation !== this.generation) return this.state();
+      this.busy = false;
+      this.rosterError = messageOf(error);
+      return this.publish();
+    }
+    if (generation !== this.generation) return this.state();
+    this.busy = false;
+    // The revoke is a soft delete server-side; the row stops qualifying only
+    // because the refreshed list reports it inactive. So the list is the
+    // source of truth here, not a local splice.
+    await this.refreshRoster();
+    return this.publish();
   }
 
   /**
@@ -142,6 +248,10 @@ export class ConnectClient {
           this.pendingId = 0;
         }
       }
+      // A mint changes the roster, so the list is re-read before the screen is
+      // told anything — the new agent is in the state the caller gets back,
+      // rather than arriving in a second render a round trip later.
+      if (generation === this.generation) await this.refreshRoster();
       return this.publish();
     })();
     this.pending = flight;
@@ -168,6 +278,10 @@ export class ConnectClient {
     // one whose result will be thrown away.
     this.pending = null;
     this.pendingId = 0;
+    // The roster belonged to that account too, and the next sign-in may be a
+    // different one. A list in flight is dropped by the generation check.
+    this.roster = [];
+    this.rosterError = null;
     return this.publish();
   }
 
@@ -179,6 +293,15 @@ export class ConnectClient {
     this.credential = null;
     this.message = "";
     return this.publish();
+  }
+
+  /** Publish only if the screen would look different — see `refreshRoster`. */
+  private setRoster(rows: AgentRosterRow[], error: string | null): ConnectClientState {
+    const same =
+      this.rosterError === error && JSON.stringify(this.roster) === JSON.stringify(rows);
+    this.roster = rows;
+    this.rosterError = error;
+    return same ? this.state() : this.publish();
   }
 
   private settings(): Settings {
@@ -194,6 +317,15 @@ export class ConnectClient {
     this.deps.onChange?.();
     return this.state();
   }
+}
+
+/**
+ * A roster row id as Plow issues them: a non-negative safe integer, nothing
+ * else. Exported so the IPC handler can refuse a bad one at the bridge rather
+ * than one call deeper.
+ */
+export function isRosterId(id: unknown): id is number {
+  return typeof id === "number" && Number.isSafeInteger(id) && id >= 0;
 }
 
 /** What to paste into an MCP client. The credential is a header, never part of
