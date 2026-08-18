@@ -41,6 +41,45 @@ export const RETRY_AFTER_MS = 1_000;
 export type PendingReason = "awaiting_approval" | "running";
 
 /**
+ * What the agent should DO about a pending handle, in the envelope itself.
+ *
+ * The four machine fields say what is true; none of them say what to do, and
+ * an agent cannot see the dialog that just appeared on a screen in another
+ * room. So agents went quiet, and — worse — re-issued the original call, which
+ * mints a fresh intent and asks the human all over again.
+ *
+ * This rides the response rather than only the server's `instructions` block
+ * because a client may drop instructions, and because this is the moment the
+ * advice is actually needed. `retry_after_ms` next to it is advice too, never
+ * a gate: polling early is answered honestly.
+ *
+ * `awaiting_approval` is deliberately hedged. It means "no decision yet",
+ * which covers the work before a human is ever asked (path resolution, writing
+ * the approval record) as well as a dialog nobody has answered — so it must
+ * not flatly claim a human is looking at something.
+ */
+const PENDING_NOTES: Record<PendingReason, string> = {
+  awaiting_approval:
+    "not decided yet — if this needs approval it is on the user's Mac now, unanswered. " +
+    "Tell the user you are waiting for them, then poll get_result with this handle. " +
+    "Do not repeat the original call; that asks them a second time.",
+  running:
+    "approved, and running now. Poll get_result with this handle; do not repeat the " +
+    "original call.",
+};
+
+/** §4.3's pending envelope, with the advice the caller needs to act on it. */
+function pendingEnvelope(handle: string, reason: PendingReason): JSONValue {
+  return {
+    status: "pending",
+    handle,
+    reason,
+    note: PENDING_NOTES[reason],
+    retry_after_ms: RETRY_AFTER_MS,
+  };
+}
+
+/**
  * Thrown by a tool when a human or a policy rule refused the operation, as
  * opposed to it failing. The two are different answers and §4.3 keeps them
  * distinct (`denied` vs `failed`).
@@ -168,7 +207,7 @@ export class DeferredResults {
       terminal: null,
       expiresAt: this.now() + this.ttlMs,
     });
-    return { status: "pending", handle, reason, retry_after_ms: RETRY_AFTER_MS };
+    return pendingEnvelope(handle, reason);
   }
 
   /**
@@ -182,12 +221,7 @@ export class DeferredResults {
     if (!entry || entry.agentId !== agentId) return { status: "unknown", handle };
     if (this.now() > entry.expiresAt) return { status: "expired", handle };
     if (entry.terminal !== null) return entry.terminal;
-    return {
-      status: "pending",
-      handle,
-      reason: entry.reason,
-      retry_after_ms: RETRY_AFTER_MS,
-    };
+    return pendingEnvelope(handle, entry.reason);
   }
 
   /**
