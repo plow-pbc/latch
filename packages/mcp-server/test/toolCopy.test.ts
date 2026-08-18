@@ -164,15 +164,8 @@ describe("the browsing skill agrees with the tools it documents", () => {
     }
   });
 
-  // The rename handled `browser` and `vault` by exact-context substitution,
-  // because a blanket replace would have hit the capability kind, the Vault tab
-  // and browserDir. The contexts were enumerated by hand and five were missed.
-  // This is the cheap check that would have caught all five: no unprefixed tool
-  // name anywhere in the published guide.
   it("names no tool without the plow_ prefix", () => {
-    for (const stale of [/\bbrowser \{/, /\bvault \{/, /`browser`/, /`vault`/]) {
-      expect(BROWSING_SKILL.body, `stale tool name matching ${stale}`).not.toMatch(stale);
-    }
+    expect(bareToolNames(BROWSING_SKILL.body)).toEqual([]);
   });
 
   // The skill and the server instructions are read by the same model in the
@@ -182,5 +175,59 @@ describe("the browsing skill agrees with the tools it documents", () => {
   it("the skill description does not claim general web reading", () => {
     expect(BROWSING_SKILL.description).toMatch(/general web reading belongs in your own tools/i);
     expect(BROWSING_SKILL.description).not.toMatch(/any task that requires visiting/i);
+  });
+});
+
+/**
+ * Bare (unprefixed) tool names in text an agent reads.
+ *
+ * The prefixing pass renamed `browser` and `vault` by hand-enumerated exact
+ * contexts, because a blanket replace would have hit the capability kind, the
+ * Vault tab and browserDir — and five were missed in one file while a
+ * first-match-only test stayed green. So the rule lives here once, and every
+ * agent-facing string is swept through it.
+ *
+ * Underscored names are unambiguous: `get_result` is never English. `browser`
+ * and `vault` are ordinary words that belong in prose ("open a browser on the
+ * user's own Mac"), so only call-shaped or quoted uses count as a tool
+ * reference.
+ */
+const AMBIGUOUS = new Set(["browser", "vault"]);
+
+export function bareToolNames(text: string): string[] {
+  const hits = new Set<string>();
+  for (const tool of TOOLS) {
+    const bare = tool.name.replace(/^plow_/, "");
+    const re = AMBIGUOUS.has(bare)
+      ? new RegExp(`(?<!plow_)\\b${bare}\\s*\\{|\`${bare}\`|'${bare}'`)
+      : new RegExp(`(?<![\\w.])(?<!plow_)${bare}\\b`);
+    if (re.test(text)) hits.add(bare);
+  }
+  return [...hits].sort();
+}
+
+/** Every string the manifest puts in front of a model. */
+function manifestStrings(): { where: string; text: string }[] {
+  const out = [{ where: "instructions", text: SERVER_INSTRUCTIONS }];
+  for (const tool of TOOLS) {
+    out.push({ where: `${tool.name}.description`, text: tool.description });
+    const props =
+      (tool.inputSchema as { properties?: Record<string, { description?: string }> })
+        .properties ?? {};
+    for (const [name, prop] of Object.entries(props)) {
+      if (prop?.description) out.push({ where: `${tool.name}.${name}`, text: prop.description });
+    }
+  }
+  out.push({ where: "skill.description", text: BROWSING_SKILL.description });
+  return out;
+}
+
+describe("nothing an agent reads names a tool by its old name", () => {
+  // Not just the skill: #46's pending-handle note shipped "poll get_result"
+  // an hour before this rename landed, and nothing here would have caught it.
+  it("no manifest string carries a bare tool name", () => {
+    for (const { where, text } of manifestStrings()) {
+      expect(bareToolNames(text), `${where} names a tool without plow_`).toEqual([]);
+    }
   });
 });
