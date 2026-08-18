@@ -361,8 +361,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
 .cap-title .support-title { margin-bottom: 0; }
 .cap-title .status-dot { flex: none; }
-/* `.item p` zeroes margins, so the how-to-grant line asks for its blank line. */
-.item p.cap-grant { margin-top: 10px; }
+/* The from-source note sits right under the Launch at Login checkbox line;
+   `.item p` zeroes margins, so it asks for its blank line. */
+.item p.cap-note { margin-top: 8px; }
 
 .agent-status {
   margin: 0;

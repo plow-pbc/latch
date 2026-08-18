@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld("domo", {
   // macOS permission ceilings (today just Full Disk Access). Read-only: the
   // grant itself happens in System Settings, via openExternal("fullDiskSettings").
   capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
+  // Launch at Login: one whole-state shape per read. macOS owns the bit
+  // (System Settings can flip it behind the app's back), so every read
+  // re-asks the OS, and set answers with what the OS then holds.
+  launchGet: () => ipcRenderer.invoke("launch:get"),
+  launchSet: (on: boolean) => ipcRenderer.invoke("launch:set", on),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
