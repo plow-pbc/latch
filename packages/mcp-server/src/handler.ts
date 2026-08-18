@@ -128,7 +128,12 @@ function refusal(id: unknown, method: string): Response {
           `that buffers one HTTP exchange per frame and cannot carry a stream.`,
       },
     }),
-    { status: 400, headers: { "content-type": "application/json" } },
+    // 404, not 400. The 2026-07-28 Streamable HTTP binding is normative: "If
+    // the server does not implement the requested RPC method, it MUST respond
+    // with 404 Not Found and a JSON-RPC error with code -32601." The body is
+    // what distinguishes this from a legacy server's bare 404, so both halves
+    // matter. This answered 400 until someone read the spec.
+    { status: 404, headers: { "content-type": "application/json" } },
   );
 }
 

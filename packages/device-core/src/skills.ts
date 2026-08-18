@@ -27,11 +27,19 @@ export class SkillRegistry {
     return this.skills.get(name) ?? null;
   }
 
-  /** Full manifest (bodies included) sent to the broker at registration. */
-  manifest(): JSONValue {
+  /**
+   * What `plow_list_skills` advertises: names and descriptions, sorted.
+   *
+   * Bodies are deliberately NOT here. They used to be, because the whole
+   * manifest was shipped to the broker at registration; there is no broker and
+   * the only consumer is the tool, which stripped them straight back off. A
+   * body is fetched one at a time by `plow_read_skill`, which is what keeps a
+   * long operator manual off every tools/list.
+   */
+  manifest(): { name: string; description: string }[] {
     return [...this.skills.values()]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((s) => ({ name: s.name, description: s.description, body: s.body }));
+      .map(({ name, description }) => ({ name, description }));
   }
 
   /** Load owner-authored skills from $DOMO_HOME/device/skills/*.md. */

@@ -360,8 +360,8 @@ log. The thumbnail appears only while a session is active and disappears when
 it closes.
 
 **Skills.** Devices publish skills (name/description/markdown body,
-`SkillRegistry`) in their register manifest; agents discover them via
-`list_device_tools` and read them with `read_skill`. The built-in
+`SkillRegistry`); agents discover them via `plow_list_skills` and read them
+with `plow_read_skill`. The built-in
 `camoufox-browsing` skill is the operator manual for this tool surface.
 
 **Runtime & packaging.** The stack ships inside the app: a relocated
@@ -616,7 +616,7 @@ Monorepo mirroring the current module seams one-to-one:
 | `@domo/protocol` | `DomoProtocol` | canonical JSON, identities, Capability/Intent/Grant, rule keys |
 | `@domo/transport` | `DomoTransport` | NDJSON framing, LineRPC, UDS, WebSocket (`ws`), E2EChannel |
 | `@domo/broker-core` | `DomoBrokerCore` | Broker, BrokerStore, MCP surface via `@modelcontextprotocol/sdk` |
-| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, BlessedTools, GoalsLibrary |
+| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, SkillRegistry, GoalsLibrary |
 | `apps/broker` | `domo-broker` | Linux deploy target; TLS in-process or behind a reverse proxy per the runbook |
 | `apps/mcp` | `domo-mcp` | stdio shim on the official SDK |
 | `apps/desktop` | `DomoApp` | Electron: device-core in the main process; tray, approval windows, Goals/Rules/Audit |

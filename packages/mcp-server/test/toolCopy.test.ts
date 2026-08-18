@@ -124,30 +124,56 @@ describe("the goal field says a human reads it", () => {
 });
 
 describe("the browsing skill agrees with the tools it documents", () => {
-  /** Property names an example object literal in the skill body passes. */
-  function exampleProps(tool: string): string[] {
-    const match = new RegExp(`\\b${tool} \\{([^}]*)\\}`).exec(BROWSING_SKILL.body);
-    expect(match, `no ${tool} example in the skill body`).not.toBeNull();
-    return match![1]
-      .replace(/"[^"]*"/g, "") // drop string contents: they hold dots and commas
-      .split(",")
-      .map((part) => part.split(":")[0].replace(/[^a-z_]/g, ""))
-      .filter((name) => name.length > 0 && name !== "true" && name !== "false");
+  /**
+   * EVERY example call in the skill body, as (tool, property names).
+   *
+   * `matchAll`, not `exec`. The first version of this used `exec` and so
+   * checked only the FIRST example per tool — which is exactly how five stale
+   * tool names shipped in this file while this test stayed green. A guard that
+   * stops at the first match guards the first match.
+   */
+  function examples(): { tool: string; props: string[] }[] {
+    const out: { tool: string; props: string[] }[] = [];
+    for (const m of BROWSING_SKILL.body.matchAll(/\b(plow_[a-z_]+) \{([^}]*)\}/g)) {
+      const props = m[2]
+        .replace(/"[^"]*"/g, "") // drop string contents: they hold dots and commas
+        .split(",")
+        .map((part) => part.split(":")[0].replace(/[^a-z_]/g, ""))
+        .filter((name) => name.length > 0 && name !== "true" && name !== "false");
+      out.push({ tool: m[1], props });
+    }
+    return out;
   }
 
-  // `device` survived in both examples long after the broker that needed it was
+  // `device` survived in the examples long after the broker that needed it was
   // removed, and every tool schema is additionalProperties:false — so an agent
   // following the guide verbatim got a validation error on its first call. The
   // guide is only worth publishing if the calls in it actually run.
-  for (const tool of ["plow_browser_open", "plow_browser"]) {
-    it(`${tool}'s example passes only properties the schema declares`, () => {
-      const schema = TOOLS.find((t) => t.name === tool)!.inputSchema as {
-        properties: Record<string, unknown>;
-      };
-      const declared = Object.keys(schema.properties);
-      for (const prop of exampleProps(tool)) expect(declared).toContain(prop);
-    });
-  }
+  it("every example calls a tool that exists, with properties its schema declares", () => {
+    const found = examples();
+    expect(found.length).toBeGreaterThan(3);
+    for (const { tool, props } of found) {
+      const spec = TOOLS.find((t) => t.name === tool);
+      expect(spec, `the skill calls ${tool}, which is not a tool`).toBeDefined();
+      const declared = Object.keys(
+        (spec!.inputSchema as { properties: Record<string, unknown> }).properties,
+      );
+      for (const prop of props) {
+        expect(declared, `${tool} has no '${prop}'`).toContain(prop);
+      }
+    }
+  });
+
+  // The rename handled `browser` and `vault` by exact-context substitution,
+  // because a blanket replace would have hit the capability kind, the Vault tab
+  // and browserDir. The contexts were enumerated by hand and five were missed.
+  // This is the cheap check that would have caught all five: no unprefixed tool
+  // name anywhere in the published guide.
+  it("names no tool without the plow_ prefix", () => {
+    for (const stale of [/\bbrowser \{/, /\bvault \{/, /`browser`/, /`vault`/]) {
+      expect(BROWSING_SKILL.body, `stale tool name matching ${stale}`).not.toMatch(stale);
+    }
+  });
 
   // The skill and the server instructions are read by the same model in the
   // same breath; when they disagreed about who does general web reading, the

@@ -344,19 +344,14 @@ export const TOOLS: ToolSpec[] = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     deferrable: false,
     async run(_args, ctx) {
-      return {
-        skills: (jv(ctx.device.skills.manifest()).arr ?? []).map((s) => ({
-          name: jv(s).get("name").str,
-          description: jv(s).get("description").str,
-        })),
-      };
+      return { skills: ctx.device.skills.manifest() };
     },
   },
   {
     name: "plow_read_skill",
     description:
       "Read a skill this Mac publishes (listed by plow_list_skills): a how-to guide for a task. " +
-      "Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the browser tools).",
+      "Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the plow_browser tools).",
     inputSchema: {
       type: "object",
       required: ["name"],
@@ -497,7 +492,7 @@ export const TOOLS: ToolSpec[] = [
       "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
       "'screenshot' returns an image of the page — take one after " +
-      "every navigation to see where you are. Ask the vault tool what is in the vault; " +
+      "every navigation to see where you are. Ask plow_vault what is in the vault; " +
       "'fill_secret' types an approved item's field into a form " +
       "field without ever showing you the value. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +

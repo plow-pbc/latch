@@ -17,7 +17,7 @@ export const BROWSING_SKILL: Skill = {
   body: `# Browsing on this Mac
 
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:
-\`plow_browser_open\` (start a session), \`browser\` (act), \`plow_browser_request\` (widen scope),
+\`plow_browser_open\` (start a session), \`plow_browser\` (act), \`plow_browser_request\` (widen scope),
 \`plow_browser_close\` (finish). The browser uses the owner's local network and credentials;
 secret values are typed into pages on the Mac and are NEVER shown to you.
 
@@ -31,7 +31,7 @@ secret values are typed into pages on the Mac and are NEVER shown to you.
   headless"), open with \`headed: false\`; if they ask to watch, say nothing or pass
   \`headed: true\`. Your screenshots are identical either way — only their view changes.
   The choice lasts the session; a new mode means a new \`plow_browser_open\`.
-- Every \`browser\` action is checked against the approved origins. If a click or popup
+- Every \`plow_browser\` action is checked against the approved origins. If a click or popup
   lands outside them, page content locks: you can only \`url\`, \`pages\`, \`use_page\`, or
   \`goto\` back in scope. To follow the flow (e.g. a payment popup went to paypal.com),
   call \`plow_browser_request {session, origins: ["paypal.com", "*.paypal.com"]}\` and continue
@@ -62,17 +62,17 @@ url, title, links, forms, tables, pages.
 ## Credentials (logins, cards) — values never reach you
 
 **This machine has its own password vault — do not go looking for 1Password or ask the
-owner to paste anything.** \`vault {action: "list"}\` answers at any time, with no browser
+owner to paste anything.** \`plow_vault {action: "list"}\` answers at any time, with no browser
 session: every item the owner keeps — logins, cards, secure notes, custom fields — with
 titles, usernames and sites, never a value.
 
-1. \`vault {action: "list"}\` to see what is there; \`vault {action: "describe", item: "<id>"}\`
+1. \`plow_vault {action: "list"}\` to see what is there; \`plow_vault {action: "describe", item: "<id>"}\`
    names the fields that item holds.
 2. Open the session with \`credentials_metadata: true\` (or add it later via plow_browser_request).
 3. Pick the right item by reading the page.
 4. Ask for fill rights: \`plow_browser_request {session, credential_items: ["<item-id>"]}\` —
    the owner approves the named items.
-5. \`browser {action: "fill_secret", selector: "#password", item: "<item-id>", field: "password"}\`
+5. \`plow_browser {action: "fill_secret", selector: "#password", item: "<item-id>", field: "password"}\`
    types the value on the Mac. You get \`{ok: true}\` — never the value. Works for card
    number/expiry/CVC fields too (cards may fill on any approved origin; logins only on
    their own site).
