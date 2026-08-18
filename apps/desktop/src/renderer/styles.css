@@ -146,6 +146,10 @@ body {
 }
 .chip.active { background: var(--sel); color: var(--blue-fg); border-color: var(--blue-bd); }
 .chip.disabled { opacity: 0.4; cursor: default; }
+/* A disabled chip that CAN take you to the thing that would enable it. Opacity
+   alone said "not for you"; this says "not yet, and here is where you fix it". */
+.chip.disabled.actionable { cursor: pointer; }
+.chip.disabled.actionable:hover { opacity: 0.65; }
 .spacer { flex: 1; }
 .count { color: var(--faint); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
@@ -611,3 +615,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 
 /* The locked-vault explanation: an honest paragraph under the empty state. */
 .panel .vault-note { margin: 8px 0 0; max-width: 68ch; }
+
+/* The line under a chip row explaining what a faded chip is waiting for. */
+.settings .chip-note:empty { display: none; }
+.settings .chip-note { margin-top: 10px; }
