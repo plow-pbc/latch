@@ -6,6 +6,8 @@ export * from "./browser/browserRuntime.js";
 export * from "./browser/browserSessions.js";
 export * from "./browser/credentialBroker.js";
 export * from "./browser/vaultServer.js";
+export * from "./browser/vaultClient.js";
+export * from "./browser/vaultItems.js";
 export * from "./browser/vaultBootstrap.js";
 export * from "./browser/vaultCredentials.js";
 export * from "./browser/vaultSecretStore.js";

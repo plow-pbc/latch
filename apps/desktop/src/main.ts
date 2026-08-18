@@ -548,33 +548,33 @@ ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 // point of the tab: the vault's web page is the only other way in, and reaching
 // it means a browser warning about a certificate the app issued to itself.
 ipcMain.handle("vault:items", async () => {
-  const broker = device?.credentialBroker;
-  if (!broker) return null;
+  const vault = device?.vaultClient;
+  if (!vault) return null;
   // Every type, not only logins: a card and a note are things the owner keeps
   // here too, and the tab is where they are kept.
-  return broker.whatsHere();
+  return vault.list();
 });
 
 // One item to fill an edit form with — never a secret value; those are asked
 // for one at a time, below.
 ipcMain.handle("vault:item", async (_e, itemId: string) => {
-  const broker = device?.credentialBroker;
-  if (!broker) throw new Error("the vault is not running");
-  return broker.readItem(String(itemId));
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.read(String(itemId));
 });
 
-// A value the OWNER asked to see, in the app window. No page is involved, so
-// the broker logs the release as SEM-URL rather than binding it to a site.
+// A value the OWNER asked to see, in the app window. It never touches a page,
+// and the vault's audit records it as the owner's own reading.
 ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
-  const broker = device?.credentialBroker;
-  if (!broker) throw new Error("the vault is not running");
-  return broker.revealField(String(itemId), String(field || "password"));
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.reveal(String(itemId), String(field || "password"));
 });
 
-ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput & { itemId?: string }) => {
-  const broker = device?.credentialBroker;
-  if (!broker) throw new Error("the vault is not running");
-  return broker.saveItem(input);
+ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.save(input);
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like

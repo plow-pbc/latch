@@ -1,117 +1,84 @@
-// Render the REAL main window's Vault tab offscreen, with the REAL preload,
-// the REAL CredentialBroker and the REAL broker CLI, and capture one PNG per
-// state: the list, the New login form, and the list again with the login that
-// was just added. Like connect-screenshot.mjs it EXITS NON-ZERO if a screen is
-// missing the content it exists to show.
+// Render the REAL main window's Vault tab offscreen, with the REAL preload and
+// the REAL item encryption, and capture one PNG per state: the list, the type
+// picker, a card form, an identity form, an item opened with its password
+// shown, and the list again with the login that was just added. Like
+// connect-screenshot.mjs it EXITS NON-ZERO if a screen is missing the content
+// it exists to show.
 //
 //   just vault-screenshot                → /tmp/vault-*.png
 //   OUT_DIR=/path just vault-screenshot
 //
-// What is stood in for is the vault itself and nothing else: `bw` is replaced
-// by a script that keeps items in a JSON file, so everything above it — the
-// broker's item building and its refusal of a site-less login, the IPC
-// handlers, the preload bridge, the tab — is the shipping code, and the login
-// on the last screen really was created through it.
+// What is stood in for is the vault SERVER and nothing else: the items live in
+// a Map here instead of behind HTTPS, but they are encrypted and decrypted by
+// the shipping code with a real account key, so what the screens show came
+// through the same crypto the app uses against the real vault.
 import { app, BrowserWindow, ipcMain } from "electron";
+import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  checkedUrls,
+  decryptField,
+  decryptItem,
+  decryptSummary,
+  encryptCipher,
+  splitKey,
+} from "@domo/device-core";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
-const repo = path.resolve(dir, "../../..");
 const outDir = process.env.OUT_DIR ?? "/tmp";
 
-const state = fs.mkdtempSync(path.join(os.tmpdir(), "vault-shot-"));
-const itemsPath = path.join(state, "items.json");
+const account = splitKey(crypto.randomBytes(64));
 
-/** A stand-in `bw`: it keeps the vault's items in one JSON file. */
-function fakeVaultTool() {
-  const file = path.join(state, "bw.cjs");
-  fs.writeFileSync(
-    file,
-    `#!/usr/bin/env node
-     const fs = require("fs");
-     const P = ${JSON.stringify(itemsPath)};
-     const read = () => { try { return JSON.parse(fs.readFileSync(P, "utf8")); } catch { return []; } };
-     const write = (v) => fs.writeFileSync(P, JSON.stringify(v));
-     const args = process.argv.slice(2).filter((a) => a !== "--nointeraction");
-     const [verb, ...rest] = args;
-     if (verb === "status") { process.stdout.write(JSON.stringify({ serverUrl: "https://vault.local", status: "unlocked" })); process.exit(0); }
-     if (verb === "unlock" || verb === "login") { process.stdout.write("session-key"); process.exit(0); }
-     if (verb === "sync" || verb === "config") { process.exit(0); }
-     if (verb === "list") { process.stdout.write(JSON.stringify(read())); process.exit(0); }
-     if (verb === "get" && rest[0] === "item") {
-       const found = read().find((i) => i.id === rest[1]);
-       if (!found) { process.stderr.write("not found"); process.exit(1); }
-       process.stdout.write(JSON.stringify(found));
-       process.exit(0);
-     }
-     if (verb === "create" || verb === "edit") {
-       const item = JSON.parse(Buffer.from(fs.readFileSync(0, "utf8"), "base64").toString());
-       const items = read();
-       if (verb === "edit") {
-         const at = items.findIndex((i) => i.id === rest[1]);
-         items[at] = { ...item, id: rest[1] };
-       } else {
-         item.id = "item-" + (items.length + 1);
-         items.push(item);
-       }
-       write(items);
-       const saved = verb === "edit" ? items.find((i) => i.id === rest[1]) : items[items.length - 1];
-       process.stdout.write(JSON.stringify(saved));
-       process.exit(0);
-     }
-     process.exit(1);`,
-    { mode: 0o755 }, // the broker execs it, so it has to be runnable
-  );
-  return file;
+/** The vault's items, as ciphers — the same shape the server stores. */
+const ciphers = new Map();
+let nextId = 1;
+
+function seed(input) {
+  const id = `item-${nextId++}`;
+  ciphers.set(id, { ...encryptCipher(input, null, account), id });
 }
 
-// One login that was already there, so the list has something on it before the
-// screen that adds the second.
-fs.writeFileSync(
-  itemsPath,
-  JSON.stringify([
-    {
-      id: "item-1",
-      name: "Product Hunt",
-      type: 1,
-      login: { username: "daniel@plow.co", password: "already-stored", uris: [{ uri: "https://www.producthunt.com" }] },
-    },
-    {
-      id: "item-2",
-      name: "Amex",
-      type: 3,
-      card: { cardholderName: "Daniel Delattre", brand: "amex", number: "371449635398431", expMonth: "04", expYear: "2030", code: "1234" },
-    },
-  ]),
-);
+// Two items that were already there, of two different types, so the list shows
+// what "every type" means before anything is added to it.
+seed({
+  type: "login",
+  name: "Product Hunt",
+  username: "daniel@plow.co",
+  password: "already-stored",
+  urls: ["https://www.producthunt.com"],
+});
+seed({
+  type: "card",
+  name: "Amex",
+  cardholderName: "Daniel Delattre",
+  brand: "amex",
+  number: "371449635398431",
+  expMonth: "04",
+  expYear: "2030",
+  code: "1234",
+});
 
 async function setUp() {
-  const { CredentialBroker } = await import(path.join(repo, "packages/device-core/dist/index.js"));
-  const brokerDir = path.join(repo, "vendor/browser-server");
-  const broker = new CredentialBroker({
-    command: ["python3", "-m", "seed_vault_broker"],
-    env: {
-      PYTHONPATH: `${brokerDir}:${path.join(repo, "vendor/python-runtime/site-packages")}`,
-      SEED_VAULT_BW: fakeVaultTool(),
-      SEED_VAULT_URL: "https://vault.local",
-      SEED_VAULT_PERSON: "daniel@plow.co",
-      SEED_VAULT_USER: "agent@local",
-      SEED_VAULT_PASSWORD: "vault-password",
-      SEED_VAULT_STATE: path.join(state, "broker"),
-      SEED_VAULT_AUDIT: path.join(state, "audit.log"),
-    },
+  // The Vault tab's IPC surface — the same calls main.ts registers, over the
+  // same encryption, against items held here instead of behind the vault.
+  ipcMain.handle("vault:items", async () =>
+    [...ciphers.values()].map((c) => decryptSummary(c, account)),
+  );
+  ipcMain.handle("vault:item", async (_e, itemId) => decryptItem(ciphers.get(itemId), account));
+  ipcMain.handle("vault:reveal", async (_e, itemId, field) =>
+    decryptField(ciphers.get(itemId), account, field),
+  );
+  ipcMain.handle("vault:saveItem", async (_e, input) => {
+    const existing = input.itemId ? ciphers.get(input.itemId) : null;
+    const type = existing?.type ?? { login: 1, note: 2, card: 3, identity: 4 }[input.type ?? "login"];
+    const given = type === 1 ? { ...input, urls: checkedUrls(input.urls ?? []) } : input;
+    const id = input.itemId ?? `item-${nextId++}`;
+    ciphers.set(id, { ...encryptCipher(given, existing, account), id });
+    return { id, title: String(input.name ?? "") };
   });
-
-  // The Vault tab's IPC surface — the same handlers main.ts registers, over the
-  // same broker methods.
-  ipcMain.handle("vault:items", async () => broker.whatsHere());
-  ipcMain.handle("vault:item", async (_e, itemId) => broker.readItem(String(itemId)));
-  ipcMain.handle("vault:reveal", async (_e, itemId, field) => broker.revealField(String(itemId), String(field)));
-  ipcMain.handle("vault:saveItem", async (_e, input) => broker.saveItem(input));
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("ui:getTab", async () => "vault");
   ipcMain.handle("ui:setTab", async () => {});
@@ -220,9 +187,9 @@ async function type(win, label, text) {
   if (!found) throw new Error(`no field labelled ${label}`);
 }
 
-/** The broker is a process per call; give the answer time to come back. */
+/** Give an IPC round trip and its render a moment to land. */
 async function settle(win) {
-  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => setTimeout(r, 400));
 }
 
 /** Wait for the listing to arrive, rather than guessing how long it takes. */

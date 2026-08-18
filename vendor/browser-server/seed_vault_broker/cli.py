@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import ipaddress
 import json
 import os
@@ -41,8 +40,6 @@ _CMD_GET_FIELD = "get-field"
 _CMD_STATUS = "status"
 _CMD_WHATS_HERE = "whats-here"
 _CMD_DESCRIBE = "describe-item"
-_CMD_SAVE_ITEM = "save-item"
-_CMD_READ_ITEM = "read-item"
 _AUDIT_PATH = os.environ.get(
     "SEED_VAULT_AUDIT", os.path.expanduser("~/.local/state/vault-broker/audit.log")
 )
@@ -340,17 +337,15 @@ def _vault_password() -> str:
     return password
 
 
-def _raw_bw(args: list[str], session: str | None, stdin_data: str | None = None) -> subprocess.CompletedProcess:
+def _raw_bw(args: list[str], session: str | None) -> subprocess.CompletedProcess:
     try:
         # --nointeraction + closed stdin: without a TTY, bw otherwise blocks on
         # prompts forever (the "browser crashed" hang on credentials).
-        # stdin_data is how an item is written: bw takes the encoded item on
-        # stdin, so a password never appears in argv where `ps` can read it.
         return subprocess.run(
             [_BW_BIN, "--nointeraction", *args],
             capture_output=True, text=True, check=False,
             env=_vault_env(session), timeout=_BW_TIMEOUT_S,
-            **({"input": stdin_data} if stdin_data is not None else {"stdin": subprocess.DEVNULL}),
+            stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:
         raise _VaultToolError(_ERR_VAULT_UNAVAILABLE, _UNAVAILABLE_MSG)
@@ -405,9 +400,21 @@ def _point_at_vault() -> None:
     exactly once — on a fresh state — and fails on every call after the first
     login. Ask first, and only log out if the address really has to change.
     """
+    # Asking costs a whole CLI start (~1.5s), on every call, for an answer that
+    # only changes when the vault address does. Remember it beside the state the
+    # answer is about: a wrong marker costs one failed command, which the
+    # unlock-and-retry path already handles.
+    marker = os.path.join(_STATE_DIR, "server")
+    try:
+        with open(marker, encoding="utf-8") as fh:
+            if fh.read().strip() == _VAULT_URL:
+                return
+    except OSError:
+        pass
     status = _raw_bw(["status"], None)
     try:
         if json.loads(status.stdout).get("serverUrl") == _VAULT_URL:
+            _remember_server(marker)
             return
     except (ValueError, KeyError, TypeError):
         pass
@@ -419,6 +426,16 @@ def _point_at_vault() -> None:
         cfg = _raw_bw(["config", "server", _VAULT_URL], None)
     if cfg.returncode != 0:
         raise _VaultToolError(_ERR_VAULT_ERROR, "Could not point the vault tool at %s." % _VAULT_URL)
+    _remember_server(os.path.join(_STATE_DIR, "server"))
+
+
+def _remember_server(marker: str) -> None:
+    try:
+        _state_dir()
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write(_VAULT_URL)
+    except OSError:
+        pass  # the probe just runs again next time
 
 
 def _ensure_identity_and_server() -> None:
@@ -439,27 +456,49 @@ def _ensure_identity_and_server() -> None:
     _server_set = True
 
 
-def _run_vault(args: list[str], stdin_data: str | None = None) -> tuple[int, str, str]:
+def _run_vault(args: list[str]) -> tuple[int, str, str]:
     """Run one vault command, unlocking once if the cached session is stale."""
     _ensure_identity_and_server()
     session = _read_session()
     if session:
-        result = _raw_bw(args, session, stdin_data)
+        result = _raw_bw(args, session)
         if result.returncode == 0:
             return result.returncode, result.stdout, result.stderr
         if _classify(result.stderr + result.stdout) != _ERR_VAULT_LOCKED:
             return result.returncode, result.stdout, result.stderr
     session = _open_vault()
-    result = _raw_bw(args, session, stdin_data)
+    result = _raw_bw(args, session)
     return result.returncode, result.stdout, result.stderr
 
 
-def _sync() -> None:
-    """Pull the latest items. Without this a credential added a moment ago is invisible."""
+_SYNC_EVERY_S = 60
+
+
+def _sync(force: bool = False) -> None:
+    """Pull the latest items, but not on every single read.
+
+    Our own writes land in the local copy as they are made, so a sync is only
+    about what someone changed elsewhere (the vault's web page). A full sync is
+    another whole CLI start, so it runs at most once a minute unless a caller
+    asks for it outright.
+    """
+    stamp = os.path.join(_STATE_DIR, "synced")
+    if not force:
+        try:
+            if time.time() - os.path.getmtime(stamp) < _SYNC_EVERY_S:
+                return
+        except OSError:
+            pass
     try:
         _run_vault(["sync"])
     except _VaultToolError:
         pass  # a stale local copy still beats failing the whole call
+    try:
+        _state_dir()
+        with open(stamp, "w", encoding="utf-8") as fh:
+            fh.write("")
+    except OSError:
+        pass
 
 
 def _normalize(raw: dict) -> dict:
@@ -775,154 +814,6 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
     return 0
 
 
-def _encoded(item: dict) -> str:
-    """The vault tool takes an item as base64 JSON, on stdin."""
-    return base64.b64encode(json.dumps(item).encode()).decode()
-
-
-def _checked_urls(urls: list[str]) -> list[str]:
-    """Every URL an item is saved with must be one a fill can match.
-
-    A login with no usable site is exactly the item the fill path refuses
-    later ("item is not tied to any site"), so it is refused here instead --
-    at the one place items are written, rather than once per caller.
-    """
-    if not urls:
-        raise _VaultToolError(_ERR_INVALID_ARG, "a login needs at least one site URL, or it can never be filled")
-    for url in urls:
-        if not _host_key(url):
-            raise _VaultToolError(_ERR_INVALID_ARG, "could not read a site from %r" % url)
-    return urls
-
-
-def _item_body(item_type: int, raw: dict) -> dict:
-    """The part of a vault item that belongs to its type, for merging."""
-    if item_type == 1:
-        return dict(raw.get("login") or {})
-    if item_type == 3:
-        return dict(raw.get("card") or {})
-    if item_type == 4:
-        return dict(raw.get("identity") or {})
-    return dict(raw.get("secureNote") or {"type": 0})
-
-
-def _apply(item_type: int, raw: dict, given: dict) -> dict:
-    """Fold what the app sent onto the item, leaving anything it omitted alone.
-
-    Omitted and empty are different on purpose: a key that is not there keeps
-    what the vault holds (this is what makes "edit without retyping the
-    password" work), and a key sent empty clears that field.
-    """
-    body = _item_body(item_type, raw)
-    if "name" in given:
-        raw["name"] = given["name"]
-    if "notes" in given:
-        raw["notes"] = given["notes"] or None
-
-    if item_type == 1:
-        for key in ("username", "password", "totp"):
-            if key in given:
-                body[key] = given[key] or None
-        # A login with no site is one the fill path can never match, so the
-        # check lives here, at the one place items are written.
-        if "urls" in given or not raw.get("id"):
-            body["uris"] = [{"match": None, "uri": u} for u in _checked_urls(given.get("urls") or [])]
-    elif item_type == 3:
-        for key in _CARD_KEYS:
-            if key in given:
-                body[key] = given[key] or None
-    elif item_type == 4:
-        for key in _IDENTITY_KEYS:
-            if key in given:
-                body[key] = given[key] or None
-    else:
-        body = {"type": 0}  # the note itself is `notes`; a note has no body of its own
-
-    raw["type"] = item_type
-    raw[{1: "login", 2: "secureNote", 3: "card", 4: "identity"}[item_type]] = body
-    return raw
-
-
-def _cmd_save_item(args: argparse.Namespace) -> int:
-    """Create an item of any of the four types, or change one already there.
-
-    The whole item arrives as JSON on stdin, never in argv: half the fields
-    (password, card number, security code, SSN) are secrets, and everything on
-    a command line is readable by every process on this machine.
-    """
-    try:
-        given = json.loads(sys.stdin.read() or "{}")
-        if not isinstance(given, dict):
-            raise ValueError("expected an object")
-    except ValueError as exc:
-        return _emit_error(_ERR_INVALID_ARG, "could not read the item from stdin: %s" % exc)
-
-    try:
-        if args.item_id:
-            raw = dict(_get_item(args.item_id).get("_raw") or {})
-            item_type = raw.get("type") or _TYPE_BY_NAME.get(str(given.get("type", "")), 1)
-            verb = ["edit", "item", args.item_id]
-        else:
-            name = str(given.get("type", "login"))
-            if name not in _TYPE_BY_NAME:
-                raise _VaultToolError(
-                    _ERR_INVALID_ARG,
-                    "unknown item type %r; this vault holds: %s" % (name, ", ".join(_TYPE_BY_NAME)),
-                )
-            item_type = _TYPE_BY_NAME[name]
-            if not given.get("name"):
-                raise _VaultToolError(_ERR_INVALID_ARG, "a new item needs a name")
-            raw = {"name": given["name"], "notes": None, "favorite": False}
-            verb = ["create", "item"]
-        rc, stdout, stderr = _run_vault(verb, _encoded(_apply(item_type, raw, given)))
-    except _VaultToolError as exc:
-        return _emit_error(exc.type_name, exc.message)
-    if rc != 0:
-        kind = _classify(stderr)
-        return _emit_error(kind, _classify_message(kind, stderr))
-    try:
-        saved = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        return _emit_error(_ERR_VAULT_ERROR, "the vault did not say what it saved: %s" % exc)
-    _sync()  # or the item just written is invisible to the next listing
-    _audit(saved.get("id", ""), "(item)", ", ".join(given.get("urls") or []) or "-",
-           "UPDATED" if args.item_id else "CREATED")
-    sys.stdout.write(json.dumps({"id": saved.get("id", ""), "title": saved.get("name", "")}) + "\n")
-    return 0
-
-
-def _cmd_read_item(args: argparse.Namespace) -> int:
-    """One whole item, with its secret values replaced by null.
-
-    This is what an edit form is filled from: everything the owner needs to see
-    to change an item, and none of the values that are the reason the vault
-    exists. Those come one at a time from get-field, which audits each release.
-    """
-    try:
-        item = _get_item(args.item_id)
-    except _VaultToolError as exc:
-        return _emit_error(exc.type_name, exc.message)
-    raw = item.get("_raw") or {}
-    item_type = raw.get("type") or 1
-    body = _item_body(item_type, raw)
-    for key in _SECRET_KEYS.get(item_type, ()):  # present, but never the value
-        if body.get(key) not in (None, ""):
-            body[key] = None
-    out = {
-        "id": item.get("id", ""),
-        "name": raw.get("name", ""),
-        "type": _NAME_BY_TYPE.get(item_type, "login"),
-        "notes": raw.get("notes") or "",
-        "urls": [u["href"] for u in _urls_for(item)],
-        "fields": {k: v for k, v in body.items() if k != "uris"},
-        "secrets": [k for k in _SECRET_KEYS.get(item_type, ())
-                    if (_item_body(item_type, raw).get(k) not in (None, ""))],
-    }
-    _audit(args.item_id, "(item)", "-", "READ")
-    sys.stdout.write(json.dumps(out) + "\n")
-    return 0
-
-
 def _cmd_status(args: argparse.Namespace) -> int:
     try:
         # resolving the identity is what pairs this machine on first use
@@ -1042,42 +933,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_desc.add_argument("--item-id", required=True, help="Vault item id.")
     p_desc.set_defaults(func=_cmd_describe_item)
-
-    p_save = sub.add_parser(
-        _CMD_SAVE_ITEM,
-        help="Create a vault item of any type, or change one that already exists.",
-        description=(
-            "Write one item. The item itself is JSON on STDIN, never argv, because "
-            "half of what it carries is secret: {type: login|card|identity|note, "
-            "name, notes, urls: [...], and the type's own fields}. Without --item-id "
-            "a new item is created; with it, only the keys present are changed and "
-            "everything else is left as the vault holds it. A login is refused "
-            "without a usable site URL: it could never be filled."
-        ),
-        epilog=(
-            "Example:\n"
-            '  echo \'{"type":"login","name":"GitHub","username":"me","password":"s3cret",'
-            '"urls":["https://github.com"]}\' | seed-vault-broker save-item'
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p_save.add_argument("--item-id", default=None, help="Existing item to change. Omit to create one.")
-    p_save.set_defaults(func=_cmd_save_item)
-
-    p_read = sub.add_parser(
-        _CMD_READ_ITEM,
-        help="Read one whole item, with its secret values replaced by null.",
-        description=(
-            "Everything an edit form needs — name, type, notes, urls and the type's "
-            "own fields — with password, TOTP, card number, security code and SSN "
-            "returned as null and listed under `secrets`. Those values are read one "
-            "at a time with get-field, which audits each release."
-        ),
-        epilog="Example:\n  seed-vault-broker read-item --item-id abc123",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p_read.add_argument("--item-id", required=True, help="Vault item id.")
-    p_read.set_defaults(func=_cmd_read_item)
 
     p_status = sub.add_parser(
         _CMD_STATUS,

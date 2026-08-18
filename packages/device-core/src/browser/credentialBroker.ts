@@ -37,31 +37,6 @@ export interface CredentialBrokerConfig {
   beforeRun?: () => Promise<void>;
 }
 
-/** The four types this vault models. */
-export type VaultItemType = "login" | "card" | "identity" | "note";
-
-/** One item as the app edits it: no secret value ever sits in here. */
-export interface VaultItem {
-  id: string;
-  name: string;
-  type: VaultItemType;
-  notes: string;
-  urls: string[];
-  /** The type's own fields, secret ones present but null. */
-  fields: Record<string, string | null>;
-  /** Which of those fields hold a secret worth revealing. */
-  secrets: string[];
-}
-
-/** What the app sends to write an item. Omitted keys are left as they are. */
-export interface VaultItemInput {
-  type?: VaultItemType;
-  name?: string;
-  notes?: string;
-  urls?: string[];
-  [field: string]: string | string[] | undefined;
-}
-
 export interface CredentialItemSummary {
   id: string;
   title: string;
@@ -74,10 +49,10 @@ export interface CredentialItemSummary {
 export class CredentialBroker {
   constructor(private readonly cfg: CredentialBrokerConfig) {}
 
-  private async run(args: string[], timeoutMs?: number, stdin?: string): Promise<string> {
+  private async run(args: string[], timeoutMs?: number): Promise<string> {
     await this.cfg.beforeRun?.();
     return new Promise((resolve, reject) => {
-      const child = execFile(
+      execFile(
         this.cfg.command[0],
         [...this.cfg.command.slice(1), ...args],
         {
@@ -114,9 +89,6 @@ export class CredentialBroker {
           resolve(stdout);
         },
       );
-      // A password goes to the broker on stdin, never in argv: a command line
-      // is readable by every process on this machine.
-      if (stdin !== undefined) child.stdin?.end(stdin);
     });
   }
 
@@ -173,38 +145,4 @@ export class CredentialBroker {
     return this.run(["get-field", "--item-id", itemId, "--field", field, "--url", pageUrl]);
   }
 
-  /**
-   * One field, shown to the OWNER in this app rather than filled into a page.
-   * There is no page to bind it to, so no origin check runs and the broker
-   * records the release as SEM-URL — call this only for something the owner
-   * asked to see with their own eyes.
-   */
-  revealField(itemId: string, field: string): Promise<string> {
-    return this.run(["get-field", "--item-id", itemId, "--field", field]);
-  }
-
-  /**
-   * One whole item, with its secret values null — what an edit form is filled
-   * from. The values behind `secrets` are read one at a time with revealField.
-   */
-  async readItem(itemId: string): Promise<VaultItem> {
-    const out = await this.run(["read-item", "--item-id", itemId]);
-    return JSON.parse(out) as VaultItem;
-  }
-
-  /**
-   * Create an item of any type the vault models, or change one already there.
-   * The whole item goes in on stdin: half of what it carries (password, card
-   * number, security code, SSN) is secret, and argv is world-readable.
-   *
-   * Only the keys present are written; anything omitted keeps what the vault
-   * holds, which is what lets an edit leave a password alone.
-   */
-  async saveItem(input: VaultItemInput & { itemId?: string }): Promise<{ id: string; title: string }> {
-    const { itemId, ...item } = input;
-    const args = ["save-item", ...(itemId ? ["--item-id", itemId] : [])];
-    const out = await this.run(args, undefined, JSON.stringify(item));
-    const saved = JSON.parse(out) as { [k: string]: JSONValue };
-    return { id: String(saved.id ?? ""), title: String(saved.title ?? "") };
-  }
 }

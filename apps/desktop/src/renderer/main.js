@@ -895,9 +895,6 @@ const VAULT_TYPES = {
   note: { label: "Secure note", fields: [] },
 };
 
-/** What the listing calls a type, and what this screen calls it. */
-const TYPE_BY_CATEGORY = { LOGIN: "login", CREDIT_CARD: "card", IDENTITY: "identity", SECURE_NOTE: "note" };
-
 function errText(err) {
   return err && err.message ? String(err.message).replace(/^Error: /, "") : String(err);
 }
@@ -905,8 +902,8 @@ function errText(err) {
 /* One saved item, as a card: what it is, and — once opened — every field it
    has, with the secret ones fetched only when asked for. */
 function itemCard(summary, reload) {
-  const type = TYPE_BY_CATEGORY[summary.category] || "login";
-  const context = summary.username || (summary.urls && summary.urls[0]) || "";
+  const type = summary.type || "login";
+  const context = summary.subtitle || (summary.urls && summary.urls[0]) || "";
   const slot = el("div", {});
   const open = el("button", { class: "btn small", text: "Open" });
   open.addEventListener("click", async () => {

@@ -18,6 +18,7 @@ import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { VaultServer } from "./browser/vaultServer.js";
+import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { Executor } from "./executor.js";
@@ -61,6 +62,8 @@ export class DeviceAgent {
   readonly credentialBroker: CredentialBroker | null = null;
   /** The vault this machine runs, when this build ships one. */
   readonly vaultServer: VaultServer | null = null;
+  /** The owner's own way into the vault: no CLI, no port, no session on disk. */
+  readonly vaultClient: VaultClient | null = null;
   private readonly browserHost: BrowserHost | null = null;
   private readonly seenNonces = new Set<string>();
 
@@ -120,6 +123,17 @@ export class DeviceAgent {
           })
         : null;
       this.vaultServer = vault;
+      // What the Vault tab talks to. The broker below stays for the AGENT,
+      // where a release is bound to the page on screen; this is the owner's.
+      this.vaultClient = vault
+        ? new VaultClient({
+            url: vault.url,
+            certPath: vault.certPath,
+            account: () => vault.account,
+            beforeRun: () => vault.start(),
+            auditPath: path.join(browserDir, "credential-audit.log"),
+          })
+        : null;
       // Up with the app, not on first use: the owner has to be able to open
       // the vault's own page whenever Domo is running, not only after an agent
       // happens to ask for a credential.
