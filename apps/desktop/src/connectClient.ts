@@ -291,9 +291,15 @@ export class ConnectClient {
           this.pendingId = 0;
         }
       }
-      // A mint changes the roster, so the list is re-read before the screen is
-      // told anything — the new agent is in the state the caller gets back,
-      // rather than arriving in a second render a round trip later.
+      // The credential goes on screen NOW, before anything else is asked of
+      // Plow. This is the one screen in the app whose whole job is to be
+      // copied from, it is shown exactly once, and the roster read that
+      // follows can take as long as a request takes — holding the mint behind
+      // it is a spinner over the thing the user is waiting to read.
+      this.publish();
+      // The roster gained a row, so it is re-read after. The screen already
+      // has what it needs; the new agent arrives in the render this second
+      // publish drives.
       if (generation === this.generation) await this.refreshRoster({ fresh: true });
       return this.publish();
     })();

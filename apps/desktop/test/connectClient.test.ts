@@ -11,7 +11,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConnectClient, agentConfig, isRosterId } from "../src/connectClient.js";
+import {
+  ConnectClient,
+  ConnectClientState,
+  agentConfig,
+  isRosterId,
+} from "../src/connectClient.js";
 import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
@@ -124,16 +129,20 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
+/** Every state the screen was told to render, in order. */
+let published: ConnectClientState[];
 
 function build(): ConnectClient {
-  return new ConnectClient({
+  const connect: ConnectClient = new ConnectClient({
     api: plow.api(),
     home,
     isConnected: () => connected,
     onChange: () => {
       changes += 1;
+      published.push(connect.state());
     },
   });
+  return connect;
 }
 
 /** Let queued microtasks and the timer queue drain, so an in-flight call has
@@ -154,6 +163,7 @@ beforeEach(() => {
   plow = new FakePlow();
   connected = true;
   changes = 0;
+  published = [];
 });
 
 afterEach(() => {
@@ -261,10 +271,10 @@ describe("the static-credential fallback", () => {
     expect(connect.state().busy).toBe(true);
     await pending;
     expect(connect.state().busy).toBe(false);
-    // Busy on, busy off, and the roster the mint just added a row to: the
-    // screen is notified for each. What matters is that the busy edges are
-    // both published — a mint that only notified at the end is a dead window.
-    expect(changes).toBe(3);
+    // Busy on; the credential; the roster row it added; and the mint's own
+    // closing publish. What matters is that the busy edges are both published
+    // — a mint that only notified at the end is a dead window.
+    expect(changes).toBe(4);
   });
 });
 
@@ -817,5 +827,47 @@ describe("a revoke complaint is its own, and does not outstay its welcome", () =
     expect(state.revokeError).toBeNull();
     expect(state.rosterError).toBeNull();
     expect(state.roster).toEqual([]);
+  });
+});
+
+describe("the credential goes on screen before anything else is asked of Plow", () => {
+  it("does not hold the shown-once credential behind the roster re-read", async () => {
+    // This screen exists to be copied from, and it is shown exactly once. The
+    // list that follows the mint takes as long as a request takes — up to the
+    // API client's whole timeout if Plow is wedged — and every second of that
+    // would be a spinner over the thing the user is waiting to read.
+    signIn();
+    plow.holdList(1);
+    const connect = build();
+    const minting = connect.createCredential("Claude Code");
+    await tick();
+
+    // Readable...
+    const shown = connect.state();
+    expect(shown.credential?.config).toContain(plow.issued[0]);
+    expect(shown.busy).toBe(false);
+    // ...and the screen was TOLD, rather than left to find out later.
+    const told = published.at(-1)!;
+    expect(told.credential?.config).toContain(plow.issued[0]);
+    expect(told.busy).toBe(false);
+    // The roster is still the pre-mint one, which is exactly the point: it is
+    // not what the user is here for, and it is not worth waiting on.
+    expect(told.roster).toEqual([]);
+
+    plow.releaseList(1);
+    const state = await minting;
+    expect(state.roster.map((r) => r.name)).toEqual(["Claude Code"]);
+  });
+
+  it("still shows it when the roster re-read fails outright", async () => {
+    signIn();
+    plow.listFails = new PlowApiError("network", "Couldn't reach Plow.");
+    const connect = build();
+    const state = await connect.createCredential("Claude Code");
+
+    expect(state.credential?.config).toContain(plow.issued[0]);
+    expect(state.rosterError).toBe("Couldn't reach Plow.");
+    // The mint worked; the connect card must not claim otherwise.
+    expect(state.message).toBe("");
   });
 });
