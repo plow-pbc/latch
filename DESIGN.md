@@ -92,9 +92,9 @@ Design points:
 - **Skills are the surviving discovery surface.** `plow_list_skills` names what
   this Mac publishes and `plow_read_skill` fetches the body, so a long operator
   manual (`camoufox-browsing`) costs no manifest tokens until an agent asks.
-- **Streaming:** MCP tool calls are request/response, so `run_command` waits up
-  to `wait_ms` (default 10 s); if the command is still running it returns a
-  `handle` plus output-so-far, and the agent polls `get_output(handle, since)`
+- **Streaming:** MCP tool calls are request/response, so `plow_run_command`
+  waits up to `wait_ms` (default 10 s); if the command is still running it
+  returns a `handle` plus output-so-far, and the agent polls `plow_get_output`
   for incremental bytes. stdout and stderr are merged into one stream.
 - **`goal`:** each mutating tool accepts an optional goal/justification string,
   displayed to the approver. Session-level goals (from the access request or
@@ -104,7 +104,7 @@ Design points:
 
 ## 4. The intent object
 
-Every operation (file read/write, command, blessed tool) becomes one signed
+Every operation (file read/write, command, browser session) becomes one signed
 intent — the single artifact that the approval UI renders, the sandbox is
 derived from, the audit log stores, and the future adversarial reviewer
 evaluates.
@@ -165,10 +165,10 @@ Decisions: **Always allow / Allow once / Deny.**
 
 ## 6. Execution & sandbox
 
-**Minimize what needs sandboxing.** `read_file`, `write_file`, and blessed
-tools execute *in-process* in the device app — trusted code, bounds-checked
-against the approved paths (canonicalized, symlink- and `..`-safe), inherently
-audited. Only `run_command` runs third-party code, and only it gets the cage.
+**Minimize what needs sandboxing.** `plow_read_file` and `plow_write_file`
+execute *in-process* in the device app — trusted code, bounds-checked against
+the approved paths (canonicalized, symlink- and `..`-safe), inherently audited.
+Only `plow_run_command` runs third-party code, and only it gets the cage.
 
 **Seatbelt (`sandbox-exec`) with a generated profile.** The profile is not
 authored by anyone — it is *mechanically derived* from the approved capability
@@ -276,7 +276,7 @@ repo can prove they broke nothing.
   `domo-broker` process, real `domo-device` process, a real MCP client speaking
   JSON-RPC over the agent socket — and drives full scenarios: enrollment →
   discovery → access request → file ops → sandboxed exec → streaming via
-  `get_output` → blessed tools → always-allow rule reuse (asserted via audit
+  `plow_get_output` → always-allow rule reuse (asserted via audit
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,

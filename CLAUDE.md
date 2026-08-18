@@ -24,7 +24,7 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
   tests use fake servers and need no Python).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
-  (revision 2026-07-28): the reduced tool surface (including the `browser_*`
+  (revision 2026-07-28): the reduced tool surface (including the `plow_browser_*`
   tools), capability construction from tool arguments, and the deferred-result
   contract. Binds no port; takes a `Request`, returns a `Response`.
 - `packages/relay-client` (`@domo/relay-client`) — dials the Plow relay, speaks
