@@ -381,7 +381,11 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve .fine {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px; margin-bottom: 14px;
-  flex: 1; overflow: auto;
+  /* A floor nothing above can take. `flex: 1` alone lets a sibling with a tall
+     natural height eat this block's share of a 560pt window, and the capability
+     list is the one thing on this card that must never be the part that
+     scrolled out of view. */
+  flex: 1; min-height: 120px; overflow: auto;
 }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
 .approve .actions { display: flex; gap: 8px; }
