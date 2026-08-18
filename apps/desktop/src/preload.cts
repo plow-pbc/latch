@@ -25,9 +25,6 @@ contextBridge.exposeInMainWorld("domo", {
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
-  vaultGet: () => ipcRenderer.invoke("vault:get"),
-  vaultSet: (email: string, password: string) => ipcRenderer.invoke("vault:set", email, password),
-  vaultOpen: () => ipcRenderer.invoke("vault:open"),
   // The vault's own contents, edited here instead of on its web page.
   vaultItems: () => ipcRenderer.invoke("vault:items"),
   vaultReveal: (itemId: string) => ipcRenderer.invoke("vault:reveal", itemId),

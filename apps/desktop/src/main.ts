@@ -25,8 +25,6 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
-  changeCredentials,
-  readCredentials,
   readCredentialsState,
   resolveBrowserRuntime,
 } from "@domo/device-core";
@@ -545,24 +543,6 @@ ipcMain.handle("settings:setInference", async (_e, provider: string) =>
   setInferenceProvider(home, provider),
 );
 ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
-// The vault's own account: the owner reads it here to sign in on the vault's
-// page, and can replace either half with something of their own choosing.
-ipcMain.handle("vault:get", async () => {
-  const vault = device?.vaultServer;
-  // No vault in this build, or it has not started: genuinely nothing to show.
-  if (!vault) return { status: "empty" };
-  return readCredentialsState(vault.url, vault.dataDir);
-});
-
-// A renderer anchor cannot open a browser from inside Electron, so the main
-// process does it — and only ever for this machine's own vault address.
-ipcMain.handle("vault:open", async () => {
-  const vault = device?.vaultServer;
-  if (!vault) return false;
-  await shell.openExternal(vault.url);
-  return true;
-});
-
 // The vault's contents, for the owner's own eyes and hands. This is the whole
 // point of the tab: the vault's web page is the only other way in, and reaching
 // it means a browser warning about a certificate the app issued to itself.
@@ -593,13 +573,6 @@ ipcMain.handle("vault:saveItem", async (_e, input: {
     urls: input.urls ?? [],
     password: input.password || undefined,
   });
-});
-
-ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
-  const vault = device?.vaultServer;
-  if (!vault) throw new Error("this build has no vault");
-  await changeCredentials(vault.url, vault.dataDir, { email, password }, vault.certPath);
-  return readCredentials(vault.url, vault.dataDir);
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like

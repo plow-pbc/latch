@@ -102,11 +102,6 @@ async function setUp() {
 
   // The Vault tab's IPC surface — the same handlers main.ts registers, over the
   // same broker methods.
-  ipcMain.handle("vault:get", async () => ({
-    url: "https://127.0.0.1:8222",
-    email: "agent@local",
-    password: "vault-password",
-  }));
   ipcMain.handle("vault:items", async () => (await broker.whatsHere()).filter((i) => i.category === "LOGIN"));
   ipcMain.handle("vault:reveal", async (_e, itemId) => broker.revealField(String(itemId), "password"));
   ipcMain.handle("vault:saveItem", async (_e, input) =>
@@ -118,8 +113,6 @@ async function setUp() {
       password: input.password || undefined,
     }),
   );
-  ipcMain.handle("vault:open", async () => true);
-  ipcMain.handle("vault:set", async () => ({ email: "agent@local", password: "vault-password" }));
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("ui:getTab", async () => "vault");
   ipcMain.handle("ui:setTab", async () => {});
@@ -212,6 +205,23 @@ async function settle(win) {
   await new Promise((r) => setTimeout(r, 1500));
 }
 
+/** Wait for the listing to arrive, rather than guessing how long it takes. */
+async function listed(win) {
+  for (let i = 0; i < 40; i++) {
+    const ready = await win.webContents.executeJavaScript(
+      `!!document.querySelector(".item, .empty")`,
+    );
+    if (ready) {
+      // The text is in the DOM one tick before it is painted; a shot taken on
+      // that tick is a blank window with the right innerText.
+      await new Promise((r) => setTimeout(r, 400));
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error("the vault tab never listed anything");
+}
+
 process.on("unhandledRejection", (error) => {
   console.error("SHOT-FAILED:", error);
   app.exit(1);
@@ -235,7 +245,7 @@ app.whenReady().then(async () => {
   let failures = 0;
   for (const screen of SCREENS) {
     await win.loadFile(path.join(dist, "renderer/index.html"));
-    await new Promise((r) => setTimeout(r, 1200)); // the first listing runs the broker
+    await listed(win); // the tab is empty until the broker answers
     await screen.prepare(win);
 
     const out = path.join(outDir, `vault-${screen.name}.png`);

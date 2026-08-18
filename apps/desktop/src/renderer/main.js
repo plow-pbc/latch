@@ -825,6 +825,15 @@ async function refreshUpdateBanner() {
  * hidden: either half can be replaced with something the owner chooses, and the
  * account key is re-wrapped underneath so what is stored stays readable.
  */
+/**
+ * The Vault tab. The logins themselves are read and written here — the vault's
+ * own web page is the only other way in, and reaching it means a browser
+ * warning about a certificate this app issued to itself.
+ *
+ * The vault's own account stays on the screen below them, shown rather than
+ * hidden: either half can be replaced with something the owner chooses, and the
+ * account key is re-wrapped underneath so what is stored stays readable.
+ */
 /** One editable value with a Copy button beside it — never two of the same. */
 function fieldRow(input) {
   const copy = el("button", { class: "btn small", text: "Copy" });
@@ -933,24 +942,24 @@ function loginForm(item, reload, done) {
 }
 
 async function renderVault() {
-  const creds = await window.domo.vaultGet();
-  if (!creds) {
-    view.replaceChildren(el("div", { class: "panel" }, [
-      el("div", { class: "section-label", text: "Your vault" }),
-      el("div", { class: "empty", text: "The vault has not started yet." }),
-    ]));
-    return;
-  }
-
   // The logins themselves, edited here. This is why the tab exists: the only
-  // other way in is the vault's own web page, and reaching that means a
-  // browser warning about the certificate the app issued to itself.
+  // other way in is the vault's own web page, and reaching it means a browser
+  // warning about the certificate the app issued to itself. Nothing about
+  // signing in on that page is on this screen, because nobody goes there.
   let items = null;
   let failure = "";
   try {
     items = await window.domo.vaultItems();
   } catch (err) {
     failure = errText(err);
+  }
+
+  if (items === null && !failure) {
+    view.replaceChildren(el("div", { class: "panel" }, [
+      el("div", { class: "section-label", text: "Your logins" }),
+      el("div", { class: "empty", text: "The vault has not started yet." }),
+    ]));
+    return;
   }
 
   const list = el("div", {});
@@ -966,53 +975,17 @@ async function renderVault() {
 
   if (failure) {
     list.replaceChildren(el("div", { class: "empty", text: "Could not read the vault: " + failure }));
-  } else if (!items || items.length === 0) {
+  } else if (items.length === 0) {
     list.replaceChildren(el("div", { class: "empty", text: "No logins yet." }));
   } else {
     list.replaceChildren(...items.map((i) => loginCard(i, renderVault)));
   }
-
-  // Anchors go nowhere inside Electron; the main process opens the browser.
-  const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });
-  link.addEventListener("click", (e) => {
-    e.preventDefault();
-    window.domo.vaultOpen();
-  });
-
-  const emailInput = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
-  emailInput.value = creds.email;
-  const passwordInput = el("input", { class: "text mono", attrs: { type: "text", spellcheck: "false" } });
-  passwordInput.value = creds.password;
-
-  const note = el("p", { class: "faint", text: "You only need these to sign in on the vault's own page." });
-  const save = el("button", { class: "btn", text: "Save changes" });
-  save.addEventListener("click", async () => {
-    save.disabled = true;
-    note.textContent = "Changing…";
-    try {
-      const updated = await window.domo.vaultSet(emailInput.value.trim(), passwordInput.value);
-      emailInput.value = updated.email;
-      passwordInput.value = updated.password;
-      note.textContent = "Saved. Sign in with these from now on.";
-    } catch (err) {
-      note.textContent = "Could not change it: " + errText(err);
-    }
-    save.disabled = false;
-  });
 
   view.replaceChildren(el("div", { class: "panel" }, [
     el("div", { class: "section-label", text: "Your logins" }),
     el("div", { class: "row" }, [add]),
     newSlot,
     list,
-    el("div", { class: "section-label", text: "Vault account" }),
-    el("div", { class: "item" }, [
-      el("div", { class: "field" }, [el("label", { text: "Address" }), link]),
-      el("div", { class: "field" }, [el("label", { text: "Email" }), fieldRow(emailInput)]),
-      el("div", { class: "field" }, [el("label", { text: "Password" }), fieldRow(passwordInput)]),
-      note,
-      el("div", { class: "row" }, [save]),
-    ]),
   ]));
 }
 
