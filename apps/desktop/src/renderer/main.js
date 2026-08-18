@@ -834,14 +834,28 @@ function fieldRow(input) {
 }
 
 async function renderVault() {
-  const creds = await window.domo.vaultGet();
-  if (!creds) {
+  const state = (await window.domo.vaultGet()) ?? { status: "empty" };
+  if (state.status !== "ok") {
+    // Locked and empty are different facts and get different words. A vault
+    // whose key has moved — a Keychain reset, a Mac restored from backup — used
+    // to render as "has not started yet", which sent people looking for a
+    // server that was running fine.
+    const locked = state.status === "locked";
     view.replaceChildren(el("div", { class: "panel" }, [
       el("div", { class: "section-label", text: "Your vault" }),
-      el("div", { class: "empty", text: "The vault has not started yet." }),
-    ]));
+      el("div", { class: "empty", text: locked
+        ? "This Mac can't unlock its vault account."
+        : "The vault has not started yet." }),
+      locked
+        ? el("p", { class: "faint vault-note", text: state.reason === "no-storage"
+            ? "The account is here, but this build has no secure storage to open it with. It is still safe on disk."
+            : "The account is here and still safe on disk, but the key that opens it is not in this Mac's Keychain — that happens after a Keychain reset or a restore from backup. Signing in again on the vault's own page will re-establish it." }
+          )
+        : null,
+    ].filter(Boolean)));
     return;
   }
+  const creds = state.credentials;
 
   // Anchors go nowhere inside Electron; the main process opens the browser.
   const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });

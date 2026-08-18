@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -25,8 +25,10 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
+  bindVaultKeychainIdentity,
   changeCredentials,
   readCredentials,
+  readCredentialsState,
   resolveBrowserRuntime,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
@@ -541,8 +543,9 @@ ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 // page, and can replace either half with something of their own choosing.
 ipcMain.handle("vault:get", async () => {
   const vault = device?.vaultServer;
-  if (!vault) return null;
-  return readCredentials(vault.url, vault.dataDir);
+  // No vault in this build, or it has not started: genuinely nothing to show.
+  if (!vault) return { status: "empty" };
+  return readCredentialsState(vault.url, vault.dataDir);
 });
 
 // A renderer anchor cannot open a browser from inside Electron, so the main
@@ -731,7 +734,39 @@ async function startRelay(): Promise<void> {
   await relay.start();
 }
 
+/**
+ * Bind `safeStorage` to the vault's frozen Keychain identity.
+ *
+ * ORDER MATTERS: `safeStorage` latches its key at first use and keeps it for
+ * the life of the process, so this has to run before anything reads or writes
+ * the vault account — and before any window exists, so the display name is back
+ * in place by the time the menu is built.
+ *
+ * There is no migration here and there deliberately never was one that shipped:
+ * the identity is frozen to the string every existing vault was already
+ * encrypted under, so the ciphertext on disk just keeps working. Nothing is
+ * copied, rewritten or prompted for.
+ */
+function bindVaultStorage(): void {
+  bindVaultKeychainIdentity(
+    {
+      get name() {
+        return app.name;
+      },
+      setName: (n) => app.setName(n),
+      // One throwaway encrypt is what actually fetches and caches the key;
+      // `isEncryptionAvailable()` is not guaranteed to.
+      latch: () => {
+        if (safeStorage.isEncryptionAvailable()) safeStorage.encryptString("latch");
+      },
+    },
+    instance.vaultIdentity,
+  );
+}
+
 app.whenReady().then(async () => {
+  // Before anything reads or writes the vault account, and before any window.
+  bindVaultStorage();
   // The dialog answers; the store writes down what was asked before it is
   // asked, so a pending approval is a record on disk rather than only a promise
   // in memory. It also bounds the wait: an approval nobody answers expires and

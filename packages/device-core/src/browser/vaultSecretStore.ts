@@ -11,6 +11,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 
+/** Empty, locked, or open — see `readState`. */
+export type VaultSecretState =
+  | { status: "empty" }
+  | { status: "locked"; reason: "no-storage" | "undecryptable" }
+  | { status: "ok"; account: VaultAccount };
+
 export interface VaultAccount {
   email: string;
   password: string;
@@ -39,21 +45,45 @@ export class VaultSecretStore {
     this.file = path.join(dir, "vault-account.enc");
   }
 
-  read(): VaultAccount | null {
-    if (!fs.existsSync(this.file)) return null;
+  /**
+   * What is actually on disk — including the case this used to hide.
+   *
+   * "No account" and "an account we cannot decrypt" are different facts and
+   * must not collapse into one `null`. They did, and the app rendered a locked
+   * vault as "The vault has not started yet." — so a Keychain that had moved
+   * (a rename, a reset, a Mac restored from backup) looked like a machine that
+   * had simply never started its vault, and the real cause was invisible.
+   */
+  readState(): VaultSecretState {
+    if (!fs.existsSync(this.file)) return { status: "empty" };
     const raw = fs.readFileSync(this.file);
     const s = safeStorage();
     try {
       // The marker distinguishes the two shapes, so a machine that gains (or
       // loses) Electron's storage does not silently read garbage.
       if (raw.subarray(0, 4).toString() === "ENC1") {
-        if (!s) return null;
-        return JSON.parse(s.decryptString(raw.subarray(4))) as VaultAccount;
+        // Ciphertext we have no key for. The account exists; we cannot open it.
+        if (!s) return { status: "locked", reason: "no-storage" };
+        return { status: "ok", account: JSON.parse(s.decryptString(raw.subarray(4))) as VaultAccount };
       }
-      return JSON.parse(raw.toString("utf8")) as VaultAccount;
+      return { status: "ok", account: JSON.parse(raw.toString("utf8")) as VaultAccount };
     } catch {
-      return null;
+      // A file that exists and will not decrypt is locked, never empty.
+      return { status: "locked", reason: "undecryptable" };
     }
+  }
+
+  /**
+   * The account, or null when there is not one we can read.
+   *
+   * Kept exactly as it was, because callers depend on the conservative
+   * reading: `ensureVaultAccount` treats null as "no usable account" and then
+   * refuses to mint a second one when the `account-created` marker is present.
+   * Anything wanting to TELL the two apart asks `readState`.
+   */
+  read(): VaultAccount | null {
+    const state = this.readState();
+    return state.status === "ok" ? state.account : null;
   }
 
   write(account: VaultAccount): void {

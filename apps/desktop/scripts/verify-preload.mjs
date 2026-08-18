@@ -95,6 +95,10 @@ ipcMain.handle("updates:get", async () => ({
   dismissed: false,
   upToDate: false,
 }));
+// A vault whose key has moved: the account is on disk and cannot be opened.
+// This is what a Keychain reset, a restore from backup, or an app rename leaves
+// behind, and it must not be reported as an empty vault.
+ipcMain.handle("vault:get", async () => ({ status: "locked", reason: "undecryptable" }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 // No browsing session: the audit screen's live thumbnail stays hidden.
@@ -127,6 +131,39 @@ ipcMain.handle("approval:get", async () => ({
 
 const errors = [];
 
+/**
+ * Wait until the page says the thing is true, instead of guessing how long it
+ * takes. Every fixed sleep that gated an assertion was a flake with a timer on
+ * it: fast enough on a warm Mac, not on a loaded CI runner, and silently
+ * asserting on a half-rendered pane when it lost. `capturePage()` still gets
+ * its explicit frame waits — those are about paint, not state, and a poll
+ * cannot see paint.
+ */
+async function waitFor(target, expr, label, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let ok = false;
+    try {
+      ok = await target.webContents.executeJavaScript(`!!(${expr})`);
+    } catch {
+      ok = false; // the page is mid-navigation; try again
+    }
+    if (ok) return;
+    if (Date.now() >= deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** The same idea for a condition in this process rather than the page. */
+async function waitForNode(predicate, label, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (predicate()) return;
+    if (Date.now() >= deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 function offscreen() {
   const win = new BrowserWindow({
     show: false,
@@ -150,8 +187,8 @@ function offscreen() {
 app.whenReady().then(async () => {
   const win = offscreen();
   await win.loadFile(path.join(dist, "renderer/index.html"));
-  // Give the async render() a tick.
-  await new Promise((r) => setTimeout(r, 400));
+  await waitFor(win, `window.domo && document.getElementById("view")?.childElementCount > 0`,
+    "the main window to boot its bridge and render a pane");
   const main = await win.webContents.executeJavaScript(`(${() => {
     return {
       hasBridge: typeof window.domo === "object" && window.domo !== null,
@@ -166,7 +203,8 @@ app.whenReady().then(async () => {
   // the credential is minted by first-run login and the API origin is baked into
   // the build.
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `document.querySelector(".panel.settings") && document.querySelectorAll(".chip").length > 0`,
+    "the Settings pane and its provider chips");
   const settings = await win.webContents.executeJavaScript(`(${() => {
     const chip = (label) =>
       [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === label);
@@ -223,7 +261,8 @@ app.whenReady().then(async () => {
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `[...document.querySelectorAll("input")].some((i) => i.type === "password")`,
+    "the Settings pane's API-key field");
   const modeBeforeTyping = loadSettings(probeHome).approvalMode;
   // Clear the field the way someone does before pasting a replacement: `input`
   // fires, `change` does not (no blur, no Enter). Nothing is committed, so
@@ -234,6 +273,8 @@ app.whenReady().then(async () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     return true;
   })()`);
+  // No condition to poll for: the assertion is that nothing was written. A
+  // settle window is the only way to give a write the chance to happen.
   await new Promise((r) => setTimeout(r, 300));
   const afterTransientInput = loadSettings(probeHome);
   const transientInput = {
@@ -247,14 +288,16 @@ app.whenReady().then(async () => {
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "", inferenceProvider: "anthropic" });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Plow account" && c.classList.contains("disabled"))`,
+    "the Plow provider chip to go disabled while signed out");
   const plowDisabledWhileSignedOut = await win.webContents.executeJavaScript(`(() => {
     const plow = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Plow account");
     return !!plow && plow.classList.contains("disabled");
   })()`);
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_now_signed_in" });
   win.webContents.send("status:changed");
-  await new Promise((r) => setTimeout(r, 500));
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Plow account" && !c.classList.contains("disabled"))`,
+    "the open Settings pane to re-read the account and re-enable Plow");
   const staleSettingsPane = {
     disabledWhileSignedOut: plowDisabledWhileSignedOut,
     enabledAfterStatusChanged: await win.webContents.executeJavaScript(`(() => {
@@ -275,7 +318,8 @@ app.whenReady().then(async () => {
     input.dataset.probeMark = "original-node";
     return true;
   })()`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `document.querySelector('input[data-probe-mark="original-node"]')`,
+    "the marked key field to be the one on screen");
 
   let releaseRelay = () => {};
   relayGate = new Promise((r) => {
@@ -298,7 +342,8 @@ app.whenReady().then(async () => {
   })()`);
   releaseRelay();
   relayGate = null;
-  await new Promise((r) => setTimeout(r, 500));
+  await waitFor(win, `document.querySelector(".account")?.textContent.includes("u_mid_flight")`,
+    "the parked refresh to finish and redraw the account rows");
 
   const midFlight = await win.webContents.executeJavaScript(`(() => {
     const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
@@ -314,7 +359,8 @@ app.whenReady().then(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   })()`);
-  await new Promise((r) => setTimeout(r, 400));
+  await waitForNode(() => loadSettings(probeHome).anthropicApiKey === "sk-ant-typed-mid-refresh",
+    "the mid-refresh keystroke to be committed to settings.json");
   const raceDuringRefresh = {
     ...midFlight,
     // The keystroke that arrived mid-refresh is what got committed.
@@ -335,7 +381,8 @@ app.whenReady().then(async () => {
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && !c.classList.contains("disabled"))`,
+    "the Adversarial chip to render enabled");
   // The credential goes AFTER the pane rendered, with no notification — so the
   // chip is still enabled and the renderer still believes it can select this.
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
@@ -344,7 +391,8 @@ app.whenReady().then(async () => {
     chip.click();
     return true;
   })()`);
-  await new Promise((r) => setTimeout(r, 400));
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && !c.classList.contains("active"))`,
+    "the pane to follow main's refusal of Adversarial");
   const optimisticMode = {
     storedIsAsk: loadSettings(probeHome).approvalMode === "ask",
     // What the pane claims, after main said no.
@@ -364,7 +412,8 @@ app.whenReady().then(async () => {
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_probe_credential" });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `document.querySelector(".settings .item > .group-title")?.textContent.trim() === "Plow Account"`,
+    "Settings to remount with Plow Account first");
   const settingsPane = await win.webContents.executeJavaScript(`(${() => {
     const titles = [...document.querySelectorAll(".settings .item > .group-title")].map((t) =>
       t.textContent.trim(),
@@ -386,7 +435,8 @@ app.whenReady().then(async () => {
   }})()`);
 
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `document.querySelector("#view .panel.agents .connect .client-card")`,
+    "the Agents pane and its client card");
   const connect = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     const tabs = [...document.querySelectorAll("#seg button")].map((b) => b.dataset.tab);
@@ -431,7 +481,8 @@ app.whenReady().then(async () => {
     link.click();
     return true;
   })()`);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(win, `document.querySelector(".modal-backdrop .modal input.text")`,
+    "the static-credential modal and its name field");
   const agentsOpen = await win.webContents.executeJavaScript(`(${() => {
     const modal = document.querySelector(".modal-backdrop .modal");
     return {
@@ -452,6 +503,27 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(agentsOpenShot, (await win.webContents.capturePage()).toPNG());
 
+  // The vault's honest failure state: locked is not empty, and the screen has to
+  // say so — the old copy sent people to debug a server that was running fine.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
+  await waitFor(win, `document.querySelector("#view .empty")`, "the vault pane to render");
+  const vaultLocked = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    return {
+      saysCannotUnlock: text.includes("can't unlock its vault account"),
+      doesNotClaimEmpty: !text.includes("has not started yet"),
+      explains: text.includes("still safe on disk"),
+      offersRecovery: text.includes("Signing in again"),
+    };
+  }})()`);
+  const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(vaultShot, (await win.webContents.capturePage()).toPNG());
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane to come back");
+
   // Esc is a courtesy the FORM gets. (The credential state refuses it, but this
   // probe has no minted credential to test that with — `connect:get` is stubbed
   // with `credential: null` — so this covers the safe half only.)
@@ -459,7 +531,7 @@ app.whenReady().then(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return true;
   })()`);
-  await new Promise((r) => setTimeout(r, 250));
+  await waitFor(win, `!document.querySelector(".modal-backdrop")`, "the modal to close on Esc");
   const modalClosed = await win.webContents.executeJavaScript(`(${() => ({
     gone: !document.querySelector(".modal-backdrop"),
     paneLive: document.querySelector("#view")?.hasAttribute("inert") === false,
@@ -484,7 +556,8 @@ app.whenReady().then(async () => {
   );
 
   await approvalWin.loadFile(path.join(dist, "renderer/approval.html"));
-  await new Promise((r) => setTimeout(r, 400));
+  await waitFor(approvalWin, `document.body.innerText.includes("Probe Agent")`,
+    "the approval window to render its view model");
   const approval = await approvalWin.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     return {
@@ -523,6 +596,10 @@ app.whenReady().then(async () => {
     agentsOpen.noInlineForm &&
     agentsOpen.paneInert &&
     agentsOpen.focusInModal &&
+    vaultLocked.saysCannotUnlock &&
+    vaultLocked.doesNotClaimEmpty &&
+    vaultLocked.explains &&
+    vaultLocked.offersRecovery &&
     modalClosed.gone &&
     modalClosed.paneLive &&
     modalClosed.focusBackOnTrigger &&
@@ -572,7 +649,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, agentsOpen, modalClosed, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });
