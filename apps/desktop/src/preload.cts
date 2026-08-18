@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld("domo", {
   inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
   inferenceSet: (provider: string) => ipcRenderer.invoke("settings:setInference", provider),
   statusGet: () => ipcRenderer.invoke("status:get"),
+  // macOS permission ceilings (today just Full Disk Access). Read-only: the
+  // grant itself happens in System Settings, via openExternal("fullDiskSettings").
+  capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
