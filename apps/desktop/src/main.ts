@@ -780,6 +780,11 @@ app.whenReady().then(async () => {
     approvals,
     resolveBrowserRuntime(process.resourcesPath),
   );
+  // Same tick as the store's construction (see onAbandoned): an approval that
+  // was pending when the app last quit gets closed out in the audit log too,
+  // not only in the approvals directory.
+  approvals.onAbandoned = (record) =>
+    device?.audit.record("approval_abandoned", { intentId: record.intentId });
   // Say, once, whether this Mac can open its vault account. It is the one fact
   // about the vault that a log is good at: no secret, no noise, and it turns
   // "the vault screen looks wrong" into a one-line answer. `locked` means the

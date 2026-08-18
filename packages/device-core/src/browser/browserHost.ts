@@ -70,6 +70,10 @@ export class BrowserHost {
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
 
+  /** Set by the session layer: fires when a ready browser dies unexpectedly,
+   * so the session over it can be closed out rather than left open forever. */
+  onCrash?: () => void;
+
   /** Window mode of the current (or next) browser — a session may switch it. */
   private headedNow: boolean;
 
@@ -277,6 +281,7 @@ export class BrowserHost {
         this.pending.clear();
         if (wasReady && !this.shuttingDown) {
           this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
+          this.onCrash?.();
         }
         if (!ready) {
           ready = true; // don't double-settle

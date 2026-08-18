@@ -79,6 +79,25 @@ describe("audit grouping for browser sessions", () => {
     expect(filled.text).toContain("L1");
     expect(filled.text).not.toContain("password: "); // never a value
   });
+
+  it("a session ended by a crash reads as Crashed, not Closed or Browsing", () => {
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      { event: "browser_session_closed", session: "S", reason: "crashed", ts: "2026-08-10T10:00:05Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Crashed");
+    expect(acts[0]!.tone).toBe("red");
+    expect(acts[0]!.category).toBe("failed");
+  });
+
+  it("a session-scoped metadata read stays with its session, not a row of its own", () => {
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      { event: "credential_metadata", session: "S", op: "list", ts: "2026-08-10T10:00:01Z" },
+    ]);
+    expect(acts).toHaveLength(1);
+    expect(acts[0]!.status).toBe("Browsing"); // the vault-read "Completed" is for sessionless reads
+  });
 });
 
 describe("a failed credential fill is visible to the owner", () => {

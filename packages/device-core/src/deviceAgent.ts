@@ -175,6 +175,7 @@ export class DeviceAgent {
       });
       this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
+      this.browserHost.onCrash = () => this.browserSessions?.noteCrash();
     }
   }
 
@@ -369,6 +370,23 @@ export class DeviceAgent {
           intentId: intent.intentId,
           exit_code: result.exitCode ?? -1,
         });
+      } else {
+        // A deferred run's end is recorded when it actually ends, keyed to the
+        // intent — never from the polling path, which may run many times or
+        // not at all.
+        this.executor.onExit(result.handle, (exitCode) => {
+          // Fires from the child's exit event, possibly mid-shutdown; a failed
+          // append must not become an uncaught exception in the event loop.
+          try {
+            this.audit.record("exec_end", {
+              intentId: intent.intentId,
+              handle: result.handle,
+              exit_code: exitCode,
+            });
+          } catch {
+            /* the home is already gone */
+          }
+        });
       }
       const response: { [k: string]: JSONValue } = {
         status: result.running ? "running" : "completed",
@@ -446,9 +464,6 @@ export class DeviceAgent {
 
   getOutput(handle: string, since = 0): JSONValue {
     const result = this.executor.output(handle, since);
-    if (!result.running && result.exitCode !== null) {
-      this.audit.record("exec_end", { handle, exit_code: result.exitCode });
-    }
     const response: { [k: string]: JSONValue } = {
       status: result.running ? "running" : "completed",
       output: result.output.toString("utf8"),
