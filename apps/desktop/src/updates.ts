@@ -200,7 +200,11 @@ export class UpdateController {
 
   /** A human asked — runs even with auto-check off. */
   checkNow(): void {
-    if (this.current.phase === "checking" || this.current.phase === "downloading") return;
+    // "ready" is busy too: a check that fails (e.g. offline) would transition
+    // to error and throw away the staged update's restart controls, even
+    // though the download is still on disk. Restart first, then check.
+    if (this.current.phase === "checking" || this.current.phase === "downloading" || this.current.phase === "ready")
+      return;
     this.check();
   }
 
@@ -221,10 +225,9 @@ export class UpdateController {
   private tick(): void {
     if (!this.opts.autoCheckEnabled()) return;
     // A staged or in-flight download keeps quietly waiting; don't churn the
-    // feed under it. (A manual check still can — it may find something even
-    // newer.) A stale "checking" does NOT block the tick: if a check's outcome
-    // event were ever lost, refusing to re-check would kill the cadence
-    // forever, and re-checking is harmless.
+    // feed under it. A stale "checking" does NOT block the tick: if a check's
+    // outcome event were ever lost, refusing to re-check would kill the
+    // cadence forever, and re-checking is harmless.
     if (this.current.phase === "downloading" || this.current.phase === "ready") return;
     this.check();
   }
