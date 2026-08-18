@@ -28,6 +28,10 @@ jobs:
   macOS:
     runs-on: macos-26
     timeout-minutes: 90
+    # Serialize builds: the version stamp (`just package`) has minute
+    # resolution, so two overlapping runs could mint the same version, overwrite
+    # each other's S3 prefix, and race to push the same tag.
+    concurrency: domo-release-candidate
 
     steps:
       - uses: actions/checkout@v4
