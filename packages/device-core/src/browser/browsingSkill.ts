@@ -10,9 +10,10 @@ export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
-    "owner's local credentials (their vault) without ever seeing the secret values. Use for " +
-    "any task that requires visiting, reading, or acting on real websites: finding " +
-    "information, comparing prices, filling forms, logging in, buying things.",
+    "owner's local credentials (their vault) without ever seeing the secret values. Use when " +
+    "the task needs the OWNER'S browser rather than any browser: signing in as them, filling " +
+    "forms, buying things, or reading a page only their session can see. General web reading " +
+    "belongs in your own tools, which are faster at it.",
   body: `# Browsing on this Mac
 
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:
@@ -22,7 +23,7 @@ secret values are typed into pages on the Mac and are NEVER shown to you.
 
 ## Sessions and scope
 
-- \`browser_open {device, origins: ["dominos.com", "*.dominos.com"], credentials_metadata: true, goal}\`
+- \`browser_open {origins: ["dominos.com", "*.dominos.com"], credentials_metadata: true, goal}\`
   asks the owner to approve a browsing session bound to those site origins. List every
   domain you expect up front — the apex and the wildcard are separate entries.
 - The window is **visible by default** — the owner watches what is done with their
@@ -39,7 +40,7 @@ secret values are typed into pages on the Mac and are NEVER shown to you.
 
 ## Acting: always screenshot first
 
-\`browser {device, session, action, ...}\` — actions:
+\`browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
 url, title, links, forms, tables, pages.
 

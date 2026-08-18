@@ -13,8 +13,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DeviceAgent, HeadlessPolicy } from "@domo/device-core";
-import { createDomoMcpServer, DomoMcpServer, SERVER_INSTRUCTIONS } from "@domo/mcp-server";
+import { BROWSING_SKILL, DeviceAgent, HeadlessPolicy } from "@domo/device-core";
+import {
+  createDomoMcpServer,
+  DomoMcpServer,
+  SERVER_INSTRUCTIONS,
+  TOOLS,
+} from "@domo/mcp-server";
 import { parse, rpc } from "./client.js";
 
 const cleanups: (() => void)[] = [];
@@ -115,5 +120,41 @@ describe("the goal field says a human reads it", () => {
     // Goal text is display-only and never influences a decision path, so the
     // copy must not imply that explaining well earns anything.
     expect(goal?.description).not.toMatch(/more likely|grant|permission|access/i);
+  });
+});
+
+describe("the browsing skill agrees with the tools it documents", () => {
+  /** Property names an example object literal in the skill body passes. */
+  function exampleProps(tool: string): string[] {
+    const match = new RegExp(`\\b${tool} \\{([^}]*)\\}`).exec(BROWSING_SKILL.body);
+    expect(match, `no ${tool} example in the skill body`).not.toBeNull();
+    return match![1]
+      .replace(/"[^"]*"/g, "") // drop string contents: they hold dots and commas
+      .split(",")
+      .map((part) => part.split(":")[0].replace(/[^a-z_]/g, ""))
+      .filter((name) => name.length > 0 && name !== "true" && name !== "false");
+  }
+
+  // `device` survived in both examples long after the broker that needed it was
+  // removed, and every tool schema is additionalProperties:false — so an agent
+  // following the guide verbatim got a validation error on its first call. The
+  // guide is only worth publishing if the calls in it actually run.
+  for (const tool of ["browser_open", "browser"]) {
+    it(`${tool}'s example passes only properties the schema declares`, () => {
+      const schema = TOOLS.find((t) => t.name === tool)!.inputSchema as {
+        properties: Record<string, unknown>;
+      };
+      const declared = Object.keys(schema.properties);
+      for (const prop of exampleProps(tool)) expect(declared).toContain(prop);
+    });
+  }
+
+  // The skill and the server instructions are read by the same model in the
+  // same breath; when they disagreed about who does general web reading, the
+  // agent resolved it arbitrarily — the exact inconsistency this work exists to
+  // remove.
+  it("the skill description does not claim general web reading", () => {
+    expect(BROWSING_SKILL.description).toMatch(/general web reading belongs in your own tools/i);
+    expect(BROWSING_SKILL.description).not.toMatch(/any task that requires visiting/i);
   });
 });

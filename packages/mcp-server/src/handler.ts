@@ -48,6 +48,14 @@ export const PROTOCOL_REVISION = "2026-07-28";
  * anywhere told an agent what to DO about a pending handle: not to go quiet,
  * and not to re-issue the call — which asks the human a second time.
  *
+ * The approval sentence ENUMERATES rather than generalising, and that is not
+ * style. It said "the user approves anything that touches their machine",
+ * which is false: `vault` list/describe is non-deferrable, builds no intent,
+ * and reads the vault's inventory (titles, usernames, sites — never a value)
+ * with no human in the loop. Whether that carve-out should exist is a product
+ * question; describing it accurately is not. An instructions block that
+ * overstates the guarantee is worse than one that says less.
+ *
  * This is guidance to a model, never a capability claim. Nothing here widens
  * what a tool may do; the enforceable bound is the capability set the human
  * approves.
@@ -56,7 +64,7 @@ export const SERVER_INSTRUCTIONS = `These tools act on the user's own Mac — th
 
 Use these tools whenever the task is about THIS USER's computer, accounts, or data: a file that exists on their machine, something that must run there, or a site they need to be signed in to as themselves. Use your own tools for scratch work, for code you are writing, and for general web reading.
 
-The user approves anything that touches their machine. A call may return a pending handle instead of a result — that means a request is on their screen and nobody has answered yet. Tell the user you are waiting for them, then poll get_result. Do not re-issue the original call; that asks them a second time.`;
+The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result — that means a request is on their screen and nobody has answered yet. Tell the user you are waiting for them, then poll get_result. Do not re-issue the original call; that asks them a second time.`;
 
 /**
  * The agent identity the relay asserts on each request frame (design §3.4).
