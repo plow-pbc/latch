@@ -44,6 +44,25 @@ function icon(kind) {
   return svg;
 }
 
+/** The Discord mark. Built apart from `icon()`: that helper draws stroked
+    line art, and this is a filled silhouette. */
+function discordIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 127.14 96.36");
+  svg.setAttribute("class", "discord-ico");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", "M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z");
+  svg.appendChild(p);
+  return svg;
+}
+
+/** The shared globe line art at the Support row's size. */
+function globeIcon() {
+  const svg = icon("browser");
+  svg.setAttribute("class", "ico support-globe");
+  return svg;
+}
+
 function badge(tone, text) {
   return el("span", { class: `badge b-${tone}` }, [el("span", { class: "dot" }), el("span", { text })]);
 }
@@ -423,7 +442,7 @@ function copyRow(value, label) {
  * browser — the place the URL above gets pasted.
  *
  * A card exists only for a client whose link lands the user where they paste;
- * see `CLIENT_CONNECTOR_URLS` in main.ts. It is a shortcut past the clicks, not
+ * see `EXTERNAL_URLS` in main.ts. It is a shortcut past the clicks, not
  * the supported-client list — the group's subtitle names the others.
  *
  * From the designer's mock, minus the brand logo: an approximated or borrowed
@@ -435,7 +454,7 @@ function clientCard(key, name) {
     el("span", { class: "client-name", text: name }),
     el("span", { class: "client-arrow", text: "↗" }),
   ]);
-  card.addEventListener("click", () => window.domo.connectOpenClient(key));
+  card.addEventListener("click", () => window.domo.openExternal(key));
   return card;
 }
 
@@ -921,6 +940,22 @@ async function renderSettings() {
     el("span", { text: "Install downloaded updates when quitting Plow" }),
   ]);
 
+  // One Support destination: icon, title + blurb, and a button that asks main
+  // to open the URL behind `key` — the renderer never holds the URL itself.
+  const supportRow = (iconNode, title, desc, buttonLabel, key) => {
+    const open = el("button", { class: "btn", text: buttonLabel });
+    open.addEventListener("click", () => window.domo.openExternal(key));
+    return el("div", { class: "support-row" }, [
+      iconNode,
+      el("div", { class: "support-copy" }, [
+        el("div", { class: "support-title", text: title }),
+        el("p", { class: "faint", text: desc }),
+      ]),
+      el("div", { class: "spacer" }),
+      open,
+    ]);
+  };
+
   // Anthropic API key — one of the two ways to power the adversarial agent.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
@@ -1067,6 +1102,22 @@ async function renderSettings() {
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
       autoCheckLabel,
       autoInstallLabel,
+    ]),
+    group("Support", null, [
+      supportRow(
+        discordIcon(),
+        "Join our Discord",
+        "Get help, share feedback, and hear about updates — our community and team are here.",
+        "Join Discord",
+        "discord",
+      ),
+      supportRow(
+        globeIcon(),
+        "See Us Build",
+        "Watch the livestream to watch us build the Plow app in public.",
+        "Watch Livestream",
+        "website",
+      ),
     ]),
   ]));
 }
