@@ -773,9 +773,11 @@ describe("a revoke complaint is its own, and does not outstay its welcome", () =
     expect(state.roster.map((r) => r.id)).toEqual([8]);
   });
 
-  it("goes when the list is read again successfully", async () => {
-    // The screen has just been redrawn from the truth. A complaint about a row
-    // that may no longer be there is worse than no complaint at all.
+  it("survives a list that lands, which is what happens a round trip later", async () => {
+    // Reads are triggered by the renderer asking for the state, and a failed
+    // revoke is one of the things that makes it ask. Clearing on a successful
+    // list would therefore erase the message almost as soon as it was written
+    // — the user would see the row still there and nothing saying why.
     signIn();
     plow.keys = [keyRow({ id: 7 })];
     const connect = build();
@@ -785,8 +787,8 @@ describe("a revoke complaint is its own, and does not outstay its welcome", () =
     expect(connect.state().revokeError).toBe("Couldn't reach Plow.");
 
     const state = await connect.refreshRoster({ fresh: true });
-    expect(state.revokeError).toBeNull();
-    expect(changes).toBeGreaterThan(0);
+    expect(state.rosterError).toBeNull();
+    expect(state.revokeError).toBe("Couldn't reach Plow.");
   });
 
   it("survives a list that fails, because nothing has replaced what it said", async () => {

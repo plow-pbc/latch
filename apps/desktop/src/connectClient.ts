@@ -106,7 +106,8 @@ export class ConnectClient {
   private roster: AgentRosterRow[] = [];
   private rosterError: string | null = null;
   /** A REVOKE failure only — nothing writes both this and `rosterError`.
-   * Cleared by a revoke that works, a list that works, and sign-out. */
+   * Cleared by the NEXT revoke attempt and by sign-out, and by nothing else:
+   * see `setRoster` for why a list landing must not take it away. */
   private revokeError: string | null = null;
   /** The list in flight, if any. A second *reader* joins it — see `refreshRoster`. */
   private rosterPending: Promise<ConnectClientState> | null = null;
@@ -344,16 +345,15 @@ export class ConnectClient {
 
   /** Publish only if the screen would look different — see `refreshRoster`. */
   private setRoster(rows: AgentRosterRow[], error: string | null): ConnectClientState {
-    // A list that came back is the screen being redrawn from the truth, so a
-    // revoke complaint from before it does not survive the redraw.
-    const revokeError = error === null ? null : this.revokeError;
+    // `revokeError` is deliberately untouched, including when the list comes
+    // back clean. Reads here are triggered by the renderer asking for the
+    // state, and a failed revoke makes it ask — so clearing on a successful
+    // list would wipe the message one round trip after it was written, before
+    // anyone had read it. It goes when the user tries again, or signs out.
     const same =
-      this.rosterError === error &&
-      this.revokeError === revokeError &&
-      JSON.stringify(this.roster) === JSON.stringify(rows);
+      this.rosterError === error && JSON.stringify(this.roster) === JSON.stringify(rows);
     this.roster = rows;
     this.rosterError = error;
-    this.revokeError = revokeError;
     return same ? this.state() : this.publish();
   }
 
