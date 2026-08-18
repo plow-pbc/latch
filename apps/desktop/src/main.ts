@@ -33,6 +33,7 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
+import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -601,6 +602,18 @@ ipcMain.handle("status:get", async () => ({
 ipcMain.handle("capabilities:get", async () => ({
   fullDiskAccess: await probeFullDiskAccess(),
 }));
+
+// Launch at Login. macOS owns the bit and loginItem.ts owns the rules (fresh
+// OS read per get, packaged-only writes); this is only the seam that hands it
+// the real Electron API.
+const loginItems: LoginItemApi = {
+  get: () => app.getLoginItemSettings(),
+  set: (settings) => app.setLoginItemSettings(settings),
+};
+ipcMain.handle("launch:get", async () => launchAtLoginState(app.isPackaged, loginItems));
+ipcMain.handle("launch:set", async (_e, on: boolean) =>
+  setLaunchAtLogin(app.isPackaged, loginItems, on),
+);
 
 // MARK: IPC for software updates (banner + Software Updates settings section).
 // One whole-state shape per read, renderer-side composition-free. In a
