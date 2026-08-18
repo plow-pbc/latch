@@ -33,7 +33,14 @@ function armActions(buttons, focusTarget) {
     clearTimeout(mouseTimer);
     clearTimeout(keyTimer);
     mouseTimer = setTimeout(() => setEnabled(true), arming.remainingMs("mouse"));
-    keyTimer = setTimeout(() => focusTarget.focus(), arming.remainingMs("key"));
+    // The default focus must YIELD: buttons are Tab-focusable from the moment
+    // they enable, and stealing focus from a button the human already chose
+    // (Deny, say) would aim their next armed Return at Allow Once instead —
+    // the exact accident this file exists to prevent. Renderer-only wiring no
+    // vitest case can pin, so don't "simplify" the guard away.
+    keyTimer = setTimeout(() => {
+      if (!buttons.includes(document.activeElement)) focusTarget.focus();
+    }, arming.remainingMs("key"));
   };
   window.addEventListener("focus", rearm);
   window.addEventListener("blur", () => {
