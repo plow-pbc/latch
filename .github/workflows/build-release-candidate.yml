@@ -11,7 +11,12 @@ run-name: Manual build — ${{ github.ref_name }}@${{ github.sha }}
 # verified against a stand-in, so releases are cut deliberately, not on a timer.
 #
 # Setup this workflow assumes (shared with Plow's release pipeline):
-#   - repo secret OP_SERVICE_ACCOUNT_TOKEN for the 1Password service account
+#   - a "release" environment with required reviewers, a deployment policy of
+#     main + v*-build.* tags, and the OP_SERVICE_ACCOUNT_TOKEN secret for the
+#     1Password service account — the environment is what stops a dispatch
+#     against an arbitrary branch from reaching the secret, since a branch
+#     controls its own copy of this file (the ref guard below only fails
+#     honest mistakes early)
 #   - the "GitHub Actions Release Secrets" 1Password item (same cert + notary
 #     credentials — both apps sign as The Plow Collective, 3559PD337Z)
 #   - AWS_RELEASE_ROLE_ARN's OIDC trust policy extended to THIS repository,
@@ -26,6 +31,10 @@ permissions:
 
 jobs:
   macOS:
+    # Releases are cut from main only. GitHub enforces this via the release
+    # environment's deployment branch policy; this guard just says so sooner.
+    if: ${{ github.ref == 'refs/heads/main' }}
+    environment: release
     runs-on: macos-26
     timeout-minutes: 90
     # Serialize builds: the version stamp (`just package`) has minute

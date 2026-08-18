@@ -1094,6 +1094,11 @@ async function renderSettings() {
       applyUpdates();
     },
   };
+  // Re-read updater state now that refreshUpdates is installed: a transition
+  // arriving during the awaits above found settingsMounted unset and was
+  // dropped — and a missed final transition (say, update-downloaded) would
+  // otherwise leave this pane stale with no later event to correct it.
+  await settingsMounted.refreshUpdates();
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
     group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [

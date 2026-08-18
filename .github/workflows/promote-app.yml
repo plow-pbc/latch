@@ -18,6 +18,12 @@ jobs:
     # Only app release tags (v<version>-build.<build>) — ignore anything else.
     # A cheap skip filter; the parse step below enforces the full grammar.
     if: ${{ startsWith(github.event.release.tag_name, 'v') && contains(github.event.release.tag_name, '-build.') }}
+    # OP_SERVICE_ACCOUNT_TOKEN lives in the release environment (not repo
+    # secrets), so a workflow outside the environment's gates can't read it.
+    # Cost: publishing the draft ALSO needs an environment-reviewer approval
+    # on this run — a second click, and defense-in-depth against tag-shaped
+    # attacks (the workflow file itself runs from the tagged commit).
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # Promotions write shared stable keys (DMG + checksum + feed); interleaved
