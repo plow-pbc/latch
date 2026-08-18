@@ -65,14 +65,15 @@ describe("audit grouping for browser sessions", () => {
 
   it("collapses one session into one activity (plus the opening intent's)", () => {
     const activities = auditActivities(events);
-    // The opened event carries an intentId so it groups as the intent activity;
-    // everything else shares the browser:S activity.
+    // The opened event carries both ids, so it opens the intent activity AND
+    // the browser:S activity, which the rest of the session's events share.
     const browser = activities.find((a) => a.id === "browser:S")!;
     expect(browser).toBeDefined();
     expect(browser.kind).toBe("browser");
     expect(browser.title).toContain("dominos.com/menu");
     expect(browser.status).toContain("scope blocks");
-    expect(browser.timeline.length).toBe(5);
+    expect(browser.timeline.length).toBe(6);
+    expect(browser.timeline[0]!.text).toContain("Browser session opened");
     const violation = browser.timeline.find((s) => s.text.includes("paypal.com"))!;
     expect(violation.state).toBe("bad");
     const filled = browser.timeline.find((s) => s.text.includes("Credential typed"))!;

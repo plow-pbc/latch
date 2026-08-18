@@ -208,14 +208,20 @@ describe("auditActivities (grouping)", () => {
     );
   });
 
-  it("a browser_open intent row shows its decision, not a forever-'Browsing' state", () => {
+  it("a browser_open intent shows its decision; the session row is live from the open", () => {
     const acts = auditActivities([
       { event: "intent_received", intentId: "i1", request: "open browser: dominos.com", ts: "2026-08-18T12:00:00Z" },
       { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
       { event: "browser_session_opened", intentId: "i1", session: "S", origins: ["dominos.com"], ts: "2026-08-18T12:00:02Z" },
     ]);
-    expect(acts[0]!.status).toBe("Allowed once");
-    expect(acts[0]!.tone).toBe("green");
+    // The open event belongs to both stories: the intent row says how it was
+    // decided, and browser:S exists — Browsing — before any command runs.
+    const intent = acts.find((a) => a.id === "intent:i1")!;
+    expect(intent.status).toBe("Allowed once");
+    expect(intent.tone).toBe("green");
+    const session = acts.find((a) => a.id === "browser:S")!;
+    expect(session.status).toBe("Browsing");
+    expect(session.tone).toBe("green");
   });
 
   it("a handle-only exec_end from an old log shows its exit, not Pending", () => {

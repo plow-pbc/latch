@@ -163,7 +163,13 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
       continue;
     const intentId = ev.get("intentId").str;
     const session = ev.get("session").str;
-    if (intentId !== null) {
+    if (event === "browser_session_opened" && intentId !== null && session !== null) {
+      // The open belongs to both stories: the intent row says how the session
+      // was decided, and the session row must exist — and say "Browsing" —
+      // from the moment the browser opens, not from its first command.
+      push(`intent:${intentId}`, e);
+      push(`browser:${session}`, e);
+    } else if (intentId !== null) {
       push(`intent:${intentId}`, e);
     } else if (session !== null) {
       // One activity per browser session, not one per command.
@@ -203,7 +209,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
   };
 
   const title = activityTitle(events, has, value);
-  const { status, tone } = activityStatus(events, has, entry);
+  const { status, tone, category } = classifyActivity(events, has, entry);
   return {
     id,
     time: dayTime(jv(events[0]).get("ts").str ?? ""),
@@ -211,7 +217,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     status,
     title,
     kind: activityKind(events, has, value),
-    category: activityCategory(has, entry),
+    category,
     command: activityCommand(entry, value),
     agentId:
       value("intent_received", "agent") ??
@@ -262,22 +268,33 @@ function activityTitle(
   return jv(events[0]).get("event").str ?? "Activity";
 }
 
-/** Combined status of the whole operation (decision + outcome), color-coded. */
-function activityStatus(
+/**
+ * Combined status of the whole operation (decision + outcome), color-coded,
+ * plus the coarse filter bucket — one tree, so the badge and the chip cannot
+ * drift apart. The buckets:
+ *   - denied:   refused at the approval gate (a person, device, or deadline)
+ *   - failed:   ran but didn't cleanly succeed — sandbox-blocked, errored,
+ *               crashed, or a non-zero exit
+ *   - approved: permitted and completed cleanly
+ *   - other:    pending / spawned / live / uncategorized
+ */
+function classifyActivity(
   events: JSONValue[],
   has: (e: string) => boolean,
   entry: (e: string) => JSONValue | null,
-): { status: string; tone: BadgeTone } {
-  if (entry("intent_rejected")) return { status: "Rejected", tone: "red" };
+): { status: string; tone: BadgeTone; category: string } {
+  if (entry("intent_rejected")) return { status: "Rejected", tone: "red", category: "denied" };
   if (has("access_request") || has("access_decision")) {
     const d = entry("access_decision");
     if (d) {
       const ok = jv(d).get("approved").bool ?? false;
-      return ok ? { status: "Granted", tone: "green" } : { status: "Denied", tone: "red" };
+      return ok
+        ? { status: "Granted", tone: "green", category: "approved" }
+        : { status: "Denied", tone: "red", category: "denied" };
     }
-    return { status: "Pending", tone: "zinc" };
+    return { status: "Pending", tone: "zinc", category: "other" };
   }
-  if (has("agent_spawned")) return { status: "Spawned", tone: "blue" };
+  if (has("agent_spawned")) return { status: "Spawned", tone: "blue", category: "other" };
   // The decision outranks any browser events riding in the intent's group: a
   // browser_open/browser_request row says how it was decided, and the live
   // browsing state belongs to the session's own activity.
@@ -287,40 +304,48 @@ function activityStatus(
     if (decision === "deny") {
       // The deadline denying is a timeout, not a refusal (approvalStore.ts) —
       // the audit must not dress it up as one.
-      if (jv(dec).get("source").str === "expired") return { status: "Timed out", tone: "amber" };
-      return { status: "Denied", tone: "red" };
+      if (jv(dec).get("source").str === "expired") {
+        return { status: "Timed out", tone: "amber", category: "denied" };
+      }
+      return { status: "Denied", tone: "red", category: "denied" };
     }
     const base = decision === "always_allow" ? "Always allowed" : "Allowed once";
     // Failures/blocks keep their suffix; plain successes show just the base
     // (no "· done"/"· finished").
-    if (entry("denied_operation")) return { status: `${base} · blocked`, tone: "red" };
-    if (has("exec_error") || has("tool_error")) return { status: `${base} · error`, tone: "red" };
+    if (entry("denied_operation")) {
+      return { status: `${base} · blocked`, tone: "red", category: "failed" };
+    }
+    if (has("exec_error") || has("tool_error")) {
+      return { status: `${base} · error`, tone: "red", category: "failed" };
+    }
     const ee = entry("exec_end");
     if (ee) {
       const code = jv(ee).get("exit_code").int ?? -1;
-      if (code !== 0) return { status: `${base} · failed (exit ${code})`, tone: "amber" };
+      if (code !== 0) {
+        return { status: `${base} · failed (exit ${code})`, tone: "amber", category: "failed" };
+      }
     }
-    return { status: base, tone: "green" };
+    return { status: base, tone: "green", category: "approved" };
   }
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
     if (has("credential_fill_failed")) {
       return has("browser_session_closed")
-        ? { status: "Closed · fill failed", tone: "amber" }
-        : { status: "Fill failed", tone: "amber" };
+        ? { status: "Closed · fill failed", tone: "amber", category: "failed" }
+        : { status: "Fill failed", tone: "amber", category: "failed" };
     }
     if (has("credential_denied") || has("browser_scope_violation")) {
       return has("browser_session_closed")
-        ? { status: "Closed · scope blocks", tone: "amber" }
-        : { status: "Scope blocked", tone: "amber" };
+        ? { status: "Closed · scope blocks", tone: "amber", category: "other" }
+        : { status: "Scope blocked", tone: "amber", category: "other" };
     }
     if (has("browser_session_closed")) {
       const closed = entry("browser_session_closed")!;
       return jv(closed).get("reason").str === "crashed"
-        ? { status: "Crashed", tone: "red" }
-        : { status: "Closed", tone: "zinc" };
+        ? { status: "Crashed", tone: "red", category: "failed" }
+        : { status: "Closed", tone: "zinc", category: "other" };
     }
-    if (has("browser_crashed")) return { status: "Crashed", tone: "red" };
-    return { status: "Browsing", tone: "green" };
+    if (has("browser_crashed")) return { status: "Crashed", tone: "red", category: "failed" };
+    return { status: "Browsing", tone: "green", category: "other" };
   }
   // A vault metadata read carries no intent and no session, so it stands
   // alone — and it is recorded only after the broker answered, so by the time
@@ -328,23 +353,23 @@ function activityStatus(
   // this event is handled with its browser session above.)
   const vaultRead = entry("credential_metadata");
   if (vaultRead && jv(vaultRead).get("session").str === null) {
-    return { status: "Completed", tone: "green" };
+    return { status: "Completed", tone: "green", category: "approved" };
   }
-  if (entry("denied_operation")) return { status: "Blocked", tone: "red" };
+  if (entry("denied_operation")) return { status: "Blocked", tone: "red", category: "failed" };
   // A handle-only exec_end from an old log: a deferred run's end recorded
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");
   if (ee) {
     const code = jv(ee).get("exit_code").int ?? -1;
     return code === 0
-      ? { status: "Finished", tone: "green" }
-      : { status: `Failed (exit ${code})`, tone: "amber" };
+      ? { status: "Finished", tone: "green", category: "approved" }
+      : { status: `Failed (exit ${code})`, tone: "amber", category: "failed" };
   }
-  if (has("approval_abandoned")) return { status: "Not answered", tone: "zinc" };
+  if (has("approval_abandoned")) return { status: "Not answered", tone: "zinc", category: "other" };
   // Only an undecided intent is genuinely pending; anything else unrecognized
   // is a record, not an operation in flight.
-  if (has("intent_received")) return { status: "Pending", tone: "zinc" };
-  return { status: "Info", tone: "zinc" };
+  if (has("intent_received")) return { status: "Pending", tone: "zinc", category: "other" };
+  return { status: "Info", tone: "zinc", category: "other" };
 }
 
 function activityKind(
@@ -373,46 +398,6 @@ function activityKind(
     return "file";
   }
   return "command";
-}
-
-/**
- * Coarse filter bucket, derived from the events (not the status string):
- *   - denied:   refused at the approval gate (a person/device said no)
- *   - failed:   ran but didn't cleanly succeed — sandbox-blocked, errored, or a
- *               non-zero exit (this absorbs the old "blocked" bucket)
- *   - approved: permitted and completed cleanly
- *   - other:    pending / spawned / uncategorized
- */
-function activityCategory(
-  has: (e: string) => boolean,
-  entry: (e: string) => JSONValue | null,
-): string {
-  if (entry("intent_rejected")) return "denied";
-  if (has("access_request") || has("access_decision")) {
-    const d = entry("access_decision");
-    if (d) return jv(d).get("approved").bool ? "approved" : "denied";
-    return "other"; // pending
-  }
-  const dec = entry("intent_decision");
-  if (dec) {
-    if (jv(dec).get("decision").str === "deny") return "denied";
-    if (entry("denied_operation")) return "failed"; // sandbox/scope block
-    if (has("exec_error") || has("tool_error")) return "failed";
-    const ee = entry("exec_end");
-    if (ee && (jv(ee).get("exit_code").int ?? 0) !== 0) return "failed";
-    return "approved";
-  }
-  if (has("credential_fill_failed") || entry("denied_operation")) return "failed";
-  if (has("browser_crashed")) return "failed";
-  const closed = entry("browser_session_closed");
-  if (closed && jv(closed).get("reason").str === "crashed") return "failed";
-  // A standalone vault metadata read (see activityStatus) completed cleanly.
-  const vaultRead = entry("credential_metadata");
-  if (vaultRead && jv(vaultRead).get("session").str === null) return "approved";
-  // A handle-only exec_end from an old log: bucket by how the run exited.
-  const ee = entry("exec_end");
-  if (ee) return (jv(ee).get("exit_code").int ?? -1) === 0 ? "approved" : "failed";
-  return "other";
 }
 
 function activityCommand(
@@ -518,8 +503,6 @@ function describeStep(e: JSONValue): AuditStep {
       text = `Credential refused: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} — ${ev.get("reason").str ?? ""}`;
       state = "bad";
       break;
-    case "browser_started": text = "Browser launched"; break;
-    case "browser_stopped": text = "Browser stopped"; break;
     case "browser_crashed": text = "Browser crashed"; state = "bad"; break;
     default: text = event;
   }

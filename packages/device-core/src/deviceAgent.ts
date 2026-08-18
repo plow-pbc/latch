@@ -383,8 +383,10 @@ export class DeviceAgent {
               handle: result.handle,
               exit_code: exitCode,
             });
-          } catch {
-            /* the home is already gone */
+          } catch (error) {
+            // Nowhere durable left to write it — the durable sink is what
+            // failed — but the loss should at least be visible in a terminal.
+            console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
           }
         });
       }
