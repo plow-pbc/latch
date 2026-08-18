@@ -27,7 +27,8 @@ contextBridge.exposeInMainWorld("domo", {
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
   // The vault's own contents, edited here instead of on its web page.
   vaultItems: () => ipcRenderer.invoke("vault:items"),
-  vaultReveal: (itemId: string) => ipcRenderer.invoke("vault:reveal", itemId),
+  vaultItem: (itemId: string) => ipcRenderer.invoke("vault:item", itemId),
+  vaultReveal: (itemId: string, field: string) => ipcRenderer.invoke("vault:reveal", itemId, field),
   vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),

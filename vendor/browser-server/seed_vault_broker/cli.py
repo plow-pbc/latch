@@ -42,6 +42,7 @@ _CMD_STATUS = "status"
 _CMD_WHATS_HERE = "whats-here"
 _CMD_DESCRIBE = "describe-item"
 _CMD_SAVE_ITEM = "save-item"
+_CMD_READ_ITEM = "read-item"
 _AUDIT_PATH = os.environ.get(
     "SEED_VAULT_AUDIT", os.path.expanduser("~/.local/state/vault-broker/audit.log")
 )
@@ -70,7 +71,28 @@ _CARD_FIELDS = {
 _ALLOWED_FIELDS = frozenset(
     {_FIELD_PASSWORD, _FIELD_TOTP, _FIELD_USERNAME, _FIELD_EMAIL, _FIELD_LOGIN, _FIELD_USER}
     | set(_CARD_FIELDS)
+  # identity fields are checked against the item itself
 )
+
+# The four item types this vault models and can be written through the vault
+# tool. (The vault's own enum reserves 5-8; its CLI has no template for any of
+# them, so nothing here can create one.)
+_TYPE_BY_NAME = {"login": 1, "note": 2, "card": 3, "identity": 4}
+_NAME_BY_TYPE = {v: k for k, v in _TYPE_BY_NAME.items()}
+
+_CARD_KEYS = ("cardholderName", "brand", "number", "expMonth", "expYear", "code")
+_IDENTITY_KEYS = (
+    "title", "firstName", "middleName", "lastName", "company",
+    "address1", "address2", "address3", "city", "state", "postalCode", "country",
+    "email", "phone", "ssn", "username", "passportNumber", "licenseNumber",
+)
+# Values that are never handed back with the item itself. They are readable one
+# at a time through get-field, which audits every release.
+_SECRET_KEYS = {
+    1: ("password", "totp"),
+    3: ("number", "code"),
+    4: ("ssn",),
+}
 
 _MAX_ENTRIES = 50
 
@@ -572,6 +594,10 @@ def _field_labels(item: dict) -> list[str]:
                        ("cardholderName", "cardholder name")):
         if card.get(key):
             labels.append(label)
+    identity = raw.get("identity") or {}
+    for key in _IDENTITY_KEYS:
+        if identity.get(key):
+            labels.append(key)
     for field in raw.get("fields") or []:
         name = field.get("name")
         if name and name not in labels and (field.get("value") is not None or field.get("type") == 1):
@@ -591,6 +617,9 @@ def _read_field(item: dict, field: str) -> str | None:
     card_key = _CARD_FIELDS.get(field)
     if card_key:
         value = (raw.get("card") or {}).get(card_key)
+        return str(value) if value not in (None, "") else None
+    if field in _IDENTITY_KEYS:
+        value = (raw.get("identity") or {}).get(field)
         return str(value) if value not in (None, "") else None
     if field == "notes":
         return raw.get("notes") or None
@@ -766,42 +795,86 @@ def _checked_urls(urls: list[str]) -> list[str]:
     return urls
 
 
-def _cmd_save_item(args: argparse.Namespace) -> int:
-    """Create a login, or change one that is already there.
+def _item_body(item_type: int, raw: dict) -> dict:
+    """The part of a vault item that belongs to its type, for merging."""
+    if item_type == 1:
+        return dict(raw.get("login") or {})
+    if item_type == 3:
+        return dict(raw.get("card") or {})
+    if item_type == 4:
+        return dict(raw.get("identity") or {})
+    return dict(raw.get("secureNote") or {"type": 0})
 
-    The password is read from stdin, never from argv: everything on a command
-    line is readable by every process on this machine. On an edit, empty stdin
-    means "leave the password alone".
+
+def _apply(item_type: int, raw: dict, given: dict) -> dict:
+    """Fold what the app sent onto the item, leaving anything it omitted alone.
+
+    Omitted and empty are different on purpose: a key that is not there keeps
+    what the vault holds (this is what makes "edit without retyping the
+    password" work), and a key sent empty clears that field.
     """
-    password = sys.stdin.read().rstrip("\n") if args.password_stdin else ""
+    body = _item_body(item_type, raw)
+    if "name" in given:
+        raw["name"] = given["name"]
+    if "notes" in given:
+        raw["notes"] = given["notes"] or None
+
+    if item_type == 1:
+        for key in ("username", "password", "totp"):
+            if key in given:
+                body[key] = given[key] or None
+        # A login with no site is one the fill path can never match, so the
+        # check lives here, at the one place items are written.
+        if "urls" in given or not raw.get("id"):
+            body["uris"] = [{"match": None, "uri": u} for u in _checked_urls(given.get("urls") or [])]
+    elif item_type == 3:
+        for key in _CARD_KEYS:
+            if key in given:
+                body[key] = given[key] or None
+    elif item_type == 4:
+        for key in _IDENTITY_KEYS:
+            if key in given:
+                body[key] = given[key] or None
+    else:
+        body = {"type": 0}  # the note itself is `notes`; a note has no body of its own
+
+    raw["type"] = item_type
+    raw[{1: "login", 2: "secureNote", 3: "card", 4: "identity"}[item_type]] = body
+    return raw
+
+
+def _cmd_save_item(args: argparse.Namespace) -> int:
+    """Create an item of any of the four types, or change one already there.
+
+    The whole item arrives as JSON on stdin, never in argv: half the fields
+    (password, card number, security code, SSN) are secrets, and everything on
+    a command line is readable by every process on this machine.
+    """
+    try:
+        given = json.loads(sys.stdin.read() or "{}")
+        if not isinstance(given, dict):
+            raise ValueError("expected an object")
+    except ValueError as exc:
+        return _emit_error(_ERR_INVALID_ARG, "could not read the item from stdin: %s" % exc)
+
     try:
         if args.item_id:
             raw = dict(_get_item(args.item_id).get("_raw") or {})
-            login = dict(raw.get("login") or {})
-            if args.title:
-                raw["name"] = args.title
-            if args.username is not None:
-                login["username"] = args.username or None
-            if password:
-                login["password"] = password
-            if args.url:
-                login["uris"] = [{"match": None, "uri": u} for u in _checked_urls(args.url)]
-            raw["login"] = login
+            item_type = raw.get("type") or _TYPE_BY_NAME.get(str(given.get("type", "")), 1)
             verb = ["edit", "item", args.item_id]
         else:
-            if not args.title:
-                raise _VaultToolError(_ERR_INVALID_ARG, "a new login needs a title")
-            if not password:
-                raise _VaultToolError(_ERR_INVALID_ARG, "a new login needs a password on stdin")
-            raw = {
-                "type": 1, "name": args.title, "notes": None, "favorite": False,
-                "login": {
-                    "username": args.username or None, "password": password, "totp": None,
-                    "uris": [{"match": None, "uri": u} for u in _checked_urls(args.url)],
-                },
-            }
+            name = str(given.get("type", "login"))
+            if name not in _TYPE_BY_NAME:
+                raise _VaultToolError(
+                    _ERR_INVALID_ARG,
+                    "unknown item type %r; this vault holds: %s" % (name, ", ".join(_TYPE_BY_NAME)),
+                )
+            item_type = _TYPE_BY_NAME[name]
+            if not given.get("name"):
+                raise _VaultToolError(_ERR_INVALID_ARG, "a new item needs a name")
+            raw = {"name": given["name"], "notes": None, "favorite": False}
             verb = ["create", "item"]
-        rc, stdout, stderr = _run_vault(verb, _encoded(raw))
+        rc, stdout, stderr = _run_vault(verb, _encoded(_apply(item_type, raw, given)))
     except _VaultToolError as exc:
         return _emit_error(exc.type_name, exc.message)
     if rc != 0:
@@ -812,9 +885,41 @@ def _cmd_save_item(args: argparse.Namespace) -> int:
     except json.JSONDecodeError as exc:
         return _emit_error(_ERR_VAULT_ERROR, "the vault did not say what it saved: %s" % exc)
     _sync()  # or the item just written is invisible to the next listing
-    _audit(saved.get("id", ""), "(item)", ", ".join(args.url) or "-",
+    _audit(saved.get("id", ""), "(item)", ", ".join(given.get("urls") or []) or "-",
            "UPDATED" if args.item_id else "CREATED")
     sys.stdout.write(json.dumps({"id": saved.get("id", ""), "title": saved.get("name", "")}) + "\n")
+    return 0
+
+
+def _cmd_read_item(args: argparse.Namespace) -> int:
+    """One whole item, with its secret values replaced by null.
+
+    This is what an edit form is filled from: everything the owner needs to see
+    to change an item, and none of the values that are the reason the vault
+    exists. Those come one at a time from get-field, which audits each release.
+    """
+    try:
+        item = _get_item(args.item_id)
+    except _VaultToolError as exc:
+        return _emit_error(exc.type_name, exc.message)
+    raw = item.get("_raw") or {}
+    item_type = raw.get("type") or 1
+    body = _item_body(item_type, raw)
+    for key in _SECRET_KEYS.get(item_type, ()):  # present, but never the value
+        if body.get(key) not in (None, ""):
+            body[key] = None
+    out = {
+        "id": item.get("id", ""),
+        "name": raw.get("name", ""),
+        "type": _NAME_BY_TYPE.get(item_type, "login"),
+        "notes": raw.get("notes") or "",
+        "urls": [u["href"] for u in _urls_for(item)],
+        "fields": {k: v for k, v in body.items() if k != "uris"},
+        "secrets": [k for k in _SECRET_KEYS.get(item_type, ())
+                    if (_item_body(item_type, raw).get(k) not in (None, ""))],
+    }
+    _audit(args.item_id, "(item)", "-", "READ")
+    sys.stdout.write(json.dumps(out) + "\n")
     return 0
 
 
@@ -940,27 +1045,39 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_save = sub.add_parser(
         _CMD_SAVE_ITEM,
-        help="Create a Login item, or change one that already exists.",
+        help="Create a vault item of any type, or change one that already exists.",
         description=(
-            "Write a Login item. Without --item-id a new one is created; with it, only "
-            "the parts given are changed. The password is read from stdin (pass "
-            "--password-stdin) so it never appears in argv. Every URL is checked: an "
-            "item with no usable site could never be filled, and is refused here."
+            "Write one item. The item itself is JSON on STDIN, never argv, because "
+            "half of what it carries is secret: {type: login|card|identity|note, "
+            "name, notes, urls: [...], and the type's own fields}. Without --item-id "
+            "a new item is created; with it, only the keys present are changed and "
+            "everything else is left as the vault holds it. A login is refused "
+            "without a usable site URL: it could never be filled."
         ),
         epilog=(
             "Example:\n"
-            "  printf %s \"$PASS\" | seed-vault-broker save-item --title GitHub \\\n"
-            "      --username me@example.com --url https://github.com --password-stdin"
+            '  echo \'{"type":"login","name":"GitHub","username":"me","password":"s3cret",'
+            '"urls":["https://github.com"]}\' | seed-vault-broker save-item'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_save.add_argument("--item-id", default=None, help="Existing item to change. Omit to create one.")
-    p_save.add_argument("--title", default=None, help="Item title. Required when creating.")
-    p_save.add_argument("--username", default=None, help="Username stored on the login.")
-    p_save.add_argument("--url", action="append", default=[], help="Site URL. Repeatable. At least one when creating.")
-    p_save.add_argument("--password-stdin", action="store_true",
-                        help="Read the password from stdin. Required when creating; on an edit, empty means unchanged.")
     p_save.set_defaults(func=_cmd_save_item)
+
+    p_read = sub.add_parser(
+        _CMD_READ_ITEM,
+        help="Read one whole item, with its secret values replaced by null.",
+        description=(
+            "Everything an edit form needs — name, type, notes, urls and the type's "
+            "own fields — with password, TOTP, card number, security code and SSN "
+            "returned as null and listed under `secrets`. Those values are read one "
+            "at a time with get-field, which audits each release."
+        ),
+        epilog="Example:\n  seed-vault-broker read-item --item-id abc123",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_read.add_argument("--item-id", required=True, help="Vault item id.")
+    p_read.set_defaults(func=_cmd_read_item)
 
     p_status = sub.add_parser(
         _CMD_STATUS,

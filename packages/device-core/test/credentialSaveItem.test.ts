@@ -39,27 +39,32 @@ function echoBroker(): string {
   return file;
 }
 
-describe("saving a login", () => {
-  it("puts the password on stdin, never in argv", async () => {
+describe("saving an item", () => {
+  it("puts the whole item on stdin, never in argv", async () => {
     const broker = new CredentialBroker({ command: ["node", echoBroker()] });
     const seen = await broker.saveItem({
-      title: "GitHub",
+      type: "login",
+      name: "GitHub",
       username: "me@example.com",
       urls: ["https://github.com"],
       password: "hunter2",
     });
-    expect(seen.id).toBe(
-      "save-item --title GitHub --username me@example.com --url https://github.com --password-stdin",
-    );
+    expect(seen.id).toBe("save-item");
     expect(seen.id).not.toContain("hunter2");
-    expect(seen.title).toBe("hunter2");
+    expect(JSON.parse(seen.title)).toEqual({
+      type: "login",
+      name: "GitHub",
+      username: "me@example.com",
+      urls: ["https://github.com"],
+      password: "hunter2",
+    });
   });
 
-  it("leaves the password alone on an edit that does not set one", async () => {
+  it("names the item to change in argv, and nothing else", async () => {
     const broker = new CredentialBroker({ command: ["node", echoBroker()] });
-    const seen = await broker.saveItem({ itemId: "abc", title: "GitHub" });
-    expect(seen.id).toBe("save-item --item-id abc --title GitHub");
-    expect(seen.id).not.toContain("--password-stdin");
+    const seen = await broker.saveItem({ itemId: "abc", name: "GitHub" });
+    expect(seen.id).toBe("save-item --item-id abc");
+    expect(JSON.parse(seen.title)).toEqual({ name: "GitHub" });
   });
 });
 
@@ -92,14 +97,14 @@ function fakeVaultTool(outPath: string): string {
 const havePython = fs.existsSync(path.join(sitePackages, "tldextract"));
 
 describe.skipIf(!havePython)("what the broker actually writes to the vault", () => {
-  function saveItem(args: string[], password: string): { stdout: string; item: unknown } {
+  function saveItem(args: string[], item: unknown): { stdout: string; item: unknown } {
     const outPath = path.join(tmp("domo-item-"), "item.json");
     const stdout = execFileSync(
       "python3",
       ["-m", "seed_vault_broker", "save-item", ...args],
       {
         cwd: brokerDir,
-        input: password,
+        input: JSON.stringify(item),
         encoding: "utf8",
         env: {
           ...process.env,
@@ -121,10 +126,13 @@ describe.skipIf(!havePython)("what the broker actually writes to the vault", () 
   }
 
   it("stores the site, so the login can be filled later", () => {
-    const { stdout, item } = saveItem(
-      ["--title", "GitHub", "--username", "me@example.com", "--url", "https://github.com", "--password-stdin"],
-      "hunter2",
-    );
+    const { stdout, item } = saveItem([], {
+      type: "login",
+      name: "GitHub",
+      username: "me@example.com",
+      password: "hunter2",
+      urls: ["https://github.com"],
+    });
     expect(JSON.parse(stdout)).toEqual({ id: "item-1", title: "GitHub" });
     expect(item).toMatchObject({
       type: 1,
@@ -138,8 +146,31 @@ describe.skipIf(!havePython)("what the broker actually writes to the vault", () 
   });
 
   it("refuses a login with no site at all", () => {
-    expect(() => saveItem(["--title", "Nowhere", "--password-stdin"], "hunter2")).toThrow(
+    expect(() => saveItem([], { type: "login", name: "Nowhere", password: "hunter2" })).toThrow(
       /at least one site URL/,
     );
+  });
+
+  it("writes a card as a card, with its own fields and no site", () => {
+    const { stdout, item } = saveItem([], {
+      type: "card",
+      name: "Amex",
+      cardholderName: "Daniel Delattre",
+      number: "371449635398431",
+      expMonth: "04",
+      expYear: "2030",
+      code: "1234",
+    });
+    expect(JSON.parse(stdout)).toEqual({ id: "item-1", title: "Amex" });
+    expect(item).toMatchObject({
+      type: 3,
+      name: "Amex",
+      card: { cardholderName: "Daniel Delattre", number: "371449635398431", code: "1234" },
+    });
+  });
+
+  it("writes a secure note, whose body is the note itself", () => {
+    const { item } = saveItem([], { type: "note", name: "Wifi", notes: "the password is on the router" });
+    expect(item).toMatchObject({ type: 2, name: "Wifi", notes: "the password is on the router" });
   });
 });

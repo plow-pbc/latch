@@ -37,6 +37,31 @@ export interface CredentialBrokerConfig {
   beforeRun?: () => Promise<void>;
 }
 
+/** The four types this vault models. */
+export type VaultItemType = "login" | "card" | "identity" | "note";
+
+/** One item as the app edits it: no secret value ever sits in here. */
+export interface VaultItem {
+  id: string;
+  name: string;
+  type: VaultItemType;
+  notes: string;
+  urls: string[];
+  /** The type's own fields, secret ones present but null. */
+  fields: Record<string, string | null>;
+  /** Which of those fields hold a secret worth revealing. */
+  secrets: string[];
+}
+
+/** What the app sends to write an item. Omitted keys are left as they are. */
+export interface VaultItemInput {
+  type?: VaultItemType;
+  name?: string;
+  notes?: string;
+  urls?: string[];
+  [field: string]: string | string[] | undefined;
+}
+
 export interface CredentialItemSummary {
   id: string;
   title: string;
@@ -159,24 +184,26 @@ export class CredentialBroker {
   }
 
   /**
-   * Create a login, or change one that is already there. Omit `password` on an
-   * edit to leave it as it was. The broker refuses a login with no usable site,
-   * because a login the fill path can never match is not worth storing.
+   * One whole item, with its secret values null — what an edit form is filled
+   * from. The values behind `secrets` are read one at a time with revealField.
    */
-  async saveItem(input: {
-    itemId?: string;
-    title?: string;
-    username?: string;
-    urls?: string[];
-    password?: string;
-  }): Promise<{ id: string; title: string }> {
-    const args = ["save-item"];
-    if (input.itemId) args.push("--item-id", input.itemId);
-    if (input.title !== undefined) args.push("--title", input.title);
-    if (input.username !== undefined) args.push("--username", input.username);
-    for (const url of input.urls ?? []) args.push("--url", url);
-    if (input.password) args.push("--password-stdin");
-    const out = await this.run(args, undefined, input.password ?? "");
+  async readItem(itemId: string): Promise<VaultItem> {
+    const out = await this.run(["read-item", "--item-id", itemId]);
+    return JSON.parse(out) as VaultItem;
+  }
+
+  /**
+   * Create an item of any type the vault models, or change one already there.
+   * The whole item goes in on stdin: half of what it carries (password, card
+   * number, security code, SSN) is secret, and argv is world-readable.
+   *
+   * Only the keys present are written; anything omitted keeps what the vault
+   * holds, which is what lets an edit leave a password alone.
+   */
+  async saveItem(input: VaultItemInput & { itemId?: string }): Promise<{ id: string; title: string }> {
+    const { itemId, ...item } = input;
+    const args = ["save-item", ...(itemId ? ["--item-id", itemId] : [])];
+    const out = await this.run(args, undefined, JSON.stringify(item));
     const saved = JSON.parse(out) as { [k: string]: JSONValue };
     return { id: String(saved.id ?? ""), title: String(saved.title ?? "") };
   }

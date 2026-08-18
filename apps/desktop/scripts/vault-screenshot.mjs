@@ -80,6 +80,12 @@ fs.writeFileSync(
       type: 1,
       login: { username: "daniel@plow.co", password: "already-stored", uris: [{ uri: "https://www.producthunt.com" }] },
     },
+    {
+      id: "item-2",
+      name: "Amex",
+      type: 3,
+      card: { cardholderName: "Daniel Delattre", brand: "amex", number: "371449635398431", expMonth: "04", expYear: "2030", code: "1234" },
+    },
   ]),
 );
 
@@ -102,17 +108,10 @@ async function setUp() {
 
   // The Vault tab's IPC surface — the same handlers main.ts registers, over the
   // same broker methods.
-  ipcMain.handle("vault:items", async () => (await broker.whatsHere()).filter((i) => i.category === "LOGIN"));
-  ipcMain.handle("vault:reveal", async (_e, itemId) => broker.revealField(String(itemId), "password"));
-  ipcMain.handle("vault:saveItem", async (_e, input) =>
-    broker.saveItem({
-      itemId: input.itemId || undefined,
-      title: input.title,
-      username: input.username,
-      urls: input.urls ?? [],
-      password: input.password || undefined,
-    }),
-  );
+  ipcMain.handle("vault:items", async () => broker.whatsHere());
+  ipcMain.handle("vault:item", async (_e, itemId) => broker.readItem(String(itemId)));
+  ipcMain.handle("vault:reveal", async (_e, itemId, field) => broker.revealField(String(itemId), String(field)));
+  ipcMain.handle("vault:saveItem", async (_e, input) => broker.saveItem(input));
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("ui:getTab", async () => "vault");
   ipcMain.handle("ui:setTab", async () => {});
@@ -136,37 +135,58 @@ const SCREENS = [
     name: "list",
     prepare: async () => {},
     // The heading is uppercased by the stylesheet, so that is how it reads back.
-    expect: ["YOUR LOGINS", "New login", "Product Hunt", "daniel@plow.co", "https://www.producthunt.com"],
+    expect: ["YOUR SECRETS", "New", "Product Hunt", "Login", "Amex", "Card"],
   },
   {
-    name: "reveal",
+    name: "types",
+    prepare: async (win) => clickText(win, "New"),
+    // Every type the vault models is offered, not only logins.
+    expect: ["What are you saving?", "Login", "Card", "Identity", "Secure note"],
+  },
+  {
+    name: "card-form",
     prepare: async (win) => {
-      await clickText(win, "Show password");
+      await clickText(win, "New");
+      await clickText(win, "Card");
+    },
+    expect: ["Item name", "Cardholder name", "Brand", "Number", "Expiry month", "Expiry year", "Security code", "Add card"],
+  },
+  {
+    name: "identity-form",
+    prepare: async (win) => {
+      await clickText(win, "New");
+      await clickText(win, "Identity");
+    },
+    expect: ["First name", "Last name", "Address 1", "Postal code", "SSN", "Passport number", "Licence number"],
+  },
+  {
+    name: "open-login",
+    prepare: async (win) => {
+      await clickText(win, "Open");
+      await settle(win);
+      await clickText(win, "Show");
       await settle(win);
     },
-    // The password is on screen because the owner asked for it — that is the
-    // whole decision this screen carries.
-    expect: ["already-stored", "Hide password"],
-  },
-  {
-    name: "new-form",
-    prepare: async (win) => clickText(win, "New login"),
-    expect: ["Title", "Username", "Site URL", "Password", "Add login", "site URL is what lets the agent fill"],
+    // Opened, and the stored password fetched because the owner asked for it.
+    // The value lands in a field, so it is checked as a value, not as page text.
+    expect: ["Site URL", "TOTP secret", "Shown"],
+    expectValues: ["already-stored"],
   },
   {
     name: "added",
     prepare: async (win) => {
-      await clickText(win, "New login");
-      await type(win, "Title", "GitHub");
+      await clickText(win, "New");
+      await clickText(win, "Login");
+      await type(win, "Item name", "GitHub");
       await type(win, "Username", "daniel@plow.co");
       await type(win, "Site URL", "https://github.com");
       await type(win, "Password", "a-new-password");
       await clickText(win, "Add login");
       await settle(win);
     },
-    // The login was written through the broker and read back from the vault —
-    // no browser page anywhere in that loop.
-    expect: ["GitHub", "https://github.com", "Product Hunt"],
+    // Written through the broker and read back from the vault — no browser page
+    // anywhere in that loop.
+    expect: ["GitHub", "Product Hunt", "Amex"],
   },
 ];
 
@@ -190,7 +210,7 @@ async function type(win, label, text) {
   const found = await win.webContents.executeJavaScript(`
     (() => {
       const field = [...document.querySelectorAll(".field")]
-        .find((f) => f.querySelector("label")?.textContent === ${JSON.stringify(label)});
+        .find((f) => (f.querySelector("label")?.textContent || "").replace(" (optional)", "") === ${JSON.stringify(label)});
       const el = field?.querySelector("input");
       if (!el) return false;
       el.value = ${JSON.stringify(text)};
@@ -252,7 +272,13 @@ app.whenReady().then(async () => {
     fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
 
     const text = await win.webContents.executeJavaScript("document.body.innerText");
-    const missing = screen.expect.filter((needle) => !text.includes(needle));
+    const values = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll("input, textarea")].map((f) => f.value).join("\\n")`,
+    );
+    const missing = [
+      ...screen.expect.filter((needle) => !text.includes(needle)),
+      ...(screen.expectValues ?? []).filter((needle) => !values.includes(needle)),
+    ];
     if (missing.length) failures += 1;
     console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing }));
   }

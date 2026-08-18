@@ -845,81 +845,174 @@ function fieldRow(input) {
   return el("div", { class: "copyrow" }, [input, copy]);
 }
 
-/* One login, as a card: what it is, and the two things you can do to it —
-   see the password, or change it. The password is fetched only when asked
-   for, so a listing never carries one. */
-function loginCard(item, reload) {
-  const note = el("p", { class: "faint", text: item.urls.join("  ") || "No site — this one can never be filled." });
-  const secret = el("div", { class: "mono", text: "" });
-  const show = el("button", { class: "btn small", text: "Show password" });
-  show.addEventListener("click", async () => {
-    if (secret.textContent) {           // second click hides it again
-      secret.textContent = "";
-      show.textContent = "Show password";
-      return;
-    }
-    show.disabled = true;
-    try {
-      secret.textContent = await window.domo.vaultReveal(item.id);
-      show.textContent = "Hide password";
-    } catch (err) {
-      secret.textContent = "Could not read it: " + errText(err);
-    }
-    show.disabled = false;
-  });
+/* The four types this vault models, and the fields each one carries. The order
+   here is the order on screen; `secret` means the value is never in a listing
+   and is fetched only when the owner asks for it. */
+const VAULT_TYPES = {
+  login: {
+    label: "Login",
+    fields: [
+      { key: "username", label: "Username" },
+      { key: "password", label: "Password", secret: true },
+      { key: "url", label: "Site URL", required: true },
+      { key: "totp", label: "TOTP secret", secret: true },
+    ],
+  },
+  card: {
+    label: "Card",
+    fields: [
+      { key: "cardholderName", label: "Cardholder name" },
+      { key: "brand", label: "Brand" },
+      { key: "number", label: "Number", secret: true },
+      { key: "expMonth", label: "Expiry month" },
+      { key: "expYear", label: "Expiry year" },
+      { key: "code", label: "Security code", secret: true },
+    ],
+  },
+  identity: {
+    label: "Identity",
+    fields: [
+      { key: "title", label: "Title" },
+      { key: "firstName", label: "First name" },
+      { key: "middleName", label: "Middle name" },
+      { key: "lastName", label: "Last name" },
+      { key: "company", label: "Company" },
+      { key: "address1", label: "Address 1" },
+      { key: "address2", label: "Address 2" },
+      { key: "address3", label: "Address 3" },
+      { key: "city", label: "City" },
+      { key: "state", label: "State" },
+      { key: "postalCode", label: "Postal code" },
+      { key: "country", label: "Country" },
+      { key: "email", label: "Email" },
+      { key: "phone", label: "Phone" },
+      { key: "ssn", label: "SSN", secret: true },
+      { key: "username", label: "Username" },
+      { key: "passportNumber", label: "Passport number" },
+      { key: "licenseNumber", label: "Licence number" },
+    ],
+  },
+  note: { label: "Secure note", fields: [] },
+};
 
-  const edit = el("button", { class: "btn small", text: "Edit" });
-  const slot = el("div", {});
-  edit.addEventListener("click", () => {
-    if (slot.firstChild) {
-      slot.replaceChildren();
-      edit.textContent = "Edit";
-      return;
-    }
-    slot.replaceChildren(loginForm(item, reload, () => slot.replaceChildren()));
-    edit.textContent = "Cancel";
-  });
-
-  return el("div", { class: "item" }, [
-    el("h4", { text: item.title || "(untitled)" }),
-    el("p", { text: item.username || "no username" }),
-    note,
-    el("div", { class: "row" }, [show, edit]),
-    secret,
-    slot,
-  ]);
-}
+/** What the listing calls a type, and what this screen calls it. */
+const TYPE_BY_CATEGORY = { LOGIN: "login", CREDIT_CARD: "card", IDENTITY: "identity", SECURE_NOTE: "note" };
 
 function errText(err) {
   return err && err.message ? String(err.message).replace(/^Error: /, "") : String(err);
 }
 
-/* The one form, for a new login and for changing an existing one. On an edit
-   the password box starts empty and an empty box means "leave it alone" — the
-   stored password is never put into a field the app might save back. */
-function loginForm(item, reload, done) {
-  const title = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
-  const username = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
-  const url = el("input", { class: "text", attrs: { type: "text", spellcheck: "false", placeholder: "https://example.com" } });
-  const password = el("input", { class: "text mono", attrs: { type: "password" } });
-  if (item) {
-    title.value = item.title || "";
-    username.value = item.username || "";
-    url.value = (item.urls && item.urls[0]) || "";
+/* One saved item, as a card: what it is, and — once opened — every field it
+   has, with the secret ones fetched only when asked for. */
+function itemCard(summary, reload) {
+  const type = TYPE_BY_CATEGORY[summary.category] || "login";
+  const context = summary.username || (summary.urls && summary.urls[0]) || "";
+  const slot = el("div", {});
+  const open = el("button", { class: "btn small", text: "Open" });
+  open.addEventListener("click", async () => {
+    if (slot.firstChild) {
+      slot.replaceChildren();
+      open.textContent = "Open";
+      return;
+    }
+    open.disabled = true;
+    try {
+      const item = await window.domo.vaultItem(summary.id);
+      slot.replaceChildren(itemForm(item, reload, () => {
+        slot.replaceChildren();
+        open.textContent = "Open";
+      }));
+      open.textContent = "Close";
+    } catch (err) {
+      slot.replaceChildren(el("p", { class: "faint", text: "Could not open it: " + errText(err) }));
+    }
+    open.disabled = false;
+  });
+
+  return el("div", { class: "item" }, [
+    el("div", { class: "row" }, [
+      el("h4", { text: summary.title || "(untitled)" }),
+      badge("zinc", VAULT_TYPES[type].label),
+    ]),
+    context ? el("p", { text: context }) : null,
+    el("div", { class: "row" }, [open]),
+    slot,
+  ]);
+}
+
+/**
+ * The one form, for a new item and for one already saved.
+ *
+ * A secret starts empty with a Show button beside it: empty means "leave what
+ * the vault holds alone", so an edit never has to retype a password, and the
+ * value only ever reaches this window when the owner asks for it.
+ */
+function itemForm(item, reload, done) {
+  const saved = !!item.id;             // a new item comes in blank, with no id
+  const type = item.type;
+  const spec = VAULT_TYPES[type];
+  const name = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
+  const notes = el("textarea", { class: "text" });
+  name.value = item.name || "";
+  notes.value = item.notes || "";
+
+  const inputs = {};
+  const rows = [];
+  for (const field of spec.fields) {
+    const input = el("input", {
+      class: field.secret ? "text mono" : "text",
+      attrs: { type: field.secret ? "password" : "text", spellcheck: "false" },
+    });
+    const stored = field.key === "url" ? (item.urls || [])[0] : item.fields[field.key];
+    if (!field.secret && stored) input.value = stored;
+    inputs[field.key] = input;
+
+    // A stored secret is fetched on demand, one field at a time — that request
+    // is what the vault's audit records.
+    const held = saved && (item.secrets || []).includes(field.key);
+    const show = el("button", { class: "btn small", text: "Show" });
+    show.addEventListener("click", async () => {
+      show.disabled = true;
+      try {
+        input.value = await window.domo.vaultReveal(item.id, field.key);
+        input.setAttribute("type", "text");
+        show.textContent = "Shown";
+      } catch (err) {
+        show.textContent = "Failed";
+        show.title = errText(err);
+      }
+      show.disabled = false;
+    });
+
+    rows.push(el("div", { class: "field" }, [
+      el("label", { text: field.label + (field.required ? "" : " (optional)") }),
+      held ? el("div", { class: "copyrow" }, [input, show]) : input,
+    ]));
   }
-  const note = el("p", { class: "faint", text: item ? "Leave the password empty to keep the one already stored." : "The site URL is what lets the agent fill this login later." });
-  const save = el("button", { class: "btn primary", text: item ? "Save" : "Add login" });
+
+  const note = el("p", {
+    class: "faint",
+    text: saved
+      ? "Secret fields are blank until you press Show; leave one blank and it keeps the value already stored."
+      : type === "login"
+        ? "The site URL is what lets the agent fill this login later."
+        : "",
+  });
+  const save = el("button", { class: "btn primary", text: saved ? "Save" : "Add " + spec.label.toLowerCase() });
   save.addEventListener("click", async () => {
     save.disabled = true;
     note.textContent = "Saving…";
     try {
-      await window.domo.vaultSaveItem({
-        itemId: item ? item.id : "",
-        title: title.value.trim(),
-        username: username.value.trim(),
-        urls: url.value.trim() ? [url.value.trim()] : [],
-        password: password.value,
-      });
+      const payload = { type, name: name.value.trim(), notes: notes.value };
+      if (saved) payload.itemId = item.id;
+      for (const field of spec.fields) {
+        const value = inputs[field.key].value;
+        // A blank secret means "unchanged"; a blank anything else means empty.
+        if (field.secret && !value) continue;
+        if (field.key === "url") payload.urls = value.trim() ? [value.trim()] : [];
+        else payload[field.key] = value;
+      }
+      await window.domo.vaultSaveItem(payload);
       done();
       await reload();
       return;
@@ -932,20 +1025,35 @@ function loginForm(item, reload, done) {
   cancel.addEventListener("click", () => done());
 
   return el("div", {}, [
-    el("div", { class: "field" }, [el("label", { text: "Title" }), title]),
-    el("div", { class: "field" }, [el("label", { text: "Username" }), username]),
-    el("div", { class: "field" }, [el("label", { text: "Site URL" }), url]),
-    el("div", { class: "field" }, [el("label", { text: "Password" }), password]),
+    el("div", { class: "field" }, [el("label", { text: "Item name" }), name]),
+    ...rows,
+    el("div", { class: "field" }, [el("label", { text: type === "note" ? "Note" : "Notes (optional)" }), notes]),
     note,
     el("div", { class: "row" }, [save, cancel]),
   ]);
 }
 
+/** The New button: pick a type, get that type's form. */
+function newItemPicker(reload, done) {
+  const buttons = Object.entries(VAULT_TYPES).map(([key, spec]) => {
+    const b = el("button", { class: "btn", text: spec.label });
+    b.addEventListener("click", () => {
+      slot.replaceChildren(itemForm({ type: key, name: "", notes: "", urls: [], fields: {}, secrets: [], id: "" }, reload, done));
+    });
+    return b;
+  });
+  const slot = el("div", {});
+  return el("div", { class: "item" }, [
+    el("p", { class: "faint", text: "What are you saving?" }),
+    el("div", { class: "row" }, buttons),
+    slot,
+  ]);
+}
+
 async function renderVault() {
-  // The logins themselves, edited here. This is why the tab exists: the only
-  // other way in is the vault's own web page, and reaching it means a browser
-  // warning about the certificate the app issued to itself. Nothing about
-  // signing in on that page is on this screen, because nobody goes there.
+  // Everything the vault holds, edited here. This is why the tab exists: the
+  // only other way in is the vault's own web page, and reaching it means a
+  // browser warning about the certificate the app issued to itself.
   let items = null;
   let failure = "";
   try {
@@ -956,7 +1064,7 @@ async function renderVault() {
 
   if (items === null && !failure) {
     view.replaceChildren(el("div", { class: "panel" }, [
-      el("div", { class: "section-label", text: "Your logins" }),
+      el("div", { class: "section-label", text: "Your secrets" }),
       el("div", { class: "empty", text: "The vault has not started yet." }),
     ]));
     return;
@@ -964,25 +1072,25 @@ async function renderVault() {
 
   const list = el("div", {});
   const newSlot = el("div", {});
-  const add = el("button", { class: "btn primary", text: "New login" });
+  const add = el("button", { class: "btn primary", text: "New" });
   add.addEventListener("click", () => {
     if (newSlot.firstChild) {
       newSlot.replaceChildren();
       return;
     }
-    newSlot.replaceChildren(loginForm(null, renderVault, () => newSlot.replaceChildren()));
+    newSlot.replaceChildren(newItemPicker(renderVault, () => newSlot.replaceChildren()));
   });
 
   if (failure) {
     list.replaceChildren(el("div", { class: "empty", text: "Could not read the vault: " + failure }));
   } else if (items.length === 0) {
-    list.replaceChildren(el("div", { class: "empty", text: "No logins yet." }));
+    list.replaceChildren(el("div", { class: "empty", text: "Nothing saved yet." }));
   } else {
-    list.replaceChildren(...items.map((i) => loginCard(i, renderVault)));
+    list.replaceChildren(...items.map((i) => itemCard(i, renderVault)));
   }
 
   view.replaceChildren(el("div", { class: "panel" }, [
-    el("div", { class: "section-label", text: "Your logins" }),
+    el("div", { class: "section-label", text: "Your secrets" }),
     el("div", { class: "row" }, [add]),
     newSlot,
     list,

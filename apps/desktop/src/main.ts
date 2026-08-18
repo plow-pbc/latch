@@ -27,6 +27,7 @@ import {
   PolicyDelegate,
   readCredentialsState,
   resolveBrowserRuntime,
+  VaultItemInput,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
@@ -549,30 +550,31 @@ ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 ipcMain.handle("vault:items", async () => {
   const broker = device?.credentialBroker;
   if (!broker) return null;
-  const items = await broker.whatsHere();
-  return items.filter((i) => i.category === "LOGIN");
+  // Every type, not only logins: a card and a note are things the owner keeps
+  // here too, and the tab is where they are kept.
+  return broker.whatsHere();
 });
 
-// A password the OWNER asked to see, in the app window. No page is involved,
-// so the broker logs the release as SEM-URL rather than binding it to a site.
-ipcMain.handle("vault:reveal", async (_e, itemId: string) => {
+// One item to fill an edit form with — never a secret value; those are asked
+// for one at a time, below.
+ipcMain.handle("vault:item", async (_e, itemId: string) => {
   const broker = device?.credentialBroker;
   if (!broker) throw new Error("the vault is not running");
-  return broker.revealField(String(itemId), "password");
+  return broker.readItem(String(itemId));
 });
 
-ipcMain.handle("vault:saveItem", async (_e, input: {
-  itemId?: string; title?: string; username?: string; urls?: string[]; password?: string;
-}) => {
+// A value the OWNER asked to see, in the app window. No page is involved, so
+// the broker logs the release as SEM-URL rather than binding it to a site.
+ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
   const broker = device?.credentialBroker;
   if (!broker) throw new Error("the vault is not running");
-  return broker.saveItem({
-    itemId: input.itemId || undefined,
-    title: input.title,
-    username: input.username,
-    urls: input.urls ?? [],
-    password: input.password || undefined,
-  });
+  return broker.revealField(String(itemId), String(field || "password"));
+});
+
+ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput & { itemId?: string }) => {
+  const broker = device?.credentialBroker;
+  if (!broker) throw new Error("the vault is not running");
+  return broker.saveItem(input);
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like
