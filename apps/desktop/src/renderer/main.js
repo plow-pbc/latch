@@ -970,9 +970,17 @@ async function renderSettings() {
   let inference = await window.domo.inferenceGet();
   const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
   const providerChips = el("div", { class: "chips" });
-  // Labels are the only provider knowledge left here; which providers exist,
-  // and whether each is usable, comes from main.
-  const PROVIDER_LABELS = { plow: "Plow account", anthropic: "Anthropic API key" };
+  // Everything this pane knows about a provider, in one place: what to call it,
+  // what it is waiting for when it cannot be picked, and where that lives.
+  // Which providers exist, and whether each is usable, still comes from main —
+  // this is display knowledge only.
+  //
+  // `hint` follows the chip's own label, so it must not repeat it: "Anthropic
+  // API key: add one below to select it" reads; "Anthropic API key needs an
+  // Anthropic API key" is what happens when it does.
+  //
+  // Declared after the reveal helpers it references (see below).
+  let PROVIDERS;
 
   // Approval mode for operations — read from the SAME snapshot as availability,
   // because main decides both in one write.
@@ -1005,21 +1013,20 @@ async function renderSettings() {
   const renderModeChips = () => {
     // Whatever the ACTIVE provider is missing is what blocks Adversarial —
     // a pasted Anthropic key does not enable it while Plow is selected.
-    const need = NEEDS[inference.provider];
-    modeNote.textContent = hasKey ? "" : (need?.adversarial ?? "Adversarial Agent needs a credential.");
+    const provider = PROVIDERS[inference.provider];
+    modeNote.textContent = hasKey ? "" : provider.adversarial;
     modeChips.replaceChildren(...MODES.map(([value, label]) => {
       const disabled = value === "adversarial" && !hasKey;
       const chip = el("span", {
         class:
           "chip" +
           (currentMode === value ? " active" : "") +
-          (disabled ? " disabled" : "") +
-          (disabled && need ? " actionable" : ""),
-        attrs: disabled && need ? { title: need.adversarial } : {},
+          (disabled ? " disabled actionable" : ""),
+        attrs: disabled ? { title: provider.adversarial } : {},
       }, [el("span", { text: label })]);
       if (disabled) {
-        if (need) chip.addEventListener("click", need.go);
-      } else if (!disabled) {
+        chip.addEventListener("click", provider.go);
+      } else {
         chip.addEventListener("click", async () => {
           // What MAIN stored, not what was asked for. Adversarial is refused
           // when the active provider has no credential, and the credential can
@@ -1053,53 +1060,48 @@ async function renderSettings() {
     accountBox.scrollIntoView({ block: "center" });
     (signIn.style.display === "none" ? signOut : signIn).focus();
   };
-  /**
-   * What each provider is waiting for, and where that is.
-   *
-   * `hint` follows the chip's own label, so it must not repeat it — "Anthropic
-   * API key: add one below to select it" reads; "Anthropic API key needs an
-   * Anthropic API key" is what happens when it does.
-   */
-  const NEEDS = {
-    anthropic: {
-      hint: "add one below to select it",
-      adversarial: "Adversarial Agent needs an Anthropic API key — add one below.",
-      go: revealApiKeyField,
-    },
+  PROVIDERS = {
     plow: {
+      label: "Plow account",
       hint: "sign in to select it",
       adversarial: "Adversarial Agent needs you signed in to Plow.",
       go: revealAccount,
+    },
+    anthropic: {
+      label: "Anthropic API key",
+      hint: "add one below to select it",
+      adversarial: "Adversarial Agent needs an Anthropic API key — add one below.",
+      go: revealApiKeyField,
     },
   };
 
   // A provider with no credential is disabled and cannot be selected; the main
   // process enforces the same rule, this only keeps the UI honest.
   const renderProviderChips = () => {
+    // No fallback copy: `available` comes from main's frozen provider list, so a
+    // key here that PROVIDERS does not know is a bug to see, not to paper over.
     const unavailable = Object.entries(inference.available)
       .filter(([, usable]) => !usable)
-      .map(([value]) => `${PROVIDER_LABELS[value] ?? value}: ${NEEDS[value]?.hint ?? "no credential yet"}`);
+      .map(([value]) => `${PROVIDERS[value].label}: ${PROVIDERS[value].hint}`);
     // The note carries both facts: which reviewer is running, and — when a chip
     // is faded — what would un-fade it. Until now the only signal was opacity.
     reviewerNote.textContent =
       `Reviewer: ${inference.info}` +
       (unavailable.length ? ` · ${unavailable.join("; ")}.` : "");
     providerChips.replaceChildren(...Object.entries(inference.available).map(([value, usable]) => {
-      const label = PROVIDER_LABELS[value] ?? value;
+      const provider = PROVIDERS[value];
       const disabled = !usable;
-      const need = NEEDS[value];
       const chip = el("span", {
         class:
           "chip" +
           (inference.provider === value ? " active" : "") +
-          (disabled ? " disabled" : "") +
-          (disabled && need ? " actionable" : ""),
-        attrs: disabled && need ? { title: `${label} — ${need.hint}` } : {},
-      }, [el("span", { text: label })]);
+          (disabled ? " disabled actionable" : ""),
+        attrs: disabled ? { title: `${provider.label} — ${provider.hint}` } : {},
+      }, [el("span", { text: provider.label })]);
       if (disabled) {
         // Still clickable, deliberately: it cannot select the provider, but it
         // can take you to the field that would make selecting it possible.
-        if (need) chip.addEventListener("click", need.go);
+        chip.addEventListener("click", provider.go);
       } else if (inference.provider !== value) {
         chip.addEventListener("click", async () => {
           // What main stored, not what was asked for: an unavailable provider
