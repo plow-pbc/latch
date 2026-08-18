@@ -386,7 +386,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
 .approve .actions { display: flex; gap: 8px; }
 .approve .actions .action-slot { flex: 1; position: relative; display: flex; }
-.approve .actions .btn { flex: 1; justify-content: center; padding: 9px; }
+/* The opacity transition makes the arming delay (buttons start disabled for a
+   beat so stray input can't land — approval.js) read as deliberate, not lag. */
+.approve .actions .btn { flex: 1; justify-content: center; padding: 9px; transition: opacity 0.3s ease; }
 .warn { color: var(--amber-fg); }
 
 /* A tiny rainbow spinner pinned to the window's bottom-right corner, shown while
