@@ -783,9 +783,9 @@ const updateBanner = document.getElementById("updateBanner");
 function updateStatusText(u) {
   if (!u.supported) return "This build updates with git, not the feed — only the packaged app self-updates.";
   if (u.phase === "checking") return "Checking for updates…";
-  if (u.phase === "downloading") return `Downloading Domo Desktop ${u.availableVersion}…`;
+  if (u.phase === "downloading") return `Downloading Plow ${u.availableVersion}…`;
   if (u.phase === "ready")
-    return `Domo Desktop ${u.availableVersion} is downloaded — restart to install${u.autoInstall ? ", or it installs when you quit" : ""}.`;
+    return `Plow ${u.availableVersion} is downloaded — restart to install${u.autoInstall ? ", or it installs when you quit" : ""}.`;
   if (u.phase === "error") return `Last check failed: ${u.error}`;
   // "You're up to date" only when a check THIS session confirmed it; a
   // timestamp persisted from an earlier launch only proves we once looked.
@@ -807,7 +807,7 @@ async function refreshUpdateBanner() {
   close.addEventListener("click", () => window.domo.updatesDismiss());
   updateBanner.replaceChildren(
     close,
-    el("span", { text: `Domo Desktop ${u.availableVersion} is ready to install.` }),
+    el("span", { text: `Plow ${u.availableVersion} is ready to install.` }),
     el("div", { class: "spacer" }),
     later,
     restart,
@@ -955,7 +955,7 @@ async function renderSettings() {
   autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
   const autoInstallLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
     autoInstallBox,
-    el("span", { text: "Install downloaded updates when quitting Domo" }),
+    el("span", { text: "Install downloaded updates when quitting Plow" }),
   ]);
 
   const restoreNote = el("p", { class: "faint", text: "" });

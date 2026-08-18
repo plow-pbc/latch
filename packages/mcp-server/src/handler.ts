@@ -124,7 +124,7 @@ export function createDomoMcpServer(
   const handler = createMcpHandler(
     (ctx) => {
       const server = new McpServer(
-        { name: "domo", version: "0.1.0" },
+        { name: "plow", version: "0.1.0" },
         // Without this the client may open a subscriptions stream, which a
         // one-buffered-exchange-per-frame tunnel cannot carry.
         { capabilities: { tools: { listChanged: false } } },

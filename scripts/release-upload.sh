@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Upload a packaged Domo Desktop release candidate to versioned S3 keys.
+# Upload a packaged Plow release candidate to versioned S3 keys.
 #
 # Reads apps/desktop/release/ (the electron-builder output that `just package`
 # produced) and uploads everything an update or a download needs to
@@ -56,8 +56,8 @@ aws_args=()
 
 # Everything the feed and the download page need. latest-mac.yml names the zip;
 # the blockmap enables differential downloads; the DMG is the human download.
-zip_name="Domo-Desktop-${version}-universal.zip"
-dmg_name="Domo-Desktop-${version}.dmg"
+zip_name="Plow-${version}-universal.zip"
+dmg_name="Plow-${version}.dmg"
 artifacts=("$zip_name" "$zip_name.blockmap" "$dmg_name" "latest-mac.yml")
 
 for f in "${artifacts[@]}"; do

@@ -79,7 +79,7 @@ export class WindowGate {
    *
    * The third possibility — do nothing — is what shipped in the first cut, and
    * it leaves a Mac that has just been set up showing no window at all. Quitting
-   * instead would be worse than either: Domo is a menu-bar agent, closing a
+   * instead would be worse than either: Plow is a menu-bar agent, closing a
    * window is not quitting it, and an exit here would take the relay socket down
    * with it and quietly make the Mac the user just connected unreachable.
    */

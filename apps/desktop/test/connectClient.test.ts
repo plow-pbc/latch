@@ -131,10 +131,10 @@ describe("the static-credential fallback", () => {
     expect(state.credential?.name).toBe("Claude Code");
 
     const config = JSON.parse(state.credential!.config);
-    expect(config.mcpServers.domo.url).toBe(MCP_URL);
-    expect(config.mcpServers.domo.headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
+    expect(config.mcpServers.plow.url).toBe(MCP_URL);
+    expect(config.mcpServers.plow.headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
     // A URL ends up in shell history, logs and stored registrations.
-    expect(config.mcpServers.domo.url).not.toContain(CLIENT_TOKEN);
+    expect(config.mcpServers.plow.url).not.toContain(CLIENT_TOKEN);
   });
 
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {
@@ -325,7 +325,7 @@ describe("reading the state is a read", () => {
 describe("agentConfig", () => {
   it("puts the credential in a header, because URLs end up in logs", () => {
     const config = JSON.parse(agentConfig(MCP_URL, "plow_secret"));
-    expect(config.mcpServers.domo).toEqual({
+    expect(config.mcpServers.plow).toEqual({
       type: "http",
       url: MCP_URL,
       headers: { Authorization: "Bearer plow_secret" },

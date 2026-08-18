@@ -202,7 +202,7 @@ export function agentConfig(mcpUrl: string, token: string): string {
   return JSON.stringify(
     {
       mcpServers: {
-        domo: {
+        plow: {
           type: "http",
           url: mcpUrl,
           headers: { Authorization: `Bearer ${token}` },
