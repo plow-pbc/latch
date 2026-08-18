@@ -23,7 +23,6 @@ import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
-  GoalsLibrary,
   PolicyDelegate,
   changeCredentials,
   readCredentials,
@@ -126,7 +125,6 @@ const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
-let goals: GoalsLibrary | null = null;
 let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
@@ -341,7 +339,7 @@ function restorableBounds(saved: WindowBounds | undefined): WindowBounds | null 
   return onScreen ? saved : null;
 }
 
-// MARK: IPC for the main window (audit / goals / rules / settings / status)
+// MARK: IPC for the main window (audit / rules / settings / status)
 
 ipcMain.handle("audit:list", async () => device?.audit.entries() ?? []);
 // Group events into logical activities in the main process, so the sandboxed
@@ -363,16 +361,6 @@ ipcMain.handle("audit:clear", async () => {
   device.audit.clear();
   return true;
 });
-ipcMain.handle("goals:list", async () => goals?.all() ?? []);
-ipcMain.handle("goals:add", async (_e, title: string, text: string) => {
-  goals?.add({ title, text });
-  return goals?.all() ?? [];
-});
-ipcMain.handle("goals:remove", async (_e, id: string) => {
-  goals?.remove(id);
-  return goals?.all() ?? [];
-});
-ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? []);
 // Approvals still awaiting an answer, so the UI can show what is outstanding
 // rather than relying on a window that may have been closed.
 ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
@@ -790,8 +778,6 @@ app.whenReady().then(async () => {
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
-  goals = new GoalsLibrary(path.join(home, "device/goals.json"));
-
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
   mcp = createDomoMcpServer(device);

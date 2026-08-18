@@ -17,7 +17,7 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   This Mac only ever dials out, so there is no listener.
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
   `FileOps`, `Executor` (+ generated seatbelt profile), `BlessedToolRegistry`,
-  `AuditLog`, `GoalsLibrary`, identity/key store; `src/browser/` is the local
+  `AuditLog`, identity/key store; `src/browser/` is the local
   browsing subsystem (session grants, origin enforcement, credential gate —
   DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
   Camoufox server + 1Password broker (pins in `runtime.lock.json`;

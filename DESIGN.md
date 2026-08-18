@@ -247,7 +247,6 @@ $DOMO_HOME (default ~/Library/Application Support/Domo)
 ├── device/known_agents.json             # pinned agent pubkeys
 ├── device/rules.json                    # always-allow rules
 ├── device/audit.ndjson                  # append-only audit log
-├── device/goals.json                    # goals library
 └── device/scratch/…                     # per-run sandbox scratch dirs
 ```
 

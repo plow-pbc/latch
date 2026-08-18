@@ -37,7 +37,7 @@ just app         # launch the desktop app
 
 | App / package | Role |
 |---|---|
-| `apps/desktop` (Domo Desktop) | Electron app: runs the device core in its main process; approval windows, Goals Library, rules manager, audit viewer. |
+| `apps/desktop` (Domo Desktop) | Electron app: runs the device core in its main process; approval windows, rules manager, audit viewer. |
 | `packages/protocol` | Canonical JSON, Ed25519 identity, capabilities, intents, grants, rule keys. |
 | `packages/transport` | The Connection seam and the outbound WebSocket client. |
 | `packages/device-core` | The decision + execution path: policy engine, sandboxed executor, file ops, blessed tools, audit log. |

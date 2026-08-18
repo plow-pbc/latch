@@ -15,6 +15,5 @@ export * from "./skills.js";
 export * from "./deviceAgent.js";
 export * from "./executor.js";
 export * from "./fileOps.js";
-export * from "./goalsLibrary.js";
 export * from "./identity.js";
 export * from "./policyEngine.js";

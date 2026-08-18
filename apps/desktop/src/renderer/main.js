@@ -67,12 +67,6 @@ function badge(tone, text) {
   return el("span", { class: `badge b-${tone}` }, [el("span", { class: "dot" }), el("span", { text })]);
 }
 
-// Close any open "⋯" overflow menu when clicking elsewhere.
-function closeAllMenus() {
-  for (const m of document.querySelectorAll(".menu")) m.classList.add("hidden");
-}
-document.addEventListener("click", closeAllMenus);
-
 async function refreshStatus() {
   const status = await window.domo.statusGet();
   statusDot.className = "status-dot" + (status.connected ? " on" : "");
@@ -399,59 +393,6 @@ function detailFor(a) {
     )));
   }
   return el("div", {}, children.filter(Boolean));
-}
-
-// ---- Goals ----
-
-async function renderGoals() {
-  const goals = await window.domo.goalsList();
-  const titleInput = el("input", { class: "text", attrs: { placeholder: "Goal title" } });
-  const textInput = el("textarea", { class: "text", attrs: { placeholder: "What should the agent do?" } });
-  const addBtn = el("button", { class: "btn", text: "Add Goal" });
-  addBtn.addEventListener("click", async () => {
-    // A title is optional — the library derives one from the text if omitted.
-    // Only skip a completely empty entry.
-    if (!titleInput.value.trim() && !textInput.value.trim()) return;
-    await window.domo.goalsAdd(titleInput.value.trim(), textInput.value.trim());
-    renderGoals();
-  });
-  // Same 8px spacing as a goal item's action column.
-  const composeActions = el("div", { class: "goal-actions" }, [addBtn]);
-
-  const items = goals.map((g) => {
-    // "⋯" overflow menu with a Remove item.
-    const removeItem = el("button", { class: "menu-item", text: "Remove" });
-    removeItem.addEventListener("click", async () => { await window.domo.goalsRemove(g.id); renderGoals(); });
-    const menu = el("div", { class: "menu hidden" }, [removeItem]);
-    const menuBtn = el("button", { class: "iconbtn", text: "⋯", attrs: { title: "More" } });
-    menuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const wasHidden = menu.classList.contains("hidden");
-      closeAllMenus();
-      if (wasHidden) menu.classList.remove("hidden");
-    });
-
-    // Left column: title + description (kept clear of the action column).
-    const main = el("div", { class: "goal-main" }, [
-      el("h4", { text: g.title }),
-      el("p", { text: g.text }),
-    ]);
-    // Right column, top-aligned: the "⋯" menu in the top corner.
-    const actions = el("div", { class: "goal-actions" }, [
-      el("div", { class: "menu-wrap" }, [menuBtn, menu]),
-    ]);
-    return el("div", { class: "item goal-item" }, [main, actions]);
-  });
-
-  const children = [
-    el("div", { class: "item" }, [
-      el("div", { class: "field" }, [el("label", { text: "New goal" }), titleInput]),
-      el("div", { class: "field" }, [textInput]),
-      el("div", { class: "row" }, [el("div", { class: "spacer" }), composeActions]),
-    ]),
-  ];
-  children.push(...items);
-  view.replaceChildren(el("div", { class: "panel" }, children));
 }
 
 // ---- Rules ----
@@ -1015,13 +956,6 @@ async function renderSettings() {
     ]);
   };
 
-  const restoreNote = el("p", { class: "faint", text: "" });
-  const restore = el("button", { class: "btn", text: "Restore Default Goals" });
-  restore.addEventListener("click", async () => {
-    await window.domo.goalsRestoreDefaults();
-    restoreNote.textContent = "Default goals restored.";
-  });
-
   // Anthropic API key — one of the two ways to power the adversarial agent.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
@@ -1164,9 +1098,6 @@ async function renderSettings() {
       modeChips,
       suggestLabel,
     ]),
-    group("Goals", "Re-add any default goals you've removed.", [
-      el("div", { class: "row" }, [restore, restoreNote]),
-    ]),
     group("Software Updates", `Version ${u.currentVersion}`, [
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
       autoCheckLabel,
@@ -1194,7 +1125,6 @@ async function renderSettings() {
 function render() {
   if (currentTab === "agents") renderAgents();
   else if (currentTab === "audit") renderAudit();
-  else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
   else if (currentTab === "vault") renderVault();
   else if (currentTab === "settings") renderSettings();
@@ -1250,7 +1180,7 @@ async function boot() {
   refreshStatus();
   refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
-  const known = ["agents", "goals", "audit", "rules", "vault", "settings"];
+  const known = ["agents", "audit", "rules", "vault", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
 }
 boot();

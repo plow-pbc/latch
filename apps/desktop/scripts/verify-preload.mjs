@@ -36,7 +36,6 @@ saveSettings(probeHome, {
 // device — we're testing the bridge + render path, not the data.
 ipcMain.handle("audit:activities", async () => []);
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
-ipcMain.handle("goals:list", async () => []);
 ipcMain.handle("rules:list", async () => []);
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
