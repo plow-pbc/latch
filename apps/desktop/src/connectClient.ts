@@ -96,8 +96,14 @@ export class ConnectClient {
    * more use than an empty one, and `rosterError` says it is stale. */
   private roster: AgentRosterRow[] = [];
   private rosterError: string | null = null;
-  /** The list in flight, if any. A second reader joins it — see `refreshRoster`. */
+  /** The list in flight, if any. A second *reader* joins it — see `refreshRoster`. */
   private rosterPending: Promise<ConnectClientState> | null = null;
+  /**
+   * Which list read is the newest. A read that started before a mutation can
+   * still be in the air after it, and its answer is a description of the
+   * account as it was — so only the latest read is allowed to land.
+   */
+  private rosterFlights = 0;
 
   constructor(private readonly deps: ConnectClientDeps) {}
 
@@ -130,8 +136,12 @@ export class ConnectClient {
    * already has breaks it — a steady roster settles after one extra round trip,
    * and a failing one settles on its first error message.
    */
-  async refreshRoster(): Promise<ConnectClientState> {
-    if (this.rosterPending) return this.rosterPending;
+  async refreshRoster(options: { fresh?: boolean } = {}): Promise<ConnectClientState> {
+    // Two readers arriving together ask once. A reader after a MUTATION must
+    // not: a list that was already in the air when the revoke was sent left
+    // Plow before the row went away, so joining it would resolve the revoke
+    // with the row it just removed still on screen.
+    if (!options.fresh && this.rosterPending) return this.rosterPending;
 
     const generation = this.generation;
     const settings = this.settings();
@@ -141,18 +151,25 @@ export class ConnectClient {
       return this.setRoster([], null);
     }
 
+    const flightId = ++this.rosterFlights;
     const flight = (async () => {
       try {
         const keys = await this.deps.api.listApiKeys(settings.relayCredential);
-        if (generation !== this.generation) return this.state();
+        // Stale in two ways, and both are dropped: a different account now
+        // (generation), or a newer read already started, which makes this one
+        // a description of the account before the mutation that superseded it.
+        if (generation !== this.generation || flightId !== this.rosterFlights) return this.state();
         return this.setRoster(agentRosterRows(keys), null);
       } catch (error) {
-        if (generation !== this.generation) return this.state();
+        if (generation !== this.generation || flightId !== this.rosterFlights) return this.state();
         // The rows already on screen stay: the connect card above them, and
         // everything else in this state, is untouched by a failed list.
         return this.setRoster(this.roster, messageOf(error));
       } finally {
-        this.rosterPending = null;
+        // Only if this flight still owns the handle — a fresh read started
+        // after it has already taken it, and clearing it here would send the
+        // next reader off to ask again instead of joining that one.
+        if (flightId === this.rosterFlights) this.rosterPending = null;
       }
     })();
     this.rosterPending = flight;
@@ -177,6 +194,14 @@ export class ConnectClient {
     const generation = this.generation;
     const settings = this.settings();
     if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
+    // And it must be a row the user is actually looking at. Ids are small
+    // sequential integers on a shared table, so a renderer that could name any
+    // of them could walk the account revoking credentials that were never
+    // relay-capable and never listed here — including the portal login. The
+    // roster is the whole of what this channel may act on.
+    if (!this.roster.some((row) => row.id === id)) {
+      return this.fail("That isn't something this Mac can revoke.");
+    }
 
     this.busy = true;
     this.rosterError = null;
@@ -193,8 +218,9 @@ export class ConnectClient {
     this.busy = false;
     // The revoke is a soft delete server-side; the row stops qualifying only
     // because the refreshed list reports it inactive. So the list is the
-    // source of truth here, not a local splice.
-    await this.refreshRoster();
+    // source of truth here, not a local splice — and it has to be a list read
+    // that started AFTER the revoke landed, or it would still contain the row.
+    await this.refreshRoster({ fresh: true });
     return this.publish();
   }
 
@@ -251,7 +277,7 @@ export class ConnectClient {
       // A mint changes the roster, so the list is re-read before the screen is
       // told anything — the new agent is in the state the caller gets back,
       // rather than arriving in a second render a round trip later.
-      if (generation === this.generation) await this.refreshRoster();
+      if (generation === this.generation) await this.refreshRoster({ fresh: true });
       return this.publish();
     })();
     this.pending = flight;
@@ -279,7 +305,11 @@ export class ConnectClient {
     this.pending = null;
     this.pendingId = 0;
     // The roster belonged to that account too, and the next sign-in may be a
-    // different one. A list in flight is dropped by the generation check.
+    // different one. The generation check drops whatever that read returns —
+    // so the handle has to go with it, or the next account joins a request
+    // whose answer is thrown away, and the tab sits falsely empty with no
+    // re-read scheduled.
+    this.rosterPending = null;
     this.roster = [];
     this.rosterError = null;
     return this.publish();

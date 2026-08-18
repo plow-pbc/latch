@@ -43,6 +43,9 @@ class FakePlow {
   listFails: PlowApiError | null = null;
   revoked: Array<{ token: string; id: number }> = [];
   revokeFails: PlowApiError | null = null;
+  /** Held LIST responses, by request number. Individually releasable, so a
+   * test can decide the order two overlapping reads land in. */
+  private listGates = new Map<number, { wait: Promise<void>; open: () => void }>();
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
@@ -67,6 +70,20 @@ class FakePlow {
     this.open = null;
   }
 
+  /** Hold the answer to the n-th list request (1-based). The request still
+   * leaves, and still snapshots the account, exactly as a real one would. */
+  holdList(n: number): void {
+    let open: () => void = () => {};
+    const wait = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    this.listGates.set(n, { wait, open });
+  }
+
+  releaseList(n: number): void {
+    this.listGates.get(n)?.open();
+  }
+
   async createAgent(token: string, name: string) {
     if (this.gate) await this.gate;
     if (this.fails) throw this.fails;
@@ -82,10 +99,15 @@ class FakePlow {
   }
 
   async listApiKeys(token: string): Promise<KeyInfo[]> {
-    if (this.gate) await this.gate;
     this.listedWith.push(token);
+    // Answered as of the moment the request arrives, like the real endpoint —
+    // so a read still in the air when a revoke lands returns the pre-revoke
+    // account, which is exactly the thing that must not reach the screen.
+    const snapshot = this.keys.map((k) => ({ ...k }));
+    if (this.gate) await this.gate;
+    await this.listGates.get(this.listedWith.length)?.wait;
     if (this.listFails) throw this.listFails;
-    return this.keys.map((k) => ({ ...k }));
+    return snapshot;
   }
 
   async revokeApiKey(token: string, id: number) {
@@ -113,6 +135,10 @@ function build(): ConnectClient {
     },
   });
 }
+
+/** Let queued microtasks and the timer queue drain, so an in-flight call has
+ * actually reached the fake before a test releases it. */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** A Mac that has been through login: a device credential and an endpoint. */
 function signIn(): void {
@@ -580,5 +606,121 @@ describe("isRosterId", () => {
     for (const bad of [-1, 1.5, NaN, Infinity, -0.0001, Number.MAX_SAFE_INTEGER + 2, "7", null, undefined, {}, []]) {
       expect(isRosterId(bad)).toBe(false);
     }
+  });
+});
+
+describe("only what is on the roster can be revoked", () => {
+  it("refuses a real-looking id that was never listed, without calling Plow", async () => {
+    // Ids are small sequential integers on a table shared with every other
+    // credential on the account. A renderer that could name any of them could
+    // walk the account — revoking keys that are not relay-capable, were never
+    // shown here, and in the portal login's case would sign the user out of
+    // the website. The roster is the whole of what this channel may act on.
+    signIn();
+    plow.keys = [
+      keyRow({ id: 7, name: "Claude Code" }),
+      // Real rows on the account, correctly filtered out of the roster.
+      keyRow({ id: 8, name: "Domo Desktop", scopes: ["relay:device", "llm:chat"] }),
+      keyRow({ id: 9, name: "revoked already", is_active: false }),
+    ];
+    const connect = build();
+    await connect.refreshRoster();
+    expect(connect.state().roster.map((r) => r.id)).toEqual([7]);
+
+    for (const unlisted of [8, 9, 0, 42]) {
+      const state = await connect.revokeCredential(unlisted);
+      expect(state.message).toBe("That isn't something this Mac can revoke.");
+    }
+    expect(plow.revoked).toEqual([]);
+
+    // And the one that IS listed still goes through.
+    await connect.revokeCredential(7);
+    expect(plow.revoked).toEqual([{ token: DEVICE_TOKEN, id: 7 }]);
+  });
+
+  it("refuses everything while the roster has not loaded", async () => {
+    signIn();
+    const connect = build();
+    const state = await connect.revokeCredential(7);
+    expect(plow.revoked).toEqual([]);
+    expect(state.message).toBe("That isn't something this Mac can revoke.");
+  });
+});
+
+describe("a read already in the air when the account changes under it", () => {
+  it("does not let a revoke resolve on a list that predates it, whenever it lands", async () => {
+    // The stale list left before the revoke did, so it describes the account
+    // with the row still on it. Two things have to hold: the revoke must not
+    // JOIN that request, and the request must not overwrite the revoke's own
+    // answer when it finally lands — which, on a real network, it may well do
+    // second. The gates below make it land second on purpose.
+    signIn();
+    plow.keys = [keyRow({ id: 7, name: "Claude Code" }), keyRow({ id: 8, name: "ChatGPT" })];
+    const connect = build();
+    await connect.refreshRoster();
+
+    plow.holdList(2); // the stale read
+    plow.holdList(3); // the revoke's own read
+    const stale = connect.refreshRoster();
+    await tick();
+
+    const revoking = connect.revokeCredential(7);
+    await tick();
+    plow.releaseList(3); // the fresh answer lands first...
+    await tick();
+    plow.releaseList(2); // ...and the stale one arrives after it
+    const [, state] = await Promise.all([stale, revoking]);
+
+    // Three reads: the first, the one in the air, and the revoke's own — which
+    // it had to start rather than join.
+    expect(plow.listedWith).toHaveLength(3);
+    expect(state.roster.map((r) => r.id)).toEqual([8]);
+    // The late stale answer does not put the row back.
+    expect(connect.state().roster.map((r) => r.id)).toEqual([8]);
+  });
+
+  it("does not let a mint resolve on a list that predates it either", async () => {
+    signIn();
+    plow.keys = [keyRow({ id: 7, name: "Claude Code" })];
+    const connect = build();
+    await connect.refreshRoster();
+
+    plow.holdList(2);
+    plow.holdList(3);
+    const stale = connect.refreshRoster();
+    await tick();
+
+    const minting = connect.createCredential("ChatGPT");
+    await tick();
+    plow.releaseList(3);
+    await tick();
+    plow.releaseList(2);
+    const [, state] = await Promise.all([stale, minting]);
+
+    expect(state.roster.map((r) => r.name)).toEqual(["Claude Code", "ChatGPT"]);
+    expect(connect.state().roster.map((r) => r.name)).toEqual(["Claude Code", "ChatGPT"]);
+  });
+
+  it("does not leave the next account joining the old account's list", async () => {
+    // The generation check throws the old account's answer away. If the handle
+    // were left installed, the new account would join that request, get the
+    // discarded result, and sit on an empty Agents tab with no re-read coming.
+    signIn();
+    plow.keys = [keyRow({ id: 7, name: "Claude Code" })];
+    const connect = build();
+    plow.holdList(1);
+    const abandoned = connect.refreshRoster();
+    await tick();
+
+    connect.signedOut();
+    const state = await connect.refreshRoster();
+
+    expect(plow.listedWith).toHaveLength(2);
+    expect(state.roster.map((r) => r.id)).toEqual([7]);
+
+    // And the abandoned read, landing after all of it, changes nothing.
+    plow.releaseList(1);
+    await abandoned;
+    expect(connect.state().roster.map((r) => r.id)).toEqual([7]);
   });
 });
