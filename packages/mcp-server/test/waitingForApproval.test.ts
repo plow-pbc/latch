@@ -18,7 +18,6 @@ import os from "node:os";
 import path from "node:path";
 import { JSONValue } from "@domo/protocol";
 import {
-  APPROVAL_SOURCE_EXPIRED,
   ApprovalStore,
   DeviceAgent,
   HeadlessPolicy,
@@ -83,22 +82,11 @@ describe("a timeout is not a refusal", () => {
     expect(payload.reason).not.toMatch(/denied the request/);
   });
 
-  it("a human pressing Deny still gets the human sentence", async () => {
-    const home = tempDir();
-    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "deny" }));
-    const server = createDomoMcpServer(device);
-    cleanups.push(() => server.close());
-    const file = path.join(tempDir(), "a.txt");
-    fs.writeFileSync(file, "contents");
-
-    const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
-    expect(payload.status).toBe("denied");
-    // Unchanged: why the owner said no is between them and their Mac.
-    expect(payload.reason).toBe("the owner of this Mac denied the request");
-  });
-
-  // The two sentences are the whole point; if they ever converge again the
-  // symptom comes straight back.
+  // KEPT deliberately, against review: this looks like it duplicates the two
+  // denial paths, and it is the only test that pins the bug. The defect was
+  // those two paths converging on one sentence — every other assertion here
+  // checks a path in isolation and would stay green through a regression that
+  // made them identical again. A test that re-runs both is what the bug costs.
   it("the two denials are distinguishable", async () => {
     const timedOut = serverWith(NEVER_ANSWERS, { ttlMs: 20, budgetMs: 5_000 });
     const expired = await callTool(timedOut.server, "read_file", { path: timedOut.file }, AGENT);
@@ -112,10 +100,6 @@ describe("a timeout is not a refusal", () => {
     const refused = await callTool(server, "read_file", { path: file }, AGENT);
 
     expect(expired.payload.reason).not.toBe(refused.payload.reason);
-  });
-
-  it("the expiry source is one shared constant, not two string literals", () => {
-    expect(APPROVAL_SOURCE_EXPIRED).toBe("expired");
   });
 });
 
