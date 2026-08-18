@@ -64,7 +64,7 @@ export const SERVER_INSTRUCTIONS = `These tools act on the user's own Mac — th
 
 Use these tools whenever the task is about THIS USER's computer, accounts, or data: a file that exists on their machine, something that must run there, or a site they need to be signed in to as themselves. Use your own tools for scratch work, for code you are writing, and for general web reading.
 
-The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result — that means a request is on their screen and nobody has answered yet. Tell the user you are waiting for them, then poll get_result. Do not re-issue the original call; that asks them a second time.`;
+The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result — that means a request is on their screen and nobody has answered yet. Tell the user you are waiting for them, then poll plow_get_result. Do not re-issue the original call; that asks them a second time.`;
 
 /**
  * The agent identity the relay asserts on each request frame (design §3.4).
@@ -189,7 +189,7 @@ export function createDomoMcpServer(
             // this Mac — no state, no user data, no side effect — and the relay
             // refuses an unauthenticated caller before anything reaches us.
             // Everything that touches this Mac or does work is a tool, and
-            // every tool goes through here, `list_tools` included.
+            // every tool goes through here, `plow_list_tools` included.
             if (!agent) {
               return {
                 content: [toolContent({ error: "no authenticated agent on this request" })],

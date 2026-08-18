@@ -71,7 +71,7 @@ export class DeviceAgent {
   readonly policy: PolicyEngine;
   readonly blessedTools: BlessedToolRegistry;
   readonly executor: Executor;
-  /** Owner-published skills (how-to guides), surfaced via list_tools/read_skill. */
+  /** Owner-published skills (how-to guides), surfaced via plow_list_tools/plow_read_skill. */
   readonly skills: SkillRegistry;
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
@@ -106,7 +106,7 @@ export class DeviceAgent {
         // Visible by default: the owner should be able to watch what is being
         // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
         // which is what the test tiers and any unattended run want. This is only
-        // the default — browser_open carries the agent's per-session choice, so
+        // the default — plow_browser_open carries the agent's per-session choice, so
         // the owner can ask for the background (or to watch) in the moment.
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
@@ -118,7 +118,7 @@ export class DeviceAgent {
         // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
         // a hung page/eval returns an error in time instead of a torn 504. The
         // cold start is separate (startTimeoutMs) and paid by the deferrable
-        // browser_open, so it does not need to fit this bound.
+        // plow_browser_open, so it does not need to fit this bound.
         actionTimeoutMs: 15_000,
         audit: auditFn,
       });
@@ -439,7 +439,7 @@ export class DeviceAgent {
       );
     }
     if (origins.length === 0) {
-      return { status: "error", error: "browser_open requires at least one origin" };
+      return { status: "error", error: "plow_browser_open requires at least one origin" };
     }
     // Window mode is delivery detail too: it changes nothing about what the
     // owner approved, so it rides the payload and leaves the capability set —

@@ -151,7 +151,7 @@ class OutputBuffer {
 
 /**
  * Runs approved commands under /usr/bin/sandbox-exec with a per-run generated
- * profile, buffering merged stdout+stderr for the get_output streaming path.
+ * profile, buffering merged stdout+stderr for the plow_get_output streaming path.
  */
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();

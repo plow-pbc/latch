@@ -5,7 +5,7 @@
  * 20 seconds, so nothing on this Mac may block past its call budget — not a
  * human who has walked away from an approval, not a slow command. Any
  * tool that cannot finish inside the budget returns a handle instead, keeps the
- * work running, and the agent retrieves the outcome later with `get_result`.
+ * work running, and the agent retrieves the outcome later with `plow_get_result`.
  *
  * Two rules make this safe rather than merely convenient:
  *

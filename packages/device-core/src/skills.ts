@@ -1,6 +1,6 @@
 /**
  * Device-published skills: owner-curated how-to guides for this Mac's tools,
- * surfaced to agents via list_device_tools + read_skill. Skills are
+ * surfaced to agents via plow_list_tools + plow_read_skill. Skills are
  * documentation, not capability — reading one requires no intent.
  *
  * Sources: built-ins registered in code, plus $DOMO_HOME/device/skills/*.md

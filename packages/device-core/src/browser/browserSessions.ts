@@ -8,7 +8,7 @@
  *   navigate too), and popups are swept and audited;
  * - on an out-of-scope page the session is locked: nothing can be observed or
  *   interacted with except finding the way back (url/pages/use_page/goto) —
- *   recovery is a browser_request intent that widens the scope;
+ *   recovery is a plow_browser_request intent that widens the scope;
  * - credential values flow op → here → a frame-targeted fill on an approved
  *   origin, and are dropped immediately. They never appear in results or audit.
  *
@@ -120,7 +120,7 @@ export class BrowserSessions {
     }
     if (this.session) await this.close(this.session.handle, "reopened");
 
-    // Warm the browser now. browser_open is deferrable, so a cold Camoufox
+    // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
     // start (~30s) absorbs into the deferred handle; every later `browser`
     // action is non-deferrable and must answer well inside the relay's ~20s
     // per-exchange ceiling, which it can only do against an already-running
@@ -214,7 +214,7 @@ export class BrowserSessions {
 
   private validate(agentId: string, handle: string): Session | string {
     const s = this.session;
-    if (!s || s.handle !== handle) return "unknown session (open one with browser_open)";
+    if (!s || s.handle !== handle) return "unknown session (open one with plow_browser_open)";
     if (s.agentId !== agentId) return "session belongs to a different agent";
     return s;
   }
@@ -255,7 +255,7 @@ export class BrowserSessions {
           status: "error",
           error:
             `page is on ${origin}, outside the approved origins ` +
-            `[${s.origins.join(", ")}] — use browser_request to ask for it, ` +
+            `[${s.origins.join(", ")}] — use plow_browser_request to ask for it, ` +
             `or goto an approved origin`,
         };
       }
@@ -281,7 +281,7 @@ export class BrowserSessions {
               status: "error",
               error:
                 `${host ?? target} is outside the approved origins ` +
-                `[${s.origins.join(", ")}] — use browser_request to widen the session`,
+                `[${s.origins.join(", ")}] — use plow_browser_request to widen the session`,
             };
           }
           return await this.serverAction(s, { action: "goto", url: target });
@@ -351,7 +351,7 @@ export class BrowserSessions {
       out.out_of_scope = origin;
       out.note =
         `landed on ${origin}, outside the approved origins — page content is ` +
-        `locked; use browser_request to ask for this origin`;
+        `locked; use plow_browser_request to ask for this origin`;
       // Never hand out content from an unapproved origin.
       delete out.data_b64;
       delete out.text;
@@ -388,7 +388,7 @@ export class BrowserSessions {
         status: "error",
         error:
           "credential metadata was not approved for this session — " +
-          "open with credentials_metadata or use browser_request",
+          "open with credentials_metadata or use plow_browser_request",
       };
     }
     const items = await this.credentials.whatsHere(s.lastUrl || "https://invalid.invalid/");
@@ -443,7 +443,7 @@ export class BrowserSessions {
       });
       return {
         status: "error",
-        error: `item ${itemId} is not approved for this session — use browser_request with credential_items`,
+        error: `item ${itemId} is not approved for this session — use plow_browser_request with credential_items`,
       };
     }
 

@@ -138,7 +138,7 @@ export class BrowserHost {
 
   /**
    * Start the browser if it isn't already running and resolve once it's ready.
-   * Called from browser_open (a deferrable tool) so the ~30s cold start is paid
+   * Called from plow_browser_open (a deferrable tool) so the ~30s cold start is paid
    * there, absorbed by the deferred handle, rather than by a later
    * non-deferrable action that would blow the relay's per-exchange ceiling.
    *

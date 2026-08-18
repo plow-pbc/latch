@@ -63,7 +63,7 @@ the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-AP
   text rides along for the human to read and never influences the bound.
 - **Nothing may block past the call budget.** The relay's pending future times
   out at **20 seconds**, so a tunnelled call has to answer well inside that. Any
-  tool that cannot returns a deferred handle and keeps working; `get_result`
+  tool that cannot returns a deferred handle and keeps working; `plow_get_result`
   retrieves it. A handle belongs to the `agent_id` that created it. This is why
   file operations are async and size-capped: synchronous work blocks the event
   loop and the budget timer never fires.

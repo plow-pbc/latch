@@ -64,7 +64,7 @@ describe("the server tells the agent what it is for", () => {
     // The approval contract: say something, poll, do not ask twice.
     expect(SERVER_INSTRUCTIONS).toMatch(/pending handle/);
     expect(SERVER_INSTRUCTIONS).toMatch(/tell the user/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/get_result/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/plow_get_result/);
     expect(SERVER_INSTRUCTIONS).toMatch(/do not re-issue/i);
   });
 
@@ -78,35 +78,35 @@ describe("the server tells the agent what it is for", () => {
 describe("every tool with a strong built-in alternative says whose Mac this is", () => {
   // The three where the agent's own tool is obvious, frictionless, and wrong:
   // its sandbox filesystem, its sandbox shell, its own web fetch.
-  for (const tool of ["read_file", "write_file", "run_command", "browser_open"]) {
+  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command", "plow_browser_open"]) {
     it(`${tool} names the user's own machine`, async () => {
       expect(await descriptions(makeServer()).then((d) => d[tool])).toMatch(/user's own Mac/);
     });
   }
 
-  it("read_file and write_file distinguish this Mac from the agent's workspace", async () => {
+  it("plow_read_file and plow_write_file distinguish this Mac from the agent's workspace", async () => {
     const d = await descriptions(makeServer());
-    expect(d.read_file).toMatch(/not your workspace/);
-    expect(d.write_file).toMatch(/not for your own working files/);
+    expect(d.plow_read_file).toMatch(/not your workspace/);
+    expect(d.plow_write_file).toMatch(/not for your own working files/);
   });
 
-  it("run_command leads with when to choose it, not with the sandbox", async () => {
+  it("plow_run_command leads with when to choose it, not with the sandbox", async () => {
     const d = await descriptions(makeServer());
     // The sandbox is still stated — it is true and the agent needs it — but it
     // no longer opens the description, where it read as "this one is worse".
-    expect(d.run_command).toMatch(/seatbelt sandbox/);
-    expect(d.run_command.indexOf("own Mac")).toBeLessThan(d.run_command.indexOf("sandbox"));
+    expect(d.plow_run_command).toMatch(/seatbelt sandbox/);
+    expect(d.plow_run_command.indexOf("own Mac")).toBeLessThan(d.plow_run_command.indexOf("sandbox"));
   });
 
   // The differentiator that was missing entirely: a persistent profile and
   // vault fills. Stated as what it is — NOT as "already signed in", which
   // would be a promise this profile does not keep.
-  it("browser_open says why it beats a plain web fetch, without overselling", async () => {
+  it("plow_browser_open says why it beats a plain web fetch, without overselling", async () => {
     const d = await descriptions(makeServer());
-    expect(d.browser_open).toMatch(/profile persists/);
-    expect(d.browser_open).toMatch(/vault/);
-    expect(d.browser_open).toMatch(/one session at a time/i);
-    expect(d.browser_open).not.toMatch(/already signed in/i);
+    expect(d.plow_browser_open).toMatch(/profile persists/);
+    expect(d.plow_browser_open).toMatch(/vault/);
+    expect(d.plow_browser_open).toMatch(/one session at a time/i);
+    expect(d.plow_browser_open).not.toMatch(/already signed in/i);
   });
 });
 
@@ -115,7 +115,7 @@ describe("the goal field says a human reads it", () => {
     const listed = parse(await rpc(makeServer(), "tools/list", {})).result?.tools as
       | { name: string; inputSchema: { properties?: Record<string, { description?: string }> } }[]
       | undefined;
-    const goal = listed?.find((t) => t.name === "read_file")?.inputSchema?.properties?.goal;
+    const goal = listed?.find((t) => t.name === "plow_read_file")?.inputSchema?.properties?.goal;
     expect(goal?.description).toMatch(/the user reads/i);
     // Goal text is display-only and never influences a decision path, so the
     // copy must not imply that explaining well earns anything.
@@ -139,7 +139,7 @@ describe("the browsing skill agrees with the tools it documents", () => {
   // removed, and every tool schema is additionalProperties:false — so an agent
   // following the guide verbatim got a validation error on its first call. The
   // guide is only worth publishing if the calls in it actually run.
-  for (const tool of ["browser_open", "browser"]) {
+  for (const tool of ["plow_browser_open", "plow_browser"]) {
     it(`${tool}'s example passes only properties the schema declares`, () => {
       const schema = TOOLS.find((t) => t.name === tool)!.inputSchema as {
         properties: Record<string, unknown>;

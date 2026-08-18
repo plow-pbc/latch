@@ -28,7 +28,7 @@ describe("SkillRegistry", () => {
     reg.register(BROWSING_SKILL);
     const manifest = reg.manifest() as JSONValue[];
     expect(jv(manifest[0]).get("name").str).toBe("camoufox-browsing");
-    expect(jv(manifest[0]).get("body").str).toContain("browser_open");
+    expect(jv(manifest[0]).get("body").str).toContain("plow_browser_open");
     expect(jv(manifest[1]).get("name").str).toBe("zeta");
   });
 
@@ -36,6 +36,6 @@ describe("SkillRegistry", () => {
     expect(BROWSING_SKILL.body).toContain("back");
     expect(BROWSING_SKILL.body).toContain("use_page");
     expect(BROWSING_SKILL.body).toContain("fill_secret");
-    expect(BROWSING_SKILL.body).toContain("browser_request");
+    expect(BROWSING_SKILL.body).toContain("plow_browser_request");
   });
 });
