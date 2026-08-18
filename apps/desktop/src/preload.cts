@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld("domo", {
   connectOpenClient: (client: string) => ipcRenderer.invoke("connect:openClient", client),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
+  // Settings' Support section. A destination KEY, not a URL; main owns the
+  // table of what may be opened.
+  supportOpen: (key: string) => ipcRenderer.invoke("support:open", key),
+
   // Live browser thumbnail (audit detail pane). One whole-state shape per
   // poll; no push channel — the renderer's own interval is the clock.
   viewerState: () => ipcRenderer.invoke("viewer:state"),

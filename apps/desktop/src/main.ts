@@ -490,6 +490,24 @@ ipcMain.handle("connect:openClient", async (_e, client: string) => {
   await shell.openExternal(url);
   return true;
 });
+/**
+ * Settings' Support section destinations. Same rule as the connector table
+ * above: the renderer names a KEY, main owns the URLs, so the only things
+ * `openExternal` ever opens are URLs the app composed itself. An unknown key
+ * opens nothing.
+ */
+const SUPPORT_URLS: Readonly<Record<string, string>> = Object.freeze({
+  discord: "https://watchmepivot.com/discord",
+  website: "https://watchmepivot.com/",
+});
+
+ipcMain.handle("support:open", async (_e, key: string) => {
+  const url = SUPPORT_URLS[key];
+  if (!url) return false;
+  await shell.openExternal(url);
+  return true;
+});
+
 ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
 ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
 ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());
