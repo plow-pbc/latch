@@ -137,8 +137,10 @@ describe("PlowApi", () => {
     await api.relayInfo("t");
     await api.mintDeviceCredential("t", "Mac");
     await api.createAgent("t", "a");
+    await api.listApiKeys("t");
+    await api.revokeApiKey("t", 7);
 
-    expect(seen).toEqual(Array(6).fill("signal"));
+    expect(seen).toEqual(Array(8).fill("signal"));
   });
 
   it("turns an unreachable API into a readable message, not a stack", async () => {
@@ -267,13 +269,108 @@ describe("PlowApi", () => {
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
     expect(minted.token).toBe("plow_agenttok");
   });
+
+  it("lists API keys with the device credential in the bearer header", async () => {
+    const credential = "plow_device_do_not_leak";
+    const body = [
+      {
+        id: 17,
+        key_prefix: "agentkey",
+        name: "Claude Code",
+        scopes: ["relay:call"],
+        tokens_used: 12,
+        is_active: true,
+        last_seen_at: "2026-08-17T12:00:00+00:00",
+        created_at: "2026-08-16T12:00:00+00:00",
+      },
+    ];
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body }]);
+
+    const keys = await new PlowApi("https://api.plow.co", fetchImpl).listApiKeys(credential);
+
+    expect(keys).toEqual(body);
+    expect(calls[0].init.method).toBe("GET");
+    expect(calls[0].url).toBe("https://api.plow.co/v1/api-keys");
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe(
+      `Bearer ${credential}`,
+    );
+    expect(calls[0].url).not.toContain(credential);
+  });
+
+  it("revokes one API key by id with the device credential in the bearer header", async () => {
+    const credential = "plow_device_do_not_leak";
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: { status: "revoked", id: 17 } },
+    ]);
+
+    const revoked = await new PlowApi("https://api.plow.co", fetchImpl).revokeApiKey(credential, 17);
+
+    expect(revoked).toEqual({ status: "revoked", id: 17 });
+    expect(calls[0].init.method).toBe("DELETE");
+    expect(calls[0].url).toBe("https://api.plow.co/v1/api-keys/17");
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe(
+      `Bearer ${credential}`,
+    );
+    expect(calls[0].url).not.toContain(credential);
+    expect(calls[0].init.body).toBeUndefined();
+  });
+
+  it.each([
+    ["a path-shaped string", "17/../relay/devices/self/revoke"],
+    ["a negative integer", -1],
+    ["a fraction", 1.5],
+    ["an unsafe integer", Number.MAX_SAFE_INTEGER + 1],
+    ["NaN", Number.NaN],
+    ["infinity", Number.POSITIVE_INFINITY],
+  ])("rejects %s as an API key id without making a request", async (_case, id) => {
+    const { calls, fetchImpl } = recordingFetch([]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    const error = await api
+      .revokeApiKey("plow_device_do_not_leak", id as number)
+      .catch((caught) => caught as Error);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(error.message).toBe("Invalid API key id.");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not copy an API-key credential from a transport failure into an error string", async () => {
+    const credential = "plow_device_do_not_leak";
+    const fetchImpl = async () => {
+      throw new Error(`request failed with Authorization: Bearer ${credential}`);
+    };
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    const requests = [() => api.listApiKeys(credential), () => api.revokeApiKey(credential, 17)];
+    for (const request of requests) {
+      const error = await request().catch((caught) => caught as Error);
+      expect(error.message).toBe("Couldn't reach Plow at https://api.plow.co.");
+      expect(error.message).not.toContain(credential);
+    }
+  });
+
+  it("does not copy a bearer credential from an HTTP error detail into the error string", async () => {
+    const credential = "plow_device_do_not_leak";
+    const { fetchImpl } = recordingFetch([
+      { status: 403, body: { detail: `Not permitted for Bearer ${credential}` } },
+    ]);
+
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .listApiKeys(credential)
+      .catch((caught) => caught as Error);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(error.message).toBe("Not permitted.");
+    expect(error.message).not.toContain(credential);
+  });
 });
 
 /**
  * `chatCompletion` shares the transport with every other call but NOT the error
  * policy, and that difference is the whole reason it exists.
  *
- * `errorFor` puts the server's `detail` verbatim into a thrown error's message.
+ * `errorFor` puts credential-safe server `detail` into a thrown error's message.
  * That is right for onboarding, where `detail` is a sentence written for the
  * person reading it ("That code has expired"). It is wrong for the reviewer,
  * whose failure reasons are shown to a human deciding whether to trust an

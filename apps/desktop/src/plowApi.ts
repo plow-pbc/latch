@@ -104,6 +104,25 @@ export interface MintedCredential {
   name: string;
 }
 
+/** The account credential metadata returned by `GET /v1/api-keys`.
+ * Main-process only: `key_prefix` and `scopes` must be projected away before
+ * any row crosses the renderer bridge. */
+export interface KeyInfo {
+  id: number;
+  key_prefix: string | null;
+  name: string | null;
+  scopes: string[];
+  tokens_used: number;
+  is_active: boolean;
+  last_seen_at: string | null;
+  created_at: string | null;
+}
+
+export interface RevokedKey {
+  status: string;
+  id: number;
+}
+
 /** `AbortSignal.timeout` aborts with a `TimeoutError`; some runtimes surface it
  * as a plain `AbortError`, so both count. */
 function isTimeout(error: unknown): boolean {
@@ -261,16 +280,33 @@ export class PlowApi {
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
   }
 
+  /** List this account's credential metadata. The device credential carries
+   * `keys:manage`; it remains in the bearer header and is never returned. */
+  async listApiKeys(token: string): Promise<KeyInfo[]> {
+    return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+  }
+
+  /** Soft-revoke one credential by its server id. */
+  async revokeApiKey(token: string, id: number): Promise<RevokedKey> {
+    // IPC callers are runtime values no matter what TypeScript says. Refuse
+    // path-shaped strings, fractions and out-of-range numbers before the id is
+    // interpolated into an authenticated request URL.
+    if (!Number.isSafeInteger(id) || id < 0) {
+      throw new PlowApiError("http", "Invalid API key id.");
+    }
+    return this.call<RevokedKey>("DELETE", `/v1/api-keys/${id}`, { token });
+  }
+
   /**
    * One inference call, as `{status, body}` — **this deliberately does not go
    * through `call()`**.
    *
-   * `call()` throws `PlowApiError`s whose message carries the server's `detail`
-   * verbatim (see `errorFor`), which is right for onboarding, where `detail` is
-   * a sentence written for the person reading it. It is wrong here: the
-   * reviewer's failure reasons are shown to a human deciding whether to trust
-   * an operation, and an upstream body is not text we control. So this returns
-   * the status and the decoded body and lets the caller do its own mapping —
+   * `call()` throws `PlowApiError`s whose message normally carries the server's
+   * `detail` after credential rejection (see `errorFor`). That is right for
+   * onboarding, where it is a sentence written for the person reading it. It is
+   * wrong here: the reviewer's failure reasons are shown to a human deciding
+   * whether to trust an operation, and an upstream body is not text we control.
+   * So this returns the status and the decoded body and lets the caller do its own mapping —
    * the reviewer keeps `plowHttpReason`, and nothing from the body reaches a
    * reason string except what that mapping deliberately extracts.
    *
@@ -308,7 +344,7 @@ export class PlowApi {
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 
-    if (!response.ok) throw await this.errorFor(response);
+    if (!response.ok) throw await this.errorFor(response, opts.token);
     if (response.status === 204) return undefined as T;
     try {
       return (await response.json()) as T;
@@ -357,9 +393,10 @@ export class PlowApi {
     }
   }
 
-  private async errorFor(response: Response): Promise<PlowApiError> {
-    // `detail` is the FastAPI convention. It is server-authored and never
-    // echoes a request header, so it is safe to surface.
+  private async errorFor(response: Response, credential?: string): Promise<PlowApiError> {
+    // `detail` is the FastAPI convention. It is server-authored, but an
+    // authenticated response that repeats its bearer credential is not safe to
+    // surface. Drop the whole detail and use the status-specific fallback.
     let detail = "";
     try {
       const body = (await response.json()) as { detail?: unknown };
@@ -367,6 +404,7 @@ export class PlowApi {
     } catch {
       /* a non-JSON body tells us nothing worth showing */
     }
+    if (credential && detail.includes(credential)) detail = "";
     if (response.status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", 401);
     if (response.status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", 403);
     if (response.status === 410) {
