@@ -360,7 +360,7 @@ function activityCategory(
     if (ee && (jv(ee).get("exit_code").int ?? 0) !== 0) return "failed";
     return "approved";
   }
-  if (entry("denied_operation")) return "failed";
+  if (has("credential_fill_failed") || entry("denied_operation")) return "failed";
   return "other";
 }
 

@@ -106,5 +106,7 @@ describe("a failed credential fill is visible to the owner", () => {
     expect(line.text).toContain("L1");
     expect(line.text).toContain("#pass");
     expect(line.text).toContain("dominos.com");
+    // ...and the Failed filter must show it, or the owner only finds it by luck.
+    expect(browser.category).toBe("failed");
   });
 });
