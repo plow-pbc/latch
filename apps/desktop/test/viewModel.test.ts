@@ -59,6 +59,56 @@ describe("approvalViewModel", () => {
   });
 });
 
+/**
+ * The card now carries a line the OWNER wrote, next to lines the agent wrote,
+ * and the whole value of it depends on the human being able to tell which is
+ * which. So: it comes in as an argument from the main process, never off the
+ * intent, and it stays out of the capability list the card presents as
+ * enforced.
+ */
+describe("the owner's purpose on the approval card", () => {
+  const PURPOSE = "Groceries and calendar only. Never touch ~/Developer.";
+
+  it("comes from the caller, not from anything the agent supplied", () => {
+    const vm = approvalViewModel(intentOf(), undefined, PURPOSE);
+    expect(vm.agentPurpose).toBe(PURPOSE);
+  });
+
+  it("is empty when the owner has said nothing — including when the agent has", () => {
+    // The agent fills goal and planContext with purpose-shaped prose. Neither
+    // is a source for this field, so the row stays off the card.
+    const vm = approvalViewModel(
+      intentOf({
+        goal: "Groceries and calendar only. Never touch ~/Developer.",
+        planContext: "Groceries and calendar only. Never touch ~/Developer.",
+      }),
+    );
+    expect(vm.agentPurpose).toBe("");
+  });
+
+  it("treats a whitespace-only statement as nothing said", () => {
+    expect(approvalViewModel(intentOf(), undefined, "   \n  ").agentPurpose).toBe("");
+  });
+
+  /**
+   * The enforced block on the card is `capabilities`, and only that. Prose
+   * appearing there would read as something the sandbox will hold to, which is
+   * exactly the confusion the two-level card exists to prevent.
+   */
+  it("stays out of the enforced capability list", () => {
+    const vm = approvalViewModel(intentOf(), undefined, PURPOSE);
+    expect(vm.capabilities.map((c) => c.display).join(" ")).not.toContain("Groceries");
+    expect(JSON.stringify(vm.capabilities)).not.toContain("Groceries");
+    // It is its own field beside them, not folded into one of them.
+    expect(vm.agentPurpose).toBe(PURPOSE);
+  });
+
+  it("carries markup verbatim as data, like every other agent-adjacent string", () => {
+    const vm = approvalViewModel(intentOf(), undefined, "<img src=x onerror=alert(1)>");
+    expect(vm.agentPurpose).toBe("<img src=x onerror=alert(1)>");
+  });
+});
+
 describe("auditActivities (grouping)", () => {
   // A full command lifecycle for one intent: received → decided → ran → finished.
   const commandRun: JSONValue[] = [

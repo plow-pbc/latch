@@ -73,7 +73,10 @@ async function render() {
   // reserves space for advice that may never arrive.
   const reviewerNote = el("div", { class: "reviewer-note" });
 
-  root.replaceChildren(
+  // Built as a list and filtered, not passed straight in: `replaceChildren`
+  // takes Nodes or STRINGS, so a null child would land on the card as the word
+  // "null" rather than being skipped the way `el()` skips one.
+  const cards = [
     el("div", { class: "who" }, [
       el("span", { class: "name", text: v.agentDisplay }),
       badge("blue", "wants to act"),
@@ -89,9 +92,21 @@ async function render() {
       v.planContext ? el("div", { class: "lbl", text: "Session context" }) : null,
       v.planContext ? el("div", { class: "faint", text: v.planContext }) : null,
     ]),
+    // What the owner said agents are for, in their own words — OUTSIDE the
+    // block above on purpose. That block is the enforceable bound; this is the
+    // standing instruction the human wrote for themselves, and putting it
+    // inside would dress prose up as something the sandbox enforces. Absent
+    // entirely when they have said nothing: an empty label is furniture.
+    v.agentPurpose
+      ? el("div", {}, [
+          el("div", { class: "section-label", text: "You said agents here are for" }),
+          el("div", { class: "faint", text: v.agentPurpose }),
+        ])
+      : null,
     reviewerNote,
     el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
-  );
+  ];
+  root.replaceChildren(...cards.filter(Boolean));
   if (reviewing) document.body.appendChild(reviewing);
   allowOnce.focus(); // keyboard default: Return activates Allow Once
 

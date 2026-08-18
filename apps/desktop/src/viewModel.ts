@@ -17,6 +17,18 @@ export interface ApprovalViewModel {
   goal: string;
   request: string;
   planContext: string | null;
+  /**
+   * What the owner of this Mac says agents are for — THEIR words, read from
+   * settings by the main process and passed in beside the intent.
+   *
+   * The opposite provenance to `goal` above it: that one is written by the
+   * agent asking, this one by the person being asked. It is shown so the human
+   * can weigh the request against what they already said they wanted, and it
+   * is context like the goal is — never part of the enforceable bound, which is
+   * `capabilities` and nothing else. Empty means the owner has said nothing,
+   * and the row is left off the card.
+   */
+  agentPurpose: string;
   /** The enforceable capability set — the source of the sandbox bound. */
   capabilities: { kind: string; display: string }[];
   /** Convenience flags for the UI. */
@@ -36,10 +48,18 @@ export interface ApprovalViewModel {
 /** Locally-resolved vault item titles, keyed by item id. */
 export type CredentialTitles = Map<string, { title: string; category: string }>;
 
-/** Build the approval card model from an already-verified intent. */
+/**
+ * Build the approval card model from an already-verified intent.
+ *
+ * `agentPurpose` is deliberately a PARAMETER and not something read off the
+ * intent: it is device-side settings data, and an intent is the agent's side of
+ * the conversation. Sourcing it here from anything the agent supplied would
+ * hand an agent the power to write the line the human reads as their own.
+ */
 export function approvalViewModel(
   intent: Intent,
   credentialTitles?: CredentialTitles,
+  agentPurpose = "",
 ): ApprovalViewModel {
   const caps: Capability[] = intent.capabilities ?? [];
   const fillItems = caps.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
@@ -67,6 +87,7 @@ export function approvalViewModel(
     goal: intent.goal ?? "",
     request: intent.request,
     planContext: intent.planContext ?? null,
+    agentPurpose: agentPurpose.trim(),
     capabilities: caps.map((c) => ({ kind: c.kind, display: display(c) })),
     needsNetwork: caps.some((c) => c.kind === "network" && c.allowed === true),
     writesFiles: caps.some((c) => c.kind === "fs.write"),

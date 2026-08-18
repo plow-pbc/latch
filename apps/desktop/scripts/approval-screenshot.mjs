@@ -25,6 +25,8 @@ ipcMain.handle("approval:get", async () => ({
     goal: "Tidy up the quarterly report folder",
     request: "run: sips -Z 1600 ~/Documents/report/photos",
     planContext: null,
+    // Device-side, from settings — the one line on this card the owner wrote.
+    agentPurpose: "Help with the quarterly report and the calendar. Never touch code or email.",
     capabilities: [
       { kind: "process.exec", display: "Run: sips -Z 1600 photos" },
       { kind: "fs.read", display: "Read: /Users/you/Documents/report/photos" },
@@ -54,6 +56,11 @@ app.whenReady().then(async () => {
   const image = await win.webContents.capturePage();
   fs.writeFileSync(out, image.toPNG());
   const text = await win.webContents.executeJavaScript("document.body.innerText");
-  console.log("SHOT:" + JSON.stringify({ out, namesAgent: text.includes("Claude Code"), showsId: text.includes("sess_01HZX9K4M2QP") }));
+  console.log("SHOT:" + JSON.stringify({
+    out,
+    namesAgent: text.includes("Claude Code"),
+    showsId: text.includes("sess_01HZX9K4M2QP"),
+    showsPurpose: text.includes("You said agents here are for"),
+  }));
   app.exit(text.includes("Claude Code") ? 0 : 1);
 });
