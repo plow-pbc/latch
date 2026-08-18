@@ -70,9 +70,32 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 ipcMain.handle("settings:setInference", async (_e, provider) =>
   setInferenceProvider(probeHome, provider),
 );
-// Connect a client: the same shape `ConnectClient.state()` returns, with no
-// credential minted — the screen this probe renders is the OAuth one.
-ipcMain.handle("connect:get", async () => ({
+// Connect a client: Chunk 3's renderer-safe state shape, with no credential
+// minted and representative roster rows for the Agents pane.
+const probeRoster = [
+  {
+    id: 41,
+    name: "Probe Agent",
+    kind: "Agent",
+    createdAt: "2026-08-12T18:20:00.000Z",
+    lastSeenAt: "2026-08-17T16:42:00.000Z",
+  },
+  {
+    id: 42,
+    name: "Probe website login",
+    kind: "Plow web login",
+    createdAt: "2026-08-10T15:00:00.000Z",
+    lastSeenAt: null,
+  },
+  {
+    id: 43,
+    name: "Old full-access key",
+    kind: "Legacy — full access",
+    createdAt: null,
+    lastSeenAt: "2026-08-01T12:00:00.000Z",
+  },
+];
+const probeConnectState = () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
   connected: true,
@@ -80,7 +103,15 @@ ipcMain.handle("connect:get", async () => ({
   busy: false,
   message: "",
   credential: null,
-}));
+  roster: probeRoster,
+  rosterError: null,
+});
+const probeRevokedIds = [];
+ipcMain.handle("connect:get", async () => probeConnectState());
+ipcMain.handle("connect:revoke", async (_e, id) => {
+  probeRevokedIds.push(id);
+  return probeConnectState();
+});
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -459,6 +490,12 @@ app.whenReady().then(async () => {
       clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
         n.textContent.trim(),
       ),
+      rosterRows: [...document.querySelectorAll(".roster-item")].map((item) => ({
+        name: item.querySelector("h4")?.textContent.trim(),
+        kind: item.querySelector(".badge")?.textContent.trim(),
+        dangerAction: item.querySelector("button")?.classList.contains("danger") === true,
+      })),
+      rosterMetadata: [...document.querySelectorAll(".roster-meta")].map((n) => n.textContent.trim()),
     };
   }})()`);
 
@@ -470,6 +507,66 @@ app.whenReady().then(async () => {
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
   fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
+
+  // Agent rows are one-click revokes. Account-wide credentials stop at a
+  // consequence-bearing confirmation and make no IPC call until confirmed.
+  await win.webContents.executeJavaScript(`(() => {
+    const row = [...document.querySelectorAll(".roster-item")]
+      .find((item) => item.textContent.includes("Probe Agent"));
+    row.querySelector("button").click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 250));
+  const agentRevoke = {
+    called: probeRevokedIds.includes(41),
+    noConfirmation: await win.webContents.executeJavaScript(`!document.querySelector(".roster-confirm")`),
+  };
+  await win.webContents.executeJavaScript(`(() => {
+    const row = [...document.querySelectorAll(".roster-item")]
+      .find((item) => item.textContent.includes("Probe website login"));
+    row.querySelector("button").click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 200));
+  const accountRevoke = await win.webContents.executeJavaScript(`(${() => {
+    const dialog = document.querySelector(".roster-confirm");
+    return {
+      opensConfirmation: !!dialog,
+      namesConsequence: (dialog?.innerText ?? "").includes("signs you out of the Plow website"),
+      waitsForConfirmation: true,
+      focusInDialog: !!dialog && dialog.contains(document.activeElement),
+    };
+  }})()`);
+  accountRevoke.waitsForConfirmation = !probeRevokedIds.includes(42);
+  await win.webContents.executeJavaScript(`(() => {
+    const cancel = [...document.querySelectorAll(".roster-confirm button")]
+      .find((button) => button.textContent.trim() === "Cancel");
+    cancel.click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 150));
+  accountRevoke.cancelCloses = await win.webContents.executeJavaScript(`!document.querySelector(".roster-confirm")`);
+  await win.webContents.executeJavaScript(`(() => {
+    const row = [...document.querySelectorAll(".roster-item")]
+      .find((item) => item.textContent.includes("Old full-access key"));
+    row.querySelector("button").click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 150));
+  const legacyRevoke = await win.webContents.executeJavaScript(`(${() => {
+    const dialog = document.querySelector(".roster-confirm");
+    return {
+      namesConsequence: (dialog?.innerText ?? "").includes("legacy full-access credential will stop working"),
+      waitsForConfirmation: true,
+    };
+  }})()`);
+  legacyRevoke.waitsForConfirmation = !probeRevokedIds.includes(43);
+  await win.webContents.executeJavaScript(`(() => {
+    const cancel = [...document.querySelectorAll(".roster-confirm button")]
+      .find((button) => button.textContent.trim() === "Cancel");
+    cancel.click();
+    return true;
+  })()`);
 
   // …and the same pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -618,6 +715,21 @@ app.whenReady().then(async () => {
     connect.agentsTabFirst &&
     connect.hasAgentsPane &&
     connect.showsTitle &&
+    connect.rosterRows.length === 3 &&
+    connect.rosterRows.every((row) => row.dangerAction) &&
+    connect.rosterRows.map((row) => row.name).join(",") === "Probe Agent,Probe website login,Old full-access key" &&
+    connect.rosterRows.map((row) => row.kind).join(",") === "Agent,Plow web login,Legacy — full access" &&
+    connect.rosterMetadata.some((line) => line.includes("Last used")) &&
+    connect.rosterMetadata.some((line) => line.includes("Never used")) &&
+    agentRevoke.called &&
+    agentRevoke.noConfirmation &&
+    accountRevoke.opensConfirmation &&
+    accountRevoke.namesConsequence &&
+    accountRevoke.waitsForConfirmation &&
+    accountRevoke.focusInDialog &&
+    accountRevoke.cancelCloses &&
+    legacyRevoke.namesConsequence &&
+    legacyRevoke.waitsForConfirmation &&
     settingsPane.firstGroupIsAccount &&
     settingsPane.noConnectBlock &&
     settingsPane.noConnectText &&
@@ -657,7 +769,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, connect, agentRevoke, accountRevoke, legacyRevoke, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

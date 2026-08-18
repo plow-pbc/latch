@@ -342,6 +342,17 @@ textarea.text { min-height: 70px; resize: vertical; }
 .item p.conn-note { margin-bottom: 16px; }
 .item p.reviewer-note { margin-top: 14px; }
 
+/* Agents roster: the Rules item pattern, with its metadata kept in the left
+   column and the destructive action pinned to the right. */
+.roster-label { margin-top: 20px; }
+.roster-item { display: flex; align-items: center; gap: 12px; }
+.roster-main { flex: 1 1 auto; min-width: 0; }
+.roster-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 5px; }
+.roster-title h4 { margin: 0; overflow-wrap: anywhere; }
+.roster-item .roster-meta { color: var(--faint); font-size: 12px; }
+.roster-empty { padding: 4px 2px; text-align: left; }
+.roster-error p { color: var(--red-fg); }
+
 /* Goal item: title + description on the left, action column on the right that
    the description can never flow under (separate flex columns). */
 .goal-item { display: flex; align-items: center; gap: 12px; }

@@ -33,6 +33,29 @@ const MCP_URL = "https://api.plow.co/v1/relay/devices/u_7Qk2p9/mcp";
 // fake mint hands back, so the copy-once block has something to show.
 const DEVICE_TOKEN = "plow_EXAMPLEdeviceNOTreal_00000";
 const CLIENT_TOKEN = "plow_EXAMPLEclientNOTreal_00000";
+const ROSTER_ROWS = [
+  {
+    id: 101,
+    name: "Claude Code",
+    kind: "Agent",
+    createdAt: "2026-08-12T18:20:00.000Z",
+    lastSeenAt: "2026-08-17T16:42:00.000Z",
+  },
+  {
+    id: 102,
+    name: "claude.ai",
+    kind: "Agent",
+    createdAt: "2026-08-14T20:05:00.000Z",
+    lastSeenAt: null,
+  },
+  {
+    id: 103,
+    name: "Plow website",
+    kind: "Plow web login",
+    createdAt: "2026-08-10T15:00:00.000Z",
+    lastSeenAt: "2026-08-17T17:01:00.000Z",
+  },
+];
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
@@ -48,21 +71,43 @@ async function setUp() {
   // A Mac that has been through login: a device credential and an endpoint.
   saveSettings(home, { ...loadSettings(home), ...DEVICE_SETTINGS });
 
-  /** Plow, stood in for — the one call this screen can make. */
+  /** Plow, stood in for. Chunk 4 consumes display rows, so the roster calls
+      exist only to satisfy the real Chunk 3 controller when it refreshes. */
   const api = {
     async createAgent(token, name) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
       return { token: CLIENT_TOKEN, keyPrefix: CLIENT_TOKEN.slice(5, 13), name };
     },
+    async listApiKeys(token) {
+      if (token !== DEVICE_TOKEN) throw new Error("the list must use the device credential");
+      return [];
+    },
+    async revokeApiKey(token, id) {
+      if (token !== DEVICE_TOKEN) throw new Error("the revoke must use the device credential");
+      return { status: "revoked", id };
+    },
   };
 
   const connect = new ConnectClient({ api, home, isConnected: () => true });
+  let roster = ROSTER_ROWS;
+  let rosterError = null;
+  const state = () => ({ ...connect.state(), roster, rosterError });
 
-  // The main window's IPC surface, as far as this screen reaches. `connect:*`
-  // are the real handlers from main.ts, pointed at the same class.
-  ipcMain.handle("connect:get", async () => connect.state());
-  ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
-  ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
+  // The main window's renderer contract, with Chunk 3's state/revoke surface
+  // stubbed explicitly so this harness remains owned by the UI chunk.
+  ipcMain.handle("connect:get", async () => state());
+  ipcMain.handle("connect:create", async (_e, name) => {
+    await connect.createCredential(name);
+    return state();
+  });
+  ipcMain.handle("connect:dismiss", async () => {
+    connect.dismissCredential();
+    return state();
+  });
+  ipcMain.handle("connect:revoke", async (_e, id) => {
+    roster = roster.filter((row) => row.id !== id);
+    return state();
+  });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});
@@ -80,13 +125,20 @@ async function setUp() {
     dismissed: false,
     upToDate: false,
   }));
-  return connect;
+  return {
+    connect,
+    setRoster(rows, error = null) {
+      roster = rows;
+      rosterError = error;
+    },
+  };
 }
 
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
   {
-    name: "oauth",
+    name: "roster",
+    before: ({ setRoster }) => setRoster(ROSTER_ROWS),
     prepare: async () => {},
     expect: [
       "Connect an MCP client",
@@ -99,6 +151,36 @@ const SCREENS = [
       // The shortcut to where the URL gets pasted.
       "Claude",
       "Can't use OAuth? Create a static credential",
+      "AGENTS WITH ACCESS",
+      "Claude Code",
+      "claude.ai",
+      "Agent",
+      "Plow web login",
+      "Last used",
+      "Never used",
+    ],
+  },
+  {
+    name: "roster-empty",
+    before: ({ setRoster }) => setRoster([]),
+    prepare: async () => {},
+    expect: ["Connect an MCP client", "AGENTS WITH ACCESS", "No agents have access to this Mac yet."],
+  },
+  {
+    name: "roster-error",
+    before: ({ setRoster }) => setRoster([], "Plow is unavailable."),
+    prepare: async () => {},
+    expect: ["Connect an MCP client", "Couldn’t load agents: Plow is unavailable.", "Retry"],
+  },
+  {
+    name: "roster-confirm",
+    before: ({ setRoster }) => setRoster(ROSTER_ROWS),
+    prepare: async (win) => clickRowAction(win, "Plow website", "Revoke"),
+    expect: [
+      "Revoke Plow website?",
+      "This signs you out of the Plow website.",
+      "Cancel",
+      "Revoke",
     ],
   },
   {
@@ -129,6 +211,24 @@ const SCREENS = [
     ],
   },
 ];
+
+/** Click an action within one roster row, rather than whichever same-labelled
+    button happens to occur first on the page. */
+async function clickRowAction(win, rowName, label) {
+  const found = await win.webContents.executeJavaScript(`
+    (() => {
+      const row = [...document.querySelectorAll(".roster-item")]
+        .find((item) => item.textContent.includes(${JSON.stringify(rowName)}));
+      const button = [...(row?.querySelectorAll("button") ?? [])]
+        .find((b) => b.textContent.includes(${JSON.stringify(label)}));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()
+  `);
+  if (!found) throw new Error(`no ${label} action for roster row ${rowName}`);
+  await new Promise((r) => setTimeout(r, 250));
+}
 
 /** Click by visible label, the way a person picks a button out of the page. */
 async function clickText(win, label) {
@@ -163,7 +263,7 @@ process.on("unhandledRejection", (error) => {
 });
 
 app.whenReady().then(async () => {
-  const connect = await setUp();
+  const harness = await setUp();
   fs.mkdirSync(outDir, { recursive: true });
   const win = new BrowserWindow({
     width: 940,
@@ -179,6 +279,7 @@ app.whenReady().then(async () => {
 
   let failures = 0;
   for (const screen of SCREENS) {
+    await screen.before?.(harness);
     // A reload re-runs the renderer's boot, which restores the Agents tab — and
     // drops any modal left standing by the screen before it.
     await win.loadFile(path.join(dist, "renderer/index.html"));
@@ -202,8 +303,8 @@ app.whenReady().then(async () => {
     // Copy-once is a claim about the app, so the run checks it rather than
     // leaving it to the picture: once dismissed, the config is gone for good.
     if (screen.name === "static-shown") {
-      connect.dismissCredential();
-      const after = JSON.stringify(connect.state());
+      harness.connect.dismissCredential();
+      const after = JSON.stringify(harness.connect.state());
       if (after.includes(CLIENT_TOKEN)) {
         failures += 1;
         console.log("SHOT:" + JSON.stringify({ screen: "copy-once", missing: ["credential survived dismissal"] }));

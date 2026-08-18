@@ -715,10 +715,150 @@ function connectNodes(s, redraw) {
   for (const b of box.querySelectorAll("button")) if (s.busy) b.disabled = true;
   return [box];
 }
+
+/** Human-readable account timestamps. `lastSeenAt` is deliberately described
+    as "last used", never as a live/online signal. */
+function rosterTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? null
+    : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function rosterName(row) {
+  return row.name && row.name.trim() ? row.name : "Unnamed credential";
+}
+
+/** The higher-impact credential kinds require an explicit consequence before
+    the revoke call. This uses the existing modal furniture so the confirmation
+    is capturable by the macOS harness as well as keyboard accessible. */
+let rosterConfirm = null;
+
+function closeRosterConfirm() {
+  if (!rosterConfirm) return;
+  const { backdrop, trigger, onKeydown } = rosterConfirm;
+  document.removeEventListener("keydown", onKeydown, true);
+  backdrop.remove();
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.removeAttribute("inert");
+  }
+  rosterConfirm = null;
+  if (trigger && trigger.isConnected) trigger.focus();
+}
+
+function openRosterConfirm(row, trigger, redraw) {
+  if (rosterConfirm) return;
+  const consequence =
+    row.kind === "Plow web login"
+      ? "This signs you out of the Plow website."
+      : "Any client using this legacy full-access credential will stop working.";
+  const panel = el("div", { class: "modal roster-confirm", attrs: { role: "dialog", "aria-modal": "true" } });
+  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const confirm = el("button", { class: "btn danger", text: "Revoke" });
+  const note = el("p", { class: "faint modal-note", text: "" });
+  const onKeydown = (e) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeRosterConfirm();
+  };
+  cancel.addEventListener("click", closeRosterConfirm);
+  confirm.addEventListener("click", async () => {
+    cancel.disabled = true;
+    confirm.disabled = true;
+    note.textContent = "Revoking…";
+    try {
+      await window.domo.connectRevoke(row.id);
+      closeRosterConfirm();
+      await redraw();
+    } catch {
+      cancel.disabled = false;
+      confirm.disabled = false;
+      note.textContent = "Couldn’t revoke it. Try again.";
+    }
+  });
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) closeRosterConfirm();
+  });
+  panel.replaceChildren(
+    el("div", { class: "group-title", text: `Revoke ${rosterName(row)}?` }),
+    el("p", { class: "conn-note", text: consequence }),
+    note,
+    el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), confirm]),
+  );
+  document.addEventListener("keydown", onKeydown, true);
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.setAttribute("inert", "");
+  }
+  document.body.appendChild(backdrop);
+  rosterConfirm = { backdrop, trigger, onKeydown };
+  cancel.focus();
+}
+
+/** Display-only roster rows from ConnectClientState. The renderer never sees
+    the raw scopes, key prefix, or token used to derive these rows. */
+function rosterNodes(s, redraw) {
+  if (s.rosterError) {
+    const retry = el("button", { class: "btn small", text: "Retry" });
+    retry.addEventListener("click", redraw);
+    return [el("div", { class: "item roster-error" }, [
+      el("div", { class: "row" }, [
+        el("p", { text: `Couldn’t load agents: ${s.rosterError}` }),
+        el("div", { class: "spacer" }),
+        retry,
+      ]),
+    ])];
+  }
+
+  if (!s.roster.length) {
+    return [el("div", { class: "empty roster-empty", text: "No agents have access to this Mac yet." })];
+  }
+
+  return s.roster.map((row) => {
+    const name = rosterName(row);
+    const created = rosterTime(row.createdAt);
+    const lastUsed = rosterTime(row.lastSeenAt);
+    const metadata = [
+      created ? `Created ${created}` : "Created date unknown",
+      lastUsed ? `Last used ${lastUsed}` : "Never used",
+    ].join(" · ");
+    const revoke = el("button", {
+      class: "btn danger",
+      text: "Revoke",
+      attrs: { "aria-label": `Revoke ${name}` },
+    });
+    revoke.addEventListener("click", async () => {
+      if (row.kind !== "Agent") {
+        openRosterConfirm(row, revoke, redraw);
+        return;
+      }
+      revoke.disabled = true;
+      try {
+        await window.domo.connectRevoke(row.id);
+        await redraw();
+      } catch {
+        // Re-read the controller's renderer-safe error state; never draw the
+        // rejected IPC error, which is not part of that credential boundary.
+        await redraw();
+      } finally {
+        if (revoke.isConnected) revoke.disabled = false;
+      }
+    });
+    return el("div", { class: "item roster-item" }, [
+      el("div", { class: "roster-main" }, [
+        el("div", { class: "roster-title" }, [el("h4", { text: name }), badge("zinc", row.kind)]),
+        el("p", { class: "roster-meta", text: metadata }),
+      ]),
+      revoke,
+    ]);
+  });
+}
 /**
  * The mounted Agents pane, while that tab is up. Holds the one refresh
- * `connect:changed` calls, so a mint or a dismissal redraws the flow and
- * nothing else.
+ * `connect:changed` calls, so a mint, dismissal, or revoke redraws both views
+ * of the same state without rebuilding the pane around them.
  */
 let agentsMounted = null;
 
@@ -732,13 +872,15 @@ let agentsMounted = null;
  */
 async function renderAgents() {
   const connectBox = el("div");
-  const refreshConnect = async () => {
+  const rosterBox = el("div", { class: "roster" });
+  const refreshAgents = async () => {
     const s = await window.domo.connectGet();
-    connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
-    if (s) syncStaticModal(s, refreshConnect);
+    connectBox.replaceChildren(...(s ? connectNodes(s, refreshAgents) : []));
+    rosterBox.replaceChildren(...(s ? rosterNodes(s, refreshAgents) : []));
+    if (s) syncStaticModal(s, refreshAgents);
   };
-  await refreshConnect();
-  agentsMounted = { refreshConnect };
+  await refreshAgents();
+  agentsMounted = { refreshAgents };
 
   // `settings` alongside `agents` on purpose: the group card, its title and its
   // description are the same furniture Settings uses, and this pane is one of
@@ -750,6 +892,8 @@ async function renderAgents() {
       "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
       [connectBox],
     ),
+    el("div", { class: "section-label roster-label", text: "Agents with access" }),
+    rosterBox,
   ]));
 }
 
@@ -1153,7 +1297,7 @@ function selectTab(tab) {
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
-  if (tab !== "agents") { staticOpen = false; closeStaticModal(); }
+  if (tab !== "agents") { staticOpen = false; closeStaticModal(); closeRosterConfirm(); }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
   if (tab !== "agents") agentsMounted = null;
@@ -1183,10 +1327,10 @@ window.domo.onStatusChanged(() => {
   // updates the account and provider nodes and leaves the field alone.
   if (currentTab === "settings") settingsMounted?.refresh();
   // Signing in or out changes whether the flow has a URL to show at all.
-  if (currentTab === "agents") agentsMounted?.refreshConnect();
+  if (currentTab === "agents") agentsMounted?.refreshAgents();
 });
-// Minting or dismissing a credential redraws only the Agents flow.
-window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
+// Minting, dismissing, or revoking redraws the connect flow and its roster.
+window.domo.onConnectChanged(() => { agentsMounted?.refreshAgents(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
   if (currentTab === "settings") renderSettings();
