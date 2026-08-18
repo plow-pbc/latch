@@ -106,41 +106,32 @@ describe("an edit", () => {
     });
   });
 
-  it("touches only the URL it showed, and passes the rest through untouched", () => {
+  it("touches only the URL it showed, and leaves every other entry alone", () => {
     const many = encryptCipher(
       { type: "login", name: "GitHub", password: "x", urls: ["https://github.com", "https://gist.github.com"] },
       null,
       account,
     );
     // The stored entries carry match rules this screen never shows, and the
-    // second one is not even a URL — a rule the vault understands and we do not.
+    // second is not even a URL — a rule the vault understands and we do not.
     many.login.uris = [
       { ...many.login.uris[0], match: 0 },
       { uri: many.login.uris[1].uri, match: 4 },
     ];
-    const edited = encryptCipher(
-      { itemId: "item-1", url: "https://github.com/login" },
-      { ...many, id: "item-1" },
-      account,
-    );
-    expect(decryptItem({ ...edited, id: "item-1" }, account).urls).toEqual([
+    const stored = { ...many, id: "item-1" };
+
+    const changed = encryptCipher({ itemId: "item-1", url: "https://github.com/login" }, stored, account);
+    expect(decryptItem({ ...changed, id: "item-1" }, account).urls).toEqual([
       "https://github.com/login",
       "https://gist.github.com",
     ]);
-    // Byte for byte: the entry that was not shown is the same object it was.
-    expect(edited.login.uris[1]).toEqual(many.login.uris[1]);
-    expect(edited.login.uris[0].match).toBeNull();
-  });
+    // Byte for byte: the entry that was not shown is the object it was.
+    expect(changed.login.uris[1]).toEqual(many.login.uris[1]);
+    expect(changed.login.uris[0].match).toBeNull();
 
-  it("leaves the URL alone when the edit does not mention one", () => {
-    const before = encryptCipher(
-      { type: "login", name: "GitHub", password: "x", urls: ["https://github.com"] },
-      null,
-      account,
-    );
-    before.login.uris = [{ ...before.login.uris[0], match: 3 }];
-    const edited = encryptCipher({ itemId: "item-1", username: "new" }, { ...before, id: "item-1" }, account);
-    expect(edited.login.uris).toEqual(before.login.uris);
+    // And an edit that mentions no URL at all changes none of them.
+    const untouched = encryptCipher({ itemId: "item-1", username: "new" }, stored, account);
+    expect(untouched.login.uris).toEqual(many.login.uris);
   });
 
   it("clears a field that is sent empty", () => {

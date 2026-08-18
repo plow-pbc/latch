@@ -22,9 +22,9 @@ const TYPE_NAME: Record<number, VaultItemType> = { 1: "login", 2: "note", 3: "ca
 /** Where each type keeps its fields inside a cipher. */
 const TYPE_BODY: Record<number, string> = { 1: "login", 2: "secureNote", 3: "card", 4: "identity" };
 
-export const LOGIN_KEYS = ["username", "password", "totp"] as const;
-export const CARD_KEYS = ["cardholderName", "brand", "number", "expMonth", "expYear", "code"] as const;
-export const IDENTITY_KEYS = [
+const LOGIN_KEYS = ["username", "password", "totp"] as const;
+const CARD_KEYS = ["cardholderName", "brand", "number", "expMonth", "expYear", "code"] as const;
+const IDENTITY_KEYS = [
   "title", "firstName", "middleName", "lastName", "company",
   "address1", "address2", "address3", "city", "state", "postalCode", "country",
   "email", "phone", "ssn", "username", "passportNumber", "licenseNumber",
@@ -112,7 +112,7 @@ export interface VaultItemInput {
  * else the account key. Writing an item back under a different key than it was
  * read with is how a vault loses data, so this is the one place that decides.
  */
-export function itemKey(cipher: Cipher, account: VaultKey): VaultKey {
+function itemKey(cipher: Cipher, account: VaultKey): VaultKey {
   if (!cipher.key) return account;
   return splitKey(decString(cipher.key, account.enc, account.mac));
 }
@@ -285,4 +285,4 @@ export function checkedUrls(urls: string[]): string[] {
   });
 }
 
-export { TYPE_CODE, TYPE_NAME, SECRET_KEYS, KEYS_FOR };
+export { TYPE_CODE };

@@ -71,26 +71,13 @@ _ALLOWED_FIELDS = frozenset(
   # identity fields are checked against the item itself
 )
 
-# The four item types this vault models and can be written through the vault
-# tool. (The vault's own enum reserves 5-8; its CLI has no template for any of
-# them, so nothing here can create one.)
-_TYPE_BY_NAME = {"login": 1, "note": 2, "card": 3, "identity": 4}
-_NAME_BY_TYPE = {v: k for k, v in _TYPE_BY_NAME.items()}
-
-_CARD_KEYS = ("cardholderName", "brand", "number", "expMonth", "expYear", "code")
+# The identity fields this broker can name and release one at a time. (Cards
+# have their own map above; logins are named by _USERNAME_FIELDS.)
 _IDENTITY_KEYS = (
     "title", "firstName", "middleName", "lastName", "company",
     "address1", "address2", "address3", "city", "state", "postalCode", "country",
     "email", "phone", "ssn", "username", "passportNumber", "licenseNumber",
 )
-# Values that are never handed back with the item itself. They are readable one
-# at a time through get-field, which audits every release.
-_SECRET_KEYS = {
-    1: ("password", "totp"),
-    3: ("number", "code"),
-    4: ("ssn",),
-}
-
 _MAX_ENTRIES = 50
 
 _ERR_VAULT_LOCKED = "VaultLocked"

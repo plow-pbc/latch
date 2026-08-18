@@ -92,10 +92,12 @@ export class VaultServer {
    */
   start(): Promise<void> {
     if (!this.starting) {
+      // Cleared whatever happens: a startup that failed must be retryable, and
+      // a vault that exits later must be startable again. `startOnce` returns
+      // immediately when the process is already up, so dropping the memo costs
+      // nothing.
       this.starting = this.startOnce().finally(() => {
-        // Keep the resolved promise only while the process is alive, so a vault
-        // that exits can be started again.
-        if (!this.child) this.starting = null;
+        this.starting = null;
       });
     }
     return this.starting;

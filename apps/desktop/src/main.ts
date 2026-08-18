@@ -554,12 +554,14 @@ ipcMain.handle("vault:items", async () => {
   // Locked and empty are different facts and the screen says different words.
   // An account that is on disk and will not open must never be reported as a
   // vault that has not started — that sent people to debug a running server.
+  // Read BEFORE starting: a locked account is the very case where the vault's
+  // own bootstrap cannot finish, and the explanation has to survive that.
+  const locked = readCredentialsState(server.url, server.dataDir);
+  if (locked.status === "locked") return { locked: true, reason: locked.reason };
   // Started, not merely launched: the account is written by the vault's first
   // run, so reading its state before that finishes reports an empty vault.
   await server.start();
-  const state = readCredentialsState(server.url, server.dataDir);
-  if (state.status === "locked") return { locked: true, reason: state.reason };
-  if (state.status === "empty") return null;
+  if (readCredentialsState(server.url, server.dataDir).status !== "ok") return null;
   // Every type, not only logins: a card and a note are things the owner keeps
   // here too, and the tab is where they are kept.
   return vault.list();

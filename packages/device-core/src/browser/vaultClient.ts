@@ -29,29 +29,37 @@ import {
   VaultKey,
 } from "./vaultItems.js";
 
-export interface VaultClientConfig {
-  url: string;
-  certPath?: string;
-  /** Resolved per call: the account is created by the vault's first run. */
-  account: () => { email: string; password: string } | null;
-  /** Awaited before every call — this is what starts the vault. */
-  beforeRun?: () => Promise<void>;
-  /** One line per value the owner asked to see. Never the value. */
-  auditPath?: string;
+/** What this client needs from the vault it belongs to. */
+export interface OwnVault {
+  readonly url: string;
+  readonly certPath: string;
+  readonly account: { email: string; password: string } | null;
+  start(): Promise<void>;
 }
 
 export class VaultClient {
   private session: { http: VaultHttp; key: VaultKey } | null = null;
 
-  constructor(private readonly cfg: VaultClientConfig) {}
+  /**
+   * There is one vault on this Mac and this client is its owner-side face, so
+   * it takes the server itself rather than a copy of its address, certificate,
+   * account and startup. One fewer thing to keep in step.
+   */
+  constructor(
+    private readonly server: OwnVault,
+    /** One line per value the owner asked to see. Never the value. */
+    private readonly auditPath?: string,
+  ) {}
 
   /** Sign in once and keep the account key; the token is refreshed on refusal. */
   private async open(): Promise<{ http: VaultHttp; key: VaultKey }> {
+    // Before the session, every time: a vault that exited since the last call
+    // has to come back up, and a cached session would talk to a closed port.
+    await this.server.start();
     if (this.session) return this.session;
-    await this.cfg.beforeRun?.();
-    const account = this.cfg.account();
+    const account = this.server.account;
     if (!account) throw new Error("this machine has no vault account yet");
-    const http: VaultHttp = { url: this.cfg.url, ca: httpCa(this.cfg.certPath) };
+    const http: VaultHttp = { url: this.server.url, ca: httpCa(this.server.certPath) };
     const { userKey } = await signIn(http, account.email, account.password);
     this.session = { http, key: splitKey(userKey) };
     return this.session;
@@ -118,9 +126,9 @@ export class VaultClient {
     // not speak, and an edit to a username must not fail on one.
     if (type === 1) {
       if (!existing) input = { ...input, urls: checkedUrls(input.urls ?? []) };
-      else if (typeof input.url === "string" && input.url !== "") {
-        input = { ...input, url: checkedUrls([input.url])[0] };
-      }
+      // Blank included: emptying the field would leave a login the fill path
+      // can never match, which is the same item the check exists to refuse.
+      else if (typeof input.url === "string") input = { ...input, url: checkedUrls([input.url])[0] };
     }
     if (!existing && !String(input.name ?? "").trim()) throw new Error("a new item needs a name");
 
@@ -135,11 +143,11 @@ export class VaultClient {
   }
 
   private audit(itemId: string, field: string, outcome: string): void {
-    if (!this.cfg.auditPath) return;
+    if (!this.auditPath) return;
     try {
-      fs.mkdirSync(path.dirname(this.cfg.auditPath), { recursive: true, mode: 0o700 });
+      fs.mkdirSync(path.dirname(this.auditPath), { recursive: true, mode: 0o700 });
       fs.appendFileSync(
-        this.cfg.auditPath,
+        this.auditPath,
         `${new Date().toISOString()}  item=${itemId}  field=${field}  page=OWNER  -> ${outcome}\n`,
       );
     } catch {

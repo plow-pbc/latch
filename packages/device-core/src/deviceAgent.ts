@@ -126,13 +126,7 @@ export class DeviceAgent {
       // What the Vault tab talks to. The broker below stays for the AGENT,
       // where a release is bound to the page on screen; this is the owner's.
       this.vaultClient = vault
-        ? new VaultClient({
-            url: vault.url,
-            certPath: vault.certPath,
-            account: () => vault.account,
-            beforeRun: () => vault.start(),
-            auditPath: path.join(browserDir, "credential-audit.log"),
-          })
+        ? new VaultClient(vault, path.join(browserDir, "credential-audit.log"))
         : null;
       // Up with the app, not on first use: the owner has to be able to open
       // the vault's own page whenever Domo is running, not only after an agent
