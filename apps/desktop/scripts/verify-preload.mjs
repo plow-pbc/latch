@@ -98,7 +98,7 @@ ipcMain.handle("updates:get", async () => ({
 // A vault whose key has moved: the account is on disk and cannot be opened.
 // This is what a Keychain reset, a restore from backup, or an app rename leaves
 // behind, and it must not be reported as an empty vault.
-ipcMain.handle("vault:get", async () => ({ status: "locked", reason: "undecryptable" }));
+ipcMain.handle("vault:items", async () => ({ locked: true, reason: "undecryptable" }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 // No browsing session: the audit screen's live thumbnail stays hidden.

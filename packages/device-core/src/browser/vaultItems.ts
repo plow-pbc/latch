@@ -203,37 +203,41 @@ export function encryptCipher(
   const key = existing ? itemKey(existing, account) : splitKey(decString(wrapped as string, account.enc, account.mac));
   const stored = existing ? body(existing) : {};
 
-  const out: Record<string, string | null> = {};
+  // An edit is the stored item with the supplied fields written over it.
+  // Rebuilding it from scratch instead would quietly drop everything this
+  // screen does not show — favourite, reprompt, custom fields, password
+  // history — which is data loss dressed up as a save.
+  const cipher: Cipher = existing
+    ? { ...existing }
+    : { favorite: false, reprompt: 0, fields: [], passwordHistory: null };
+  cipher.type = type;
+  cipher.key = wrapped;
+  if (typeof input.name === "string") cipher.name = enc(input.name, key) ?? "";
+  if (typeof input.notes === "string") cipher.notes = enc(input.notes, key);
+
+  const out: Record<string, string | null> = { ...stored };
   for (const field of KEYS_FOR[type] ?? []) {
     const given = input[field];
     if (typeof given === "string") out[field] = enc(given, key);
-    else out[field] = stored[field] ?? null;
   }
 
-  const cipher: Cipher = {
-    type,
-    key: wrapped,
-    name: enc(typeof input.name === "string" ? input.name : "", key) ?? (existing?.name ?? null) ?? "",
-    notes: typeof input.notes === "string" ? enc(input.notes, key) : existing?.notes ?? null,
-    favorite: false,
-    reprompt: 0,
-    fields: [],
-    passwordHistory: null,
-    login: null,
-    secureNote: null,
-    card: null,
-    identity: null,
-  };
-  if (typeof input.name !== "string" && existing) cipher.name = existing.name ?? "";
-
+  cipher.login = null;
+  cipher.secureNote = null;
+  cipher.card = null;
+  cipher.identity = null;
   if (type === 1) {
-    const urls = input.urls ?? (existing ? urlsOf(existing, key) : []);
+    // Each URL keeps the entry it already had — its match rule included — and
+    // only a URL that actually changed is written anew.
+    const previous = existing?.login?.uris ?? [];
+    const before = new Map(previous.map((u) => [dec(u?.uri, key), u]));
+    const urls = input.urls ?? [...before.keys()].filter(Boolean);
+    delete out.uris;
     cipher.login = {
       ...out,
-      uris: urls.map((u) => ({ uri: enc(u, key), match: null })),
+      uris: urls.map((u) => before.get(u) ?? { uri: enc(u, key), match: null }),
     } as Cipher["login"];
   } else if (type === 2) {
-    cipher.secureNote = { type: 0 };
+    cipher.secureNote = (existing?.secureNote as { type?: number } | null) ?? { type: 0 };
   } else if (type === 3) {
     cipher.card = out;
   } else {

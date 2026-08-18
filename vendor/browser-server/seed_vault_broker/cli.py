@@ -471,34 +471,18 @@ def _run_vault(args: list[str]) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
-_SYNC_EVERY_S = 60
+def _sync() -> None:
+    """Pull the latest items before reading any of them.
 
-
-def _sync(force: bool = False) -> None:
-    """Pull the latest items, but not on every single read.
-
-    Our own writes land in the local copy as they are made, so a sync is only
-    about what someone changed elsewhere (the vault's web page). A full sync is
-    another whole CLI start, so it runs at most once a minute unless a caller
-    asks for it outright.
+    Throttling this was tempting when the app read the vault through here too,
+    and it was wrong: the owner now writes to the vault DIRECTLY from the app,
+    so a cached copy means the agent can list, reveal or fill the credential the
+    owner just changed. A stale secret is worse than a slow one.
     """
-    stamp = os.path.join(_STATE_DIR, "synced")
-    if not force:
-        try:
-            if time.time() - os.path.getmtime(stamp) < _SYNC_EVERY_S:
-                return
-        except OSError:
-            pass
     try:
         _run_vault(["sync"])
     except _VaultToolError:
         pass  # a stale local copy still beats failing the whole call
-    try:
-        _state_dir()
-        with open(stamp, "w", encoding="utf-8") as fh:
-            fh.write("")
-    except OSError:
-        pass
 
 
 def _normalize(raw: dict) -> dict:
@@ -535,6 +519,7 @@ def _list_items(logins_only: bool = False) -> list[dict]:
 
 
 def _get_item(item_id: str) -> dict:
+    _sync()  # same reason as _list_items: the owner may have just changed it
     rc, stdout, stderr = _run_vault(["get", "item", item_id])
     if rc != 0:
         kind = _classify(stderr)

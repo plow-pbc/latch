@@ -84,6 +84,51 @@ describe("an edit", () => {
     expect(decryptField(second, account, "password")).toBe("hunter2"); // untouched
   });
 
+  it("keeps what the screen never showed", () => {
+    // Everything below is real vault data that the Vault tab has no field for.
+    // An edit that rebuilt the item from the form alone would delete it.
+    const rich = {
+      ...first,
+      id: "item-1",
+      favorite: true,
+      reprompt: 1,
+      fields: [{ name: "recovery code", value: "2.xx|yy|zz", type: 1 }],
+      passwordHistory: [{ password: "2.aa|bb|cc", lastUsedDate: "2026-01-01T00:00:00Z" }],
+      folderId: "folder-9",
+    };
+    const second = encryptCipher({ itemId: "item-1", username: "new" }, rich, account);
+    expect(second).toMatchObject({
+      favorite: true,
+      reprompt: 1,
+      fields: rich.fields,
+      passwordHistory: rich.passwordHistory,
+      folderId: "folder-9",
+    });
+  });
+
+  it("keeps the other sites, and every URI entry it did not change", () => {
+    const many = encryptCipher(
+      { type: "login", name: "GitHub", password: "x", urls: ["https://github.com", "https://gist.github.com"] },
+      null,
+      account,
+    );
+    // The stored entries carry a match rule this screen never shows.
+    many.login.uris = many.login.uris.map((u, i) => ({ ...u, match: i }));
+    const edited = encryptCipher(
+      { itemId: "item-1", urls: ["https://github.com/login", "https://gist.github.com"] },
+      { ...many, id: "item-1" },
+      account,
+    );
+    expect(decryptItem({ ...edited, id: "item-1" }, account).urls).toEqual([
+      "https://github.com/login",
+      "https://gist.github.com",
+    ]);
+    // The unchanged one is the SAME entry, match rule and all; only the changed
+    // URL was written anew.
+    expect(edited.login.uris[1]).toEqual(many.login.uris[1]);
+    expect(edited.login.uris[0].match).toBeNull();
+  });
+
   it("clears a field that is sent empty", () => {
     const second = encryptCipher({ itemId: "item-1", username: "" }, { ...first, id: "item-1" }, account);
     expect(decryptItem({ ...second, id: "item-1" }, account).fields.username).toBe("");

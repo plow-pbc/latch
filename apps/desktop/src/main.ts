@@ -549,7 +549,14 @@ ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 // it means a browser warning about a certificate the app issued to itself.
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
-  if (!vault) return null;
+  const server = device?.vaultServer;
+  if (!vault || !server) return null;
+  // Locked and empty are different facts and the screen says different words.
+  // An account that is on disk and will not open must never be reported as a
+  // vault that has not started — that sent people to debug a running server.
+  const state = readCredentialsState(server.url, server.dataDir);
+  if (state.status === "locked") return { locked: true, reason: state.reason };
+  if (state.status === "empty") return null;
   // Every type, not only logins: a card and a note are things the owner keeps
   // here too, and the tab is where they are kept.
   return vault.list();
@@ -568,7 +575,7 @@ ipcMain.handle("vault:item", async (_e, itemId: string) => {
 ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  return vault.reveal(String(itemId), String(field || "password"));
+  return vault.reveal(String(itemId), field);
 });
 
 ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {

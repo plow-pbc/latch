@@ -1006,7 +1006,13 @@ function itemForm(item, reload, done) {
         const value = inputs[field.key].value;
         // A blank secret means "unchanged"; a blank anything else means empty.
         if (field.secret && !value) continue;
-        if (field.key === "url") payload.urls = value.trim() ? [value.trim()] : [];
+        // Only the first URL is on screen; the rest are still the item's, so
+        // they travel with it rather than being deleted by an edit that never
+        // showed them.
+        if (field.key === "url") {
+          const rest = (item.urls || []).slice(1);
+          payload.urls = value.trim() ? [value.trim(), ...rest] : rest;
+        }
         else payload[field.key] = value;
       }
       await window.domo.vaultSaveItem(payload);
@@ -1059,11 +1065,28 @@ async function renderVault() {
     failure = errText(err);
   }
 
-  if (items === null && !failure) {
+  if ((items === null || (items && items.locked)) && !failure) {
+    // Locked and empty are different facts and get different words. A vault
+    // whose key has moved — a Keychain reset, a Mac restored from backup — used
+    // to render as "has not started yet", which sent people looking for a
+    // server that was running fine.
+    const locked = !!(items && items.locked);
     view.replaceChildren(el("div", { class: "panel" }, [
       el("div", { class: "section-label", text: "Your secrets" }),
-      el("div", { class: "empty", text: "The vault has not started yet." }),
-    ]));
+      el("div", { class: "empty", text: locked
+        ? "This Mac can't unlock its vault account."
+        : "The vault has not started yet." }),
+      // No invented recovery, and no asserting a cause the code cannot tell
+      // apart: `undecryptable` is one `catch` covering a wrong key AND a
+      // damaged file, so the copy leads with what is certain, names the likely
+      // cause as likely, and gives the remedy — the same either way.
+      locked
+        ? el("p", { class: "faint vault-note", text: items.reason === "no-storage"
+            ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
+            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." }
+          )
+        : null,
+    ].filter(Boolean)));
     return;
   }
 
