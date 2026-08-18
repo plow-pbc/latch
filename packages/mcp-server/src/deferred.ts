@@ -53,16 +53,22 @@ export type PendingReason = "awaiting_approval" | "running";
  * advice is actually needed. `retry_after_ms` next to it is advice too, never
  * a gate: polling early is answered honestly.
  *
- * `awaiting_approval` is deliberately hedged. It means "no decision yet",
- * which covers the work before a human is ever asked (path resolution, writing
- * the approval record) as well as a dialog nobody has answered — so it must
- * not flatly claim a human is looking at something.
+ * `awaiting_approval` must not claim a dialog is on screen, because often
+ * there is not one. It means "no decision yet", and that covers the work
+ * before anyone is asked (path resolution, writing the approval record), the
+ * adversarial reviewer thinking — a 30s budget against this 8s one, so in that
+ * mode deferring while nobody has been asked is the ORDINARY case — and the
+ * approve/deny modes, which never show a human anything at all.
+ *
+ * An earlier version of this note hedged on whether approval was *needed*,
+ * which is not the uncertain part: it always is. What varies is whether it has
+ * been ASKED yet.
  */
 const PENDING_NOTES: Record<PendingReason, string> = {
   awaiting_approval:
-    "not decided yet — if this needs approval it is on the user's Mac now, unanswered. " +
-    "Tell the user you are waiting for them, then poll get_result with this handle. " +
-    "Do not repeat the original call; that asks them a second time.",
+    "not decided yet — it may be waiting on the user, on a policy check, or still being " +
+    "prepared. Tell the user it is waiting, then poll get_result with this handle. " +
+    "Do not repeat the original call; that starts a second request.",
   running:
     "approved, and running now. Poll get_result with this handle; do not repeat the " +
     "original call.",

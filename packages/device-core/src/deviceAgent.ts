@@ -52,10 +52,17 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   // happened. The owner had simply walked away from the dialog. Distinguishing
   // the two is the whole fix: one is a decision, the other is a timeout, and
   // only one of them is worth trying again.
+  //
+  // RETRY FIRST, and say the old prompt is dead. Expiry settles this call from
+  // a timer; it does not close the window, which stays on screen and inert. An
+  // earlier version of this sentence said "ask the user to approve it on their
+  // Mac, then try again" — following it, the user clicks a dead prompt, nothing
+  // runs, and the retry's dialog (queued behind that window) appears as if they
+  // had been asked twice. That is the loop, driven by our own copy.
   [APPROVAL_SOURCE_EXPIRED]:
-    "no one answered the approval request in time, so it expired and the " +
-    "operation was denied — this is a timeout, not a refusal. Ask the user to " +
-    "approve it on their Mac, then try again",
+    "no one answered in time, so the request expired and was denied — a timeout, " +
+    "not a refusal. Try again to raise a fresh request; any prompt still on the " +
+    "user's screen from the first attempt is expired and does nothing",
 };
 
 export class DeviceAgent {

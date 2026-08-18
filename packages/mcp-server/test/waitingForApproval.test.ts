@@ -80,6 +80,11 @@ describe("a timeout is not a refusal", () => {
     expect(payload.reason).toMatch(/try again/i);
     // The sentence a human pressing Deny produces must not appear here.
     expect(payload.reason).not.toMatch(/denied the request/);
+    // …and it must not send the user back to the prompt that just expired: it
+    // is still on screen, it is inert, and clicking it only lets the retry's
+    // dialog through. Retry first.
+    expect(payload.reason).not.toMatch(/approve it on their Mac/i);
+    expect(payload.reason).toMatch(/expired and does nothing/i);
   });
 
   // KEPT deliberately, against review: this looks like it duplicates the two
@@ -121,6 +126,10 @@ describe("a pending handle says what to do about it", () => {
     // Honest about what awaiting_approval actually means: no decision yet,
     // which also covers the work before anyone is asked.
     expect(payload.note).toMatch(/not decided yet/i);
+    // It must NOT claim a dialog is on screen. Often there is not one: the
+    // adversarial reviewer runs on a 30s budget against this 8s one, and the
+    // approve/deny modes never ask a human at all.
+    expect(payload.note).not.toMatch(/on the user's Mac now/i);
   });
 
   it("polling the handle repeats the advice, so it survives a lost first answer", async () => {
