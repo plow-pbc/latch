@@ -418,7 +418,7 @@ describe("the roster of what can reach this Mac", () => {
       keyRow({ id: 8, name: "plow.co", scopes: ["relay:*"] }),
       keyRow({ id: 9, name: "old", scopes: ["*:*"] }),
       // Not relay-capable, and not revoked from here: this Mac's own device row.
-      keyRow({ id: 10, name: "Domo Desktop", scopes: ["relay:device", "llm:chat"] }),
+      keyRow({ id: 10, name: "Plow (this Mac)", scopes: ["relay:device", "llm:chat"] }),
       keyRow({ id: 11, name: "gone", is_active: false }),
     ];
     const connect = build();
@@ -641,7 +641,7 @@ describe("only what is on the roster can be revoked", () => {
     plow.keys = [
       keyRow({ id: 7, name: "Claude Code" }),
       // Real rows on the account, correctly filtered out of the roster.
-      keyRow({ id: 8, name: "Domo Desktop", scopes: ["relay:device", "llm:chat"] }),
+      keyRow({ id: 8, name: "Plow (this Mac)", scopes: ["relay:device", "llm:chat"] }),
       keyRow({ id: 9, name: "revoked already", is_active: false }),
     ];
     const connect = build();
