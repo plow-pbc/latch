@@ -189,7 +189,7 @@ export function createDomoMcpServer(
             // this Mac — no state, no user data, no side effect — and the relay
             // refuses an unauthenticated caller before anything reaches us.
             // Everything that touches this Mac or does work is a tool, and
-            // every tool goes through here, `plow_list_tools` included.
+            // every tool goes through here, `plow_list_skills` included.
             if (!agent) {
               return {
                 content: [toolContent({ error: "no authenticated agent on this request" })],

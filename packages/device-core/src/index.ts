@@ -1,6 +1,5 @@
 export * from "./approvalStore.js";
 export * from "./auditLog.js";
-export * from "./blessedTools.js";
 export * from "./browser/browserHost.js";
 export * from "./browser/browserRuntime.js";
 export * from "./browser/browserSessions.js";

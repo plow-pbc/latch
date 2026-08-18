@@ -16,7 +16,7 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   (`Connection`/`ConnectionDialer`) and the WebSocket (`ws`) **client** half.
   This Mac only ever dials out, so there is no listener.
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
-  `FileOps`, `Executor` (+ generated seatbelt profile), `BlessedToolRegistry`,
+  `FileOps`, `Executor` (+ generated seatbelt profile), `SkillRegistry`,
   `AuditLog`, identity/key store; `src/browser/` is the local
   browsing subsystem (session grants, origin enforcement, credential gate —
   DESIGN.md §11a). `vendor/browser-server/` is the vendored Python

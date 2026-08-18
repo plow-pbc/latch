@@ -14,7 +14,6 @@ import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
-import { BlessedToolRegistry } from "./blessedTools.js";
 import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
@@ -69,9 +68,8 @@ export class DeviceAgent {
   readonly identity: DeviceIdentity;
   readonly audit: AuditLog;
   readonly policy: PolicyEngine;
-  readonly blessedTools: BlessedToolRegistry;
   readonly executor: Executor;
-  /** Owner-published skills (how-to guides), surfaced via plow_list_tools/plow_read_skill. */
+  /** Owner-published skills (how-to guides), surfaced via plow_list_skills/plow_read_skill. */
   readonly skills: SkillRegistry;
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
@@ -86,14 +84,12 @@ export class DeviceAgent {
     public readonly home: string,
     name: string,
     private readonly delegate: PolicyDelegate,
-    blessedTools?: BlessedToolRegistry,
     browserRuntime?: ResolvedBrowserRuntime | null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
-    this.blessedTools = blessedTools ?? BlessedToolRegistry.standard();
     this.skills = new SkillRegistry();
     this.skills.loadDir(path.join(home, "device/skills"));
     if (browserRuntime) {
@@ -293,8 +289,6 @@ export class DeviceAgent {
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
-    const toolCap = intent.capabilities.find((c) => c.kind === "tool");
-    if (toolCap) return this.executeTool(intent, toolCap, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -387,25 +381,6 @@ export class DeviceAgent {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-      return { status: "error", error: message };
-    }
-  }
-
-  private async executeTool(
-    intent: Intent,
-    toolCap: { tool?: string },
-    payload: JSONValue,
-  ): Promise<JSONValue> {
-    const name = toolCap.tool;
-    const tool = name !== undefined ? this.blessedTools.tool(name) : null;
-    if (!tool || name === undefined) return { status: "error", error: "unknown tool" };
-    try {
-      const result = await tool.invoke(jv(payload).get("args").value ?? null);
-      this.audit.record("tool_invoked", { intentId: intent.intentId, tool: name });
-      return { status: "completed", result };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: message });
       return { status: "error", error: message };
     }
   }

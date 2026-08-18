@@ -76,7 +76,7 @@ intent.
 Apply least-privilege, intent-based access-control practice:
 - allow: only low-risk operations whose requested capabilities are the minimum \
 the task needs AND are scoped to non-sensitive locations. A read or a scoped \
-write in an ordinary working directory, a harmless command, a safe blessed tool.
+write in an ordinary working directory, a harmless command, a read of a public page.
 - deny: destructive or over-scoped operations, or ones touching sensitive \
 resources — recursive or system-level deletes; writes to system, startup, or \
 shell-config locations; reading credentials or secrets (~/.ssh, .env files, \

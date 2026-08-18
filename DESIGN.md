@@ -4,8 +4,8 @@
 **Audience:** Domo developers and agents working on this codebase.
 
 Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a person's
-Mac — read and write files, run CLI commands with streaming output, and invoke
-"blessed" tools built for our applications — through an **intent-based request
+Mac — read and write files, run CLI commands with streaming output, and drive a
+real browser signed in as them — through an **intent-based request
 system**: every operation is a structured, signed intent that a human (later, an
 adversarial reviewer agent plus a human escalation path) can inspect and approve
 before it executes inside an on-the-fly sandbox derived from exactly the approved
@@ -79,14 +79,21 @@ stdio shim (auth token + socket path via env; pure pipe thereafter).
 | `write_file(device, path, content, goal?)` | Write a file |
 | `run_command(device, argv, cwd?, read_paths?, write_paths?, network?, wait_ms?, goal?)` | Run a CLI command in the sandbox; returns full output or a handle |
 | `get_output(device, handle, since?)` | Incremental output of a running command |
-| `list_device_tools(device)` | That Mac's blessed tools with JSON schemas |
-| `use_tool(device, tool, args, goal?)` | Invoke a blessed tool |
 
 Design points:
 
-- **Blessed tools are per-device and discovered dynamically** via
-  `list_device_tools` rather than flattened into the global MCP tool list —
-  different Macs have different tools, and devices come and go mid-session.
+- **Blessed tools are gone (cut 2026-08-17).** They were per-device tools
+  discovered dynamically rather than flattened into the global MCP tool list,
+  because different Macs had different tools and devices came and went
+  mid-session. That was a *fleet* argument, and it died with the broker: one Mac
+  addressed by its own URL has one tool list. The registry never shipped
+  anything but a single demo tool (`mac_info`), and nothing but a rebuild could
+  add to it — while the same job is one `plow_run_command` away. The capability
+  kind `tool` survives in the protocol because it is frozen into
+  `fixtures/rulekeys.json`; nothing on this Mac constructs one any more.
+- **Skills are the surviving discovery surface.** `plow_list_skills` names what
+  this Mac publishes and `plow_read_skill` fetches the body, so a long operator
+  manual (`camoufox-browsing`) costs no manifest tokens until an agent asks.
 - **Streaming:** MCP tool calls are request/response, so `run_command` waits up
   to `wait_ms` (default 10 s); if the command is still running it returns a
   `handle` plus output-so-far, and the agent polls `get_output(handle, since)`

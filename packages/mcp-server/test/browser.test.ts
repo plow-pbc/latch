@@ -64,7 +64,7 @@ function makeServer(
     },
     camoufoxInstallDir: null,
   };
-  const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, undefined, runtime);
+  const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, runtime);
   const server = createDomoMcpServer(device);
   cleanups.push(() => server.close());
   cleanups.push(() => device.shutdown());
@@ -93,9 +93,9 @@ const act = (server: DomoMcpServer, session: string, action: string, extra: Reco
   callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
 
 describe("browser tools (fake runtime)", () => {
-  it("advertises the browsing skill via plow_list_tools + plow_read_skill", async () => {
+  it("advertises the browsing skill via plow_list_skills + plow_read_skill", async () => {
     const { server } = makeServer();
-    const list = parse(await rpc(server, "tools/call", { name: "plow_list_tools", arguments: {} }, AGENT));
+    const list = parse(await rpc(server, "tools/call", { name: "plow_list_skills", arguments: {} }, AGENT));
     const skills = JSON.parse(list.result!.content![0].text).skills as { name: string }[];
     expect(skills.map((s) => s.name)).toContain("camoufox-browsing");
     const { payload } = await callTool(server, "plow_read_skill", { name: "camoufox-browsing" }, AGENT);

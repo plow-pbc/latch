@@ -82,16 +82,20 @@ describe("the reduced tool surface (§4.5)", () => {
       "plow_browser_request",
       "plow_get_output",
       "plow_get_result",
-      "plow_list_tools",
+      "plow_list_skills",
       "plow_read_file",
       "plow_read_skill",
       "plow_run_command",
-      "plow_use_tool",
       "plow_vault",
       "plow_write_file",
     ]);
     // The concepts §4.5 deletes are gone…
     expect(tools.map((t) => t.name)).not.toContain("list_devices");
+    // Blessed tools were a fleet-era concept: per-device tools that could not be
+    // flattened into one global list because many Macs sat behind one broker
+    // endpoint. One Mac addressed by its own URL does not need the indirection,
+    // and anything a blessed tool did is a plow_run_command away.
+    expect(tools.map((t) => t.name)).not.toContain("plow_use_tool");
     expect(tools.map((t) => t.name)).not.toContain("request_device_access");
     // …and no surviving tool takes a `device` argument.
     for (const tool of tools) {

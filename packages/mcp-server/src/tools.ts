@@ -335,18 +335,16 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "plow_list_tools",
+    name: "plow_list_skills",
     description:
-      "Call this early. This Mac may publish tools and how-to guides specific to this user that " +
-      "you cannot otherwise know about. " +
-      "Lists the blessed tools this Mac offers, with their JSON input schemas, and any skills " +
-      "it publishes (how-to guides for a task — read one with plow_read_skill before starting). " +
-      "Blessed tools are trusted in-process capabilities, distinct from the tools in this list.",
+      "Call this early. This Mac publishes skills — how-to guides for tasks it can do, written " +
+      "for whoever is driving it, and specific to this user's setup in ways you cannot otherwise " +
+      "know. Lists their names and descriptions; read one with plow_read_skill before starting " +
+      "work it covers.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     deferrable: false,
     async run(_args, ctx) {
       return {
-        tools: ctx.device.blessedTools.manifest(),
         skills: (jv(ctx.device.skills.manifest()).arr ?? []).map((s) => ({
           name: jv(s).get("name").str,
           description: jv(s).get("description").str,
@@ -357,12 +355,12 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_skill",
     description:
-      "Read a skill this Mac publishes (listed by plow_list_tools): a how-to guide for a task. " +
+      "Read a skill this Mac publishes (listed by plow_list_skills): a how-to guide for a task. " +
       "Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the browser tools).",
     inputSchema: {
       type: "object",
       required: ["name"],
-      properties: { name: { type: "string", description: "Skill name from plow_list_tools" } },
+      properties: { name: { type: "string", description: "Skill name from plow_list_skills" } },
       additionalProperties: false,
     },
     deferrable: false,
@@ -372,31 +370,6 @@ export const TOOLS: ToolSpec[] = [
       const skill = ctx.device.skills.skill(name);
       if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
       return { name: skill.name, description: skill.description, body: skill.body };
-    },
-  },
-  {
-    name: "plow_use_tool",
-    description: "Invoke a blessed tool on this Mac (discover them with plow_list_tools).",
-    inputSchema: {
-      type: "object",
-      required: ["tool"],
-      properties: { tool: { type: "string" }, args: { type: "object" }, goal: GOAL },
-      additionalProperties: false,
-    },
-    deferrable: true,
-    async run(args, ctx, progress) {
-      const a = jv(args);
-      const tool = a.get("tool").str;
-      if (tool === null) throw new ToolError("missing 'tool'");
-      const response = await decideAndRun(
-        ctx,
-        progress,
-        `use blessed tool: ${tool}`,
-        a.get("goal").str ?? undefined,
-        [{ kind: "tool", tool }],
-        { args: a.get("args").value ?? null },
-      );
-      return { result: jv(response).get("result").value ?? null };
     },
   },
   {

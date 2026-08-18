@@ -21,7 +21,7 @@ packages/
                                      rule keys, PathUtil  (twin of DomoProtocol)
   transport/     @domo/transport     the Connection seam and the WebSocket (ws) client half
   device-core/   @domo/device-core   DeviceAgent, PolicyEngine, FileOps, Executor + SBPL, AuditLog,
-                                     BlessedTools, identity/key store  (twin of DomoDeviceCore)
+                                     SkillRegistry, identity/key store  (twin of DomoDeviceCore)
   mcp-server/    @domo/mcp-server    the MCP server on this Mac (revision 2026-07-28): the reduced
                                      tool surface, capability construction, and deferred results
   relay-client/  @domo/relay-client  dials the Plow relay, speaks plow's channel handshake, and
@@ -87,9 +87,12 @@ POST-only, so there is no session lifecycle and no GET/SSE requirement:
   relay refuses an unauthenticated caller before it reaches us. Everything that
   touches this Mac or does work is a tool, and every tool requires identity.
 
-The tool surface is one Mac's, not a fleet's: `plow_read_file`, `plow_write_file`,
-`plow_run_command`, `plow_get_output`, `plow_list_tools`, `plow_use_tool`, `plow_get_result`. No tool
-takes a `device` argument.
+The tool surface is one Mac's, not a fleet's: `plow_read_file`,
+`plow_write_file`, `plow_run_command`, `plow_get_output`, `plow_get_result`,
+`plow_list_skills`, `plow_read_skill`, `plow_vault`, and the four browser tools
+(`plow_browser_open`, `plow_browser_request`, `plow_browser`,
+`plow_browser_close`). No tool takes a `device` argument, and every name is
+prefixed so it cannot be confused with an agent's own built-ins.
 
 **Paths are resolved before the human sees them.** Every path an agent supplies
 is canonicalised *before* it becomes a capability, so the approval dialog and the

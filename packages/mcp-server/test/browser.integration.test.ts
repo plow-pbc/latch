@@ -54,7 +54,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       credentialBrokerCommand: [path.join(fixtures, "fake-broker", "seed-vault-broker")],
       env: { ...base.env, FAKE_BROKER_VAULT: vaultPath },
     };
-    device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), undefined, runtime);
+    device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), runtime);
     server = createDomoMcpServer(device);
   }, 60_000);
 
