@@ -512,8 +512,11 @@ app.whenReady().then(async () => {
     return {
       saysCannotUnlock: text.includes("can't unlock its vault account"),
       doesNotClaimEmpty: !text.includes("has not started yet"),
-      explains: text.includes("still safe on disk"),
-      offersRecovery: text.includes("Signing in again"),
+      explains: text.includes("The encrypted account is on disk"),
+      // The copy must NOT promise a recovery that does not exist:
+      // `changeCredentials` refuses when the account cannot be read.
+      promisesNoFakeRecovery: !text.includes("Signing in again"),
+      saysNothingDeleted: text.includes("Nothing has been deleted"),
     };
   }})()`);
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
@@ -599,7 +602,8 @@ app.whenReady().then(async () => {
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&
-    vaultLocked.offersRecovery &&
+    vaultLocked.promisesNoFakeRecovery &&
+    vaultLocked.saysNothingDeleted &&
     modalClosed.gone &&
     modalClosed.paneLive &&
     modalClosed.focusBackOnTrigger &&

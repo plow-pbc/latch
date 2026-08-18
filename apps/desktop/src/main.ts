@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -25,7 +25,6 @@ import {
   DeviceAgent,
   GoalsLibrary,
   PolicyDelegate,
-  bindVaultKeychainIdentity,
   changeCredentials,
   readCredentials,
   readCredentialsState,
@@ -63,7 +62,14 @@ import {
 // menu, About/Hide/Quit items, and dock title read "Plow" instead of
 // "Electron", the paths so Chromium never opens the default locations.
 const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
-app.setName(instance.appName);
+// THE NAME SET HERE IS THE ONE THE KEYCHAIN SEES. Chromium captures the string
+// it derives `<name> Safe Storage` from at startup, BEFORE `app.whenReady`, and
+// a later `setName` does not move it (measured: an item is created under the
+// pre-ready name and never under the post-ready one). So the frozen vault
+// identity goes on first, and the display name is put back as the first thing
+// in `whenReady` — early enough that the menus, windows and tray built after it
+// all read the real product name.
+app.setName(instance.vaultIdentity);
 app.setPath("userData", instance.electronData);
 app.setPath("sessionData", instance.electronData);
 
@@ -747,26 +753,11 @@ async function startRelay(): Promise<void> {
  * encrypted under, so the ciphertext on disk just keeps working. Nothing is
  * copied, rewritten or prompted for.
  */
-function bindVaultStorage(): void {
-  bindVaultKeychainIdentity(
-    {
-      get name() {
-        return app.name;
-      },
-      setName: (n) => app.setName(n),
-      // One throwaway encrypt is what actually fetches and caches the key;
-      // `isEncryptionAvailable()` is not guaranteed to.
-      latch: () => {
-        if (safeStorage.isEncryptionAvailable()) safeStorage.encryptString("latch");
-      },
-    },
-    instance.vaultIdentity,
-  );
-}
-
 app.whenReady().then(async () => {
-  // Before anything reads or writes the vault account, and before any window.
-  bindVaultStorage();
+  // The Keychain has already captured the frozen vault identity (see the
+  // setName at the top of this file). From here on the name is the product's,
+  // for every menu, window and tray item built below.
+  app.setName(instance.appName);
   // The dialog answers; the store writes down what was asked before it is
   // asked, so a pending approval is a record on disk rather than only a promise
   // in memory. It also bounds the wait: an approval nobody answers expires and
@@ -781,6 +772,17 @@ app.whenReady().then(async () => {
     undefined,
     resolveBrowserRuntime(process.resourcesPath),
   );
+  // Say, once, whether this Mac can open its vault account. It is the one fact
+  // about the vault that a log is good at: no secret, no noise, and it turns
+  // "the vault screen looks wrong" into a one-line answer. `locked` means the
+  // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
+  if (device.vaultServer) {
+    const vaultState = readCredentialsState(device.vaultServer.url, device.vaultServer.dataDir);
+    console.log(
+      `[vault] account: ${vaultState.status}` +
+        (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
+    );
+  }
   goals = new GoalsLibrary(path.join(home, "device/goals.json"));
 
   // Live-refresh the audit view whenever a new event is recorded.

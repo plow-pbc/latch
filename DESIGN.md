@@ -387,8 +387,10 @@ in the macOS Keychain, via Electron's `safeStorage`. Three facts about
 1. It has no key of its own. On macOS it looks up a Keychain item named
    `<app.name> Safe Storage` (account `<app.name> Key`) and uses the password
    in it. **The encryption key is addressed by a display string.**
-2. It reads `app.name` at **first use**, not at process start, and caches the
-   key for the life of the process. **One process gets exactly one key.**
+2. It captures that name at **startup, before `app.whenReady`**, and holds one
+   key for the life of the process. Setting `app.name` after ready does not
+   move it — measured: the Keychain item appears under the pre-ready name and
+   never under the post-ready one. **One process gets exactly one key.**
 3. Therefore **renaming the app orphans every ciphertext it has written.**
 
 Renaming the app to "Plow" (PR #42) did exactly that: `safeStorage` looked for
@@ -402,10 +404,16 @@ the *old* app name, because that is what every existing vault was encrypted
 under. Freezing it means the ciphertext on disk keeps working with no
 migration, no re-encryption and no prompt. It is not derived from `app.name`,
 `appId` or `productName`, and the fact that it no longer matches the product's
-name is the point. `bindVaultKeychainIdentity` sets the name to the frozen
-identity, forces the latch with one throwaway encrypt, and restores the display
-name — which fact (2) above is what makes possible, and which must happen
-before any window exists.
+name is the point.
+
+Fact (2) dictates where this happens: `app.setName(instance.vaultIdentity)` runs
+at module top level in the Electron entry, before ready, because that is the
+only moment the Keychain is listening. The product name is restored as the first
+statement inside `whenReady` — early enough for every menu, window and tray item,
+all of which are built after it. A helper that wrapped a "latch" call cannot
+work: by the time any code inside `whenReady` runs, the name is already
+captured. (This was got wrong once, in exactly that way, and produced a fix that
+changed nothing.)
 
 Two rejected alternatives, recorded so they are not re-proposed:
 
@@ -419,6 +427,12 @@ Two rejected alternatives, recorded so they are not re-proposed:
   one.** Correct, silent, and unnecessary machinery for a problem that a frozen
   string solves outright — and every extra moving part sits between a user and
   the only copy of their credentials.
+
+There is no recovery for a genuinely lost key, and the UI must not invent one:
+`changeCredentials` refuses outright when the account cannot be read, and signing
+in on the vault's own page needs the very password that state cannot produce. The
+copy says so — the account is on disk, nothing is deleted, and if the key is gone
+the vault has to be set up again.
 
 A locked vault must also never be reported as an empty one. `readState()`
 distinguishes empty / locked / ok, because a Keychain reset or a Mac restored

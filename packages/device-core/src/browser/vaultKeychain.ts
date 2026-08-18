@@ -33,11 +33,12 @@
 //     looks up a Keychain item named `<app.name> Safe Storage`, with account
 //     `<app.name> Key`, and uses the password in it as the encryption key.
 //
-//  2. It reads `app.name` at FIRST USE, not at process start, and caches the
-//     key for the life of the process. One process gets exactly one key. That
-//     is why `bindVaultKeychainIdentity` below can set the name, force the
-//     latch, and put the display name back — and why "decrypt under the old
-//     name, re-encrypt under the new one" is impossible in a single launch.
+//  2. It captures that name at STARTUP — before `app.whenReady` — and one
+//     process gets exactly one key for its whole life. Setting `app.name`
+//     after ready does NOT move it: measured, an item appears under the
+//     pre-ready name and never under the post-ready one. So the identity must
+//     be in place before ready, and "decrypt under the old name, re-encrypt
+//     under the new one" is impossible in a single launch.
 //
 //  3. Therefore renaming the app orphans every ciphertext it has ever written.
 //     PR #42 renamed "Domo Desktop" to "Plow"; `safeStorage` started looking
@@ -66,33 +67,15 @@ export function vaultStoreIdentity(branch?: string): string {
   return b ? `${VAULT_STORE_IDENTITY} (${b})` : VAULT_STORE_IDENTITY;
 }
 
-/** What `bindVaultKeychainIdentity` needs from Electron. */
-export interface KeychainHost {
-  name: string;
-  setName(name: string): void;
-  /** Force `safeStorage` to fetch and cache its key, now. */
-  latch(): void;
-}
-
 /**
- * Bind this process's `safeStorage` key to the frozen identity.
+ * Where this has to happen, because it is not obvious and it was got wrong once:
  *
- * `safeStorage` latches its key at FIRST USE, not at process start (verified
- * empirically), and holds exactly one key for the life of the process. That is
- * what makes this safe and what makes it necessary: set the name, force the
- * latch, put the display name back. The menu bar, dock and window titles are
- * built later and never see the swap.
+ * `app.setName(vaultStoreIdentity(branch))` goes at MODULE TOP LEVEL in the
+ * Electron entry, before `app.whenReady`, because that is when the Keychain
+ * name is captured. The product name is then restored as the first statement
+ * inside `whenReady`, which is early enough for every menu, window and tray
+ * item — they are all built after it and read `app.name` when they are built.
  *
- * Call once, before anything else touches `safeStorage` — including before any
- * window exists. If something else latches first, it latches under the display
- * name and the vault stays locked until the next launch.
+ * A helper that does both around a "latch" call cannot work: by the time any
+ * function could run inside `whenReady`, the name is already captured.
  */
-export function bindVaultKeychainIdentity(host: KeychainHost, identity: string): void {
-  const display = host.name;
-  host.setName(identity);
-  try {
-    host.latch();
-  } finally {
-    host.setName(display);
-  }
-}

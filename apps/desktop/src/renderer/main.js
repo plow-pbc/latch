@@ -846,10 +846,14 @@ async function renderVault() {
       el("div", { class: "empty", text: locked
         ? "This Mac can't unlock its vault account."
         : "The vault has not started yet." }),
+      // No invented recovery here. `changeCredentials` refuses outright when the
+      // account cannot be read ("this machine has no vault account yet"), and
+      // signing in on the vault's own page needs the very password this state
+      // cannot produce. Saying what is true and what is not is the whole job.
       locked
         ? el("p", { class: "faint vault-note", text: state.reason === "no-storage"
-            ? "The account is here, but this build has no secure storage to open it with. It is still safe on disk."
-            : "The account is here and still safe on disk, but the key that opens it is not in this Mac's Keychain — that happens after a Keychain reset or a restore from backup. Signing in again on the vault's own page will re-establish it." }
+            ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
+            : "The encrypted account is on disk and the key that opens it is not in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself. If the key is genuinely gone there is no way to recover this account's password, here or anywhere: the vault would have to be set up again. Nothing has been deleted." }
           )
         : null,
     ].filter(Boolean)));
