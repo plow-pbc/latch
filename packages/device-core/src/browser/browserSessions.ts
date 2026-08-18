@@ -483,6 +483,31 @@ export class BrowserSessions {
 
     try {
       await this.host.sendAction({ action: "fill", selector, value: secret, frame });
+    } catch (error: unknown) {
+      // Playwright reports what it tried to type: `filling "hunter2"` is part of
+      // its failure message. Forwarding that hands the agent the very value this
+      // whole path exists to keep from it — and a wrong selector, a hidden field
+      // or a slow render is the common case, not an exotic one. So the error the
+      // agent sees is written here, never forwarded, and the audit copy is
+      // scrubbed too: the secret is toxic everywhere, not only in model context.
+      // The reason is written here too, not scrubbed from the browser's text:
+      // that text is truncated to MAX_ERROR_LEN before it reaches us, so a long
+      // enough secret loses its tail and an exact-match scrub leaves the prefix
+      // behind in audit.ndjson. Nothing derived from the failure text is kept.
+      this.audit("credential_fill_failed", {
+        session: s.handle,
+        item: itemId,
+        field,
+        origin: frameHost,
+        selector,
+        reason: "the browser could not type it into that field",
+      });
+      return {
+        status: "error",
+        error:
+          `could not type ${field} into ${selector} — the field may be the wrong one, ` +
+          `hidden, or not ready yet. Screenshot the page and check the selector.`,
+      };
     } finally {
       secret = "";
     }

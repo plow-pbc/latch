@@ -84,6 +84,15 @@ function handle(cmd) {
     return { ok: true, frame: 0 };
   }
   if (a === "fill") {
+    // Playwright puts the value it tried to type into its own failure message.
+    // Reproduce that shape so the leak this guards against is testable.
+    if (String(cmd.selector) === "#nofill") {
+      throw new Error(
+        `locator.fill: Timeout 5000ms exceeded.\nCall log:\n` +
+          `  - waiting for locator("${cmd.selector}")\n` +
+          `  - filling "${cmd.value}"\n`,
+      );
+    }
     if (process.env.FAKE_FILL_LOG) {
       fs.appendFileSync(
         process.env.FAKE_FILL_LOG,

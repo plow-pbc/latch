@@ -80,3 +80,33 @@ describe("audit grouping for browser sessions", () => {
     expect(filled.text).not.toContain("password: "); // never a value
   });
 });
+
+describe("a failed credential fill is visible to the owner", () => {
+  const events: JSONValue[] = [
+    { event: "browser_session_opened", intentId: "i2", session: "T", origins: ["dominos.com"], ts: "2026-08-10T11:00:00Z" },
+    { event: "browser_command", session: "T", action: "goto", url: "https://dominos.com/login", ts: "2026-08-10T11:00:01Z" },
+    {
+      event: "credential_fill_failed",
+      session: "T",
+      item: "L1",
+      field: "password",
+      selector: "#pass",
+      origin: "dominos.com",
+      reason: "the browser could not type it into that field",
+      ts: "2026-08-10T11:00:02Z",
+    },
+  ];
+
+  it("does not read as a healthy browsing session", () => {
+    const browser = auditActivities(events).find((a) => a.id === "browser:T")!;
+    // Green "Browsing" would tell the owner a credential went in when it did not.
+    expect(browser.status).toBe("Fill failed");
+    const line = browser.timeline.find((s) => s.text.includes("Credential not typed"))!;
+    expect(line.state).toBe("bad");
+    expect(line.text).toContain("L1");
+    expect(line.text).toContain("#pass");
+    expect(line.text).toContain("dominos.com");
+    // ...and the Failed filter must show it, or the owner only finds it by luck.
+    expect(browser.category).toBe("failed");
+  });
+});
