@@ -18,7 +18,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
@@ -554,6 +554,9 @@ ipcMain.handle("vault:items", async () => {
   // Locked and empty are different facts and the screen says different words.
   // An account that is on disk and will not open must never be reported as a
   // vault that has not started — that sent people to debug a running server.
+  // Started, not merely launched: the account is written by the vault's first
+  // run, so reading its state before that finishes reports an empty vault.
+  await server.start();
   const state = readCredentialsState(server.url, server.dataDir);
   if (state.status === "locked") return { locked: true, reason: state.reason };
   if (state.status === "empty") return null;
@@ -905,10 +908,16 @@ app.on("window-all-closed", () => {
 });
 
 // Block any attempt to navigate to remote content or open external windows —
-// the approval surface must never load anything but our local files.
+// the approval surface must never load anything but our local files. "Any
+// file://" is not narrow enough: the preload bridge survives a navigation, and
+// it now reaches the vault, so a local HTML file an attacker can write would
+// inherit it. Only the documents we ship are allowed.
+const OUR_DOCUMENTS = ["index.html", "onboarding.html", "approval.html"].map((f) =>
+  pathToFileURL(path.join(rendererDir, f)).href,
+);
 app.on("web-contents-created", (_e, contents) => {
   contents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("file://")) event.preventDefault();
+    if (!OUR_DOCUMENTS.includes(url.split("?")[0].split("#")[0])) event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });

@@ -106,16 +106,20 @@ describe("an edit", () => {
     });
   });
 
-  it("keeps the other sites, and every URI entry it did not change", () => {
+  it("touches only the URL it showed, and passes the rest through untouched", () => {
     const many = encryptCipher(
       { type: "login", name: "GitHub", password: "x", urls: ["https://github.com", "https://gist.github.com"] },
       null,
       account,
     );
-    // The stored entries carry a match rule this screen never shows.
-    many.login.uris = many.login.uris.map((u, i) => ({ ...u, match: i }));
+    // The stored entries carry match rules this screen never shows, and the
+    // second one is not even a URL — a rule the vault understands and we do not.
+    many.login.uris = [
+      { ...many.login.uris[0], match: 0 },
+      { uri: many.login.uris[1].uri, match: 4 },
+    ];
     const edited = encryptCipher(
-      { itemId: "item-1", urls: ["https://github.com/login", "https://gist.github.com"] },
+      { itemId: "item-1", url: "https://github.com/login" },
       { ...many, id: "item-1" },
       account,
     );
@@ -123,10 +127,20 @@ describe("an edit", () => {
       "https://github.com/login",
       "https://gist.github.com",
     ]);
-    // The unchanged one is the SAME entry, match rule and all; only the changed
-    // URL was written anew.
+    // Byte for byte: the entry that was not shown is the same object it was.
     expect(edited.login.uris[1]).toEqual(many.login.uris[1]);
     expect(edited.login.uris[0].match).toBeNull();
+  });
+
+  it("leaves the URL alone when the edit does not mention one", () => {
+    const before = encryptCipher(
+      { type: "login", name: "GitHub", password: "x", urls: ["https://github.com"] },
+      null,
+      account,
+    );
+    before.login.uris = [{ ...before.login.uris[0], match: 3 }];
+    const edited = encryptCipher({ itemId: "item-1", username: "new" }, { ...before, id: "item-1" }, account);
+    expect(edited.login.uris).toEqual(before.login.uris);
   });
 
   it("clears a field that is sent empty", () => {

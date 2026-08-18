@@ -816,35 +816,6 @@ async function refreshUpdateBanner() {
 
 // ---- Settings ----
 
-/**
- * The Vault tab. The logins themselves are read and written here — the vault's
- * own web page is the only other way in, and reaching it means a browser
- * warning about a certificate this app issued to itself.
- *
- * The vault's own account stays on the screen below them, shown rather than
- * hidden: either half can be replaced with something the owner chooses, and the
- * account key is re-wrapped underneath so what is stored stays readable.
- */
-/**
- * The Vault tab. The logins themselves are read and written here — the vault's
- * own web page is the only other way in, and reaching it means a browser
- * warning about a certificate this app issued to itself.
- *
- * The vault's own account stays on the screen below them, shown rather than
- * hidden: either half can be replaced with something the owner chooses, and the
- * account key is re-wrapped underneath so what is stored stays readable.
- */
-/** One editable value with a Copy button beside it — never two of the same. */
-function fieldRow(input) {
-  const copy = el("button", { class: "btn small", text: "Copy" });
-  copy.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(input.value);
-    copy.textContent = "Copied";
-    setTimeout(() => { copy.textContent = "Copy"; }, 1200);
-  });
-  return el("div", { class: "copyrow" }, [input, copy]);
-}
-
 /* The four types this vault models, and the fields each one carries. The order
    here is the order on screen; `secret` means the value is never in a listing
    and is fetched only when the owner asks for it. */
@@ -1006,12 +977,12 @@ function itemForm(item, reload, done) {
         const value = inputs[field.key].value;
         // A blank secret means "unchanged"; a blank anything else means empty.
         if (field.secret && !value) continue;
-        // Only the first URL is on screen; the rest are still the item's, so
-        // they travel with it rather than being deleted by an edit that never
-        // showed them.
+        // Only the first URL is on screen, so an edit says just that one and
+        // the item's other URLs are never mentioned — nothing this screen did
+        // not show can be rewritten by it.
         if (field.key === "url") {
-          const rest = (item.urls || []).slice(1);
-          payload.urls = value.trim() ? [value.trim(), ...rest] : rest;
+          if (saved) payload.url = value.trim();
+          else payload.urls = value.trim() ? [value.trim()] : [];
         }
         else payload[field.key] = value;
       }

@@ -22,6 +22,7 @@ import {
   decryptSummary,
   encryptCipher,
   splitKey,
+  TYPE_CODE,
   VaultItem,
   VaultItemInput,
   VaultItemSummary,
@@ -110,9 +111,16 @@ export class VaultClient {
   async save(input: VaultItemInput): Promise<{ id: string; title: string }> {
     const { key } = await this.open();
     const existing = input.itemId ? await this.cipher(input.itemId) : null;
-    const type = existing?.type ?? { login: 1, note: 2, card: 3, identity: 4 }[input.type ?? "login"];
-    if (type === 1 && (input.urls !== undefined || !existing)) {
-      input = { ...input, urls: checkedUrls(input.urls ?? []) };
+    const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
+    // Only what the owner actually typed is checked. A new login needs a site;
+    // an edit re-states the one URL it displayed, and the rest of the item's
+    // URLs are never revalidated — they may hold match rules this screen does
+    // not speak, and an edit to a username must not fail on one.
+    if (type === 1) {
+      if (!existing) input = { ...input, urls: checkedUrls(input.urls ?? []) };
+      else if (typeof input.url === "string" && input.url !== "") {
+        input = { ...input, url: checkedUrls([input.url])[0] };
+      }
     }
     if (!existing && !String(input.name ?? "").trim()) throw new Error("a new item needs a name");
 

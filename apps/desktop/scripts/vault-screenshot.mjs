@@ -24,6 +24,7 @@ import {
   decryptSummary,
   encryptCipher,
   splitKey,
+  TYPE_CODE,
 } from "@domo/device-core";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -73,8 +74,9 @@ async function setUp() {
   );
   ipcMain.handle("vault:saveItem", async (_e, input) => {
     const existing = input.itemId ? ciphers.get(input.itemId) : null;
-    const type = existing?.type ?? { login: 1, note: 2, card: 3, identity: 4 }[input.type ?? "login"];
-    const given = type === 1 ? { ...input, urls: checkedUrls(input.urls ?? []) } : input;
+    const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
+    const given =
+      type === 1 && !existing ? { ...input, urls: checkedUrls(input.urls ?? []) } : input;
     const id = input.itemId ?? `item-${nextId++}`;
     ciphers.set(id, { ...encryptCipher(given, existing, account), id });
     return { id, title: String(input.name ?? "") };

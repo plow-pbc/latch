@@ -84,8 +84,26 @@ export class VaultServer {
     });
   }
 
-  /** Start it and wait until the port answers. Idempotent. */
-  async start(): Promise<void> {
+  /**
+   * Start it and wait until the port answers. Idempotent — and idempotent for
+   * CALLERS TOO: everyone awaits the same startup, rather than the second
+   * caller returning early on a process that is still booting and then talking
+   * to a port nobody is listening on yet.
+   */
+  start(): Promise<void> {
+    if (!this.starting) {
+      this.starting = this.startOnce().finally(() => {
+        // Keep the resolved promise only while the process is alive, so a vault
+        // that exits can be started again.
+        if (!this.child) this.starting = null;
+      });
+    }
+    return this.starting;
+  }
+
+  private starting: Promise<void> | null = null;
+
+  private async startOnce(): Promise<void> {
     if (this.child) return;
     fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const { cert, key } = this.ensureCert();

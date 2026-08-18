@@ -60,7 +60,13 @@ export interface Cipher {
   key?: string | null;
   name?: string;
   notes?: string | null;
-  login?: { username?: string | null; password?: string | null; totp?: string | null; uris?: Array<{ uri?: string | null }> | null } | null;
+  login?: {
+    username?: string | null;
+    password?: string | null;
+    totp?: string | null;
+    /** A stored entry carries a match rule this app does not interpret. */
+    uris?: Array<{ uri?: string | null; match?: number | null }> | null;
+  } | null;
   card?: Record<string, string | null> | null;
   identity?: Record<string, string | null> | null;
   secureNote?: { type?: number } | null;
@@ -94,7 +100,10 @@ export interface VaultItemInput {
   type?: VaultItemType;
   name?: string;
   notes?: string;
+  /** Every URL of a NEW item. */
   urls?: string[];
+  /** The one URL an edit showed, replacing index 0 and nothing else. */
+  url?: string;
   [field: string]: string | string[] | undefined;
 }
 
@@ -226,16 +235,23 @@ export function encryptCipher(
   cipher.card = null;
   cipher.identity = null;
   if (type === 1) {
-    // Each URL keeps the entry it already had — its match rule included — and
-    // only a URL that actually changed is written anew.
+    // The screen shows one URL — the first — so an edit may only touch that
+    // one. Every other entry is passed through untouched, match rule and all:
+    // they were never displayed, so nothing here is entitled to reinterpret
+    // them, and two entries that happen to share a URL stay two entries.
     const previous = existing?.login?.uris ?? [];
-    const before = new Map(previous.map((u) => [dec(u?.uri, key), u]));
-    const urls = input.urls ?? [...before.keys()].filter(Boolean);
     delete out.uris;
-    cipher.login = {
-      ...out,
-      uris: urls.map((u) => before.get(u) ?? { uri: enc(u, key), match: null }),
-    } as Cipher["login"];
+    let uris = previous;
+    if (input.urls !== undefined) {
+      uris = input.urls.map((u) => ({ uri: enc(u, key), match: null }));   // a new item
+    } else if (typeof input.url === "string") {
+      const rest = previous.slice(1);
+      const unchanged = previous[0] && dec(previous[0].uri, key) === input.url;
+      uris = input.url
+        ? [unchanged ? previous[0] : { uri: enc(input.url, key), match: null }, ...rest]
+        : rest;
+    }
+    cipher.login = { ...out, uris } as Cipher["login"];
   } else if (type === 2) {
     cipher.secureNote = (existing?.secureNote as { type?: number } | null) ?? { type: 0 };
   } else if (type === 3) {
