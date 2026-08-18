@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ipaddress
 import json
 import os
@@ -40,6 +41,7 @@ _CMD_GET_FIELD = "get-field"
 _CMD_STATUS = "status"
 _CMD_WHATS_HERE = "whats-here"
 _CMD_DESCRIBE = "describe-item"
+_CMD_SAVE_ITEM = "save-item"
 _AUDIT_PATH = os.environ.get(
     "SEED_VAULT_AUDIT", os.path.expanduser("~/.local/state/vault-broker/audit.log")
 )
@@ -316,15 +318,17 @@ def _vault_password() -> str:
     return password
 
 
-def _raw_bw(args: list[str], session: str | None) -> subprocess.CompletedProcess:
+def _raw_bw(args: list[str], session: str | None, stdin_data: str | None = None) -> subprocess.CompletedProcess:
     try:
         # --nointeraction + closed stdin: without a TTY, bw otherwise blocks on
         # prompts forever (the "browser crashed" hang on credentials).
+        # stdin_data is how an item is written: bw takes the encoded item on
+        # stdin, so a password never appears in argv where `ps` can read it.
         return subprocess.run(
             [_BW_BIN, "--nointeraction", *args],
             capture_output=True, text=True, check=False,
             env=_vault_env(session), timeout=_BW_TIMEOUT_S,
-            stdin=subprocess.DEVNULL,
+            **({"input": stdin_data} if stdin_data is not None else {"stdin": subprocess.DEVNULL}),
         )
     except FileNotFoundError:
         raise _VaultToolError(_ERR_VAULT_UNAVAILABLE, _UNAVAILABLE_MSG)
@@ -413,18 +417,18 @@ def _ensure_identity_and_server() -> None:
     _server_set = True
 
 
-def _run_vault(args: list[str]) -> tuple[int, str, str]:
+def _run_vault(args: list[str], stdin_data: str | None = None) -> tuple[int, str, str]:
     """Run one vault command, unlocking once if the cached session is stale."""
     _ensure_identity_and_server()
     session = _read_session()
     if session:
-        result = _raw_bw(args, session)
+        result = _raw_bw(args, session, stdin_data)
         if result.returncode == 0:
             return result.returncode, result.stdout, result.stderr
         if _classify(result.stderr + result.stdout) != _ERR_VAULT_LOCKED:
             return result.returncode, result.stdout, result.stderr
     session = _open_vault()
-    result = _raw_bw(args, session)
+    result = _raw_bw(args, session, stdin_data)
     return result.returncode, result.stdout, result.stderr
 
 
@@ -742,6 +746,78 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
     return 0
 
 
+def _encoded(item: dict) -> str:
+    """The vault tool takes an item as base64 JSON, on stdin."""
+    return base64.b64encode(json.dumps(item).encode()).decode()
+
+
+def _checked_urls(urls: list[str]) -> list[str]:
+    """Every URL an item is saved with must be one a fill can match.
+
+    A login with no usable site is exactly the item the fill path refuses
+    later ("item is not tied to any site"), so it is refused here instead --
+    at the one place items are written, rather than once per caller.
+    """
+    if not urls:
+        raise _VaultToolError(_ERR_INVALID_ARG, "a login needs at least one site URL, or it can never be filled")
+    for url in urls:
+        if not _host_key(url):
+            raise _VaultToolError(_ERR_INVALID_ARG, "could not read a site from %r" % url)
+    return urls
+
+
+def _cmd_save_item(args: argparse.Namespace) -> int:
+    """Create a login, or change one that is already there.
+
+    The password is read from stdin, never from argv: everything on a command
+    line is readable by every process on this machine. On an edit, empty stdin
+    means "leave the password alone".
+    """
+    password = sys.stdin.read().rstrip("\n") if args.password_stdin else ""
+    try:
+        if args.item_id:
+            raw = dict(_get_item(args.item_id).get("_raw") or {})
+            login = dict(raw.get("login") or {})
+            if args.title:
+                raw["name"] = args.title
+            if args.username is not None:
+                login["username"] = args.username or None
+            if password:
+                login["password"] = password
+            if args.url:
+                login["uris"] = [{"match": None, "uri": u} for u in _checked_urls(args.url)]
+            raw["login"] = login
+            verb = ["edit", "item", args.item_id]
+        else:
+            if not args.title:
+                raise _VaultToolError(_ERR_INVALID_ARG, "a new login needs a title")
+            if not password:
+                raise _VaultToolError(_ERR_INVALID_ARG, "a new login needs a password on stdin")
+            raw = {
+                "type": 1, "name": args.title, "notes": None, "favorite": False,
+                "login": {
+                    "username": args.username or None, "password": password, "totp": None,
+                    "uris": [{"match": None, "uri": u} for u in _checked_urls(args.url)],
+                },
+            }
+            verb = ["create", "item"]
+        rc, stdout, stderr = _run_vault(verb, _encoded(raw))
+    except _VaultToolError as exc:
+        return _emit_error(exc.type_name, exc.message)
+    if rc != 0:
+        kind = _classify(stderr)
+        return _emit_error(kind, _classify_message(kind, stderr))
+    try:
+        saved = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        return _emit_error(_ERR_VAULT_ERROR, "the vault did not say what it saved: %s" % exc)
+    _sync()  # or the item just written is invisible to the next listing
+    _audit(saved.get("id", ""), "(item)", ", ".join(args.url) or "-",
+           "UPDATED" if args.item_id else "CREATED")
+    sys.stdout.write(json.dumps({"id": saved.get("id", ""), "title": saved.get("name", "")}) + "\n")
+    return 0
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     try:
         # resolving the identity is what pairs this machine on first use
@@ -861,6 +937,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_desc.add_argument("--item-id", required=True, help="Vault item id.")
     p_desc.set_defaults(func=_cmd_describe_item)
+
+    p_save = sub.add_parser(
+        _CMD_SAVE_ITEM,
+        help="Create a Login item, or change one that already exists.",
+        description=(
+            "Write a Login item. Without --item-id a new one is created; with it, only "
+            "the parts given are changed. The password is read from stdin (pass "
+            "--password-stdin) so it never appears in argv. Every URL is checked: an "
+            "item with no usable site could never be filled, and is refused here."
+        ),
+        epilog=(
+            "Example:\n"
+            "  printf %s \"$PASS\" | seed-vault-broker save-item --title GitHub \\\n"
+            "      --username me@example.com --url https://github.com --password-stdin"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_save.add_argument("--item-id", default=None, help="Existing item to change. Omit to create one.")
+    p_save.add_argument("--title", default=None, help="Item title. Required when creating.")
+    p_save.add_argument("--username", default=None, help="Username stored on the login.")
+    p_save.add_argument("--url", action="append", default=[], help="Site URL. Repeatable. At least one when creating.")
+    p_save.add_argument("--password-stdin", action="store_true",
+                        help="Read the password from stdin. Required when creating; on an edit, empty means unchanged.")
+    p_save.set_defaults(func=_cmd_save_item)
 
     p_status = sub.add_parser(
         _CMD_STATUS,

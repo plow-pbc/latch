@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld("domo", {
   vaultGet: () => ipcRenderer.invoke("vault:get"),
   vaultSet: (email: string, password: string) => ipcRenderer.invoke("vault:set", email, password),
   vaultOpen: () => ipcRenderer.invoke("vault:open"),
+  // The vault's own contents, edited here instead of on its web page.
+  vaultItems: () => ipcRenderer.invoke("vault:items"),
+  vaultReveal: (itemId: string) => ipcRenderer.invoke("vault:reveal", itemId),
+  vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
   // Availability booleans and the active model — never a credential.

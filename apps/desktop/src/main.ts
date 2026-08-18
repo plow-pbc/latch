@@ -563,6 +563,38 @@ ipcMain.handle("vault:open", async () => {
   return true;
 });
 
+// The vault's contents, for the owner's own eyes and hands. This is the whole
+// point of the tab: the vault's web page is the only other way in, and reaching
+// it means a browser warning about a certificate the app issued to itself.
+ipcMain.handle("vault:items", async () => {
+  const broker = device?.credentialBroker;
+  if (!broker) return null;
+  const items = await broker.whatsHere();
+  return items.filter((i) => i.category === "LOGIN");
+});
+
+// A password the OWNER asked to see, in the app window. No page is involved,
+// so the broker logs the release as SEM-URL rather than binding it to a site.
+ipcMain.handle("vault:reveal", async (_e, itemId: string) => {
+  const broker = device?.credentialBroker;
+  if (!broker) throw new Error("the vault is not running");
+  return broker.revealField(String(itemId), "password");
+});
+
+ipcMain.handle("vault:saveItem", async (_e, input: {
+  itemId?: string; title?: string; username?: string; urls?: string[]; password?: string;
+}) => {
+  const broker = device?.credentialBroker;
+  if (!broker) throw new Error("the vault is not running");
+  return broker.saveItem({
+    itemId: input.itemId || undefined,
+    title: input.title,
+    username: input.username,
+    urls: input.urls ?? [],
+    password: input.password || undefined,
+  });
+});
+
 ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
   const vault = device?.vaultServer;
   if (!vault) throw new Error("this build has no vault");

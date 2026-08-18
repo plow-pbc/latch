@@ -49,10 +49,10 @@ export interface CredentialItemSummary {
 export class CredentialBroker {
   constructor(private readonly cfg: CredentialBrokerConfig) {}
 
-  private async run(args: string[], timeoutMs?: number): Promise<string> {
+  private async run(args: string[], timeoutMs?: number, stdin?: string): Promise<string> {
     await this.cfg.beforeRun?.();
     return new Promise((resolve, reject) => {
-      execFile(
+      const child = execFile(
         this.cfg.command[0],
         [...this.cfg.command.slice(1), ...args],
         {
@@ -89,6 +89,9 @@ export class CredentialBroker {
           resolve(stdout);
         },
       );
+      // A password goes to the broker on stdin, never in argv: a command line
+      // is readable by every process on this machine.
+      if (stdin !== undefined) child.stdin?.end(stdin);
     });
   }
 
@@ -143,5 +146,38 @@ export class CredentialBroker {
    */
   getField(itemId: string, field: string, pageUrl: string): Promise<string> {
     return this.run(["get-field", "--item-id", itemId, "--field", field, "--url", pageUrl]);
+  }
+
+  /**
+   * One field, shown to the OWNER in this app rather than filled into a page.
+   * There is no page to bind it to, so no origin check runs and the broker
+   * records the release as SEM-URL — call this only for something the owner
+   * asked to see with their own eyes.
+   */
+  revealField(itemId: string, field: string): Promise<string> {
+    return this.run(["get-field", "--item-id", itemId, "--field", field]);
+  }
+
+  /**
+   * Create a login, or change one that is already there. Omit `password` on an
+   * edit to leave it as it was. The broker refuses a login with no usable site,
+   * because a login the fill path can never match is not worth storing.
+   */
+  async saveItem(input: {
+    itemId?: string;
+    title?: string;
+    username?: string;
+    urls?: string[];
+    password?: string;
+  }): Promise<{ id: string; title: string }> {
+    const args = ["save-item"];
+    if (input.itemId) args.push("--item-id", input.itemId);
+    if (input.title !== undefined) args.push("--title", input.title);
+    if (input.username !== undefined) args.push("--username", input.username);
+    for (const url of input.urls ?? []) args.push("--url", url);
+    if (input.password) args.push("--password-stdin");
+    const out = await this.run(args, undefined, input.password ?? "");
+    const saved = JSON.parse(out) as { [k: string]: JSONValue };
+    return { id: String(saved.id ?? ""), title: String(saved.title ?? "") };
   }
 }
