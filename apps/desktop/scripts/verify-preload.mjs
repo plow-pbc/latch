@@ -42,6 +42,9 @@ ipcMain.handle("ui:setTab", async () => {});
 // A signed-in Mac: the credential itself is deliberately absent from this
 // shape, because the main process never hands it to the renderer.
 let relayGate = null; // when set, `settings:getRelay` blocks until released
+/** Flipped by the mid-flight test: the one account-group value a refresh still
+ *  visibly changes, now that the endpoint and UID rows are gone. */
+let relayConnected = true;
 /** Resolved BY the handler the moment a refresh actually parks on the gate. */
 let relayEntered = () => {};
 ipcMain.handle("settings:getRelay", async () => {
@@ -55,7 +58,7 @@ ipcMain.handle("settings:getRelay", async () => {
     accountUid: s.accountUid,
     mcpUrl: s.mcpUrl,
     hasCredential: !!(s.relayCredential ?? "").trim(),
-    connected: true,
+    connected: relayConnected,
   };
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
@@ -214,6 +217,26 @@ app.whenReady().then(async () => {
     const anthropic = chip("Anthropic API key");
     return {
       hasAccountGroup: document.body.innerText.includes("Plow Account"),
+      // The account group is about this Mac now, not the wire. The endpoint is
+      // the Agents tab's job (where it can be copied) and the UID was noise.
+      showsThisMac: document.querySelector("#view").innerText.includes("This Mac"),
+      noEndpointRow: !document.querySelector("#view").innerText.includes("Agent endpoint"),
+      noAccountUid: !document.querySelector("#view").innerText.includes("u_probe"),
+      noPhonePromise: !document.querySelector("#view").innerText.includes("phone number"),
+      // A faded chip must say what would un-fade it, and be the way there.
+      explainsDisabledProvider: (document.querySelector(".reviewer-note")?.textContent ?? "").includes(
+        "Anthropic API key: add one below to select it",
+      ),
+      // …and it must not repeat the chip's own label back at itself.
+      hintDoesNotStutter: !(document.querySelector(".reviewer-note")?.textContent ?? "").includes(
+        "Anthropic API key needs an Anthropic API key",
+      ),
+      disabledChipIsActionable: !!(() => {
+        const chip = [...document.querySelectorAll(".chip")].find(
+          (c) => c.textContent.trim() === "Anthropic API key",
+        );
+        return chip && chip.classList.contains("disabled") && chip.classList.contains("actionable");
+      })(),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
@@ -255,6 +278,20 @@ app.whenReady().then(async () => {
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
   fs.writeFileSync(settingsShot, (await win.webContents.capturePage()).toPNG());
+
+  // …and the chip rows, scrolled to, because the explanation is the point of
+  // this change and it sits below the account group.
+  const chipsShot = process.env.CHIPS_OUT ?? "/tmp/settings-chips.png";
+  await win.webContents.executeJavaScript(`(() => {
+    const chips = [...document.querySelectorAll(".settings .item > .group-title")]
+      .find((t) => t.textContent.trim() === "Reviewer inference");
+    chips?.scrollIntoView({ block: "start" });
+    return true;
+  })()`);
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(chipsShot, (await win.webContents.capturePage()).toPNG());
 
   // What used to sit here: a provider round-trip through the bridge, and a
   // mode-fallback check. Both asserted the interlock in `settingsActions`, and
@@ -345,7 +382,10 @@ app.whenReady().then(async () => {
   const entered = new Promise((r) => {
     relayEntered = r;
   });
-  saveSettings(probeHome, { ...loadSettings(probeHome), accountUid: "u_mid_flight" });
+  // Something the refresh will visibly change. The account UID used to be that
+  // marker; the group shows "This Mac" now, which a refresh does not alter, so
+  // the connection line is the honest observable.
+  relayConnected = false;
   win.webContents.send("status:changed"); // refresh starts, parks on relayGet
   await entered;
   await win.webContents.executeJavaScript(`(() => {
@@ -356,8 +396,8 @@ app.whenReady().then(async () => {
   })()`);
   releaseRelay();
   relayGate = null;
-  await waitFor(win, `document.querySelector(".account")?.textContent.includes("u_mid_flight")`,
-    "the parked refresh to finish and redraw the account rows");
+  await waitFor(win, `document.body.innerText.includes("Not connected")`,
+    "the parked refresh to finish and redraw the connection line");
 
   const midFlight = await win.webContents.executeJavaScript(`(() => {
     const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
@@ -365,7 +405,9 @@ app.whenReady().then(async () => {
       kept: input.value === "sk-ant-typed-mid-refresh",
       // The same DOM node, not a rebuilt one that happens to hold the value.
       sameNode: input.dataset.probeMark === "original-node",
-      accountRefreshed: document.body.innerText.includes("u_mid_flight"),
+      // The parked refresh did land: the account group followed the flipped
+      // connection state rather than staying on the value it rendered before.
+      accountRefreshed: document.body.innerText.includes("Not connected"),
     };
   })()`);
   await win.webContents.executeJavaScript(`(() => {
@@ -639,6 +681,13 @@ app.whenReady().then(async () => {
     connect.clientCards.join(",") === "Claude" &&
     connect.noConnectTab &&
     settings.hasAccountGroup &&
+    settings.showsThisMac &&
+    settings.noEndpointRow &&
+    settings.noAccountUid &&
+    settings.noPhonePromise &&
+    settings.explainsDisabledProvider &&
+    settings.hintDoesNotStutter &&
+    settings.disabledChipIsActionable &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
     settings.hasInferenceGroup &&
@@ -675,7 +724,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, chipsShot, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

@@ -32,8 +32,11 @@ apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
     nethome
   }
 # Where the evidence scripts drop screenshots. Per-worktree so simultaneous
-# runs don't clobber each other's output; explicit OUT/OUT_DIR/SETTINGS_OUT
-# env vars still win inside the recipes.
+# runs don't clobber each other's output; explicit OUT/OUT_DIR/SETTINGS_OUT/
+# CHIPS_OUT/AGENTS_OUT/AGENTS_OPEN_OUT/VAULT_OUT env vars still win inside the
+# recipes. EVERY capture a script can write needs its variable passed below —
+# one that is missed silently falls back to bare /tmp and two checkouts
+# overwrite each other's evidence while both runs still report success.
 outdir := if worktree == "" { "/tmp" } else { "/tmp/domo-" + worktree }
 
 _default:
@@ -209,7 +212,13 @@ app: build
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build
     @mkdir -p "{{outdir}}"
-    DOMO_HOME="{{apphome}}" SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" npx electron apps/desktop/scripts/verify-preload.mjs
+    DOMO_HOME="{{apphome}}" \
+      SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" \
+      CHIPS_OUT="${CHIPS_OUT:-{{outdir}}/settings-chips.png}" \
+      AGENTS_OUT="${AGENTS_OUT:-{{outdir}}/agents.png}" \
+      AGENTS_OPEN_OUT="${AGENTS_OPEN_OUT:-{{outdir}}/agents-open.png}" \
+      VAULT_OUT="${VAULT_OUT:-{{outdir}}/vault-locked.png}" \
+      npx electron apps/desktop/scripts/verify-preload.mjs
 
 # Screenshot the audit screen's live-browser thumbnail (evidence the owner can watch the browser).
 viewer-screenshot: build

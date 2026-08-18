@@ -869,6 +869,9 @@ async function renderSettings() {
   // and the API origin is baked into the build (a token is only valid against
   // the environment that minted it, so an editable origin could only be wrong).
   const relay = await window.domo.relayGet();
+  // The machine's own name, for the one row this group keeps. Already on the
+  // bridge for the titlebar; no new IPC and no API call for it.
+  const status = await window.domo.statusGet();
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
   // The "Connect a Client" button that used to sit here is gone: connecting a
   // client is now a subsection of this same group, so a button navigating to it
@@ -892,16 +895,18 @@ async function renderSettings() {
     // button sitting next to Sign Out on an account that is already signed in.
     signIn.style.display = relay.hasCredential ? "none" : "";
     signOut.disabled = !relay.hasCredential;
+    // One row, and it is about this Mac rather than about the wire. The agent
+    // endpoint lived here too, which is the same string the Agents tab shows as
+    // step 1 of connecting a client — where it can actually be copied and used;
+    // printing it twice is most of what made this group read as diagnostics.
+    // The account UID went with it: nothing a person can act on, and support
+    // reads it out of the audit log.
     accountBox.replaceChildren(
       ...(relay.hasCredential
         ? [
             el("div", { class: "field" }, [
-              el("label", { text: "Agent endpoint" }),
-              el("div", { class: "mono faint", text: relay.mcpUrl || "—" }),
-            ]),
-            el("div", { class: "field" }, [
-              el("label", { text: "Account" }),
-              el("div", { class: "mono faint", text: relay.accountUid || "—" }),
+              el("label", { text: "This Mac" }),
+              el("div", { class: "mono faint", text: `Plow (${status.name || "Mac"})` }),
             ]),
           ]
         : []),
@@ -990,9 +995,17 @@ async function renderSettings() {
   let inference = await window.domo.inferenceGet();
   const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
   const providerChips = el("div", { class: "chips" });
-  // Labels are the only provider knowledge left here; which providers exist,
-  // and whether each is usable, comes from main.
-  const PROVIDER_LABELS = { plow: "Plow account", anthropic: "Anthropic API key" };
+  // Everything this pane knows about a provider, in one place: what to call it,
+  // what it is waiting for when it cannot be picked, and where that lives.
+  // Which providers exist, and whether each is usable, still comes from main —
+  // this is display knowledge only.
+  //
+  // `hint` follows the chip's own label, so it must not repeat it: "Anthropic
+  // API key: add one below to select it" reads; "Anthropic API key needs an
+  // Anthropic API key" is what happens when it does.
+  //
+  // Declared after the reveal helpers it references (see below).
+  let PROVIDERS;
 
   // Approval mode for operations — read from the SAME snapshot as availability,
   // because main decides both in one write.
@@ -1011,6 +1024,9 @@ async function renderSettings() {
 
   const suggestCheck = el("input", { attrs: { type: "checkbox" } });
   suggestCheck.checked = showSuggestions;
+  // Said once, under the mode chips, for the same reason the reviewer note
+  // exists: a faded chip that explains nothing is a dead end.
+  const modeNote = el("p", { class: "faint chip-note", text: "" });
   const suggestLabel = el("label", { class: "check" }, [
     suggestCheck,
     el("span", { text: "Show Adversarial Agent suggestions in Ask mode" }),
@@ -1020,12 +1036,22 @@ async function renderSettings() {
   // Adversarial Agent needs an API key; the suggestions checkbox needs Ask mode
   // AND a key. Re-render whenever the mode or key presence changes.
   const renderModeChips = () => {
+    // Whatever the ACTIVE provider is missing is what blocks Adversarial —
+    // a pasted Anthropic key does not enable it while Plow is selected.
+    const provider = PROVIDERS[inference.provider];
+    modeNote.textContent = hasKey ? "" : provider.adversarial;
     modeChips.replaceChildren(...MODES.map(([value, label]) => {
       const disabled = value === "adversarial" && !hasKey;
       const chip = el("span", {
-        class: "chip" + (currentMode === value ? " active" : "") + (disabled ? " disabled" : ""),
+        class:
+          "chip" +
+          (currentMode === value ? " active" : "") +
+          (disabled ? " disabled actionable" : ""),
+        attrs: disabled ? { title: provider.adversarial } : {},
       }, [el("span", { text: label })]);
-      if (!disabled) {
+      if (disabled) {
+        chip.addEventListener("click", provider.go);
+      } else {
         chip.addEventListener("click", async () => {
           // What MAIN stored, not what was asked for. Adversarial is refused
           // when the active provider has no credential, and the credential can
@@ -1045,20 +1071,63 @@ async function renderSettings() {
     suggestLabel.classList.toggle("disabled", !on);
   };
 
+  /**
+   * Put the thing that would enable a chip in front of the user.
+   *
+   * A disabled control that says nothing is a dead end; the app knows exactly
+   * what is missing, so the chip becomes the way to go fix it.
+   */
+  const revealApiKeyField = () => {
+    apiKeyInput.scrollIntoView({ block: "center" });
+    apiKeyInput.focus();
+  };
+  const revealAccount = () => {
+    accountBox.scrollIntoView({ block: "center" });
+    (signIn.style.display === "none" ? signOut : signIn).focus();
+  };
+  PROVIDERS = {
+    plow: {
+      label: "Plow account",
+      hint: "sign in to select it",
+      adversarial: "Adversarial Agent needs you signed in to Plow.",
+      go: revealAccount,
+    },
+    anthropic: {
+      label: "Anthropic API key",
+      hint: "add one below to select it",
+      adversarial: "Adversarial Agent needs an Anthropic API key — add one below.",
+      go: revealApiKeyField,
+    },
+  };
+
   // A provider with no credential is disabled and cannot be selected; the main
   // process enforces the same rule, this only keeps the UI honest.
   const renderProviderChips = () => {
-    reviewerNote.textContent = `Reviewer: ${inference.info}`;
+    // No fallback copy: `available` comes from main's frozen provider list, so a
+    // key here that PROVIDERS does not know is a bug to see, not to paper over.
+    const unavailable = Object.entries(inference.available)
+      .filter(([, usable]) => !usable)
+      .map(([value]) => `${PROVIDERS[value].label}: ${PROVIDERS[value].hint}`);
+    // The note carries both facts: which reviewer is running, and — when a chip
+    // is faded — what would un-fade it. Until now the only signal was opacity.
+    reviewerNote.textContent =
+      `Reviewer: ${inference.info}` +
+      (unavailable.length ? ` · ${unavailable.join("; ")}.` : "");
     providerChips.replaceChildren(...Object.entries(inference.available).map(([value, usable]) => {
-      const label = PROVIDER_LABELS[value] ?? value;
+      const provider = PROVIDERS[value];
       const disabled = !usable;
       const chip = el("span", {
         class:
           "chip" +
           (inference.provider === value ? " active" : "") +
-          (disabled ? " disabled" : ""),
-      }, [el("span", { text: label })]);
-      if (!disabled && inference.provider !== value) {
+          (disabled ? " disabled actionable" : ""),
+        attrs: disabled ? { title: `${provider.label} — ${provider.hint}` } : {},
+      }, [el("span", { text: provider.label })]);
+      if (disabled) {
+        // Still clickable, deliberately: it cannot select the provider, but it
+        // can take you to the field that would make selecting it possible.
+        chip.addEventListener("click", provider.go);
+      } else if (inference.provider !== value) {
         chip.addEventListener("click", async () => {
           // What main stored, not what was asked for: an unavailable provider
           // is refused there, and the answer is the refusal.
@@ -1118,7 +1187,11 @@ async function renderSettings() {
   await settingsMounted.refreshUpdates();
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
+    // The old subtitle promised a phone number this screen never shows — the
+    // activation flow learns it server-side from the inbound SMS, and the OTP
+    // fallback holds it in memory and drops it on reset. Say what is true of
+    // what is on screen.
+    group("Plow Account", "The account agents reach this Mac through.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
     ]),
@@ -1131,6 +1204,7 @@ async function renderSettings() {
     ]),
     group("Approval Mode", "How operations are decided.", [
       modeChips,
+      modeNote,
       suggestLabel,
     ]),
     group("Capabilities", "Extended capabilities that let Plow reach parts of this Mac that macOS blocks by default.", [
