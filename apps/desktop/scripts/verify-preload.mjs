@@ -243,6 +243,18 @@ app.whenReady().then(async () => {
       // The new group, and its interlock: Plow has a credential so it is
       // selected; Anthropic has none so its chip is disabled.
       hasInferenceGroup: document.body.innerText.includes("Reviewer inference"),
+      // The key is not a setting of its own any more — it is the credential one
+      // provider runs on, so it lives in that provider's group and nowhere else.
+      noSeparateKeyGroup: ![...document.querySelectorAll(".settings .item > .group-title")].some(
+        (t) => t.textContent.trim() === "Anthropic API Key",
+      ),
+      keyFieldInReviewerGroup: (() => {
+        const item = document.querySelector(".settings .keyfield")?.closest(".item");
+        return !!item && item.querySelector(".group-title")?.textContent.trim() === "Reviewer inference";
+      })(),
+      // Collapsed while there is no key and nobody has asked for the field.
+      keyFieldHiddenAtRest:
+        getComputedStyle(document.querySelector(".settings .keyfield")).display === "none",
       // The Capabilities section, on a Mac whose probe says denied: it names
       // the permission, says so honestly, gives the Messages use case, and
       // routes the grant through System Settings (a key into main's table —
@@ -293,6 +305,45 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(chipsShot, (await win.webContents.capturePage()).toPNG());
 
+  // Reveal on intent. The disabled chip IS the disclosure for the field that
+  // would enable it: clicking expands the field in place and focuses it. #48
+  // scrolled to a field in a different group, which moved the page and left the
+  // reader to spot what had changed; there is nothing to scroll to now.
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".chip")]
+      .find((c) => c.textContent.trim() === "Anthropic API key")
+      .click();
+    return true;
+  })()`);
+  await waitFor(
+    win,
+    `!document.querySelector(".settings .keyfield").classList.contains("is-hidden")`,
+    "the Anthropic key field to expand when its disabled chip is clicked",
+  );
+  const reveal = await win.webContents.executeJavaScript(`(${() => {
+    const field = document.querySelector(".settings .keyfield");
+    const input = field.querySelector("input");
+    return {
+      fieldVisible: getComputedStyle(field).display !== "none",
+      // Focused, so the next keystroke lands in it — the whole point of
+      // revealing it rather than merely un-hiding it.
+      inputFocused: document.activeElement === input,
+      // Masked: the renderer may hold this value, never show it.
+      stillMasked: input.type === "password",
+      // The chip stays disabled — revealing the field is not selecting the
+      // provider, and the gate is main's to open, not the renderer's.
+      chipStillDisabled: [...document.querySelectorAll(".chip")]
+        .find((c) => c.textContent.trim() === "Anthropic API key")
+        .classList.contains("disabled"),
+    };
+  }})()`);
+
+  const revealShot = process.env.REVEAL_OUT ?? "/tmp/settings-key-revealed.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(revealShot, (await win.webContents.capturePage()).toPNG());
+
   // What used to sit here: a provider round-trip through the bridge, and a
   // mode-fallback check. Both asserted the interlock in `settingsActions`, and
   // both are covered by `test/settingsActions.test.ts`, which executes the same
@@ -314,6 +365,21 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(win, `[...document.querySelectorAll("input")].some((i) => i.type === "password")`,
     "the Settings pane's API-key field");
+  // Freshly rendered on a home that HAS a key: the field is on screen with no
+  // click, and still masked. Reveal-on-intent is for the empty case only —
+  // hiding a stored credential behind a disclosure would hide the way to
+  // replace it too.
+  const storedKeyState = await win.webContents.executeJavaScript(`(${() => {
+    const field = document.querySelector(".settings .keyfield");
+    const input = field.querySelector("input");
+    return {
+      visibleWithoutClicking: getComputedStyle(field).display !== "none",
+      masked: input.type === "password",
+      // The value is in the DOM because the field must be editable; it must not
+      // be readable on screen, which is what `masked` above pins.
+      holdsTheStoredKey: input.value === "sk-ant-a-real-committed-key",
+    };
+  }})()`);
   const modeBeforeTyping = loadSettings(probeHome).approvalMode;
   // Clear the field the way someone does before pasting a replacement: `input`
   // fires, `change` does not (no blur, no Enter). Nothing is committed, so
@@ -332,6 +398,7 @@ app.whenReady().then(async () => {
     startedAdversarial: modeBeforeTyping === "adversarial",
     modeUntouched: afterTransientInput.approvalMode === "adversarial",
     storedKeyUntouched: afterTransientInput.anthropicApiKey === "sk-ant-a-real-committed-key",
+    ...storedKeyState,
   };
 
   // An open Settings pane must re-read when main says the account changed —
@@ -691,6 +758,13 @@ app.whenReady().then(async () => {
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
     settings.hasInferenceGroup &&
+    settings.noSeparateKeyGroup &&
+    settings.keyFieldInReviewerGroup &&
+    settings.keyFieldHiddenAtRest &&
+    reveal.fieldVisible &&
+    reveal.inputFocused &&
+    reveal.stillMasked &&
+    reveal.chipStillDisabled &&
     settings.hasCapabilitiesGroup &&
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
@@ -702,6 +776,9 @@ app.whenReady().then(async () => {
     transientInput.startedAdversarial &&
     transientInput.modeUntouched &&
     transientInput.storedKeyUntouched &&
+    transientInput.visibleWithoutClicking &&
+    transientInput.masked &&
+    transientInput.holdsTheStoredKey &&
     staleSettingsPane.disabledWhileSignedOut &&
     staleSettingsPane.enabledAfterStatusChanged &&
     raceDuringRefresh.kept &&
@@ -724,7 +801,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, chipsShot, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, reveal, revealShot, settingsPane, chipsShot, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

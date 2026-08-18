@@ -987,8 +987,22 @@ async function renderSettings() {
   };
 
   // Anthropic API key — one of the two ways to power the adversarial agent.
+  //
+  // It lives INSIDE Reviewer inference rather than in a group of its own,
+  // because it is not a setting: it is the credential one of the two providers
+  // runs on, and a heading of its own asked the reader to connect two boxes to
+  // work out why it was there. So it sits under the chip it enables, carrying
+  // its own label now that the group title no longer speaks for it.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
+  const apiKeyField = el("div", { class: "field keyfield" }, [
+    el("label", { text: "Anthropic API key" }),
+    apiKeyInput,
+    el("p", {
+      class: "faint keyfield-note",
+      text: "Runs the reviewer on your own Anthropic account instead of your Plow one. Stored on this Mac.",
+    }),
+  ]);
 
   // Which backend runs the reviewer. `inference` carries a per-provider
   // availability map and the active model — never a credential.
@@ -1077,8 +1091,24 @@ async function renderSettings() {
    * A disabled control that says nothing is a dead end; the app knows exactly
    * what is missing, so the chip becomes the way to go fix it.
    */
+  /**
+   * Shown when there is a key to show, or when someone asks for one.
+   *
+   * `keyRevealed` is one-way on purpose: a field that vanished again after a
+   * mistyped key would take the fix with it. Once a key is stored the field
+   * stays regardless — masked, because the value is a secret the renderer is
+   * allowed to hold but not to display.
+   */
+  let keyRevealed = false;
+  const renderApiKeyField = () => {
+    apiKeyField.classList.toggle("is-hidden", !(keyRevealed || inference.available.anthropic));
+  };
+  // The chip IS the disclosure. #48 scrolled to a field in another group, which
+  // moved the page and left the reader to spot what had changed; the field is
+  // in this group now, so it can simply appear where the eye already is.
   const revealApiKeyField = () => {
-    apiKeyInput.scrollIntoView({ block: "center" });
+    keyRevealed = true;
+    renderApiKeyField();
     apiKeyInput.focus();
   };
   const revealAccount = () => {
@@ -1151,6 +1181,7 @@ async function renderSettings() {
     hasKey = next.available[next.provider];
     renderProviderChips();
     renderModeChips();
+    renderApiKeyField();
     updateSuggestEnabled();
   };
 
@@ -1164,6 +1195,7 @@ async function renderSettings() {
 
   renderProviderChips();
   renderModeChips();
+  renderApiKeyField();
   updateSuggestEnabled();
 
   // What a status change re-reads. Display nodes only: `apiKeyInput` is not
@@ -1198,9 +1230,7 @@ async function renderSettings() {
     group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
       providerChips,
       reviewerNote,
-    ]),
-    group("Anthropic API Key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
-      apiKeyInput,
+      apiKeyField,
     ]),
     group("Approval Mode", "How operations are decided.", [
       modeChips,
