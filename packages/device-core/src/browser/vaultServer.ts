@@ -106,7 +106,11 @@ export class VaultServer {
   private starting: Promise<void> | null = null;
 
   private async startOnce(): Promise<void> {
-    if (this.child) return;
+    // Running, but perhaps not finished: a bootstrap that failed transiently
+    // left a live process with no account, and returning here would keep the
+    // vault looking empty until something restarted it. Bootstrapping is a
+    // file read when there is nothing to do, so retrying it costs nothing.
+    if (this.child) return this.bootstrap();
     fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const { cert, key } = this.ensureCert();
 
