@@ -351,7 +351,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .roster-title h4 { margin: 0; overflow-wrap: anywhere; }
 .roster-item .roster-meta { color: var(--faint); font-size: 12px; }
 .roster-empty { padding: 4px 2px; text-align: left; }
-.roster-error p { color: var(--red-fg); }
+.roster-error p, .revoke-error p { color: var(--red-fg); }
 
 /* Goal item: title + description on the left, action column on the right that
    the description can never flow under (separate flex columns). */

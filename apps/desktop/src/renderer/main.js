@@ -730,9 +730,9 @@ function rosterName(row) {
   return row.name && row.name.trim() ? row.name : "Unnamed credential";
 }
 
-/** The higher-impact credential kinds require an explicit consequence before
-    the revoke call. This uses the existing modal furniture so the confirmation
-    is capturable by the macOS harness as well as keyboard accessible. */
+/** Every credential uses the same confirmation before revoke. This uses the
+    existing modal furniture so it is capturable by the macOS harness as well
+    as keyboard accessible. */
 let rosterConfirm = null;
 
 function closeRosterConfirm() {
@@ -749,10 +749,6 @@ function closeRosterConfirm() {
 
 function openRosterConfirm(row, trigger, redraw) {
   if (rosterConfirm) return;
-  const consequence =
-    row.kind === "Plow web login"
-      ? "This signs you out of the Plow website."
-      : "Any client using this legacy full-access credential will stop working.";
   const panel = el("div", { class: "modal roster-confirm", attrs: { role: "dialog", "aria-modal": "true" } });
   const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
   const cancel = el("button", { class: "btn", text: "Cancel" });
@@ -769,22 +765,16 @@ function openRosterConfirm(row, trigger, redraw) {
     cancel.disabled = true;
     confirm.disabled = true;
     note.textContent = "Revoking…";
-    try {
-      await window.domo.connectRevoke(row.id);
-      closeRosterConfirm();
-      await redraw();
-    } catch {
-      cancel.disabled = false;
-      confirm.disabled = false;
-      note.textContent = "Couldn’t revoke it. Try again.";
-    }
+    await window.domo.connectRevoke(row.id);
+    closeRosterConfirm();
+    await redraw();
   });
   backdrop.addEventListener("mousedown", (e) => {
     if (e.target === backdrop) closeRosterConfirm();
   });
   panel.replaceChildren(
-    el("div", { class: "group-title", text: `Revoke ${rosterName(row)}?` }),
-    el("p", { class: "conn-note", text: consequence }),
+    el("div", { class: "group-title", text: "Revoke credential?" }),
+    el("p", { class: "conn-note", text: "Any client using this credential will stop working." }),
     note,
     el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), confirm]),
   );
@@ -800,23 +790,33 @@ function openRosterConfirm(row, trigger, redraw) {
 /** Display-only roster rows from ConnectClientState. The renderer never sees
     the raw scopes, key prefix, or token used to derive these rows. */
 function rosterNodes(s, redraw) {
+  const nodes = [];
   if (s.rosterError) {
     const retry = el("button", { class: "btn small", text: "Retry" });
     retry.addEventListener("click", redraw);
-    return [el("div", { class: "item roster-error" }, [
+    nodes.push(el("div", { class: "item roster-error" }, [
       el("div", { class: "row" }, [
         el("p", { text: `Couldn’t load agents: ${s.rosterError}` }),
         el("div", { class: "spacer" }),
         retry,
       ]),
-    ])];
+    ]));
+  }
+
+  if (s.revokeError) {
+    nodes.push(el("div", { class: "item revoke-error" }, [
+      el("p", { text: `Couldn’t revoke credential: ${s.revokeError}` }),
+    ]));
   }
 
   if (!s.roster.length) {
-    return [el("div", { class: "empty roster-empty", text: "No agents have access to this Mac yet." })];
+    if (!s.rosterError) {
+      nodes.push(el("div", { class: "empty roster-empty", text: "No agents have access to this Mac yet." }));
+    }
+    return nodes;
   }
 
-  return s.roster.map((row) => {
+  nodes.push(...s.roster.map((row) => {
     const name = rosterName(row);
     const created = rosterTime(row.createdAt);
     const lastUsed = rosterTime(row.lastSeenAt);
@@ -829,23 +829,7 @@ function rosterNodes(s, redraw) {
       text: "Revoke",
       attrs: { "aria-label": `Revoke ${name}` },
     });
-    revoke.addEventListener("click", async () => {
-      if (row.kind !== "Agent") {
-        openRosterConfirm(row, revoke, redraw);
-        return;
-      }
-      revoke.disabled = true;
-      try {
-        await window.domo.connectRevoke(row.id);
-        await redraw();
-      } catch {
-        // Re-read the controller's renderer-safe error state; never draw the
-        // rejected IPC error, which is not part of that credential boundary.
-        await redraw();
-      } finally {
-        if (revoke.isConnected) revoke.disabled = false;
-      }
-    });
+    revoke.addEventListener("click", () => openRosterConfirm(row, revoke, redraw));
     return el("div", { class: "item roster-item" }, [
       el("div", { class: "roster-main" }, [
         el("div", { class: "roster-title" }, [el("h4", { text: name }), badge("zinc", row.kind)]),
@@ -853,7 +837,8 @@ function rosterNodes(s, redraw) {
       ]),
       revoke,
     ]);
-  });
+  }));
+  return nodes;
 }
 /**
  * The mounted Agents pane, while that tab is up. Holds the one refresh

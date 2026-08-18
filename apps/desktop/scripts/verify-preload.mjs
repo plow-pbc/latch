@@ -72,7 +72,7 @@ ipcMain.handle("settings:setInference", async (_e, provider) =>
 );
 // Connect a client: Chunk 3's renderer-safe state shape, with no credential
 // minted and representative roster rows for the Agents pane.
-const probeRoster = [
+let probeRoster = [
   {
     id: 41,
     name: "Probe Agent",
@@ -95,6 +95,11 @@ const probeRoster = [
     lastSeenAt: "2026-08-01T12:00:00.000Z",
   },
 ];
+let probeRosterError = null;
+let probeRevokeError = null;
+let probeConnectReads = 0;
+let probeRevokeGate = null;
+let probeFailRevokeId = null;
 const probeConnectState = () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
@@ -104,12 +109,25 @@ const probeConnectState = () => ({
   message: "",
   credential: null,
   roster: probeRoster,
-  rosterError: null,
+  rosterError: probeRosterError,
+  revokeError: probeRevokeError,
 });
 const probeRevokedIds = [];
-ipcMain.handle("connect:get", async () => probeConnectState());
+ipcMain.handle("connect:get", async () => {
+  probeConnectReads += 1;
+  return probeConnectState();
+});
 ipcMain.handle("connect:revoke", async (_e, id) => {
   probeRevokedIds.push(id);
+  const gate = probeRevokeGate;
+  probeRevokeGate = null;
+  if (gate) await gate;
+  if (id === probeFailRevokeId) {
+    probeRevokeError = "Plow refused the revoke.";
+    return probeConnectState();
+  }
+  probeRoster = probeRoster.filter((row) => row.id !== id);
+  probeRevokeError = null;
   return probeConnectState();
 });
 // A packaged-looking updater state so the Software Updates section renders
@@ -508,44 +526,75 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
 
-  // Agent rows are one-click revokes. Account-wide credentials stop at a
-  // consequence-bearing confirmation and make no IPC call until confirmed.
+  // Every kind uses one identical confirmation and makes no IPC call until the
+  // confirm button is clicked. Start with Agent and cancel it.
   await win.webContents.executeJavaScript(`(() => {
     const row = [...document.querySelectorAll(".roster-item")]
       .find((item) => item.textContent.includes("Probe Agent"));
     row.querySelector("button").click();
     return true;
   })()`);
-  await new Promise((r) => setTimeout(r, 250));
-  const agentRevoke = {
-    called: probeRevokedIds.includes(41),
-    noConfirmation: await win.webContents.executeJavaScript(`!document.querySelector(".roster-confirm")`),
-  };
-  await win.webContents.executeJavaScript(`(() => {
-    const row = [...document.querySelectorAll(".roster-item")]
-      .find((item) => item.textContent.includes("Probe website login"));
-    row.querySelector("button").click();
-    return true;
-  })()`);
-  await new Promise((r) => setTimeout(r, 200));
-  const accountRevoke = await win.webContents.executeJavaScript(`(${() => {
+  await new Promise((r) => setTimeout(r, 150));
+  const uniformConfirm = await win.webContents.executeJavaScript(`(${() => {
     const dialog = document.querySelector(".roster-confirm");
     return {
-      opensConfirmation: !!dialog,
-      namesConsequence: (dialog?.innerText ?? "").includes("signs you out of the Plow website"),
+      agentOpensConfirmation: !!dialog,
+      title: dialog?.querySelector(".group-title")?.textContent.trim(),
+      consequence: dialog?.querySelector(".conn-note")?.textContent.trim(),
       waitsForConfirmation: true,
-      focusInDialog: !!dialog && dialog.contains(document.activeElement),
     };
   }})()`);
-  accountRevoke.waitsForConfirmation = !probeRevokedIds.includes(42);
+  uniformConfirm.waitsForConfirmation = !probeRevokedIds.includes(41);
   await win.webContents.executeJavaScript(`(() => {
     const cancel = [...document.querySelectorAll(".roster-confirm button")]
       .find((button) => button.textContent.trim() === "Cancel");
     cancel.click();
     return true;
   })()`);
+
+  // Exercise the whole confirm-and-revoke sequence for the website row. Hold
+  // the IPC open so disabled controls and "Revoking…" are observable rather
+  // than racing a handler that resolves in the same tick.
+  let releaseProbeRevoke = () => {};
+  probeRevokeGate = new Promise((resolve) => {
+    releaseProbeRevoke = resolve;
+  });
+  const readsBeforeConfirmedRevoke = probeConnectReads;
+  await win.webContents.executeJavaScript(`(() => {
+    const row = [...document.querySelectorAll(".roster-item")]
+      .find((item) => item.textContent.includes("Probe website login"));
+    row.querySelector("button").click();
+    const confirm = [...document.querySelectorAll(".roster-confirm button")]
+      .find((button) => button.textContent.trim() === "Revoke");
+    confirm.click();
+    return true;
+  })()`);
   await new Promise((r) => setTimeout(r, 150));
-  accountRevoke.cancelCloses = await win.webContents.executeJavaScript(`!document.querySelector(".roster-confirm")`);
+  const confirmRevoke = await win.webContents.executeJavaScript(`(${() => {
+    const dialog = document.querySelector(".roster-confirm");
+    return {
+      callStarted: true,
+      dialogStaysOpen: !!dialog,
+      websiteMatches: dialog?.querySelector(".group-title")?.textContent.trim() === "Revoke credential?" &&
+        dialog?.querySelector(".conn-note")?.textContent.trim() ===
+          "Any client using this credential will stop working.",
+      showsProgress: (dialog?.innerText ?? "").includes("Revoking…"),
+      buttonsDisabled: [...(dialog?.querySelectorAll("button") ?? [])].every((button) => button.disabled),
+    };
+  }})()`);
+  confirmRevoke.callStarted = probeRevokedIds.includes(42);
+  releaseProbeRevoke();
+  await new Promise((r) => setTimeout(r, 300));
+  Object.assign(confirmRevoke, await win.webContents.executeJavaScript(`(${() => ({
+    dialogGone: !document.querySelector(".roster-confirm"),
+    rowGone: ![...document.querySelectorAll(".roster-item")]
+      .some((item) => item.textContent.includes("Probe website login")),
+  })})()`));
+  confirmRevoke.listReread = probeConnectReads > readsBeforeConfirmedRevoke;
+
+  // Legacy gets the exact same dialog text. Cancel once, then run it again
+  // with a resolved revoke failure to prove the row remains and revokeError —
+  // not rosterError — is what the renderer shows.
   await win.webContents.executeJavaScript(`(() => {
     const row = [...document.querySelectorAll(".roster-item")]
       .find((item) => item.textContent.includes("Old full-access key"));
@@ -553,20 +602,60 @@ app.whenReady().then(async () => {
     return true;
   })()`);
   await new Promise((r) => setTimeout(r, 150));
-  const legacyRevoke = await win.webContents.executeJavaScript(`(${() => {
+  uniformConfirm.legacyMatches = await win.webContents.executeJavaScript(`(${() => {
     const dialog = document.querySelector(".roster-confirm");
-    return {
-      namesConsequence: (dialog?.innerText ?? "").includes("legacy full-access credential will stop working"),
-      waitsForConfirmation: true,
-    };
+    return dialog?.querySelector(".group-title")?.textContent.trim() === "Revoke credential?" &&
+      dialog?.querySelector(".conn-note")?.textContent.trim() ===
+        "Any client using this credential will stop working.";
   }})()`);
-  legacyRevoke.waitsForConfirmation = !probeRevokedIds.includes(43);
   await win.webContents.executeJavaScript(`(() => {
     const cancel = [...document.querySelectorAll(".roster-confirm button")]
       .find((button) => button.textContent.trim() === "Cancel");
     cancel.click();
     return true;
   })()`);
+
+  probeFailRevokeId = 43;
+  const readsBeforeFailedRevoke = probeConnectReads;
+  await win.webContents.executeJavaScript(`(() => {
+    const row = [...document.querySelectorAll(".roster-item")]
+      .find((item) => item.textContent.includes("Old full-access key"));
+    row.querySelector("button").click();
+    const confirm = [...document.querySelectorAll(".roster-confirm button")]
+      .find((button) => button.textContent.trim() === "Revoke");
+    confirm.click();
+    return true;
+  })()`);
+  await new Promise((r) => setTimeout(r, 300));
+  const revokeFailure = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    return {
+      dialogGone: !document.querySelector(".roster-confirm"),
+      rowStillStanding: [...document.querySelectorAll(".roster-item")]
+        .some((item) => item.textContent.includes("Old full-access key")),
+      showsRevokeError: text.includes("Couldn’t revoke credential: Plow refused the revoke."),
+      notCalledListError: !text.includes("Couldn’t load agents: Plow refused the revoke."),
+    };
+  }})()`);
+  revokeFailure.called = probeRevokedIds.includes(43);
+  revokeFailure.listReread = probeConnectReads > readsBeforeFailedRevoke;
+
+  // A later list failure keeps those stale rows on screen alongside its own
+  // retry surface instead of replacing them with the error.
+  probeFailRevokeId = null;
+  probeRevokeError = null;
+  probeRosterError = "Couldn’t reach Plow.";
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await new Promise((r) => setTimeout(r, 250));
+  const staleRoster = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    return {
+      showsListError: text.includes("Couldn’t load agents: Couldn’t reach Plow."),
+      offersRetry: [...document.querySelectorAll(".roster-error button")]
+        .some((button) => button.textContent.trim() === "Retry"),
+      keepsRows: document.querySelectorAll(".roster-item").length === 2,
+    };
+  }})()`);
 
   // …and the same pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -721,15 +810,28 @@ app.whenReady().then(async () => {
     connect.rosterRows.map((row) => row.kind).join(",") === "Agent,Plow web login,Legacy — full access" &&
     connect.rosterMetadata.some((line) => line.includes("Last used")) &&
     connect.rosterMetadata.some((line) => line.includes("Never used")) &&
-    agentRevoke.called &&
-    agentRevoke.noConfirmation &&
-    accountRevoke.opensConfirmation &&
-    accountRevoke.namesConsequence &&
-    accountRevoke.waitsForConfirmation &&
-    accountRevoke.focusInDialog &&
-    accountRevoke.cancelCloses &&
-    legacyRevoke.namesConsequence &&
-    legacyRevoke.waitsForConfirmation &&
+    uniformConfirm.agentOpensConfirmation &&
+    uniformConfirm.title === "Revoke credential?" &&
+    uniformConfirm.consequence === "Any client using this credential will stop working." &&
+    uniformConfirm.waitsForConfirmation &&
+    uniformConfirm.legacyMatches &&
+    confirmRevoke.callStarted &&
+    confirmRevoke.dialogStaysOpen &&
+    confirmRevoke.websiteMatches &&
+    confirmRevoke.showsProgress &&
+    confirmRevoke.buttonsDisabled &&
+    confirmRevoke.dialogGone &&
+    confirmRevoke.rowGone &&
+    confirmRevoke.listReread &&
+    revokeFailure.called &&
+    revokeFailure.dialogGone &&
+    revokeFailure.rowStillStanding &&
+    revokeFailure.showsRevokeError &&
+    revokeFailure.notCalledListError &&
+    revokeFailure.listReread &&
+    staleRoster.showsListError &&
+    staleRoster.offersRetry &&
+    staleRoster.keepsRows &&
     settingsPane.firstGroupIsAccount &&
     settingsPane.noConnectBlock &&
     settingsPane.noConnectText &&
@@ -769,7 +871,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, connect, agentRevoke, accountRevoke, legacyRevoke, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, connect, uniformConfirm, confirmRevoke, revokeFailure, staleRoster, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

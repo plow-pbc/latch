@@ -91,7 +91,8 @@ async function setUp() {
   const connect = new ConnectClient({ api, home, isConnected: () => true });
   let roster = ROSTER_ROWS;
   let rosterError = null;
-  const state = () => ({ ...connect.state(), roster, rosterError });
+  let revokeError = null;
+  const state = () => ({ ...connect.state(), roster, rosterError, revokeError });
 
   // The main window's renderer contract, with Chunk 3's state/revoke surface
   // stubbed explicitly so this harness remains owned by the UI chunk.
@@ -106,6 +107,7 @@ async function setUp() {
   });
   ipcMain.handle("connect:revoke", async (_e, id) => {
     roster = roster.filter((row) => row.id !== id);
+    revokeError = null;
     return state();
   });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
@@ -127,9 +129,10 @@ async function setUp() {
   }));
   return {
     connect,
-    setRoster(rows, error = null) {
+    setRoster(rows, listError = null, nextRevokeError = null) {
       roster = rows;
-      rosterError = error;
+      rosterError = listError;
+      revokeError = nextRevokeError;
     },
   };
 }
@@ -168,17 +171,41 @@ const SCREENS = [
   },
   {
     name: "roster-error",
-    before: ({ setRoster }) => setRoster([], "Plow is unavailable."),
+    before: ({ setRoster }) => setRoster(ROSTER_ROWS, "Plow is unavailable."),
     prepare: async () => {},
-    expect: ["Connect an MCP client", "Couldn’t load agents: Plow is unavailable.", "Retry"],
+    scrollToRoster: true,
+    expect: ["Connect an MCP client", "Couldn’t load agents: Plow is unavailable.", "Retry", "Claude Code"],
+    verify: async (win) => {
+      const ok = await win.webContents.executeJavaScript(`(() =>
+        !!document.querySelector(".roster-error") &&
+        document.querySelectorAll(".roster-item").length === ${ROSTER_ROWS.length}
+      )()`);
+      return ok ? [] : ["list error did not retain roster rows"];
+    },
+  },
+  {
+    name: "roster-revoke-error",
+    before: ({ setRoster }) => setRoster(ROSTER_ROWS, null, "Plow refused the revoke."),
+    prepare: async () => {},
+    scrollToRoster: true,
+    expect: ["Connect an MCP client", "Couldn’t revoke credential: Plow refused the revoke.", "Claude Code"],
+    reject: ["Couldn’t load agents: Plow refused the revoke."],
+    verify: async (win) => {
+      const ok = await win.webContents.executeJavaScript(`(() =>
+        !!document.querySelector(".revoke-error") &&
+        !document.querySelector(".roster-error") &&
+        document.querySelectorAll(".roster-item").length === ${ROSTER_ROWS.length}
+      )()`);
+      return ok ? [] : ["revoke error was not distinct beside roster rows"];
+    },
   },
   {
     name: "roster-confirm",
     before: ({ setRoster }) => setRoster(ROSTER_ROWS),
     prepare: async (win) => clickRowAction(win, "Plow website", "Revoke"),
     expect: [
-      "Revoke Plow website?",
-      "This signs you out of the Plow website.",
+      "Revoke credential?",
+      "Any client using this credential will stop working.",
       "Cancel",
       "Revoke",
     ],
@@ -285,6 +312,12 @@ app.whenReady().then(async () => {
     await win.loadFile(path.join(dist, "renderer/index.html"));
     await new Promise((r) => setTimeout(r, 400));
     await screen.prepare(win);
+    if (screen.scrollToRoster) {
+      await win.webContents.executeJavaScript(
+        `(() => { const p = document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
+      );
+      await new Promise((r) => setTimeout(r, 200));
+    }
     if (screen.scrollToBottom) {
       await win.webContents.executeJavaScript(
         `(() => { const p = document.querySelector(".modal") ?? document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
@@ -297,8 +330,10 @@ app.whenReady().then(async () => {
 
     const text = await win.webContents.executeJavaScript("document.body.innerText");
     const missing = screen.expect.filter((needle) => !text.includes(needle));
-    if (missing.length) failures += 1;
-    console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing }));
+    const unexpected = (screen.reject ?? []).filter((needle) => text.includes(needle));
+    const failedAssertions = screen.verify ? await screen.verify(win) : [];
+    if (missing.length || unexpected.length || failedAssertions.length) failures += 1;
+    console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing, unexpected, failedAssertions }));
 
     // Copy-once is a claim about the app, so the run checks it rather than
     // leaving it to the picture: once dismissed, the config is gone for good.
