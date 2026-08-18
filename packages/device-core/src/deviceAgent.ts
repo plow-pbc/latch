@@ -12,6 +12,7 @@
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import os from "node:os";
 import path from "node:path";
+import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
 import { BlessedToolRegistry } from "./blessedTools.js";
 import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
@@ -45,6 +46,23 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   [DENIAL_SOURCE_NO_CREDITS]:
     "inference unavailable: this Plow account is out of credits, so the " +
     "adversarial reviewer could not run and the operation was denied",
+  // Nobody answered. This used to fall through to the default sentence, so an
+  // agent was told "the owner of this Mac denied the request" — byte-identical
+  // to a human pressing Deny — and stopped, correctly, on a refusal that never
+  // happened. The owner had simply walked away from the dialog. Distinguishing
+  // the two is the whole fix: one is a decision, the other is a timeout, and
+  // only one of them is worth trying again.
+  //
+  // RETRY FIRST, and say the old prompt is dead. Expiry settles this call from
+  // a timer; it does not close the window, which stays on screen and inert. An
+  // earlier version of this sentence said "ask the user to approve it on their
+  // Mac, then try again" — following it, the user clicks a dead prompt, nothing
+  // runs, and the retry's dialog (queued behind that window) appears as if they
+  // had been asked twice. That is the loop, driven by our own copy.
+  [APPROVAL_SOURCE_EXPIRED]:
+    "no one answered in time, so the request expired and was denied — a timeout, " +
+    "not a refusal. Try again to raise a fresh request; any prompt still on the " +
+    "user's screen from the first attempt is expired and does nothing",
 };
 
 export class DeviceAgent {
