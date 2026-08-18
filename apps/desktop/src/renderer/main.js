@@ -501,7 +501,7 @@ function copyRow(value, label) {
  * browser — the place the URL above gets pasted.
  *
  * A card exists only for a client whose link lands the user where they paste;
- * see `CLIENT_CONNECTOR_URLS` in main.ts. It is a shortcut past the clicks, not
+ * see `EXTERNAL_URLS` in main.ts. It is a shortcut past the clicks, not
  * the supported-client list — the group's subtitle names the others.
  *
  * From the designer's mock, minus the brand logo: an approximated or borrowed
@@ -513,7 +513,7 @@ function clientCard(key, name) {
     el("span", { class: "client-name", text: name }),
     el("span", { class: "client-arrow", text: "↗" }),
   ]);
-  card.addEventListener("click", () => window.domo.connectOpenClient(key));
+  card.addEventListener("click", () => window.domo.openExternal(key));
   return card;
 }
 
@@ -1003,7 +1003,7 @@ async function renderSettings() {
   // to open the URL behind `key` — the renderer never holds the URL itself.
   const supportRow = (iconNode, title, desc, buttonLabel, key) => {
     const open = el("button", { class: "btn", text: buttonLabel });
-    open.addEventListener("click", () => window.domo.supportOpen(key));
+    open.addEventListener("click", () => window.domo.openExternal(key));
     return el("div", { class: "support-row" }, [
       iconNode,
       el("div", { class: "support-copy" }, [

@@ -466,43 +466,32 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 // re-reads on every change notification, so a getter that notifies is an
 // unbroken re-render loop.
 /**
- * Deep links into a client's "add a custom MCP connector" screen.
+ * Every web page the renderer may ask to open, in one table.
  *
- * The renderer names a CLIENT, never a URL. `openExternal` is pinned to URLs
- * the app composed itself — the `sms:` one and this table — because a renderer
- * that can hand main an arbitrary URL to open is a renderer that can open
- * anything. An unknown key opens nothing.
+ * The renderer names a KEY, never a URL. `openExternal` is pinned to URLs the
+ * app composed itself — the `sms:` one, the vault's own address, and this
+ * table — because a renderer that can hand main an arbitrary URL to open is a
+ * renderer that can open anything. An unknown key opens nothing.
  *
- * One entry, on purpose. A card earns its place by landing the user where they
- * paste the URL, and Claude's link opens the add-custom-connector modal
- * directly. ChatGPT has no equivalent deep link — the nearest target is a help
- * article about enabling developer mode — so it gets no card rather than a card
- * that promises one click and delivers a document. The step's own copy stays
- * client-agnostic, so this table growing is the only change a new client needs.
+ * `claude` deep-links into that client's "add a custom MCP connector" screen,
+ * and is the only client entry on purpose. A connect card earns its place by
+ * landing the user where they paste the URL, and Claude's link opens the
+ * add-custom-connector modal directly. ChatGPT has no equivalent deep link —
+ * the nearest target is a help article about enabling developer mode — so it
+ * gets no card rather than a card that promises one click and delivers a
+ * document. The connect step's own copy stays client-agnostic, so this table
+ * growing is the only change a new client needs.
+ *
+ * `discord` and `website` are Settings' Support section.
  */
-const CLIENT_CONNECTOR_URLS: Readonly<Record<string, string>> = Object.freeze({
+const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
-});
-
-ipcMain.handle("connect:openClient", async (_e, client: string) => {
-  const url = CLIENT_CONNECTOR_URLS[client];
-  if (!url) return false;
-  await shell.openExternal(url);
-  return true;
-});
-/**
- * Settings' Support section destinations. Same rule as the connector table
- * above: the renderer names a KEY, main owns the URLs, so the only things
- * `openExternal` ever opens are URLs the app composed itself. An unknown key
- * opens nothing.
- */
-const SUPPORT_URLS: Readonly<Record<string, string>> = Object.freeze({
   discord: "https://watchmepivot.com/discord",
   website: "https://watchmepivot.com/",
 });
 
-ipcMain.handle("support:open", async (_e, key: string) => {
-  const url = SUPPORT_URLS[key];
+ipcMain.handle("external:open", async (_e, key: string) => {
+  const url = EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
   return true;
