@@ -147,6 +147,14 @@ class OutputBuffer {
       });
     });
   }
+
+  onExit(cb: (exitCode: number) => void): void {
+    if (this.exitCode !== null) {
+      cb(this.exitCode);
+      return;
+    }
+    this.waiters.push(() => cb(this.exitCode ?? -1));
+  }
 }
 
 /**
@@ -222,6 +230,13 @@ export class Executor {
       output: snap.output,
       outputLength: snap.total,
     };
+  }
+
+  /** Invoke cb when the run exits — immediately if it already has. */
+  onExit(handle: string, cb: (exitCode: number) => void): void {
+    const buffer = this.buffers.get(handle);
+    if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
+    buffer.onExit(cb);
   }
 
   output(handle: string, since: number): ExecResult {

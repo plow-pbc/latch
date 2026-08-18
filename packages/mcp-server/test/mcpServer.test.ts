@@ -532,7 +532,7 @@ describe("review findings", () => {
   // happens so the claim cannot drift back to the wrong one.
   describe("a command outrunning the budget defers, then yields its job handle", () => {
     it("takes two hops: pending handle, then a ready payload containing the job handle", async () => {
-      const { server } = makeServer(new ScriptedPolicy("allow_once", 0), 30);
+      const { server, device } = makeServer(new ScriptedPolicy("allow_once", 0), 30);
       const first = await callTool(
         server,
         "plow_run_command",
@@ -570,6 +570,17 @@ describe("review findings", () => {
       expect(out.status).toBe("completed");
       expect(out.exit_code).toBe(0);
       expect(out.output).toContain("done");
+
+      // The audit closes the run out exactly once, keyed to the intent — not
+      // once per get_output poll, and never as a handle-only orphan.
+      await callTool(server, "plow_get_output", { handle: poll.result.handle }, AGENT);
+      await callTool(server, "plow_get_output", { handle: poll.result.handle }, AGENT);
+      const entries = device.audit.entries();
+      const ends = entries.filter((e) => jv(e).get("event").str === "exec_end");
+      expect(ends).toHaveLength(1);
+      expect(jv(ends[0]!).get("exit_code").int).toBe(0);
+      const received = entries.find((e) => jv(e).get("event").str === "intent_received");
+      expect(jv(ends[0]!).get("intentId").str).toBe(jv(received!).get("intentId").str);
     });
   });
 

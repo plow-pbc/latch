@@ -83,6 +83,14 @@ export class ApprovalStore implements PolicyDelegate {
   private readonly waiting = new Map<string, (d: IntentDecision, source: string) => void>();
 
   /**
+   * Called for each pending record the startup sweep marks abandoned, so the
+   * abandonment can reach the audit log. Assign it in the same tick as
+   * construction: the sweep performs I/O before it can fire, so a hook set
+   * immediately never misses one.
+   */
+  onAbandoned?: (record: ApprovalRecord) => void;
+
+  /**
    * Directory creation and the stale sweep, started at construction. Awaited by
    * the first approval rather than blocking a constructor, so no I/O is
    * synchronous anywhere.
@@ -169,7 +177,13 @@ export class ApprovalStore implements PolicyDelegate {
   private async reapStale(): Promise<void> {
     for (const record of await this.all()) {
       if (record.status !== "pending") continue;
-      await this.write({ ...record, status: "abandoned", decidedAt: iso(this.now()) });
+      const abandoned: ApprovalRecord = {
+        ...record,
+        status: "abandoned",
+        decidedAt: iso(this.now()),
+      };
+      await this.write(abandoned);
+      this.onAbandoned?.(abandoned);
     }
   }
 
