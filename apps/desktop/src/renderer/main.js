@@ -911,34 +911,43 @@ async function renderSettings() {
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
-  const u = await window.domo.updatesGet();
-  const updateStatus = el("p", { class: "faint", text: updateStatusText(u) });
-  const updateAction =
-    u.phase === "ready"
-      ? el("button", { class: "btn primary", text: "Restart to Update" })
-      : el("button", { class: "btn", text: "Check for Updates" });
-  updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+  // These nodes are stable for the pane's lifetime: controller transitions
+  // patch them in place (refreshUpdates below) rather than re-rendering the
+  // pane, which would reset its scroll position on every phase change.
+  let u = await window.domo.updatesGet();
+  const updateStatus = el("p", { class: "faint" });
+  const updateAction = el("button", { class: "btn" });
   updateAction.addEventListener("click", async () => {
     if (u.phase === "ready") await window.domo.updatesRestart();
     else await window.domo.updatesCheck();
-    // The controller's change events re-render this screen as the check runs.
+    // The controller's change events redraw these nodes as the check runs.
   });
   const autoCheckBox = el("input", { attrs: { type: "checkbox" } });
-  autoCheckBox.checked = u.autoCheck;
-  autoCheckBox.disabled = !u.supported;
   autoCheckBox.addEventListener("change", () => window.domo.updatesSetAutoCheck(autoCheckBox.checked));
-  const autoCheckLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+  const autoCheckLabel = el("label", { class: "check block" }, [
     autoCheckBox,
     el("span", { text: "Automatically check for updates" }),
   ]);
   const autoInstallBox = el("input", { attrs: { type: "checkbox" } });
-  autoInstallBox.checked = u.autoInstall;
-  autoInstallBox.disabled = !u.supported;
   autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
-  const autoInstallLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+  const autoInstallLabel = el("label", { class: "check block" }, [
     autoInstallBox,
     el("span", { text: "Install downloaded updates when quitting Plow" }),
   ]);
+  const applyUpdates = () => {
+    const ready = u.phase === "ready";
+    updateStatus.textContent = updateStatusText(u);
+    updateAction.textContent = ready ? "Restart to Update" : "Check for Updates";
+    updateAction.className = ready ? "btn primary" : "btn";
+    updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+    autoCheckBox.checked = u.autoCheck;
+    autoCheckBox.disabled = !u.supported;
+    autoInstallBox.checked = u.autoInstall;
+    autoInstallBox.disabled = !u.supported;
+    autoCheckLabel.classList.toggle("disabled", !u.supported);
+    autoInstallLabel.classList.toggle("disabled", !u.supported);
+  };
+  applyUpdates();
 
   // One Support destination: icon, title + blurb, and a button that asks main
   // to open the URL behind `key` — the renderer never holds the URL itself.
@@ -1080,6 +1089,10 @@ async function renderSettings() {
       await refreshAccount();
       applyInference(await window.domo.inferenceGet());
     },
+    refreshUpdates: async () => {
+      u = await window.domo.updatesGet();
+      applyUpdates();
+    },
   };
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
@@ -1170,7 +1183,9 @@ window.domo.onStatusChanged(() => {
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
-  if (currentTab === "settings") renderSettings();
+  // In place, never renderSettings(): a full rebuild resets the pane's scroll
+  // (and would eat a half-typed API key) on every background phase change.
+  if (currentTab === "settings") settingsMounted?.refreshUpdates();
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 window.domo.onShowSettings(() => selectTab("settings"));
