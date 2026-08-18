@@ -24,6 +24,7 @@ import {
   PolicyDelegate,
 } from "@domo/device-core";
 import { createDomoMcpServer, DeferredResults, DomoMcpServer } from "@domo/mcp-server";
+import { bareToolNames } from "./toolNames.js";
 import { callTool } from "./client.js";
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
@@ -69,7 +70,7 @@ describe("a timeout is not a refusal", () => {
     // TTL well under the budget, so the deadline lands inside the call and the
     // agent gets the denial directly rather than through a handle.
     const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 20, budgetMs: 5_000 });
-    const { payload, isError } = await callTool(server, "read_file", { path: file }, AGENT);
+    const { payload, isError } = await callTool(server, "plow_read_file", { path: file }, AGENT);
 
     // Still a denial, and still an error: it fails closed, exactly as before.
     expect(isError).toBe(true);
@@ -85,6 +86,7 @@ describe("a timeout is not a refusal", () => {
     // dialog through. Retry first.
     expect(payload.reason).not.toMatch(/approve it on their Mac/i);
     expect(payload.reason).toMatch(/expired and does nothing/i);
+    expect(bareToolNames(payload.reason)).toEqual([]);
   });
 
   // KEPT deliberately, against review: this looks like it duplicates the two
@@ -94,7 +96,7 @@ describe("a timeout is not a refusal", () => {
   // made them identical again. A test that re-runs both is what the bug costs.
   it("the two denials are distinguishable", async () => {
     const timedOut = serverWith(NEVER_ANSWERS, { ttlMs: 20, budgetMs: 5_000 });
-    const expired = await callTool(timedOut.server, "read_file", { path: timedOut.file }, AGENT);
+    const expired = await callTool(timedOut.server, "plow_read_file", { path: timedOut.file }, AGENT);
 
     const home = tempDir();
     const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "deny" }));
@@ -102,7 +104,7 @@ describe("a timeout is not a refusal", () => {
     cleanups.push(() => server.close());
     const file = path.join(tempDir(), "a.txt");
     fs.writeFileSync(file, "contents");
-    const refused = await callTool(server, "read_file", { path: file }, AGENT);
+    const refused = await callTool(server, "plow_read_file", { path: file }, AGENT);
 
     expect(expired.payload.reason).not.toBe(refused.payload.reason);
   });
@@ -113,7 +115,7 @@ describe("a pending handle says what to do about it", () => {
     // Budget under the approval deadline, so the call defers while the human
     // is still (notionally) looking at a dialog.
     const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
-    const { payload, isError } = await callTool(server, "read_file", { path: file }, AGENT);
+    const { payload, isError } = await callTool(server, "plow_read_file", { path: file }, AGENT);
 
     expect(isError).toBe(false);
     expect(payload.status).toBe("pending");
@@ -121,11 +123,15 @@ describe("a pending handle says what to do about it", () => {
     expect(payload.retry_after_ms).toBeTypeOf("number");
     // The three things nothing used to say.
     expect(payload.note).toMatch(/tell the user/i);
-    expect(payload.note).toMatch(/get_result/);
+    expect(payload.note).toMatch(/plow_get_result/);
     expect(payload.note).toMatch(/do not repeat the original call/i);
     // Honest about what awaiting_approval actually means: no decision yet,
     // which also covers the work before anyone is asked.
     expect(payload.note).toMatch(/not decided yet/i);
+    // This note is not in the manifest, so the manifest sweep cannot see it —
+    // and it shipped saying "poll get_result" an hour before the tools were
+    // prefixed. Sweep it where it actually surfaces: on the payload.
+    expect(bareToolNames(payload.note)).toEqual([]);
     // It must NOT claim a dialog is on screen. Often there is not one: the
     // adversarial reviewer runs on a 30s budget against this 8s one, and the
     // approve/deny modes never ask a human at all.
@@ -134,8 +140,8 @@ describe("a pending handle says what to do about it", () => {
 
   it("polling the handle repeats the advice, so it survives a lost first answer", async () => {
     const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
-    const first = await callTool(server, "read_file", { path: file }, AGENT);
-    const polled = await callTool(server, "get_result", { handle: first.payload.handle }, AGENT);
+    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    const polled = await callTool(server, "plow_get_result", { handle: first.payload.handle }, AGENT);
 
     expect(polled.payload.status).toBe("pending");
     expect(polled.payload.note).toBe(first.payload.note);
@@ -159,7 +165,8 @@ describe("a pending handle says what to do about it", () => {
     expect(pending.reason).toBe("running");
     expect(pending.note).toMatch(/approved/i);
     expect(pending.note).not.toMatch(/tell the user you are waiting/i);
-    expect(pending.note).toMatch(/get_result/);
+    expect(pending.note).toMatch(/plow_get_result/);
+    expect(bareToolNames(pending.note)).toEqual([]);
     release();
   });
 
@@ -167,7 +174,7 @@ describe("a pending handle says what to do about it", () => {
   // the tool may do — the capability set the human approves is the bound.
   it("the note promises nothing", async () => {
     const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
-    const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
+    const { payload } = await callTool(server, "plow_read_file", { path: file }, AGENT);
     expect(payload.note).not.toMatch(/will be approved|guaranteed|always/i);
   });
 });

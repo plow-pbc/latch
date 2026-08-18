@@ -14,7 +14,6 @@ import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
-import { BlessedToolRegistry } from "./blessedTools.js";
 import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
@@ -69,9 +68,8 @@ export class DeviceAgent {
   readonly identity: DeviceIdentity;
   readonly audit: AuditLog;
   readonly policy: PolicyEngine;
-  readonly blessedTools: BlessedToolRegistry;
   readonly executor: Executor;
-  /** Owner-published skills (how-to guides), surfaced via list_tools/read_skill. */
+  /** Owner-published skills (how-to guides), surfaced via plow_list_skills/plow_read_skill. */
   readonly skills: SkillRegistry;
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
@@ -86,14 +84,12 @@ export class DeviceAgent {
     public readonly home: string,
     name: string,
     private readonly delegate: PolicyDelegate,
-    blessedTools?: BlessedToolRegistry,
     browserRuntime?: ResolvedBrowserRuntime | null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
-    this.blessedTools = blessedTools ?? BlessedToolRegistry.standard();
     this.skills = new SkillRegistry();
     this.skills.loadDir(path.join(home, "device/skills"));
     if (browserRuntime) {
@@ -106,7 +102,7 @@ export class DeviceAgent {
         // Visible by default: the owner should be able to watch what is being
         // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
         // which is what the test tiers and any unattended run want. This is only
-        // the default — browser_open carries the agent's per-session choice, so
+        // the default — plow_browser_open carries the agent's per-session choice, so
         // the owner can ask for the background (or to watch) in the moment.
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
@@ -118,7 +114,7 @@ export class DeviceAgent {
         // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
         // a hung page/eval returns an error in time instead of a torn 504. The
         // cold start is separate (startTimeoutMs) and paid by the deferrable
-        // browser_open, so it does not need to fit this bound.
+        // plow_browser_open, so it does not need to fit this bound.
         actionTimeoutMs: 15_000,
         audit: auditFn,
       });
@@ -293,8 +289,6 @@ export class DeviceAgent {
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
-    const toolCap = intent.capabilities.find((c) => c.kind === "tool");
-    if (toolCap) return this.executeTool(intent, toolCap, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -391,25 +385,6 @@ export class DeviceAgent {
     }
   }
 
-  private async executeTool(
-    intent: Intent,
-    toolCap: { tool?: string },
-    payload: JSONValue,
-  ): Promise<JSONValue> {
-    const name = toolCap.tool;
-    const tool = name !== undefined ? this.blessedTools.tool(name) : null;
-    if (!tool || name === undefined) return { status: "error", error: "unknown tool" };
-    try {
-      const result = await tool.invoke(jv(payload).get("args").value ?? null);
-      this.audit.record("tool_invoked", { intentId: intent.intentId, tool: name });
-      return { status: "completed", result };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: message });
-      return { status: "error", error: message };
-    }
-  }
-
   /** Read more output from a still-running (or finished) command. */
   /**
    * A browser/credential intent either opens a session (no `session` in the
@@ -439,7 +414,7 @@ export class DeviceAgent {
       );
     }
     if (origins.length === 0) {
-      return { status: "error", error: "browser_open requires at least one origin" };
+      return { status: "error", error: "plow_browser_open requires at least one origin" };
     }
     // Window mode is delivery detail too: it changes nothing about what the
     // owner approved, so it rides the payload and leaves the capability set —

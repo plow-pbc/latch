@@ -5,7 +5,7 @@
  * 20 seconds, so nothing on this Mac may block past its call budget — not a
  * human who has walked away from an approval, not a slow command. Any
  * tool that cannot finish inside the budget returns a handle instead, keeps the
- * work running, and the agent retrieves the outcome later with `get_result`.
+ * work running, and the agent retrieves the outcome later with `plow_get_result`.
  *
  * Two rules make this safe rather than merely convenient:
  *
@@ -67,10 +67,10 @@ export type PendingReason = "awaiting_approval" | "running";
 const PENDING_NOTES: Record<PendingReason, string> = {
   awaiting_approval:
     "not decided yet — it may be waiting on the user, on a policy check, or still being " +
-    "prepared. Tell the user it is waiting, then poll get_result with this handle. " +
+    "prepared. Tell the user it is waiting, then poll plow_get_result with this handle. " +
     "Do not repeat the original call; that starts a second request.",
   running:
-    "approved, and running now. Poll get_result with this handle; do not repeat the " +
+    "approved, and running now. Poll plow_get_result with this handle; do not repeat the " +
     "original call.",
 };
 

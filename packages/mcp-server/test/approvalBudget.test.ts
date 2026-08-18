@@ -90,7 +90,7 @@ describe("the budget fires while persisting the approval is still in flight", ()
     fs.writeFileSync(file, "the numbers");
 
     const started = Date.now();
-    const call = callTool(server, "read_file", { path: file }, AGENT);
+    const call = callTool(server, "plow_read_file", { path: file }, AGENT);
 
     // The persistence has begun and is stuck.
     await entered;
@@ -108,7 +108,7 @@ describe("the budget fires while persisting the approval is still in flight", ()
     let poll = payload;
     for (let i = 0; i < 80 && poll.status === "pending"; i++) {
       await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "get_result", { handle: payload.handle }, AGENT)).payload;
+      poll = (await callTool(server, "plow_get_result", { handle: payload.handle }, AGENT)).payload;
     }
     expect(poll.status).toBe("ready");
     expect(poll.result.content).toBe("the numbers");
@@ -135,7 +135,7 @@ describe("the budget fires while persisting the approval is still in flight", ()
     const file = path.join(dir, "a.txt");
     fs.writeFileSync(file, "x");
 
-    const call = callTool(server, "read_file", { path: file }, AGENT);
+    const call = callTool(server, "plow_read_file", { path: file }, AGENT);
     await entered;
     // The write is stuck, so the human has NOT been asked yet: the record is
     // written first, which is the whole point of writing it.

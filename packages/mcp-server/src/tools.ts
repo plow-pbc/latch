@@ -45,7 +45,7 @@ export interface ToolContext {
   agent: AgentIdentity;
   /** Stable for the life of this Mac process; intents carry it for grouping. */
   sessionId: string;
-  /** Ceiling on `run_command`'s in-call wait — the call budget. */
+  /** Ceiling on `plow_run_command`'s in-call wait — the call budget. */
   commandWaitCapMs: number;
 }
 
@@ -127,12 +127,27 @@ async function decideAndRun(
   }
 }
 
-const GOAL = { type: "string", description: "Why (shown to the approver)" };
+/**
+ * The one field a human actually reads. It said "Why (shown to the approver)",
+ * which never told the model that a person is on the other end of it.
+ *
+ * Deliberately phrased as description, not persuasion: goal text is
+ * display-only and never influences a decision path, so this must not read as
+ * "explain well and you get more access". The enforceable bound is the
+ * capability set.
+ */
+const GOAL = {
+  type: "string",
+  description:
+    "Why you need this, in one line. The user reads exactly this when deciding whether to approve.",
+};
 
 export const TOOLS: ToolSpec[] = [
   {
-    name: "read_file",
-    description: "Read a file on this Mac. The owner may be asked to approve.",
+    name: "plow_read_file",
+    description:
+      "Read a file on the user's own Mac — their real filesystem, not your workspace. " +
+      "They may be asked to approve, so this can return a pending handle.",
     inputSchema: {
       type: "object",
       required: ["path"],
@@ -166,8 +181,11 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "write_file",
-    description: "Write a file on this Mac. The owner may be asked to approve.",
+    name: "plow_write_file",
+    description:
+      "Write a file on the user's own Mac — use this when the file is for them to open or keep, " +
+      "not for your own working files. They may be asked to approve, so this can return a " +
+      "pending handle.",
     inputSchema: {
       type: "object",
       required: ["path", "content"],
@@ -202,15 +220,17 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "run_command",
+    name: "plow_run_command",
     description:
-      "Run a CLI command on this Mac inside a seatbelt sandbox. Declare every path you need: " +
+      "Run a command on the user's own Mac — their installed tools, their data, their network. " +
+      "Use this when the command must affect their machine; use your own shell for your own work. " +
+      "It runs inside a seatbelt sandbox. Declare every path you need: " +
       "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
       "write access is granted from them. They are NOT the full extent of what the command can " +
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
-      "If the command is still running when the wait elapses you get a job handle for get_output. " +
+      "If the command is still running when the wait elapses you get a job handle for plow_get_output. " +
       "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
-      "get_result, and the ready payload is the run_command result — including its job handle.",
+      "plow_get_result, and the ready payload is the plow_run_command result — including its job handle.",
     inputSchema: {
       type: "object",
       required: ["argv"],
@@ -273,7 +293,7 @@ export const TOOLS: ToolSpec[] = [
       //
       // Note what this does NOT do — an earlier comment here claimed it. A
       // command that outruns the budget does not hand back a job handle
-      // directly; the call defers, and `get_result` later returns a ready
+      // directly; the call defers, and `plow_get_result` later returns a ready
       // payload that CONTAINS the job handle. Two hops, not one.
       const waitMs = Math.min(a.get("wait_ms").int ?? 10_000, ctx.commandWaitCapMs);
       const result = await decideAndRun(
@@ -292,11 +312,11 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "get_output",
+    name: "plow_get_output",
     description:
-      "Fetch incremental output of a command still running from run_command. " +
-      "Pass 'since' = the output_length you last saw. Takes the job handle run_command returned, " +
-      "not a handle from get_result.",
+      "Fetch incremental output of a command still running from plow_run_command. " +
+      "Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, " +
+      "not a handle from plow_get_result.",
     inputSchema: {
       type: "object",
       required: ["handle"],
@@ -315,32 +335,27 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "list_tools",
+    name: "plow_list_skills",
     description:
-      "List the blessed tools this Mac offers, with their JSON input schemas, and any skills " +
-      "it publishes (how-to guides for a task — read one with read_skill before starting). " +
-      "Blessed tools are trusted in-process capabilities, distinct from the tools in this list.",
+      "Call this early. This Mac publishes skills — how-to guides for tasks it can do, written " +
+      "for whoever is driving it, and specific to this user's setup in ways you cannot otherwise " +
+      "know. Lists their names and descriptions; read one with plow_read_skill before starting " +
+      "work it covers.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     deferrable: false,
     async run(_args, ctx) {
-      return {
-        tools: ctx.device.blessedTools.manifest(),
-        skills: (jv(ctx.device.skills.manifest()).arr ?? []).map((s) => ({
-          name: jv(s).get("name").str,
-          description: jv(s).get("description").str,
-        })),
-      };
+      return { skills: ctx.device.skills.manifest() };
     },
   },
   {
-    name: "read_skill",
+    name: "plow_read_skill",
     description:
-      "Read a skill this Mac publishes (listed by list_tools): a how-to guide for a task. " +
-      "Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the browser tools).",
+      "Read a skill this Mac publishes (listed by plow_list_skills): a how-to guide for a task. " +
+      "Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the plow_browser tools).",
     inputSchema: {
       type: "object",
       required: ["name"],
-      properties: { name: { type: "string", description: "Skill name from list_tools" } },
+      properties: { name: { type: "string", description: "Skill name from plow_list_skills" } },
       additionalProperties: false,
     },
     deferrable: false,
@@ -353,39 +368,17 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "use_tool",
-    description: "Invoke a blessed tool on this Mac (discover them with list_tools).",
-    inputSchema: {
-      type: "object",
-      required: ["tool"],
-      properties: { tool: { type: "string" }, args: { type: "object" }, goal: GOAL },
-      additionalProperties: false,
-    },
-    deferrable: true,
-    async run(args, ctx, progress) {
-      const a = jv(args);
-      const tool = a.get("tool").str;
-      if (tool === null) throw new ToolError("missing 'tool'");
-      const response = await decideAndRun(
-        ctx,
-        progress,
-        `use blessed tool: ${tool}`,
-        a.get("goal").str ?? undefined,
-        [{ kind: "tool", tool }],
-        { args: a.get("args").value ?? null },
-      );
-      return { result: jv(response).get("result").value ?? null };
-    },
-  },
-  {
-    name: "browser_open",
+    name: "plow_browser_open",
     description:
-      "Open a supervised anti-detection browser session on this Mac, scoped to the listed site " +
-      "origins. The owner approves the origin list — include every domain you expect (apex AND " +
+      "Open a browser on the user's own Mac. Its profile persists between sessions and it can " +
+      "fill passwords from their vault without revealing them to you — so use it for sites that " +
+      "must be signed in as them, not for general web reading, which your own tools do faster. " +
+      "One session at a time. It is a supervised anti-detection browser, scoped to the listed " +
+      "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
       "permission to list the owner's vault item names (never values). The browser window is " +
       "visible by default; pass headed:false only when the owner asked for it to run in the " +
-      "background. Returns a session handle for the 'browser' tool. Read the camoufox-browsing " +
+      "background. Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
       "skill first.",
     inputSchema: {
       type: "object",
@@ -436,16 +429,16 @@ export const TOOLS: ToolSpec[] = [
         session: r.get("session").str,
         origins: r.get("origins").value ?? origins,
         headed: r.get("headed").bool,
-        note: "use the 'browser' tool with this session handle; screenshot after every navigation",
+        note: "use the 'plow_browser' tool with this session handle; screenshot after every navigation",
       };
     },
   },
   {
-    name: "browser_request",
+    name: "plow_browser_request",
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
-      "(find item ids via the browser tool's 'credentials' action). Secret values are never " +
+      "(find item ids with plow_vault's 'list' action). Secret values are never " +
       "revealed to you; they are typed into the page on this Mac.",
     inputSchema: {
       type: "object",
@@ -473,7 +466,7 @@ export const TOOLS: ToolSpec[] = [
       if (origins.length > 0) capabilities.push({ kind: "browser", origins });
       if (items.length > 0) capabilities.push({ kind: "credential", access: "fill", items });
       if (capabilities.length === 0) {
-        throw new ToolError("browser_request needs origins and/or credential_items");
+        throw new ToolError("plow_browser_request needs origins and/or credential_items");
       }
       const parts = [
         ...(origins.length ? [`browse: ${origins.join(", ")}`] : []),
@@ -494,15 +487,15 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "browser",
+    name: "plow_browser",
     description:
       "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
       "'screenshot' returns an image of the page — take one after " +
-      "every navigation to see where you are. Ask the vault tool what is in the vault; " +
+      "every navigation to see where you are. Ask plow_vault what is in the vault; " +
       "'fill_secret' types an approved item's field into a form " +
       "field without ever showing you the value. Actions on pages outside the approved origins are " +
-      "refused — use browser_request to widen scope. Every result includes the current url and " +
+      "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page).",
     inputSchema: {
       type: "object",
@@ -521,8 +514,8 @@ export const TOOLS: ToolSpec[] = [
         value: { type: "string", description: "fill: literal text to type (non-secret)" },
         expression: { type: "string", description: "eval: JS expression (top frame)" },
         index: { type: "integer", description: "use_page: page index from 'pages'" },
-        item: { type: "string", description: "fill_secret / describe_item: vault item id" },
-        field: { type: "string", description: "fill_secret: field label from describe_item (or 'totp')" },
+        item: { type: "string", description: "fill_secret: vault item id, from plow_vault list" },
+        field: { type: "string", description: "fill_secret: field label from plow_vault describe (or 'totp')" },
         direction: { type: "string", description: "scroll: down|up|bottom|top" },
         seconds: { type: "number", description: "wait: seconds" },
         frame: { type: "integer", description: "click/fill: target a specific frame index" },
@@ -532,7 +525,7 @@ export const TOOLS: ToolSpec[] = [
     },
     // Rides the session grant — no new intent, no approval. Non-deferrable so a
     // screenshot's image block reaches the agent directly (a deferred result
-    // would be re-serialized as text by get_result).
+    // would be re-serialized as text by plow_get_result).
     deferrable: false,
     async run(args, ctx) {
       const a = jv(args);
@@ -569,12 +562,13 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "vault",
+    name: "plow_vault",
     description:
+      "Check here before concluding you cannot sign in somewhere. " +
       "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
       "notes, custom fields — with titles, usernames and sites but never a value. 'describe' " +
       "names the fields one item holds. No browser session is needed to ask. To USE a secret, " +
-      "open a browser session and call the browser tool's fill_secret: values are typed into the " +
+      "open a browser session and call the plow_browser tool's fill_secret: values are typed into the " +
       "page and never returned to you.",
     inputSchema: {
       type: "object",
@@ -595,7 +589,7 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "browser_close",
+    name: "plow_browser_close",
     description: "Close a browser session when the task is done.",
     inputSchema: {
       type: "object",
@@ -612,7 +606,7 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "get_result",
+    name: "plow_get_result",
     description:
       "Retrieve the result of any call that returned a pending handle — whichever tool created it. " +
       "Answers pending / ready / denied / failed / expired / unknown. " +

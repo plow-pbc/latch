@@ -764,7 +764,6 @@ app.whenReady().then(async () => {
     home,
     hostName(),
     approvals,
-    undefined,
     resolveBrowserRuntime(process.resourcesPath),
   );
   // Say, once, whether this Mac can open its vault account. It is the one fact

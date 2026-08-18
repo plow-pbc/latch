@@ -29,6 +29,51 @@ import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./to
 export const PROTOCOL_REVISION = "2026-07-28";
 
 /**
+ * What this server is FOR, in the agent's own terms.
+ *
+ * Every tool description used to say only what a tool does. An agent choosing
+ * between an instant read in its own workspace and one that might block on a
+ * human picked its own every time — correctly, on the information it had,
+ * because nothing said the local read was reading the wrong machine. Users had
+ * to prefix requests with "with Plow, do X" to get these tools used at all.
+ *
+ * So the boundary is stated once, here, rather than thirteen times in thirteen
+ * descriptions: these tools reach the user's real computer, the agent's own
+ * tools do not. The tool descriptions carry a compressed version of the same
+ * thing because not every client forwards this block to the model — it rides
+ * `initialize` (2025 clients) and `server/discover` (2026-07-28), and a client
+ * is free to drop it.
+ *
+ * The last paragraph is the approval contract, and it is here because nothing
+ * anywhere told an agent what to DO about a pending handle: not to go quiet,
+ * and not to re-issue the call — which asks the human a second time.
+ *
+ * It DEFERS to the payload rather than describing it. This paragraph used to
+ * say a pending handle "means a request is on their screen and nobody has
+ * answered yet" — the same claim the pending note itself was corrected for,
+ * and false in the same states: the reason may be `running`, or approval may
+ * not have been asked for yet. Two copies of a runtime contract in prose is
+ * one copy too many; the handle says what it is waiting for, so point at it.
+ *
+ * The approval sentence ENUMERATES rather than generalising, and that is not
+ * style. It said "the user approves anything that touches their machine",
+ * which is false: `vault` list/describe is non-deferrable, builds no intent,
+ * and reads the vault's inventory (titles, usernames, sites — never a value)
+ * with no human in the loop. Whether that carve-out should exist is a product
+ * question; describing it accurately is not. An instructions block that
+ * overstates the guarantee is worse than one that says less.
+ *
+ * This is guidance to a model, never a capability claim. Nothing here widens
+ * what a tool may do; the enforceable bound is the capability set the human
+ * approves.
+ */
+export const SERVER_INSTRUCTIONS = `These tools act on the user's own Mac — their real files, their real applications, and a real browser running there. Your own file, shell and web tools act on your workspace, which is a different machine the user cannot see.
+
+Use these tools whenever the task is about THIS USER's computer, accounts, or data: a file that exists on their machine, something that must run there, or a site they need to be signed in to as themselves. Use your own tools for scratch work, for code you are writing, and for general web reading.
+
+The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.`;
+
+/**
  * The agent identity the relay asserts on each request frame (design §3.4).
  * This is deliberately NOT the SDK's `AuthInfo` — we map ours onto that rather
  * than passing it through, so the wire contract and the library's type can move
@@ -90,7 +135,12 @@ function refusal(id: unknown, method: string): Response {
           `that buffers one HTTP exchange per frame and cannot carry a stream.`,
       },
     }),
-    { status: 400, headers: { "content-type": "application/json" } },
+    // 404, not 400. The 2026-07-28 Streamable HTTP binding is normative: "If
+    // the server does not implement the requested RPC method, it MUST respond
+    // with 404 Not Found and a JSON-RPC error with code -32601." The body is
+    // what distinguishes this from a legacy server's bare 404, so both halves
+    // matter. This answered 400 until someone read the spec.
+    { status: 404, headers: { "content-type": "application/json" } },
   );
 }
 
@@ -125,9 +175,12 @@ export function createDomoMcpServer(
     (ctx) => {
       const server = new McpServer(
         { name: "plow", version: "0.1.0" },
-        // Without this the client may open a subscriptions stream, which a
-        // one-buffered-exchange-per-frame tunnel cannot carry.
-        { capabilities: { tools: { listChanged: false } } },
+        {
+          // Without this the client may open a subscriptions stream, which a
+          // one-buffered-exchange-per-frame tunnel cannot carry.
+          capabilities: { tools: { listChanged: false } },
+          instructions: SERVER_INSTRUCTIONS,
+        },
       );
       const agent = agentFrom(ctx.authInfo);
 
@@ -148,7 +201,7 @@ export function createDomoMcpServer(
             // this Mac — no state, no user data, no side effect — and the relay
             // refuses an unauthenticated caller before anything reaches us.
             // Everything that touches this Mac or does work is a tool, and
-            // every tool goes through here, `list_tools` included.
+            // every tool goes through here, `plow_list_skills` included.
             if (!agent) {
               return {
                 content: [toolContent({ error: "no authenticated agent on this request" })],

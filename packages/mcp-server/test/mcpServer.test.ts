@@ -76,19 +76,18 @@ describe("the reduced tool surface (§4.5)", () => {
     const parsed = parse(await rpc(server, "tools/list", {}, AGENT));
     const tools = (parsed.result?.tools ?? []) as { name: string; inputSchema: any }[];
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "browser",
-      "browser_close",
-      "browser_open",
-      "browser_request",
-      "get_output",
-      "get_result",
-      "list_tools",
-      "read_file",
-      "read_skill",
-      "run_command",
-      "use_tool",
-      "vault",
-      "write_file",
+      "plow_browser",
+      "plow_browser_close",
+      "plow_browser_open",
+      "plow_browser_request",
+      "plow_get_output",
+      "plow_get_result",
+      "plow_list_skills",
+      "plow_read_file",
+      "plow_read_skill",
+      "plow_run_command",
+      "plow_vault",
+      "plow_write_file",
     ]);
     // The concepts §4.5 deletes are gone…
     expect(tools.map((t) => t.name)).not.toContain("list_devices");
@@ -102,7 +101,7 @@ describe("the reduced tool surface (§4.5)", () => {
 });
 
 describe("a tool call end to end, in process", () => {
-  it("read_file builds a capability set, runs policy, executes and audits", async () => {
+  it("plow_read_file builds a capability set, runs policy, executes and audits", async () => {
     const { server, device } = makeServer();
     const dir = tempDir();
     const file = path.join(dir, "hello.txt");
@@ -110,7 +109,7 @@ describe("a tool call end to end, in process", () => {
 
     const { payload, isError, status } = await callTool(
       server,
-      "read_file",
+      "plow_read_file",
       { path: file, goal: "check the greeting" },
       AGENT,
     );
@@ -149,7 +148,7 @@ describe("a tool call end to end, in process", () => {
     // only by that accident.
     const { payload } = await callTool(
       server,
-      "run_command",
+      "plow_run_command",
       {
         argv: ["/bin/cat", path.join(offLimits, "secret.txt")],
         read_paths: [allowed],
@@ -166,7 +165,7 @@ describe("a tool call end to end, in process", () => {
     // above was the capability bound and not a broken command.
     const ok = await callTool(
       server,
-      "run_command",
+      "plow_run_command",
       {
         argv: ["/bin/cat", path.join(allowed, "ok.txt")],
         read_paths: [allowed],
@@ -184,7 +183,7 @@ describe("a tool call end to end, in process", () => {
     fs.writeFileSync(path.join(dir, "a.txt"), "x");
     const { isError, payload } = await callTool(
       server,
-      "read_file",
+      "plow_read_file",
       { path: path.join(dir, "a.txt") },
       AGENT,
     );
@@ -208,7 +207,7 @@ describe("a tool call end to end, in process", () => {
     fs.writeFileSync(path.join(dir, "a.txt"), "x");
     const { isError, payload } = await callTool(
       server,
-      "read_file",
+      "plow_read_file",
       { path: path.join(dir, "a.txt") },
       AGENT,
     );
@@ -232,7 +231,7 @@ describe("agent identity", () => {
     const { server, device } = makeServer();
     const dir = tempDir();
     fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    const { isError, payload } = await callTool(server, "read_file", {
+    const { isError, payload } = await callTool(server, "plow_read_file", {
       path: path.join(dir, "a.txt"),
     });
     expect(isError).toBe(true);
@@ -266,7 +265,7 @@ describe("the deferred-result contract (§4.3)", () => {
     const dir = tempDir();
     const file = path.join(dir, "slow.txt");
     fs.writeFileSync(file, "slow content");
-    const first = await callTool(server, "read_file", { path: file }, auth);
+    const first = await callTool(server, "plow_read_file", { path: file }, auth);
     return { server, device, file, first };
   }
 
@@ -279,13 +278,13 @@ describe("the deferred-result contract (§4.3)", () => {
     const handle: string = first.payload.handle;
 
     // Polling early is answered honestly, not rejected.
-    const early = await callTool(server, "get_result", { handle }, AGENT);
+    const early = await callTool(server, "plow_get_result", { handle }, AGENT);
     expect(early.payload.status).toBe("pending");
 
     let poll = early.payload;
     for (let i = 0; i < 60 && poll.status === "pending"; i++) {
       await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "get_result", { handle }, AGENT)).payload;
+      poll = (await callTool(server, "plow_get_result", { handle }, AGENT)).payload;
     }
     expect(poll.status).toBe("ready");
     // Byte-for-byte what the original call would have returned.
@@ -295,13 +294,13 @@ describe("the deferred-result contract (§4.3)", () => {
   it("a handle belongs to the agent that created it — another agent gets `unknown`", async () => {
     const { server, first } = await deferredRead(new ScriptedPolicy("allow_once", 200));
     const handle: string = first.payload.handle;
-    const stolen = await callTool(server, "get_result", { handle }, OTHER);
+    const stolen = await callTool(server, "plow_get_result", { handle }, OTHER);
     expect(stolen.payload).toEqual({ status: "unknown", handle });
     // Indistinguishable from a handle that never existed.
-    const invented = await callTool(server, "get_result", { handle: "NO-SUCH-HANDLE" }, OTHER);
+    const invented = await callTool(server, "plow_get_result", { handle: "NO-SUCH-HANDLE" }, OTHER);
     expect(invented.payload.status).toBe("unknown");
     // …and the owner still gets a real answer, so nothing was consumed.
-    const owner = await callTool(server, "get_result", { handle }, AGENT);
+    const owner = await callTool(server, "plow_get_result", { handle }, AGENT);
     expect(owner.payload.status).not.toBe("unknown");
   });
 
@@ -346,7 +345,7 @@ describe("review findings", () => {
         { notifications: ["notifications/tools/list_changed"] },
         AGENT,
       );
-      expect(raw.status).toBe(400);
+      expect(raw.status).toBe(404);
       // Not an SSE stream: a single JSON body.
       expect(raw.headers["content-type"]).toContain("application/json");
       expect(raw.headers["content-type"]).not.toContain("text/event-stream");
@@ -380,7 +379,7 @@ describe("review findings", () => {
         fs.writeFileSync(path.join(dir, "a.txt"), "x");
         const { isError, payload } = await callTool(
           server,
-          "read_file",
+          "plow_read_file",
           { path: path.join(dir, "a.txt") },
           { agent_id } as unknown as RelayAuth,
         );
@@ -401,7 +400,7 @@ describe("review findings", () => {
       });
       const dir = tempDir();
       fs.writeFileSync(path.join(dir, "a.txt"), "x");
-      await callTool(server, "read_file", { path: path.join(dir, "a.txt") }, {
+      await callTool(server, "plow_read_file", { path: path.join(dir, "a.txt") }, {
         agent_id: "agent-7",
         agent_name: { evil: true },
       } as unknown as RelayAuth);
@@ -429,7 +428,7 @@ describe("review findings", () => {
       const fd = fs.openSync(big, "w");
       fs.ftruncateSync(fd, MAX_FILE_BYTES + 1);
       fs.closeSync(fd);
-      const { isError, payload } = await callTool(server, "read_file", { path: big }, AGENT);
+      const { isError, payload } = await callTool(server, "plow_read_file", { path: big }, AGENT);
       expect(isError).toBe(true);
       expect(JSON.stringify(payload)).toMatch(/single-call limit/);
     });
@@ -442,7 +441,7 @@ describe("review findings", () => {
       const dir = tempDir();
       const file = path.join(dir, "a.txt");
       fs.writeFileSync(file, "content");
-      const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
+      const { payload } = await callTool(server, "plow_read_file", { path: file }, AGENT);
       expect(payload.status).toBe("pending");
     });
   });
@@ -465,7 +464,7 @@ describe("review findings", () => {
       const innocuous = path.join(linkDir, "report.txt");
       fs.symlinkSync(target, innocuous);
 
-      const { payload } = await callTool(server, "read_file", { path: innocuous }, AGENT);
+      const { payload } = await callTool(server, "plow_read_file", { path: innocuous }, AGENT);
 
       // The approver saw the real target, not the innocuous name.
       expect(approved).toEqual([canonicalize(target)]);
@@ -496,7 +495,7 @@ describe("review findings", () => {
         },
       });
 
-      const { payload } = await callTool(server, "read_file", { path: link }, AGENT);
+      const { payload } = await callTool(server, "plow_read_file", { path: link }, AGENT);
       // The capability froze the resolved path, so execution never re-follows
       // the link: the swap is inert.
       expect(payload.path).toBe(canonicalize(decoy));
@@ -504,7 +503,7 @@ describe("review findings", () => {
       expect(payload.content).not.toContain("s3cret");
     });
 
-    it("run_command's declared bounds are resolved before approval too", async () => {
+    it("plow_run_command's declared bounds are resolved before approval too", async () => {
       let approved: string[] = [];
       let cwd: string | undefined;
       const { server } = makeServer({
@@ -520,7 +519,7 @@ describe("review findings", () => {
       fs.symlinkSync(realDir, link);
       await callTool(
         server,
-        "run_command",
+        "plow_run_command",
         { argv: ["/bin/echo", "x"], read_paths: [link], cwd: link, wait_ms: 3_000 },
         AGENT,
       );
@@ -536,7 +535,7 @@ describe("review findings", () => {
       const { server } = makeServer(new ScriptedPolicy("allow_once", 0), 30);
       const first = await callTool(
         server,
-        "run_command",
+        "plow_run_command",
         { argv: ["/bin/sh", "-c", "sleep 0.4; echo done"], wait_ms: 60_000 },
         AGENT,
       );
@@ -546,27 +545,27 @@ describe("review findings", () => {
       expect(first.payload.retry_after_ms).toBeTypeOf("number");
       const deferredHandle: string = first.payload.handle;
 
-      // Hop two: the ready payload is the run_command result, and the job
+      // Hop two: the ready payload is the plow_run_command result, and the job
       // handle is inside it.
       let poll = first.payload;
       for (let i = 0; i < 80 && poll.status === "pending"; i++) {
         await new Promise((r) => setTimeout(r, 25));
-        poll = (await callTool(server, "get_result", { handle: deferredHandle }, AGENT)).payload;
+        poll = (await callTool(server, "plow_get_result", { handle: deferredHandle }, AGENT)).payload;
       }
       expect(poll.status).toBe("ready");
-      // The ready payload is the run_command result. Because wait_ms is capped
+      // The ready payload is the plow_run_command result. Because wait_ms is capped
       // at the budget, that result is itself the "still running, here is a job
       // handle" answer — so the agent ends up with TWO handles for one command.
       expect(poll.result.status).toBe("running");
       expect(poll.result.handle).toBeTypeOf("string");
       expect(poll.result.handle).not.toBe(deferredHandle);
 
-      // Hop three, in practice: the inner handle is the JOB handle get_output
+      // Hop three, in practice: the inner handle is the JOB handle plow_get_output
       // takes, and that is where the output actually arrives.
       let out = poll.result;
       for (let i = 0; i < 80 && out.status === "running"; i++) {
         await new Promise((r) => setTimeout(r, 25));
-        out = (await callTool(server, "get_output", { handle: poll.result.handle }, AGENT)).payload;
+        out = (await callTool(server, "plow_get_output", { handle: poll.result.handle }, AGENT)).payload;
       }
       expect(out.status).toBe("completed");
       expect(out.exit_code).toBe(0);
@@ -620,7 +619,7 @@ describe("per-agent isolation (§4.4)", () => {
   async function startJob(server: DomoMcpServer, auth: RelayAuth, marker: string) {
     const { payload } = await callTool(
       server,
-      "run_command",
+      "plow_run_command",
       { argv: ["/bin/sh", "-c", `echo ${marker}; sleep 0.6; echo ${marker}-done`], wait_ms: 100 },
       auth,
     );
@@ -632,18 +631,18 @@ describe("per-agent isolation (§4.4)", () => {
     const { server } = makeServer();
     const handle = await startJob(server, ALICE, "alice-secret");
 
-    const stolen = await callTool(server, "get_output", { handle }, MALLORY);
+    const stolen = await callTool(server, "plow_get_output", { handle }, MALLORY);
     expect(stolen.isError).toBe(true);
     expect(JSON.stringify(stolen.payload)).not.toContain("alice-secret");
 
     // Indistinguishable from a handle that never existed.
-    const invented = await callTool(server, "get_output", { handle: "NO-SUCH-HANDLE" }, MALLORY);
+    const invented = await callTool(server, "plow_get_output", { handle: "NO-SUCH-HANDLE" }, MALLORY);
     expect(JSON.stringify(stolen.payload)).toBe(
       JSON.stringify(invented.payload).replace("NO-SUCH-HANDLE", handle),
     );
 
     // The owner still reads it — nothing was consumed or broken.
-    const owner = await callTool(server, "get_output", { handle }, ALICE);
+    const owner = await callTool(server, "plow_get_output", { handle }, ALICE);
     expect(owner.isError).toBe(false);
     expect(owner.payload.output).toContain("alice-secret");
   });
@@ -659,7 +658,7 @@ describe("per-agent isolation (§4.4)", () => {
       let out = { status: "running", output: "" } as any;
       for (let i = 0; i < 80 && out.status === "running"; i++) {
         await new Promise((r) => setTimeout(r, 25));
-        out = (await callTool(server, "get_output", { handle, since: 0 }, auth)).payload;
+        out = (await callTool(server, "plow_get_output", { handle, since: 0 }, auth)).payload;
       }
       return out;
     };
@@ -682,7 +681,7 @@ describe("per-agent isolation (§4.4)", () => {
     // caller's `since`, not shared state one agent can move for another.
     const aliceAgain = await callTool(
       server,
-      "get_output",
+      "plow_get_output",
       { handle: aliceHandle, since: 0 },
       ALICE,
     );
@@ -694,12 +693,12 @@ describe("per-agent isolation (§4.4)", () => {
     const dir = tempDir();
     const file = path.join(dir, "alice.txt");
     fs.writeFileSync(file, "alice's file");
-    const first = await callTool(server, "read_file", { path: file }, ALICE);
+    const first = await callTool(server, "plow_read_file", { path: file }, ALICE);
     expect(first.payload.status).toBe("pending");
 
     const stolen = await callTool(
       server,
-      "get_result",
+      "plow_get_result",
       { handle: first.payload.handle },
       MALLORY,
     );
@@ -720,15 +719,15 @@ describe("per-agent isolation (§4.4)", () => {
     const file = path.join(dir, "shared.txt");
     fs.writeFileSync(file, "contents");
 
-    await callTool(server, "read_file", { path: file }, ALICE);
+    await callTool(server, "plow_read_file", { path: file }, ALICE);
     expect(asked).toEqual(["sess_alice"]);
 
     // Alice's second identical call is served by her stored rule — not asked.
-    await callTool(server, "read_file", { path: file }, ALICE);
+    await callTool(server, "plow_read_file", { path: file }, ALICE);
     expect(asked).toEqual(["sess_alice"]);
 
     // Mallory's identical call, same name, must still be asked.
-    await callTool(server, "read_file", { path: file }, MALLORY);
+    await callTool(server, "plow_read_file", { path: file }, MALLORY);
     expect(asked).toEqual(["sess_alice", "sess_mallory"]);
   });
 
@@ -737,8 +736,8 @@ describe("per-agent isolation (§4.4)", () => {
     const dir = tempDir();
     const file = path.join(dir, "a.txt");
     fs.writeFileSync(file, "x");
-    await callTool(server, "read_file", { path: file }, ALICE);
-    await callTool(server, "read_file", { path: file }, MALLORY);
+    await callTool(server, "plow_read_file", { path: file }, ALICE);
+    await callTool(server, "plow_read_file", { path: file }, MALLORY);
 
     const received = device.audit
       .entries()

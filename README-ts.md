@@ -21,7 +21,7 @@ packages/
                                      rule keys, PathUtil  (twin of DomoProtocol)
   transport/     @domo/transport     the Connection seam and the WebSocket (ws) client half
   device-core/   @domo/device-core   DeviceAgent, PolicyEngine, FileOps, Executor + SBPL, AuditLog,
-                                     BlessedTools, identity/key store  (twin of DomoDeviceCore)
+                                     SkillRegistry, identity/key store  (twin of DomoDeviceCore)
   mcp-server/    @domo/mcp-server    the MCP server on this Mac (revision 2026-07-28): the reduced
                                      tool surface, capability construction, and deferred results
   relay-client/  @domo/relay-client  dials the Plow relay, speaks plow's channel handshake, and
@@ -87,9 +87,12 @@ POST-only, so there is no session lifecycle and no GET/SSE requirement:
   relay refuses an unauthenticated caller before it reaches us. Everything that
   touches this Mac or does work is a tool, and every tool requires identity.
 
-The tool surface is one Mac's, not a fleet's: `read_file`, `write_file`,
-`run_command`, `get_output`, `list_tools`, `use_tool`, `get_result`. No tool
-takes a `device` argument.
+The tool surface is one Mac's, not a fleet's: `plow_read_file`,
+`plow_write_file`, `plow_run_command`, `plow_get_output`, `plow_get_result`,
+`plow_list_skills`, `plow_read_skill`, `plow_vault`, and the four browser tools
+(`plow_browser_open`, `plow_browser_request`, `plow_browser`,
+`plow_browser_close`). No tool takes a `device` argument, and every name is
+prefixed so it cannot be confused with an agent's own built-ins.
 
 **Paths are resolved before the human sees them.** Every path an agent supplies
 is canonicalised *before* it becomes a capability, so the approval dialog and the
@@ -125,10 +128,10 @@ another agent's handle returns exactly what a handle that never existed returns.
 The name is carried for a human to read — in the approval dialog, in the audit
 record, and in the adversarial reviewer's prompt — and for nothing else.
 
-**Two kinds of handle, and they are not interchangeable.** `run_command` returns
-a *job* handle for `get_output` when a command outlives its wait. Any tool that
+**Two kinds of handle, and they are not interchangeable.** `plow_run_command` returns
+a *job* handle for `plow_get_output` when a command outlives its wait. Any tool that
 outlives the **call budget** — a human who has not answered yet, or slow work —
-returns a *deferred* handle for `get_result`, which answers `pending` / `ready` /
+returns a *deferred* handle for `plow_get_result`, which answers `pending` / `ready` /
 `denied` / `failed` / `expired` / `unknown`. A deferred handle belongs to the
 agent that created it; another agent presenting it gets `unknown`, which is
 indistinguishable from a handle that never existed.
@@ -152,7 +155,7 @@ running the app against a locally running plow API.
 Note how those two compose, because it is not what you would guess: a command
 that outruns the budget does **not** hand back a job handle directly. The budget
 timer starts before approval and the executor's wait starts after it, so the
-budget always expires first. The call defers, and `get_result` later returns a
+budget always expires first. The call defers, and `plow_get_result` later returns a
 ready payload that *contains* the job handle. Two hops.
 
 ## The relay client
