@@ -29,6 +29,36 @@ import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./to
 export const PROTOCOL_REVISION = "2026-07-28";
 
 /**
+ * What this server is FOR, in the agent's own terms.
+ *
+ * Every tool description used to say only what a tool does. An agent choosing
+ * between an instant read in its own workspace and one that might block on a
+ * human picked its own every time — correctly, on the information it had,
+ * because nothing said the local read was reading the wrong machine. Users had
+ * to prefix requests with "with Plow, do X" to get these tools used at all.
+ *
+ * So the boundary is stated once, here, rather than thirteen times in thirteen
+ * descriptions: these tools reach the user's real computer, the agent's own
+ * tools do not. The tool descriptions carry a compressed version of the same
+ * thing because not every client forwards this block to the model — it rides
+ * `initialize` (2025 clients) and `server/discover` (2026-07-28), and a client
+ * is free to drop it.
+ *
+ * The last paragraph is the approval contract, and it is here because nothing
+ * anywhere told an agent what to DO about a pending handle: not to go quiet,
+ * and not to re-issue the call — which asks the human a second time.
+ *
+ * This is guidance to a model, never a capability claim. Nothing here widens
+ * what a tool may do; the enforceable bound is the capability set the human
+ * approves.
+ */
+export const SERVER_INSTRUCTIONS = `These tools act on the user's own Mac — their real files, their real applications, and a real browser running there. Your own file, shell and web tools act on your workspace, which is a different machine the user cannot see.
+
+Use these tools whenever the task is about THIS USER's computer, accounts, or data: a file that exists on their machine, something that must run there, or a site they need to be signed in to as themselves. Use your own tools for scratch work, for code you are writing, and for general web reading.
+
+The user approves anything that touches their machine. A call may return a pending handle instead of a result — that means a request is on their screen and nobody has answered yet. Tell the user you are waiting for them, then poll get_result. Do not re-issue the original call; that asks them a second time.`;
+
+/**
  * The agent identity the relay asserts on each request frame (design §3.4).
  * This is deliberately NOT the SDK's `AuthInfo` — we map ours onto that rather
  * than passing it through, so the wire contract and the library's type can move
@@ -125,9 +155,12 @@ export function createDomoMcpServer(
     (ctx) => {
       const server = new McpServer(
         { name: "plow", version: "0.1.0" },
-        // Without this the client may open a subscriptions stream, which a
-        // one-buffered-exchange-per-frame tunnel cannot carry.
-        { capabilities: { tools: { listChanged: false } } },
+        {
+          // Without this the client may open a subscriptions stream, which a
+          // one-buffered-exchange-per-frame tunnel cannot carry.
+          capabilities: { tools: { listChanged: false } },
+          instructions: SERVER_INSTRUCTIONS,
+        },
       );
       const agent = agentFrom(ctx.authInfo);
 

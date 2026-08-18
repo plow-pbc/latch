@@ -127,12 +127,27 @@ async function decideAndRun(
   }
 }
 
-const GOAL = { type: "string", description: "Why (shown to the approver)" };
+/**
+ * The one field a human actually reads. It said "Why (shown to the approver)",
+ * which never told the model that a person is on the other end of it.
+ *
+ * Deliberately phrased as description, not persuasion: goal text is
+ * display-only and never influences a decision path, so this must not read as
+ * "explain well and you get more access". The enforceable bound is the
+ * capability set.
+ */
+const GOAL = {
+  type: "string",
+  description:
+    "Why you need this, in one line. The user reads exactly this when deciding whether to approve.",
+};
 
 export const TOOLS: ToolSpec[] = [
   {
     name: "read_file",
-    description: "Read a file on this Mac. The owner may be asked to approve.",
+    description:
+      "Read a file on the user's own Mac — their real filesystem, not your workspace. " +
+      "They may be asked to approve, so this can return a pending handle.",
     inputSchema: {
       type: "object",
       required: ["path"],
@@ -167,7 +182,10 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "write_file",
-    description: "Write a file on this Mac. The owner may be asked to approve.",
+    description:
+      "Write a file on the user's own Mac — use this when the file is for them to open or keep, " +
+      "not for your own working files. They may be asked to approve, so this can return a " +
+      "pending handle.",
     inputSchema: {
       type: "object",
       required: ["path", "content"],
@@ -204,7 +222,9 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "run_command",
     description:
-      "Run a CLI command on this Mac inside a seatbelt sandbox. Declare every path you need: " +
+      "Run a command on the user's own Mac — their installed tools, their data, their network. " +
+      "Use this when the command must affect their machine; use your own shell for your own work. " +
+      "It runs inside a seatbelt sandbox. Declare every path you need: " +
       "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
       "write access is granted from them. They are NOT the full extent of what the command can " +
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
@@ -317,7 +337,9 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "list_tools",
     description:
-      "List the blessed tools this Mac offers, with their JSON input schemas, and any skills " +
+      "Call this early. This Mac may publish tools and how-to guides specific to this user that " +
+      "you cannot otherwise know about. " +
+      "Lists the blessed tools this Mac offers, with their JSON input schemas, and any skills " +
       "it publishes (how-to guides for a task — read one with read_skill before starting). " +
       "Blessed tools are trusted in-process capabilities, distinct from the tools in this list.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -380,8 +402,11 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "browser_open",
     description:
-      "Open a supervised anti-detection browser session on this Mac, scoped to the listed site " +
-      "origins. The owner approves the origin list — include every domain you expect (apex AND " +
+      "Open a browser on the user's own Mac. Its profile persists between sessions and it can " +
+      "fill passwords from their vault without revealing them to you — so use it for sites that " +
+      "must be signed in as them, not for general web reading, which your own tools do faster. " +
+      "One session at a time. It is a supervised anti-detection browser, scoped to the listed " +
+      "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
       "permission to list the owner's vault item names (never values). The browser window is " +
       "visible by default; pass headed:false only when the owner asked for it to run in the " +
@@ -571,6 +596,7 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "vault",
     description:
+      "Check here before concluding you cannot sign in somewhere. " +
       "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
       "notes, custom fields — with titles, usernames and sites but never a value. 'describe' " +
       "names the fields one item holds. No browser session is needed to ask. To USE a secret, " +
