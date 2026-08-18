@@ -285,7 +285,7 @@ dl.meta dd { margin: 0; }
 .tl .tt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .tl .tm { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* Goals / Rules / Settings panels — fill the content area below the titlebar. */
+/* Rules / Settings panels — fill the content area below the titlebar. */
 .panel { padding: 16px; overflow: auto; flex: 1 1 auto; min-height: 0; }
 .item {
   background: var(--card);
@@ -342,62 +342,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 .item p.conn-note { margin-bottom: 16px; }
 .item p.reviewer-note { margin-top: 14px; }
 
-/* Goal item: title + description on the left, action column on the right that
-   the description can never flow under (separate flex columns). */
-.goal-item { display: flex; align-items: center; gap: 12px; }
-.goal-main { flex: 1 1 auto; min-width: 0; }
-.goal-main h4 { margin: 0 0 4px; }
-.goal-main p { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
-.goal-actions { flex: none; display: flex; align-items: center; gap: 8px; }
-/* Buttons in an action column share one height. */
-.goal-actions .btn, .goal-actions .iconbtn { height: 28px; }
-
-/* "⋯" overflow menu — a white button matching the Start Agent height, revealed
-   only when the goal group is hovered. */
-.iconbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-strong);
-  background: var(--card);
-  color: var(--muted);
-  border-radius: 8px;
-  padding: 0 10px;
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.goal-item:hover .iconbtn { opacity: 1; }
-.iconbtn:hover { background: var(--hover); color: var(--fg); }
-.menu-wrap { position: relative; }
-.menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  min-width: 130px;
-  background: var(--card);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow);
-  padding: 4px;
-  z-index: 20;
-}
-.menu.hidden { display: none; }
-.menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  color: var(--red-fg);
-  font: inherit;
-  padding: 7px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.menu-item:hover { background: var(--hover); }
 .agent-status {
   margin: 0;
   font-family: var(--mono);
