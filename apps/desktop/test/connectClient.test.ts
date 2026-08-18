@@ -563,6 +563,7 @@ describe("revoking a listed credential", () => {
     // The row is gone because the refreshed list reports it inactive.
     expect(state.roster.map((r) => r.id)).toEqual([8, 9]);
     expect(state.rosterError).toBeNull();
+    expect(state.revokeError).toBeNull();
     expect(state.busy).toBe(false);
   });
 
@@ -574,7 +575,11 @@ describe("revoking a listed credential", () => {
 
     plow.revokeFails = new PlowApiError("network", "Couldn't reach Plow.");
     const state = await connect.revokeCredential(7);
-    expect(state.rosterError).toBe("Couldn't reach Plow.");
+    // The list is fine; it is the removal that did not happen. Saying so on
+    // the roster's own error line would claim the rows are not to be trusted.
+    expect(state.revokeError).toBe("Couldn't reach Plow.");
+    expect(state.rosterError).toBeNull();
+    expect(state.message).toBe("");
     expect(state.roster.map((r) => r.id)).toEqual([7]);
     expect(state.busy).toBe(false);
     expect(JSON.stringify(state)).not.toContain(DEVICE_TOKEN);
@@ -587,7 +592,11 @@ describe("revoking a listed credential", () => {
     const connect = build();
     for (const bad of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 2, "7", null, undefined, {}]) {
       const state = await connect.revokeCredential(bad as number);
-      expect(state.message).toBe("That isn't something this Mac can revoke.");
+      expect(state.revokeError).toBe("That isn't something this Mac can revoke.");
+      // A revoke failure is its own sentence: it is not a list failure, and it
+      // is not the connect card's line either.
+      expect(state.rosterError).toBeNull();
+      expect(state.message).toBe("");
     }
     expect(plow.revoked).toEqual([]);
   });
@@ -595,7 +604,9 @@ describe("revoking a listed credential", () => {
   it("does nothing when this Mac is not signed in", async () => {
     const state = await build().revokeCredential(7);
     expect(plow.revoked).toEqual([]);
-    expect(state.message).toBe("This Mac isn't signed in yet.");
+    expect(state.revokeError).toBe("This Mac isn't signed in yet.");
+    expect(state.rosterError).toBeNull();
+    expect(state.message).toBe("");
   });
 });
 
@@ -629,7 +640,9 @@ describe("only what is on the roster can be revoked", () => {
 
     for (const unlisted of [8, 9, 0, 42]) {
       const state = await connect.revokeCredential(unlisted);
-      expect(state.message).toBe("That isn't something this Mac can revoke.");
+      expect(state.revokeError).toBe("That isn't something this Mac can revoke.");
+      expect(state.rosterError).toBeNull();
+      expect(state.message).toBe("");
     }
     expect(plow.revoked).toEqual([]);
 
@@ -643,7 +656,9 @@ describe("only what is on the roster can be revoked", () => {
     const connect = build();
     const state = await connect.revokeCredential(7);
     expect(plow.revoked).toEqual([]);
-    expect(state.message).toBe("That isn't something this Mac can revoke.");
+    expect(state.revokeError).toBe("That isn't something this Mac can revoke.");
+    expect(state.rosterError).toBeNull();
+    expect(state.message).toBe("");
   });
 });
 
@@ -722,5 +737,83 @@ describe("a read already in the air when the account changes under it", () => {
     plow.releaseList(1);
     await abandoned;
     expect(connect.state().roster.map((r) => r.id)).toEqual([7]);
+  });
+});
+
+describe("a revoke complaint is its own, and does not outstay its welcome", () => {
+  it("does not clear a list failure, which a revoke has said nothing about", async () => {
+    signIn();
+    plow.keys = [keyRow({ id: 7 })];
+    const connect = build();
+    await connect.refreshRoster();
+    plow.listFails = new PlowApiError("network", "Couldn't reach Plow.");
+    await connect.refreshRoster();
+    expect(connect.state().rosterError).toBe("Couldn't reach Plow.");
+
+    // The rows are stale and say so; revoking one of them still fails on its
+    // own terms, and the list's complaint is not this call's to withdraw.
+    plow.revokeFails = new PlowApiError("http", "Plow said no.");
+    const state = await connect.revokeCredential(7);
+    expect(state.revokeError).toBe("Plow said no.");
+    expect(state.rosterError).toBe("Couldn't reach Plow.");
+  });
+
+  it("goes when the next revoke works", async () => {
+    signIn();
+    plow.keys = [keyRow({ id: 7 }), keyRow({ id: 8 })];
+    const connect = build();
+    await connect.refreshRoster();
+
+    plow.revokeFails = new PlowApiError("network", "Couldn't reach Plow.");
+    expect((await connect.revokeCredential(7)).revokeError).toBe("Couldn't reach Plow.");
+
+    plow.revokeFails = null;
+    const state = await connect.revokeCredential(7);
+    expect(state.revokeError).toBeNull();
+    expect(state.roster.map((r) => r.id)).toEqual([8]);
+  });
+
+  it("goes when the list is read again successfully", async () => {
+    // The screen has just been redrawn from the truth. A complaint about a row
+    // that may no longer be there is worse than no complaint at all.
+    signIn();
+    plow.keys = [keyRow({ id: 7 })];
+    const connect = build();
+    await connect.refreshRoster();
+    plow.revokeFails = new PlowApiError("network", "Couldn't reach Plow.");
+    await connect.revokeCredential(7);
+    expect(connect.state().revokeError).toBe("Couldn't reach Plow.");
+
+    const state = await connect.refreshRoster({ fresh: true });
+    expect(state.revokeError).toBeNull();
+    expect(changes).toBeGreaterThan(0);
+  });
+
+  it("survives a list that fails, because nothing has replaced what it said", async () => {
+    signIn();
+    plow.keys = [keyRow({ id: 7 })];
+    const connect = build();
+    await connect.refreshRoster();
+    plow.revokeFails = new PlowApiError("network", "Couldn't reach Plow.");
+    await connect.revokeCredential(7);
+
+    plow.listFails = new PlowApiError("network", "Couldn't reach Plow.");
+    const state = await connect.refreshRoster({ fresh: true });
+    expect(state.revokeError).toBe("Couldn't reach Plow.");
+    expect(state.rosterError).toBe("Couldn't reach Plow.");
+  });
+
+  it("goes on sign-out, with the roster it was about", async () => {
+    signIn();
+    plow.keys = [keyRow({ id: 7 })];
+    const connect = build();
+    await connect.refreshRoster();
+    plow.revokeFails = new PlowApiError("network", "Couldn't reach Plow.");
+    await connect.revokeCredential(7);
+
+    const state = connect.signedOut();
+    expect(state.revokeError).toBeNull();
+    expect(state.rosterError).toBeNull();
+    expect(state.roster).toEqual([]);
   });
 });

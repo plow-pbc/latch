@@ -64,6 +64,15 @@ export interface ConnectClientState {
   /** Why the roster is empty, if it is empty because the read failed. Written
    * for a human, and — like every message here — never carries a credential. */
   rosterError: string | null;
+  /**
+   * Why the last revoke did not happen.
+   *
+   * Separate from `rosterError` because the two are different sentences about
+   * different things: one says the list could not be read, the other says a row
+   * the user asked to remove is still there. Collapsing them prints "couldn't
+   * load agents" over a list that loaded perfectly well.
+   */
+  revokeError: string | null;
 }
 
 export interface ConnectClientDeps {
@@ -96,6 +105,9 @@ export class ConnectClient {
    * more use than an empty one, and `rosterError` says it is stale. */
   private roster: AgentRosterRow[] = [];
   private rosterError: string | null = null;
+  /** A REVOKE failure only — nothing writes both this and `rosterError`.
+   * Cleared by a revoke that works, a list that works, and sign-out. */
+  private revokeError: string | null = null;
   /** The list in flight, if any. A second *reader* joins it — see `refreshRoster`. */
   private rosterPending: Promise<ConnectClientState> | null = null;
   /**
@@ -119,6 +131,7 @@ export class ConnectClient {
       credential: this.credential,
       roster: this.roster,
       rosterError: this.rosterError,
+      revokeError: this.revokeError,
     };
   }
 
@@ -190,28 +203,31 @@ export class ConnectClient {
     // is refused here, before `plowApi` is called at all — a float, a negative,
     // a NaN or a string can only be a bug or an attempt at something else, and
     // neither should reach the network.
-    if (!isRosterId(id)) return this.fail("That isn't something this Mac can revoke.");
+    if (!isRosterId(id)) return this.failRevoke("That isn't something this Mac can revoke.");
     const generation = this.generation;
     const settings = this.settings();
-    if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
+    if (!settings.relayCredential.trim()) return this.failRevoke("This Mac isn't signed in yet.");
     // And it must be a row the user is actually looking at. Ids are small
     // sequential integers on a shared table, so a renderer that could name any
     // of them could walk the account revoking credentials that were never
     // relay-capable and never listed here — including the portal login. The
     // roster is the whole of what this channel may act on.
     if (!this.roster.some((row) => row.id === id)) {
-      return this.fail("That isn't something this Mac can revoke.");
+      return this.failRevoke("That isn't something this Mac can revoke.");
     }
 
     this.busy = true;
-    this.rosterError = null;
+    // The previous attempt's complaint goes. `rosterError` is not this call's
+    // to clear — whether the list can be read is a question a revoke does not
+    // answer, and the refresh below is what settles it.
+    this.revokeError = null;
     this.publish();
     try {
       await this.deps.api.revokeApiKey(settings.relayCredential, id);
     } catch (error) {
       if (generation !== this.generation) return this.state();
       this.busy = false;
-      this.rosterError = messageOf(error);
+      this.revokeError = messageOf(error);
       return this.publish();
     }
     if (generation !== this.generation) return this.state();
@@ -312,6 +328,7 @@ export class ConnectClient {
     this.rosterPending = null;
     this.roster = [];
     this.rosterError = null;
+    this.revokeError = null;
     return this.publish();
   }
 
@@ -327,11 +344,23 @@ export class ConnectClient {
 
   /** Publish only if the screen would look different — see `refreshRoster`. */
   private setRoster(rows: AgentRosterRow[], error: string | null): ConnectClientState {
+    // A list that came back is the screen being redrawn from the truth, so a
+    // revoke complaint from before it does not survive the redraw.
+    const revokeError = error === null ? null : this.revokeError;
     const same =
-      this.rosterError === error && JSON.stringify(this.roster) === JSON.stringify(rows);
+      this.rosterError === error &&
+      this.revokeError === revokeError &&
+      JSON.stringify(this.roster) === JSON.stringify(rows);
     this.roster = rows;
     this.rosterError = error;
+    this.revokeError = revokeError;
     return same ? this.state() : this.publish();
+  }
+
+  /** A revoke failed, or was refused. Never `message`, never `rosterError`. */
+  private failRevoke(message: string): ConnectClientState {
+    this.revokeError = message;
+    return this.publish();
   }
 
   private settings(): Settings {
