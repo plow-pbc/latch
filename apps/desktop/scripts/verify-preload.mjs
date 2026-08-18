@@ -11,7 +11,9 @@ import { fileURLToPath } from "node:url";
 // The REAL settings actions, so the inference handlers below are the ones the
 // app runs rather than stubs that agree with the renderer by construction.
 import {
+  readAgentPurpose,
   readInference,
+  setAgentPurpose,
   setAnthropicApiKey,
   setApprovalMode,
   setInferenceProvider,
@@ -72,6 +74,10 @@ ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
 ipcMain.handle("settings:getApiKey", async () => loadSettings(probeHome).anthropicApiKey ?? "");
 ipcMain.handle("settings:setApiKey", async (_e, key) => setAnthropicApiKey(probeHome, key));
 ipcMain.handle("settings:getInference", async () => readInference(probeHome));
+// The purpose statement, through the real setter — the one path that may write
+// it. Nothing an agent can reach registers a handler on either channel.
+ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
+ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
 ipcMain.handle("settings:setInference", async (_e, provider) =>
   setInferenceProvider(probeHome, provider),
 );
@@ -242,7 +248,22 @@ app.whenReady().then(async () => {
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
       // The new group, and its interlock: Plow has a credential so it is
       // selected; Anthropic has none so its chip is disabled.
-      hasInferenceGroup: document.body.innerText.includes("Reviewer inference"),
+      hasInferenceGroup: document.body.innerText.includes("AI Reviewer"),
+      // The mode chips left this pane for Agents, and the group that kept the
+      // suggestions checkbox says where they went.
+      noApprovalModeGroup: !document.body.innerText.includes("Approval Mode"),
+      noModeChipsHere: ![...document.querySelectorAll(".chip")].some((c) =>
+        ["Ask me every time", "AI Reviewer decides", "Approve everything", "Deny everything"]
+          .includes(c.textContent.trim()),
+      ),
+      pointsAtAgentsTab: document.body.innerText.includes(
+        "Whether the reviewer decides on its own is set in the Agents tab, under Approvals",
+      ),
+      hasSuggestionsCheckbox: document.body.innerText.includes(
+        "Let the reviewer suggest an answer when an approval window opens",
+      ),
+      // The word is gone from this pane's copy entirely.
+      saysNothingAdversarial: !/adversarial/i.test(document.querySelector("#view").innerText),
       // The Capabilities section, on a Mac whose probe says denied: it names
       // the permission, says so honestly, gives the Messages use case, and
       // routes the grant through System Settings (a key into main's table —
@@ -284,7 +305,7 @@ app.whenReady().then(async () => {
   const chipsShot = process.env.CHIPS_OUT ?? "/tmp/settings-chips.png";
   await win.webContents.executeJavaScript(`(() => {
     const chips = [...document.querySelectorAll(".settings .item > .group-title")]
-      .find((t) => t.textContent.trim() === "Reviewer inference");
+      .find((t) => t.textContent.trim() === "AI Reviewer");
     chips?.scrollIntoView({ block: "start" });
     return true;
   })()`);
@@ -423,11 +444,12 @@ app.whenReady().then(async () => {
     committed: loadSettings(probeHome).anthropicApiKey === "sk-ant-typed-mid-refresh",
   };
 
-  // REPRO (c): the renderer's optimistic mode. Adversarial is offered while a
-  // credential is present, so the chip is enabled and clickable — but the
-  // credential can go between the render and the click, and main REFUSES. The
-  // renderer assigned `currentMode` before asking, so it kept a selection main
-  // had already turned down: the pane says Adversarial while disk says Ask.
+  // REPRO (c): the renderer's optimistic mode — now in the Agents pane, which
+  // is where the modes live. The reviewer is offered while a credential is
+  // present, so the chip is enabled and clickable — but the credential can go
+  // between the render and the click, and main REFUSES. A renderer that
+  // assigned the mode before asking keeps a selection main already turned
+  // down: the pane says AI Reviewer while disk says ask.
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
     relayCredential: "plow_sk_probe_credential",
@@ -436,26 +458,30 @@ app.whenReady().then(async () => {
     approvalMode: "ask",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && !c.classList.contains("disabled"))`,
-    "the Adversarial chip to render enabled");
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && !c.classList.contains("disabled"))`,
+    "the AI Reviewer chip to render enabled");
   // The credential goes AFTER the pane rendered, with no notification — so the
   // chip is still enabled and the renderer still believes it can select this.
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   await win.webContents.executeJavaScript(`(() => {
-    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Adversarial Agent");
+    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "AI Reviewer decides");
     chip.click();
     return true;
   })()`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && !c.classList.contains("active"))`,
-    "the pane to follow main's refusal of Adversarial");
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && !c.classList.contains("active"))`,
+    "the pane to follow main's refusal of the reviewer mode");
   const optimisticMode = {
     storedIsAsk: loadSettings(probeHome).approvalMode === "ask",
     // What the pane claims, after main said no.
     chipAgrees: await win.webContents.executeJavaScript(`(() => {
-      const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Adversarial Agent");
+      const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "AI Reviewer decides");
       return !!chip && !chip.classList.contains("active");
     })()`),
+    // …and with no reviewer available, the purpose field is not on offer either.
+    noPurposeFieldWithoutReviewer: await win.webContents.executeJavaScript(
+      `!document.querySelector("#view textarea.text")?.checkVisibility()`,
+    ),
   };
 
   // Connecting a client lives in the Agents tab — first in the bar — and no
@@ -526,6 +552,97 @@ app.whenReady().then(async () => {
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
   fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
+
+  // The Approvals card: the modes, and the owner's purpose statement. Two
+  // states, because the card has two — the field under the reviewer chip, and
+  // one honest line in its place under every other one.
+  saveSettings(probeHome, {
+    ...loadSettings(probeHome),
+    relayCredential: "plow_sk_probe_credential",
+    approvalMode: "adversarial",
+    inferenceProvider: "plow",
+    agentPurpose: "Groceries and calendar only.",
+  });
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
+    "the Approvals card in its reviewer state");
+  const approvalsReviewer = await win.webContents.executeJavaScript(`(${() => {
+    const pane = document.querySelector("#view");
+    const field = pane.querySelector("textarea.text");
+    return {
+      chipLabels: [...pane.querySelectorAll(".chips .chip")].map((c) => c.textContent.trim()),
+      inAgentsPane: !!pane.querySelector(".panel.agents"),
+      // The stored text, in the field, and the two things said beside it.
+      showsStoredPurpose: !!field && field.checkVisibility() && field.value === "Groceries and calendar only.",
+      labelled: pane.innerText.includes("What are agents for?"),
+      saysItOnlyNarrows: pane.innerText.includes("It can only narrow what gets approved"),
+      saysItMayApprove: pane.innerText.includes("Requests that fit may be approved without asking you."),
+      // The card is context, not enforcement: no capability list here, and the
+      // word this rename retired is nowhere on screen.
+      noAdversarialWord: !/adversarial/i.test(pane.innerText),
+      noHintLineTakingItsPlace: !pane.innerText.includes("Every request opens an approval window"),
+    };
+  }})()`);
+  const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
+    const title = [...document.querySelectorAll(".agents .item > .group-title")]
+      .find((t) => t.textContent.trim() === "Approvals");
+    title?.scrollIntoView({ block: "start" });
+    return true;
+  })()`);
+  await scrollToApprovals();
+  const approvalsShot = process.env.APPROVALS_OUT ?? "/tmp/agents-approvals.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(approvalsShot, (await win.webContents.capturePage()).toPNG());
+
+  // The field commits on `change`, like the API key, and what goes back on
+  // screen is what the setter stored.
+  await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector("#view textarea.text");
+    field.value = "  Only household errands.  ";
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await waitForNode(() => loadSettings(probeHome).agentPurpose === "Only household errands.",
+    "the purpose to reach settings.json through the IPC pair");
+  const purposeRoundTrip = {
+    stored: loadSettings(probeHome).agentPurpose === "Only household errands.",
+    fieldShowsWhatWasStored: await win.webContents.executeJavaScript(
+      `document.querySelector("#view textarea.text").value === "Only household errands."`,
+    ),
+  };
+
+  // Ask mode: no field at all, and the line that replaces it.
+  await win.webContents.executeJavaScript(`(() => {
+    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Ask me every time");
+    chip.click();
+    return true;
+  })()`);
+  await waitForNode(() => loadSettings(probeHome).approvalMode === "ask",
+    "Ask mode to be stored");
+  // …and the card redraws off what main stored, one round-trip after the click.
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Ask me every time" && c.classList.contains("active"))`,
+    "the Approvals card to follow the stored mode");
+  const approvalsAsk = await win.webContents.executeJavaScript(`(${() => {
+    const pane = document.querySelector("#view");
+    const field = pane.querySelector("textarea.text");
+    return {
+      fieldGone: !field || !field.checkVisibility(),
+      // The label goes with it: nothing about the purpose is on screen in a
+      // mode whose reviewer never reads it…
+      purposeTextGone: !pane.innerText.includes("What are agents for?"),
+      // …and the card still says what this mode does.
+      showsHint: pane.innerText.includes("Every request opens an approval window"),
+    };
+  }})()`);
+  await scrollToApprovals();
+  const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/agents-approvals-ask.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(approvalsShotAsk, (await win.webContents.capturePage()).toPNG());
 
   // …and the same pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -710,6 +827,26 @@ app.whenReady().then(async () => {
     raceDuringRefresh.committed &&
     optimisticMode.storedIsAsk &&
     optimisticMode.chipAgrees &&
+    optimisticMode.noPurposeFieldWithoutReviewer &&
+    approvalsReviewer.chipLabels.join(",") ===
+      "Ask me every time,AI Reviewer decides,Approve everything,Deny everything" &&
+    approvalsReviewer.inAgentsPane &&
+    approvalsReviewer.showsStoredPurpose &&
+    approvalsReviewer.labelled &&
+    approvalsReviewer.saysItOnlyNarrows &&
+    approvalsReviewer.saysItMayApprove &&
+    approvalsReviewer.noAdversarialWord &&
+    approvalsReviewer.noHintLineTakingItsPlace &&
+    purposeRoundTrip.stored &&
+    purposeRoundTrip.fieldShowsWhatWasStored &&
+    approvalsAsk.fieldGone &&
+    approvalsAsk.purposeTextGone &&
+    approvalsAsk.showsHint &&
+    settings.noApprovalModeGroup &&
+    settings.noModeChipsHere &&
+    settings.pointsAtAgentsTab &&
+    settings.hasSuggestionsCheckbox &&
+    settings.saysNothingAdversarial &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
@@ -724,7 +861,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, chipsShot, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, settingsPane, chipsShot, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

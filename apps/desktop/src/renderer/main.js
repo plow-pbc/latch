@@ -2,6 +2,14 @@
    `window.domo` bridge from preload. All agent-derived text is inserted with
    textContent (never innerHTML), so nothing on the wire can inject markup. */
 
+import {
+  APPROVAL_MODES,
+  PURPOSE_CAVEATS,
+  PURPOSE_LABEL,
+  modeHint,
+  showsPurpose,
+} from "./approvals.js";
+
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
@@ -698,7 +706,77 @@ async function renderAgents() {
     if (s) syncStaticModal(s, refreshConnect);
   };
   await refreshConnect();
-  agentsMounted = { refreshConnect };
+
+  // ---- Approvals: what happens when one of those agents asks for something.
+  //
+  // It sits here, under the clients, because that is the order of the two
+  // questions: what can reach this Mac, and what it may do when it does. The
+  // stored mode values are untouched — every label below is display only.
+  let inference = await window.domo.inferenceGet();
+  const modeChips = el("div", { class: "chips" });
+  const modeNote = el("p", { class: "faint chip-note", text: "" });
+  const modeHintLine = el("p", { class: "faint mode-hint", text: "" });
+
+  // The purpose statement, and the two things that have to be said beside it.
+  // Device-owner text: it is read and written through the settings IPC pair and
+  // nowhere else, and it reaches no rule key, grant, or sandbox profile.
+  const purposeInput = el("textarea", { class: "text" });
+  purposeInput.value = await window.domo.agentPurposeGet();
+  // On commit only, like the API-key field: an `input` handler would persist
+  // every half-written sentence on the way to the real one. The stored value is
+  // what goes back on screen, so the field shows what the reviewer will read.
+  purposeInput.addEventListener("change", async () => {
+    purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
+  });
+  const purposeBlock = el("div", { class: "revealed" }, [
+    el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
+    ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
+  ]);
+
+  // What the reviewer is waiting for when it cannot be selected. Both remedies
+  // live in Settings, so the faded chip goes there rather than nowhere.
+  const REVIEWER_BLOCKED = {
+    plow: "The AI Reviewer needs you signed in to Plow.",
+    anthropic: "The AI Reviewer needs an Anthropic API key — add one in Settings.",
+  };
+
+  const renderApprovals = () => {
+    const mode = inference.approvalMode;
+    const hasKey = inference.available[inference.provider];
+    const blocked = REVIEWER_BLOCKED[inference.provider];
+    modeNote.textContent = hasKey ? "" : blocked;
+    modeChips.replaceChildren(...APPROVAL_MODES.map(({ value, label }) => {
+      const disabled = value === "adversarial" && !hasKey;
+      const chip = el("span", {
+        class:
+          "chip" + (mode === value ? " active" : "") + (disabled ? " disabled actionable" : ""),
+        attrs: disabled ? { title: blocked } : {},
+      }, [el("span", { text: label })]);
+      chip.addEventListener("click", async () => {
+        if (disabled) return goToSettings();
+        // What MAIN stored, not what was asked for: the reviewer is refused
+        // when its provider has no credential, and the credential can go
+        // between this render and this click.
+        await window.domo.approvalModeSet(value);
+        inference = await window.domo.inferenceGet();
+        renderApprovals();
+      });
+      return chip;
+    }));
+    const showing = showsPurpose(mode);
+    purposeBlock.hidden = !showing;
+    modeHintLine.textContent = showing ? "" : modeHint(mode);
+    modeHintLine.hidden = showing;
+  };
+  renderApprovals();
+
+  // Signing in or out changes whether the reviewer can be selected at all, and
+  // main retires the mode in the same write — so this only re-reads.
+  const refreshApprovals = async () => {
+    inference = await window.domo.inferenceGet();
+    renderApprovals();
+  };
+  agentsMounted = { refreshConnect, refreshApprovals };
 
   // `settings` alongside `agents` on purpose: the group card, its title and its
   // description are the same furniture Settings uses, and this pane is one of
@@ -710,7 +788,24 @@ async function renderAgents() {
       "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
       [connectBox],
     ),
+    group(
+      "Approvals",
+      "What happens when an agent asks to do something on this Mac.",
+      [modeChips, modeNote, purposeBlock, modeHintLine],
+    ),
   ]));
+}
+
+/**
+ * Send someone to Settings, where the reviewer's credentials live.
+ *
+ * The Approvals card can say what the reviewer is missing, but not fix it —
+ * the account and the API key are a pane away. A disabled chip that explains
+ * itself and goes nowhere is still a dead end, so it goes there.
+ */
+function goToSettings() {
+  selectTab("settings");
+  window.domo.uiSetTab("settings");
 }
 
 /** One honest line about the relay link, from what the main process reports. */
@@ -1007,66 +1102,29 @@ async function renderSettings() {
   // Declared after the reveal helpers it references (see below).
   let PROVIDERS;
 
-  // Approval mode for operations — read from the SAME snapshot as availability,
-  // because main decides both in one write.
-  let currentMode = inference.approvalMode;
+  // The mode itself is set in the Agents tab now; this pane only reads it, to
+  // decide whether the suggestions checkbox can do anything.
   const showSuggestions = await window.domo.showSuggestionsGet();
-  // Adversarial mode needs a credential for the ACTIVE provider — a pasted
+  // The reviewer needs a credential for the ACTIVE provider — a pasted
   // Anthropic key does not enable it while Plow is selected, and vice versa.
   let hasKey = inference.available[inference.provider];
-  const modeChips = el("div", { class: "chips" });
-  const MODES = [
-    ["approve", "Approve"],
-    ["adversarial", "Adversarial Agent"],
-    ["ask", "Ask"],
-    ["deny", "Deny"],
-  ];
 
   const suggestCheck = el("input", { attrs: { type: "checkbox" } });
   suggestCheck.checked = showSuggestions;
-  // Said once, under the mode chips, for the same reason the reviewer note
-  // exists: a faded chip that explains nothing is a dead end.
-  const modeNote = el("p", { class: "faint chip-note", text: "" });
-  const suggestLabel = el("label", { class: "check" }, [
+  // Where the other half of this system lives. Said once, under the group that
+  // no longer holds it, so the move does not read as a removal.
+  const modeNote = el("p", { class: "faint chip-note", text:
+    "Whether the reviewer decides on its own is set in the Agents tab, under Approvals." });
+  const suggestLabel = el("label", { class: "check block" }, [
     suggestCheck,
-    el("span", { text: "Show Adversarial Agent suggestions in Ask mode" }),
+    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
   ]);
   suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
 
-  // Adversarial Agent needs an API key; the suggestions checkbox needs Ask mode
-  // AND a key. Re-render whenever the mode or key presence changes.
-  const renderModeChips = () => {
-    // Whatever the ACTIVE provider is missing is what blocks Adversarial —
-    // a pasted Anthropic key does not enable it while Plow is selected.
-    const provider = PROVIDERS[inference.provider];
-    modeNote.textContent = hasKey ? "" : provider.adversarial;
-    modeChips.replaceChildren(...MODES.map(([value, label]) => {
-      const disabled = value === "adversarial" && !hasKey;
-      const chip = el("span", {
-        class:
-          "chip" +
-          (currentMode === value ? " active" : "") +
-          (disabled ? " disabled actionable" : ""),
-        attrs: disabled ? { title: provider.adversarial } : {},
-      }, [el("span", { text: label })]);
-      if (disabled) {
-        chip.addEventListener("click", provider.go);
-      } else {
-        chip.addEventListener("click", async () => {
-          // What MAIN stored, not what was asked for. Adversarial is refused
-          // when the active provider has no credential, and the credential can
-          // go between this render and this click — so assuming the request
-          // succeeded leaves the pane claiming a mode disk never took.
-          currentMode = await window.domo.approvalModeSet(value);
-          renderModeChips();
-          updateSuggestEnabled();
-        });
-      }
-      return chip;
-    }));
-  };
+  // The suggestion is only ever shown in Ask mode, and only a reviewer with a
+  // credential can produce one.
   const updateSuggestEnabled = () => {
-    const on = currentMode === "ask" && hasKey;
+    const on = inference.approvalMode === "ask" && hasKey;
     suggestCheck.disabled = !on;
     suggestLabel.classList.toggle("disabled", !on);
   };
@@ -1089,13 +1147,11 @@ async function renderSettings() {
     plow: {
       label: "Plow account",
       hint: "sign in to select it",
-      adversarial: "Adversarial Agent needs you signed in to Plow.",
       go: revealAccount,
     },
     anthropic: {
       label: "Anthropic API key",
       hint: "add one below to select it",
-      adversarial: "Adversarial Agent needs an Anthropic API key — add one below.",
       go: revealApiKeyField,
     },
   };
@@ -1147,10 +1203,8 @@ async function renderSettings() {
   // stored key was still there and never put it back.
   const applyInference = (next) => {
     inference = next;
-    currentMode = next.approvalMode;
     hasKey = next.available[next.provider];
     renderProviderChips();
-    renderModeChips();
     updateSuggestEnabled();
   };
 
@@ -1163,7 +1217,6 @@ async function renderSettings() {
   });
 
   renderProviderChips();
-  renderModeChips();
   updateSuggestEnabled();
 
   // What a status change re-reads. Display nodes only: `apiKeyInput` is not
@@ -1195,17 +1248,14 @@ async function renderSettings() {
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
     ]),
-    group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
+    group("AI Reviewer", "Who runs the reviewer that judges each request. It receives the command, the paths asked for, and that agent's recent activity on this Mac. Billed to that account; nothing from other agents is sent.", [
       providerChips,
       reviewerNote,
+      suggestLabel,
+      modeNote,
     ]),
     group("Anthropic API Key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
       apiKeyInput,
-    ]),
-    group("Approval Mode", "How operations are decided.", [
-      modeChips,
-      modeNote,
-      suggestLabel,
     ]),
     group("Capabilities", "Extended capabilities that let Plow reach parts of this Mac that macOS blocks by default.", [
       el("div", { class: "support-row" }, [
@@ -1290,8 +1340,12 @@ window.domo.onStatusChanged(() => {
   // person typing a key did not ask for and must not be punished by — so this
   // updates the account and provider nodes and leaves the field alone.
   if (currentTab === "settings") settingsMounted?.refresh();
-  // Signing in or out changes whether the flow has a URL to show at all.
-  if (currentTab === "agents") agentsMounted?.refreshConnect();
+  // Signing in or out changes whether the flow has a URL to show at all — and,
+  // since the Approvals card moved here, whether the reviewer can be selected.
+  if (currentTab === "agents") {
+    agentsMounted?.refreshConnect();
+    agentsMounted?.refreshApprovals();
+  }
 });
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });

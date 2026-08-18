@@ -627,3 +627,17 @@ textarea.text { min-height: 70px; resize: vertical; }
 /* The line under a chip row explaining what a faded chip is waiting for. */
 .settings .chip-note:empty { display: none; }
 .settings .chip-note { margin-top: 10px; }
+
+/* The purpose field, hanging off the reviewer chip that reveals it. Same 2px
+   rail the audit timeline uses, so it reads as belonging to the chip above
+   rather than as another row of the card. */
+.revealed {
+  margin: 14px 0 0 14px;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--border);
+}
+.revealed .field { margin-bottom: 8px; }
+/* `.item p` zeroes margins, so each caveat asks for its own line back. */
+.item .revealed p { margin: 6px 0 0; }
+/* What the selected mode does, where the purpose field would otherwise be. */
+.item p.mode-hint { margin: 10px 0 0; }
