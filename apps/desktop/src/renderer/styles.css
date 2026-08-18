@@ -264,19 +264,19 @@ dl.meta dd { margin: 0; }
 .empty { color: var(--faint); padding: 40px; text-align: center; }
 
 /* Detail-pane timeline: one row per underlying raw event. */
-.timeline { display: flex; flex-direction: column; gap: 2px; }
+.timeline { display: flex; flex-direction: column; }
 .tl {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 6px 0 6px 16px;
+  padding: 7px 0 7px 16px;
   position: relative;
   border-left: 2px solid var(--border);
 }
 .tl::before {
   content: "";
   position: absolute;
-  left: -5px;
+  left: -7px; /* 12px outer width centered on the 2px border */
   top: 10px;
   width: 8px;
   height: 8px;
