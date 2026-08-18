@@ -264,19 +264,19 @@ dl.meta dd { margin: 0; }
 .empty { color: var(--faint); padding: 40px; text-align: center; }
 
 /* Detail-pane timeline: one row per underlying raw event. */
-.timeline { display: flex; flex-direction: column; gap: 2px; }
+.timeline { display: flex; flex-direction: column; }
 .tl {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 6px 0 6px 16px;
+  padding: 7px 0 7px 16px;
   position: relative;
   border-left: 2px solid var(--border);
 }
 .tl::before {
   content: "";
   position: absolute;
-  left: -5px;
+  left: -7px; /* 12px outer width centered on the 2px border */
   top: 10px;
   width: 8px;
   height: 8px;
@@ -355,6 +355,14 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-row .btn { white-space: nowrap; }
 .support-copy { min-width: 0; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
+
+/* Capabilities: the row is a support-row; this adds the inline status beside
+   the title, reusing the titlebar's connection dot. */
+.cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
+.cap-title .support-title { margin-bottom: 0; }
+.cap-title .status-dot { flex: none; }
+/* `.item p` zeroes margins, so the how-to-grant line asks for its blank line. */
+.item p.cap-grant { margin-top: 10px; }
 
 .agent-status {
   margin: 0;

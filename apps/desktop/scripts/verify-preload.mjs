@@ -63,6 +63,9 @@ ipcMain.handle("settings:getRelay", async () => {
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
+// A Mac that has NOT granted Full Disk Access — the state the Capabilities
+// section exists to explain.
+ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
@@ -240,6 +243,18 @@ app.whenReady().then(async () => {
       // The new group, and its interlock: Plow has a credential so it is
       // selected; Anthropic has none so its chip is disabled.
       hasInferenceGroup: document.body.innerText.includes("Reviewer inference"),
+      // The Capabilities section, on a Mac whose probe says denied: it names
+      // the permission, says so honestly, gives the Messages use case, and
+      // routes the grant through System Settings (a key into main's table —
+      // the renderer never holds the URL).
+      hasCapabilitiesGroup: document.body.innerText.includes("Capabilities"),
+      fdaSaysNotGranted:
+        document.body.innerText.includes("Full Disk Access") &&
+        document.body.innerText.includes("Not granted"),
+      fdaNamesMessages: document.body.innerText.includes("texted to you in Messages"),
+      fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
+        (b) => b.textContent.trim() === "Open System Settings",
+      ),
       plowChipActive: !!plow && plow.classList.contains("active"),
       anthropicChipDisabled: !!anthropic && anthropic.classList.contains("disabled"),
       showsActiveModel: document.body.innerText.includes("anthropic/claude-sonnet-4-6"),
@@ -676,6 +691,10 @@ app.whenReady().then(async () => {
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
     settings.hasInferenceGroup &&
+    settings.hasCapabilitiesGroup &&
+    settings.fdaSaysNotGranted &&
+    settings.fdaNamesMessages &&
+    settings.fdaOffersSystemSettings &&
     settings.plowChipActive &&
     settings.anthropicChipDisabled &&
     settings.showsActiveModel &&

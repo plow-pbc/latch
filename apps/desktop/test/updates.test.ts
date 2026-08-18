@@ -101,6 +101,19 @@ describe("scheduling", () => {
     controller.checkNow();
     expect(updater.checks).toBe(1);
   });
+
+  it("checkNow leaves a staged update alone — an offline check must not eat the restart controls", () => {
+    const { updater, controller } = make();
+    controller.checkNow();
+    updater.emit("update-available", { version: "0.2.0" });
+    updater.emit("update-downloaded", { version: "0.2.0" });
+    expect(controller.state().phase).toBe("ready");
+
+    controller.checkNow();
+    expect(updater.checks).toBe(1);
+    expect(controller.state().phase).toBe("ready");
+    expect(controller.state().availableVersion).toBe("0.2.0");
+  });
 });
 
 describe("state machine", () => {

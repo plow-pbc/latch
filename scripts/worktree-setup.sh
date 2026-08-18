@@ -3,8 +3,9 @@
 # make the new checkout buildable and runnable alongside the main checkout:
 #
 #   1. copies the gitignored browser runtime (Python + Camoufox + download
-#      cache, ~500 MB+) from the main checkout instead of re-downloading it
-#      (APFS clones, so it is instant and costs no disk on the same volume)
+#      cache + vault server/CLI payloads, ~500 MB+) from the main checkout
+#      instead of re-downloading or recompiling it (APFS clones, so it is
+#      instant and costs no disk on the same volume)
 #   2. installs workspace dependencies and builds everything
 #
 # Per-checkout isolation is handled by the justfile and the app, keyed on the
@@ -35,7 +36,7 @@ echo "worktree:      $name"
 echo "main checkout: $main_root"
 
 # --- browser runtime: clone from the main checkout -------------------------
-for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads; do
+for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads vendor/vault-server vendor/vault-cli; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -d "$main_root/$dir" ]]; then

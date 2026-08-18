@@ -916,34 +916,59 @@ async function renderSettings() {
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
-  const u = await window.domo.updatesGet();
-  const updateStatus = el("p", { class: "faint", text: updateStatusText(u) });
-  const updateAction =
-    u.phase === "ready"
-      ? el("button", { class: "btn primary", text: "Restart to Update" })
-      : el("button", { class: "btn", text: "Check for Updates" });
-  updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+  // These nodes are stable for the pane's lifetime: controller transitions
+  // patch them in place (refreshUpdates below) rather than re-rendering the
+  // pane, which would reset its scroll position on every phase change.
+  let u = await window.domo.updatesGet();
+  const updateStatus = el("p", { class: "faint" });
+  const updateAction = el("button", { class: "btn" });
   updateAction.addEventListener("click", async () => {
     if (u.phase === "ready") await window.domo.updatesRestart();
     else await window.domo.updatesCheck();
-    // The controller's change events re-render this screen as the check runs.
+    // The controller's change events redraw these nodes as the check runs.
   });
   const autoCheckBox = el("input", { attrs: { type: "checkbox" } });
-  autoCheckBox.checked = u.autoCheck;
-  autoCheckBox.disabled = !u.supported;
   autoCheckBox.addEventListener("change", () => window.domo.updatesSetAutoCheck(autoCheckBox.checked));
-  const autoCheckLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+  const autoCheckLabel = el("label", { class: "check block" }, [
     autoCheckBox,
     el("span", { text: "Automatically check for updates" }),
   ]);
   const autoInstallBox = el("input", { attrs: { type: "checkbox" } });
-  autoInstallBox.checked = u.autoInstall;
-  autoInstallBox.disabled = !u.supported;
   autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
-  const autoInstallLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+  const autoInstallLabel = el("label", { class: "check block" }, [
     autoInstallBox,
     el("span", { text: "Install downloaded updates when quitting Plow" }),
   ]);
+  const applyUpdates = () => {
+    const ready = u.phase === "ready";
+    updateStatus.textContent = updateStatusText(u);
+    updateAction.textContent = ready ? "Restart to Update" : "Check for Updates";
+    updateAction.className = ready ? "btn primary" : "btn";
+    updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+    autoCheckBox.checked = u.autoCheck;
+    autoCheckBox.disabled = !u.supported;
+    autoInstallBox.checked = u.autoInstall;
+    autoInstallBox.disabled = !u.supported;
+    autoCheckLabel.classList.toggle("disabled", !u.supported);
+    autoInstallLabel.classList.toggle("disabled", !u.supported);
+  };
+  applyUpdates();
+
+  // Capabilities: what macOS lets the app itself reach. Full Disk Access has
+  // no prompt an app can raise — the only grant path is the switch in System
+  // Settings — so the button deep-links there (a key into main's table, like
+  // every external open) and the status re-probes when focus comes back to
+  // this window (the boot()-installed focus listener), which is the first
+  // moment the pane can learn what happened over there.
+  const capDot = el("span", { class: "status-dot" });
+  const capStatus = el("span", { class: "faint", text: "…" });
+  const applyCapabilities = (caps) => {
+    capDot.className = "status-dot" + (caps.fullDiskAccess ? " on" : "");
+    capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
+  };
+  applyCapabilities(await window.domo.capabilitiesGet());
+  const openFullDisk = el("button", { class: "btn", text: "Open System Settings" });
+  openFullDisk.addEventListener("click", () => window.domo.openExternal("fullDiskSettings"));
 
   // One Support destination: icon, title + blurb, and a button that asks main
   // to open the URL behind `key` — the renderer never holds the URL itself.
@@ -1148,8 +1173,18 @@ async function renderSettings() {
     refresh: async () => {
       await refreshAccount();
       applyInference(await window.domo.inferenceGet());
+      applyCapabilities(await window.domo.capabilitiesGet());
+    },
+    refreshUpdates: async () => {
+      u = await window.domo.updatesGet();
+      applyUpdates();
     },
   };
+  // Re-read updater state now that refreshUpdates is installed: a transition
+  // arriving during the awaits above found settingsMounted unset and was
+  // dropped — and a missed final transition (say, update-downloaded) would
+  // otherwise leave this pane stale with no later event to correct it.
+  await settingsMounted.refreshUpdates();
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
     // The old subtitle promised a phone number this screen never shows — the
@@ -1171,6 +1206,24 @@ async function renderSettings() {
       modeChips,
       modeNote,
       suggestLabel,
+    ]),
+    group("Capabilities", "Extended capabilities that let Plow reach parts of this Mac that macOS blocks by default.", [
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "cap-title" }, [
+            el("span", { class: "support-title", text: "Full Disk Access" }),
+            capDot,
+            capStatus,
+          ]),
+          el("p", { class: "faint", text:
+            "macOS blocks Messages, Mail, Safari data, and Time Machine backups until you grant this. " +
+            "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt." }),
+          el("p", { class: "faint cap-grant", text:
+            "To grant it, turn on Plow under Privacy & Security → Full Disk Access. macOS may ask to quit and reopen the app." }),
+        ]),
+        el("div", { class: "spacer" }),
+        openFullDisk,
+      ]),
     ]),
     group("Software Updates", `Version ${u.currentVersion}`, [
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
@@ -1244,10 +1297,19 @@ window.domo.onStatusChanged(() => {
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
-  if (currentTab === "settings") renderSettings();
+  // In place, never renderSettings(): a full rebuild resets the pane's scroll
+  // (and would eat a half-typed API key) on every background phase change.
+  if (currentTab === "settings") settingsMounted?.refreshUpdates();
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 window.domo.onShowSettings(() => selectTab("settings"));
+// Granting Full Disk Access happens in System Settings, and no event reaches
+// this app when it does — the moment the pane can learn the outcome is when
+// the person comes back. `refresh` updates display nodes only, so a focus
+// change can never cost a half-typed key.
+window.addEventListener("focus", () => {
+  if (currentTab === "settings") settingsMounted?.refresh();
+});
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {

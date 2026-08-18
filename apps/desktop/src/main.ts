@@ -32,6 +32,7 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -471,11 +472,18 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * growing is the only change a new client needs.
  *
  * `discord` and `website` are Settings' Support section.
+ *
+ * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
+ * Access pane. macOS has no API an app can call to request that permission —
+ * sending the person to the switch IS the whole grant flow (see
+ * fullDiskAccess.ts), so the deep link belongs in this table like any other
+ * page the app may open.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
   discord: "https://watchmepivot.com/discord",
   website: "https://watchmepivot.com/",
+  fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
 ipcMain.handle("external:open", async (_e, key: string) => {
@@ -586,6 +594,12 @@ ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
   name: device?.identity.name ?? "",
   connected: connected,
+}));
+// macOS permission ceilings on the app itself — today just Full Disk Access.
+// A fresh probe per read, because the answer changes outside the app (in
+// System Settings) and there is no event to invalidate a cache on.
+ipcMain.handle("capabilities:get", async () => ({
+  fullDiskAccess: await probeFullDiskAccess(),
 }));
 
 // MARK: IPC for software updates (banner + Software Updates settings section).
