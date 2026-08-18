@@ -512,7 +512,10 @@ app.whenReady().then(async () => {
     return {
       saysCannotUnlock: text.includes("can't unlock its vault account"),
       doesNotClaimEmpty: !text.includes("has not started yet"),
-      explains: text.includes("The encrypted account is on disk"),
+      explains: text.includes("The account file is present but cannot be opened"),
+      // `undecryptable` covers a wrong key AND a damaged file. The copy must not
+      // pick one and state it as fact.
+      hedgesTheCause: text.includes("Usually that means") && text.includes("damaged"),
       // The copy must NOT promise a recovery that does not exist:
       // `changeCredentials` refuses when the account cannot be read.
       promisesNoFakeRecovery: !text.includes("Signing in again"),
@@ -602,6 +605,7 @@ app.whenReady().then(async () => {
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&
+    vaultLocked.hedgesTheCause &&
     vaultLocked.promisesNoFakeRecovery &&
     vaultLocked.saysNothingDeleted &&
     modalClosed.gone &&

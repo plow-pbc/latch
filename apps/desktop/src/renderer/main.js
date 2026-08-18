@@ -846,14 +846,18 @@ async function renderVault() {
       el("div", { class: "empty", text: locked
         ? "This Mac can't unlock its vault account."
         : "The vault has not started yet." }),
-      // No invented recovery here. `changeCredentials` refuses outright when the
-      // account cannot be read ("this machine has no vault account yet"), and
-      // signing in on the vault's own page needs the very password this state
-      // cannot produce. Saying what is true and what is not is the whole job.
+      // Two rules here, both learned the hard way. No invented recovery:
+      // `changeCredentials` refuses outright when the account cannot be read
+      // ("this machine has no vault account yet"), and signing in on the vault's
+      // own page needs the very password this state cannot produce. And no
+      // asserting a cause the code cannot tell apart: `undecryptable` is one
+      // `catch` covering a wrong key AND a damaged file, so the copy leads with
+      // what is certain (the file is there and will not open), names the likely
+      // cause as likely, and gives the remedy — which is the same either way.
       locked
         ? el("p", { class: "faint vault-note", text: state.reason === "no-storage"
             ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
-            : "The encrypted account is on disk and the key that opens it is not in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself. If the key is genuinely gone there is no way to recover this account's password, here or anywhere: the vault would have to be set up again. Nothing has been deleted." }
+            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." }
           )
         : null,
     ].filter(Boolean)));
