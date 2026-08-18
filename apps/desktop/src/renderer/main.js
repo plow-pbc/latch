@@ -949,6 +949,22 @@ async function renderSettings() {
   };
   applyUpdates();
 
+  // Capabilities: what macOS lets the app itself reach. Full Disk Access has
+  // no prompt an app can raise — the only grant path is the switch in System
+  // Settings — so the button deep-links there (a key into main's table, like
+  // every external open) and the status re-probes when focus comes back to
+  // this window (the boot()-installed focus listener), which is the first
+  // moment the pane can learn what happened over there.
+  const capDot = el("span", { class: "status-dot" });
+  const capStatus = el("span", { class: "faint", text: "…" });
+  const applyCapabilities = (caps) => {
+    capDot.className = "status-dot" + (caps.fullDiskAccess ? " on" : "");
+    capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
+  };
+  applyCapabilities(await window.domo.capabilitiesGet());
+  const openFullDisk = el("button", { class: "btn", text: "Open System Settings" });
+  openFullDisk.addEventListener("click", () => window.domo.openExternal("fullDiskSettings"));
+
   // One Support destination: icon, title + blurb, and a button that asks main
   // to open the URL behind `key` — the renderer never holds the URL itself.
   const supportRow = (iconNode, title, desc, buttonLabel, key) => {
@@ -1088,6 +1104,7 @@ async function renderSettings() {
     refresh: async () => {
       await refreshAccount();
       applyInference(await window.domo.inferenceGet());
+      applyCapabilities(await window.domo.capabilitiesGet());
     },
     refreshUpdates: async () => {
       u = await window.domo.updatesGet();
@@ -1115,6 +1132,24 @@ async function renderSettings() {
     group("Approval Mode", "How operations are decided.", [
       modeChips,
       suggestLabel,
+    ]),
+    group("Capabilities", "Extended capabilities that let Plow reach parts of this Mac that macOS blocks by default.", [
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "cap-title" }, [
+            el("span", { class: "support-title", text: "Full Disk Access" }),
+            capDot,
+            capStatus,
+          ]),
+          el("p", { class: "faint", text:
+            "macOS blocks Messages, Mail, Safari data, and Time Machine backups until you grant this. " +
+            "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt." }),
+          el("p", { class: "faint cap-grant", text:
+            "To grant it, turn on Plow under Privacy & Security → Full Disk Access. macOS may ask to quit and reopen the app." }),
+        ]),
+        el("div", { class: "spacer" }),
+        openFullDisk,
+      ]),
     ]),
     group("Software Updates", `Version ${u.currentVersion}`, [
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
@@ -1194,6 +1229,13 @@ window.domo.onUpdatesChanged(() => {
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 window.domo.onShowSettings(() => selectTab("settings"));
+// Granting Full Disk Access happens in System Settings, and no event reaches
+// this app when it does — the moment the pane can learn the outcome is when
+// the person comes back. `refresh` updates display nodes only, so a focus
+// change can never cost a half-typed key.
+window.addEventListener("focus", () => {
+  if (currentTab === "settings") settingsMounted?.refresh();
+});
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {

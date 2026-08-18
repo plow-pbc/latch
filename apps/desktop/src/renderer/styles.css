@@ -352,6 +352,14 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-copy { min-width: 0; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
 
+/* Capabilities: the row is a support-row; this adds the inline status beside
+   the title, reusing the titlebar's connection dot. */
+.cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
+.cap-title .support-title { margin-bottom: 0; }
+.cap-title .status-dot { flex: none; }
+/* `.item p` zeroes margins, so the how-to-grant line asks for its blank line. */
+.item p.cap-grant { margin-top: 10px; }
+
 .agent-status {
   margin: 0;
   font-family: var(--mono);
