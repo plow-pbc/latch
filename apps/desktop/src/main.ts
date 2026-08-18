@@ -45,7 +45,9 @@ import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
+  readAgentPurpose,
   readInference,
+  setAgentPurpose,
   setAnthropicApiKey,
   revokeAndSignOut,
   setApprovalMode,
@@ -538,6 +540,13 @@ ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
 });
 ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
 ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
+// What the owner says agents are for. This pair is the only way the text is
+// written or read on the renderer's behalf; nothing an agent can reach touches
+// it, which is what makes it trusted context for the reviewer.
+ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
+ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
+  setAgentPurpose(home, purpose),
+);
 /**
  * Everything the renderer is allowed to know about inference: the selection,
  * which providers are usable, and the active model. Deliberately booleans and

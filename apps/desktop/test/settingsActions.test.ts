@@ -17,8 +17,10 @@ import { loadSettings, saveSettings, Settings } from "../src/settings.js";
 import { PlowApiError } from "../src/plowApi.js";
 import {
   isSignedIn,
+  readAgentPurpose,
   readInference,
   revokeAndSignOut,
+  setAgentPurpose,
   setAnthropicApiKey,
   setApprovalMode,
   setInferenceProvider,
@@ -381,5 +383,65 @@ describe("a second sign-out is a no-op, not a second sign-out", () => {
     await revokeAndSignOut(home, revoke);
     await revokeAndSignOut(home, revoke); // the second click
     expect(revoke).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the purpose statement is owner-authored data", () => {
+  it("stores what the owner wrote, and reads it back from disk", () => {
+    const home = homeWith();
+    expect(readAgentPurpose(home)).toBe("");
+
+    const stored = setAgentPurpose(home, "Groceries and calendar. Never touch ~/Developer.");
+
+    // The return value is what was stored, not what was sent — a caller shows
+    // the file's truth rather than its own optimistic guess.
+    expect(stored).toBe("Groceries and calendar. Never touch ~/Developer.");
+    expect(readAgentPurpose(home)).toBe("Groceries and calendar. Never touch ~/Developer.");
+  });
+
+  it("clears on empty, so a purpose can be taken back as easily as it was given", () => {
+    const home = homeWith({ agentPurpose: "Groceries only." });
+    expect(setAgentPurpose(home, "")).toBe("");
+    expect(readAgentPurpose(home)).toBe("");
+  });
+
+  it("trims the edges but keeps the shape of what was typed", () => {
+    const home = homeWith();
+    setAgentPurpose(home, "  Groceries.\nNever ~/Developer.\n\n");
+    expect(readAgentPurpose(home)).toBe("Groceries.\nNever ~/Developer.");
+  });
+
+  /**
+   * The renderer is sandboxed but still the untrusted side of the bridge, and
+   * this string is interpolated into the reviewer's prompt. A hand-made or
+   * replayed IPC call must not be able to park a non-string there.
+   */
+  it("coerces anything that is not a string to empty", () => {
+    for (const bad of [null, undefined, 42, { toString: () => "sneaky" }, ["a"], true]) {
+      const home = homeWith({ agentPurpose: "Groceries only." });
+      expect(setAgentPurpose(home, bad)).toBe("");
+      expect(readAgentPurpose(home)).toBe("");
+    }
+  });
+
+  /**
+   * Writing a purpose must not disturb the reviewer interlock that every other
+   * setter shares: a mode naming a reviewer that cannot run is the bug all of
+   * this exists to prevent.
+   */
+  it("leaves a usable reviewer's mode alone", () => {
+    const home = homeWith({
+      approvalMode: "adversarial",
+      inferenceProvider: "plow",
+      relayCredential: PLOW_CREDENTIAL,
+    });
+    setAgentPurpose(home, "Groceries only.");
+    expect(stored(home).approvalMode).toBe("adversarial");
+  });
+
+  it("still retires a mode whose reviewer has no credential", () => {
+    const home = homeWith({ approvalMode: "adversarial", inferenceProvider: "anthropic" });
+    setAgentPurpose(home, "Groceries only.");
+    expect(stored(home).approvalMode).toBe("ask");
   });
 });
