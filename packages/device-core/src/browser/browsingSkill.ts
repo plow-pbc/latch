@@ -25,6 +25,11 @@ secret values are typed into pages on the Mac and are NEVER shown to you.
 - \`browser_open {device, origins: ["dominos.com", "*.dominos.com"], credentials_metadata: true, goal}\`
   asks the owner to approve a browsing session bound to those site origins. List every
   domain you expect up front — the apex and the wildcard are separate entries.
+- The window is **visible by default** — the owner watches what is done with their
+  credentials. If they ask for it in the background ("don't take over my screen", "run it
+  headless"), open with \`headed: false\`; if they ask to watch, say nothing or pass
+  \`headed: true\`. Your screenshots are identical either way — only their view changes.
+  The choice lasts the session; a new mode means a new \`browser_open\`.
 - Every \`browser\` action is checked against the approved origins. If a click or popup
   lands outside them, page content locks: you can only \`url\`, \`pages\`, \`use_page\`, or
   \`goto\` back in scope. To follow the flow (e.g. a payment popup went to paypal.com),

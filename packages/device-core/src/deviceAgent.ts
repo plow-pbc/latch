@@ -87,7 +87,9 @@ export class DeviceAgent {
         command: browserRuntime.serverCommand,
         // Visible by default: the owner should be able to watch what is being
         // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
-        // which is what the test tiers and any unattended run want.
+        // which is what the test tiers and any unattended run want. This is only
+        // the default — browser_open carries the agent's per-session choice, so
+        // the owner can ask for the background (or to watch) in the moment.
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
@@ -421,7 +423,17 @@ export class DeviceAgent {
     if (origins.length === 0) {
       return { status: "error", error: "browser_open requires at least one origin" };
     }
-    return this.browserSessions.open(intent.intentId, intent.agentId, origins, metadata);
+    // Window mode is delivery detail too: it changes nothing about what the
+    // owner approved, so it rides the payload and leaves the capability set —
+    // and the rule the owner may have saved for these origins — untouched.
+    const headed = jv(payload).get("headed").bool;
+    return this.browserSessions.open(
+      intent.intentId,
+      intent.agentId,
+      origins,
+      metadata,
+      headed ?? undefined,
+    );
   }
 
   /**

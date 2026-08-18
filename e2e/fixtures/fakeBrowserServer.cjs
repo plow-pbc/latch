@@ -12,6 +12,7 @@
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
+ *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
  *
  * Scripted page behaviors:
  *   click "#popup"    opens a second page on https://popup.example/pay
@@ -111,6 +112,11 @@ function handle(cmd) {
 }
 
 function main() {
+  // One line per launch, so a test can see the window mode the host chose —
+  // --headed is a spawn flag, invisible on the protocol channel.
+  if (process.env.FAKE_ARGV_LOG) {
+    fs.appendFileSync(process.env.FAKE_ARGV_LOG, process.argv.slice(2).join(" ") + "\n");
+  }
   const start = () => {
     if (process.env.NO_READY !== "1") {
       respond({ status: "ready", pid: process.pid, browser_version: "fake-152.0.4" });

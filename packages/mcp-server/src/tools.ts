@@ -383,8 +383,10 @@ export const TOOLS: ToolSpec[] = [
       "Open a supervised anti-detection browser session on this Mac, scoped to the listed site " +
       "origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
-      "permission to list the owner's vault item names (never values). Returns a session " +
-      "handle for the 'browser' tool. Read the camoufox-browsing skill first.",
+      "permission to list the owner's vault item names (never values). The browser window is " +
+      "visible by default; pass headed:false only when the owner asked for it to run in the " +
+      "background. Returns a session handle for the 'browser' tool. Read the camoufox-browsing " +
+      "skill first.",
     inputSchema: {
       type: "object",
       required: ["origins"],
@@ -397,6 +399,13 @@ export const TOOLS: ToolSpec[] = [
         credentials_metadata: {
           type: "boolean",
           description: "Also request vault metadata listing (default false)",
+        },
+        headed: {
+          type: "boolean",
+          description:
+            "Show the browser window so the owner can watch (default true). Pass false only " +
+            "when the owner asked to run it in the background — you see the same screenshots " +
+            "either way, they do not.",
         },
         goal: GOAL,
       },
@@ -411,17 +420,22 @@ export const TOOLS: ToolSpec[] = [
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });
       }
+      // The owner is about to approve a browser they may not see: say so in the
+      // line they read, and carry the choice as payload — it bounds nothing.
+      const headed = a.get("headed").bool;
       const response = await decideAndRun(
         ctx,
         progress,
-        `browse: ${origins.join(", ")}`,
+        `browse${headed === false ? " (hidden window)" : ""}: ${origins.join(", ")}`,
         a.get("goal").str ?? undefined,
         capabilities,
+        headed === null ? null : { headed },
       );
       const r = jv(response);
       return {
         session: r.get("session").str,
         origins: r.get("origins").value ?? origins,
+        headed: r.get("headed").bool,
         note: "use the 'browser' tool with this session handle; screenshot after every navigation",
       };
     },
