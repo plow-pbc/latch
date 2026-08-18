@@ -26,7 +26,12 @@ ipcMain.handle("approval:get", async () => ({
     request: "run: sips -Z 1600 ~/Documents/report/photos",
     planContext: null,
     // Device-side, from settings — the one line on this card the owner wrote.
-    agentPurpose: "Help with the quarterly report and the calendar. Never touch code or email.",
+    // PURPOSE overrides it, so the long-statement case (which is where the
+    // fixed 460x560 window is under pressure) is reproducible rather than a
+    // one-off edit someone made locally and threw away.
+    agentPurpose:
+      process.env.PURPOSE ??
+      "Help with the quarterly report and the calendar. Never touch code or email.",
     capabilities: [
       { kind: "process.exec", display: "Run: sips -Z 1600 photos" },
       { kind: "fs.read", display: "Read: /Users/you/Documents/report/photos" },
@@ -60,7 +65,32 @@ app.whenReady().then(async () => {
     out,
     namesAgent: text.includes("Claude Code"),
     showsId: text.includes("sess_01HZX9K4M2QP"),
-    showsPurpose: text.includes("You said agents here are for"),
+    // Case-insensitive: the label is uppercased by CSS (`.section-label`), and
+    // innerText reports what is RENDERED, not what the source string said.
+    showsPurpose: /you said agents here are for/i.test(text),
+    // Whether the ENFORCED block lost content to the window's fixed height.
+    //
+    // The obvious signal — are the buttons still on screen — was the wrong one,
+    // and reported healthy on a card that had gone bad: the actions row is
+    // last, so it holds its place while `.fine` above it shrinks and clips.
+    // What matters is that a long purpose statement pushes the capability list
+    // (the one part of this card that is a promise about what will happen) out
+    // of view, with no scrollbar at that size to say so. `enforcedClipped`
+    // catches exactly that, and `enforcedHeight` says how little was left.
+    ...(await win.webContents.executeJavaScript(
+      `(() => {
+         const fine = document.querySelector(".fine");
+         const actions = document.querySelector(".actions");
+         return {
+           enforcedClipped: fine.scrollHeight > fine.clientHeight,
+           enforcedHeight: Math.round(fine.getBoundingClientRect().height),
+           enforcedContentHeight: fine.scrollHeight,
+           actionsOnScreen:
+             actions.getBoundingClientRect().bottom <= window.innerHeight &&
+             actions.getBoundingClientRect().top >= 0,
+         };
+       })()`,
+    )),
   }));
   app.exit(text.includes("Claude Code") ? 0 : 1);
 });
