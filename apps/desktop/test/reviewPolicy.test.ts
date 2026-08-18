@@ -553,7 +553,7 @@ describe("the audit tells one coherent story about who decided", () => {
     expect(lines.some((l) => l.includes("could not run"))).toBe(true);
     expect(lines.some((l) => l.includes("defer to you"))).toBe(false);
     // …and the decision that follows names the same thing, in human words.
-    expect(decidedByLabel(decision.source)).toBe("Adversarial Agent (out of credits)");
+    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (out of credits)");
     expect(decidedByLabel(decision.source)).not.toContain("no_credits");
   });
 

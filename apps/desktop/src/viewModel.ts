@@ -140,12 +140,12 @@ export interface AuditActivity {
 export function decidedByLabel(source: string | null): string | null {
   switch (source) {
     case "approve": return "Auto-approved";
-    case "adversarial": return "Adversarial Agent";
+    case "adversarial": return "AI Reviewer";
     case "rule": return "Always-allow rule";
     case "policy": return "Policy (deny mode)";
     // Not an internal label in the human's view: the operation was denied
     // because the reviewer could not be paid for, not because anyone chose.
-    case "no_credits": return "Adversarial Agent (out of credits)";
+    case "no_credits": return "AI Reviewer (out of credits)";
     case "ask":
     case "prompt": return "You (asked)";
     default: return source;
@@ -412,7 +412,7 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     case "agent_spawned": text = `Agent spawned — ${ev.get("goal").str ?? ""}`; break;
     case "intent_received": text = `Request: ${ev.get("request").str ?? ""}`; break;
-    case "adversarial_review_started": text = "Adversarial agent started reviewing…"; break;
+    case "adversarial_review_started": text = "AI Reviewer started reviewing…"; break;
     case "adversarial_review_result": {
       const verdict = ev.get("verdict").str ?? "";
       const reason = ev.get("reason").str ?? "";
@@ -428,7 +428,7 @@ function describeStep(e: JSONValue): AuditStep {
             : verdict === "deny"
               ? "deny"
               : "defer to you";
-      text = `Adversarial agent: ${label}${reason ? ` — ${reason}` : ""}`;
+      text = `AI Reviewer: ${label}${reason ? ` — ${reason}` : ""}`;
       state = verdict === "deny" || cause ? "bad" : verdict === "allow" ? "ok" : "neutral";
       break;
     }
