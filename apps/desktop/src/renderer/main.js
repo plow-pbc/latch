@@ -834,14 +834,36 @@ function fieldRow(input) {
 }
 
 async function renderVault() {
-  const creds = await window.domo.vaultGet();
-  if (!creds) {
+  const state = (await window.domo.vaultGet()) ?? { status: "empty" };
+  if (state.status !== "ok") {
+    // Locked and empty are different facts and get different words. A vault
+    // whose key has moved — a Keychain reset, a Mac restored from backup — used
+    // to render as "has not started yet", which sent people looking for a
+    // server that was running fine.
+    const locked = state.status === "locked";
     view.replaceChildren(el("div", { class: "panel" }, [
       el("div", { class: "section-label", text: "Your vault" }),
-      el("div", { class: "empty", text: "The vault has not started yet." }),
-    ]));
+      el("div", { class: "empty", text: locked
+        ? "This Mac can't unlock its vault account."
+        : "The vault has not started yet." }),
+      // Two rules here, both learned the hard way. No invented recovery:
+      // `changeCredentials` refuses outright when the account cannot be read
+      // ("this machine has no vault account yet"), and signing in on the vault's
+      // own page needs the very password this state cannot produce. And no
+      // asserting a cause the code cannot tell apart: `undecryptable` is one
+      // `catch` covering a wrong key AND a damaged file, so the copy leads with
+      // what is certain (the file is there and will not open), names the likely
+      // cause as likely, and gives the remedy — which is the same either way.
+      locked
+        ? el("p", { class: "faint vault-note", text: state.reason === "no-storage"
+            ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
+            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." }
+          )
+        : null,
+    ].filter(Boolean)));
     return;
   }
+  const creds = state.credentials;
 
   // Anchors go nowhere inside Electron; the main process opens the browser.
   const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });

@@ -46,6 +46,18 @@ describe("resolveInstancePaths", () => {
     expect(p.appName).toBe("Plow (feature-test)");
   });
 
+  /** The vault key's identity is not the app's name, and must never become it. */
+  it("carries a vault identity that no rename can move", () => {
+    expect(resolveInstancePaths({ env: {}, appData }).vaultIdentity).toBe("Domo Desktop");
+    expect(resolveInstancePaths({ env: { DOMO_BRANCH: "feature-test" }, appData }).vaultIdentity).toBe(
+      "Domo Desktop (feature-test)",
+    );
+    // The display name moved to "Plow"; the vault's key identity did not, and
+    // that is what keeps existing ciphertext readable.
+    expect(resolveInstancePaths({ env: {}, appData }).vaultIdentity).not.toContain("Plow");
+    expect(resolveInstancePaths({ env: {}, appData }).appName).toBe("Plow");
+  });
+
   it("a blank or whitespace DOMO_BRANCH means unbranded, like the packaged run", () => {
     const p = resolveInstancePaths({ env: { DOMO_BRANCH: "  " }, appData });
     expect(p.home).toBe(path.join(appData, "Domo"));

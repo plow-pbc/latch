@@ -17,6 +17,7 @@
  * throwaway home really is the instance's ONLY folder.
  */
 import path from "node:path";
+import { vaultStoreIdentity } from "@domo/device-core";
 
 export interface InstancePaths {
   /** macOS app menu / dock title (set before ready via app.setName). */
@@ -27,6 +28,12 @@ export interface InstancePaths {
   home: string;
   /** Electron userData AND sessionData — Chromium's state, inside the home. */
   electronData: string;
+  /**
+   * The Keychain identity the vault account's encryption is bound to. NOT the
+   * app name: `safeStorage` keys on `app.name`, and binding a secret to a
+   * display string is what made an app rename unreadable. See vaultKeychain.ts.
+   */
+  vaultIdentity: string;
 }
 
 export function resolveInstancePaths(opts: {
@@ -41,5 +48,6 @@ export function resolveInstancePaths(opts: {
     trayTooltip: branch ? `Plow (${branch})` : "Plow",
     home,
     electronData: path.join(home, "electron"),
+    vaultIdentity: vaultStoreIdentity(branch),
   };
 }

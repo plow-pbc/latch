@@ -654,3 +654,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 .live-corner.offscope img { border-color: var(--red-bd); }
 .live-corner.offscope .live-cap { color: var(--red-fg); }
 .live-corner.offscope .live-cap .dot { background: var(--red-fg); }
+
+/* The locked-vault explanation: an honest paragraph under the empty state. */
+.panel .vault-note { margin: 8px 0 0; max-width: 68ch; }

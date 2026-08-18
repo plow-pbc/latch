@@ -378,6 +378,67 @@ server + fake `op` fixtures make the whole flow CI-testable without Python,
 and `just test-browser` runs the real browser against a local checkout
 fixture site.
 
+### 11a-i. The vault's Keychain identity is frozen, and it is not the app's name
+
+The vault account's password is stored as ciphertext on disk and the key lives
+in the macOS Keychain, via Electron's `safeStorage`. Three facts about
+`safeStorage` decide the design, and all three were learned by breaking it:
+
+1. It has no key of its own. On macOS it looks up a Keychain item named
+   `<app.name> Safe Storage` (account `<app.name> Key`) and uses the password
+   in it. **The encryption key is addressed by a display string.**
+2. It captures that name at **startup, before `app.whenReady`**, and holds one
+   key for the life of the process. Setting `app.name` after ready does not
+   move it — measured: the Keychain item appears under the pre-ready name and
+   never under the post-ready one. **One process gets exactly one key.**
+3. Therefore **renaming the app orphans every ciphertext it has written.**
+
+Renaming the app to "Plow" (PR #42) did exactly that: `safeStorage` looked for
+`Plow Safe Storage`, found nothing, minted a fresh random key, and four
+colleagues' vault accounts stopped opening. Nothing was lost — the old key and
+the ciphertext were both intact — but nothing in the app could reach them.
+
+So the identity is a **frozen literal** in
+`packages/device-core/src/browser/vaultKeychain.ts`, deliberately still spelling
+the *old* app name, because that is what every existing vault was encrypted
+under. Freezing it means the ciphertext on disk keeps working with no
+migration, no re-encryption and no prompt. It is not derived from `app.name`,
+`appId` or `productName`, and the fact that it no longer matches the product's
+name is the point.
+
+Fact (2) dictates where this happens: `app.setName(instance.vaultIdentity)` runs
+at module top level in the Electron entry, before ready, because that is the
+only moment the Keychain is listening. The product name is restored as the first
+statement inside `whenReady` — early enough for every menu, window and tray item,
+all of which are built after it. A helper that wrapped a "latch" call cannot
+work: by the time any code inside `whenReady` runs, the name is already
+captured. (This was got wrong once, in exactly that way, and produced a fix that
+changed nothing.)
+
+Two rejected alternatives, recorded so they are not re-proposed:
+
+- **Copy the Keychain key to a new identity.** macOS gates reading another
+  application's Keychain item behind an authorization prompt that asks for the
+  login password and names the `security` binary — an alarming dialog to show
+  someone at app launch, and one that strands the old key permanently if it is
+  dismissed (`safeStorage` mints a replacement, and the migration then looks
+  complete forever).
+- **Decrypt under the old name in a child process and re-encrypt under a new
+  one.** Correct, silent, and unnecessary machinery for a problem that a frozen
+  string solves outright — and every extra moving part sits between a user and
+  the only copy of their credentials.
+
+There is no recovery for a genuinely lost key, and the UI must not invent one:
+`changeCredentials` refuses outright when the account cannot be read, and signing
+in on the vault's own page needs the very password that state cannot produce. The
+copy says so — the account is on disk, nothing is deleted, and if the key is gone
+the vault has to be set up again.
+
+A locked vault must also never be reported as an empty one. `readState()`
+distinguishes empty / locked / ok, because a Keychain reset or a Mac restored
+from backup lands in exactly this state, and "The vault has not started yet"
+sends people to debug a server that is running fine.
+
 ## 11b. Software updates
 
 The packaged app self-updates via **electron-updater** (generic provider — no

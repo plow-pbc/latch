@@ -6,7 +6,7 @@
  * re-wrapped with the new one, so everything already in the vault stays
  * readable. Only the machine's copy of the password changes with it.
  */
-import { VaultSecretStore, VaultAccount } from "./vaultSecretStore.js";
+import { VaultSecretStore, VaultAccount, VaultSecretState } from "./vaultSecretStore.js";
 import { encString, httpCa, masterKeyAndHash, send, signIn, KDF_ITERATIONS, VaultHttp } from "./vaultCrypto.js";
 
 export interface VaultCredentialsView {
@@ -19,6 +19,28 @@ export interface VaultCredentialsView {
 export function readCredentials(url: string, storeDir: string): VaultCredentialsView | null {
   const account = new VaultSecretStore(storeDir).read();
   return account ? { url, email: account.email, password: account.password } : null;
+}
+
+/** What the vault screen shows: the credentials, nothing yet, or a locked account. */
+export type VaultCredentialsState =
+  | { status: "empty" }
+  | { status: "locked"; reason: "no-storage" | "undecryptable" }
+  | { status: "ok"; credentials: VaultCredentialsView };
+
+/**
+ * The same read, with the locked case kept intact all the way to the screen.
+ * `readCredentials` flattens it to null, which is right for callers that only
+ * want a usable account and wrong for the one that has to explain itself.
+ */
+export function readCredentialsState(url: string, storeDir: string): VaultCredentialsState {
+  const state: VaultSecretState = new VaultSecretStore(storeDir).readState();
+  if (state.status === "ok") {
+    return {
+      status: "ok",
+      credentials: { url, email: state.account.email, password: state.account.password },
+    };
+  }
+  return state.status === "locked" ? { status: "locked", reason: state.reason } : { status: "empty" };
 }
 
 /**
