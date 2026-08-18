@@ -438,7 +438,7 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
-      "(find item ids via the plow_browser tool's 'credentials' action). Secret values are never " +
+      "(find item ids with plow_vault's 'list' action). Secret values are never " +
       "revealed to you; they are typed into the page on this Mac.",
     inputSchema: {
       type: "object",
@@ -514,8 +514,8 @@ export const TOOLS: ToolSpec[] = [
         value: { type: "string", description: "fill: literal text to type (non-secret)" },
         expression: { type: "string", description: "eval: JS expression (top frame)" },
         index: { type: "integer", description: "use_page: page index from 'pages'" },
-        item: { type: "string", description: "fill_secret / describe_item: vault item id" },
-        field: { type: "string", description: "fill_secret: field label from describe_item (or 'totp')" },
+        item: { type: "string", description: "fill_secret: vault item id, from plow_vault list" },
+        field: { type: "string", description: "fill_secret: field label from plow_vault describe (or 'totp')" },
         direction: { type: "string", description: "scroll: down|up|bottom|top" },
         seconds: { type: "number", description: "wait: seconds" },
         frame: { type: "integer", description: "click/fill: target a specific frame index" },

@@ -21,6 +21,7 @@ import {
   TOOLS,
 } from "@domo/mcp-server";
 import { parse, rpc } from "./client.js";
+import { bareToolNames } from "./toolNames.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(async () => {
@@ -177,34 +178,6 @@ describe("the browsing skill agrees with the tools it documents", () => {
     expect(BROWSING_SKILL.description).not.toMatch(/any task that requires visiting/i);
   });
 });
-
-/**
- * Bare (unprefixed) tool names in text an agent reads.
- *
- * The prefixing pass renamed `browser` and `vault` by hand-enumerated exact
- * contexts, because a blanket replace would have hit the capability kind, the
- * Vault tab and browserDir — and five were missed in one file while a
- * first-match-only test stayed green. So the rule lives here once, and every
- * agent-facing string is swept through it.
- *
- * Underscored names are unambiguous: `get_result` is never English. `browser`
- * and `vault` are ordinary words that belong in prose ("open a browser on the
- * user's own Mac"), so only call-shaped or quoted uses count as a tool
- * reference.
- */
-const AMBIGUOUS = new Set(["browser", "vault"]);
-
-export function bareToolNames(text: string): string[] {
-  const hits = new Set<string>();
-  for (const tool of TOOLS) {
-    const bare = tool.name.replace(/^plow_/, "");
-    const re = AMBIGUOUS.has(bare)
-      ? new RegExp(`(?<!plow_)\\b${bare}\\s*\\{|\`${bare}\`|'${bare}'`)
-      : new RegExp(`(?<![\\w.])(?<!plow_)${bare}\\b`);
-    if (re.test(text)) hits.add(bare);
-  }
-  return [...hits].sort();
-}
 
 /** Every string the manifest puts in front of a model. */
 function manifestStrings(): { where: string; text: string }[] {

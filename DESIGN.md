@@ -5,7 +5,7 @@
 
 Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a person's
 Mac — read and write files, run CLI commands with streaming output, and drive a
-real browser signed in as them — through an **intent-based request
+real browser on their machine — through an **intent-based request
 system**: every operation is a structured, signed intent that a human (later, an
 adversarial reviewer agent plus a human escalation path) can inspect and approve
 before it executes inside an on-the-fly sandbox derived from exactly the approved
@@ -67,18 +67,16 @@ redesigning.
 
 ## 3. Agent-facing protocol: MCP
 
-One MCP endpoint (the broker), device-addressed tools. Agents connect once and
-reach every Mac they hold grants for. Claude Code connects via the `domo-mcp`
-stdio shim (auth token + socket path via env; pure pipe thereafter).
-
-| Tool | Purpose |
-|---|---|
-| `list_devices()` | Devices visible to this agent: id, name, online, granted |
-| `request_device_access(device, goals)` | Ask the owner for access |
-| `read_file(device, path, goal?)` | Read a file (returned base64 for binary safety) |
-| `write_file(device, path, content, goal?)` | Write a file |
-| `run_command(device, argv, cwd?, read_paths?, write_paths?, network?, wait_ms?, goal?)` | Run a CLI command in the sandbox; returns full output or a handle |
-| `get_output(device, handle, since?)` | Incremental output of a running command |
+**Superseded.** This section described one MCP endpoint (the broker) serving
+device-addressed tools, so that an agent connected once and reached every Mac it
+held grants for. There is no broker: a Mac dials the Plow relay and serves its
+own tools, addressed by its own URL, so no tool takes a `device` argument and
+there is nothing to enumerate. The table that stood here listed
+`list_devices`, `request_device_access` and `device`-first signatures for
+tools that have since been renamed — it was a second, hand-maintained copy of a
+contract that lives in code, and it drifted, as the second copy always does.
+**The current surface is in [README-ts.md](README-ts.md); `TOOLS` in
+`packages/mcp-server/src/tools.ts` is authoritative.**
 
 Design points:
 
@@ -616,7 +614,7 @@ Monorepo mirroring the current module seams one-to-one:
 | `@domo/protocol` | `DomoProtocol` | canonical JSON, identities, Capability/Intent/Grant, rule keys |
 | `@domo/transport` | `DomoTransport` | NDJSON framing, LineRPC, UDS, WebSocket (`ws`), E2EChannel |
 | `@domo/broker-core` | `DomoBrokerCore` | Broker, BrokerStore, MCP surface via `@modelcontextprotocol/sdk` |
-| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, SkillRegistry, GoalsLibrary |
+| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, SkillRegistry |
 | `apps/broker` | `domo-broker` | Linux deploy target; TLS in-process or behind a reverse proxy per the runbook |
 | `apps/mcp` | `domo-mcp` | stdio shim on the official SDK |
 | `apps/desktop` | `DomoApp` | Electron: device-core in the main process; tray, approval windows, Goals/Rules/Audit |

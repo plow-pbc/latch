@@ -24,7 +24,7 @@ import {
   PolicyDelegate,
 } from "@domo/device-core";
 import { createDomoMcpServer, DeferredResults, DomoMcpServer } from "@domo/mcp-server";
-import { bareToolNames } from "./toolCopy.test.js";
+import { bareToolNames } from "./toolNames.js";
 import { callTool } from "./client.js";
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
