@@ -241,7 +241,7 @@ function connectedScreen() {
     ]),
     el("p", {
       class: "faint lede",
-      text: "Domo is signed in to Plow and this Mac is reachable. Connect an MCP client whenever you're ready — it's in the app, under Connect a client.",
+      text: "You're signed in and this Mac is reachable. Connect an MCP client whenever you're ready — it's in the app, under Agents.",
     }),
     el("div", { class: "field" }, [
       el("label", { text: "Account" }),

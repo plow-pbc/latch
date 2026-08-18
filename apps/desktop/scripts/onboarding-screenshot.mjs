@@ -115,7 +115,7 @@ const SCREENS = [
     // here — it is per-client and repeatable, so it lives in the main window.
     name: "connected",
     state: { ...base, step: "connected" },
-    expect: ["This Mac is connected", "u_7Qk2p9", "Connect a client", "Continue"],
+    expect: ["This Mac is connected", "u_7Qk2p9", "under Agents", "Continue"],
   },
 ];
 

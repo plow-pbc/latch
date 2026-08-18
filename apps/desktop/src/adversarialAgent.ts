@@ -62,7 +62,7 @@ export type Verdict = "allow" | "deny" | "ask";
  */
 export type ReviewFailureCause = "no_credits";
 
-const SYSTEM_PROMPT = `You are an adversarial security reviewer for "Domo", a system that lets a \
+const SYSTEM_PROMPT = `You are an adversarial security reviewer for "Plow", a system that lets a \
 remote AI agent operate a person's Mac through explicitly approved, sandboxed \
 capabilities. You review ONE operation (an "intent") and decide, on the owner's \
 behalf, whether to approve it.

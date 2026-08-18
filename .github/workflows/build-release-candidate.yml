@@ -125,7 +125,7 @@ jobs:
       - name: Read version and build from the packaged app
         id: version
         run: |
-          APP_BUNDLE="apps/desktop/release/mac-universal/Domo Desktop.app"
+          APP_BUNDLE="apps/desktop/release/mac-universal/Plow.app"
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_BUNDLE/Contents/Info.plist")
           BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_BUNDLE/Contents/Info.plist")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -140,15 +140,15 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
           BUILD="${{ steps.version.outputs.build }}"
-          DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Domo-Desktop-${VERSION}.dmg"
+          DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Plow-${VERSION}.dmg"
 
           git tag "$TAG"
           git push origin "$TAG"
 
           RELEASE_URL=$(gh release create "$TAG" \
             --draft \
-            --title "Domo Desktop ${VERSION} (${BUILD})" \
-            --notes "**Download:** [Domo-Desktop-${VERSION}.dmg](${DMG_URL})
+            --title "Plow ${VERSION} (${BUILD})" \
+            --notes "**Download:** [Plow-${VERSION}.dmg](${DMG_URL})
 
           Built from \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`")
 
@@ -162,9 +162,9 @@ jobs:
           BUILD="${{ steps.version.outputs.build }}"
           RELEASE_URL="${{ steps.draft_release.outputs.release_url }}"
           if [[ -n "$VERSION" && -n "$BUILD" ]]; then
-            DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Domo-Desktop-${VERSION}.dmg"
+            DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Plow-${VERSION}.dmg"
             {
-              echo "### Domo Desktop ${VERSION} (${BUILD})"
+              echo "### Plow ${VERSION} (${BUILD})"
               echo ""
               echo "- [Download DMG](${DMG_URL})"
               if [[ -n "$RELEASE_URL" ]]; then
@@ -175,7 +175,7 @@ jobs:
                 echo "1. Open the [release draft](${RELEASE_URL}) and review it."
                 echo "2. Confirm **Set as the latest release** is checked, then **Publish release**."
                 echo ""
-                echo "Publishing triggers \`promote-app.yml\`, which copies the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Domo-Desktop.dmg\` keys — that's the moment installed apps start updating."
+                echo "Publishing triggers \`promote-app.yml\`, which copies the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Plow.dmg\` keys — that's the moment installed apps start updating."
               fi
             } >> "$GITHUB_STEP_SUMMARY"
           fi

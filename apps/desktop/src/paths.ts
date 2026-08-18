@@ -6,7 +6,7 @@
  * One folder per instance: everything — settings, device identity, audit log,
  * AND Electron/Chromium's own state (userData/sessionData) — lives under a
  * single home in Application Support. Chromium state goes in `<home>/electron`
- * instead of the separate name-keyed "Domo Desktop*" folder Electron would
+ * instead of the separate name-keyed "Plow*" folder Electron would
  * pick on its own.
  *
  * DOMO_BRANCH (set by `just app` to this checkout's normalized branch name,
@@ -37,8 +37,8 @@ export function resolveInstancePaths(opts: {
   const home =
     opts.env.DOMO_HOME ?? path.join(opts.appData, branch ? `Domo-${branch}` : "Domo");
   return {
-    appName: branch ? `Domo Desktop (${branch})` : "Domo Desktop",
-    trayTooltip: branch ? `Domo (${branch})` : "Domo",
+    appName: branch ? `Plow (${branch})` : "Plow",
+    trayTooltip: branch ? `Plow (${branch})` : "Plow",
     home,
     electronData: path.join(home, "electron"),
   };
