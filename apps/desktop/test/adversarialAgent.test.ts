@@ -906,6 +906,9 @@ describe("the owner's purpose reaches the reviewer as TRUSTED context", () => {
 
   const PURPOSE = "Groceries and calendar only. Never touch ~/Developer.";
 
+  /** The one prompt line carrying the owner's statement. */
+  const purposeLine = (prompt: string) => prompt.split("\n").find((l) => l.includes("TRUSTED"))!;
+
   it("labels the block TRUSTED and says who set it", async () => {
     const prompt = await promptFor({ agentPurpose: PURPOSE });
     expect(prompt).toContain(
@@ -960,27 +963,54 @@ describe("the owner's purpose reaches the reviewer as TRUSTED context", () => {
   });
 
   /**
-   * No cap is imposed on what is STORED — those are the owner's words. The
-   * bound is here, where the text becomes part of a paid request on a 30s
-   * budget, and it is marked rather than silently cut: a statement severed
-   * mid-sentence can read as the opposite of what it says.
+   * No cap is imposed on what is STORED — those are the owner's words — and the
+   * bound here is set far past any real statement, because what a purpose
+   * statement mostly contains is RESTRICTIONS. Every character cut is a limit
+   * the reviewer cannot see.
    */
-  it("bounds a very long statement at prompt-build time, and says it did", async () => {
-    const long = "x".repeat(REVIEWER_PURPOSE_MAX_CHARS + 500);
-    const prompt = await promptFor({ agentPurpose: long });
-
-    const line = prompt.split("\n").find((l) => l.includes("TRUSTED"))!;
-    expect(line).toContain("… (truncated)");
-    expect(line).not.toContain("x".repeat(REVIEWER_PURPOSE_MAX_CHARS + 1));
-    expect(line).toContain("x".repeat(REVIEWER_PURPOSE_MAX_CHARS));
+  it("does not bite on any statement a person would actually write", async () => {
+    // Several thousand words of prose: still sent whole, still unmarked.
+    const realistic = "Groceries and calendar. ".repeat(400);
+    expect(realistic.length).toBeLessThan(REVIEWER_PURPOSE_MAX_CHARS);
+    const line = purposeLine(await promptFor({ agentPurpose: realistic }));
+    expect(line).toContain(realistic.trim());
+    expect(line).not.toContain("TRUNCATED");
   });
 
-  it("leaves a statement at the bound untouched and unmarked", async () => {
+  /**
+   * When the guard does bite, it FAILS CLOSED. A request can satisfy every word
+   * still visible while violating a restriction that was cut off, so the block
+   * withdraws the allow rather than merely noting the cut.
+   */
+  it("tells the reviewer a cut fragment cannot justify an allow", async () => {
+    const long = "x".repeat(REVIEWER_PURPOSE_MAX_CHARS + 500);
+    const line = purposeLine(await promptFor({ agentPurpose: long }));
+
+    // What was sent: the prefix, and not a character more of the statement.
+    expect(line).toContain("x".repeat(REVIEWER_PURPOSE_MAX_CHARS));
+    expect(line).not.toContain("x".repeat(REVIEWER_PURPOSE_MAX_CHARS + 1));
+
+    // Says it was cut, and that what is missing may be a restriction.
+    expect(line).toContain("TRUNCATED");
+    expect(line).toContain("Restrictions they wrote may be missing");
+    expect(line).toContain("FRAGMENT");
+
+    // And withdraws the allow: a fit with the fragment is worth `ask` at best.
+    expect(line).toContain("Do not treat a fit with this fragment as grounds to allow");
+    expect(line).toContain('the most permissive verdict available to you is "ask"');
+
+    // A mismatch still denies — the caution must not read as "be lenient".
+    expect(line).toContain("A clear mismatch is still grounds to deny");
+  });
+
+  it("leaves a statement at the bound untouched, with no caution attached", async () => {
     const exact = "y".repeat(REVIEWER_PURPOSE_MAX_CHARS);
-    const prompt = await promptFor({ agentPurpose: exact });
-    const line = prompt.split("\n").find((l) => l.includes("TRUSTED"))!;
+    const line = purposeLine(await promptFor({ agentPurpose: exact }));
     expect(line).toContain(exact);
-    expect(line).not.toContain("truncated");
+    expect(line).not.toContain("TRUNCATED");
+    // The fail-closed language appears only when it is earned; a reviewer told
+    // to distrust a statement that arrived whole would be told a falsehood.
+    expect(line).not.toContain("ask");
   });
 
   /**

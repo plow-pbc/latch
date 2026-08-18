@@ -129,23 +129,42 @@ const VERDICT_SCHEMA = {
  * The bound belongs here instead, at the one place the text becomes part of a
  * request someone pays for and waits 30 seconds on.
  *
- * 2000 characters is several paragraphs — far more than the one-liner the UI
- * asks for, and roughly 500 tokens against a 4096-token answer and a 2048-token
- * thinking budget, so a long statement cannot crowd out the operation being
- * reviewed. The cut is MARKED rather than silent: a statement severed
- * mid-sentence can read as the opposite of what it says ("never touch
- * ~/Developer" → "never touch"), and a reviewer is better off knowing it holds
- * a fragment than trusting a fragment as the whole.
+ * 20000 characters is far past any real statement — several thousand words —
+ * so this is a guard against pathological input, not a length policy. It is set
+ * high on purpose: what a purpose statement mostly contains is RESTRICTIONS,
+ * and every character cut is a restriction the reviewer cannot see. A bound
+ * tight enough to bite in ordinary use would silently turn "groceries only,
+ * never ~/.ssh" into "groceries only".
  */
-export const REVIEWER_PURPOSE_MAX_CHARS = 2000;
-const PURPOSE_TRUNCATION_MARKER = "… (truncated)";
+export const REVIEWER_PURPOSE_MAX_CHARS = 20_000;
 
-/** The purpose as it goes on the wire: trimmed, bounded, marked when cut. */
+/**
+ * What the prompt says when the cut actually happens — and it FAILS CLOSED.
+ *
+ * A marker alone said "there was more" and left the reviewer to decide what
+ * that was worth, which is the wrong default in the one direction that matters:
+ * a request can satisfy every word still visible while violating a restriction
+ * that was cut off. So the truncated block does not merely note the cut, it
+ * withdraws the allow: an apparent fit with a fragment is worth `ask` at best.
+ * A mismatch still denies — nothing here softens that, and a fragment is
+ * plenty to recognise a request that was never in scope.
+ */
+const PURPOSE_TRUNCATION_NOTICE =
+  "… [TRUNCATED — the owner's statement is cut off here and the rest was not sent. " +
+  "Restrictions they wrote may be missing from what you can see, so what is visible is a " +
+  "FRAGMENT, not the whole of what they permit. Do not treat a fit with this fragment as " +
+  'grounds to allow: for an apparent fit the most permissive verdict available to you is "ask". ' +
+  "A clear mismatch is still grounds to deny.]";
+
+/**
+ * The purpose as it goes on the wire: trimmed, bounded, and — when the bound
+ * bites — carrying the notice above rather than a quiet ellipsis.
+ */
 function boundedPurpose(purpose: string): string {
   const text = purpose.trim();
   return text.length <= REVIEWER_PURPOSE_MAX_CHARS
     ? text
-    : text.slice(0, REVIEWER_PURPOSE_MAX_CHARS) + PURPOSE_TRUNCATION_MARKER;
+    : text.slice(0, REVIEWER_PURPOSE_MAX_CHARS) + PURPOSE_TRUNCATION_NOTICE;
 }
 
 /**
