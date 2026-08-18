@@ -1,9 +1,10 @@
 /* The approval window's guard against accidental input: the window can take
    key focus while the human is typing in another app, so nothing may activate
-   until the window has been quietly focused for the arming delay — and the
-   press itself must have started after that. Keyboard arms later than mouse: a
-   stray Return is exactly the keystroke the human was already making. Driven
-   with a fake clock; the renderer supplies the real one. */
+   until the window has been shown for the arming delay — and the press itself
+   must have started after that. Keyboard arms later than mouse: a stray
+   Return is exactly the keystroke the human was already making. Arming is
+   one-shot at show; once armed, armed. Driven with a fake clock; the renderer
+   supplies the real one. */
 
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — plain-JS renderer module, shipped as-is (not compiled by tsc)
@@ -83,33 +84,15 @@ describe("InputArming", () => {
     expect(arming.mayActivate()).toBe(true);
   });
 
-  it("re-arming (focus regained) invalidates an in-flight press and restarts both delays", () => {
+  it("arm() invalidates a press already in flight when it fires", () => {
+    // A keydown can land between the module loading its capture listeners and
+    // armActions() calling arm(); that press predates the prompt and must die.
     const { clock, arming } = make();
-    arming.arm();
-    clock.t += KEY;
     arming.pressStarted("key");
-    expect(arming.mayActivate()).toBe(true);
     arming.arm();
-    expect(arming.mayActivate()).toBe(false);
-    expect(arming.remainingMs("mouse")).toBe(MOUSE);
     clock.t += KEY;
-    expect(arming.mayActivate()).toBe(false); // armed again, but that press is stale
+    expect(arming.mayActivate()).toBe(false); // armed, but that press is stale
     arming.pressStarted("key");
-    expect(arming.mayActivate()).toBe(true);
-  });
-
-  it("disarm (focus lost) blocks everything until re-armed", () => {
-    const { clock, arming } = make();
-    arming.arm();
-    clock.t += KEY;
-    arming.pressStarted("mouse");
-    arming.disarm();
-    expect(arming.mayActivate()).toBe(false);
-    expect(arming.isArmed("mouse")).toBe(false);
-    expect(arming.remainingMs("key")).toBe(Infinity);
-    arming.arm();
-    clock.t += MOUSE;
-    arming.pressStarted("mouse");
     expect(arming.mayActivate()).toBe(true);
   });
 

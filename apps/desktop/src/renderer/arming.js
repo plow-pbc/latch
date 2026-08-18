@@ -13,9 +13,11 @@
 
    The rule has two halves, and both are needed:
 
-   - **Armed only after a quiet delay (per input kind).** Arming starts when
-     the window is shown and restarts every time it gains focus; nothing
-     activates until that kind's delay has fully elapsed. The renderer also
+   - **Armed only after a quiet delay (per input kind).** Arming happens once,
+     when the window is shown; nothing activates until that kind's delay has
+     fully elapsed, and once armed the window STAYS armed (an agent is driving
+     this Mac, so focus shifts under the user constantly — tying arming to
+     focus made the buttons revoke themselves mid-read). The renderer also
      disables the buttons until then, but the disabled attribute alone can't
      express the second half:
    - **The press must have STARTED while armed.** A keydown in the previous app
@@ -46,19 +48,11 @@ export class InputArming {
     this.pressKind = null;
   }
 
-  /** The window was shown or gained focus: restart both quiet periods. Any
-   *  press already in flight predates the (re)gained attention, so it is
-   *  invalidated too. */
+  /** The window was shown: start both quiet periods. Any press already in
+   *  flight predates the window, so it is invalidated too. */
   arm() {
     const t = this.now();
     this.armedAt = { mouse: t + this.delayMs.mouse, key: t + this.delayMs.key };
-    this.pressValid = false;
-    this.pressKind = null;
-  }
-
-  /** The window lost focus: nothing may activate until it is re-armed. */
-  disarm() {
-    this.armedAt = { mouse: Infinity, key: Infinity };
     this.pressValid = false;
     this.pressKind = null;
   }
@@ -70,8 +64,8 @@ export class InputArming {
   }
 
   /** Milliseconds until `kind` is armed — 0 when already armed, Infinity when
-   *  disarmed. The renderer schedules its button-enable moment (mouse) and its
-   *  default-focus moment (key) from this.
+   *  never armed. The renderer schedules its button-enable moment (mouse) and
+   *  its default-focus moment (key) from this.
    *  @param {PressKind} kind */
   remainingMs(kind) {
     return Math.max(0, this.armedAt[kind] - this.now());

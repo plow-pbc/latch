@@ -16,40 +16,27 @@ const arming = new InputArming({ now: () => performance.now() });
 window.addEventListener("keydown", (e) => arming.pressStarted("key", { repeat: e.repeat }), true);
 window.addEventListener("mousedown", () => arming.pressStarted("mouse"), true);
 
-/* Disable the action buttons until the mouse arming delay elapses, and re-run
-   the delays every time the window regains focus (macOS delivers the
-   activating click of a background window to the button under it — that click
-   must not count either). Keyboard arms later than mouse, so `focusTarget`
-   only gets keyboard focus at that later moment; until then a stray Return
-   has nothing to land on, and the gate in button() covers the rest. */
-let mouseTimer = null;
-let keyTimer = null;
+/* Disable the action buttons until the mouse arming delay elapses. Arming is
+   ONE-SHOT, at show: an agent is actively driving this Mac, so window focus
+   shifts under the user constantly — re-arming on focus made the buttons fade
+   out and revoke themselves mid-read. Once enabled they stay enabled; the
+   press-start rule in arming.js still rejects input that began elsewhere.
+   Keyboard arms later than mouse, so `focusTarget` only gets keyboard focus
+   at that later moment; until then a stray Return has nothing to land on, and
+   the gate in button() covers the rest. */
 function armActions(buttons, focusTarget) {
   const setEnabled = (on) => buttons.forEach((b) => (b.disabled = !on));
-  const rearm = () => {
-    arming.arm();
-    setEnabled(false);
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    clearTimeout(mouseTimer);
-    clearTimeout(keyTimer);
-    mouseTimer = setTimeout(() => setEnabled(true), arming.remainingMs("mouse"));
-    // The default focus must YIELD: buttons are Tab-focusable from the moment
-    // they enable, and stealing focus from a button the human already chose
-    // (Deny, say) would aim their next armed Return at Allow Once instead —
-    // the exact accident this file exists to prevent. Renderer-only wiring no
-    // vitest case can pin, so don't "simplify" the guard away.
-    keyTimer = setTimeout(() => {
-      if (!buttons.includes(document.activeElement)) focusTarget.focus();
-    }, arming.remainingMs("key"));
-  };
-  window.addEventListener("focus", rearm);
-  window.addEventListener("blur", () => {
-    arming.disarm();
-    setEnabled(false);
-    clearTimeout(mouseTimer);
-    clearTimeout(keyTimer);
-  });
-  rearm();
+  arming.arm();
+  setEnabled(false);
+  setTimeout(() => setEnabled(true), arming.remainingMs("mouse"));
+  // The default focus must YIELD: buttons are Tab-focusable from the moment
+  // they enable, and stealing focus from a button the human already chose
+  // (Deny, say) would aim their next armed Return at Allow Once instead —
+  // the exact accident this file exists to prevent. Renderer-only wiring no
+  // vitest case can pin, so don't "simplify" the guard away.
+  setTimeout(() => {
+    if (!buttons.includes(document.activeElement)) focusTarget.focus();
+  }, arming.remainingMs("key"));
 }
 
 function el(tag, opts = {}, children = []) {
