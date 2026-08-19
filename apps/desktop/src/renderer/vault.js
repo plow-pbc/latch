@@ -176,14 +176,34 @@ function vfield(spec, ctx) {
     [label, el("div", { class: "inwrap" }, [input, ...buttons]), hint].filter(Boolean));
 }
 
-/** The website group: one box per URL the item has, and her "Add website". */
+/** The website group: one box per URL the item has, her "Add website", and a
+    way back off each one. */
 function vurls(ctx) {
   const rows = el("div", {});
+  // The last remaining site cannot be removed: a login with no URL can never be
+  // filled, and the save refuses it — so the form never offers that dead end.
+  const sync = () => {
+    const only = rows.children.length === 1;
+    for (const row of rows.children) row.querySelector(".drop").hidden = only;
+  };
   const add = () => {
     const input = el("input", { class: "inp", attrs: { type: "text", spellcheck: "false", placeholder: "https://" } });
     input.addEventListener("input", () => ctx.onChange?.());
     ctx.urlInputs.push(input);
-    rows.appendChild(el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input])]));
+    const drop = el("button", { class: "mini drop", attrs: { type: "button", title: "Remove this website", "aria-label": "Remove this website" } },
+      [icon("close", { class: "vico", strokeWidth: "1.8" })]);
+    const row = el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input, drop])]);
+    drop.addEventListener("click", () => {
+      // Emptied and detached, never spliced out of urlInputs: vpayload sends the
+      // boxes by position, and a shorter list would reconcile every URL below
+      // this one against the entry that belongs to the row above it.
+      input.value = "";
+      row.remove();
+      sync();
+      ctx.onChange?.();
+    });
+    rows.appendChild(row);
+    sync();
     return input;
   };
   const existing = ctx.item ? ctx.item.urls || [] : [];

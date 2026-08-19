@@ -38,6 +38,9 @@ const account = splitKey(crypto.randomBytes(64));
 const ciphers = new Map();
 let nextId = 1;
 
+/** Product Hunt's URL entries as they were before a site was removed. */
+let phUris = [];
+
 function seed(input) {
   const id = `item-${nextId++}`;
   ciphers.set(id, { ...encryptCipher(input, null, account), id });
@@ -50,7 +53,8 @@ seed({
   name: "Product Hunt",
   username: "daniel@plow.co",
   password: "already-stored",
-  urls: ["https://www.producthunt.com"],
+  // Three, because one site proves nothing about removing the right one.
+  urls: ["https://www.producthunt.com", "https://ph.co", "https://api.producthunt.com"],
 });
 seed({
   type: "card",
@@ -163,7 +167,69 @@ const SCREENS = [
     // anywhere in that loop.
     expect: ["GitHub", "Product Hunt", "Amex", "3 items"],
   },
+  {
+    name: "dropped-url",
+    prepare: async (win) => {
+      phUris = ciphers.get("item-1").login.uris.map((u) => u.uri);
+      await clickText(win, "Product Hunt");
+      await settle(win);
+      await removable(win, 3, "before the removal");
+      await dropUrl(win, 1);
+      // The website group sits below the fold in this window, and it is the
+      // whole subject of this shot.
+      await showUrls(win);
+      await settle(win);
+    },
+    // The middle box is gone from the form; the two it kept are still there.
+    expectValues: ["https://www.producthunt.com", "https://api.producthunt.com"],
+    after: async (win) => {
+      await clickText(win, "Save");
+      await settle(win);
+      const item = ciphers.get("item-1");
+      const urls = decryptItem(item, account).urls;
+      const want = ["https://www.producthunt.com", "https://api.producthunt.com"];
+      if (JSON.stringify(urls) !== JSON.stringify(want)) {
+        throw new Error(`removed site not dropped: stored ${JSON.stringify(urls)}, wanted ${JSON.stringify(want)}`);
+      }
+      // And the two it kept are the entries they already were. A removal that
+      // renumbered the boxes would reconcile the last one against the entry
+      // above it, rewriting a URL nobody touched — invisible above, and the
+      // reason the removed row is emptied in place rather than spliced out.
+      const kept = item.login.uris.map((u) => u.uri);
+      if (kept[0] !== phUris[0] || kept[1] !== phUris[2]) {
+        throw new Error("removing a site shifted the ones below it onto other entries");
+      }
+      // GitHub has the one site it was saved with, and no way to remove it: a
+      // login with no URL can never be filled, so the form never offers that.
+      await clickText(win, "GitHub");
+      await settle(win);
+      await removable(win, 0, "on a login with a single site");
+    },
+  },
 ];
+
+/** How many websites can be removed right now, and how many should be. */
+async function removable(win, n, when) {
+  const shown = await win.webContents.executeJavaScript(
+    `document.querySelectorAll(".vaultui .mini.drop:not([hidden])").length`,
+  );
+  if (shown !== n) throw new Error(`${shown} remove buttons ${when}, wanted ${n}`);
+}
+
+/** Bring the website group into the frame. */
+async function showUrls(win) {
+  await win.webContents.executeJavaScript(
+    `(() => { const h = [...document.querySelectorAll(".vaultui .group-h")].find((e) => e.textContent.startsWith("Website")); h?.scrollIntoView({ block: "center" }); })()`,
+  );
+}
+
+/** Click the remove button on the nth website box, the way a person does. */
+async function dropUrl(win, nth) {
+  const found = await win.webContents.executeJavaScript(
+    `(() => { const b = document.querySelectorAll(".vaultui .mini.drop")[${nth}]; if (!b) return false; b.click(); return true; })()`,
+  );
+  if (!found) throw new Error(`no remove button on website box ${nth}`);
+}
 
 /** The first eye button on screen — how a person asks to see a stored secret. */
 async function clickEye(win) {

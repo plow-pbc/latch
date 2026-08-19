@@ -220,6 +220,7 @@
     padding: 15px 20px; border-top: 1px solid var(--border); position: relative; z-index: 4; }
 .vaultui .sheet-back[hidden],
 .vaultui .sheet-foot[hidden],
+.vaultui .mini[hidden],
 .vaultui .htag[hidden] { display: none !important; }
 .vaultui .sheet-foot .btn.ghost { background: transparent; }
 .vaultui .btn.save[disabled] { opacity: .4; cursor: not-allowed; box-shadow: none; filter: none; }
