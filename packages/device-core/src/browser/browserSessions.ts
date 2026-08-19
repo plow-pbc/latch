@@ -10,7 +10,9 @@
  *   interacted with except finding the way back (url/pages/use_page/goto) —
  *   recovery is a plow_browser_request intent that widens the scope;
  * - credential values flow op → here → a frame-targeted fill on an approved
- *   origin, and are dropped immediately. They never appear in results or audit.
+ *   origin, and are dropped immediately. They never appear in the results these
+ *   tools return, nor in either audit log. `eval` is the documented exception:
+ *   it reads page values directly, so a filled field is readable through it.
  *
  * This layer is the cage: seatbelt cannot confine a browser (network is
  * all-or-nothing), so scope enforcement lives in trusted TS. What the origin
@@ -21,7 +23,7 @@
 import crypto from "node:crypto";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost } from "./browserHost.js";
-import { CredentialBroker, CredentialError } from "./credentialBroker.js";
+import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
@@ -395,6 +397,25 @@ export class BrowserSessions {
       url: stripQuery(url),
     });
 
+    // The browser puts the mark back on every concealed field before it lets
+    // anything be observed, and says so when one of them would not take. It
+    // sends no picture and no field list in that case, and neither does this:
+    // an observation that cannot be made safely is not made.
+    if (result.ok === false && result.mask === "unmasked") {
+      this.audit("credential_mask_failed", {
+        session: s.handle,
+        action: String(action.action),
+        url: stripQuery(url),
+      });
+      return {
+        status: "error",
+        error:
+          `${String(action.action)} was refused: a field on this page holds a value the vault ` +
+          `conceals and the page will not let it be hidden on screen. Navigate away from it, ` +
+          `or fill that field by hand.`,
+      };
+    }
+
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
@@ -476,9 +497,14 @@ export class BrowserSessions {
 
   /**
    * The strongest gate. Order matters: approved item → locate the frame the
-   * selector is actually in → that frame's origin must be approved → the op
-   * broker releases against the DEVICE-observed frame URL (its own item-origin
-   * check applies) → frame-targeted fill → value dropped.
+   * selector is actually in → that frame's origin must be approved → ask the
+   * vault whether it masks this field → the op broker releases against the
+   * DEVICE-observed frame URL (its own item-origin check applies) →
+   * frame-targeted fill, marking the element when the vault masks it → value
+   * dropped.
+   *
+   * The mask question is asked before the secret is fetched, so nothing is
+   * holding a value while a second broker process runs.
    */
   private async fillSecret(
     s: Session,
@@ -507,6 +533,10 @@ export class BrowserSessions {
     const located = await this.host.sendAction({ action: "locate", selector });
     const frame = typeof located.frame === "number" ? located.frame : 0;
     const frameUrl = typeof located.frame_url === "string" ? located.frame_url : "";
+    // What identifies the document this field is in. The url answers "may a
+    // credential go here"; this answers "is this still the same page", which a
+    // url cannot — an SPA rewrites it without replacing anything.
+    const frameToken = typeof located.frame_token === "string" ? located.frame_token : null;
     const frameHost = hostOf(frameUrl);
     if (frameHost === null || !originMatches(frameHost, s.origins)) {
       this.audit("credential_denied", {
@@ -522,9 +552,13 @@ export class BrowserSessions {
       };
     }
 
-    let secret: string;
+    // The value and whether the vault conceals it come back together, from one
+    // reading of the item. Two questions would be two answers about two moments
+    // — and an item edited between them releases a concealed value under the
+    // flag the old one carried.
+    let release: CredentialRelease;
     try {
-      secret = await this.credentials.getField(itemId, field, frameUrl);
+      release = await this.credentials.getField(itemId, field, frameUrl);
     } catch (error: unknown) {
       const type = error instanceof CredentialError ? error.type : "BrokerFailed";
       const message = error instanceof Error ? error.message : String(error);
@@ -535,11 +569,98 @@ export class BrowserSessions {
         origin: frameHost,
         reason: `${type}: ${message}`,
       });
+      // A field the vault will not offer is answered in this device's own
+      // words; anything else keeps the broker's, which is written for a human
+      // and carries no value.
+      if (type === "InvalidArgument") {
+        return {
+          status: "error",
+          error:
+            `item ${itemId} does not offer a field called ${field} — ask ` +
+            `plow_vault {action: "describe"} for the item and use one it lists`,
+        };
+      }
       return { status: "error", error: `credential release refused: ${message}` };
     }
+    // Asking the vault takes long enough for the session to end underneath
+    // this: closed by the owner, by the idle timer, or by another agent opening
+    // one. The browser is shared, so a value released for a session that no
+    // longer exists would be typed into whatever is on screen now.
+    if (this.session !== s) {
+      this.audit("credential_denied", {
+        session: s.handle,
+        item: itemId,
+        field,
+        origin: frameHost,
+        selector,
+        reason: "the session ended while the vault was being asked",
+      });
+      return {
+        status: "error",
+        error:
+          `${field} was not filled: this browser session ended while the vault was being asked ` +
+          `for the value, so nothing was typed. Open a session and try again.`,
+      };
+    }
+
+    const mask = release.hidden;
+    let secret = release.value;
 
     try {
-      await this.host.sendAction({ action: "fill", selector, value: secret, frame });
+      const filled = await this.host.sendAction({
+        action: "fill",
+        selector,
+        value: secret,
+        frame,
+        // The origin was checked against this document before the vault was
+        // asked for the value. A frame index is not an identity — the site can
+        // swap the iframe out while that is in flight — so the browser is told
+        // which document was approved and refuses if the node is in another.
+        ...(frameToken === null ? {} : { frame_token: frameToken }),
+        // Only a masked field carries the mark; a visible one — an address, a
+        // username, a cardholder name — is filled exactly as it always was,
+        // with nothing added to the page.
+        ...(mask ? { mask: true } : {}),
+      });
+      // The browser reports back whether the mark actually took. A page can
+      // defeat it — a Content-Security-Policy without 'unsafe-inline' in
+      // style-src blocks the stylesheet the mask rides on — and when it does,
+      // nothing was typed: the value would have been legible in every
+      // screenshot from that moment on, which is the whole thing this exists to
+      // prevent. Refused rather than filled.
+      if (filled.mask === "moved") {
+        this.audit("credential_denied", {
+          session: s.handle,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: "the frame was replaced after its origin was approved",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: the frame holding ${selector} was replaced while the vault ` +
+            `was being asked for the value, so it is no longer the one whose origin was approved. ` +
+            `Screenshot the page and locate the field again.`,
+        };
+      }
+      if (filled.ok !== true) {
+        this.audit("credential_denied", {
+          session: s.handle,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: "the page prevented the value from being masked",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: this page stops the value from being hidden on screen, ` +
+            `so it was not typed. Fill it by hand, or use a field the vault does not conceal.`,
+        };
+      }
     } catch (error: unknown) {
       // Playwright reports what it tried to type: `filling "hunter2"` is part of
       // its failure message. Forwarding that hands the agent the very value this

@@ -12,7 +12,20 @@
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
+ *   FAKE_CSP_BLOCKS_MASK=1   answer every masked fill "unmasked" and type
+ *                            nothing, the way a page whose style-src omits
+ *                            'unsafe-inline' defeats the mask
+ *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
+ *                            server does when the resolved node is in a
+ *                            different document than the one approved
+ *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
+ *                            server refuses when a mark will not go back on
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
+ *   FAKE_CMD_LOG=path  append the JSON of every command received, one per line
+ *                      (proof of what the device asked the browser to do). The
+ *                      `value` a fill carries is replaced with its length
+ *                      before the line is written — a credential value never
+ *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
  *   click "#popup"    opens a second page on https://popup.example/pay
@@ -43,6 +56,14 @@ function respond(obj) {
 
 function handle(cmd) {
   const a = cmd.action;
+  // The real server re-applies every mark before it lets anything be observed
+  // and refuses the observation when one will not take. FAKE_REMASK_FAILS is
+  // how a test says "it will not take"; which fields are masked is the real
+  // server's business, and tracking a copy of it here only invited the two to
+  // disagree.
+  if ((a === "screenshot" || a === "forms") && process.env.FAKE_REMASK_FAILS === "1") {
+    return { ok: false, mask: "unmasked" };
+  }
   if (a === "goto") {
     current().url = cmd.url;
     current().title = "page at " + cmd.url;
@@ -84,6 +105,15 @@ function handle(cmd) {
     return { ok: true, frame: 0 };
   }
   if (a === "fill") {
+    // A page that will not let the mark take: nothing is typed, and the caller
+    // is told the value would have been legible.
+    if (cmd.mask && process.env.FAKE_CSP_BLOCKS_MASK === "1") {
+      return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
+    }
+    // The frame behind the index is no longer the document the device approved.
+    if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_token) {
+      return { ok: false, mask: "moved", frame: cmd.frame ?? 0 };
+    }
     // Playwright puts the value it tried to type into its own failure message.
     // Reproduce that shape so the leak this guards against is testable.
     if (String(cmd.selector) === "#nofill") {
@@ -99,16 +129,23 @@ function handle(cmd) {
         `${cmd.selector}\t${cmd.value}\t${cmd.frame ?? 0}\n`,
       );
     }
-    return { ok: true, frame: cmd.frame ?? 0 };
+    return {
+      ok: true,
+      frame: cmd.frame ?? 0,
+      ...(cmd.mask ? { mask: "stylesheet" } : {}),
+    };
   }
   if (a === "locate") {
+    // The token is what the fill is checked against; the url is what the device
+    // checks an origin against.
     if (String(cmd.selector).startsWith("#card")) {
       return {
         frame: 1,
         frame_url: process.env.FAKE_CARD_FRAME_URL || "https://payframe.example/card",
+        frame_token: "doc-card",
       };
     }
-    return { frame: 0, frame_url: current().url };
+    return { frame: 0, frame_url: current().url, frame_token: "doc-top" };
   }
   if (a === "scroll") return { ok: true };
   if (a === "wait") return { ok: true, seconds: cmd.seconds }; // echo so tests can see clamping
@@ -149,6 +186,12 @@ function main() {
     if (cmd.action === "quit") {
       respond({ id: cmd.id, result: { ok: true } });
       process.exit(0);
+    }
+    if (process.env.FAKE_CMD_LOG) {
+      // Redacted here, at the point of writing, so no reader has to remember to
+      // do it and no failure diff can print the value.
+      const line = typeof cmd.value === "string" ? { ...cmd, value: `<${cmd.value.length} chars>` } : cmd;
+      fs.appendFileSync(process.env.FAKE_CMD_LOG, JSON.stringify(line) + "\n");
     }
     state.commands++;
     if (process.env.CRASH_AFTER && state.commands > Number(process.env.CRASH_AFTER)) {

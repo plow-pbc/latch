@@ -143,11 +143,13 @@ describe("audit grouping for browser sessions", () => {
   });
 });
 
-describe("a failed credential fill is visible to the owner", () => {
-  const events: JSONValue[] = [
-    { event: "browser_session_opened", intentId: "i2", session: "T", origins: ["dominos.com"], ts: "2026-08-10T11:00:00Z" },
-    { event: "browser_command", session: "T", action: "goto", url: "https://dominos.com/login", ts: "2026-08-10T11:00:01Z" },
-    {
+// Two ways a credential can go wrong in front of the owner: one that could not
+// be typed, and one that was typed into a page that would not keep it hidden.
+// Both must read as failures rather than as a healthy browsing session.
+describe.each([
+  {
+    what: "a fill that could not be typed",
+    event: {
       event: "credential_fill_failed",
       session: "T",
       item: "L1",
@@ -156,19 +158,39 @@ describe("a failed credential fill is visible to the owner", () => {
       origin: "dominos.com",
       reason: "the browser could not type it into that field",
       ts: "2026-08-10T11:00:02Z",
-    },
+    } as JSONValue,
+    status: "Fill failed",
+    says: "Credential not typed",
+    mentions: ["L1", "#pass", "dominos.com"],
+  },
+  {
+    what: "a page that would not keep it hidden",
+    event: {
+      event: "credential_mask_failed",
+      session: "T",
+      action: "screenshot",
+      url: "https://dominos.com/pay",
+      ts: "2026-08-10T11:00:02Z",
+    } as JSONValue,
+    status: "Mask failed",
+    says: "could not be kept hidden",
+    mentions: ["dominos.com/pay", "screenshot"],
+  },
+])("$what is visible to the owner", ({ event, status, says, mentions }) => {
+  const events: JSONValue[] = [
+    { event: "browser_session_opened", intentId: "i2", session: "T", origins: ["dominos.com"], ts: "2026-08-10T11:00:00Z" },
+    { event: "browser_command", session: "T", action: "goto", url: "https://dominos.com/login", ts: "2026-08-10T11:00:01Z" },
+    event,
   ];
 
   it("does not read as a healthy browsing session", () => {
     const browser = auditActivities(events).find((a) => a.id === "browser:T")!;
-    // Green "Browsing" would tell the owner a credential went in when it did not.
-    expect(browser.status).toBe("Fill failed");
-    const line = browser.timeline.find((s) => s.text.includes("Credential not typed"))!;
-    expect(line.state).toBe("bad");
-    expect(line.text).toContain("L1");
-    expect(line.text).toContain("#pass");
-    expect(line.text).toContain("dominos.com");
-    // ...and the Failed filter must show it, or the owner only finds it by luck.
+    // Green "Browsing" would tell the owner all is well when it is not.
+    expect(browser.status).toBe(status);
+    // ...and the Failed filter must show it, or they only find it by luck.
     expect(browser.category).toBe("failed");
+    const line = browser.timeline.find((step) => step.text.includes(says))!;
+    expect(line.state).toBe("bad");
+    for (const fragment of mentions) expect(line.text).toContain(fragment);
   });
 });

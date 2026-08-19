@@ -1,17 +1,27 @@
 #!/usr/bin/env node
 /**
  * Fake seed-vault-broker for unit tests: speaks the same CLI surface
- * (whats-here / describe-item / get-field / status) and mimics the origin
- * check, backed by a JSON vault file. The REAL seed-vault-broker is
- * exercised in the integration tier against a fake `op` binary; this fake is
- * only for python-free unit tests of the TS layer above it.
+ * (whats-here / describe-item / get-field / status), backed by a JSON vault
+ * file. The REAL seed_vault_broker is exercised by e2e/fixtures/classifyProbe.py
+ * against the same table; this fake exists so the TS layer above it can be
+ * tested without Python.
+ *
+ * It holds NO policy. Which fields an item has, and which of them the vault
+ * conceals, are stated outright in the fixture — this used to re-derive them
+ * from Bitwarden's rules, which meant two copies of one classification and two
+ * chances to get it wrong. (It did get it wrong, twice.) A fake that only
+ * reads back what a test wrote cannot disagree with production about anything,
+ * because it has no opinion to disagree with.
  *
  * Vault file (env FAKE_BROKER_VAULT):
  *   [{ "id", "title", "category", "username", "urls": ["https://..."],
- *      "fields": { "password": "hunter2", ... } }]
+ *      "descriptors": [{ "label", "hidden", "custom", "alias" }],
+ *      "values": { "<label>": "the value" } }]
  *
- * Like the real broker, appends release/denial lines (never values) to
- * SEED_VAULT_AUDIT when set.
+ * Like the real broker, appends one line per describe and per release to
+ * SEED_VAULT_AUDIT when set — never a value.
+ *
+ * FAKE_BROKER_DELAY_MS holds a release open for that many milliseconds.
  */
 "use strict";
 const fs = require("node:fs");
@@ -47,6 +57,8 @@ function argValue(args, flag) {
   return i !== -1 && i + 1 < args.length ? args[i + 1] : null;
 }
 
+const descriptors = (item) => item.descriptors || [];
+
 const [cmd, ...args] = process.argv.slice(2);
 
 if (cmd === "status") {
@@ -67,32 +79,44 @@ if (cmd === "status") {
   const id = argValue(args, "--item-id");
   const item = vault().find((i) => i.id === id);
   if (!item) fail("VaultNotFound", "No such item in the vault.");
+  // The real broker writes this line for every describe. Labels, never values.
+  audit(id, "(labels)", "-", "DESCRIBED");
   process.stdout.write(
     JSON.stringify({
       id: item.id,
       title: item.title,
       category: item.category,
-      fields: Object.keys(item.fields || {}),
+      fields: descriptors(item),
     }) + "\n",
   );
 } else if (cmd === "get-field") {
+  // A release that takes its time, so a test can do something else while the
+  // device is waiting on it — closing the session, for instance.
+  const delay = Number(process.env.FAKE_BROKER_DELAY_MS || 0);
+  if (delay > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
   const id = argValue(args, "--item-id");
   const field = argValue(args, "--field");
   const url = argValue(args, "--url");
   const item = vault().find((i) => i.id === id);
   if (!item) fail("VaultNotFound", "No such item in the vault.");
   const page = url ? hostKey(url) : null;
-  if (url && item.category !== "CREDIT_CARD") {
+  // The one rule the fake keeps, because callers are tested against it: a login
+  // is not released off its own site. Cards and the rest carry no site.
+  if (url && item.category === "LOGIN") {
     const keys = (item.urls || []).map(hostKey).filter(Boolean);
     if (keys.length && !keys.includes(page)) {
       audit(id, field, page, "DENIED origin mismatch");
       fail("VaultDenied", `item belongs to ${keys.join(", ")}, not to ${page}`);
     }
   }
-  const value = (item.fields || {})[field];
-  if (value === undefined) fail("OpNotFound", `no field ${field}`);
+  const descriptor = descriptors(item).find((d) => d.label === field);
+  const value = (item.values || {})[field];
+  if (!descriptor || value === undefined) {
+    fail("InvalidArgument", `this item does not offer '${field}'`);
+  }
   audit(id, field, page || "SEM-URL", "RELEASED");
-  process.stdout.write(value); // no trailing newline, like the real one
+  // Value and concealment together, out of one reading — the real contract.
+  process.stdout.write(JSON.stringify({ value, hidden: descriptor.hidden === true }));
 } else {
   fail("InvalidArgument", "unknown command: " + cmd);
 }
