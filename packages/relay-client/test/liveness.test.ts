@@ -154,6 +154,38 @@ describe("a socket that goes silent", () => {
     await client.stop();
   });
 
+  it("does not hold a replacement socket to the last relay's cadence", async () => {
+    // The advertised cadence belongs to the connection that advertised it. Kept
+    // across a redial it becomes a trap: a relay that asked for a 1s beat leaves
+    // the next socket on a 2s pre-auth fuse, so a healthy replacement whose
+    // handshake takes a moment longer is closed on sight — and the one after
+    // that, and the one after that, which is a reconnect loop that never lands.
+    const { client, conns, status } = harness();
+    await client.start();
+    conns[0].deliver({ type: "auth.challenge" });
+    conns[0].deliver({ type: "auth.ok", ping_interval_ms: 1000 });
+    expect(client.isConnected).toBe(true);
+
+    // That relay goes silent and is dropped on its own (fast) cadence.
+    conns[0].deaf = true;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(conns[0].closed).toBe(true);
+
+    // The redial lands, and this relay is fine — it is simply slower to say
+    // hello than the last one's two beats.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(conns).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(conns[1].closed).toBe(false);
+    expect(conns).toHaveLength(2);
+
+    conns[1].handshake();
+    expect(client.isConnected).toBe(true);
+    expect(status).toEqual([true, false, true]);
+
+    await client.stop();
+  });
+
   it("counts any inbound frame as proof of life, not just a pong", async () => {
     // The relay is under load and answers no pings, but is plainly alive: it is
     // still pushing frames down the socket. Dropping that connection would kill

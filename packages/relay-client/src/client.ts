@@ -165,6 +165,11 @@ export class RelayClient {
     }
     this.conn = conn;
     this.lastInboundAt = Date.now();
+    // A cadence the *last* relay advertised says nothing about this socket, and
+    // inheriting a short one would have the watchdog close a perfectly healthy
+    // replacement whose handshake merely took longer than two of them. Back to
+    // ours until this connection has advertised its own.
+    this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
     // Armed here, not at `auth.ok`: a socket that opens and then goes silent
     // before the handshake completes is the same dead socket, and waiting for
     // an `auth.ok` that will never arrive would leave it sitting until the OS
