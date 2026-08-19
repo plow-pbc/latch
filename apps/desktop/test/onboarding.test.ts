@@ -7,6 +7,7 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   Onboarding,
+  OnboardingDeps,
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";

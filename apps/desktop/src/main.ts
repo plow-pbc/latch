@@ -652,6 +652,38 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
   setLaunchAtLogin(app.isPackaged, loginItems, on),
 );
 
+/**
+ * The one-time first-run default: a user who just set this Mac up wants it
+ * reachable, so launch at login turns ON the moment setup hands over to the
+ * app — and never again after that (`Settings.launchAtLoginDefaulted`), so
+ * turning it off in Settings sticks.
+ *
+ * "Pending" is read entirely off disk: a credential with the marker still
+ * false can only mean a completed setup whose default has not landed —
+ * `finishWithSession` writes both fields, a home signed in from before the
+ * marker existed reads as already defaulted (`loadSettings`), and sign-out
+ * keeps the marker. So someone reopening the setup window from Settings never
+ * trips this, no in-memory "signed in this session" flag is needed, and the
+ * hook is idempotent — which is why it runs at BOTH the hand-over (the setup
+ * window's closed handler) and startup: a crash between setup and the
+ * hand-over leaves the default pending on disk, and the next launch opens the
+ * main window directly, never closing a setup window.
+ *
+ * The attempt is the shot: if the OS declines the write we do not come back on
+ * every launch — the Settings toggle is the recourse. A from-source run is the
+ * one case that does NOT burn it (`supported` false writes nothing), so no dev
+ * checkout enrolls the stock Electron binary and a packaged install's real
+ * first run still gets its default.
+ */
+function applyFirstRunLaunchAtLogin(): void {
+  const settings = loadSettings(home);
+  if (settings.launchAtLoginDefaulted || !settings.relayCredential.trim()) return;
+  if (setLaunchAtLogin(app.isPackaged, loginItems, true).supported) {
+    settings.launchAtLoginDefaulted = true;
+    saveSettings(home, settings);
+  }
+}
+
 // MARK: IPC for software updates (banner + Software Updates settings section).
 // One whole-state shape per read, renderer-side composition-free. In a
 // from-source run there is no controller: supported=false and the section
@@ -724,6 +756,10 @@ function openOnboardingWindow(): void {
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
+    // Every hand-over from a completed setup to the main window closes this
+    // window — Continue, the close box, the tray — so this is the one place
+    // the first-run launch-at-login default lands.
+    applyFirstRunLaunchAtLogin();
     // Closing the gate quits; closing the confirmation behind it hands over to
     // the app, the same as Continue. See WindowGate.setupClosed.
     gate.setupClosed();
@@ -944,6 +980,11 @@ app.whenReady().then(async () => {
       (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
     );
   }
+  // A crash between setup saving the credential and the hand-over would leave
+  // the first-run default pending on disk with no setup window left to close —
+  // and this launch goes straight to the main window, so the hand-over hook
+  // never runs. Settle it here; every already-settled home returns early.
+  applyFirstRunLaunchAtLogin();
   // The gate decides what opens. A Mac with no credential cannot do anything
   // until it has one, so it gets the setup window and nothing else — not the
   // main window with a setup window floating beside it.
