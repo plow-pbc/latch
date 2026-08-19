@@ -124,10 +124,19 @@ export class RelayClient {
   private ceilingMs = directCeilingMs(undefined) ?? LEGACY_CALL_BUDGET_MS;
   private ackAdvertised = false;
   /**
-   * Rids this client has answered, awaiting the relay's acknowledgement, each
-   * tagged with the socket it went out on and when it stops being answerable.
+   * Exchanges being served, from the moment the request arrives until their
+   * delivery is settled one way or the other.
+   *
+   * Tracked from RECEIPT, not from the response going out. An approval still
+   * being decided when the socket dies had nothing recorded under the old
+   * shape — the response never existed, so nothing was ever tracked — and that
+   * is precisely the case where the user most needs the audit to say delivery
+   * is unknown.
    */
-  private readonly awaitingAck = new Map<string, { generation: number; expiresAt: number }>();
+  private readonly exchanges = new Map<
+    string,
+    { generation: number; deadlineAt: number; timer: NodeJS.Timeout }
+  >();
   /** Bumped on every connection, so an ack can never cross socket lifetimes. */
   private generation = 0;
   /** Requests being served right now, so shutdown can wait for them. */
@@ -301,14 +310,43 @@ export class RelayClient {
     );
   }
 
-  /** Forget rids nobody can still acknowledge — the exchange is long over. */
-  private sweepAcks(now: number): void {
-    for (const [rid, entry] of this.awaitingAck) {
-      if (entry.expiresAt <= now) {
-        this.awaitingAck.delete(rid);
-        this.options.onDeliveryUnknown?.(rid);
-      }
-    }
+  /**
+   * Start the clock on one exchange, at the instant it arrives.
+   *
+   * The deadline is absolute and set here: the relay started counting when it
+   * forwarded this request, so measuring from the response — which is what
+   * happened before — handed a slow call a fresh deadline it had already spent.
+   * The timer is the exchange's own, scheduled now rather than depending on
+   * later traffic to notice: a Mac that goes quiet after one call still
+   * finalizes it.
+   */
+  private trackExchange(rid: string, generation: number): void {
+    if (this.exchanges.has(rid)) return;
+    const timer = setTimeout(() => {
+      this.finalize(rid, "unknown");
+    }, this.exchangeDeadline);
+    timer.unref?.();
+    this.exchanges.set(rid, {
+      generation,
+      deadlineAt: this.now() + this.exchangeDeadline,
+      timer,
+    });
+  }
+
+  /**
+   * Settle one exchange's delivery, exactly once.
+   *
+   * Every path out — acknowledged, socket gone, deadline elapsed — comes
+   * through here, and the entry is removed before anything is reported, so no
+   * rid can be settled twice however the races fall.
+   */
+  private finalize(rid: string, how: "ack" | "unknown"): void {
+    const entry = this.exchanges.get(rid);
+    if (!entry) return;
+    this.exchanges.delete(rid);
+    clearTimeout(entry.timer);
+    if (how === "ack") this.options.onResponseAck?.(rid);
+    else this.options.onDeliveryUnknown?.(rid);
   }
 
   private onFrame(conn: Connection, line: Buffer): void {
@@ -382,18 +420,21 @@ export class RelayClient {
     }
 
     if (isResponseAckFrame(msg)) {
-      // Fail closed on all three counts: an ack for a rid we never answered
-      // proves nothing about our delivery; one for a response that went out on
-      // an earlier socket is answering a delivery that died with that socket;
-      // and one arriving after the exchange could possibly still be open is
-      // stale. Any of them is dropped rather than reported.
-      const now = this.now();
-      this.sweepAcks(now);
-      const entry = this.awaitingAck.get(msg.rid);
+      // Fail closed on all three counts: an ack for a rid we never served
+      // proves nothing about our delivery; one for an exchange that arrived on
+      // an earlier socket is answering for a connection that died with it; and
+      // one arriving past the deadline is stale — that entry has already
+      // settled as unknown. Any of them is dropped rather than reported.
+      // A relay that never advertised acknowledgements cannot vouch for one:
+      // the exchange settles as unknown at its deadline instead.
+      if (!this.ackAdvertised) return;
+      const entry = this.exchanges.get(msg.rid);
       if (!entry) return;
-      this.awaitingAck.delete(msg.rid);
-      if (entry.generation !== this.generation) return;
-      this.options.onResponseAck?.(msg.rid);
+      if (entry.generation !== this.generation || this.now() > entry.deadlineAt) {
+        this.finalize(msg.rid, "unknown");
+        return;
+      }
+      this.finalize(msg.rid, "ack");
       return;
     }
 
@@ -402,6 +443,8 @@ export class RelayClient {
       // budget, and awaiting here would stall the heartbeat — after two missed
       // beats the relay treats this socket as stale and every call fails.
       const generation = this.generation;
+      // Before a byte of work: the relay is already counting.
+      this.trackExchange(msg.rid, generation);
       const task = this.serveRequest(conn, msg, generation).finally(() =>
         this.inFlight.delete(task),
       );
@@ -469,16 +512,10 @@ export class RelayClient {
         body: JSON.stringify({ error: message }),
       };
     }
-    // Only worth tracking when an ack is actually coming, and only for as long
-    // as the relay could still be holding the exchange open.
-    if (this.ackAdvertised) {
-      const now = this.now();
-      this.sweepAcks(now);
-      this.awaitingAck.set(response.rid, {
-        generation,
-        expiresAt: now + this.exchangeDeadline,
-      });
-    }
+    // The exchange has been tracked since the request arrived; answering does
+    // not restart its clock. A relay that never promised acknowledgements
+    // settles as unknown at the deadline, which is the honest answer for one.
+    void generation;
     this.send(conn, response);
   }
 
@@ -492,12 +529,11 @@ export class RelayClient {
 
   private onClose(): void {
     this.conn = null;
-    // The socket is gone, so no acknowledgement is coming for anything still
-    // outstanding: its delivery is unknown, and a later reconnect must not
-    // resolve a stale rid.
-    const stranded = [...this.awaitingAck.keys()];
-    this.awaitingAck.clear();
-    for (const rid of stranded) this.options.onDeliveryUnknown?.(rid);
+    // The socket is gone, so nothing outstanding on it can be acknowledged —
+    // including a call still being decided, whose response was never written.
+    // Each settles once, as unknown, and a later reconnect cannot resolve a
+    // stale rid because the entry is gone.
+    for (const rid of [...this.exchanges.keys()]) this.finalize(rid, "unknown");
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.setConnected(false);

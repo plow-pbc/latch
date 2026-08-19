@@ -99,6 +99,15 @@ type Entry = {
   terminal: JSONValue | null;
   /** When this handle stops answering: creation + TTL, then re-stamped on landing. */
   expiresAt: number;
+  /**
+   * Fires when retention runs out on a terminal payload nobody collected.
+   *
+   * Scheduled rather than swept, because a sweep only runs when something else
+   * happens: a Mac that answers one approval and then goes quiet would leave
+   * that result "ready, uncollected" in the timeline for ever, which is the
+   * one ending a user cannot act on.
+   */
+  expiry: NodeJS.Timeout | null;
 };
 
 export class DeferredResults {
@@ -177,6 +186,7 @@ export class DeferredResults {
       settled = true;
       const status = (value as { status?: string }).status;
       const tell = () => {
+        this.armExpiry(handle);
         if (status === "ready") this.continuations?.ready(handle);
         else if (status === "denied") this.continuations?.denied(handle);
         else this.continuations?.failed(handle);
@@ -236,6 +246,7 @@ export class DeferredResults {
       reason,
       terminal: null,
       expiresAt: this.now() + this.ttlMs,
+      expiry: null,
     });
     // The envelope is about to go back down one relay exchange; remember which,
     // because an acknowledgement names only the exchange.
@@ -244,6 +255,23 @@ export class DeferredResults {
     // has been waiting to be told.
     (announce as (() => void) | null)?.();
     return { status: "pending", handle, reason, retry_after_ms: RETRY_AFTER_MS };
+  }
+
+  /**
+   * Start retention's clock on a terminal payload.
+   *
+   * Only a terminal result gets one: pending work has nothing to expire, and
+   * `Continuations` refuses the transition anyway.
+   */
+  private armExpiry(handle: string): void {
+    const entry = this.entries.get(handle);
+    if (!entry || entry.expiry) return;
+    const timer = setTimeout(() => {
+      entry.expiry = null;
+      this.continuations?.expired(handle);
+    }, this.ttlMs);
+    timer.unref?.();
+    entry.expiry = timer;
   }
 
   /**
@@ -292,7 +320,10 @@ export class DeferredResults {
       // Retention elapsed. Recorded here as well as on a read, so an operation
       // nobody ever came back for still ends up with an ending in the timeline.
       if (entry.expiresAt < now) this.continuations?.expired(handle);
-      if (entry.expiresAt < cutoff) this.entries.delete(handle);
+      if (entry.expiresAt < cutoff) {
+        if (entry.expiry) clearTimeout(entry.expiry);
+        this.entries.delete(handle);
+      }
     }
   }
 }

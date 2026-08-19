@@ -252,10 +252,10 @@ describe("the relay's acknowledgement boundary", () => {
     await client.stop();
   });
 
-  it("waits for no acknowledgement from a relay that never promised one", async () => {
-    // An old relay sends no acks, so tracking a rid for one would be a wait
-    // that never ends — and a stray frame claiming to be an ack must not be
-    // taken as delivery from a relay that does not implement it.
+  it("takes no acknowledgement from a relay that never promised one", async () => {
+    // An old relay sends no acks, so a frame claiming to be one cannot be
+    // evidence of delivery from it. The exchange settles as unknown on its own
+    // deadline instead.
     const conn = fakeConn();
     const acked: string[] = [];
     const client = await handshake(
@@ -268,6 +268,81 @@ describe("the relay's acknowledgement boundary", () => {
     await serveOne(conn, "R2");
     push(conn, { type: FRAME_RESPONSE_ACK, rid: "R2" });
     expect(acked).toEqual([]);
+    await client.stop();
+  });
+
+  it("records delivery as unknown for a request still in flight when the socket dies", async () => {
+    // The case the old shape could not see: the approval was still being
+    // decided, so no response had been written and nothing was tracked — and
+    // that is exactly when a user needs the audit to say delivery is unknown.
+    const conn = fakeConn();
+    const unknown: string[] = [];
+    let release = () => {};
+    const serving = new Promise<void>((r) => {
+      release = () => r();
+    });
+    const client = await handshake(conn, MODERN_RELAY, {
+      onDeliveryUnknown: (rid) => unknown.push(rid),
+      serve: async () => {
+        await serving;
+        return new Response("eventually");
+      },
+    });
+
+    push(conn, {
+      type: "relay.request",
+      rid: "R-INFLIGHT",
+      method: "POST",
+      path: "/mcp",
+      headers: {},
+      body: null,
+    });
+    await new Promise((r) => setImmediate(r));
+    // No response has gone out yet.
+    expect(conn.sent.some((f) => f.type === FRAME_RESPONSE)).toBe(false);
+
+    (conn as unknown as { onClose: (() => void) | null }).onClose?.();
+    expect(unknown).toEqual(["R-INFLIGHT"]);
+
+    // Exactly once: the tool finishing afterwards does not settle it again.
+    release();
+    await new Promise((r) => setImmediate(r));
+    expect(unknown).toEqual(["R-INFLIGHT"]);
+    await client.stop();
+  });
+
+  it("settles an exchange on the deadline it arrived with, not one the response renews", async () => {
+    // The relay started counting when it forwarded the request. Measuring from
+    // the response handed a slow call a deadline it had already spent, and the
+    // timer belongs to the exchange rather than to whatever traffic comes next:
+    // a Mac that answers one call and goes quiet still settles it.
+    let clock = 1_000_000;
+    const conn = fakeConn();
+    const unknown: string[] = [];
+    const acked: string[] = [];
+    const client = await handshake(conn, MODERN_RELAY, {
+      now: () => clock,
+      onDeliveryUnknown: (rid) => unknown.push(rid),
+      onResponseAck: (rid) => acked.push(rid),
+      // Slower than the whole exchange: the response goes out already too late.
+      serve: async () => {
+        clock += RELAY_EXCHANGE_DEADLINE_MS + 1;
+        return new Response("late");
+      },
+    });
+
+    await serveOne(conn, "R-SLOW");
+    expect(conn.sent.some((f) => f.type === FRAME_RESPONSE && f.rid === "R-SLOW")).toBe(true);
+
+    // An acknowledgement for an exchange whose deadline has passed is stale —
+    // and settles it as unknown rather than granting it a fresh window.
+    push(conn, { type: FRAME_RESPONSE_ACK, rid: "R-SLOW" });
+    expect(acked).toEqual([]);
+    expect(unknown).toEqual(["R-SLOW"]);
+
+    // And once settled, a repeat changes nothing.
+    push(conn, { type: FRAME_RESPONSE_ACK, rid: "R-SLOW" });
+    expect(unknown).toEqual(["R-SLOW"]);
     await client.stop();
   });
 

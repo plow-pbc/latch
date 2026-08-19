@@ -18,6 +18,7 @@ import { DeviceAgent, HeadlessPolicy } from "@domo/device-core";
 import {
   CONTINUATION_EVENTS,
   Continuations,
+  ContinuationOutcome,
   ContinuationState,
   createDomoMcpServer,
   exchangeContext,
@@ -141,12 +142,22 @@ describe("every valid transition", () => {
     cont.ready("H1");
     cont.collected("H1");
 
-    // Collected is the end. Nothing reopens it, and nothing else is recorded.
+    // A collected result cannot expire, and cannot land twice.
     cont.expired("H1");
-    cont.acknowledgeExchange("RID-5");
     cont.ready("H1");
     expect(cont.state("H1")).toBe("collected");
     expect(events).toEqual([CONTINUATION_EVENTS.ready, CONTINUATION_EVENTS.collected]);
+
+    // An acknowledgement is a separate fact and is still worth recording — but
+    // it does not disturb what became of the work.
+    cont.acknowledgeExchange("RID-5");
+    expect(cont.outcome("H1")).toBe("ready");
+    expect(cont.state("H1")).toBe("collected");
+    expect(events).toEqual([
+      CONTINUATION_EVENTS.ready,
+      CONTINUATION_EVENTS.collected,
+      CONTINUATION_EVENTS.backgrounded,
+    ]);
 
     // And an expired result cannot later be collected.
     const late = tracked("H2");
@@ -228,6 +239,142 @@ const timeline = (device: DeviceAgent, intentId: string): string[] =>
     .entries()
     .filter((e) => jv(e).get("intentId").str === intentId)
     .map((e) => jv(e).get("event").str ?? "");
+
+describe("observations are independent of the outcome", () => {
+  it("records an acknowledgement that arrives after the result is ready", () => {
+    // The relay is under no obligation to acknowledge before the work lands.
+    // Treating the two as alternatives dropped the acknowledgement, and with it
+    // the only evidence the agent ever received its handle.
+    const { cont, events } = tracked();
+    deferOn(cont, "RID-LATE-ACK");
+    cont.ready("H1");
+    expect(cont.state("H1")).toBe("approved_uncollected");
+
+    cont.acknowledgeExchange("RID-LATE-ACK");
+    expect(cont.acknowledged("H1")).toBe(true);
+    // The outcome is untouched: still a ready result nobody has asked for.
+    expect(cont.outcome("H1")).toBe("ready");
+    expect(cont.state("H1")).toBe("approved_uncollected");
+    expect(events).toEqual([CONTINUATION_EVENTS.ready, CONTINUATION_EVENTS.backgrounded]);
+  });
+
+  it("records the lookup of a denied or failed result without erasing it", () => {
+    for (const [drive, outcome] of [
+      [(c: Continuations) => c.denied("H1"), "denied"],
+      [(c: Continuations) => c.failed("H1"), "failed"],
+    ] as [(c: Continuations) => void, ContinuationOutcome][]) {
+      const { cont, events } = tracked();
+      deferOn(cont, "RID-D");
+      drive(cont);
+      cont.collected("H1");
+
+      // The agent asked, and got its answer — which was a refusal. Both facts
+      // survive: the older shape rewrote the denial as a collection.
+      expect(cont.wasCollected("H1")).toBe(true);
+      expect(cont.outcome("H1")).toBe(outcome);
+      expect(cont.state("H1")).toBe(outcome);
+      expect(events).toEqual([CONTINUATION_EVENTS.collected]);
+
+      // Still one-shot.
+      cont.collected("H1");
+      expect(events).toEqual([CONTINUATION_EVENTS.collected]);
+    }
+  });
+
+  it("keeps an acknowledgement one-shot however often the relay repeats it", () => {
+    const { cont, events } = tracked();
+    deferOn(cont, "RID-DUP");
+    cont.acknowledgeExchange("RID-DUP");
+    cont.acknowledgeExchange("RID-DUP");
+    expect(events).toEqual([CONTINUATION_EVENTS.backgrounded]);
+  });
+});
+
+describe("observations that land before the intent exists", () => {
+  it("holds them, then records them against the intent when it is linked", () => {
+    // The budget can fire before the tool has built an intent at all — a path
+    // resolution on a slow volume is enough — so the acknowledgement for that
+    // envelope arrives while the record has nothing to name.
+    const events: string[] = [];
+    const fields: { [k: string]: JSONValue | undefined }[] = [];
+    const cont = new Continuations({
+      record: (event, f) => {
+        events.push(event);
+        fields.push(f ?? {});
+      },
+    });
+    cont.open("H9", AGENT.agent_id);
+    exchangeContext.run({ rid: "RID-EARLY" }, () => cont.deferred("H9"));
+    cont.acknowledgeExchange("RID-EARLY");
+
+    // Nothing recorded yet — there is no operation to record it against.
+    expect(events).toEqual([]);
+    expect(cont.acknowledged("H9")).toBe(true);
+    expect(cont.state("H9")).toBe("backgrounded");
+
+    cont.linkIntent("H9", INTENT);
+    expect(events).toEqual([CONTINUATION_EVENTS.backgrounded]);
+    expect(fields[0].intentId).toBe(INTENT);
+
+    // And linking again does not replay them.
+    cont.linkIntent("H9", "INTENT-OTHER");
+    expect(events).toEqual([CONTINUATION_EVENTS.backgrounded]);
+    expect(cont.intentOf("H9")).toBe(INTENT);
+  });
+
+  it("holds a delivery-unknown observed before the envelope was even attached", () => {
+    // The socket dies while the human is still deciding: the exchange settles
+    // before a handle has been attached to it, and before any intent exists.
+    const events: string[] = [];
+    const cont = new Continuations({ record: (event) => events.push(event) });
+    cont.exchangeDeliveryUnknown("RID-GONE");
+
+    cont.open("H8", AGENT.agent_id);
+    exchangeContext.run({ rid: "RID-GONE" }, () => cont.deferred("H8"));
+    expect(events).toEqual([]);
+
+    cont.linkIntent("H8", INTENT);
+    expect(events).toEqual([CONTINUATION_EVENTS.deliveryUnknown]);
+    // Unknown moves nothing: the approval is still open.
+    expect(cont.state("H8")).toBe("waiting_inline");
+  });
+});
+
+describe("only a terminal, uncollected result expires", () => {
+  it("refuses to expire pending work, which then lands as ready", () => {
+    // The revival this forbids: retention elapsing on work still being decided,
+    // the operation reported dead, and then — when the human finally answers —
+    // alive again.
+    const { cont, events } = tracked();
+    deferOn(cont, "RID-SLOW");
+    cont.expired("H1");
+    expect(cont.outcome("H1")).toBe("pending");
+    expect(cont.state("H1")).toBe("waiting_inline");
+    expect(events).toEqual([]);
+
+    cont.ready("H1");
+    expect(cont.state("H1")).toBe("approved_uncollected");
+    expect(events).toEqual([CONTINUATION_EVENTS.ready]);
+  });
+
+  it("refuses to expire a denial, a failure, or a collected result", () => {
+    for (const drive of [
+      (c: Continuations) => c.denied("H1"),
+      (c: Continuations) => c.failed("H1"),
+    ]) {
+      const { cont, events } = tracked();
+      drive(cont);
+      cont.expired("H1");
+      expect(events).toEqual([]);
+    }
+    const { cont, events } = tracked();
+    cont.ready("H1");
+    cont.collected("H1");
+    cont.expired("H1");
+    expect(cont.state("H1")).toBe("collected");
+    expect(events).toEqual([CONTINUATION_EVENTS.ready, CONTINUATION_EVENTS.collected]);
+  });
+});
 
 describe("through the server, over repeated reads", () => {
   it("records the agent asking for the result exactly once, however often it polls", async () => {
@@ -335,5 +482,38 @@ describe("through the server, over repeated reads", () => {
     // The decision path is stubbed out here to control the timing, so this
     // timeline is the continuation half alone: ready, then expired.
     expect(events).toEqual([CONTINUATION_EVENTS.ready, CONTINUATION_EVENTS.expired]);
+  });
+
+  it("expires an idle uncollected result on its own, with nothing else running", async () => {
+    // Nothing polls, nothing else is called, and no other work touches the
+    // store. A swept-only expiry would leave this result "ready, uncollected"
+    // in the timeline for ever, which is the one ending a user cannot act on.
+    const home = tempDir();
+    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
+    const server = createDomoMcpServer(device, { budgetMs: 20, ttlMs: 60 });
+    cleanups.push(() => server.close());
+
+    device.handleIntent = (async () => {
+      await new Promise((r) => setTimeout(r, 40));
+      return { status: "ok", content_base64: Buffer.from("nobody reads me").toString("base64") };
+    }) as never;
+
+    const file = path.join(tempDir(), "hello.txt");
+    fs.writeFileSync(file, "nobody reads me");
+    const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
+    expect(payload.status).toBe("pending");
+    const handle = payload.handle as string;
+    const intentId = server.continuations.intentOf(handle)!;
+
+    // Wait it out without touching the server at all.
+    for (let i = 0; i < 60 && server.continuations.state(handle) !== "expired"; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(server.continuations.state(handle)).toBe("expired");
+    const events = timeline(device, intentId);
+    expect(events.filter((e) => e === CONTINUATION_EVENTS.expired)).toEqual([
+      CONTINUATION_EVENTS.expired,
+    ]);
+    expect(events).not.toContain(CONTINUATION_EVENTS.collected);
   });
 });
