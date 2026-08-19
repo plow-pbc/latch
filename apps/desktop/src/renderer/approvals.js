@@ -28,7 +28,7 @@ export const APPROVAL_MODES = [
     value: "ask",
     label: "Ask me every time",
     showsPurpose: false,
-    hint: "Every request opens an approval window. The AI Reviewer can still suggest an answer — turn that on in Settings.",
+    hint: "Any request a rule doesn't already cover opens an approval window. The AI Reviewer can still suggest an answer — turn that on in Settings.",
   },
   {
     value: "adversarial",
@@ -46,13 +46,13 @@ export const APPROVAL_MODES = [
     value: "deny",
     label: "Deny everything",
     showsPurpose: false,
-    hint: "Every request is refused without asking you.",
+    hint: "Any request a rule doesn't already cover is refused without asking you.",
   },
 ];
 
 /** The purpose field's own label, which carries its explanation with it. */
 export const PURPOSE_LABEL =
-  "What are agents for? The reviewer checks every request against this.";
+  "What are agents for? The reviewer checks each request it sees against this.";
 
 /**
  * What has to be said next to that field, both halves of it.

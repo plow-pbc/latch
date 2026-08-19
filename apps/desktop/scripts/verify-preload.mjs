@@ -581,7 +581,7 @@ app.whenReady().then(async () => {
       // The card is context, not enforcement: no capability list here, and the
       // word this rename retired is nowhere on screen.
       noAdversarialWord: !/adversarial/i.test(pane.innerText),
-      noHintLineTakingItsPlace: !pane.innerText.includes("Every request opens an approval window"),
+      noHintLineTakingItsPlace: !pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
     };
   }})()`);
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
@@ -634,7 +634,7 @@ app.whenReady().then(async () => {
       // mode whose reviewer never reads it…
       purposeTextGone: !pane.innerText.includes("What are agents for?"),
       // …and the card still says what this mode does.
-      showsHint: pane.innerText.includes("Every request opens an approval window"),
+      showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
     };
   }})()`);
   await scrollToApprovals();

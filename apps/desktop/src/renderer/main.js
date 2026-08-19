@@ -790,7 +790,8 @@ async function renderAgents() {
     ),
     group(
       "Approvals",
-      "What happens when an agent asks to do something on this Mac.",
+      "What happens when an agent asks to do something on this Mac. Requests already covered " +
+        "by an always-allow rule skip this — manage those in Rules.",
       [modeChips, modeNote, purposeBlock, modeHintLine],
     ),
   ]));
