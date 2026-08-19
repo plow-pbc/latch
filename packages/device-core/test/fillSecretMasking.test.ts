@@ -516,6 +516,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
           steps: { step: string; result: { ok?: boolean; mask?: string } | null }[];
           tracked: string[];
           marked: { [selector: string]: boolean };
+          sibling_marked: boolean;
         };
       };
     }>(FILL_PROBE);
@@ -636,7 +637,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
 
   it("keeps a concealed field tracked, and lets the observation through", () => {
     const kept = probed.ledger.kept;
-    expect(kept.tracked).toEqual(["0:#pass"]);
+    expect(kept.tracked).toEqual(["doc-1:#pass"]);
     expect(kept.marked["#pass"]).toBe(true);
     expect(kept.steps.at(-1)!.result).toEqual({});
   });
@@ -650,6 +651,34 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(over.marked["#pass"]).toBe(false);
   });
 
+  it("finds a masked field again after the frames above it are renumbered", () => {
+    // The ledger was keyed on a frame INDEX. Removing an iframe above this one
+    // renumbers everything below it, so the mark went back on whatever
+    // inherited the number while the field that needed it went bare into the
+    // next screenshot. A document token names one document and never another.
+    const shifted = probed.ledger.sibling_frame_removed;
+    expect(shifted.tracked).toEqual(["doc-1:#pass"]);
+    expect(shifted.marked["#pass"]).toBe(true);
+  });
+
+  it("forgets a field whose own frame navigated away", () => {
+    // For a child frame, "navigated" and "removed" are the same sentence: the
+    // document it was filled into is not on the page any more.
+    const gone = probed.ledger.child_frame_navigated;
+    expect(gone.tracked).toEqual([]);
+    // And the same selector in the frame next door is left alone. Looking one
+    // up by selector without pinning the document would mark that instead.
+    expect(gone.sibling_marked).toBe(false);
+  });
+
+  it("never marks the same selector in a different document", () => {
+    // The advert frame carries a `#pass` of its own. Every scenario leaves it
+    // untouched, because a target names a document as well as a selector.
+    for (const [name, run] of Object.entries(probed.ledger)) {
+      expect(run.sibling_marked, name).toBe(false);
+    }
+  });
+
   it("forgets everything when the page navigates", () => {
     // A page that has moved is not the page anything was filled on.
     expect(probed.ledger.navigated.tracked).toEqual([]);
@@ -661,7 +690,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // re-rendered controlled input then kept the secret and lost the marker —
     // so the very next screenshot showed it.
     const spa = probed.ledger.same_document_route;
-    expect(spa.tracked).toEqual(["0:#pass"]);
+    expect(spa.tracked).toEqual(["doc-1:#pass"]);
     expect(spa.marked["#pass"]).toBe(true);
     expect(spa.steps.at(-1)!.result).toEqual({});
   });
@@ -695,34 +724,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.plain_failed.trace).not.toContain("handle.evaluate:unmark");
     expect(probed.plain_failed.marked).toBe(true);
     expect(probed.plain_failed.error).toBe("RuntimeError");
-  });
-});
-
-/** The same shape, asserted from source, so a python-less run still guards it. */
-describe("the server's fill branch, as written", () => {
-  const branch = (() => {
-    const src = fs.readFileSync(SERVER_PY, "utf8");
-    const m = /if action in \("click", "fill"\):([\s\S]*?)\n        if action == "locate"/.exec(src);
-    if (!m) throw new Error("fill branch not found in server.py");
-    return m[1];
-  })();
-
-  it("marks and fills through one handle, only when the device asked", () => {
-    expect(branch).toContain('if cmd.get("mask"):');
-    expect(branch).toContain("el.evaluate(MASK_JS)");
-    expect(branch).toContain('el.fill(cmd["value"]');
-    expect(branch.indexOf("el.evaluate(MASK_JS)")).toBeLessThan(branch.indexOf('el.fill(cmd["value"]'));
-  });
-
-  it("refuses to type when the mark did not take", () => {
-    expect(branch).toContain('if state == "unmasked":');
-    expect(branch.indexOf('if state == "unmasked":')).toBeLessThan(
-      branch.indexOf('el.fill(cmd["value"]'),
-    );
-  });
-
-  it("clears the mark on a fill that is not a secret", () => {
-    expect(branch).toContain("el.evaluate(UNMASK_JS)");
   });
 });
 

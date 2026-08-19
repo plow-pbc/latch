@@ -130,6 +130,7 @@ class Frame:
                  partial_fill=False, document_token="doc-1"):
         self.trace = trace
         self.url = "https://pizza.example/login"
+        self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
                              partial_fill, document_token)
         self.nodes = nodes
@@ -138,6 +139,8 @@ class Frame:
         return self.handle if self.nodes is None else self.nodes.get(selector)
 
     def evaluate(self, expression, *args, **kwargs):
+        if "__domoDocumentToken" in expression:
+            return self.document_token
         return []          # the forms scanner, over no fields
 
     def query_selector(self, selector):
@@ -158,9 +161,11 @@ class Frame:
 
 
 class Page:
-    def __init__(self, frame):
+    def __init__(self, frame, extra_frames=()):
         self.url = "https://pizza.example/login"
-        self.frames = [frame]
+        # Siblings come FIRST, so removing one renumbers the frame that matters
+        # — which is the whole point of the scenario that uses them.
+        self.frames = [*extra_frames, frame]
         # What `DOC_TOKEN_JS` would return. A scenario changes it to say "a new
         # document"; changing only `url` says "a route change within this one".
         self.document_token = "doc-1"
@@ -209,7 +214,13 @@ def ledger(server, script):
     trace: list[str] = []
     nodes = {"#pass": Handle(trace), "#addr": Handle(trace)}
     frame = Frame(trace, nodes=nodes)
-    page = Page(frame)
+    # An advert iframe sitting above the one that matters, so a scenario can
+    # take it away and renumber everything below it. It carries a field under
+    # the SAME selector on purpose: a lookup that finds the right selector in
+    # the wrong document would mark this one, and that has to be visible.
+    sibling_nodes = {"#pass": Handle(trace)}
+    sibling = Frame(trace, nodes=sibling_nodes, document_token="doc-sibling")
+    page = Page(frame, extra_frames=[sibling])
     session = server.Session(page)
     steps = []
     for step in script:
@@ -225,6 +236,16 @@ def ledger(server, script):
             page.url = step["route"]
             frame.url = step["route"]
             steps.append({"step": "route", "result": None})
+            continue
+        if step.get("drop_sibling"):
+            page.frames = [f for f in page.frames if f is not sibling]
+            steps.append({"step": "drop_sibling", "result": None})
+            continue
+        if step.get("frame_navigated"):
+            # The frame holding the field went somewhere else: new document,
+            # new token, nothing of the old one left on the page.
+            frame.document_token = step["frame_navigated"]
+            steps.append({"step": "frame_navigated", "result": None})
             continue
         if step.get("rerender"):
             # The framework rebuilds the input: the value stays, the mark goes.
@@ -247,8 +268,10 @@ def ledger(server, script):
         steps.append({"step": step["cmd"]["action"], "result": keep})
     return {
         "steps": steps,
-        "tracked": sorted("%d:%s" % t for t in session.masked.get(page, set())),
+        "tracked": sorted("%s:%s" % t for t in session.masked.get(page, set())),
         "marked": {sel: node.marked for sel, node in nodes.items()},
+        # The same selector in the frame next door. Nothing should ever mark it.
+        "sibling_marked": sibling_nodes["#pass"].marked,
     }
 
 
@@ -299,25 +322,45 @@ def main() -> int:
     }
     fill_pass = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0, "mask": True}
     fill_addr_at_pass = {"action": "fill", "selector": "#pass", "value": "1 Elm St", "frame": 0}
+    # In the ledger scenarios the page carries an advert iframe ABOVE the one
+    # that matters, so the field starts life at index 1 — which is exactly what
+    # makes removing the sibling interesting.
+    ledger_fill = {**fill_pass, "frame": 1}
+    ledger_overwrite = {**fill_addr_at_pass, "frame": 1}
     observe = {"action": "forms"}
     result["ledger"] = {
-        "kept": ledger(server, [{"cmd": fill_pass}, {"cmd": observe}]),
+        "kept": ledger(server, [{"cmd": ledger_fill}, {"cmd": observe}]),
         "visible_overwrite": ledger(server, [
-            {"cmd": fill_pass}, {"cmd": fill_addr_at_pass}, {"cmd": observe},
+            {"cmd": ledger_fill}, {"cmd": ledger_overwrite}, {"cmd": observe},
         ]),
         "navigated": ledger(server, [
-            {"cmd": fill_pass}, {"navigate": "https://pizza.example/done"}, {"cmd": observe},
+            {"cmd": ledger_fill}, {"navigate": "https://pizza.example/done"}, {"cmd": observe},
         ]),
         "wont_take": ledger(server, [
-            {"cmd": fill_pass}, {"refuse": "#pass"}, {"cmd": observe},
+            {"cmd": ledger_fill}, {"refuse": "#pass"}, {"cmd": observe},
         ]),
         "node_gone": ledger(server, [
-            {"cmd": fill_pass}, {"vanish": "#pass"}, {"cmd": observe},
+            {"cmd": ledger_fill}, {"vanish": "#pass"}, {"cmd": observe},
+        ]),
+        # A sibling iframe above this one is removed, so every index below it
+        # shifts. The field is found by its document, not its number.
+        "sibling_frame_removed": ledger(server, [
+            {"cmd": ledger_fill},
+            {"drop_sibling": True},
+            {"rerender": "#pass"},
+            {"cmd": observe},
+        ]),
+        # The frame holding the field navigated: its document is gone, and with
+        # it anything anyone was keeping about the fields it held.
+        "child_frame_navigated": ledger(server, [
+            {"cmd": ledger_fill},
+            {"frame_navigated": "doc-elsewhere"},
+            {"cmd": observe},
         ]),
         # An SPA route change plus a re-render: the URL moved, the document did
         # not, and the mark has to go back on before anything is observed.
         "same_document_route": ledger(server, [
-            {"cmd": fill_pass},
+            {"cmd": ledger_fill},
             {"route": "https://pizza.example/step2"},
             {"rerender": "#pass"},
             {"cmd": observe},

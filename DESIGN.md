@@ -328,9 +328,13 @@ and audited; on an out-of-scope page the session locks — nothing can be
 observed or interacted with except finding the way back. **Stated limit:** the
 origin bound governs what the agent observes/interacts with and where
 credentials get typed. It is *not* network egress control — page JS (the
-site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted:
-eval can't exfiltrate anything `screenshot`/`text` couldn't already carry over
-MCP.
+site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted.
+It used to be argued that eval carries nothing `screenshot`/`text` could not
+already carry; that is no longer true. Masking (§11a-ii) covers what the agent
+SEES — screenshots and form reads — and cannot cover `eval`, which reads
+`input.value` directly. The residual is deliberate and bounded by the threat
+model: accidental exposure is what masking is for, and an agent that goes
+looking for a filled value with `eval` is outside it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

@@ -499,7 +499,9 @@ export const TOOLS: ToolSpec[] = [
       "hidden custom fields) also render masked and come back from 'forms' without their " +
       "characters; everything else fills as ordinary text you can read back. A generated " +
       "'totp' code is the one field masked although the vault's own app shows it — fill it " +
-      "and submit, you never need to read it. Actions on pages outside the approved origins are " +
+      "and submit, you never need to read it. Masking covers what you see, screenshots and " +
+      "'forms'; it does not cover 'eval', which reads a field's value straight out of the " +
+      "page, so never inspect a field you filled that way. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page).",
     inputSchema: {

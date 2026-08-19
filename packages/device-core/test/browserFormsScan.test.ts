@@ -71,31 +71,33 @@ const MARK = { "data-domo-secret": "" };
 describe("forms field scan", () => {
   const scan = loadScanner();
 
-  it("reports a marked field as populated without its value", () => {
-    const [f] = scan(page([{ tag: "input", name: "cc-number", value: SECRETS[1], attrs: MARK }]));
-    expect(f.value).toBe("");
-    expect(f.secret).toBe(true);
-    expect(f.filled).toBe(true);
-  });
-
-  it("keeps a marked empty field distinguishable from a marked filled one", () => {
-    const [f] = scan(page([{ tag: "input", name: "cvc", value: "", attrs: MARK }]));
-    expect(f.secret).toBe(true);
-    expect(f.filled).toBe(false);
-  });
-
-  it("withholds a password value with no mark at all", () => {
-    const [f] = scan(page([{ tag: "input", type: "password", name: "pw", value: SECRETS[0] }]));
-    expect(f.value).toBe("");
-    expect(f.secret).toBe(true);
-    expect(f.filled).toBe(true);
-  });
-
-  it("still returns an unmarked address field so the agent can verify it", () => {
-    const [f] = scan(page([{ tag: "input", name: "address1", value: "1 Elm St" }]));
-    expect(f.value).toBe("1 Elm St");
-    expect(f.secret).toBe(false);
-    expect(f.filled).toBe(true);
+  // One field at a time: what the scan says about it, and what it withholds.
+  it.each([
+    {
+      what: "a marked field is populated, without its characters",
+      field: { tag: "input", name: "cc-number", value: SECRETS[1], attrs: MARK },
+      value: "", secret: true, filled: true,
+    },
+    {
+      what: "a marked EMPTY field stays tellable from a marked filled one",
+      field: { tag: "input", name: "cvc", value: "", attrs: MARK },
+      value: "", secret: true, filled: false,
+    },
+    {
+      what: "a password box is withheld with no mark at all",
+      field: { tag: "input", type: "password", name: "pw", value: SECRETS[0] },
+      value: "", secret: true, filled: true,
+    },
+    {
+      what: "an unmarked address still comes back, so the agent can check it",
+      field: { tag: "input", name: "address1", value: "1 Elm St" },
+      value: "1 Elm St", secret: false, filled: true,
+    },
+  ])("$what", ({ field, value, secret, filled }) => {
+    const [f] = scan(page([field]));
+    expect(f.value).toBe(value);
+    expect(f.secret).toBe(secret);
+    expect(f.filled).toBe(filled);
   });
 
   it("leaks no secret anywhere in the output of a mixed form", () => {

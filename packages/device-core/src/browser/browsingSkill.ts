@@ -92,6 +92,9 @@ item's, and \`fill_secret\` types them into the page the same way.
    One exception to that rule: a generated \`totp\` code is hidden from you even though the
    vault's own app shows it. You do not need to read it — fill it and submit — and it is a
    working credential for the half-minute it lasts.
+   Masking covers what you SEE: screenshots and \`forms\`. It does not cover \`eval\`, which
+   reads a field's value straight out of the page. Never use \`eval\` to inspect a field you
+   filled — you have no reason to, and the mask is there because that value is not yours.
 
 ## Order of operations for a purchase
 
