@@ -19,6 +19,8 @@
   --amber-bg: #fffbeb; --amber-fg: #b45309; --amber-bd: #fde68a;
   --blue-bg: #eff6ff; --blue-fg: #1d4ed8; --blue-bd: #bfdbfe;
   --zinc-bg: #f4f4f5; --zinc-fg: #52525b; --zinc-bd: #e4e4e7;
+  /* Light enough to read against the --blue-fg primary button. */
+  --focus: #60a5fa;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
 }
@@ -33,10 +35,14 @@
     --amber-bg: #2a1e05; --amber-fg: #fcd34d; --amber-bd: #78530f;
     --blue-bg: #0c1b33; --blue-fg: #93c5fd; --blue-bd: #1e3a8a;
     --zinc-bg: #1c1c20; --zinc-fg: #a1a1aa; --zinc-bd: #27272a;
+    --focus: #93c5fd;
   }
 }
 
 * { box-sizing: border-box; }
+/* Replace Chromium's dark-blue default ring, which disappears against the
+   blue primary button; the offset keeps it legible even on same-hue fills. */
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 html, body { margin: 0; height: 100%; }
 body {
   font-family: var(--sans);
@@ -309,6 +315,8 @@ dl.meta dd { margin: 0; }
   cursor: pointer;
 }
 .btn:hover { background: var(--hover); }
+/* The external-link ↗, on any control that opens something outside the app. */
+.ext-arrow { color: var(--faint); font-size: 13px; }
 .btn.danger { color: var(--red-fg); border-color: var(--red-bd); }
 .btn.primary { background: var(--blue-fg); color: white; border-color: var(--blue-fg); }
 input.text, textarea.text {
@@ -507,7 +515,7 @@ textarea.text { min-height: 70px; resize: vertical; }
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 10px 0 0;
+  margin: 0 0 14px;
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--sel);
@@ -555,8 +563,6 @@ textarea.text { min-height: 70px; resize: vertical; }
   padding: 10px 14px; font: inherit; cursor: pointer; text-align: left;
 }
 .settings .connect .client-card:hover { background: var(--hover); }
-.settings .connect .client-name { font-weight: 600; }
-.settings .connect .client-arrow { color: var(--faint); font-size: 13px; }
 .settings .connect .conn-actions { margin-top: 14px; }
 
 /* The alternative to the flow, not the next thing in it. It is a bare link on

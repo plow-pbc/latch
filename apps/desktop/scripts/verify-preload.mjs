@@ -121,7 +121,7 @@ ipcMain.handle("updates:get", async () => ({
 // A vault whose key has moved: the account is on disk and cannot be opened.
 // This is what a Keychain reset, a restore from backup, or an app rename leaves
 // behind, and it must not be reported as an empty vault.
-ipcMain.handle("vault:get", async () => ({ status: "locked", reason: "undecryptable" }));
+ipcMain.handle("vault:items", async () => ({ locked: true, reason: "undecryptable" }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 // No browsing session: the audit screen's live thumbnail stays hidden.
@@ -311,8 +311,19 @@ app.whenReady().then(async () => {
         document.body.innerText.includes("Not granted"),
       fdaNamesMessages: document.body.innerText.includes("texted to you in Messages"),
       fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
-        (b) => b.textContent.trim() === "Open System Settings",
+        (b) => b.textContent.trim() === "Open System Settings…",
       ),
+      // The marks split by meaning: the macOS "…" on the one hand-off the user
+      // must finish over there (System Settings), the external-link ↗ on the
+      // buttons whose click just happens in the browser (Discord, Livestream)
+      // — and never both on one button.
+      supportMarks: (() => {
+        const btns = [...document.querySelectorAll(".support-row .btn")];
+        const arrowed = btns.filter((b) => b.querySelector(".ext-arrow"));
+        const handoffs = btns.filter((b) => b.textContent.trim().endsWith("…"));
+        return btns.length === 3 && arrowed.length === 2 && handoffs.length === 1 &&
+          !handoffs[0].querySelector(".ext-arrow");
+      })(),
       // Launch at Login, in Capabilities: on this packaged-looking probe the
       // toggle is live and unchecked, and the from-source note is hidden
       // (innerText omits hidden nodes).
@@ -652,6 +663,11 @@ app.whenReady().then(async () => {
       clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
         n.textContent.trim(),
       ),
+      // The card is an action, not a brand tile: plain-weight label, ↗ mark.
+      clientCardArrow: !!document.querySelector(".client-card .ext-arrow"),
+      clientNameNotBold: getComputedStyle(
+        document.querySelector(".client-card .client-name"),
+      ).fontWeight === "400",
     };
   }})()`);
 
@@ -714,6 +730,11 @@ app.whenReady().then(async () => {
   })()`);
   await waitForNode(() => loadSettings(probeHome).agentPurpose === "Only household errands.",
     "the purpose to reach settings.json through the IPC pair");
+  // The field redraws off what main stored, one refresh after the write — the
+  // same round-trip the mode chips make below. Reading it the instant the file
+  // lands is a race, and on a slow runner the read wins.
+  await waitFor(win, `document.querySelector("#view textarea.text").value === "Only household errands."`,
+    "the purpose field to show what was stored");
   const purposeRoundTrip = {
     stored: loadSettings(probeHome).agentPurpose === "Only household errands.",
     fieldShowsWhatWasStored: await win.webContents.executeJavaScript(
@@ -793,8 +814,8 @@ app.whenReady().then(async () => {
       // `undecryptable` covers a wrong key AND a damaged file. The copy must not
       // pick one and state it as fact.
       hedgesTheCause: text.includes("Usually that means") && text.includes("damaged"),
-      // The copy must NOT promise a recovery that does not exist:
-      // `changeCredentials` refuses when the account cannot be read.
+      // The copy must NOT promise a recovery that does not exist: an account
+      // that cannot be decrypted cannot be signed in with either.
       promisesNoFakeRecovery: !text.includes("Signing in again"),
       saysNothingDeleted: text.includes("Nothing has been deleted"),
     };
@@ -896,7 +917,9 @@ app.whenReady().then(async () => {
     settingsPane.noConnectBlock &&
     settingsPane.noConnectText &&
     settingsPane.noSignInWhileSignedIn &&
-    connect.clientCards.join(",") === "Claude" &&
+    connect.clientCards.join(",") === "Open Claude" &&
+    connect.clientCardArrow &&
+    connect.clientNameNotBold &&
     connect.noConnectTab &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
@@ -919,6 +942,7 @@ app.whenReady().then(async () => {
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
     settings.fdaOffersSystemSettings &&
+    settings.supportMarks &&
     settings.launchTitle &&
     settings.launchToggleLive &&
     settings.launchNoteHidden &&

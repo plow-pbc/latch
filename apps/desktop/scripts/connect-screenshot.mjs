@@ -17,11 +17,12 @@
 // settings the way it does in the app, and the credential in the copy-once
 // block was really minted by `ConnectClient` — from a fake mint, but through
 // the real path.
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -115,7 +116,7 @@ const SCREENS = [
       "signs in with OAuth the first time it connects",
       "no token to copy, store, or rotate",
       // The shortcut to where the URL gets pasted.
-      "Claude",
+      "Open Claude",
       "Can't use OAuth? Create a static credential",
       // Approvals moved onto this tab with the clients it governs.
       "Approvals",
@@ -155,21 +156,6 @@ const SCREENS = [
   },
 ];
 
-/** Click by visible label, the way a person picks a button out of the page. */
-async function clickText(win, label) {
-  const found = await win.webContents.executeJavaScript(`
-    (() => {
-      const el = [...document.querySelectorAll("button")]
-        .find((b) => b.textContent.includes(${JSON.stringify(label)}));
-      if (!el) return false;
-      el.click();
-      return true;
-    })()
-  `);
-  if (!found) throw new Error(`no button labelled ${label}`);
-  await new Promise((r) => setTimeout(r, 250));
-}
-
 async function type(win, selector, text) {
   const found = await win.webContents.executeJavaScript(`
     (() => {
@@ -182,59 +168,45 @@ async function type(win, selector, text) {
   if (!found) throw new Error(`no field matching ${selector}`);
 }
 
-process.on("unhandledRejection", (error) => {
-  console.error("SHOT-FAILED:", error);
-  app.exit(1);
-});
+failLoudly();
 
 app.whenReady().then(async () => {
   const connect = await setUp();
-  fs.mkdirSync(outDir, { recursive: true });
-  const win = new BrowserWindow({
-    width: 940,
-    height: 620,
-    show: false,
-    webPreferences: {
-      preload: path.join(dist, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
+  const win = shotWindow(dist);
 
-  let failures = 0;
-  for (const screen of SCREENS) {
+  // Copy-once is a claim about the app, so the run checks it rather than
+  // leaving it to the picture: once dismissed, the config is gone for good.
+  const extra = [];
+  SCREENS.find((s) => s.name === "static-shown").after = async () => {
+    connect.dismissCredential();
+    if (JSON.stringify(connect.state()).includes(CLIENT_TOKEN)) {
+      extra.push("copy-once");
+      console.log("SHOT:" + JSON.stringify({ screen: "copy-once", missing: ["credential survived dismissal"] }));
+    }
+  };
+
+  const failures = await shootScreens({
+    win,
+    outDir,
+    prefix: "connect",
+    screens: SCREENS,
     // A reload re-runs the renderer's boot, which restores the Agents tab — and
     // drops any modal left standing by the screen before it.
-    await win.loadFile(path.join(dist, "renderer/index.html"));
-    await new Promise((r) => setTimeout(r, 400));
-    await screen.prepare(win);
-    if (screen.scrollToBottom) {
-      await win.webContents.executeJavaScript(
+    load: async () => {
+      await win.loadFile(path.join(dist, "renderer/index.html"));
+      await new Promise((r) => setTimeout(r, 400));
+    },
+    beforeShot: async (w, screen) => {
+      if (!screen.scrollToBottom) return;
+      // The credential and its button can sit below the fold in a 620pt window,
+      // and the modal scrolls itself — so that is what gets scrolled when it is up.
+      await w.webContents.executeJavaScript(
         `(() => { const p = document.querySelector(".modal") ?? document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
       );
       await new Promise((r) => setTimeout(r, 200));
-    }
+    },
+  });
 
-    const out = path.join(outDir, `connect-${screen.name}.png`);
-    fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
-
-    const text = await win.webContents.executeJavaScript("document.body.innerText");
-    const missing = screen.expect.filter((needle) => !text.includes(needle));
-    if (missing.length) failures += 1;
-    console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing }));
-
-    // Copy-once is a claim about the app, so the run checks it rather than
-    // leaving it to the picture: once dismissed, the config is gone for good.
-    if (screen.name === "static-shown") {
-      connect.dismissCredential();
-      const after = JSON.stringify(connect.state());
-      if (after.includes(CLIENT_TOKEN)) {
-        failures += 1;
-        console.log("SHOT:" + JSON.stringify({ screen: "copy-once", missing: ["credential survived dismissal"] }));
-      }
-    }
-  }
   fs.rmSync(home, { recursive: true, force: true });
-  app.exit(failures === 0 ? 0 : 1);
+  app.exit(failures + extra.length === 0 ? 0 : 1);
 });

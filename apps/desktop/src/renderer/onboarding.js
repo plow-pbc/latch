@@ -126,7 +126,9 @@ function activateScreen() {
     }),
     ...sendInstructions(activation),
     el("div", { class: "oactions" }, [
-      button("Open Messages", "btn primary", async () =>
+      // Ellipsis per the HIG: the click drafts the text in Messages, but
+      // sending it is still on the user.
+      button("Open Messages…", "btn primary", async () =>
         apply(await window.domo.onboardingOpenMessages()),
       ),
     ]),
@@ -156,7 +158,7 @@ function waitingScreen() {
     ...(activation ? sendInstructions(activation) : []),
     el("div", { class: "orow" }, [clock]),
     el("div", { class: "oactions" }, [
-      button("Open Messages", "btn", async () => apply(await window.domo.onboardingOpenMessages())),
+      button("Open Messages…", "btn", async () => apply(await window.domo.onboardingOpenMessages())),
       el("div", { class: "spacer" }),
       // Re-polls the old code first: the app stops watching at five minutes but
       // the server honours it for thirty, so a text sent at minute six has
@@ -264,7 +266,10 @@ function render() {
     : state.step === "code" ? codeScreen()
     : connectedScreen();
   root.replaceChildren(...screen.filter(Boolean));
-  const focus = root.querySelector("input[autofocus]");
+  // Return should trigger the action the blue button advertises, so something
+  // always holds focus: the screen's input if it has one, else its primary
+  // button (Enter on a focused button clicks it).
+  const focus = root.querySelector("input[autofocus]") ?? root.querySelector("button.primary");
   if (focus && !state.busy) focus.focus();
   for (const b of root.querySelectorAll("button:not(.local)")) b.disabled = !!state.busy;
 }

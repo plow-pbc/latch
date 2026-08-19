@@ -303,8 +303,9 @@ repo can prove they broke nothing.
 The device can host a real anti-detection Firefox (Camoufox, driven by
 Playwright through a vendored Python server — `vendor/browser-server/`,
 provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
-user**: local IP, local cookies, and local credentials that never leave the
-Mac. The pieces:
+user**: local IP, local cookies, and local credentials that are typed into the
+page here rather than handed to the agent — which is driving that page, and can
+read it. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an
@@ -327,9 +328,13 @@ and audited; on an out-of-scope page the session locks — nothing can be
 observed or interacted with except finding the way back. **Stated limit:** the
 origin bound governs what the agent observes/interacts with and where
 credentials get typed. It is *not* network egress control — page JS (the
-site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted:
-eval can't exfiltrate anything `screenshot`/`text` couldn't already carry over
-MCP.
+site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted.
+It used to be argued that eval carries nothing `screenshot`/`text` could not
+already carry; that is no longer true. Masking (§11a-ii) covers what the agent
+SEES — screenshots and form reads — and cannot cover `eval`, which reads
+`input.value` directly. The residual is deliberate and bounded by the threat
+model: accidental exposure is what masking is for, and an agent that goes
+looking for a filled value with `eval` is outside it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —
@@ -341,7 +346,13 @@ to its owning frame → the frame's origin ∈ session scope → `seed-vault-bro
 get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
 check applies; credit cards deliberately pass — they are meant for any
 merchant) → a frame-targeted fill → the value is dropped. Secret values never
-traverse MCP, never appear in results, and never appear in either audit log.
+traverse MCP, never appear in the results these tools return, and never appear
+in either audit log. **Scope of that guarantee:** it covers what `plow_vault`
+and `fill_secret` hand back, and — through masking (§11a-ii) — what a
+screenshot or `forms` shows. It does not cover `eval`, which reads
+`input.value` directly; that is the documented residual, accepted because the
+threat model is accidental exposure and an agent reaching for `eval` is
+outside it.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
@@ -433,15 +444,49 @@ Two rejected alternatives, recorded so they are not re-proposed:
   the only copy of their credentials.
 
 There is no recovery for a genuinely lost key, and the UI must not invent one:
-`changeCredentials` refuses outright when the account cannot be read, and signing
-in on the vault's own page needs the very password that state cannot produce. The
-copy says so — the account is on disk, nothing is deleted, and if the key is gone
-the vault has to be set up again.
+an account that cannot be decrypted cannot be signed in with, here or anywhere,
+because the password it would need is the thing that is unreadable. The copy says
+so — the account is on disk, nothing is deleted, and if the key is gone the vault
+has to be set up again.
+
+The owner reaches the vault's CONTENTS in the app, never on the vault's own page:
+`VaultClient` signs in with the account this Mac already holds and reads and
+writes items over the vault's API, so there is no CLI process, no local port and
+no session key on disk. The tab shows the locked state from
+`readCredentialsState()` and nothing else about the account.
 
 A locked vault must also never be reported as an empty one. `readState()`
 distinguishes empty / locked / ok, because a Keychain reset or a Mac restored
 from backup lands in exactly this state, and "The vault has not started yet"
 sends people to debug a server that is running fine.
+
+### 11a-ii. A filled secret is masked from what the agent sees
+
+`fill_secret` types a vault value into a page, and the value then sits in
+`input.value` where the agent could read it straight back — as pixels from
+`screenshot`, and as characters from `forms`. That is how it was found: a card
+number and CVC plainly legible in a returned screenshot.
+
+**A field is masked from the agent if and only if the vault itself masks it.**
+The classification is Bitwarden's, and thereby the human's who made the item —
+a password, a card number and code, an ssn, a Hidden custom field. Addresses
+and names stay legible on purpose: the agent has to be able to check a shipping
+address before submitting a form. One deliberate exception: a generated TOTP
+code is masked although the client shows it, because an agent fills it and
+never needs to read it, and it is a live credential for its half-minute.
+
+The mark is one `data-domo-secret` attribute plus one injected stylesheet rule,
+applied to the resolved node at fill time and verified against the computed
+style before the value is typed — a page whose CSP blocks the stylesheet gets
+no value at all rather than a legible one. `forms` reports a marked field as
+present without its characters, and never returns a `type="password"` value at
+all. Full design, including the alternatives rejected and why, in
+`docs/superpowers/specs/2026-08-18-secret-masking-design.md`.
+
+**What it does not cover: `eval`.** It reads `input.value` directly and no mark
+changes that. Accepted residual: the threat model is accidental exposure — a
+well-behaved agent looking at a page in the ordinary course of its work — and
+an agent reaching for `eval` to read a field it just filled is outside it.
 
 ## 11b. Software updates
 

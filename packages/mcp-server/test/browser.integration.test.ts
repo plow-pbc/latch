@@ -36,12 +36,15 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       JSON.stringify([
         { id: "L1", title: "Slice of Test", category: "LOGIN", username: "jon@example.com",
           urls: [`http://127.0.0.1:${site.port}/`],
-          fields: { username: "jon@example.com", password: "pizza-time-99" } },
+          descriptors: [{ label: "username", hidden: false, custom: false, alias: false }, { label: "password", hidden: true, custom: false, alias: false }],
+          values: { username: "jon@example.com", password: "pizza-time-99" } },
         { id: "C1", title: "Visa", category: "CREDIT_CARD", username: "", urls: [],
-          fields: { number: "4111111111111111", cvv: "123" } },
+          descriptors: [{ label: "number", hidden: true, custom: false, alias: false }, { label: "cvv", hidden: true, custom: false, alias: true }],
+          values: { number: "4111111111111111", cvv: "123" } },
         { id: "X1", title: "Elsewhere", category: "LOGIN", username: "x",
           urls: ["https://elsewhere.example/"],
-          fields: { password: "do-not-release" } },
+          descriptors: [{ label: "password", hidden: true, custom: false, alias: false }],
+          values: { password: "do-not-release" } },
       ]),
     );
 
@@ -88,7 +91,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(JSON.stringify(creds.payload)).not.toContain("pizza-time-99");
 
     const described = await callTool(server, "plow_vault", { action: "describe", item: "L1" }, AGENT);
-    expect(described.payload.fields).toContain("password");
+    expect(described.payload.fields).toContainEqual({ label: "password", hidden: true, custom: false, alias: false });
 
     await callTool(server, "plow_browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
 

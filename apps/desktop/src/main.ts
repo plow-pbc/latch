@@ -12,22 +12,21 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
   PolicyDelegate,
-  changeCredentials,
-  readCredentials,
   readCredentialsState,
   resolveBrowserRuntime,
+  VaultItemInput,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
@@ -474,7 +473,9 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * document. The connect step's own copy stays client-agnostic, so this table
  * growing is the only change a new client needs.
  *
- * `discord` and `website` are Settings' Support section.
+ * `discord` and `website` are Settings' Support section; `account` is the
+ * Plow web console, Settings' View Account button. It follows the build's API
+ * origin so a `DOMO_API_BASE_URL` run opens the environment it signed into.
  *
  * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
  * Access pane. macOS has no API an app can call to request that permission —
@@ -483,6 +484,7 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * page the app may open.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
+  account: `${apiBaseUrl}/app/`,
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
   discord: "https://watchmepivot.com/discord",
   website: "https://watchmepivot.com/",
@@ -558,29 +560,55 @@ ipcMain.handle("settings:setInference", async (_e, provider: string) =>
   setInferenceProvider(home, provider),
 );
 ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
-// The vault's own account: the owner reads it here to sign in on the vault's
-// page, and can replace either half with something of their own choosing.
-ipcMain.handle("vault:get", async () => {
-  const vault = device?.vaultServer;
-  // No vault in this build, or it has not started: genuinely nothing to show.
-  if (!vault) return { status: "empty" };
-  return readCredentialsState(vault.url, vault.dataDir);
+// The vault's contents, for the owner's own eyes and hands. This is the whole
+// point of the tab: the vault's web page is the only other way in, and reaching
+// it means a browser warning about a certificate the app issued to itself.
+ipcMain.handle("vault:items", async () => {
+  const vault = device?.vaultClient;
+  const server = device?.vaultServer;
+  if (!vault || !server) return null;
+  // Locked and empty are different facts and the screen says different words.
+  // An account that is on disk and will not open must never be reported as a
+  // vault that has not started — that sent people to debug a running server.
+  // Read BEFORE starting: a locked account is the very case where the vault's
+  // own bootstrap cannot finish, and the explanation has to survive that.
+  const locked = readCredentialsState(server.url, server.dataDir);
+  if (locked.status === "locked") return { locked: true, reason: locked.reason };
+  // Started, not merely launched: the account is written by the vault's first
+  // run, so reading its state before that finishes reports an empty vault.
+  await server.start();
+  if (readCredentialsState(server.url, server.dataDir).status !== "ok") return null;
+  // Every type, not only logins: a card and a note are things the owner keeps
+  // here too, and the tab is where they are kept.
+  return vault.list();
 });
 
-// A renderer anchor cannot open a browser from inside Electron, so the main
-// process does it — and only ever for this machine's own vault address.
-ipcMain.handle("vault:open", async () => {
-  const vault = device?.vaultServer;
-  if (!vault) return false;
-  await shell.openExternal(vault.url);
-  return true;
+// One item to fill an edit form with — never a secret value; those are asked
+// for one at a time, below.
+ipcMain.handle("vault:item", async (_e, itemId: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.read(String(itemId));
 });
 
-ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
-  const vault = device?.vaultServer;
-  if (!vault) throw new Error("this build has no vault");
-  await changeCredentials(vault.url, vault.dataDir, { email, password }, vault.certPath);
-  return readCredentials(vault.url, vault.dataDir);
+// A value the OWNER asked to see, in the app window. It never touches a page,
+// and the vault's audit records it as the owner's own reading.
+ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.reveal(String(itemId), field);
+});
+
+ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.remove(String(itemId));
+});
+
+ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.save(input);
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like
@@ -807,6 +835,21 @@ app.whenReady().then(async () => {
   // not only in the approvals directory.
   approvals.onAbandoned = (record) =>
     device?.audit.record("approval_abandoned", { intentId: record.intentId });
+  // An item the vault marked "ask again" is not opened on the strength of the
+  // app being unlocked. There is no master password to ask for here — the vault
+  // account is a random string this app generated — so the Mac asks who is at
+  // the keyboard instead, and refuses when it cannot.
+  if (device.vaultClient) {
+    device.vaultClient.onReprompt = async () => {
+      if (!systemPreferences.canPromptTouchID()) return false;
+      try {
+        await systemPreferences.promptTouchID("show a vault item that asks for you");
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  }
   // Say, once, whether this Mac can open its vault account. It is the one fact
   // about the vault that a log is good at: no secret, no noise, and it turns
   // "the vault screen looks wrong" into a one-line answer. `locked` means the
@@ -924,10 +967,16 @@ app.on("window-all-closed", () => {
 });
 
 // Block any attempt to navigate to remote content or open external windows —
-// the approval surface must never load anything but our local files.
+// the approval surface must never load anything but our local files. "Any
+// file://" is not narrow enough: the preload bridge survives a navigation, and
+// it now reaches the vault, so a local HTML file an attacker can write would
+// inherit it. Only the documents we ship are allowed.
+const OUR_DOCUMENTS = ["index.html", "onboarding.html", "approval.html"].map((f) =>
+  pathToFileURL(path.join(rendererDir, f)).href,
+);
 app.on("web-contents-created", (_e, contents) => {
   contents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("file://")) event.preventDefault();
+    if (!OUR_DOCUMENTS.includes(url.split("?")[0].split("#")[0])) event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
@@ -985,8 +1034,9 @@ function checkForUpdatesFromMenu(): void {
 
 /**
  * The macOS application menu. Replacing the default menu costs the stock
- * items, so the standard roles (Edit for clipboard, Window) are declared
- * explicitly — a sandboxed renderer still needs working Cmd-C/V. The View
+ * items, so the standard roles (File for Close, Edit for clipboard, Window)
+ * are declared explicitly — a sandboxed renderer still needs working
+ * Cmd-C/V. The View
  * menu (reload, devtools) is dev-only noise and ships only from source.
  */
 function setupAppMenu(): void {
@@ -1007,6 +1057,20 @@ function setupAppMenu(): void {
         { role: "unhide" },
         { type: "separator" },
         { role: "quit" },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [
+        // Through the gate, so this cannot hand back a main window a Mac
+        // that is not signed in is not entitled to. Not Cmd-0 — the dev-only
+        // View menu's "Actual Size" (resetZoom) already claims that.
+        { label: "Show Main Window", accelerator: "CmdOrCtrl+1", click: () => gate.sync() },
+        { type: "separator" },
+        // Close (Cmd-W) lives in File on macOS; windowMenu omits it there, so
+        // without this item the accelerator binds to nothing app-wide. Closing
+        // an approval window without deciding is already a denial (fail safe).
+        { role: "close" },
       ],
     },
     { role: "editMenu" },

@@ -39,7 +39,8 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
         category: "LOGIN",
         username: "jon",
         urls: ["https://pizza.example/login"],
-        fields: { password: "hunter2", username: "jon" },
+        descriptors: [{ label: "password", hidden: true, custom: false, alias: false }, { label: "username", hidden: false, custom: false, alias: false }],
+        values: { password: "hunter2", username: "jon" },
       },
       {
         id: "C1",
@@ -47,7 +48,8 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
         category: "CREDIT_CARD",
         username: "",
         urls: [],
-        fields: { number: "4111111111111111", cvv: "123" },
+        descriptors: [{ label: "number", hidden: true, custom: false, alias: false }, { label: "cvv", hidden: true, custom: false, alias: true }],
+        values: { number: "4111111111111111", cvv: "123" },
       },
       {
         id: "X1",
@@ -55,7 +57,8 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
         category: "LOGIN",
         username: "x",
         urls: ["https://elsewhere.example/"],
-        fields: { password: "sekret" },
+        descriptors: [{ label: "password", hidden: true, custom: false, alias: false }],
+        values: { password: "sekret" },
       },
     ]),
   );
@@ -373,5 +376,105 @@ describe("audit hygiene", () => {
     const all = JSON.stringify(ctx.events);
     expect(all).not.toContain("SECRETTOKEN");
     expect(all).toContain("https://pizza.example/cb");
+  });
+});
+
+describe("access the owner's log could not record is not granted", () => {
+  /** A session store whose audit append fails once for one event, as a full
+   * disk or a bad permission would. */
+  function failingAudit(failOn: string): BrowserSessions {
+    let fired = false;
+    return new BrowserSessions(
+      ctx.host,
+      null,
+      (event: string) => {
+        if (event === failOn && !fired) {
+          fired = true; // fails once, so a retry can be observed
+          throw new Error("audit append failed");
+        }
+      },
+      60_000,
+    );
+  }
+
+  it("does not widen a session it could not record", async () => {
+    const sessions = failingAudit("browser_session_extended");
+    const opened = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const handle = opened.get("session").str!;
+
+    expect(() =>
+      sessions.extend("int-2", AGENT, handle, ["paypal.example"], ["L1"], true),
+    ).toThrow(/audit append failed/);
+
+    // The agent must not be left holding origins and credential items that the
+    // owner's log has no event for — that is access they cannot see.
+    const live = sessions.current()!;
+    expect(live.origins).toEqual(["pizza.example"]);
+    expect(live.origins).not.toContain("paypal.example");
+    await sessions.closeAll("test");
+  });
+
+  it("does not open a session it could not record, and stays usable after", async () => {
+    const sessions = failingAudit("browser_session_opened");
+    await expect(sessions.open("int-1", AGENT, ["pizza.example"], true)).rejects.toThrow(
+      /audit append failed/,
+    );
+    // A live session with no opening event is a browser being used that the
+    // owner cannot see at all — the bug this PR exists to close.
+    expect(sessions.current()).toBeNull();
+    // ...and the browser itself must not be left running: open() warms it
+    // before it audits, and headed means a window is already on screen.
+    expect(ctx.host.running).toBe(false);
+
+    // Nor may the cleanup latch the host shut. shutdown() sets `shuttingDown`
+    // and only resetBreaker() clears it, so a retry could publish a session
+    // whose every command then failed with "browser host is shut down" — a
+    // successful open the agent cannot use.
+    const retry = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    expect(retry.get("status").str).toBe("completed");
+    const r = jv(
+      await sessions.command(AGENT, retry.get("session").str!, {
+        action: "goto",
+        url: "https://pizza.example/",
+      }),
+    );
+    expect(r.get("status").str).toBe("completed");
+    await sessions.closeAll("test");
+  });
+
+  it("does not latch the browser shut when closing could not be recorded", async () => {
+    // browser_stopped is audited by the HOST, on its way out of shutdown() —
+    // so a failing append there throws between shutdown() and the breaker
+    // reset. close() is the everyday path, which makes this the likeliest way
+    // to reach an unusable browser.
+    let fired = false;
+    const host = new BrowserHost({
+      command: ["node", FAKE_SERVER],
+      env: {},
+      screenshotsDir: path.join(ctx.dir, "shots2"),
+      audit: (event: string) => {
+        if (event === "browser_stopped" && !fired) {
+          fired = true;
+          throw new Error("audit append failed");
+        }
+      },
+    });
+    const sessions = new BrowserSessions(host, null, () => {}, 60_000);
+    const handle = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true))
+      .get("session")
+      .str!;
+    await expect(sessions.close(handle, "agent")).rejects.toThrow(/audit append failed/);
+
+    const retry = jv(await sessions.open("int-2", AGENT, ["pizza.example"], true));
+    expect(retry.get("status").str).toBe("completed");
+    const r = jv(
+      await sessions.command(AGENT, retry.get("session").str!, {
+        action: "goto",
+        url: "https://pizza.example/",
+      }),
+    );
+    expect(r.get("status").str).toBe("completed");
+    await sessions.closeAll("test");
+    await host.shutdown();
   });
 });

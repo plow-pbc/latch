@@ -238,6 +238,13 @@ onboarding-screenshots: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/onboarding-screenshot.mjs
 
+# Screenshot the Vault tab: the logins, a password the owner asked to see, the
+# New login form, and the list with the login that was just added. The vault
+# itself is stood in for; everything above it is the shipping code.
+vault-screenshot: build
+    @mkdir -p "{{outdir}}"
+    OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/vault-screenshot.mjs
+
 # Screenshot the main window's Agents tab — the connect flow, the
 # static-credential modal, and the copy-once block. It makes its own throwaway
 # home, so it never reads or writes this checkout's state.

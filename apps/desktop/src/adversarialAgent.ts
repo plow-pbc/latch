@@ -96,7 +96,10 @@ Prefer a clear allow or deny; use ask sparingly.
 
 Browser intents ("Browse: …") grant navigation within the listed origins for a \
 WHOLE session of many actions, and credential intents authorize typing the named \
-vault items into pages on those origins (values never reach the agent). \
+vault items into pages on those origins. A filled value is not returned to the agent, \
+but it IS in the page the agent is driving and can be read from there — so weigh a \
+credential intent as if the agent will end up holding that value, and be strict about \
+origins that could carry it off the Mac. \
 Judge the origin list against the concrete task: allow narrow, task-consistent \
 origin sets; deny broad or unrelated ones (huge wildcard sets, aggregator or \
 paste/upload sites unrelated to the stated merchant, origin lists that do not \

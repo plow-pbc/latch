@@ -84,9 +84,33 @@ export class VaultServer {
     });
   }
 
-  /** Start it and wait until the port answers. Idempotent. */
-  async start(): Promise<void> {
-    if (this.child) return;
+  /**
+   * Start it and wait until the port answers. Idempotent — and idempotent for
+   * CALLERS TOO: everyone awaits the same startup, rather than the second
+   * caller returning early on a process that is still booting and then talking
+   * to a port nobody is listening on yet.
+   */
+  start(): Promise<void> {
+    if (!this.starting) {
+      // Cleared whatever happens: a startup that failed must be retryable, and
+      // a vault that exits later must be startable again. `startOnce` returns
+      // immediately when the process is already up, so dropping the memo costs
+      // nothing.
+      this.starting = this.startOnce().finally(() => {
+        this.starting = null;
+      });
+    }
+    return this.starting;
+  }
+
+  private starting: Promise<void> | null = null;
+
+  private async startOnce(): Promise<void> {
+    // Running, but perhaps not finished: a bootstrap that failed transiently
+    // left a live process with no account, and returning here would keep the
+    // vault looking empty until something restarted it. Bootstrapping is a
+    // file read when there is nothing to do, so retrying it costs nothing.
+    if (this.child) return this.bootstrap();
     fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const { cert, key } = this.ensureCert();
 

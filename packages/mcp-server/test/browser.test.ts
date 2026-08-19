@@ -40,9 +40,12 @@ function writeVault(dir: string): string {
     vaultPath,
     JSON.stringify([
       { id: "L1", title: "Pizza Login", category: "LOGIN", username: "jon",
-        urls: ["https://pizza.example/"], fields: { password: "hunter2", username: "jon" } },
+        urls: ["https://pizza.example/"],
+        descriptors: [{ label: "password", hidden: true, custom: false, alias: false }, { label: "username", hidden: false, custom: false, alias: false }],
+        values: { password: "hunter2", username: "jon" } },
       { id: "C1", title: "Visa", category: "CREDIT_CARD", username: "", urls: [],
-        fields: { number: "4111111111111111", cvv: "123" } },
+        descriptors: [{ label: "number", hidden: true, custom: false, alias: false }, { label: "cvv", hidden: true, custom: false, alias: true }],
+        values: { number: "4111111111111111", cvv: "123" } },
     ]),
   );
   return vaultPath;
@@ -141,7 +144,7 @@ describe("browser tools (fake runtime)", () => {
     const cold = await callTool(server, "plow_vault", { action: "list" }, AGENT);
     expect((cold.payload.items as unknown[]).length).toBe(ids.length);
     const described = await callTool(server, "plow_vault", { action: "describe", item: "L1" }, AGENT);
-    expect(described.payload.fields).toContain("password");
+    expect(described.payload.fields).toContainEqual({ label: "password", hidden: true, custom: false, alias: false });
     expect(JSON.stringify(described.payload)).not.toContain("hunter2");
     expect(ids).toEqual(expect.arrayContaining(["L1", "C1"]));
     expect(JSON.stringify(creds.payload)).not.toContain("hunter2");
