@@ -653,10 +653,16 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
  * The one-time first-run default: a user who just set this Mac up wants it
  * reachable, so launch at login turns ON the moment setup hands over to the
  * app — and never again after that (`Settings.launchAtLoginDefaulted`), so
- * turning it off in Settings sticks. Set only by Onboarding's `onSignedIn`,
- * which fires when a credential is minted THIS session — an install that was
- * already signed in (or someone reopening the setup window from Settings)
- * never trips it.
+ * turning it off in Settings sticks.
+ *
+ * "Pending" is read entirely off disk: a credential with the marker still
+ * false can only mean a completed setup whose default has not landed —
+ * `finishWithSession` writes both fields, a home signed in from before the
+ * marker existed reads as already defaulted (`loadSettings`), and sign-out
+ * keeps the marker. So someone reopening the setup window from Settings never
+ * trips this, and no in-memory "signed in this session" flag is needed —
+ * persisted state even survives a crash between setup and the hand-over,
+ * which a session flag would not.
  *
  * The attempt is the shot: if the OS declines the write we do not come back on
  * every launch — the Settings toggle is the recourse. A from-source run is the
@@ -664,14 +670,9 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
  * checkout enrolls the stock Electron binary and a packaged install's real
  * first run still gets its default.
  */
-let setupSignedInThisRun = false;
 function applyFirstRunLaunchAtLogin(): void {
-  if (!setupSignedInThisRun) return;
   const settings = loadSettings(home);
-  if (settings.launchAtLoginDefaulted) return;
-  // Signed out again between completing setup and this hand-over — the Mac the
-  // default was for no longer exists.
-  if (!settings.relayCredential.trim()) return;
+  if (settings.launchAtLoginDefaulted || !settings.relayCredential.trim()) return;
   if (setLaunchAtLogin(app.isPackaged, loginItems, true).supported) {
     settings.launchAtLoginDefaulted = true;
     saveSettings(home, settings);
@@ -903,9 +904,6 @@ app.whenReady().then(async () => {
     isConnected: () => connected,
     deviceName: `Plow (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
-    onSignedIn: () => {
-      setupSignedInThisRun = true;
-    },
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.
     warn: (message) => console.log(`[onboarding] ${message}`),

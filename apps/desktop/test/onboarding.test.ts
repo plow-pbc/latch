@@ -593,12 +593,7 @@ describe("the phone-code fallback still works", () => {
     await first.requestCode("+15551110000");
     await first.submitCode("12345678");
 
-    // Finding an old credential is not signing in: nothing was minted this
-    // session, so the first-run hook must stay silent (see onSignedIn below).
-    let signedIn = 0;
-    const relaunched = build({ onSignedIn: () => (signedIn += 1) });
-    expect(relaunched.state().step).toBe("connected");
-    expect(signedIn).toBe(0);
+    expect(build().state().step).toBe("connected");
   });
 });
 
@@ -883,37 +878,3 @@ describe("a sign-out while startRelay is dialling", () => {
   });
 });
 
-
-describe("onSignedIn — the seam behind the first-run launch-at-login default", () => {
-  it("fires exactly once when activation completes", async () => {
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    let signedIn = 0;
-    const onboarding = build({ onSignedIn: () => (signedIn += 1) });
-    await onboarding.begin();
-    await settle();
-
-    expect(onboarding.state().step).toBe("connected");
-    expect(signedIn).toBe(1);
-  });
-
-  it("fires on the phone-code path too", async () => {
-    let signedIn = 0;
-    const onboarding = build({ onSignedIn: () => (signedIn += 1) });
-    onboarding.usePhoneCode();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    expect(onboarding.state().step).toBe("connected");
-    expect(signedIn).toBe(1);
-  });
-
-  it("does NOT fire for a code that fails", async () => {
-    plow.verifyFails = "unauthorized";
-    let signedIn = 0;
-    const onboarding = build({ onSignedIn: () => (signedIn += 1) });
-    onboarding.usePhoneCode();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-    expect(signedIn).toBe(0);
-  });
-});

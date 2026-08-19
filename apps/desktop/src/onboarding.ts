@@ -109,11 +109,6 @@ export interface OnboardingDeps {
   /** Names this Mac, both in the activation and in the user's key list. */
   deviceName: string;
   onChange?: () => void;
-  /** Setup truly completed: a device credential was minted and saved in THIS
-   * session, on either path. Distinct from `onChange` (any state) and from
-   * "step is connected" (also true when the constructor finds an old
-   * credential). main.ts hangs the one-time launch-at-login default on it. */
-  onSignedIn?: () => void;
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
   wait?: (ms: number) => Promise<void>;
@@ -566,7 +561,6 @@ export class Onboarding {
     settings.accountUid = info.uid;
     settings.mcpUrl = info.mcpUrl;
     this.save(settings);
-    this.deps.onSignedIn?.();
 
     // The activation is spent: drop the code and the secret rather than leave
     // either sitting in memory or on a screen behind this one.
