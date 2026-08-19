@@ -15,6 +15,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import { DeviceAgent } from "@domo/device-core";
 import {
@@ -23,6 +24,8 @@ import {
   OperationRecords,
   operationFingerprint,
   OPERATION_ID_PATTERN,
+  OPERATION_TOMBSTONE_MS,
+  OPERATION_TTL_MS,
 } from "@domo/mcp-server";
 import { callTool } from "./client.js";
 
@@ -38,6 +41,26 @@ function tempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-ops-"));
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+/**
+ * Resolve when an operation's work has actually landed.
+ *
+ * The continuation registry announces recorded state changes, so a test can
+ * WAIT for the settlement instead of sampling for it. The polling loops these
+ * replaced went red on a loaded machine — not because anything was wrong, but
+ * because a fixed number of 25ms naps is a guess about how busy the box is.
+ */
+function whenSettled(server: { continuations: { events: EventEmitter } }): Promise<string> {
+  return new Promise((resolve) => {
+    const done = new Set(["approved_uncollected", "collected", "denied", "failed", "expired"]);
+    const listener = (change: { state: string }) => {
+      if (!done.has(change.state)) return;
+      server.continuations.events.removeListener("change", listener);
+      resolve(change.state);
+    };
+    server.continuations.events.on("change", listener);
+  });
 }
 
 /** A Mac that counts how often the human was asked. */
@@ -180,16 +203,14 @@ describe("a retry after a lost response", () => {
     expect(retry.payload.handle).toBe(first.payload.handle);
     expect(asked.length).toBe(1);
 
-    approve();
     // And once the human answers, a further retry of the same operation gets
     // the RESULT — the current state, not a recording of the first reply.
-    let latest = retry.payload;
-    for (let i = 0; i < 200 && latest.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      latest = (
-        await callTool(server, "read_file", { path: file, operation_id: "op-read-1" }, ALICE)
-      ).payload;
-    }
+    const settled = whenSettled(server);
+    approve();
+    expect(await settled).toBe("approved_uncollected");
+    const latest = (
+      await callTool(server, "read_file", { path: file, operation_id: "op-read-1" }, ALICE)
+    ).payload;
     expect(latest.status).toBe("ready");
     expect(latest.result.content).toBe("the numbers");
     expect(asked.length).toBe(1);
@@ -201,21 +222,18 @@ describe("a retry after a lost response", () => {
     const file = path.join(dir, "hello.txt");
     fs.writeFileSync(file, "recovered");
 
+    // The read is answered inline here, so there is nothing to wait for: the
+    // point is that the ID finds it even though the response carrying the
+    // handle never arrived.
     const first = await callTool(
       server,
       "read_file",
       { path: file, operation_id: "op-lost-handle" },
       ALICE,
     );
-    // Whatever came back, the agent never saw it. It asks by the id it chose.
-    let byId = (
+    const byId = (
       await callTool(server, "get_result", { operation_id: "op-lost-handle" }, ALICE)
     ).payload;
-    for (let i = 0; i < 200 && byId.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      byId = (await callTool(server, "get_result", { operation_id: "op-lost-handle" }, ALICE))
-        .payload;
-    }
     expect(byId.status).toBe("ready");
     expect(JSON.stringify(byId)).toContain("recovered");
     // The id answered without the handle ever being used.
@@ -446,14 +464,9 @@ describe("a deferred operation reaches its ending too", () => {
     expect(stillPending.payload.status).toBe("pending");
     expect(asked.length).toBe(1);
 
+    const settled = whenSettled(server);
     approve();
-    for (let i = 0; i < 200; i++) {
-      const state = (
-        await callTool(server, "get_result", { operation_id: "op-deferred-ttl" }, ALICE)
-      ).payload;
-      if (state.status === "ready") break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    expect(await settled).toBe("approved_uncollected");
 
     // NOW the clock matters. Past retention, the id is a tombstone: reserved,
     // its result gone, and a retry must not re-run the read.
@@ -591,6 +604,48 @@ describe("the registry itself", () => {
     expect(runs).toBe(1);
   });
 
+  it("ships fifteen minutes of retention and fifteen more of tombstone", async () => {
+    // The SHIPPED constants, exercised through a default-constructed registry.
+    // Every other test here injects its own short windows, so nothing else
+    // notices if the defaults change — `OPERATION_TOMBSTONE_MS` could be set to
+    // zero and the suite stayed green.
+    expect(OPERATION_TTL_MS).toBe(15 * 60_000);
+    expect(OPERATION_TOMBSTONE_MS).toBe(15 * 60_000);
+
+    let clock = 1_000_000;
+    // Defaults for both windows; only the clock is the test's.
+    const records = new OperationRecords(undefined, undefined, () => clock);
+    const read = () => ({ status: "unknown" });
+    await records.run("a", "op", "fp", async () => ({ done: true }), read as never);
+
+    // Inside retention: still the answer.
+    clock += OPERATION_TTL_MS - 1_000;
+    expect(records.lookupState("a", "op", read as never)).toEqual({
+      status: "ready",
+      operation_id: "op",
+      result: { done: true },
+    });
+
+    // Past retention: a tombstone, and the id is still reserved. A zero-length
+    // tombstone would already be `null` here.
+    clock += 2_000;
+    expect(records.lookupState("a", "op", read as never)).toEqual({
+      status: "expired",
+      operation_id: "op",
+    });
+
+    // Still reserved a moment before the tombstone runs out.
+    clock += OPERATION_TOMBSTONE_MS - 2_000;
+    expect(records.lookupState("a", "op", read as never)).toEqual({
+      status: "expired",
+      operation_id: "op",
+    });
+
+    // And free once it has.
+    clock += 2_000;
+    expect(records.lookupState("a", "op", read as never)).toBeNull();
+  });
+
   it("keeps namespaces apart and sweeps only what is past its tombstone", async () => {
     let clock = 0;
     const records = new OperationRecords(100, 100, () => clock);
@@ -640,13 +695,21 @@ describe("a socket that dies, and the agent that comes back", () => {
 
     /** A socket the relay is on the other end of. */
     const socket = () => {
+      const waiters = new Map<string, (answer: { body: string }) => void>();
       const sock = {
         sent: [] as Record<string, unknown>[],
         onLine: null as ((line: Buffer) => void) | null,
         onClose: null as (() => void) | null,
         startReading() {},
         sendLine(line: Buffer) {
-          sock.sent.push(JSON.parse(line.toString("utf8")) as Record<string, unknown>);
+          const frame = JSON.parse(line.toString("utf8")) as Record<string, unknown>;
+          sock.sent.push(frame);
+          if (frame.type !== "relay.response") return;
+          const waiting = waiters.get(frame.rid as string);
+          if (waiting) {
+            waiters.delete(frame.rid as string);
+            waiting(frame as unknown as { body: string });
+          }
         },
         close() {},
         push(frame: unknown) {
@@ -656,6 +719,12 @@ describe("a socket that dies, and the agent that comes back", () => {
           return sock.sent.find((f) => f.type === "relay.response" && f.rid === rid) as
             | { body: string }
             | undefined;
+        },
+        /** Resolve when this Mac answers `rid` — no sampling, no naps. */
+        answer(rid: string): Promise<{ body: string }> {
+          const already = sock.answerFor(rid);
+          if (already) return Promise.resolve(already);
+          return new Promise((resolve) => waiters.set(rid, resolve));
         },
       };
       return sock;
@@ -705,11 +774,9 @@ describe("a socket that dies, and the agent that comes back", () => {
     live.push({ type: "auth.ok", exchange_deadline_ms: 25_000, response_ack: true });
 
     // The call arrives, the human is slow, and a pending handle goes back.
+    const answerA = live.answer("RID-A");
     live.push(frame("RID-A"));
-    for (let i = 0; i < 200 && !live.answerFor("RID-A"); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    const first = payloadOf(live.answerFor("RID-A")!);
+    const first = payloadOf(await answerA);
     expect(first.status).toBe("pending");
     expect(asked.length).toBe(1);
 
@@ -723,29 +790,25 @@ describe("a socket that dies, and the agent that comes back", () => {
     expect(previous).not.toBe(live);
 
     // The agent retries the SAME operation on the new socket.
+    const settled = whenSettled(server);
     approve();
+    const answerB = live.answer("RID-B");
     live.push(frame("RID-B"));
-    for (let i = 0; i < 200 && !live.answerFor("RID-B"); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    const retry = payloadOf(live.answerFor("RID-B")!);
+    const retry = payloadOf(await answerB);
+    expect(await settled).toBe("approved_uncollected");
 
     // One prompt, one write, and the retry is answered by the first operation
     // — as its handle while pending, or as its result once it landed.
     expect(asked.length).toBe(1);
     expect(retry.status === "pending" ? retry.handle : first.handle).toBe(first.handle);
-    for (let i = 0; i < 200 && !fs.existsSync(file); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
     expect(fs.readFileSync(file, "utf8")).toBe("once");
 
     // And the file is written exactly once: rewrite it, retry again, and it is
     // still what the test put there.
     fs.writeFileSync(file, "not-rewritten");
+    const answerC = live.answer("RID-C");
     live.push(frame("RID-C"));
-    for (let i = 0; i < 200 && !live.answerFor("RID-C"); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await answerC;
     expect(fs.readFileSync(file, "utf8")).toBe("not-rewritten");
     expect(asked.length).toBe(1);
   });

@@ -10,9 +10,12 @@ Kept in the repo because a reviewer cannot re-derive it: the list below is the
 record of which guards are actually load-bearing.
 
 - **Implemented:** `e88ad61` (§6), review fixes in the commit carrying this file.
-- **Suite:** `npx vitest run` — 592 passed, 1 skipped, 45 files.
-- **Focused tests:** `packages/mcp-server/test/operations.test.ts` (18) and the
+- **Suite:** `npx vitest run` — 593 passed, 1 skipped, 45 files.
+- **Focused tests:** `packages/mcp-server/test/operations.test.ts` (19) and the
   three classification tests in `packages/mcp-server/test/classification.test.ts`.
+- **No polling:** these tests wait on the recorded settlement and on the socket's
+  own frame, never on a fixed number of naps — a loaded machine used to fail two
+  of them for reasons that had nothing to do with what they check.
 
 ## The contract, and where each half is tested
 
@@ -55,6 +58,14 @@ Break, observe the failure, restore. The suite was green after every restore.
 | O11 | the tombstone answers before the fingerprint is compared | 1 |
 | O12 | a denial is remembered as a plain failure | 1 |
 | O13 | `get_result` does not validate the id it is given | 1 |
+| D4 | `OPERATION_TOMBSTONE_MS` → 0 (the shipped default) | 1 |
+| D4b | `OPERATION_TTL_MS` → 1 (the shipped default) | 2 |
+
+D4 is the one a QA cook found on the release gate, and it is the sharper lesson
+of the two: every test here injected its own retention through the constructor,
+so the SHIPPED constants were never exercised and could be set to zero with the
+suite still green. A test that builds the registry with its defaults and only an
+injected clock now walks the whole life of an id.
 
 O2 is worth a note: the first attempt at it moved registration after `work()`
 but still synchronously, which the test cannot tell apart from correct ordering.

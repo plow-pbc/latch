@@ -5,8 +5,13 @@ itself cannot be: it needs Electron, Electron runs on the M4, and a reviewer
 reading this branch has neither. A screenshot proves a window looked right; the
 table below is the part that says the wiring behind it works.
 
-- **Commit verified:** `c9b59a4` (re-run unchanged on the follow-up commit that
-  added the preflight; same 18/18).
+- **Commit verified:** `c9b59a4`, then re-run unchanged on the preflight commit,
+  and again after the release-gate fixes — same 18/18 each time.
+- **Careful:** between those runs, Chunk 4 made `operation_id` required and this
+  script was not updated, so for two commits the result here could not be
+  reproduced. A QA cook caught it (`2026-08-19-release-gate/`), and the frames
+  now carry an id. A gate script that goes stale is the same class of problem as
+  the wiring it watches: it is the only thing that would notice.
 - **Where:** `plucas-m4`, macOS 27.0, Electron 33.4.11, node v26.7.0, in
   `~/plow-pbc/codex-chunk3` (per-branch directory — see the M4 procedure).
 - **How:** `just continuation-verify`

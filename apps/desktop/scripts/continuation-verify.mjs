@@ -266,7 +266,15 @@ async function verify() {
 
     const file = path.join(home, "report.txt");
     fs.writeFileSync(file, "the numbers");
-    sock.push(callFrame("RID-1", "read_file", { path: file, goal: "summarise it" }));
+    // `operation_id` is required on every tool that can act twice (§6): a
+    // frame without one is refused before it ever reaches an approval.
+    sock.push(
+      callFrame("RID-1", "read_file", {
+        path: file,
+        goal: "summarise it",
+        operation_id: "verify-read-1",
+      }),
+    );
 
     const win = await until(() => opened.win);
     check("a relay frame opened the real approval window", !!win, lastServed(sock));
@@ -338,7 +346,7 @@ async function verify() {
     server.setCallBudgetMs(800);
     const file = path.join(home, "b.txt");
     fs.writeFileSync(file, "x");
-    sock.push(callFrame("RID-3", "read_file", { path: file }));
+    sock.push(callFrame("RID-3", "read_file", { path: file, operation_id: "verify-read-2" }));
     const win = await until(() => opened.win);
     check("second window opened", !!win, lastServed(sock));
     if (!win) return finish();

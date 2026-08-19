@@ -18,6 +18,16 @@ import { fileURLToPath } from "node:url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 const outDir = process.env.OUT_DIR ?? "/tmp";
+// A directory that is not there makes every capture throw, and an unhandled
+// rejection inside `whenReady` leaves Electron alive with nothing to do — the
+// run hangs instead of failing, which is the worst of the two.
+if (!fs.existsSync(outDir)) {
+  console.error(
+    `OUT_DIR does not exist: ${outDir}\n` +
+      `  fix: mkdir -p "${outDir}"   (or unset OUT_DIR to write to /tmp)`,
+  );
+  process.exit(1);
+}
 
 const INTENT_ID = "9F2C1A44-0B77-4E3D-9A21-6C5E0D8B4417";
 
@@ -66,6 +76,15 @@ const dismissals = [];
 ipcMain.on("approval:dismiss", (_e, id) => dismissals.push(id));
 
 const results = [];
+
+// Say what went wrong rather than hanging: an unhandled rejection out of the
+// run below would otherwise leave Electron up with no window and no output.
+const die = (where) => (error) => {
+  console.error(`SHOT_ERROR:${where}: ${error?.stack ?? error}`);
+  app.exit(2);
+};
+process.on("uncaughtException", die("uncaught"));
+process.on("unhandledRejection", die("rejection"));
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -198,4 +217,4 @@ app.whenReady().then(async () => {
     report.copyConfirmed &&
     report.collectedClearsCopy;
   app.exit(ok ? 0 : 1);
-});
+}, die("whenReady"));
