@@ -91,7 +91,7 @@ test-browser: build
     DOMO_CAMOUFOX="{{root}}/vendor/camoufox-browser/$(uname -m)" \
         npx vitest run packages/mcp-server/test/browser.integration.test.ts
 
-# Package the desktop app: signed + notarized "Plow.app" + DMG, in
+# Package the desktop app: signed + notarized "Plow Latch.app" + DMG, in
 # apps/desktop/release/. Signs with the Plow Developer ID (must be in the
 # keychain). One-time setup for notarization — store credentials under a
 # keychain profile (default name "domo-notary"):
@@ -142,7 +142,7 @@ _package profile flags: build
     version="${base}.${build}"; \
     sha="$(git -C "{{root}}" rev-parse --short=12 HEAD)"; \
     [ -z "$(git -C "{{root}}" status --porcelain)" ] || sha="${sha}-dirty"; \
-    echo "packaging Plow ${version} (${sha})"; \
+    echo "packaging Plow Latch ${version} (${sha})"; \
     cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac --publish never -c.extraMetadata.version="$version" -c.extraMetadata.gitCommit="$sha" -c.buildVersion="$build" -c.mac.extendInfo.DomoGitCommit="$sha" {{flags}}
 
 # Build, sign, notarize, and upload a versioned release candidate to
@@ -153,13 +153,13 @@ _package profile flags: build
 # credentials (CI's OIDC role).
 release profile="domo-notary" s3_profile="plow": _main-only
     @just package "{{profile}}"; \
-    plist="{{root}}/apps/desktop/release/mac-universal/Plow.app/Contents/Info.plist"; \
+    plist="{{root}}/apps/desktop/release/mac-universal/Plow Latch.app/Contents/Info.plist"; \
     version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"; \
     build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"; \
     bash scripts/release-upload.sh --version "$version" --build "$build" --profile "{{s3_profile}}"
 
 # Ship an uploaded candidate: copy its artifacts onto the stable keys installed
-# apps poll (domo/latest-mac.yml + zip, domo/Plow.dmg). In CI this runs
+# apps poll (domo/latest-mac.yml + zip, domo/Plow-Latch.dmg). In CI this runs
 # from the promote workflow when a draft GitHub release is published.
 promote version build s3_profile="plow":
     bash scripts/release-promote.sh --version "{{version}}" --build "{{build}}" --profile "{{s3_profile}}"
@@ -167,13 +167,13 @@ promote version build s3_profile="plow":
 # Serve THIS checkout's apps/desktop/release/ as a local update feed, for
 # testing the whole update loop with no S3. The loop:
 #   1. just package-unnotarized                  # build A
-#   2. cp -R "apps/desktop/release/mac-universal/Plow.app" /Applications
+#   2. cp -R "apps/desktop/release/mac-universal/Plow Latch.app" /Applications
 #   3. just package-unnotarized                  # build B — wait for the next
 #      minute first: the version stamp has minute granularity, and a same-
 #      minute rebuild is the SAME version, which the updater ignores
 #   4. just serve-updates
 #   5. DOMO_HOME=/tmp/domo-update-test DOMO_UPDATE_FEED_URL=http://127.0.0.1:8043 \
-#        "/Applications/Plow.app/Contents/MacOS/Plow"
+#        "/Applications/Plow Latch.app/Contents/MacOS/Plow Latch"
 #   6. Tray → "Check for Updates…" → restart → the startup log reports B.
 # DOMO_HOME keeps the test app out of the real packaged install's "Domo" home;
 # copying (not downloading) build A avoids quarantine/translocation, which

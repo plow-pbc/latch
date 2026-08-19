@@ -110,7 +110,7 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
       plow.connected = true;
     },
     isConnected: () => plow.connected,
-    deviceName: "Plow (test)",
+    deviceName: "Plow Latch (test)",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
     // deadline is measured against, so a five-minute give-up takes microseconds
@@ -167,7 +167,7 @@ describe("activation — the path a brand-new user takes", () => {
     expect(shown.activation?.sendTo).toBe("+15550001111");
     expect(shown.activation?.smsUrl).toBe("sms:+15550001111?&body=Plow%20Activate%3A%20CODE1");
     // The Mac names itself in the activation, so the session is identifiable.
-    expect(plow.activations).toEqual(["Plow (test)"]);
+    expect(plow.activations).toEqual(["Plow Latch (test)"]);
 
     // The user types nothing. Polling was already running before they tapped.
     expect(onboarding.messagesOpened().step).toBe("waiting");
