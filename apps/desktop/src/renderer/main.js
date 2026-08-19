@@ -449,13 +449,15 @@ function clientCard(key, label) {
   return card;
 }
 
-/** The mock's external-link ↗ — on every control that leaves the app, so the
-    mark means the same thing wherever it appears. */
+/** The external-link ↗, for buttons whose click IS the action — it just
+    happens in the browser. Hand-offs the user must still finish in another
+    app (System Settings, Messages) take the macOS ellipsis in their label
+    instead: "…" means more input needed, ↗ means it happens somewhere else. */
 function extArrow() {
   return el("span", { class: "ext-arrow", text: "↗" });
 }
 
-/** A plain button that opens an external destination: the label, then the ↗. */
+/** A plain button that opens a web destination: the label, then the ↗. */
 function externalBtn(label, key) {
   const btn = el("button", { class: "btn" }, [el("span", { text: label }), extArrow()]);
   btn.addEventListener("click", () => window.domo.openExternal(key));
@@ -988,7 +990,10 @@ async function renderSettings() {
     capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
   };
   applyCapabilities(await window.domo.capabilitiesGet());
-  const openFullDisk = externalBtn("Open System Settings", "fullDiskSettings");
+  // Ellipsis, not ↗ (see extArrow): the click only starts this — the user
+  // still has to flip the toggle over there.
+  const openFullDisk = el("button", { class: "btn", text: "Open System Settings…" });
+  openFullDisk.addEventListener("click", () => window.domo.openExternal("fullDiskSettings"));
 
   // One Support destination: icon, title + blurb, and a button that asks main
   // to open the URL behind `key` — the renderer never holds the URL itself.

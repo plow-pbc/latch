@@ -311,13 +311,18 @@ app.whenReady().then(async () => {
         document.body.innerText.includes("Not granted"),
       fdaNamesMessages: document.body.innerText.includes("texted to you in Messages"),
       fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
-        (b) => b.querySelector("span")?.textContent === "Open System Settings",
+        (b) => b.textContent.trim() === "Open System Settings…",
       ),
-      // Every button that leaves the app carries the external-link ↗: Full
-      // Disk Access, Join Discord, Watch Livestream.
-      externalButtonsCarryArrow: (() => {
+      // The marks split by meaning: the macOS "…" on the one hand-off the user
+      // must finish over there (System Settings), the external-link ↗ on the
+      // buttons whose click just happens in the browser (Discord, Livestream)
+      // — and never both on one button.
+      supportMarks: (() => {
         const btns = [...document.querySelectorAll(".support-row .btn")];
-        return btns.length >= 3 && btns.every((b) => b.querySelector(".ext-arrow"));
+        const arrowed = btns.filter((b) => b.querySelector(".ext-arrow"));
+        const handoffs = btns.filter((b) => b.textContent.trim().endsWith("…"));
+        return btns.length === 3 && arrowed.length === 2 && handoffs.length === 1 &&
+          !handoffs[0].querySelector(".ext-arrow");
       })(),
       // Launch at Login, in Capabilities: on this packaged-looking probe the
       // toggle is live and unchecked, and the from-source note is hidden
@@ -937,7 +942,7 @@ app.whenReady().then(async () => {
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
     settings.fdaOffersSystemSettings &&
-    settings.externalButtonsCarryArrow &&
+    settings.supportMarks &&
     settings.launchTitle &&
     settings.launchToggleLive &&
     settings.launchNoteHidden &&
