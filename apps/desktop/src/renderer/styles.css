@@ -628,8 +628,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .settings .chip-note:empty { display: none; }
 .settings .chip-note { margin-top: 10px; }
 
-/* The Anthropic key field, folded into Reviewer inference. Hidden until there
-   is a key or someone asks for one by clicking the disabled chip. */
-.settings .keyfield.is-hidden { display: none; }
+/* The Anthropic key field, folded into Reviewer inference. Always on screen:
+   selecting a provider is not gated on having its credential. */
 .settings .keyfield { margin-top: 14px; margin-bottom: 0; }
 .settings .keyfield-note { margin-top: 6px; }

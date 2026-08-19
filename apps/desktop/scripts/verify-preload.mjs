@@ -223,20 +223,17 @@ app.whenReady().then(async () => {
       noEndpointRow: !document.querySelector("#view").innerText.includes("Agent endpoint"),
       noAccountUid: !document.querySelector("#view").innerText.includes("u_probe"),
       noPhonePromise: !document.querySelector("#view").innerText.includes("phone number"),
-      // A faded chip must say what would un-fade it, and be the way there.
-      explainsDisabledProvider: (document.querySelector(".reviewer-note")?.textContent ?? "").includes(
-        "Anthropic API key: add one below to select it",
+      // Nothing is gated any more: every provider chip is selectable, credential
+      // or not, and so is Adversarial mode. What a missing credential costs is
+      // said, not enforced by fading.
+      noDisabledChips: [...document.querySelectorAll(".chip")].every(
+        (c) => !c.classList.contains("disabled"),
       ),
-      // …and it must not repeat the chip's own label back at itself.
-      hintDoesNotStutter: !(document.querySelector(".reviewer-note")?.textContent ?? "").includes(
-        "Anthropic API key needs an Anthropic API key",
+      // The note explains only the SELECTED provider — Plow here, which has a
+      // credential — so it says nothing about what is missing elsewhere.
+      noteSaysNothingMissing: !(document.querySelector(".reviewer-note")?.textContent ?? "").includes(
+        "reviews will be denied",
       ),
-      disabledChipIsActionable: !!(() => {
-        const chip = [...document.querySelectorAll(".chip")].find(
-          (c) => c.textContent.trim() === "Anthropic API key",
-        );
-        return chip && chip.classList.contains("disabled") && chip.classList.contains("actionable");
-      })(),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
@@ -252,9 +249,11 @@ app.whenReady().then(async () => {
         const item = document.querySelector(".settings .keyfield")?.closest(".item");
         return !!item && item.querySelector(".group-title")?.textContent.trim() === "Reviewer inference";
       })(),
-      // Collapsed while there is no key and nobody has asked for the field.
-      keyFieldHiddenAtRest:
-        getComputedStyle(document.querySelector(".settings .keyfield")).display === "none",
+      // Always on screen — there is nothing to reveal when nothing is gated.
+      keyFieldAlwaysVisible:
+        getComputedStyle(document.querySelector(".settings .keyfield")).display !== "none",
+      keyFieldMasked:
+        document.querySelector(".settings .keyfield input").type === "password",
       // The Capabilities section, on a Mac whose probe says denied: it names
       // the permission, says so honestly, gives the Messages use case, and
       // routes the grant through System Settings (a key into main's table —
@@ -305,10 +304,9 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(chipsShot, (await win.webContents.capturePage()).toPNG());
 
-  // Reveal on intent. The disabled chip IS the disclosure for the field that
-  // would enable it: clicking expands the field in place and focuses it. #48
-  // scrolled to a field in a different group, which moved the page and left the
-  // reader to spot what had changed; there is nothing to scroll to now.
+  // Selecting a provider that has no credential must WORK — that is the whole
+  // change. The chip goes active, main stores it, and the note turns into the
+  // consequence: reviews will be denied until a key arrives.
   await win.webContents.executeJavaScript(`(() => {
     [...document.querySelectorAll(".chip")]
       .find((c) => c.textContent.trim() === "Anthropic API key")
@@ -317,32 +315,33 @@ app.whenReady().then(async () => {
   })()`);
   await waitFor(
     win,
-    `!document.querySelector(".settings .keyfield").classList.contains("is-hidden")`,
-    "the Anthropic key field to expand when its disabled chip is clicked",
+    `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Anthropic API key" && c.classList.contains("active"))`,
+    "the uncredentialled Anthropic provider to be selected",
   );
-  const reveal = await win.webContents.executeJavaScript(`(${() => {
-    const field = document.querySelector(".settings .keyfield");
-    const input = field.querySelector("input");
+  const ungated = await win.webContents.executeJavaScript(`(${() => {
+    const chip = [...document.querySelectorAll(".chip")].find(
+      (c) => c.textContent.trim() === "Anthropic API key",
+    );
     return {
-      fieldVisible: getComputedStyle(field).display !== "none",
-      // Focused, so the next keystroke lands in it — the whole point of
-      // revealing it rather than merely un-hiding it.
-      inputFocused: document.activeElement === input,
-      // Masked: the renderer may hold this value, never show it.
-      stillMasked: input.type === "password",
-      // The chip stays disabled — revealing the field is not selecting the
-      // provider, and the gate is main's to open, not the renderer's.
-      chipStillDisabled: [...document.querySelectorAll(".chip")]
-        .find((c) => c.textContent.trim() === "Anthropic API key")
-        .classList.contains("disabled"),
+      selected: chip.classList.contains("active"),
+      // Selectable, not merely clickable: main took it.
+      neverDisabled: !chip.classList.contains("disabled"),
+      // …and the pane says what it will cost rather than pretending it is fine.
+      warnsReviewsWillBeDenied: (document.querySelector(".reviewer-note")?.textContent ?? "").includes(
+        "reviews will be denied",
+      ),
+      // Adversarial mode is selectable with no reviewer behind it too.
+      adversarialSelectable: !([...document.querySelectorAll(".chip")].find(
+        (c) => c.textContent.trim() === "Adversarial Agent",
+      )?.classList.contains("disabled")),
     };
   }})()`);
 
-  const revealShot = process.env.REVEAL_OUT ?? "/tmp/settings-key-revealed.png";
+  const ungatedShot = process.env.UNGATED_OUT ?? "/tmp/settings-ungated.png";
   await win.webContents.executeJavaScript(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
-  fs.writeFileSync(revealShot, (await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(ungatedShot, (await win.webContents.capturePage()).toPNG());
 
   // What used to sit here: a provider round-trip through the bridge, and a
   // mode-fallback check. Both asserted the interlock in `settingsActions`, and
@@ -752,19 +751,19 @@ app.whenReady().then(async () => {
     settings.noEndpointRow &&
     settings.noAccountUid &&
     settings.noPhonePromise &&
-    settings.explainsDisabledProvider &&
-    settings.hintDoesNotStutter &&
-    settings.disabledChipIsActionable &&
+    settings.noDisabledChips &&
+    settings.noteSaysNothingMissing &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
     settings.hasInferenceGroup &&
     settings.noSeparateKeyGroup &&
     settings.keyFieldInReviewerGroup &&
-    settings.keyFieldHiddenAtRest &&
-    reveal.fieldVisible &&
-    reveal.inputFocused &&
-    reveal.stillMasked &&
-    reveal.chipStillDisabled &&
+    settings.keyFieldAlwaysVisible &&
+    settings.keyFieldMasked &&
+    ungated.selected &&
+    ungated.neverDisabled &&
+    ungated.warnsReviewsWillBeDenied &&
+    ungated.adversarialSelectable &&
     settings.hasCapabilitiesGroup &&
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
@@ -801,7 +800,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, reveal, revealShot, settingsPane, chipsShot, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, ungated, ungatedShot, settingsPane, chipsShot, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 });

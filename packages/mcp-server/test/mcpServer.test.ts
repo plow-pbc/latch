@@ -11,6 +11,7 @@ import path from "node:path";
 import { canonicalize, JSONValue, jv } from "@domo/protocol";
 import {
   DENIAL_SOURCE_NO_CREDITS,
+  DENIAL_SOURCE_NO_REVIEWER,
   DeviceAgent,
   HeadlessPolicy,
   MAX_FILE_BYTES,
@@ -222,6 +223,37 @@ describe("a tool call end to end, in process", () => {
     expect(serialized).not.toMatch(/plow_sk|sk-ant|Bearer/i);
     expect(serialized).not.toMatch(/https?:\/\//);
     expect(serialized).not.toMatch(/\bu_[a-z0-9]/i); // account uid shape
+  });
+
+  it("a reviewer that does not exist is distinguishable too, and still runs nothing", async () => {
+    // Selecting a provider is no longer gated on having its credential, so
+    // "Adversarial mode with nothing behind it" is a state a user can be in.
+    // It denies — and the agent must be able to tell that from the owner
+    // deciding against it, because only one of the two is worth reporting to
+    // the human as something they can fix.
+    const { server, device } = makeServer(
+      new ScriptedPolicy("deny", 0, DENIAL_SOURCE_NO_REVIEWER),
+    );
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "a.txt"), "x");
+    const { isError, payload } = await callTool(
+      server,
+      "plow_read_file",
+      { path: path.join(dir, "a.txt") },
+      AGENT,
+    );
+    expect(isError).toBe(true);
+    expect(payload.status).toBe("denied");
+    expect(payload.reason).toMatch(/no credential/);
+    expect(payload.reason).toMatch(/could not run/);
+    expect(payload.reason).toMatch(/Settings/);
+    // Not the sentence a human pressing Deny produces.
+    expect(payload.reason).not.toBe("the owner of this Mac denied the request");
+    expect(events(device)).not.toContain("file_read");
+    // Fixed text, like the credits one: nothing upstream reaches the caller.
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toMatch(/plow_sk|sk-ant|Bearer/i);
+    expect(serialized).not.toMatch(/https?:\/\//);
   });
 
 });

@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
 import { adversarialReview } from "../src/adversarialAgent.js";
 import type { ReviewArgs, ReviewFailureCause, Verdict } from "../src/adversarialAgent.js";
+import { DENIAL_SOURCE_NO_REVIEWER } from "@domo/device-core";
 import { Settings } from "../src/settings.js";
 import { auditActivities, decidedByLabel } from "../src/viewModel.js";
 import {
@@ -22,7 +23,6 @@ import {
   activeProvider,
   decideIntent,
   inferenceStatus,
-  modeAfterAvailabilityChange,
   providerAvailability,
   reviewerAvailable,
   reviewerInfo,
@@ -256,16 +256,21 @@ describe("decideIntent — adversarial mode", () => {
   });
 
   // The security property, per shape of "the active provider cannot run": an
-  // unusable reviewer degrades to the dialog, never to an approval — and a
-  // credential belonging to the OTHER provider does not quietly stand in for
-  // the one that was selected.
+  // unusable reviewer DENIES, never approves — and a credential belonging to
+  // the OTHER provider does not quietly stand in for the one that was selected.
+  //
+  // This used to fall to the dialog, because selecting a provider without its
+  // credential was refused and the mode was retired to Ask behind the user. The
+  // gate is gone: the state is reachable, so it has to answer for itself. Deny
+  // is the fail-closed answer, and `no_reviewer` is what makes it legible
+  // instead of looking like a decision somebody made.
   const providerCredentialCases = [
     { name: "no credential at all", over: {} },
     { name: "only the other provider's credential", over: { anthropicApiKey: ANTHROPIC_KEY } },
   ];
 
   for (const c of providerCredentialCases) {
-    it(`falls to the human when the Plow reviewer has ${c.name}`, async () => {
+    it(`denies, explaining itself, when the Plow reviewer has ${c.name}`, async () => {
       const h = harness(
         settings({
           approvalMode: "adversarial",
@@ -273,15 +278,35 @@ describe("decideIntent — adversarial mode", () => {
           relayCredential: "",
           ...c.over,
         }),
-        { verdict: "allow", decision: "deny" },
+        // What the real reviewer returns with nobody to call: no verdict, and
+        // the cause that says so. `decision` is what the dialog WOULD have said
+        // — it must not be reachable.
+        { verdict: "ask", cause: "not_configured", reason: "not signed in to Plow", decision: "allow_once" },
       );
       const result = await h.run();
-      expect(h.review).not.toHaveBeenCalled();
-      expect(h.openApproval).toHaveBeenCalledOnce();
-      expect(result.source).toBe("ask");
-      expect(result.decision).not.toBe("allow_once");
+      // The review IS attempted now — that is how the cause is discovered.
+      expect(h.review).toHaveBeenCalledOnce();
+      // No dialog: the mode the user chose is honoured, not swapped for Ask.
+      expect(h.openApproval).not.toHaveBeenCalled();
+      expect(result.decision).toBe("deny");
+      expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
     });
   }
+
+  // …and the denial carries a reason the calling agent can act on, rather than
+  // the sentence a human pressing Deny produces.
+  it("the explained denial names the standing condition, not a refusal", async () => {
+    const h = harness(
+      settings({ approvalMode: "adversarial", inferenceProvider: "anthropic", anthropicApiKey: "" }),
+      { verdict: "ask", cause: "not_configured", reason: "no API key configured", decision: "allow_once" },
+    );
+    const result = await h.run();
+    // The sentence itself lives in device-core (EXPLAINED_DENIALS) and is
+    // pinned end to end by mcpServer.test.ts; here the contract is that this
+    // path picks the explained source rather than a bare deny.
+    expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
+    expect(result.source).not.toBe("adversarial");
+  });
 });
 
 describe("decideIntent — ask mode and suggestions", () => {
@@ -477,27 +502,12 @@ describe("the renderer's view of inference carries no credentials", () => {
   });
 });
 
-describe("losing the active credential retires Adversarial mode", () => {
-  it("falls back to ask when the credential is gone", () => {
-    const signedOut = settings({ approvalMode: "adversarial", inferenceProvider: "plow", relayCredential: "" });
-    expect(modeAfterAvailabilityChange(signedOut)).toBe("ask");
-  });
-
-  it("leaves the mode alone while the credential is present", () => {
-    const ok = settings({
-      approvalMode: "adversarial",
-      inferenceProvider: "plow",
-      relayCredential: PLOW_CREDENTIAL,
-    });
-    expect(modeAfterAvailabilityChange(ok)).toBe("adversarial");
-  });
-
-  it("does not disturb the other modes", () => {
-    for (const mode of ["approve", "ask", "deny"] as const) {
-      expect(modeAfterAvailabilityChange(settings({ approvalMode: mode }))).toBe(mode);
-    }
-  });
-});
+// What used to sit here: `modeAfterAvailabilityChange`, which retired
+// Adversarial to Ask whenever the active provider lost its credential. The
+// function is gone with the gate. Losing a credential no longer rewrites the
+// user's mode behind them — the mode stays, and every operation it decides is
+// denied with `no_reviewer` until the credential comes back. That contract is
+// pinned by the adversarial-mode describe above and by settingsActions.test.
 
 describe("settings defaults", () => {
   let loadSettings: typeof import("../src/settings.js").loadSettings;

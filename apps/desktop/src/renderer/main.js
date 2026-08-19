@@ -1050,22 +1050,19 @@ async function renderSettings() {
   // Adversarial Agent needs an API key; the suggestions checkbox needs Ask mode
   // AND a key. Re-render whenever the mode or key presence changes.
   const renderModeChips = () => {
-    // Whatever the ACTIVE provider is missing is what blocks Adversarial —
-    // a pasted Anthropic key does not enable it while Plow is selected.
+    // Adversarial is selectable with or without a reviewer. Choosing it without
+    // one is not an error to prevent — it is a decision that denies every
+    // operation, loudly, until the credential arrives. Say that; do not fade it.
     const provider = PROVIDERS[inference.provider];
-    modeNote.textContent = hasKey ? "" : provider.adversarial;
+    modeNote.textContent =
+      currentMode === "adversarial" && !hasKey
+        ? `${provider.label}: ${provider.missing}. Adversarial Agent denies every operation until then.`
+        : "";
     modeChips.replaceChildren(...MODES.map(([value, label]) => {
-      const disabled = value === "adversarial" && !hasKey;
       const chip = el("span", {
-        class:
-          "chip" +
-          (currentMode === value ? " active" : "") +
-          (disabled ? " disabled actionable" : ""),
-        attrs: disabled ? { title: provider.adversarial } : {},
+        class: "chip" + (currentMode === value ? " active" : ""),
       }, [el("span", { text: label })]);
-      if (disabled) {
-        chip.addEventListener("click", provider.go);
-      } else {
+      {
         chip.addEventListener("click", async () => {
           // What MAIN stored, not what was asked for. Adversarial is refused
           // when the active provider has no credential, and the credential can
@@ -1091,76 +1088,37 @@ async function renderSettings() {
    * A disabled control that says nothing is a dead end; the app knows exactly
    * what is missing, so the chip becomes the way to go fix it.
    */
-  /**
-   * Shown when there is a key to show, or when someone asks for one.
-   *
-   * `keyRevealed` is one-way on purpose: a field that vanished again after a
-   * mistyped key would take the fix with it. Once a key is stored the field
-   * stays regardless — masked, because the value is a secret the renderer is
-   * allowed to hold but not to display.
-   */
-  let keyRevealed = false;
-  const renderApiKeyField = () => {
-    apiKeyField.classList.toggle("is-hidden", !(keyRevealed || inference.available.anthropic));
-  };
-  // The chip IS the disclosure. #48 scrolled to a field in another group, which
-  // moved the page and left the reader to spot what had changed; the field is
-  // in this group now, so it can simply appear where the eye already is.
-  const revealApiKeyField = () => {
-    keyRevealed = true;
-    renderApiKeyField();
-    apiKeyInput.focus();
-  };
-  const revealAccount = () => {
-    accountBox.scrollIntoView({ block: "center" });
-    (signIn.style.display === "none" ? signOut : signIn).focus();
-  };
+  // No reveal, and nothing hidden: the field is always on screen inside this
+  // group. Selecting a provider is no longer gated on having its credential —
+  // a provider with none is a state you are allowed to be in, and one that
+  // answers for itself at review time — so there is nothing left to disclose.
   PROVIDERS = {
-    plow: {
-      label: "Plow account",
-      hint: "sign in to select it",
-      adversarial: "Adversarial Agent needs you signed in to Plow.",
-      go: revealAccount,
-    },
-    anthropic: {
-      label: "Anthropic API key",
-      hint: "add one below to select it",
-      adversarial: "Adversarial Agent needs an Anthropic API key — add one below.",
-      go: revealApiKeyField,
-    },
+    plow: { label: "Plow account", missing: "no credential — reviews will be denied until you sign in" },
+    anthropic: { label: "Anthropic API key", missing: "no key — reviews will be denied until you add one" },
   };
 
-  // A provider with no credential is disabled and cannot be selected; the main
-  // process enforces the same rule, this only keeps the UI honest.
+  // Every provider is selectable, credential or not. Main no longer refuses
+  // one, so the UI has nothing to mirror — what a missing credential costs is
+  // said in the note instead of being enforced by a faded chip.
   const renderProviderChips = () => {
     // No fallback copy: `available` comes from main's frozen provider list, so a
     // key here that PROVIDERS does not know is a bug to see, not to paper over.
-    const unavailable = Object.entries(inference.available)
-      .filter(([, usable]) => !usable)
-      .map(([value]) => `${PROVIDERS[value].label}: ${PROVIDERS[value].hint}`);
-    // The note carries both facts: which reviewer is running, and — when a chip
-    // is faded — what would un-fade it. Until now the only signal was opacity.
+    const active = PROVIDERS[inference.provider];
+    // The note carries both facts: which reviewer is running, and — when the
+    // SELECTED one has no credential — what that will cost. Only the selected
+    // provider matters here; what the other one is missing is not this Mac's
+    // problem until it is picked.
     reviewerNote.textContent =
       `Reviewer: ${inference.info}` +
-      (unavailable.length ? ` · ${unavailable.join("; ")}.` : "");
-    providerChips.replaceChildren(...Object.entries(inference.available).map(([value, usable]) => {
-      const provider = PROVIDERS[value];
-      const disabled = !usable;
+      (inference.available[inference.provider] ? "" : ` · ${active.label}: ${active.missing}.`);
+    providerChips.replaceChildren(...Object.keys(inference.available).map((value) => {
       const chip = el("span", {
-        class:
-          "chip" +
-          (inference.provider === value ? " active" : "") +
-          (disabled ? " disabled actionable" : ""),
-        attrs: disabled ? { title: `${provider.label} — ${provider.hint}` } : {},
-      }, [el("span", { text: provider.label })]);
-      if (disabled) {
-        // Still clickable, deliberately: it cannot select the provider, but it
-        // can take you to the field that would make selecting it possible.
-        chip.addEventListener("click", provider.go);
-      } else if (inference.provider !== value) {
+        class: "chip" + (inference.provider === value ? " active" : ""),
+      }, [el("span", { text: PROVIDERS[value].label })]);
+      if (inference.provider !== value) {
         chip.addEventListener("click", async () => {
-          // What main stored, not what was asked for: an unavailable provider
-          // is refused there, and the answer is the refusal.
+          // Still what main stored rather than what was asked for: an unknown
+          // provider name is refused there, and the answer is the refusal.
           applyInference(await window.domo.inferenceSet(value));
         });
       }
@@ -1181,7 +1139,6 @@ async function renderSettings() {
     hasKey = next.available[next.provider];
     renderProviderChips();
     renderModeChips();
-    renderApiKeyField();
     updateSuggestEnabled();
   };
 
@@ -1195,7 +1152,6 @@ async function renderSettings() {
 
   renderProviderChips();
   renderModeChips();
-  renderApiKeyField();
   updateSuggestEnabled();
 
   // What a status change re-reads. Display nodes only: `apiKeyInput` is not

@@ -34,6 +34,14 @@ import { SkillRegistry } from "./skills.js";
 export const DENIAL_SOURCE_NO_CREDITS = "no_credits";
 
 /**
+ * A delegate that denies because the reviewer it was told to use does not
+ * exist — no credential for the selected provider. Same channel as
+ * `no_credits`, and the same reasoning: a standing condition the caller can
+ * act on, so it says so instead of looking like a decision someone made.
+ */
+export const DENIAL_SOURCE_NO_REVIEWER = "no_reviewer";
+
+/**
  * Denial sources whose reason is worth telling the calling agent, and the exact
  * sentence it gets.
  *
@@ -58,6 +66,10 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   // Mac, then try again" — following it, the user clicks a dead prompt, nothing
   // runs, and the retry's dialog (queued behind that window) appears as if they
   // had been asked twice. That is the loop, driven by our own copy.
+  [DENIAL_SOURCE_NO_REVIEWER]:
+    "inference unavailable: Adversarial mode is selected but its provider has " +
+    "no credential on this Mac, so the reviewer could not run and the " +
+    "operation was denied — the owner needs to add one in Settings",
   [APPROVAL_SOURCE_EXPIRED]:
     "no one answered in time, so the request expired and was denied — a timeout, " +
     "not a refusal. Try again to raise a fresh request; any prompt still on the " +

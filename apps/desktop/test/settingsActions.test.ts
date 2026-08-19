@@ -44,17 +44,18 @@ function homeWith(overrides: Partial<Settings> = {}): string {
 /** What actually survived to disk. */
 const stored = (home: string) => loadSettings(home);
 
-describe("selecting a provider is refused by main, not merely hidden in the UI", () => {
-  it("refuses a provider with no credential, and persists nothing", () => {
-    // The renderer is sandboxed but still the untrusted side of the bridge. A
-    // replayed or hand-made IPC call must not park the reviewer on a provider
-    // that can never answer.
+describe("any known provider is selectable, credential or not", () => {
+  it("stores a provider that has no credential, and says it has none", () => {
+    // The gate is gone. Parking the reviewer on a provider that cannot answer
+    // used to be refused here; it is a state the user is allowed to be in now,
+    // and one that denies — legibly — at review time instead of being
+    // prevented. `available` still reports the truth, for the note in Settings.
     const home = homeWith({ inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL });
 
     const status = setInferenceProvider(home, "anthropic");
 
-    expect(stored(home).inferenceProvider).toBe("plow");
-    expect(status.provider).toBe("plow");
+    expect(stored(home).inferenceProvider).toBe("anthropic");
+    expect(status.provider).toBe("anthropic");
     expect(status.available.anthropic).toBe(false);
   });
 
@@ -77,17 +78,18 @@ describe("selecting a provider is refused by main, not merely hidden in the UI",
     }
   });
 
-  it("reports the truth back to the renderer on a refusal", () => {
-    // A refused call still answers with the real state, so the renderer cannot
+  it("reports the truth back to the renderer either way", () => {
+    // Accepted or refused, the answer is the real state, so the renderer cannot
     // sit on an optimistic guess about which provider is live.
     const home = homeWith({ inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL });
     expect(setInferenceProvider(home, "anthropic")).toEqual(readInference(home));
+    expect(setInferenceProvider(home, "nope")).toEqual(readInference(home));
   });
 
-  it("switching providers retires Adversarial mode when the new one is unusable", () => {
-    // Not reachable through the UI today, but the guard is what makes that a
-    // UI detail rather than the only thing standing between the reviewer and a
-    // mode it cannot serve.
+  it("switching to an unusable provider keeps the mode the user chose", () => {
+    // The old contract retired Adversarial here, so the stored mode could never
+    // name a reviewer that cannot run. That rewrote the user's choice behind
+    // them; now the choice stands and the consequence is a denial they can read.
     const home = homeWith({
       approvalMode: "adversarial",
       inferenceProvider: "anthropic",
@@ -95,16 +97,17 @@ describe("selecting a provider is refused by main, not merely hidden in the UI",
       relayCredential: PLOW_CREDENTIAL,
     });
     setInferenceProvider(home, "plow");
-    expect(stored(home).inferenceProvider).toBe("plow");
-    expect(stored(home).approvalMode).toBe("adversarial"); // plow has a credential
+    expect(stored(home).approvalMode).toBe("adversarial");
 
-    // Now take the Plow credential away and try to come back to it.
+    // Take the Plow credential away: the mode SURVIVES, unusable and honest.
     signOutOfPlow(home);
-    expect(stored(home).approvalMode).toBe("ask");
+    expect(stored(home).inferenceProvider).toBe("plow");
+    expect(stored(home).approvalMode).toBe("adversarial");
+    expect(readInference(home).available.plow).toBe(false);
   });
 });
 
-describe("clearing the active provider's credential persists the fallback to ask", () => {
+describe("a credential change never rewrites the mode the user chose", () => {
   // What a key change does depends on TWO things: whether the new value counts
   // as a credential at all, and whether the provider it belongs to is the one
   // doing the reviewing. Every row carries both, and its own expectations.
@@ -115,7 +118,7 @@ describe("clearing the active provider's credential persists the fallback to ask
       mode: "adversarial" as const,
       set: "",
       key: "",
-      expected: "ask" as const,
+      expected: "adversarial" as const,
     },
     {
       name: "a whitespace-only key counts as cleared",
@@ -123,7 +126,7 @@ describe("clearing the active provider's credential persists the fallback to ask
       mode: "adversarial" as const,
       set: "   ",
       key: "",
-      expected: "ask" as const,
+      expected: "adversarial" as const,
     },
     {
       // Plow is doing the reviewing; the Anthropic key going away changes
@@ -161,8 +164,8 @@ describe("clearing the active provider's credential persists the fallback to ask
   }
 });
 
-describe("Plow sign-out retires Adversarial mode the same way clearing the key does", () => {
-  it("forgets the credential and persists mode -> ask", () => {
+describe("Plow sign-out forgets the credential and leaves the mode alone", () => {
+  it("forgets the credential and keeps the stored mode", () => {
     const home = homeWith({
       approvalMode: "adversarial",
       inferenceProvider: "plow",
@@ -177,7 +180,10 @@ describe("Plow sign-out retires Adversarial mode the same way clearing the key d
     expect(after.relayCredential).toBe("");
     expect(after.accountUid).toBe("");
     expect(after.mcpUrl).toBe("");
-    expect(after.approvalMode).toBe("ask");
+    // Adversarial survives signing out. It cannot run, and that is the point:
+    // every operation it decides is denied with `no_reviewer` until a
+    // credential comes back, instead of the mode being quietly swapped for Ask.
+    expect(after.approvalMode).toBe("adversarial");
   });
 
   it("signing out while Anthropic is the reviewer leaves the mode alone", () => {
@@ -203,11 +209,11 @@ describe("Plow sign-out retires Adversarial mode the same way clearing the key d
   });
 });
 
-describe("selecting Adversarial mode is refused when no reviewer can run", () => {
-  it("falls back to ask rather than storing a mode nothing can serve", () => {
+describe("Adversarial mode is selectable whether or not a reviewer can run", () => {
+  it("stores it even with no credential — it denies rather than being refused", () => {
     const home = homeWith({ approvalMode: "ask", inferenceProvider: "plow", relayCredential: "" });
-    expect(setApprovalMode(home, "adversarial")).toBe("ask");
-    expect(stored(home).approvalMode).toBe("ask");
+    expect(setApprovalMode(home, "adversarial")).toBe("adversarial");
+    expect(stored(home).approvalMode).toBe("adversarial");
   });
 
   it("accepts it when the active provider has a credential", () => {
@@ -295,7 +301,10 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(after.relayCredential).toBe("");
     expect(after.accountUid).toBe("");
     expect(after.mcpUrl).toBe("");
-    expect(after.approvalMode).toBe("ask");
+    // Adversarial survives signing out. It cannot run, and that is the point:
+    // every operation it decides is denied with `no_reviewer` until a
+    // credential comes back, instead of the mode being quietly swapped for Ask.
+    expect(after.approvalMode).toBe("adversarial");
   });
 
   it("clears locally even when the revoke FAILS", async () => {
@@ -314,8 +323,9 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(after.relayCredential).toBe("");
     expect(after.accountUid).toBe("");
     expect(after.mcpUrl).toBe("");
-    // …and the interlock still fires: no credential, no Adversarial mode.
-    expect(after.approvalMode).toBe("ask");
+    // …and the mode is untouched: there is no interlock to fire. Adversarial
+    // with no credential denies and says why, rather than being rewritten.
+    expect(after.approvalMode).toBe("adversarial");
   });
 
   it("clears locally for every shape of failure", async () => {

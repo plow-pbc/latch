@@ -8,7 +8,7 @@
  * device. `main.ts` keeps only the Electron-shaped adapter around it.
  */
 import { Intent, JSONValue } from "@domo/protocol";
-import { DENIAL_SOURCE_NO_CREDITS } from "@domo/device-core";
+import { DENIAL_SOURCE_NO_CREDITS, DENIAL_SOURCE_NO_REVIEWER } from "@domo/device-core";
 import {
   agentHistory,
   PLOW_REVIEWER_INFO,
@@ -107,20 +107,6 @@ export function reviewerAvailable(settings: Settings): boolean {
   return providerAvailability(settings)[activeProvider(settings)];
 }
 
-/**
- * Adversarial mode is only meaningful with a working reviewer. When the active
- * provider has no credential — the key was cleared, the Mac was signed out, the
- * provider was switched — the mode falls back to Ask, exactly as it always has
- * when the Anthropic key was cleared.
- *
- * Returns the mode to store, so the caller decides whether to persist.
- */
-export function modeAfterAvailabilityChange(settings: Settings): Settings["approvalMode"] {
-  const mode = settings.approvalMode ?? "ask";
-  if (mode === "adversarial" && !reviewerAvailable(settings)) return "ask";
-  return mode;
-}
-
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;
@@ -154,7 +140,6 @@ export async function decideIntent(
   if (mode === "deny") return { decision: "deny", source: "policy" };
 
   const provider = activeProvider(settings);
-  const available = providerAvailability(settings)[provider];
 
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
@@ -192,10 +177,21 @@ export async function decideIntent(
     return r;
   };
 
-  if (mode === "adversarial" && available) {
+  if (mode === "adversarial") {
     const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
+    // The selected provider has no credential, so the reviewer the user chose
+    // does not exist. Deny, and say which standing condition caused it.
+    //
+    // NOTE this is a CHANGE, not a description of what came before. Selecting a
+    // provider used to be gated on having its credential, and Adversarial with
+    // no credential silently became Ask — the configured mode quietly replaced
+    // by a dialog. Selection is ungated now, so this state is reachable and has
+    // to answer for itself: deny (fail closed) with a reason that names the fix.
+    if (cause === "not_configured") {
+      return { decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER };
+    }
     // The account cannot pay for inference, so the reviewer the user chose can
     // never run. Deny — and say why, in a form the calling agent can read.
     // Quietly reverting to prompting a human would change the mode the user
@@ -214,8 +210,12 @@ export async function decideIntent(
   // Ask mode (or adversarial with no credential): show the dialog, optionally
   // with the reviewer's hint when both the toggle and a credential are present.
   // A 402 here costs only the hint — the human was always the decider.
+  // A hint is a nicety, so it is still skipped when the provider has no
+   // credential: running a review that cannot run would buy an audit pair and a
+   // null suggestion. This is not a gate — nothing the human chose is refused
+   // by it, and Adversarial mode is unaffected.
   const hint =
-    settings.showAgentSuggestions && available
+    settings.showAgentSuggestions && reviewerAvailable(settings)
       ? review().then((r) => ({
           decision:
             r.verdict === "allow"

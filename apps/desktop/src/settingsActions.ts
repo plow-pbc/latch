@@ -11,21 +11,21 @@
  * is only worth anything if it persists.
  */
 import { INFERENCE_PROVIDERS, loadSettings, saveSettings, Settings } from "./settings.js";
-import {
-  InferenceStatus,
-  inferenceStatus,
-  modeAfterAvailabilityChange,
-  providerAvailability,
-} from "./reviewPolicy.js";
+import { InferenceStatus, inferenceStatus } from "./reviewPolicy.js";
 
-/** Read-modify-write, always re-applying the interlock before persisting. */
+/**
+ * Read-modify-write.
+ *
+ * There is no interlock here any more. Losing a credential used to retire
+ * Adversarial mode to Ask in the same write, so the stored mode could never
+ * name a reviewer that cannot run — which meant signing out silently changed
+ * how operations get decided. A mode that cannot run now DENIES, and says why
+ * (`DENIAL_SOURCE_NO_REVIEWER`), so the state is legible instead of impossible
+ * and what the user chose is what stays on disk.
+ */
 function update(home: string, mutate: (settings: Settings) => void): Settings {
   const settings = loadSettings(home);
   mutate(settings);
-  // Whatever just changed may have taken the active reviewer's credential with
-  // it. Retiring Adversarial mode is part of the same write, so there is no
-  // window where the stored mode names a reviewer that cannot run.
-  settings.approvalMode = modeAfterAvailabilityChange(settings);
   saveSettings(home, settings);
   return settings;
 }
@@ -38,18 +38,18 @@ export function readInference(home: string): InferenceStatus {
 /**
  * Select a provider.
  *
- * A provider with no credential is REFUSED here, not merely hidden in the UI:
- * the renderer is sandboxed but it is still the untrusted side of the bridge,
- * and a replayed or hand-made IPC call must not be able to park the reviewer on
- * a provider that can never answer. An unknown provider name is refused too.
+ * Any known provider, credential or not. Parking the reviewer on a provider
+ * that cannot answer used to be refused here; it is now a state the user is
+ * allowed to be in, and one that answers for itself at review time with an
+ * explained denial rather than a silent fallback.
  *
- * Returns the resulting status either way, so a refused call tells the renderer
- * what the truth is rather than leaving it to assume its own optimistic guess.
+ * An unknown provider name is still refused — that is input validation on the
+ * untrusted side of the bridge, not a policy gate.
  */
 export function setInferenceProvider(home: string, provider: unknown): InferenceStatus {
   const next = INFERENCE_PROVIDERS.find((p) => p === provider);
   const settings = loadSettings(home);
-  if (!next || !providerAvailability(settings)[next]) return inferenceStatus(settings);
+  if (!next) return inferenceStatus(settings);
   return inferenceStatus(update(home, (s) => (s.inferenceProvider = next)));
 }
 
@@ -136,8 +136,7 @@ export async function revokeAndSignOut(
 export function setApprovalMode(home: string, mode: unknown): Settings["approvalMode"] {
   const allowed: Settings["approvalMode"][] = ["approve", "adversarial", "ask", "deny"];
   const requested = allowed.find((m) => m === mode) ?? "ask";
-  // `update` re-applies the interlock, which is what turns an Adversarial
-  // request with no usable reviewer into Ask — one definition of that rule,
-  // not two.
+  // Stored as asked. Adversarial with no usable reviewer is a legal state now:
+  // it denies, legibly, instead of being rewritten to Ask behind the user.
   return update(home, (s) => (s.approvalMode = requested)).approvalMode;
 }
