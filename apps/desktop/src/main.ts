@@ -1031,8 +1031,9 @@ function checkForUpdatesFromMenu(): void {
 
 /**
  * The macOS application menu. Replacing the default menu costs the stock
- * items, so the standard roles (Edit for clipboard, Window) are declared
- * explicitly — a sandboxed renderer still needs working Cmd-C/V. The View
+ * items, so the standard roles (File for Close, Edit for clipboard, Window)
+ * are declared explicitly — a sandboxed renderer still needs working
+ * Cmd-C/V. The View
  * menu (reload, devtools) is dev-only noise and ships only from source.
  */
 function setupAppMenu(): void {
@@ -1053,6 +1054,20 @@ function setupAppMenu(): void {
         { role: "unhide" },
         { type: "separator" },
         { role: "quit" },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [
+        // Through the gate, so this cannot hand back a main window a Mac
+        // that is not signed in is not entitled to. Not Cmd-0 — the dev-only
+        // View menu's "Actual Size" (resetZoom) already claims that.
+        { label: "Show Main Window", accelerator: "CmdOrCtrl+1", click: () => gate.sync() },
+        { type: "separator" },
+        // Close (Cmd-W) lives in File on macOS; windowMenu omits it there, so
+        // without this item the accelerator binds to nothing app-wide. Closing
+        // an approval window without deciding is already a denial (fail safe).
+        { role: "close" },
       ],
     },
     { role: "editMenu" },
