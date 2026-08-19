@@ -376,6 +376,93 @@ describe("only a terminal, uncollected result expires", () => {
   });
 });
 
+describe("what the approval window is told", () => {
+  it("emits a change for every recorded move, and none for elapsed time", () => {
+    const seen: { intentId: string; state: string }[] = [];
+    const cont = new Continuations({ record: () => {} });
+    cont.events.on("change", (c: { intentId: string; state: string }) => seen.push(c));
+
+    cont.open("H1", AGENT.agent_id, 1_234);
+    // Nothing to render against yet — no intent, no event.
+    expect(seen).toEqual([]);
+
+    cont.linkIntent("H1", INTENT);
+    exchangeContext.run({ rid: "RID-W" }, () => cont.deferred("H1"));
+    // Deferring is not a state change: the window still shows waiting_inline.
+    expect(seen.map((c) => c.state)).toEqual(["waiting_inline"]);
+
+    cont.acknowledgeExchange("RID-W");
+    cont.ready("H1");
+    cont.collected("H1");
+    expect(seen.map((c) => c.state)).toEqual([
+      "waiting_inline",
+      "backgrounded",
+      "approved_uncollected",
+      "collected",
+    ]);
+    for (const c of seen) expect(c.intentId).toBe(INTENT);
+  });
+
+  it("hands the window the absolute deadline of the call, keyed by intent", () => {
+    const cont = new Continuations({ record: () => {} });
+    cont.open("H1", AGENT.agent_id, 9_876);
+    cont.linkIntent("H1", INTENT);
+    expect(cont.deadlineOfIntent(INTENT)).toBe(9_876);
+    expect(cont.stateOfIntent(INTENT)).toBe("waiting_inline");
+    // An intent nothing is tracking answers null rather than guessing.
+    expect(cont.deadlineOfIntent("NOPE")).toBeNull();
+    expect(cont.stateOfIntent("NOPE")).toBeNull();
+  });
+
+  it("stops answering for an approval whose call finished inline", () => {
+    const cont = new Continuations({ record: () => {} });
+    cont.open("H1", AGENT.agent_id, 5);
+    cont.linkIntent("H1", INTENT);
+    cont.closeInline("H1");
+    expect(cont.stateOfIntent(INTENT)).toBeNull();
+    expect(cont.deadlineOfIntent(INTENT)).toBeNull();
+  });
+
+  it("carries the deadline the budget was armed with, through the server", async () => {
+    const home = tempDir();
+    let approve = () => {};
+    const waited = new Promise<void>((r) => {
+      approve = () => r();
+    });
+    const device = new DeviceAgent(home, "Test Mac", {
+      decideIntent: async () => {
+        await waited;
+        return "allow_once" as const;
+      },
+    });
+    const before = Date.now();
+    const server = createDomoMcpServer(device, { budgetMs: 5_000 });
+    cleanups.push(() => server.close());
+
+    const file = path.join(tempDir(), "hello.txt");
+    fs.writeFileSync(file, "x");
+    const call = callTool(server, "read_file", { path: file }, AGENT);
+    // While the human is still deciding, the window can already ask where this
+    // stands and how long the call has left.
+    let intentId: string | null = null;
+    for (let i = 0; i < 100 && intentId === null; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      const events = device.audit.entries().map((e) => jv(e).get("intentId").str);
+      intentId = events.find((id) => id) ?? null;
+    }
+    expect(intentId).toBeTruthy();
+    const deadline = server.continuations.deadlineOfIntent(intentId!);
+    expect(deadline).not.toBeNull();
+    // Armed from the call's start, not from when the window opened.
+    expect(deadline!).toBeGreaterThanOrEqual(before);
+    expect(deadline!).toBeLessThanOrEqual(Date.now() + 5_000);
+    expect(server.continuations.stateOfIntent(intentId!)).toBe("waiting_inline");
+
+    approve();
+    await call;
+  });
+});
+
 describe("through the server, over repeated reads", () => {
   it("records the agent asking for the result exactly once, however often it polls", async () => {
     const home = tempDir();

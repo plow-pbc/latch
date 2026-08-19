@@ -12,7 +12,18 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  shell,
+  Tray,
+} from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -33,6 +44,7 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { CONFIRMATION_LINGER_MS, CONTINUE_PHRASE, ContinuationPhase } from "./continuationView.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -187,6 +199,21 @@ async function resolveCredentialTitles(intent: Intent): Promise<CredentialTitles
 
 type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };
 
+/**
+ * Where the approval's operation stands, and when its call stops waiting.
+ *
+ * Read from the continuation registry rather than guessed: the window is only
+ * allowed to say "backgrounded" because something observed the relay
+ * acknowledging the handoff.
+ */
+function continuationOf(intentId: string): { state: ContinuationPhase | null; deadlineAt: number | null } {
+  const cont = mcp?.continuations;
+  return {
+    state: (cont?.stateOfIntent(intentId) ?? null) as ContinuationPhase | null,
+    deadlineAt: cont?.deadlineOfIntent(intentId) ?? null,
+  };
+}
+
 /** Serialize approval windows so two prompts never overlap. */
 let approvalChain: Promise<unknown> = Promise.resolve();
 
@@ -212,6 +239,17 @@ function openApprovalWindow(
         },
       });
       let settled = false;
+      const intentId = approvalId(request);
+      // The window follows RECORDED state. Nothing here infers a transition
+      // from elapsed time — the renderer's countdown is a prediction about the
+      // deadline and says so, and never moves the window between states.
+      const onContinuation = (change: { intentId: string; state: string }) => {
+        if (change.intentId !== intentId || win.isDestroyed()) return;
+        win.webContents.send("approval:continuation", change);
+      };
+      mcp?.continuations.events.on("change", onContinuation);
+      /** Closes the window once nothing is left to watch. */
+      let linger: NodeJS.Timeout | null = null;
       // The renderer subscribes only after it has built its DOM, and Electron
       // IPC has no replay — so a hint that resolved first would land on nobody.
       // An adversarial fallback hands over an ALREADY-RESOLVED promise, so that
@@ -226,13 +264,35 @@ function openApprovalWindow(
         settled = true;
         ipcMain.removeHandler("approval:get");
         ipcMain.removeHandler("approval:ready");
-        win.close();
         resolve(decision);
+        // An inline approval closes on the decision, as it always has. One that
+        // has already been backgrounded does not: the user's next move is with
+        // their agent, and this is where they are told so. It stays until the
+        // agent collects, until they dismiss it, or for thirty seconds.
+        const { state } = continuationOf(intentId);
+        const keepOpen = state === "backgrounded" || state === "approved_uncollected";
+        if (!keepOpen) {
+          win.close();
+          return;
+        }
+        // §4's "compact confirmation": the question is answered, so the window
+        // shrinks to the size of what is left to say instead of leaving a
+        // card's worth of empty space under two lines of text.
+        win.setContentSize(460, 190);
+        win.webContents.send("approval:decided", { intentId });
+        linger = setTimeout(() => {
+          if (!win.isDestroyed()) win.close();
+        }, CONFIRMATION_LINGER_MS);
+        linger.unref?.();
       };
       // The renderer pulls its model (never pushed with executable content).
       // `suggesting` tells it whether an adversarial review is in flight, so it
       // can show an indeterminate "reviewing…" indicator until the hint lands.
-      ipcMain.handleOnce("approval:get", async () => ({ ...request, suggesting: !!hint }));
+      ipcMain.handleOnce("approval:get", async () => ({
+        ...request,
+        suggesting: !!hint,
+        continuation: continuationOf(intentId),
+      }));
       // The renderer calls this once its suggestion listener is installed.
       // `handle`, not `handleOnce`: a second call must be a harmless no-op
       // rather than a rejected invoke in the renderer. Resolving twice is
@@ -244,6 +304,13 @@ function openApprovalWindow(
         finish(decision);
       };
       ipcMain.on("approval:decide", onDecision);
+      // The confirmation's own dismiss. Only ever closes a window whose
+      // decision is already in — a dismiss before that would be a silent deny.
+      const onDismiss = (_e: unknown, id: string) => {
+        if (id !== intentId || !settled) return;
+        if (!win.isDestroyed()) win.close();
+      };
+      ipcMain.on("approval:dismiss", onDismiss);
       // When the adversarial agent responds, tell the window which button to
       // highlight (or that there's no hint) so it can clear the "reviewing…"
       // indicator. Only meaningful while the window is still open and unanswered.
@@ -263,6 +330,9 @@ function openApprovalWindow(
       win.on("closed", () => {
         ipcMain.removeHandler("approval:ready");
         ipcMain.removeListener("approval:decide", onDecision);
+        mcp?.continuations.events.removeListener("change", onContinuation);
+        ipcMain.removeListener("approval:dismiss", onDismiss);
+        if (linger) clearTimeout(linger);
         if (!settled) {
           settled = true;
           resolve("deny");
@@ -376,6 +446,12 @@ ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? 
 // Approvals still awaiting an answer, so the UI can show what is outstanding
 // rather than relying on a window that may have been closed.
 ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
+// The continuation phrase, onto the clipboard. Main-side because the renderer
+// is sandboxed; the text is ours, never anything the agent supplied.
+ipcMain.handle("approval:copyPhrase", async () => {
+  clipboard.writeText(CONTINUE_PHRASE);
+  return true;
+});
 ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
 ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);

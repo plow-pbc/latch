@@ -164,7 +164,9 @@ export class DeferredResults {
     work: (progress: Progress) => Promise<JSONValue>,
   ): Promise<JSONValue> {
     const handle = crypto.randomUUID().toUpperCase();
-    this.continuations?.open(handle, agentId);
+    // The absolute moment this call stops waiting, fixed before any work runs.
+    // The approval window shows the measured remainder of it.
+    this.continuations?.open(handle, agentId, this.now() + this.budgetMs);
     let reason: PendingReason = "awaiting_approval";
     const progress: Progress = {
       decided: () => {

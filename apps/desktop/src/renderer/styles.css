@@ -657,3 +657,44 @@ textarea.text { min-height: 70px; resize: vertical; }
 
 /* The locked-vault explanation: an honest paragraph under the empty state. */
 .panel .vault-note { margin: 8px 0 0; max-width: 68ch; }
+
+/* ---- Approval continuation strip ------------------------------------------
+   Where the approval's operation stands, and how much of the originating call
+   is left. It sits ABOVE the capability card on purpose: it is about the call,
+   not about what is being allowed, and nothing in it may read as part of the
+   enforced bound. Built from the tokens the rest of this window already uses —
+   the blue "informational" pair, the same radius and 12px body size as the
+   reviewer note — so it reads as the same surface rather than a new one.
+
+   Scoped under `.approve` like every other rule for this window. */
+.approve > .continuation { display: none; }
+.approve > .continuation.shown {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--blue-bd);
+  background: var(--blue-bg);
+  font-size: 12px;
+  color: var(--fg);
+}
+/* The confirmation state: the decision is in and this is now the whole window,
+   so it gets room to breathe rather than sitting as a strip above a card. */
+.approve > .continuation.confirming {
+  margin-top: 14px;
+  padding: 14px;
+  gap: 6px;
+}
+.approve > .continuation .cont-headline { font-weight: 600; color: var(--blue-fg); }
+.approve > .continuation .cont-detail { color: var(--muted); line-height: 1.4; }
+/* The countdown is a PREDICTION about the deadline — quiet, monospaced so it
+   does not jitter as the digits change, and never the loudest thing here. */
+.approve > .continuation .cont-countdown {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.approve > .continuation .cont-actions { display: flex; gap: 6px; margin-top: 4px; }
+.approve > .continuation .btn.small { padding: 4px 9px; font-size: 12px; }

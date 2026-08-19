@@ -4,6 +4,8 @@
    enforceable "fine print" is the capability set (what the sandbox is built
    from); the goal/request are shown as unverifiable context. */
 
+import { continuationView, secondsLeft } from "./continuationView.js";
+
 const root = document.getElementById("root");
 
 function el(tag, opts = {}, children = []) {
@@ -42,6 +44,78 @@ async function render() {
   }
 
   const v = req.view;
+
+  /* The continuation strip: where this approval's operation stands, and how
+     much of the originating call is left. It sits ABOVE the capability card
+     because it is about the call, not about what is being allowed — nothing
+     here may read as part of the enforced bound. */
+  const strip = el("div", { class: "continuation" });
+  let phase = req.continuation?.state ?? null;
+  const deadlineAt = req.continuation?.deadlineAt ?? null;
+  let decided = false;
+
+  const copyButton = button("Copy phrase", "btn small", () => {
+    window.domo.approvalCopyPhrase();
+    copyButton.textContent = "Copied";
+  });
+  const dismissButton = button("Dismiss", "btn small", () => {
+    window.domo.approvalDismiss(v.intentId);
+  });
+
+  function paintContinuation() {
+    const view = continuationView({ state: phase, deadlineAt, now: Date.now(), decided });
+    if (view.headline === null) {
+      strip.replaceChildren();
+      strip.classList.remove("shown");
+      return;
+    }
+    strip.classList.add("shown");
+    strip.classList.toggle("confirming", view.confirmation);
+    const line = [el("div", { class: "cont-headline", text: view.headline })];
+    if (view.detail) line.push(el("div", { class: "cont-detail", text: view.detail }));
+    /* The countdown is a PREDICTION about the call's deadline and is labelled
+       as one. It never moves the window between states: those arrive as
+       recorded changes from main. */
+    if (view.remainingMs !== null) {
+      line.push(
+        el("div", { class: "cont-countdown", text: `~${secondsLeft(view.remainingMs)}s left` }),
+      );
+    }
+    const actions = [];
+    if (view.showCopy) actions.push(copyButton);
+    if (view.confirmation) actions.push(dismissButton);
+    if (actions.length) line.push(el("div", { class: "cont-actions" }, actions));
+    strip.replaceChildren(...line);
+  }
+
+  /* Recorded changes only. */
+  window.domo.onApprovalContinuation((data) => {
+    if (data.intentId !== v.intentId) return;
+    phase = data.state;
+    paintContinuation();
+    if (decided) collapseToConfirmation();
+  });
+  window.domo.onApprovalDecided((data) => {
+    if (data.intentId !== v.intentId) return;
+    decided = true;
+    collapseToConfirmation();
+  });
+
+  /* Once the decision is in and the call has already been handed off, the
+     window stops being a question and becomes a short answer: what happens
+     next, and the phrase that makes it happen. */
+  function collapseToConfirmation() {
+    paintContinuation();
+    root.replaceChildren(
+      el("div", { class: "who" }, [el("span", { class: "name", text: v.agentDisplay })]),
+      strip,
+    );
+  }
+
+  /* Redraw the countdown on its own interval. It re-reads the clock; it never
+     invents a state change. */
+  const tick = setInterval(paintContinuation, 1000);
+  window.addEventListener("beforeunload", () => clearInterval(tick));
   const capchips = el("div", { class: "capchips" }, v.capabilities.map((c) => el("span", { class: "cap", text: c.display })));
   const warnings = [];
   if (v.runsCommand) warnings.push("runs a command");
@@ -79,6 +153,7 @@ async function render() {
       badge("blue", "wants to act"),
     ]),
     el("div", { class: "faint mono", text: v.agentId }),
+    strip,
     el("div", { class: "goal", text: v.goal || v.request }),
     el("div", { class: "fine" }, [
       el("div", { class: "lbl", text: "This will be allowed to (enforced)" }),
@@ -93,6 +168,7 @@ async function render() {
     el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
   );
   if (reviewing) document.body.appendChild(reviewing);
+  paintContinuation();
   allowOnce.focus(); // keyboard default: Return activates Allow Once
 
   // When the adversarial agent responds, clear the indicator and (if it made a

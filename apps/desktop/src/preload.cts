@@ -87,6 +87,16 @@ contextBridge.exposeInMainWorld("domo", {
   approvalReady: () => ipcRenderer.invoke("approval:ready"),
   approvalDecide: (id: string, decision: string) =>
     ipcRenderer.send("approval:decide", id, decision),
+  /** Recorded continuation changes for the open approval — never a timer. */
+  onApprovalContinuation: (cb: (data: { intentId: string; state: string }) => void) =>
+    ipcRenderer.on("approval:continuation", (_e, data) => cb(data)),
+  /** Main says the decision is in and this window is now a confirmation. */
+  onApprovalDecided: (cb: (data: { intentId: string }) => void) =>
+    ipcRenderer.on("approval:decided", (_e, data) => cb(data)),
+  /** Copy the "continue" phrase. The text lives in main; nothing is passed. */
+  approvalCopyPhrase: () => ipcRenderer.invoke("approval:copyPhrase"),
+  /** Dismiss a confirmation the user is done with. */
+  approvalDismiss: (id: string) => ipcRenderer.send("approval:dismiss", id),
   onApprovalSuggestion: (
     cb: (data: { id: string; decision: string | null; reason: string }) => void,
   ) =>

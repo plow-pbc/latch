@@ -36,6 +36,7 @@
  * activity view, and which the human has already seen.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { EventEmitter } from "node:events";
 import { JSONValue } from "@domo/protocol";
 
 /** §4's user-visible states, derived from the outcome and the observations. */
@@ -92,6 +93,15 @@ type Delivery = "ack" | "unknown";
 interface Record_ {
   agentId: string;
   intentId: string | null;
+  /**
+   * When the call that opened this stops waiting, as an absolute time.
+   *
+   * The window shows the MEASURED remainder of it. Handing the window a
+   * duration instead would promise a fresh budget after validation, path
+   * resolution and persistence had already spent part of it — a countdown
+   * that lies in the user's favour is worse than none.
+   */
+  deadlineAt: number | null;
   outcome: ContinuationOutcome;
   /** The relay acknowledged the exchange that carried this handle. */
   acknowledged: boolean;
@@ -111,7 +121,16 @@ interface Record_ {
 }
 
 export class Continuations {
+  /**
+   * Emits "change" with `{ intentId, state }` on every recorded move.
+   *
+   * The approval window transitions on these and on nothing else: §4 is
+   * explicit that the UI follows recorded state, not a renderer-side timer.
+   * The countdown is the one prediction it is allowed to make.
+   */
+  readonly events = new EventEmitter();
   private readonly byHandle = new Map<string, Record_>();
+  private readonly byIntent = new Map<string, string>();
   private readonly byRid = new Map<string, Set<string>>();
   /**
    * Deliveries observed for an exchange nothing was attached to yet.
@@ -126,10 +145,11 @@ export class Continuations {
 
   /** A deferrable call has started. Nothing is audited yet — the intent it is
    * about does not exist until the tool builds one. */
-  open(handle: string, agentId: string): void {
+  open(handle: string, agentId: string, deadlineAt: number | null = null): void {
     this.byHandle.set(handle, {
       agentId,
       intentId: null,
+      deadlineAt,
       outcome: "pending",
       acknowledged: false,
       collected: false,
@@ -146,8 +166,10 @@ export class Continuations {
     const rec = this.byHandle.get(handle);
     if (!rec || rec.intentId !== null) return;
     rec.intentId = intentId;
+    this.byIntent.set(intentId, handle);
     const held = rec.buffered.splice(0);
     for (const event of held) this.audit.record(event, { intentId });
+    this.announce(rec);
   }
 
   /**
@@ -230,6 +252,7 @@ export class Continuations {
     if (rec.outcome === "expired") return;
     rec.collected = true;
     this.emit(rec, CONTINUATION_EVENTS.collected);
+    this.announce(rec);
   }
 
   /**
@@ -246,6 +269,19 @@ export class Continuations {
     if (rec.outcome !== "ready") return;
     rec.outcome = "expired";
     this.emit(rec, CONTINUATION_EVENTS.expired);
+    this.announce(rec);
+  }
+
+  /** The state of the operation this intent belongs to, for the window. */
+  stateOfIntent(intentId: string): ContinuationState | null {
+    const handle = this.byIntent.get(intentId);
+    return handle === undefined ? null : this.state(handle);
+  }
+
+  /** When the call that asked for this approval stops waiting, absolute. */
+  deadlineOfIntent(intentId: string): number | null {
+    const handle = this.byIntent.get(intentId);
+    return handle === undefined ? null : (this.byHandle.get(handle)?.deadlineAt ?? null);
   }
 
   /** The state §4 shows a user, derived from the outcome and observations. */
@@ -304,6 +340,7 @@ export class Continuations {
     if (rec.acknowledged) return;
     rec.acknowledged = true;
     this.emit(rec, CONTINUATION_EVENTS.backgrounded);
+    this.announce(rec);
   }
 
   /**
@@ -321,6 +358,7 @@ export class Continuations {
     if (!rec || rec.outcome !== "pending") return;
     rec.outcome = outcome;
     if (event !== null) this.emit(rec, event);
+    this.announce(rec);
   }
 
   /** Record against the intent, or hold it until there is an intent to name. */
@@ -332,8 +370,17 @@ export class Continuations {
     this.audit.record(event, { intentId: rec.intentId });
   }
 
+  /** Tell whoever is rendering this operation where it now stands. */
+  private announce(rec: Record_): void {
+    if (rec.intentId === null) return;
+    const handle = this.byIntent.get(rec.intentId);
+    if (handle === undefined) return;
+    this.events.emit("change", { intentId: rec.intentId, state: this.state(handle) });
+  }
+
   private forget(handle: string): void {
     const rec = this.byHandle.get(handle);
+    if (rec?.intentId) this.byIntent.delete(rec.intentId);
     if (rec?.rid) {
       const handles = this.byRid.get(rec.rid);
       handles?.delete(handle);

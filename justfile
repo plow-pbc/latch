@@ -211,6 +211,11 @@ verify-preload: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" npx electron apps/desktop/scripts/verify-preload.mjs
 
+# Walk the approval window through the continuation states and capture each.
+continuation-screenshots: build
+    @mkdir -p "{{outdir}}"
+    DOMO_HOME="{{apphome}}" OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/continuation-screenshots.mjs
+
 # Screenshot the audit screen's live-browser thumbnail (evidence the owner can watch the browser).
 viewer-screenshot: build
     @mkdir -p "{{outdir}}"
