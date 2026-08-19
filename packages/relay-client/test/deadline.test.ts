@@ -6,7 +6,7 @@
  * because getting them out of step is invisible until an agent is already
  * waiting on a response nobody will deliver.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Connection } from "@domo/transport";
 import { DIRECT_CEILING_MS } from "@domo/mcp-server";
 import { RelayClient } from "../src/client.js";
@@ -24,6 +24,10 @@ import {
   RELAY_EXCHANGE_DEADLINE_MS,
   RESPONSE_ACK_FIELD,
 } from "../src/wire.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /** An `auth.ok` from a relay speaking the whole current contract. */
 const MODERN_RELAY = {
@@ -308,6 +312,48 @@ describe("the relay's acknowledgement boundary", () => {
     release();
     await new Promise((r) => setImmediate(r));
     expect(unknown).toEqual(["R-INFLIGHT"]);
+    await client.stop();
+  });
+
+  it("settles a never-acknowledged exchange with no further traffic of any kind", async () => {
+    // The scheduler's own test. After the response goes out NOTHING happens on
+    // this socket — no ack, no ping, no second request — so nothing but the
+    // exchange's own timer can settle it. Without one, a Mac that answers a
+    // call and then goes quiet leaves that delivery unresolved for ever, and
+    // the approval window is left claiming an operation might still be running.
+    //
+    // Only setTimeout is faked: the client's awaits run on microtasks and
+    // setImmediate, which must stay real for the handshake to complete.
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const conn = fakeConn();
+    const unknown: string[] = [];
+    const acked: string[] = [];
+    const client = await handshake(conn, MODERN_RELAY, {
+      onDeliveryUnknown: (rid) => unknown.push(rid),
+      onResponseAck: (rid) => acked.push(rid),
+    });
+
+    await serveOne(conn, "R-QUIET");
+    expect(conn.sent.some((f) => f.type === FRAME_RESPONSE && f.rid === "R-QUIET")).toBe(true);
+    const framesAfterResponse = conn.sent.length;
+
+    // Just short of the deadline: still open, nothing claimed either way.
+    vi.advanceTimersByTime(RELAY_EXCHANGE_DEADLINE_MS - 1);
+    expect(unknown).toEqual([]);
+    expect(acked).toEqual([]);
+
+    // And on it, with no frame having arrived to prompt anything.
+    vi.advanceTimersByTime(1);
+    expect(unknown).toEqual(["R-QUIET"]);
+    expect(acked).toEqual([]);
+    expect(conn.sent.length).toBe(framesAfterResponse);
+
+    // Settled once: more quiet time changes nothing, and a very late ack for a
+    // settled exchange is not a second answer.
+    vi.advanceTimersByTime(RELAY_EXCHANGE_DEADLINE_MS * 3);
+    push(conn, { type: FRAME_RESPONSE_ACK, rid: "R-QUIET" });
+    expect(unknown).toEqual(["R-QUIET"]);
+    expect(acked).toEqual([]);
     await client.stop();
   });
 
