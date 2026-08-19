@@ -111,7 +111,7 @@ function handle(cmd) {
       return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
     }
     // The frame behind the index is no longer the document the device approved.
-    if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_url) {
+    if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_token) {
       return { ok: false, mask: "moved", frame: cmd.frame ?? 0 };
     }
     // Playwright puts the value it tried to type into its own failure message.
@@ -136,13 +136,16 @@ function handle(cmd) {
     };
   }
   if (a === "locate") {
+    // The token is what the fill is checked against; the url is what the device
+    // checks an origin against.
     if (String(cmd.selector).startsWith("#card")) {
       return {
         frame: 1,
         frame_url: process.env.FAKE_CARD_FRAME_URL || "https://payframe.example/card",
+        frame_token: "doc-card",
       };
     }
-    return { frame: 0, frame_url: current().url };
+    return { frame: 0, frame_url: current().url, frame_token: "doc-top" };
   }
   if (a === "scroll") return { ok: true };
   if (a === "wait") return { ok: true, seconds: cmd.seconds }; // echo so tests can see clamping

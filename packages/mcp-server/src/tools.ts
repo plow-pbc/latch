@@ -497,7 +497,9 @@ export const TOOLS: ToolSpec[] = [
       "returns the value — use it for every vault-backed field, including ones that are not " +
       "secret. Fields the vault itself conceals (passwords, card numbers and codes, hidden " +
       "custom fields) also render masked and come back from 'forms' without their characters; " +
-      "everything else fills as ordinary text you can read back. Actions on pages outside the approved origins are " +
+      "everything else fills as ordinary text you can read back. A generated 'totp' code is the " +
+      "one field masked although the vault's own app shows it — fill it and submit, you never " +
+      "need to read it. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page).",
     inputSchema: {

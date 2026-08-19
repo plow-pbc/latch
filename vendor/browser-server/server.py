@@ -149,31 +149,14 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
-# Where a resolved node actually lives. The device names a frame by index, and
-# an index is not an identity: a site can swap an iframe out between the moment
-# the device located the field and the moment the value arrives, and the number
-# still points at something. This asks the node itself which document it is in,
-# so the answer cannot be stale.
-DOC_URL_JS = """(el) => {
-    const doc = el.ownerDocument;
-    const win = doc && doc.defaultView;
-    return (win && win.location && win.location.href) || "";
-}"""
+# Whether a field still holds what it held a moment ago. The previous value
+# stays in the page as a handle and is compared there, so it is exact and never
+# crosses the wire. A hash was tried and is not good enough: "BB" and "Aa" share
+# one, and a partial fill that collided would look unchanged and have its mark
+# taken off, which is the one outcome this must never produce.
+VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
+VALUE_UNCHANGED_JS = """(el, previous) => (el.value || '') === previous"""
 
-# A fingerprint of what a field currently holds -- never the value. Enough to
-# tell "unchanged" from "something landed in it", which is the only question
-# asked of it, and nothing more: a 32-bit hash of a secret is not a secret.
-VALUE_FINGERPRINT_JS = """(el) => {
-    const v = el.value || "";
-    let h = 0;
-    for (let i = 0; i < v.length; i++) h = (Math.imul(h, 31) + v.charCodeAt(i)) | 0;
-    return v.length + ":" + h;
-}"""
-
-# Undoing the mark, for a node being filled with something the vault does not
-# conceal. A node is not a fresh one just because the field is: a login form
-# reused for a username after a password leaves the old mark behind, and the
-# field would render as discs and report as a secret it is not.
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 
@@ -404,8 +387,16 @@ class Session:
                         # no longer the one it checked, nothing here is what was
                         # approved -- so nothing is marked, and nothing is
                         # typed.
-                        expected = cmd.get("frame_url")
-                        if expected is not None and el.evaluate(DOC_URL_JS) != expected:
+                        # The device checked an origin before it went away to
+                        # fetch the value. If the node it resolved is in a
+                        # different DOCUMENT than the one it checked, nothing
+                        # here is what was approved -- so nothing is marked and
+                        # nothing is typed. The token, not the URL: an SPA
+                        # rewriting its address bar mid-lookup has not replaced
+                        # anything, and refusing that is a fill the owner has to
+                        # do by hand for no reason.
+                        expected = cmd.get("frame_token")
+                        if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
                             return {"ok": False, "mask": "moved", "frame": i}
                         if cmd.get("mask"):
                             # Marked first, and only typed once the mark is
@@ -417,9 +408,10 @@ class Session:
                             # would leave an ordinary field tagged and withheld
                             # from `forms` for the life of the page.
                             was_marked = el.evaluate(WAS_MARKED_JS)
-                            before = el.evaluate(VALUE_FINGERPRINT_JS)
+                            before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
                             state = el.evaluate(MASK_JS)
                             if state == "unmasked":
+                                before.dispose()
                                 return {"ok": False, "mask": state, "frame": i}
                             try:
                                 el.fill(cmd["value"], timeout=3000)
@@ -428,12 +420,14 @@ class Session:
                                 # found. Something did: it is holding a value
                                 # nobody can account for, so the mark stays and
                                 # the ledger learns about it.
-                                if el.evaluate(VALUE_FINGERPRINT_JS) == before:
+                                if el.evaluate(VALUE_UNCHANGED_JS, before):
                                     if not was_marked:
                                         el.evaluate(UNMASK_JS)
                                 else:
                                     self.remember_masked(i, sel)
                                 raise
+                            finally:
+                                before.dispose()
                             self.remember_masked(i, sel)
                             return {"ok": True, "mask": state, "frame": i}
                         # Not a secret. The mark comes off AFTER the value is
@@ -457,10 +451,14 @@ class Session:
             sel = cmd["selector"]
             for i, fr in enumerate(self.page.frames):
                 try:
-                    if fr.query_selector(sel) is not None:
-                        return {"frame": i, "frame_url": fr.url}
+                    el = fr.query_selector(sel)
                 except Exception:
                     continue
+                if el is not None:
+                    # The url is what the device checks an origin against; the
+                    # token is what says "still this document" when the value
+                    # comes back.
+                    return {"frame": i, "frame_url": fr.url, "frame_token": el.evaluate(DOC_TOKEN_JS)}
             raise RuntimeError("selector not found: %s" % sel)
 
         if action == "scroll":

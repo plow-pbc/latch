@@ -128,11 +128,16 @@ _LINKED_ID_LABELS = {
     413: _FIELD_USERNAME, 414: "passport number", 415: "license number",
     416: "first name", 417: "last name", 418: _FULL_NAME,
 }
-# Which fields the vault itself renders masked -- the whole classification, and
-# the reason there is nothing bespoke to maintain: the vault (and thereby the
-# human who made the item) already decided. A card's number and security code
-# are hidden; its expiry and cardholder name are not. A login's password is
-# hidden; its username and generated TOTP code are not. Notes are not.
+# Which fields the vault itself renders masked -- very nearly the whole
+# classification, and the reason there is little bespoke to maintain: the vault
+# (and thereby the human who made the item) already decided. A card's number and
+# security code are hidden; its expiry and cardholder name are not. A login's
+# password is hidden; its username is not. Notes are not.
+#
+# The ONE exception, deliberate and the only one: a generated TOTP code is
+# masked although the client shows it. The client shows it because a person has
+# to read it off the screen; an agent fills it and moves on. See the TOTP
+# section of _field_descriptors.
 _HIDDEN_CARD_LABELS = frozenset({"number", "code"})
 _CUSTOM_FIELD_HIDDEN = 1
 # How a custom field is named when a fixed slot already owns its name.

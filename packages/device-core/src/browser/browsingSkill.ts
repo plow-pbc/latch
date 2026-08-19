@@ -83,6 +83,9 @@ titles, usernames and sites, never a value.
    them present without their characters. Everything else the vault holds — addresses,
    names, expiry dates — fills as ordinary text you can read back with \`screenshot\` or
    \`forms\` to check you put it in the right box.
+   One exception to that rule: a generated \`totp\` code is hidden from you even though the
+   vault's own app shows it. You do not need to read it — fill it and submit — and it is a
+   working credential for the half-minute it lasts.
 
 ## Order of operations for a purchase
 

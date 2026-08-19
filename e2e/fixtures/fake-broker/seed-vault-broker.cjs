@@ -20,6 +20,8 @@
  *
  * Like the real broker, appends one line per describe and per release to
  * SEED_VAULT_AUDIT when set — never a value.
+ *
+ * FAKE_BROKER_DELAY_MS holds a release open for that many milliseconds.
  */
 "use strict";
 const fs = require("node:fs");
@@ -88,6 +90,10 @@ if (cmd === "status") {
     }) + "\n",
   );
 } else if (cmd === "get-field") {
+  // A release that takes its time, so a test can do something else while the
+  // device is waiting on it — closing the session, for instance.
+  const delay = Number(process.env.FAKE_BROKER_DELAY_MS || 0);
+  if (delay > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
   const id = argValue(args, "--item-id");
   const field = argValue(args, "--field");
   const url = argValue(args, "--url");

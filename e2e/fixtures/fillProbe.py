@@ -35,6 +35,16 @@ def load_server():
     return module
 
 
+class _Handle:
+    """What `evaluate_handle` returns: a reference the server passes back."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def dispose(self):
+        pass
+
+
 class Handle:
     """One resolved DOM node.
 
@@ -46,7 +56,8 @@ class Handle:
     """
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
-                 document_url="https://pizza.example/login", value="", partial_fill=False):
+                 document_url="https://pizza.example/login", value="", partial_fill=False,
+                 document_token="doc-1"):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
@@ -55,17 +66,21 @@ class Handle:
         # Which document this node is in, and what it currently holds. A fill
         # that fails leaves the value alone; one that half-lands changes it.
         self.document_url = document_url
+        self.document_token = document_token
         self.value = value
 
-    def evaluate(self, js):
+    def evaluate(self, js, *args):
         # Recorded as a fact about the script, not its text: which one it is.
         # Ordered most specific first: MASK_JS mentions setAttribute,
         # removeAttribute AND hasAttribute, so anything looser matches it by
         # accident and the scenario quietly tests nothing.
-        if "ownerDocument" in js and "location" in js:
-            return self.document_url
-        if "charCodeAt" in js:
-            return "%d:%s" % (len(self.value), self.value)
+        if "__domoDocumentToken" in js:
+            return self.document_token
+        if "=== previous" in js:
+            previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
+            return (self.value or "") == previous
+        if "el.value" in js:
+            return self.value or ""
         if "setAttribute" in js and "data-domo-secret" in js:
             self.marked = True
             self.trace.append("handle.evaluate:mark")
@@ -78,6 +93,12 @@ class Handle:
             return self.marked
         self.trace.append("handle.evaluate:other")
         return None
+
+    def evaluate_handle(self, js, *args):
+        # Playwright hands back a reference that keeps the value in the page.
+        # Here it is the string itself; the point is that the server never gets
+        # to look at it, only to pass it back for comparison.
+        return _Handle(self.evaluate(js, *args))
 
     def fill(self, value, timeout=None):
         # A failed fill is traced too, and distinctly: "did it try" and "did it
@@ -106,11 +127,11 @@ class Frame:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False):
+                 partial_fill=False, document_token="doc-1"):
         self.trace = trace
         self.url = "https://pizza.example/login"
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill)
+                             partial_fill, document_token)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -160,17 +181,20 @@ class Page:
 
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
-        document_url="https://pizza.example/login", value="", partial_fill=False):
+        document_url="https://pizza.example/login", value="", partial_fill=False,
+        document_token="doc-1"):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
-                  value=value, partial_fill=partial_fill)
+                  value=value, partial_fill=partial_fill, document_token=document_token)
     session = server.Session(Page(frame))
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
            "ledgered": False}
     try:
         result = session.handle(dict(cmd), "/tmp")
-        # The value is never part of this: only whether the fill happened.
-        out["result"] = {k: v for k, v in result.items() if k in ("ok", "mask", "frame")}
+        # The value is never part of this: only whether the fill happened, and
+        # for a locate, what identity it reported.
+        out["result"] = {k: v for k, v in result.items()
+                         if k in ("ok", "mask", "frame", "frame_url", "frame_token")}
     except Exception as exc:  # noqa: BLE001 — the scenario under test
         out["error"] = type(exc).__name__
     out["marked"] = frame.handle.marked
@@ -234,14 +258,17 @@ def main() -> int:
     server = load_server()
     base = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0}
     # The device approved THIS document before it went to the vault.
-    approved = {"frame_url": "https://pizza.example/login"}
+    approved = {"frame_token": "doc-1"}
     result = {
         "masked": run(server, {**base, "mask": True}),
         # Same index, different document: the frame was swapped while the value
-        # was being fetched.
-        "frame_moved": run(server, {**base, "mask": True, **approved},
-                           document_url="https://ads.example/tracker"),
+        # was being fetched. A new document means a new token.
+        "frame_moved": run(server, {**base, "mask": True, **approved}, document_token="doc-2"),
         "frame_same": run(server, {**base, "mask": True, **approved}),
+        # The SPA rewrote its address bar during the lookup. Same document, same
+        # node, same token — nothing was replaced, so nothing is refused.
+        "route_changed_during_lookup": run(server, {**base, "mask": True, **approved},
+                                           document_url="https://pizza.example/login/step2"),
         # The mark takes and the fill then times out, over a field that already
         # held something ordinary.
         "orphan_mark": run(server, {**base, "mask": True}, detach_before_fill=True,
@@ -250,6 +277,14 @@ def main() -> int:
         # something unaccounted for, so the mark stays on and is ledgered.
         "orphan_mark_partial": run(server, {**base, "mask": True}, partial_fill=True,
                                    value="1 Elm St"),
+        # The half that landed happens to share a 32-bit hash with what was
+        # there before ("BB" and "Aa" do). A fingerprint would call that
+        # unchanged and strip the mark off a field now holding a credential.
+        "orphan_mark_collision": run(server, {**base, "mask": True, "value": "Aa"},
+                                     partial_fill=True, value="BB"),
+        # What `locate` hands the device: the identity the fill will be checked
+        # against, alongside the url the origin is checked against.
+        "located": run(server, {"action": "locate", "selector": "#pass"}),
         # The node was already carrying a secret when this fill failed: its mark
         # is not ours to take off.
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,

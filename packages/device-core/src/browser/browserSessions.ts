@@ -487,6 +487,10 @@ export class BrowserSessions {
     const located = await this.host.sendAction({ action: "locate", selector });
     const frame = typeof located.frame === "number" ? located.frame : 0;
     const frameUrl = typeof located.frame_url === "string" ? located.frame_url : "";
+    // What identifies the document this field is in. The url answers "may a
+    // credential go here"; this answers "is this still the same page", which a
+    // url cannot — an SPA rewrites it without replacing anything.
+    const frameToken = typeof located.frame_token === "string" ? located.frame_token : null;
     const frameHost = hostOf(frameUrl);
     if (frameHost === null || !originMatches(frameHost, s.origins)) {
       this.audit("credential_denied", {
@@ -532,6 +536,27 @@ export class BrowserSessions {
       }
       return { status: "error", error: `credential release refused: ${message}` };
     }
+    // Asking the vault takes long enough for the session to end underneath
+    // this: closed by the owner, by the idle timer, or by another agent opening
+    // one. The browser is shared, so a value released for a session that no
+    // longer exists would be typed into whatever is on screen now.
+    if (this.session !== s) {
+      this.audit("credential_denied", {
+        session: s.handle,
+        item: itemId,
+        field,
+        origin: frameHost,
+        selector,
+        reason: "the session ended while the vault was being asked",
+      });
+      return {
+        status: "error",
+        error:
+          `${field} was not filled: this browser session ended while the vault was being asked ` +
+          `for the value, so nothing was typed. Open a session and try again.`,
+      };
+    }
+
     const mask = release.hidden;
     let secret = release.value;
 
@@ -545,7 +570,7 @@ export class BrowserSessions {
         // asked for the value. A frame index is not an identity — the site can
         // swap the iframe out while that is in flight — so the browser is told
         // which document was approved and refuses if the node is in another.
-        frame_url: frameUrl,
+        ...(frameToken === null ? {} : { frame_token: frameToken }),
         // Only a masked field carries the mark; a visible one — an address, a
         // username, a cardholder name — is filled exactly as it always was,
         // with nothing added to the page.

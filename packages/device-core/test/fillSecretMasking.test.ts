@@ -45,7 +45,7 @@ interface Ctx {
 
 let ctx: Ctx;
 
-function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
+function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<string, string> = {}): Ctx {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-mask-"));
   const cmdLog = path.join(dir, "cmds.log");
   const brokerLog = path.join(dir, "broker-audit.log");
@@ -112,7 +112,7 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
   });
   const credentials = new CredentialBroker({
     command: [process.execPath, FAKE_BROKER],
-    env: { FAKE_BROKER_VAULT: vaultPath },
+    env: { FAKE_BROKER_VAULT: vaultPath, ...brokerEnv },
     auditPath: brokerLog,
   });
   const sessions = new BrowserSessions(
@@ -136,13 +136,13 @@ async function session(): Promise<string> {
 }
 
 /** Every command the device sent, values already redacted by the fixture. */
-function commands(): { action: string; selector?: string; mask?: boolean; frame_url?: string }[] {
+function commands(): { action: string; selector?: string; mask?: boolean; frame_token?: string }[] {
   return fs
     .readFileSync(ctx.cmdLog, "utf8")
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l) as { action: string; selector?: string; mask?: boolean; frame_url?: string });
+    .map((l) => JSON.parse(l) as { action: string; selector?: string; mask?: boolean; frame_token?: string });
 }
 
 /**
@@ -375,10 +375,11 @@ describe("fill_secret marking", () => {
     await ctx.sessions.command("agent-1", handle, {
       action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
     });
-    // The fill carries the frame's URL, not just its index — an index is not an
-    // identity once the site can swap the frame out.
+    // The fill carries the document's token, not just the frame index — an
+    // index is not an identity once the site can swap the frame out, and a URL
+    // is not one either once an SPA can rewrite it.
     const fill = commands().find((c) => c.action === "fill")!;
-    expect(fill.frame_url).toBe("https://payframe.example/card");
+    expect(fill.frame_token).toBe("doc-card");
   });
 
   it("refuses when the browser says the frame moved", async () => {
@@ -403,6 +404,41 @@ describe("fill_secret marking", () => {
       },
     });
     expect(JSON.stringify(result)).not.toContain("4111");
+  });
+
+  it("does not let a fill outlive the session that approved it", async () => {
+    // Asking the vault takes long enough for the session to end underneath the
+    // fill. The browser is shared, so a value released for a session that has
+    // gone would be typed into whatever the next one has on screen.
+    await ctx.host.shutdown();
+    ctx = makeCtx({}, { FAKE_BROKER_DELAY_MS: "600" });
+    const handle = await session();
+    const inFlight = ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    await ctx.sessions.close(handle, "agent");
+    const reopened = await ctx.sessions.open("i9", "agent-2", ["other.example"], false);
+    expect(jv(reopened).get("session").str).not.toBe(handle);
+
+    const result = await inFlight;
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("session ended while the vault");
+    // Nothing reached the browser at all — not the old session's, not the new
+    // session's.
+    expect(fills()).toEqual([]);
+    expect(ctx.events.at(-1)).toEqual({
+      event: "credential_denied",
+      fields: {
+        session: handle,
+        item: "L1",
+        field: "password",
+        origin: "pizza.example",
+        selector: "#pass",
+        reason: "the session ended while the vault was being asked",
+      },
+    });
+    expect(JSON.stringify(ctx.events)).not.toContain("hunter2");
   });
 
   it("keeps the filled value out of the fixture's own command log", async () => {
@@ -470,7 +506,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         trace: string[];
         error: string | null;
         marked: boolean;
-        result: { ok?: boolean; mask?: string; frame?: number } | null;
+        result: { ok?: boolean; mask?: string; frame?: number; frame_url?: string; frame_token?: string } | null;
         value_kept: boolean;
         ledgered: boolean;
       };
@@ -494,11 +530,32 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
-  it("refuses when the frame behind the index is no longer the approved one", () => {
+  it("hands the device an identity to check the fill against", () => {
+    // `locate` reports both: the url the device checks an origin against, and
+    // the document token the fill is checked against when the value comes back.
+    expect(probed.located.result).toEqual({
+      frame: 0,
+      frame_url: "https://pizza.example/login",
+      frame_token: "doc-1",
+    });
+  });
+
+  it("lets a fill through when only the address bar moved", () =>{
+    // An SPA rewriting its URL during the vault lookup has replaced nothing:
+    // same document, same node, same token. Comparing URLs refused this and
+    // sent the owner to fill their own password in by hand.
+    const spa = probed.route_changed_during_lookup;
+    expect(spa.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+    expect(spa.marked).toBe(true);
+  });
+
+  it("refuses when the frame behind the index is no longer the approved one", () =>{
     // The device checks an origin, then goes away to fetch the value. A site
     // can swap that iframe out in between, and the index still points at
     // something — so the browser is told which document was approved and
     // compares it against the node it actually resolved.
+    // A replaced frame is a new document, so a new token — this is the round-4
+    // property, and comparing tokens rather than urls must not weaken it.
     const moved = probed.frame_moved;
     expect(moved.result).toEqual({ ok: false, mask: "moved", frame: 0 });
     expect(moved.trace).toEqual(["frame.wait_for_selector"]);
@@ -523,22 +580,35 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(orphan.value_kept).toBe(true);
   });
 
-  it("keeps and ledgers the mark when part of the value did land", () => {
-    // The field is holding something nobody can account for. Taking the mark
-    // off would show it; forgetting it would leave it uncovered at the next
-    // screenshot. So it stays marked and the ledger learns about it.
-    const partial = probed.orphan_mark_partial;
-    expect(partial.marked).toBe(true);
-    expect(partial.ledgered).toBe(true);
-    expect(partial.value_kept).toBe(false);
-  });
-
-  it("never strips a mark it did not put on", () => {
-    // This node was already carrying a secret when the fill failed. Rolling
-    // back to "as found" means leaving that mark exactly where it was.
-    const pre = probed.orphan_mark_premarked;
-    expect(pre.marked).toBe(true);
-    expect(pre.value_kept).toBe(true);
+  // What a fill that did not land leaves behind. The rule is "put the node back
+  // as it was found, unless something landed in it" — the cases below are the
+  // ways that can play out.
+  it.each([
+    {
+      what: "nothing landed: the mark comes off",
+      scenario: "orphan_mark",
+      marked: false, ledgered: false, valueKept: true,
+    },
+    {
+      what: "part of it landed: the mark stays and is ledgered",
+      scenario: "orphan_mark_partial",
+      marked: true, ledgered: true, valueKept: false,
+    },
+    {
+      what: "what landed collides with what was there: still not 'unchanged'",
+      scenario: "orphan_mark_collision",
+      marked: true, ledgered: true, valueKept: false,
+    },
+    {
+      what: "the node was already masked: the mark was never ours to remove",
+      scenario: "orphan_mark_premarked",
+      marked: true, ledgered: false, valueKept: true,
+    },
+  ])("$what", ({ scenario, marked, ledgered, valueKept }) => {
+    const run = probed[scenario];
+    expect(run.marked).toBe(marked);
+    expect(run.ledgered).toBe(ledgered);
+    expect(run.value_kept).toBe(valueKept);
   });
 
   it("does not type the value when the marked node went away", () => {
