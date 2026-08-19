@@ -21,7 +21,7 @@
 import crypto from "node:crypto";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost } from "./browserHost.js";
-import { CredentialBroker, CredentialError } from "./credentialBroker.js";
+import { CredentialBroker, CredentialError, CredentialFieldInfo } from "./credentialBroker.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
@@ -31,6 +31,10 @@ interface Session {
   origins: string[];
   credentialMetadata: boolean;
   credentialItems: Set<string>;
+  /** One `describe-item` per item per session, not one per fill: the answer is
+   * the same every time, and every call is a broker process whose own log gains
+   * a line. Dropped whenever the session's approved set changes. */
+  fieldCache: Map<string, CredentialFieldInfo[]>;
   lastActivity: number;
   lastUrl: string;
   knownPageCount: number;
@@ -64,6 +68,31 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  * longer pause is expressed as several waits.
  */
 const MAX_WAIT_SECONDS = 12;
+
+/**
+ * Whether the vault masks the field about to be filled — and so whether the
+ * filled element gets marked — or `null` when the vault's answer does not cover
+ * this name at all.
+ *
+ * The classification is entirely the broker's: it reports a descriptor for every
+ * name `get-field` accepts, aliases included, so nothing here has to know that a
+ * card's `code` also answers to `cvv`. A name with no descriptor is not guessed
+ * at in either direction — the caller refuses the fill rather than choosing
+ * between leaking a secret and silently masking an address.
+ *
+ * Where a custom field is named exactly like a built-in slot, the built-in
+ * decides: it is the one `get-field` releases (the broker's `_read_field`
+ * resolves the fixed slots first). Which descriptor comes first in the list
+ * decides nothing.
+ */
+export function masksField(
+  fields: { label: string; hidden: boolean; custom: boolean }[],
+  field: string,
+): boolean | null {
+  const matches = fields.filter((f) => f.label === field);
+  if (matches.length === 0) return null;
+  return (matches.find((f) => !f.custom) ?? matches[0]).hidden;
+}
 
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
@@ -138,6 +167,7 @@ export class BrowserSessions {
       origins: origins.map(normalizeOrigin),
       credentialMetadata,
       credentialItems: new Set(),
+      fieldCache: new Map(),
       lastActivity: Date.now(),
       lastUrl: "",
       knownPageCount: 1,
@@ -176,6 +206,9 @@ export class BrowserSessions {
     }
     s.origins.sort();
     for (const i of items) s.credentialItems.add(i);
+    // A session is usually widened because the vault gained something; the
+    // cheapest correct thing is to ask about every item again.
+    s.fieldCache.clear();
     if (credentialMetadata) s.credentialMetadata = true;
     s.lastActivity = Date.now();
     this.audit("browser_session_extended", {
@@ -364,6 +397,18 @@ export class BrowserSessions {
     return out;
   }
 
+  /**
+   * The item's fields, as the vault describes them — asked once per session.
+   * Values are never part of this; it is the labels and their `hidden` flags.
+   */
+  private async itemFields(s: Session, itemId: string): Promise<CredentialFieldInfo[]> {
+    const cached = s.fieldCache.get(itemId);
+    if (cached) return cached;
+    const fields = (await this.credentials!.describeItem(itemId)).fields;
+    s.fieldCache.set(itemId, fields);
+    return fields;
+  }
+
   private async sweepPages(s: Session): Promise<void> {
     try {
       const pages = await this.host.sendAction({ action: "pages" });
@@ -419,9 +464,14 @@ export class BrowserSessions {
 
   /**
    * The strongest gate. Order matters: approved item → locate the frame the
-   * selector is actually in → that frame's origin must be approved → the op
-   * broker releases against the DEVICE-observed frame URL (its own item-origin
-   * check applies) → frame-targeted fill → value dropped.
+   * selector is actually in → that frame's origin must be approved → ask the
+   * vault whether it masks this field → the op broker releases against the
+   * DEVICE-observed frame URL (its own item-origin check applies) →
+   * frame-targeted fill, marking the element when the vault masks it → value
+   * dropped.
+   *
+   * The mask question is asked before the secret is fetched, so nothing is
+   * holding a value while a second broker process runs.
    */
   private async fillSecret(
     s: Session,
@@ -465,6 +515,49 @@ export class BrowserSessions {
       };
     }
 
+    // What the vault masks, the agent does not get to read back off the page.
+    // Neither half of this question may be guessed: a fill that cannot be
+    // classified is refused before any value is fetched, because filling it
+    // either hands the agent a secret it can read back or silently masks an
+    // address it was told to verify.
+    let fields: CredentialFieldInfo[] | null = null;
+    try {
+      fields = await this.itemFields(s, itemId);
+    } catch {
+      /* the reason the agent sees is authored below, never forwarded */
+    }
+    if (fields === null) {
+      this.audit("credential_denied", {
+        session: s.handle,
+        item: itemId,
+        field,
+        origin: frameHost,
+        reason: "the vault could not be asked which fields it masks",
+      });
+      return {
+        status: "error",
+        error:
+          `could not check with the vault whether ${field} must be hidden, so it was ` +
+          `not filled — the vault may be locked or still starting; try again`,
+      };
+    }
+    const mask = masksField(fields, field);
+    if (mask === null) {
+      this.audit("credential_denied", {
+        session: s.handle,
+        item: itemId,
+        field,
+        origin: frameHost,
+        reason: "no such field on the item",
+      });
+      return {
+        status: "error",
+        error:
+          `item ${itemId} has no field called ${field} — ask the vault tool to ` +
+          `describe the item and use one of the fields it lists`,
+      };
+    }
+
     let secret: string;
     try {
       secret = await this.credentials.getField(itemId, field, frameUrl);
@@ -482,7 +575,38 @@ export class BrowserSessions {
     }
 
     try {
-      await this.host.sendAction({ action: "fill", selector, value: secret, frame });
+      const filled = await this.host.sendAction({
+        action: "fill",
+        selector,
+        value: secret,
+        frame,
+        // Only a masked field carries the mark; a visible one — an address, a
+        // username, a cardholder name — is filled exactly as it always was,
+        // with nothing added to the page.
+        ...(mask ? { mask: true } : {}),
+      });
+      // The browser reports back whether the mark actually took. A page can
+      // defeat it — a Content-Security-Policy without 'unsafe-inline' in
+      // style-src blocks the stylesheet the mask rides on — and when it does,
+      // nothing was typed: the value would have been legible in every
+      // screenshot from that moment on, which is the whole thing this exists to
+      // prevent. Refused rather than filled.
+      if (filled.ok !== true) {
+        this.audit("credential_denied", {
+          session: s.handle,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: "the page prevented the value from being masked",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: this page stops the value from being hidden on screen, ` +
+            `so it was not typed. Fill it by hand, or use a field the vault does not conceal.`,
+        };
+      }
     } catch (error: unknown) {
       // Playwright reports what it tried to type: `filling "hunter2"` is part of
       // its failure message. Forwarding that hands the agent the very value this

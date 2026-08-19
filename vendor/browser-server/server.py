@@ -51,6 +51,11 @@ FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea"
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
     if (!lab) lab = el.getAttribute("aria-label") || el.getAttribute("placeholder") || "";
+    // A field the vault masks, and any password box whoever filled it, reports
+    // only that it holds something. `filled` keeps such a field distinguishable
+    // from an empty one, so a form can still be checked for completeness.
+    const secret = el.hasAttribute("data-domo-secret") || el.type === "password";
+    const val = el.value || "";
     return {
       tag: el.tagName.toLowerCase(), type: el.type || "", name: el.name || "",
       id: el.id || "", label: lab,
@@ -58,7 +63,8 @@ FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea"
       maxlength: el.getAttribute("maxlength") || "",
       options: el.tagName === "SELECT"
         ? Array.from(el.options).map(o => o.value).filter(Boolean).slice(0, 40) : [],
-      value: (el.value || "").substring(0, 50)
+      secret: secret, filled: val.length > 0,
+      value: secret ? "" : val.substring(0, 50)
     };
   })"""
 
@@ -74,6 +80,56 @@ TABLES_JS = """() => Array.from(document.querySelectorAll("table")).map(t => ({
     rows: Array.from(t.querySelectorAll("tr")).slice(1).slice(0,20).map(tr =>
         Array.from(tr.querySelectorAll("td")).map(td => td.textContent.trim()))
 }))"""
+
+
+# Marking a secret the vault masks, at the moment it is filled: one attribute on
+# the element, and one stylesheet rule per document that renders anything
+# carrying it as discs. An attribute is used rather than an inline style because
+# React manages the style prop and clobbers it on re-render, while it leaves
+# attributes it has never heard of alone. The rule is injected at most once --
+# a document that already carries it is left as it is.
+MASK_JS = """(el) => {
+    el.setAttribute("data-domo-secret", "");
+    const doc = el.ownerDocument;
+    const win = doc.defaultView;
+    const masked = () => {
+        if (!win || !win.getComputedStyle) return false;
+        const cs = win.getComputedStyle(el);
+        if (!cs) return false;
+        return (cs.getPropertyValue("-webkit-text-security") || cs.webkitTextSecurity) === "disc";
+    };
+    if (!doc.getElementById("domo-secret-style")) {
+        const style = doc.createElement("style");
+        style.id = "domo-secret-style";
+        style.textContent = "[data-domo-secret]{-webkit-text-security:disc}";
+        (doc.head || doc.documentElement).appendChild(style);
+    }
+    // The stylesheet is not enough on its own: a page whose CSP omits
+    // 'unsafe-inline' from style-src blocks a <style> element outright, and the
+    // mark would then be an attribute that changes nothing while the value
+    // renders in the clear. So the question is not "did we inject it" but "is
+    // this node actually masked", which is what the computed style answers.
+    if (masked()) return "stylesheet";
+    // Setting a property directly on the element's style object is the one
+    // route CSP does not police -- unlike a style attribute or cssText, which
+    // style-src blocks exactly as it blocks a <style> element.
+    el.style.setProperty("-webkit-text-security", "disc");
+    el.style.webkitTextSecurity = "disc";
+    if (masked()) return "inline";
+    return "unmasked";
+}"""
+
+# Undoing the mark, for a node being filled with something the vault does not
+# conceal. A node is not a fresh one just because the field is: a login form
+# reused for a username after a password leaves the old mark behind, and the
+# field would render as discs and report as a secret it is not.
+UNMASK_JS = """(el) => {
+    el.removeAttribute("data-domo-secret");
+    if (el.style) {
+        el.style.removeProperty("-webkit-text-security");
+    }
+    return true;
+}"""
 
 
 def _respond(payload):
@@ -196,7 +252,31 @@ class Session:
                     if action == "click":
                         fr.click(sel, timeout=3000)
                     else:
-                        fr.fill(sel, cmd["value"], timeout=3000)
+                        # ONE resolved node for the whole fill. Resolving the
+                        # selector a second time is the re-resolution failure
+                        # the mark exists to avoid: a re-render between the two
+                        # would leave the attribute on a detached node and put
+                        # the value into a fresh, unmarked one. Marking through
+                        # the handle and filling through the SAME handle makes
+                        # that impossible -- a node that goes away raises here
+                        # and the value is never typed.
+                        el = fr.wait_for_selector(sel, timeout=3000)
+                        if el is None:
+                            raise RuntimeError("selector not found: %s" % sel)
+                        if cmd.get("mask"):
+                            # Marked first, and only typed once the mark is
+                            # known to have taken. An unmasked answer means the
+                            # page defeated it, and the value is not typed at
+                            # all -- the caller turns that into its own refusal.
+                            state = el.evaluate(MASK_JS)
+                            if state == "unmasked":
+                                return {"ok": False, "mask": state, "frame": i}
+                            el.fill(cmd["value"], timeout=3000)
+                            return {"ok": True, "mask": state, "frame": i}
+                        # Not a secret: clear any mark this node still carries
+                        # from a previous fill before the value goes in.
+                        el.evaluate(UNMASK_JS)
+                        el.fill(cmd["value"], timeout=3000)
                     if action == "click":
                         self.page.wait_for_timeout(1000)
                     return {"ok": True, "frame": i}

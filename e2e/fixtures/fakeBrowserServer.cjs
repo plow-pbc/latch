@@ -12,7 +12,15 @@
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
+ *   FAKE_CSP_BLOCKS_MASK=1   answer every masked fill "unmasked" and type
+ *                            nothing, the way a page whose style-src omits
+ *                            'unsafe-inline' defeats the mask
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
+ *   FAKE_CMD_LOG=path  append the JSON of every command received, one per line
+ *                      (proof of what the device asked the browser to do). The
+ *                      `value` a fill carries is replaced with its length
+ *                      before the line is written — a credential value never
+ *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
  *   click "#popup"    opens a second page on https://popup.example/pay
@@ -84,6 +92,11 @@ function handle(cmd) {
     return { ok: true, frame: 0 };
   }
   if (a === "fill") {
+    // A page that will not let the mark take: nothing is typed, and the caller
+    // is told the value would have been legible.
+    if (cmd.mask && process.env.FAKE_CSP_BLOCKS_MASK === "1") {
+      return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
+    }
     // Playwright puts the value it tried to type into its own failure message.
     // Reproduce that shape so the leak this guards against is testable.
     if (String(cmd.selector) === "#nofill") {
@@ -99,7 +112,11 @@ function handle(cmd) {
         `${cmd.selector}\t${cmd.value}\t${cmd.frame ?? 0}\n`,
       );
     }
-    return { ok: true, frame: cmd.frame ?? 0 };
+    return {
+      ok: true,
+      frame: cmd.frame ?? 0,
+      ...(cmd.mask ? { mask: "stylesheet" } : {}),
+    };
   }
   if (a === "locate") {
     if (String(cmd.selector).startsWith("#card")) {
@@ -149,6 +166,12 @@ function main() {
     if (cmd.action === "quit") {
       respond({ id: cmd.id, result: { ok: true } });
       process.exit(0);
+    }
+    if (process.env.FAKE_CMD_LOG) {
+      // Redacted here, at the point of writing, so no reader has to remember to
+      // do it and no failure diff can print the value.
+      const line = typeof cmd.value === "string" ? { ...cmd, value: `<${cmd.value.length} chars>` } : cmd;
+      fs.appendFileSync(process.env.FAKE_CMD_LOG, JSON.stringify(line) + "\n");
     }
     state.commands++;
     if (process.env.CRASH_AFTER && state.commands > Number(process.env.CRASH_AFTER)) {
