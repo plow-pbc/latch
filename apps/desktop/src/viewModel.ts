@@ -56,7 +56,11 @@ export function approvalViewModel(
       const names = credentialItems.map((i) =>
         i.title !== null ? `'${i.title}' (${i.category ?? "?"})` : `${i.id} (unknown item)`,
       );
-      return `Credentials: fill ${names.join(", ")} into approved sites (values never leave this Mac)`;
+      // What the owner is actually granting: the value is typed here and never
+      // handed back to the agent — but the agent is driving the page it lands
+      // in, and can read that page. Saying "never leaves this Mac" would have
+      // them approve against a promise the browser does not keep.
+      return `Credentials: fill ${names.join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
     }
     return capabilityDisplay(c);
   };

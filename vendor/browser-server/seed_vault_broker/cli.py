@@ -457,9 +457,21 @@ def _point_at_vault() -> None:
     exactly once — on a fresh state — and fails on every call after the first
     login. Ask first, and only log out if the address really has to change.
     """
+    # Asking costs a whole CLI start (~1.5s), on every call, for an answer that
+    # only changes when the vault address does. Remember it beside the state the
+    # answer is about: a wrong marker costs one failed command, which the
+    # unlock-and-retry path already handles.
+    marker = os.path.join(_STATE_DIR, "server")
+    try:
+        with open(marker, encoding="utf-8") as fh:
+            if fh.read().strip() == _VAULT_URL:
+                return
+    except OSError:
+        pass
     status = _raw_bw(["status"], None)
     try:
         if json.loads(status.stdout).get("serverUrl") == _VAULT_URL:
+            _remember_server(marker)
             return
     except (ValueError, KeyError, TypeError):
         pass
@@ -471,6 +483,16 @@ def _point_at_vault() -> None:
         cfg = _raw_bw(["config", "server", _VAULT_URL], None)
     if cfg.returncode != 0:
         raise _VaultToolError(_ERR_VAULT_ERROR, "Could not point the vault tool at %s." % _VAULT_URL)
+    _remember_server(os.path.join(_STATE_DIR, "server"))
+
+
+def _remember_server(marker: str) -> None:
+    try:
+        _state_dir()
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write(_VAULT_URL)
+    except OSError:
+        pass  # the probe just runs again next time
 
 
 def _ensure_identity_and_server() -> None:
@@ -507,11 +529,19 @@ def _run_vault(args: list[str]) -> tuple[int, str, str]:
 
 
 def _sync() -> None:
-    """Pull the latest items. Without this a credential added a moment ago is invisible."""
-    try:
-        _run_vault(["sync"])
-    except _VaultToolError:
-        pass  # a stale local copy still beats failing the whole call
+    """Pull the latest items before reading any of them.
+
+    Throttling this was tempting when the app read the vault through here too,
+    and it was wrong: the owner now writes to the vault DIRECTLY from the app,
+    so a cached copy means the agent can list, reveal or fill the credential the
+    owner just changed. A stale secret is worse than a slow one.
+    """
+    rc, _, stderr = _run_vault(["sync"])
+    if rc != 0:
+        # Answering from a stale copy is the failure this exists to prevent:
+        # the owner edits in the app, and the agent would fill the old value.
+        kind = _classify(stderr)
+        raise _VaultToolError(kind, _classify_message(kind, stderr))
 
 
 def _normalize(raw: dict) -> dict:
@@ -548,6 +578,7 @@ def _list_items(logins_only: bool = False) -> list[dict]:
 
 
 def _get_item(item_id: str) -> dict:
+    _sync()  # same reason as _list_items: the owner may have just changed it
     rc, stdout, stderr = _run_vault(["get", "item", item_id])
     if rc != 0:
         kind = _classify(stderr)

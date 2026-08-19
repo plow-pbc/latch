@@ -21,9 +21,12 @@ contextBridge.exposeInMainWorld("domo", {
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
   showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
-  vaultGet: () => ipcRenderer.invoke("vault:get"),
-  vaultSet: (email: string, password: string) => ipcRenderer.invoke("vault:set", email, password),
-  vaultOpen: () => ipcRenderer.invoke("vault:open"),
+  // The vault's own contents, edited here instead of on its web page.
+  vaultItems: () => ipcRenderer.invoke("vault:items"),
+  vaultItem: (itemId: string) => ipcRenderer.invoke("vault:item", itemId),
+  vaultReveal: (itemId: string, field: string) => ipcRenderer.invoke("vault:reveal", itemId, field),
+  vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
+  vaultDeleteItem: (itemId: string) => ipcRenderer.invoke("vault:deleteItem", itemId),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
   // What the owner says agents are for. The renderer's only route to the text

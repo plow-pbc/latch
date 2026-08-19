@@ -371,7 +371,7 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser_open",
     description:
       "Open a browser on the user's own Mac. Its profile persists between sessions and it can " +
-      "fill passwords from their vault without revealing them to you — so use it for sites that " +
+      "fill passwords from their vault without returning them to you — so use it for sites that " +
       "must be signed in as them, not for general web reading, which your own tools do faster. " +
       "One session at a time. It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
@@ -438,8 +438,8 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
-      "(find item ids with plow_vault's 'list' action). Secret values are never " +
-      "revealed to you; they are typed into the page on this Mac.",
+      "(find item ids with plow_vault's 'list' action). A secret is never returned to you; " +
+      "it is typed into the page on this Mac, where it is page content like anything else.",
     inputSchema: {
       type: "object",
       required: ["session"],
@@ -493,13 +493,13 @@ export const TOOLS: ToolSpec[] = [
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
       "'screenshot' returns an image of the page — take one after " +
       "every navigation to see where you are. Ask plow_vault what is in the vault; " +
-      "'fill_secret' types any approved vault field into a form field on this Mac and never " +
-      "returns the value — use it for every vault-backed field, including ones that are not " +
-      "secret. Fields the vault itself conceals (passwords, card numbers and codes, hidden " +
-      "custom fields) also render masked and come back from 'forms' without their characters; " +
-      "everything else fills as ordinary text you can read back. A generated 'totp' code is the " +
-      "one field masked although the vault's own app shows it — fill it and submit, you never " +
-      "need to read it. Actions on pages outside the approved origins are " +
+      "'fill_secret' types any approved vault field into a form field on this Mac without " +
+      "returning the value to you — use it for every vault-backed field, including ones that " +
+      "are not secret. Fields the vault itself conceals (passwords, card numbers and codes, " +
+      "hidden custom fields) also render masked and come back from 'forms' without their " +
+      "characters; everything else fills as ordinary text you can read back. A generated " +
+      "'totp' code is the one field masked although the vault's own app shows it — fill it " +
+      "and submit, you never need to read it. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page).",
     inputSchema: {
@@ -571,11 +571,13 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Check here before concluding you cannot sign in somewhere. " +
       "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
-      "notes, custom fields — with titles, usernames and sites but never a value. 'describe' " +
-      "names the fields one item holds. No browser session is needed to ask. To USE a secret, " +
-      "open a browser session and call the plow_browser tool's fill_secret — that is the only way " +
-      "to put a vault field into a page, secret or not: values are typed into the " +
-      "page and never returned to you.",
+      "identities, notes, custom fields — with titles, usernames and sites but never a value. " +
+      "'describe' names the fields one item holds, an identity's address and ID numbers " +
+      "included. No browser session is needed to ask. To USE any vault field, secret or not, " +
+      "open a browser session and call the plow_browser tool's fill_secret — that is the only " +
+      "way to put one into a page: the value is typed in on the Mac and is never returned by " +
+      "these tools. It is in the page you are driving, so treat it as you would anything else " +
+      "on that page: do not copy it out or repeat it.",
     inputSchema: {
       type: "object",
       required: ["action"],

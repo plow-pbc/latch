@@ -10,7 +10,8 @@ export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
-    "owner's local credentials (their vault) without ever seeing the secret values. Use when " +
+    "owner's local credentials (their vault): a secret is typed into the page rather than "
+    + "returned to you. Use when " +
     "the task needs the OWNER'S browser rather than any browser: signing in as them, filling " +
     "forms, buying things, or reading a page only their session can see. General web reading " +
     "belongs in your own tools, which are faster at it.",
@@ -19,7 +20,9 @@ export const BROWSING_SKILL: Skill = {
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:
 \`plow_browser_open\` (start a session), \`plow_browser\` (act), \`plow_browser_request\` (widen scope),
 \`plow_browser_close\` (finish). The browser uses the owner's local network and credentials;
-secret values are typed into pages on the Mac and are NEVER shown to you.
+secret values are typed into pages on the Mac and are never returned to you by these
+tools — they land in the page you are driving, so treat them as you treat anything else
+there: never copy one out, repeat it, or write it anywhere.
 
 ## Sessions and scope
 
@@ -59,12 +62,14 @@ url, title, links, forms, tables, pages.
 - Cookie banners/modals: \`eval 'document.querySelector("[id*=cookie] button, [class*=consent] button")?.click()'\`.
 - Captcha/blocked: tell the user; try an alternative site.
 
-## Credentials (logins, cards) — values never reach you
+## Credentials (logins, cards, identities) — the value is never handed to you
 
 **This machine has its own password vault — do not go looking for 1Password or ask the
 owner to paste anything.** \`plow_vault {action: "list"}\` answers at any time, with no browser
-session: every item the owner keeps — logins, cards, secure notes, custom fields — with
-titles, usernames and sites, never a value.
+session: every item the owner keeps — logins, cards, identities, secure notes, custom
+fields — with titles, usernames and sites, never a value. \`plow_vault {action: "describe"}\` names an
+identity's fields (first name, address, email, passport number…) exactly like any other
+item's, and \`fill_secret\` types them into the page the same way.
 
 1. \`plow_vault {action: "list"}\` to see what is there; \`plow_vault {action: "describe", item: "<id>"}\`
    names the fields that item holds.
@@ -73,11 +78,12 @@ titles, usernames and sites, never a value.
 4. Ask for fill rights: \`plow_browser_request {session, credential_items: ["<item-id>"]}\` —
    the owner approves the named items.
 5. \`plow_browser {action: "fill_secret", selector: "#password", item: "<item-id>", field: "password"}\`
-   types the value on the Mac. You get \`{ok: true}\` — never the value. Use it for EVERY
-   field that comes out of the vault, not only the secret ones: an address, a cardholder
-   name and a username are vault fields too, and \`fill_secret\` is the only way to put one
-   in a page. Plain \`fill\` is for text you already have, not for anything the vault holds.
-   Cards may fill on any approved origin; logins only on their own site.
+   types the value on the Mac. You get \`{ok: true}\` — never the value itself, and it is not
+   yours to carry anywhere: do not restate it, and do not put it in a goal or a plan. Use it
+   for EVERY field that comes out of the vault, not only the secret ones: an address, a
+   cardholder name and a username are vault fields too, and \`fill_secret\` is the only way to
+   put one in a page. Plain \`fill\` is for text you already have, not for anything the vault
+   holds. Cards may fill on any approved origin; logins only on their own site.
 6. What is hidden afterwards is what the vault itself hides: a password, a card number and
    security code, an ssn, a Hidden custom field. Those render as dots and \`forms\` reports
    them present without their characters. Everything else the vault holds — addresses,

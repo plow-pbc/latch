@@ -9,10 +9,11 @@
 // The main process owns the onboarding state machine and the window renders
 // whatever `onboarding:get` returns, so stubbing that one handler is enough to
 // drive every screen — the same trick approval-screenshot.mjs uses.
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -127,39 +128,21 @@ ipcMain.handle("onboarding:begin", async () => current);
 
 // Without this a thrown write (a missing OUT_DIR, say) leaves the app running
 // with no output and no exit code — a hang that reads like a broken screen.
-process.on("unhandledRejection", (error) => {
-  console.error("SHOT-FAILED:", error);
-  app.exit(1);
-});
+failLoudly();
 
 app.whenReady().then(async () => {
-  fs.mkdirSync(outDir, { recursive: true });
-  const win = new BrowserWindow({
-    width: 460,
-    height: 560,
-    show: false,
-    webPreferences: {
-      preload: path.join(dist, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+  const win = shotWindow(dist, { width: 460, height: 560 });
+  const failures = await shootScreens({
+    win,
+    outDir,
+    prefix: "onboarding",
+    screens: SCREENS,
+    // A reload re-runs the renderer's boot, which pulls the stubbed state.
+    load: async (screen) => {
+      current = screen.state;
+      await win.loadFile(path.join(dist, "renderer/onboarding.html"));
+      await new Promise((r) => setTimeout(r, 400));
     },
   });
-
-  let failures = 0;
-  for (const screen of SCREENS) {
-    current = screen.state;
-    // A reload re-runs the renderer's boot, which pulls the stubbed state.
-    await win.loadFile(path.join(dist, "renderer/onboarding.html"));
-    await new Promise((r) => setTimeout(r, 400));
-
-    const out = path.join(outDir, `onboarding-${screen.name}.png`);
-    fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
-
-    const text = await win.webContents.executeJavaScript("document.body.innerText");
-    const missing = screen.expect.filter((needle) => !text.includes(needle));
-    if (missing.length) failures += 1;
-    console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing }));
-  }
-  app.exit(failures === 0 ? 0 : 1);
+  app.exit(failures ? 1 : 0);
 });
