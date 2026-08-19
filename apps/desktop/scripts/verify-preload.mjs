@@ -714,6 +714,11 @@ app.whenReady().then(async () => {
   })()`);
   await waitForNode(() => loadSettings(probeHome).agentPurpose === "Only household errands.",
     "the purpose to reach settings.json through the IPC pair");
+  // The field redraws off what main stored, one refresh after the write — the
+  // same round-trip the mode chips make below. Reading it the instant the file
+  // lands is a race, and on a slow runner the read wins.
+  await waitFor(win, `document.querySelector("#view textarea.text").value === "Only household errands."`,
+    "the purpose field to show what was stored");
   const purposeRoundTrip = {
     stored: loadSettings(probeHome).agentPurpose === "Only household errands.",
     fieldShowsWhatWasStored: await win.webContents.executeJavaScript(
