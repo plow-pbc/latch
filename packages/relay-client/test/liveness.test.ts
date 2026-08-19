@@ -124,17 +124,32 @@ describe("a socket that goes silent", () => {
     await client.stop();
   });
 
-  it("leaves a socket that is answering alone", async () => {
+  it("notices a socket that dies before the handshake ever finishes", async () => {
+    // The stall the first cut of this missed: liveness armed at `auth.ok` does
+    // nothing for a socket that opens and then goes quiet, because the
+    // `auth.ok` that would have started the watching never arrives. Nothing
+    // closes, nothing reconnects, and the app sits on a dead socket until the
+    // OS timeout — with no status change to show for it either, since it never
+    // reached Connected in the first place.
     const { client, conns, status } = harness();
     await client.start();
-    conns[0].handshake();
+    // No handshake: the relay never even sends its challenge.
+    expect(status).toEqual([]);
 
-    // Ten heartbeats, all answered. Nothing may drop.
-    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 10);
-    expect(conns[0].closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 2);
+    expect(conns[0].closed).toBe(true);
+    // Nothing was pinged at it: pre-`auth.ok` the beat only watches, because
+    // the relay is mid-handshake and an unexpected frame is not ours to invent.
+    expect(conns[0].sent).toEqual([]);
+    // It never claimed Connected, so there is no status to retract.
+    expect(status).toEqual([]);
+
+    // And it does not sit there: the backoff redials, and this socket answers.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(conns).toHaveLength(2);
+    conns[1].handshake();
     expect(client.isConnected).toBe(true);
     expect(status).toEqual([true]);
-    expect(conns[0].sent.filter((f) => f.type === "ping")).toHaveLength(10);
 
     await client.stop();
   });

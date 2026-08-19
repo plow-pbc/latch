@@ -165,6 +165,12 @@ export class RelayClient {
     }
     this.conn = conn;
     this.lastInboundAt = Date.now();
+    // Armed here, not at `auth.ok`: a socket that opens and then goes silent
+    // before the handshake completes is the same dead socket, and waiting for
+    // an `auth.ok` that will never arrive would leave it sitting until the OS
+    // timeout — the exact failure this whole path exists to end. The beat sends
+    // nothing until we are authenticated; it only watches.
+    this.startHeartbeat(conn);
 
     conn.onLine = (line) => this.onFrame(conn, line);
     conn.onClose = () => this.onClose();
@@ -310,8 +316,10 @@ export class RelayClient {
   private startHeartbeat(conn: Connection): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = setInterval(() => {
-      // The relay answers every ping, so two intervals of total silence means
-      // the socket is gone whatever the OS still believes. Closing it here
+      // A live relay is never silent for two intervals: before the handshake
+      // it is sending us the challenge, and after it answers every ping. Two
+      // intervals of nothing means the socket is gone, whatever the OS still
+      // believes. Closing it here
       // routes the failure down the ordinary path: `onClose` clears the status
       // and starts the backoff, so the indicator and the reconnect are right
       // for the same reason they are right on a clean drop. The check happens
@@ -322,7 +330,10 @@ export class RelayClient {
         conn.close();
         return;
       }
-      this.send(conn, { type: "ping" });
+      // Before `auth.ok` there is nothing to ping with: the relay is mid
+      // handshake and an unexpected frame is not ours to invent. The liveness
+      // check above still runs, which is the point.
+      if (this.connected) this.send(conn, { type: "ping" });
     }, this.heartbeatIntervalMs);
     this.heartbeat.unref?.();
   }
