@@ -159,17 +159,9 @@ export class BrowserSessions {
       // no session and no audit line is precisely the invisible browser this
       // path exists to prevent.
       try {
-        await this.host.shutdown();
+        await this.stopBrowser();
       } catch {
         /* the browser is going away regardless; the failed open is the real error */
-      } finally {
-        // shutdown() latches `shuttingDown`, and only resetBreaker() clears it —
-        // close() pairs the two, so this path has to as well. Left latched, a
-        // retry starts a browser and publishes a session whose every command
-        // then fails with "browser host is shut down": a successful open the
-        // agent cannot use. `finally`, because shutdown() audits browser_stopped
-        // and the same failing append that brought us here can throw on the way out.
-        this.host.resetBreaker();
       }
       throw error;
     }
@@ -227,13 +219,30 @@ export class BrowserSessions {
     };
   }
 
+  /**
+   * Stop the browser and clear the shutdown latch — one operation, never two.
+   * `shutdown()` sets `shuttingDown` and only `resetBreaker()` clears it, and
+   * `shutdown()` audits browser_stopped on its way out. Split across two calls,
+   * an audit failure in between leaves a host that will start, publish a
+   * session, and then fail every command at the `sendAction()` guard: an open
+   * the agent cannot use. Every caller wants the pair, so the pair is the API.
+   * Callers still choose what to do with a shutdown error; none of them get to
+   * skip the reset.
+   */
+  private async stopBrowser(): Promise<void> {
+    try {
+      await this.host.shutdown();
+    } finally {
+      this.host.resetBreaker();
+    }
+  }
+
   async close(handle: string, reason: string): Promise<JSONValue> {
     const s = this.session;
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    await this.host.shutdown();
-    this.host.resetBreaker();
+    await this.stopBrowser();
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
