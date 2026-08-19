@@ -46,6 +46,7 @@ import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { CONTINUE_PHRASE, ContinuationPhase } from "./continuationView.js";
 import { ContinuationSource, ReviewSay, runApprovalWindow } from "./approvalWindow.js";
+import { relayOptions } from "./relayWiring.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -697,51 +698,30 @@ async function startRelay(): Promise<void> {
   if (!credential || !mcp) return;
 
   const server = mcp;
-  relay = new RelayClient({
-    // Derived from the build's API base URL: same origin, scheme swapped, the
-    // relay path appended. Two URL fields that must agree is a support burden.
-    url: relaySocketUrl(apiBaseUrl),
-    credential,
-    serve: (request, auth, rid) => server.fetch(request, auth, rid),
-    // The relay owns the exchange deadline and advertises it; the budgets that
-    // run inside it have to leave delivery margin to spare. A relay that
-    // advertises nothing keeps this Mac on the old budget.
-    onBudgetChange: (budget) => {
-      server.setCallBudgetMs(budget.budgetMs);
-      server.setDirectCeilingMs(budget.directCeilingMs);
-      console.log(
-        `[relay] call budget ${budget.budgetMs}ms, direct ceiling ${budget.directCeilingMs}ms ` +
-          `(exchange deadline ${budget.exchangeDeadlineMs}ms)`,
-      );
-    },
-    // Too short to plan against — nothing is reconfigured, and the reason is
-    // worth a line because every call now runs against a deadline this Mac
-    // disagrees with.
-    onBudgetRefused: (deadlineMs) => {
-      console.log(`[relay] refused an exchange deadline of ${deadlineMs}ms; keeping safe defaults`);
-    },
-    // The one thing that may say an operation was backgrounded — and the one
-    // thing that says its delivery is unknown. Both are observations off the
-    // socket; neither is ever inferred from elapsed time.
-    onResponseAck: (rid) => server.acknowledgeExchange(rid),
-    onDeliveryUnknown: (rid) => server.exchangeDeliveryUnknown(rid),
-    onStatusChange: (isConnected) => {
-      connected = isConnected;
-      notifyRenderer("status:changed");
-    },
-    // The relay refused the credential — revoked in the console, or minted
-    // against a different environment. It will never work again, so the app
-    // signs itself out rather than reconnecting forever with a dead token.
-    onAuthFailed: (reason) => {
-      console.log(`[relay] credential rejected (${reason}); signing out`);
-      connected = false;
-      signOut();
-      notifyRenderer("status:changed");
-    },
-    // RelayClient redacts the credential from everything it emits; this is the
-    // only place its diagnostics reach a log at all.
-    log: (message) => console.log(`[relay] ${message}`),
-  });
+  relay = new RelayClient(
+    relayOptions(server, {
+      // Derived from the build's API base URL: same origin, scheme swapped, the
+      // relay path appended. Two URL fields that must agree is a support burden.
+      url: relaySocketUrl(apiBaseUrl),
+      credential,
+      onStatusChange: (isConnected) => {
+        connected = isConnected;
+        notifyRenderer("status:changed");
+      },
+      // The relay refused the credential — revoked in the console, or minted
+      // against a different environment. It will never work again, so the app
+      // signs itself out rather than reconnecting forever with a dead token.
+      onAuthFailed: (reason) => {
+        console.log(`[relay] credential rejected (${reason}); signing out`);
+        connected = false;
+        signOut();
+        notifyRenderer("status:changed");
+      },
+      // RelayClient redacts the credential from everything it emits; this is
+      // the only place its diagnostics reach a log at all.
+      log: (message) => console.log(`[relay] ${message}`),
+    }),
+  );
   await relay.start();
 }
 

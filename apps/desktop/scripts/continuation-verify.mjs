@@ -1,100 +1,126 @@
-// Drive the PRODUCTION approval-window path against real Electron.
+// Drive the PRODUCTION path end to end against real Electron: a relay socket
+// frame goes in one end, and a real approval window changes at the other.
 //
-// Everything here is the shipped code: `runApprovalWindow` (the same function
-// `main.ts` calls), a real `BrowserWindow` with the real sandboxed preload, the
-// real renderer, real `ipcMain`, and a real `Continuations` registry driven the
-// way the relay drives it — `acknowledgeExchange`, `exchangeDeliveryUnknown`,
-// and the deferred store's own `ready`/`collected` calls.
+// Nothing here reaches past the seams the app itself uses. The RelayClient is
+// the real one, wired by `relayOptions` — the same function `main.ts` builds
+// its client from — over a real `createDomoMcpServer` and a real `DeviceAgent`,
+// with the real preload and renderer in a real BrowserWindow. The only thing
+// standing in is the SOCKET: frames are handed to the client the way the relay
+// would hand them over, because the relay lives in another repository and is
+// not running here.
 //
-// The screenshot script next door is a VISUAL fixture and injects renderer
-// state directly; it cannot prove any of this. This asserts the behaviour: the
-// real window resizes, a real click delivers the decision, the copy IPC fires,
-// and a terminal state actually destroys the window.
+// So the acknowledgement that moves the window to "backgrounded" arrives as a
+// `relay.response.ack` frame off that socket and travels
+// RelayClient → onResponseAck → server.acknowledgeExchange → Continuations →
+// the window. An earlier version of this script called the registry directly,
+// which proved the registry and nothing about the wiring between them.
 //
 //   just continuation-verify
-import { app, BrowserWindow, ipcMain } from "electron";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Continuations, exchangeContext } from "@domo/mcp-server";
+import { app, BrowserWindow, ipcMain } from "electron";
+import { DeviceAgent } from "@domo/device-core";
+import { createDomoMcpServer } from "@domo/mcp-server";
+import { RelayClient } from "@domo/relay-client";
 import { runApprovalWindow } from "../dist/approvalWindow.js";
+import { relayOptions } from "../dist/relayWiring.js";
+import { approvalViewModel } from "../dist/viewModel.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 
-const INTENT = "9F2C1A44-0B77-4E3D-9A21-6C5E0D8B4417";
-const HANDLE = "H-VERIFY";
-const RID = "RID-VERIFY";
-
-const REQUEST = {
-  kind: "intent",
-  view: {
-    intentId: INTENT,
-    agentDisplay: "Claude Code",
-    agentId: "sess_01HZX9K4M2QP",
-    goal: "Tidy up the quarterly report folder",
-    request: "run: sips -Z 1600 ~/Documents/report/photos",
-    planContext: null,
-    capabilities: [
-      { kind: "process.exec", display: "Run: sips -Z 1600 photos" },
-      { kind: "fs.read", display: "Read: /Users/you/Documents/report/photos" },
-    ],
-    needsNetwork: false,
-    writesFiles: false,
-    runsCommand: true,
-    usesBrowser: false,
-    fillsCredentials: false,
-    origins: [],
-    credentialItems: [],
-  },
-};
-
+const REPORT = process.env.VERIFY_OUT ?? "/tmp/continuation-verify.json";
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail ?? null });
 
-/** The real registry, plus the adapter main.ts uses to read and subscribe. */
-function registry(deadlineAt) {
-  const audited = [];
-  const cont = new Continuations({ record: (event) => audited.push(event) });
-  cont.open(HANDLE, "sess_01HZX9K4M2QP", deadlineAt);
-  cont.linkIntent(HANDLE, INTENT);
-  exchangeContext.run({ rid: RID }, () => cont.deferred(HANDLE));
-  const source = {
-    snapshot: (intentId) => ({
-      state: cont.stateOfIntent(intentId),
-      deadlineAt: cont.deadlineOfIntent(intentId),
-      deliveryUnknown: cont.deliveryUnknownOfIntent(intentId),
-    }),
-    subscribe: (listener) => {
-      cont.events.on("change", listener);
-      return () => cont.events.removeListener("change", listener);
-    },
-  };
-  return { cont, source, audited };
-}
+/**
+ * Written to a file as well as stdout: `app.exit()` can kill the process before
+ * a piped stdout has flushed, and a verification whose output vanished reads
+ * exactly like one that passed.
+ */
+const report = (body, code) => {
+  const text = JSON.stringify(body, null, 2);
+  fs.writeFileSync(REPORT, text);
+  console.log("VERIFY:" + text);
+  app.exit(code);
+};
+const die = (where) => (error) => report({ error: `${where}: ${error?.stack ?? error}` }, 2);
+process.on("uncaughtException", die("uncaught"));
+process.on("unhandledRejection", die("rejection"));
 
-let copyCalls = 0;
-ipcMain.handle("approval:copyPhrase", async () => {
-  copyCalls += 1;
-  return true;
-});
+/**
+ * Each scenario ends by destroying its window, and an Electron app with no
+ * windows left quits — silently, exit 0, which reads exactly like a pass. This
+ * run says for itself when it is finished.
+ */
+app.on("window-all-closed", () => {});
 
 const settle = (ms = 400) => new Promise((r) => setTimeout(r, ms));
+const bodyText = (win) => win.webContents.executeJavaScript("document.body.innerText");
 
-function makeWindow(created) {
-  const win = new BrowserWindow({
-    width: 460,
-    height: 560,
-    show: false,
-    webPreferences: {
-      preload: path.join(dist, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+/** A socket with the relay on the other end of it. */
+function scriptedSocket() {
+  const sock = {
+    frames: [],
+    onLine: null,
+    onClose: null,
+    startReading() {},
+    sendLine(line) {
+      sock.frames.push(JSON.parse(line.toString("utf8")));
     },
-  });
-  created.push(win);
-  return win;
+    close() {},
+    /** Hand the client a frame, as the relay would. */
+    push(frame) {
+      sock.onLine(Buffer.from(JSON.stringify(frame), "utf8"));
+    },
+    /** What this Mac sent back for `rid`, once it has sent anything. */
+    responseFor(rid) {
+      return sock.frames.find((f) => f.type === "relay.response" && f.rid === rid);
+    },
+  };
+  return sock;
+}
+
+/** One MCP tools/call request frame, as the relay forwards it. */
+function callFrame(rid, tool, args) {
+  return {
+    type: "relay.request",
+    rid,
+    method: "POST",
+    path: "/mcp",
+    // The header set modern MCP requires, and which the SDK checks against the
+    // body: method in both places, and the tool's name alongside it.
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "tools/call",
+      "mcp-name": tool,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: tool,
+        arguments: args,
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": { name: "verify", version: "1" },
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    }),
+    auth: { agent_id: "sess_verify", agent_name: "Claude Code", scopes: [], user_uid: "u1" },
+  };
+}
+
+/** The tool payload out of one relay response frame. */
+function payloadOf(frame) {
+  const rpc = JSON.parse(frame.body);
+  return JSON.parse(rpc.result.content[0].text);
 }
 
 /** Click a rendered button by label, with real mouse events. */
@@ -113,45 +139,88 @@ async function click(win, label) {
   return true;
 }
 
-const bodyText = (win) => win.webContents.executeJavaScript("document.body.innerText");
+let copyCalls = 0;
+ipcMain.handle("approval:copyPhrase", async () => {
+  copyCalls += 1;
+  return true;
+});
 
-/** One run of the production opener, returning what it did. */
-function openWindow(source, created) {
-  const win = { current: null };
-  const decision = runApprovalWindow(REQUEST, {
-    ipc: ipcMain,
-    createWindow: () => {
-      win.current = makeWindow(created);
-      return win.current;
+/**
+ * A whole Mac: device, MCP server, a relay client wired by `relayOptions`, and
+ * a policy that opens the real approval window through the real opener — which
+ * is how `main.ts` assembles the same four.
+ */
+async function bringUp(windows) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-verify-"));
+  const opened = { win: null };
+  let server;
+  const device = new DeviceAgent(home, "Verify Mac", {
+    decideIntent: async (intent) => {
+      const decision = await runApprovalWindow(
+        { kind: "intent", view: approvalViewModel(intent) },
+        {
+          ipc: ipcMain,
+          createWindow: () => {
+            opened.win = new BrowserWindow({
+              width: 460,
+              height: 560,
+              show: false,
+              webPreferences: {
+                preload: path.join(dist, "preload.cjs"),
+                contextIsolation: true,
+                nodeIntegration: false,
+                sandbox: true,
+              },
+            });
+            windows.push(opened.win);
+            return opened.win;
+          },
+          loadFile: (w) => w.loadFile(path.join(dist, "renderer/approval.html")),
+          continuation: {
+            snapshot: (id) => ({
+              state: server.continuations.stateOfIntent(id),
+              deadlineAt: server.continuations.deadlineOfIntent(id),
+              deliveryUnknown: server.continuations.deliveryUnknownOfIntent(id),
+            }),
+            subscribe: (listener) => {
+              server.continuations.events.on("change", listener);
+              return () => server.continuations.events.removeListener("change", listener);
+            },
+          },
+          lingerMs: 120_000,
+        },
+      );
+      return { decision, source: "ask" };
     },
-    loadFile: (w) => w.loadFile(path.join(dist, "renderer/approval.html")),
-    continuation: source,
-    lingerMs: 60_000,
   });
-  return { win, decision };
+  // A short budget so the call defers while the window is still open, which is
+  // the whole situation this feature exists for.
+  server = createDomoMcpServer(device, { budgetMs: 800 });
+  const sock = scriptedSocket();
+  const relay = new RelayClient(
+    relayOptions(server, {
+      url: "ws://relay.invalid/relay",
+      credential: "plow_sk_verify",
+      dial: () => ({ connect: async () => sock }),
+    }),
+  );
+  await relay.start();
+  // The relay's handshake, ending in an auth.ok advertising the modern
+  // contract: a deadline, and acknowledgements.
+  sock.push({ type: "auth.challenge" });
+  sock.push({ type: "auth.ok", exchange_deadline_ms: 25_000, response_ack: true });
+  return { home, device, server, sock, relay, opened };
 }
 
-// Electron swallows a rejection out of `whenReady().then()`: the process exits
-// 0 having printed nothing, which reads exactly like a pass. Say what happened.
-// Written to a file as well as stdout: `app.exit()` can kill the process
-// before a piped stdout has flushed, and a verification whose output vanished
-// reads exactly like one that passed.
-const REPORT = process.env.VERIFY_OUT ?? "/tmp/continuation-verify.json";
-const report = (body, code) => {
-  const text = JSON.stringify(body, null, 2);
-  fs.writeFileSync(REPORT, text);
-  console.log("VERIFY:" + text);
-  app.exit(code);
-};
-const die = (where) => (error) => {
-  report({ error: `${where}: ${error?.stack ?? error}` }, 2);
-};
-process.on("uncaughtException", die("uncaught"));
-process.on("unhandledRejection", die("rejection"));
-// Each scenario ends by destroying its window, and an app with no windows left
-// is an app Electron will quit out from under the next one — silently, exit 0,
-// which reads exactly like a pass. This run says when it is finished.
-app.on("window-all-closed", () => {});
+/** Wait for `probe()` to be truthy, or give up. */
+async function until(probe, tries = 60, ms = 100) {
+  for (let i = 0; i < tries; i++) {
+    const value = await probe();
+    if (value) return value;
+    await settle(ms);
+  }
+  return null;
+}
 
 app.whenReady().then(async () => {
   try {
@@ -162,106 +231,134 @@ app.whenReady().then(async () => {
 }, die("whenReady"));
 
 async function verify() {
-  const created = [];
+  const windows = [];
 
-  // ---- 1. Backgrounded, approved, collected -------------------------------
+  // ---- 1. A frame in; a backgrounded, then collected, window out ----------
   {
-    const { cont, source } = registry(Date.now() + 9_400);
-    const { win, decision } = openWindow(source, created);
-    await settle(700);
-
-    // The relay acknowledges the handoff — the production callback, not a
-    // renderer poke.
-    cont.acknowledgeExchange(RID);
-    await settle();
-    const bg = await bodyText(win.current);
-    check("backgrounded reaches the real window", bg.includes("stopped waiting"), bg.slice(0, 80));
-    check("backgrounded gives the continue phrase", bg.includes("Continue the pending Plow request."));
-
-    // A real click on the real button.
-    const beforeSize = win.current.getContentSize();
-    const clicked = await click(win.current, "Allow Once");
-    check("Allow Once was clickable", clicked);
-    const got = await decision;
-    check("decision delivered to the caller", got === "allow_once", got);
-    await settle();
-
-    const afterSize = win.current.getContentSize();
+    const { server, sock, opened, home } = await bringUp(windows);
+    // The handshake's advertised deadline reached the server through the same
+    // wiring the acknowledgement uses.
     check(
-      "window resized to the compact confirmation",
-      afterSize[1] === 190 && beforeSize[1] > afterSize[1],
-      `${beforeSize.join("x")} -> ${afterSize.join("x")}`,
+      "the handshake configured the server's budgets",
+      server.callBudgetMs() === 15_000 && server.directCeilingMs() === 15_000,
+      `budget=${server.callBudgetMs()} ceiling=${server.directCeilingMs()}`,
     );
-    check("window still open after a backgrounded decision", !win.current.isDestroyed());
+    // ...and then the test's own short budget, so the call defers while a human
+    // is still reading.
+    server.setCallBudgetMs(800);
 
-    // The deferred store's own transitions.
-    cont.ready(HANDLE);
-    await settle();
-    const ready = await bodyText(win.current);
-    check("ready shows the copy action", ready.includes("Copy phrase"));
-    const copied = await click(win.current, "Copy phrase");
-    check("copy IPC fired from the real click", copied && copyCalls === 1, `copyCalls=${copyCalls}`);
+    const file = path.join(home, "report.txt");
+    fs.writeFileSync(file, "the numbers");
+    sock.push(callFrame("RID-1", "read_file", { path: file, goal: "summarise it" }));
 
-    // The agent comes back for it: terminal, so the window must be destroyed.
-    cont.collected(HANDLE);
-    await settle();
-    check("collection destroys the window", win.current.isDestroyed());
-  }
-
-  // ---- 2. Delivery unknown, then a decision --------------------------------
-  {
-    const { cont, source } = registry(Date.now() + 9_400);
-    const { win, decision } = openWindow(source, created);
+    const win = await until(() => opened.win);
+    check("a relay frame opened the real approval window", !!win, lastServed(sock));
+    if (!win) return finish();
     await settle(700);
+    const inline = await bodyText(win);
+    check(
+      "the window counts down the call it arrived on",
+      /~\d+s left/.test(inline),
+      inline.slice(0, 70),
+    );
 
-    // The socket died before the relay could acknowledge.
-    cont.exchangeDeliveryUnknown(RID);
-    await settle();
-    const text = await bodyText(win.current);
-    check("delivery unknown reaches the real window", text.includes("could not confirm"), text.slice(0, 80));
-    check("delivery unknown claims neither waiting nor handed off",
-      !text.includes("still waiting") && !text.includes("stopped waiting"));
+    // The budget expires while the human reads: this Mac answers the exchange
+    // with a pending handle of its own accord.
+    const response = await until(() => sock.responseFor("RID-1"));
+    check("the deferred answer went back on that exchange", !!response);
+    const pending = response ? payloadOf(response) : null;
+    check("and it is a pending handle, not a result", pending?.status === "pending", pending?.status);
 
-    await click(win.current, "Allow Once");
-    check("decision delivered after unknown delivery", (await decision) === "allow_once");
-    await settle();
-    check("window stays open on unconfirmed delivery", !win.current.isDestroyed());
-    cont.ready(HANDLE);
-    cont.collected(HANDLE);
-    await settle();
-    check("collection destroys it here too", win.current.isDestroyed());
-  }
+    // THE WIRING UNDER TEST: an acknowledgement frame off the socket, travelling
+    // RelayClient → onResponseAck → server.acknowledgeExchange → the window.
+    sock.push({ type: "relay.response.ack", rid: "RID-1" });
+    await settle(600);
+    const backgrounded = await bodyText(win);
+    check(
+      "an ack FRAME moved the window to backgrounded",
+      backgrounded.includes("stopped waiting"),
+      backgrounded.slice(0, 70),
+    );
+    check(
+      "and it names the phrase that brings the agent back",
+      backgrounded.includes("Continue the pending Plow request."),
+    );
 
-  // ---- 3. A failure after backgrounding -----------------------------------
-  {
-    const { cont, source } = registry(Date.now() + 9_400);
-    const { win, decision } = openWindow(source, created);
+    // Approve for real; the window becomes the compact confirmation.
+    const before = win.getContentSize();
+    check("Allow Once was clickable", await click(win, "Allow Once"));
+    await settle(600);
+    const after = win.getContentSize();
+    check(
+      "the real window resized to the confirmation",
+      after[1] === 190 && before[1] > after[1],
+      `${before.join("x")} -> ${after.join("x")}`,
+    );
+
+    // The work lands: a ready result nobody has asked for yet.
+    const ready = await until(async () => {
+      const text = await bodyText(win);
+      return text.includes("Copy phrase") ? text : null;
+    });
+    check("the ready result offers the copy action", !!ready, ready?.slice(0, 70));
+    check("copy IPC fired from a real click", (await click(win, "Copy phrase")) && copyCalls === 1);
+
+    // The agent comes back for it — over the relay, as a second exchange.
+    sock.push(callFrame("RID-2", "get_result", { handle: pending.handle }));
+    const collected = await until(() => sock.responseFor("RID-2"));
+    check("the agent's lookup was served over the relay", !!collected);
+    check(
+      "and it carried the result",
+      collected ? JSON.stringify(payloadOf(collected)).includes("the numbers") : false,
+    );
     await settle(700);
-    cont.acknowledgeExchange(RID);
-    await settle();
-    await click(win.current, "Allow Once");
-    await decision;
-    await settle();
-    check("confirmation open before the failure", !win.current.isDestroyed());
-    cont.failed(HANDLE);
-    await settle();
-    check("a failure destroys the confirmation", win.current.isDestroyed());
+    check("collection destroyed the window", win.isDestroyed());
   }
 
-  // ---- 4. Inline: answered while the call is demonstrably open -------------
+  // ---- 2. A lost socket, through the same wiring --------------------------
   {
-    const { source } = registry(Date.now() + 30_000);
-    const { win, decision } = openWindow(source, created);
+    const { server, sock, opened, home } = await bringUp(windows);
+    server.setCallBudgetMs(800);
+    const file = path.join(home, "b.txt");
+    fs.writeFileSync(file, "x");
+    sock.push(callFrame("RID-3", "read_file", { path: file }));
+    const win = await until(() => opened.win);
+    check("second window opened", !!win, lastServed(sock));
+    if (!win) return finish();
+    await until(() => sock.responseFor("RID-3"));
+
+    // The socket dies with the exchange outstanding. RelayClient settles it as
+    // unknown, and `onDeliveryUnknown` carries that to the server.
+    sock.onClose?.();
+    await settle(600);
+    const unknown = await bodyText(win);
+    check(
+      "a dropped socket told the window delivery is unconfirmed",
+      unknown.includes("could not confirm"),
+      unknown.slice(0, 70),
+    );
+    check(
+      "and it claims neither waiting nor handed off",
+      !unknown.includes("still waiting") && !unknown.includes("stopped waiting"),
+    );
+
+    await click(win, "Deny");
     await settle(700);
-    const text = await bodyText(win.current);
-    check("inline shows a measured countdown", /~\d+s left/.test(text), text.slice(0, 80));
-    await click(win.current, "Deny");
-    check("denial delivered", (await decision) === "deny");
-    await settle();
-    check("an inline decision closes the window at once", win.current.isDestroyed());
+    check("a denial closes the window even here", win.isDestroyed());
   }
 
-  for (const w of created) if (!w.isDestroyed()) w.close();
-  const failed = checks.filter((c) => !c.ok);
-  report({ checks, failed: failed.length }, failed.length === 0 ? 0 : 1);
+  finish();
+
+  function finish() {
+    for (const w of windows) if (!w.isDestroyed()) w.close();
+    const failed = checks.filter((c) => !c.ok);
+    report({ checks, failed: failed.length }, failed.length === 0 ? 0 : 1);
+  }
+}
+
+/** Whatever this Mac last put on the wire — the first thing to look at when a
+ * frame did not produce the window it should have. */
+function lastServed(sock) {
+  const last = sock.frames.at(-1);
+  return last ? JSON.stringify(last).slice(0, 220) : "nothing sent";
 }
