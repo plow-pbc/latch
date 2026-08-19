@@ -494,7 +494,7 @@ export const TOOLS: ToolSpec[] = [
       "'screenshot' returns an image of the page — take one after " +
       "every navigation to see where you are. Ask plow_vault what is in the vault; " +
       "'fill_secret' types an approved item's field into a form " +
-      "field without ever showing you the value. Actions on pages outside the approved origins are " +
+      "field without returning the value to you. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page).",
     inputSchema: {
@@ -569,8 +569,9 @@ export const TOOLS: ToolSpec[] = [
       "identities, notes, custom fields — with titles, usernames and sites but never a value. " +
       "'describe' names the fields one item holds, an identity's address and ID numbers " +
       "included. No browser session is needed to ask. To USE a secret, " +
-      "open a browser session and call the plow_browser tool's fill_secret: values are typed into the " +
-      "page and never returned to you.",
+      "open a browser session and call the plow_browser tool's fill_secret: the value is typed into " +
+      "the page on the Mac and is never returned by these tools. It is in the page you are driving, " +
+      "so treat it as you would anything else on that page: do not copy it out or repeat it.",
     inputSchema: {
       type: "object",
       required: ["action"],
