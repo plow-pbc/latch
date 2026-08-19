@@ -229,7 +229,6 @@ app.whenReady().then(async () => {
     const chip = (label) =>
       [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === label);
     const plow = chip("Plow account");
-    const anthropic = chip("Anthropic API key");
     return {
       hasAccountGroup: document.body.innerText.includes("Plow Account"),
       // The account group is about this Mac now, not the wire. The endpoint is
@@ -252,8 +251,8 @@ app.whenReady().then(async () => {
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
-      // The new group, and its interlock: Plow has a credential so it is
-      // selected; Anthropic has none so its chip is disabled.
+      // The new group. Plow has a credential so it is the selected one;
+      // Anthropic has none, which costs it nothing but a warning in the note.
       hasInferenceGroup: document.body.innerText.includes("Reviewer inference"),
       // The key is not a setting of its own any more — it is the credential one
       // provider runs on, so it lives in that provider's group and nowhere else.
@@ -282,7 +281,6 @@ app.whenReady().then(async () => {
         (b) => b.textContent.trim() === "Open System Settings",
       ),
       plowChipActive: !!plow && plow.classList.contains("active"),
-      anthropicChipDisabled: !!anthropic && anthropic.classList.contains("disabled"),
       showsActiveModel: document.body.innerText.includes("anthropic/claude-sonnet-4-6"),
       // Settings has a `.reviewer-note` of its own. The approval window's
       // advice-card styling must not reach it — same class name, different
@@ -493,11 +491,12 @@ app.whenReady().then(async () => {
     committed: loadSettings(probeHome).anthropicApiKey === "sk-ant-typed-mid-refresh",
   };
 
-  // REPRO (c): the renderer's optimistic mode. Adversarial is offered while a
-  // credential is present, so the chip is enabled and clickable — but the
-  // credential can go between the render and the click, and main REFUSES. The
-  // renderer assigned `currentMode` before asking, so it kept a selection main
-  // had already turned down: the pane says Adversarial while disk says Ask.
+  // REPRO (c): the renderer must show what main STORED, not what it asked for.
+  // The credential can go between the render and the click, so the two can
+  // disagree — the renderer used to assign `currentMode` before asking and keep
+  // a selection main had turned down. Main no longer turns this one down:
+  // Adversarial with no credential is a legal state that denies at review time,
+  // so the assertion is that disk and pane agree on Adversarial, not on Ask.
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
     relayCredential: "plow_sk_probe_credential",
@@ -517,14 +516,15 @@ app.whenReady().then(async () => {
     chip.click();
     return true;
   })()`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && !c.classList.contains("active"))`,
-    "the pane to follow main's refusal of Adversarial");
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && c.classList.contains("active"))`,
+    "the pane to follow main's acceptance of Adversarial");
   const optimisticMode = {
-    storedIsAsk: loadSettings(probeHome).approvalMode === "ask",
-    // What the pane claims, after main said no.
+    // Losing the credential no longer rewrites the mode behind the user.
+    storedIsAdversarial: loadSettings(probeHome).approvalMode === "adversarial",
+    // What the pane claims, against what main actually stored.
     chipAgrees: await win.webContents.executeJavaScript(`(() => {
       const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Adversarial Agent");
-      return !!chip && !chip.classList.contains("active");
+      return !!chip && chip.classList.contains("active");
     })()`),
   };
 
@@ -763,7 +763,6 @@ app.whenReady().then(async () => {
     settings.fdaNamesMessages &&
     settings.fdaOffersSystemSettings &&
     settings.plowChipActive &&
-    settings.anthropicChipDisabled &&
     settings.showsActiveModel &&
     settings.settingsNoteNotRestyled &&
     transientInput.startedAdversarial &&
@@ -778,7 +777,7 @@ app.whenReady().then(async () => {
     raceDuringRefresh.sameNode &&
     raceDuringRefresh.accountRefreshed &&
     raceDuringRefresh.committed &&
-    optimisticMode.storedIsAsk &&
+    optimisticMode.storedIsAdversarial &&
     optimisticMode.chipAgrees &&
     main.hasBridge &&
     main.viewChildren > 0 &&
@@ -797,4 +796,12 @@ app.whenReady().then(async () => {
       JSON.stringify({ main, settings, ungated, ungatedShot, settingsPane, chipsShot, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
+}).catch((err) => {
+  // Without this, a throw in the probe above — a `waitFor` that times out
+  // because the behavior it waits for no longer exists — leaves Electron
+  // running with no window and nothing to end it, and CI sits on a live
+  // runner until the job's own timeout hours later. A failed check has to
+  // read as a failed check.
+  console.error("PROBE-FAILED:", err?.stack ?? err);
+  app.exit(1);
 });
