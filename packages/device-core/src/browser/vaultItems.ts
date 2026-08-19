@@ -34,7 +34,7 @@ const IDENTITY_KEYS = [
 const SECRET_KEYS: Record<number, readonly string[]> = {
   1: ["password", "totp"],
   3: ["number", "code"],
-  4: ["ssn"],
+  4: ["ssn", "passportNumber", "licenseNumber"],
 };
 
 const KEYS_FOR: Record<number, readonly string[]> = {
@@ -243,9 +243,15 @@ export function encryptCipher(
     delete out.uris;
     let uris = previous;
     if (input.urls !== undefined) {
-      uris = input.urls.map((u, i) =>
-        previous[i] && dec(previous[i].uri, key) === u ? previous[i] : { uri: enc(u, key), match: null },
-      );
+      uris = input.urls
+        .map((u, i) =>
+          u === ""
+            ? null                                            // the owner emptied this row
+            : previous[i] && dec(previous[i].uri, key) === u
+              ? previous[i]                                   // unchanged: the stored entry, as it is
+              : { uri: enc(u, key), match: null },
+        )
+        .filter((u): u is NonNullable<typeof u> => u !== null);
     }
     cipher.login = { ...out, uris } as Cipher["login"];
   } else if (type === 2) {

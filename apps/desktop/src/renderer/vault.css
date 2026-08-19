@@ -5,40 +5,42 @@
    The fonts are hers too, vendored beside this file: a packaged app has no
    network, and a design that falls back to the system face is not the design.
 */
+/* One file, five weights: DM Sans ships as a variable font, so the same
+   binary answers for every weight the design asks for. */
 @font-face {
   font-family: "DM Sans";
   font-style: normal;
   font-weight: 300;
   font-display: swap;
-  src: url("fonts/DMSans-300.woff2") format("woff2");
+  src: url("fonts/DMSans.woff2") format("woff2");
 }
 @font-face {
   font-family: "DM Sans";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("fonts/DMSans-400.woff2") format("woff2");
+  src: url("fonts/DMSans.woff2") format("woff2");
 }
 @font-face {
   font-family: "DM Sans";
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url("fonts/DMSans-500.woff2") format("woff2");
+  src: url("fonts/DMSans.woff2") format("woff2");
 }
 @font-face {
   font-family: "DM Sans";
   font-style: normal;
   font-weight: 600;
   font-display: swap;
-  src: url("fonts/DMSans-600.woff2") format("woff2");
+  src: url("fonts/DMSans.woff2") format("woff2");
 }
 @font-face {
   font-family: "DM Sans";
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url("fonts/DMSans-700.woff2") format("woff2");
+  src: url("fonts/DMSans.woff2") format("woff2");
 }
 @font-face {
   font-family: "DM Mono";
@@ -163,8 +165,6 @@
     color: var(--muted); display: grid; place-items: center; transition: background .13s, color .13s; }
 .vaultui .mini svg { width: 14px; height: 14px; }
 .vaultui .mini:hover { background: var(--surface-2); color: var(--text); }
-.vaultui .mini.on { color: var(--volt); }
-.vaultui .mini.delweb:hover { background: rgba(192,115,85,.14); color: var(--clay-soft); }
 .vaultui .vfoot { display: flex; align-items: center; justify-content: space-between; gap: 14px;
     margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--border-soft); }
 .vaultui .use-note { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); }
@@ -202,12 +202,6 @@
 .vaultui .sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; position: relative; z-index: 2; }
 .vaultui .sheet-body::-webkit-scrollbar { width: 10px; }
 .vaultui .sheet-body::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 999px; border: 3px solid var(--window); }
-.vaultui .modal-banner { display: flex; gap: 11px; align-items: flex-start; padding: 12px 13px; margin-bottom: 20px;
-    border: 1px solid rgba(166,194,166,.2); border-radius: 11px; background: rgba(166,194,166,.07); }
-.vaultui .modal-banner .bi { flex: none; color: var(--sage); margin-top: 1px; }
-.vaultui .modal-banner .bi svg { width: 16px; height: 16px; }
-.vaultui .modal-banner .bt { font-size: 12px; font-weight: 300; color: var(--muted-2); line-height: 1.5; }
-.vaultui .modal-banner .bt b { font-weight: 600; color: var(--text); }
 .vaultui .picker-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .vaultui .ptype { display: flex; align-items: flex-start; gap: 12px; text-align: left; cursor: pointer; padding: 15px 15px;
     border: 1px solid var(--border-2); border-radius: 12px; background: var(--surface); color: inherit; font-family: var(--sans);
@@ -241,15 +235,9 @@
     padding: 11px 16px; border-radius: 10px; box-shadow: 0 18px 44px -12px rgba(0,0,0,.5); opacity: 0; pointer-events: none;
     transition: opacity .2s, transform .2s; z-index: 100; }
 .vaultui .toast.show { opacity: 1; transform: translate(-50%, 0); }
-.vaultui .toast.warn { background: var(--clay-soft); }
 
 /* Her masthead button, back-link, trust line and sheet copy. */
-.vaultui .main { background: var(--content); padding: 26px 30px 40px; min-width: 0; }
-.vaultui .back { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); text-transform: uppercase;
-    font-size: 10.5px; font-weight: 500; letter-spacing: .12em; color: var(--muted); text-decoration: none; transition: color .14s; }
-.vaultui .back:hover { color: var(--sage); }
 .vaultui .trust { max-width: 560px; font-size: 12.5px; font-weight: 300; color: var(--muted-2); line-height: 1.55; margin: 0; }
-.vaultui .trust .lk { color: var(--sage); }
 .vaultui .btn-primary {
     font-family: var(--sans); font-size: 13px; font-weight: 700; cursor: pointer;
     background: var(--volt); color: var(--midnight); border: 1px solid var(--volt); border-radius: 10px;

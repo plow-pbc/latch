@@ -466,10 +466,12 @@ def _sync() -> None:
     so a cached copy means the agent can list, reveal or fill the credential the
     owner just changed. A stale secret is worse than a slow one.
     """
-    try:
-        _run_vault(["sync"])
-    except _VaultToolError:
-        pass  # a stale local copy still beats failing the whole call
+    rc, _, stderr = _run_vault(["sync"])
+    if rc != 0:
+        # Answering from a stale copy is the failure this exists to prevent:
+        # the owner edits in the app, and the agent would fill the old value.
+        kind = _classify(stderr)
+        raise _VaultToolError(kind, _classify_message(kind, stderr))
 
 
 def _normalize(raw: dict) -> dict:

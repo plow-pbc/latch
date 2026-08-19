@@ -138,6 +138,28 @@ describe("an edit", () => {
     expect(untouched.login.uris).toEqual(many.login.uris);
   });
 
+  it("drops the URL the owner emptied, and leaves the others where they were", () => {
+    const many = encryptCipher(
+      { type: "login", name: "GitHub", password: "x", urls: ["https://a.example", "https://b.example", "https://c.example"] },
+      null,
+      account,
+    );
+    many.login.uris = many.login.uris.map((u, i) => ({ ...u, match: i }));
+    const stored = { ...many, id: "item-1" };
+    // The middle box was emptied: its position is still sent, so the third URL
+    // is reconciled against the entry that held it rather than the one above.
+    const edited = encryptCipher(
+      { itemId: "item-1", urls: ["https://a.example", "", "https://c.example"] },
+      stored,
+      account,
+    );
+    expect(decryptItem({ ...edited, id: "item-1" }, account).urls).toEqual([
+      "https://a.example",
+      "https://c.example",
+    ]);
+    expect(edited.login.uris).toEqual([many.login.uris[0], many.login.uris[2]]);
+  });
+
   it("clears a field that is sent empty", () => {
     const second = encryptCipher({ itemId: "item-1", username: "" }, { ...first, id: "item-1" }, account);
     expect(decryptItem({ ...second, id: "item-1" }, account).fields.username).toBe("");
