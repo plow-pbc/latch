@@ -593,7 +593,12 @@ describe("the phone-code fallback still works", () => {
     await first.requestCode("+15551110000");
     await first.submitCode("12345678");
 
-    expect(build().state().step).toBe("connected");
+    // Finding an old credential is not signing in: nothing was minted this
+    // session, so the first-run hook must stay silent (see onSignedIn below).
+    let signedIn = 0;
+    const relaunched = build({ onSignedIn: () => (signedIn += 1) });
+    expect(relaunched.state().step).toBe("connected");
+    expect(signedIn).toBe(0);
   });
 });
 
@@ -902,22 +907,13 @@ describe("onSignedIn — the seam behind the first-run launch-at-login default",
     expect(signedIn).toBe(1);
   });
 
-  it("does NOT fire for a code that fails, and not merely for reaching the connected screen", async () => {
+  it("does NOT fire for a code that fails", async () => {
     plow.verifyFails = "unauthorized";
     let signedIn = 0;
     const onboarding = build({ onSignedIn: () => (signedIn += 1) });
     onboarding.usePhoneCode();
     await onboarding.requestCode("+15551110000");
     await onboarding.submitCode("12345678");
-    expect(signedIn).toBe(0);
-
-    // A constructor that finds an old credential opens on "connected" without
-    // any mint this session — that must not count as signing in either.
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
-    const relaunched = build({ onSignedIn: () => (signedIn += 1) });
-    expect(relaunched.state().step).toBe("connected");
     expect(signedIn).toBe(0);
   });
 });

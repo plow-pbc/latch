@@ -100,11 +100,13 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
-  /** The first-run launch-at-login default has been applied
-   * (`applyLaunchAtLoginDefault`). NOT a mirror of the OS's login-item bit —
+  /** The first-run launch-at-login default has been applied (main.ts's
+   * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
    * default ran, so it can never run twice and a user who turns the toggle off
-   * stays off. Deliberately survives sign-out: a re-setup is not a first run. */
+   * stays off. Deliberately survives sign-out: a re-setup is not a first run.
+   * A signed-in home from before this field existed is grandfathered on load —
+   * see `loadSettings` — for the same reason. */
   launchAtLoginDefaulted: boolean;
 }
 
@@ -128,7 +130,19 @@ export function loadSettings(home: string): Settings {
     launchAtLoginDefaulted: false,
   };
   try {
-    return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
+    const parsed = JSON.parse(fs.readFileSync(settingsPath(home), "utf8"));
+    const settings: Settings = { ...defaults, ...parsed };
+    // A signed-in home from before `launchAtLoginDefaulted` existed: its
+    // owner's launch-at-login choice predates the default, so reading the
+    // absent field as false would let a later re-setup flip the bit on them.
+    // Grandfather it as already defaulted. This can never swallow a genuinely
+    // new home's default: setup saves the whole Settings object, so any file
+    // holding a credential written since this field existed carries the key
+    // explicitly.
+    if (!("launchAtLoginDefaulted" in parsed) && settings.relayCredential.trim()) {
+      settings.launchAtLoginDefaulted = true;
+    }
+    return settings;
   } catch {
     return defaults;
   }

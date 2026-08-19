@@ -32,12 +32,7 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
-import {
-  applyLaunchAtLoginDefault,
-  launchAtLoginState,
-  LoginItemApi,
-  setLaunchAtLogin,
-} from "./loginItem.js";
+import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -662,6 +657,12 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
  * which fires when a credential is minted THIS session — an install that was
  * already signed in (or someone reopening the setup window from Settings)
  * never trips it.
+ *
+ * The attempt is the shot: if the OS declines the write we do not come back on
+ * every launch — the Settings toggle is the recourse. A from-source run is the
+ * one case that does NOT burn it (`supported` false writes nothing), so no dev
+ * checkout enrolls the stock Electron binary and a packaged install's real
+ * first run still gets its default.
  */
 let setupSignedInThisRun = false;
 function applyFirstRunLaunchAtLogin(): void {
@@ -671,7 +672,7 @@ function applyFirstRunLaunchAtLogin(): void {
   // Signed out again between completing setup and this hand-over — the Mac the
   // default was for no longer exists.
   if (!settings.relayCredential.trim()) return;
-  if (applyLaunchAtLoginDefault(app.isPackaged, loginItems, false)) {
+  if (setLaunchAtLogin(app.isPackaged, loginItems, true).supported) {
     settings.launchAtLoginDefaulted = true;
     saveSettings(home, settings);
   }
