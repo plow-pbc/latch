@@ -187,4 +187,22 @@ describe("AuditLog", () => {
       .filter((l) => l.length > 0);
     expect(lines).toHaveLength(2);
   });
+
+  it("does not fail record() when a change listener throws", () => {
+    const log = new AuditLog(path.join(tempDir(), "audit.ndjson"));
+    // The desktop listener calls webContents.send, which throws once the
+    // renderer is torn down.
+    log.events.on("change", () => {
+      throw new Error("webContents destroyed");
+    });
+
+    // record() succeeds when the event is durably on disk. Callers gate real
+    // access on that — BrowserSessions records a session before it publishes
+    // one — so an escaping listener error would refuse access the log already
+    // says was granted.
+    expect(() => log.record("browser_session_opened", { session: "S" })).not.toThrow();
+    expect(log.entries()).toHaveLength(1);
+    expect(() => log.clear()).not.toThrow();
+    expect(log.entries()).toHaveLength(0);
+  });
 });

@@ -21,13 +21,29 @@ export class AuditLog {
     entry.event = event;
     entry.ts = isoNow();
     fs.appendFileSync(this.file, canonicalJSON(entry as JSONValue) + "\n");
-    this.events.emit("change");
+    this.notify();
+  }
+
+  /**
+   * Tell UIs to refresh. Best-effort by contract: `record()` succeeds when the
+   * event is durably appended, and nothing after that may fail it. Callers gate
+   * real access on that success — BrowserSessions records a session before it
+   * publishes one — so a listener throwing (a destroyed webContents during
+   * renderer teardown, say) would refuse access the log already says was
+   * granted, and leave the two disagreeing in the opposite direction.
+   */
+  private notify(): void {
+    try {
+      this.events.emit("change");
+    } catch (error: unknown) {
+      console.error("[audit] change listener failed after a recorded event:", error);
+    }
   }
 
   /** Erase the log (truncate the file). Emits "change" so UIs refresh. */
   clear(): void {
     fs.writeFileSync(this.file, "");
-    this.events.emit("change");
+    this.notify();
   }
 
   /** All events, oldest first. Used by tests and the audit UI. */

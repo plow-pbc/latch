@@ -58,13 +58,50 @@ describe("approvalViewModel for browser intents", () => {
 
 describe("audit grouping for browser sessions", () => {
   const events: JSONValue[] = [
+    { event: "intent_received", intentId: "i1", agent: "313", agent_name: "Daniel's Test", request: "browse: dominos.com", goal: "Order dinner", capabilities: ["Browse: dominos.com"], ts: "2026-08-10T09:59:58Z" },
+    { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "approve", ts: "2026-08-10T09:59:59Z" },
     { event: "browser_session_opened", intentId: "i1", session: "S", origins: ["dominos.com"], ts: "2026-08-10T10:00:00Z" },
     { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com/menu", ts: "2026-08-10T10:00:01Z" },
     { event: "browser_navigated", session: "S", url: "https://dominos.com/menu", ts: "2026-08-10T10:00:01Z" },
     { event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:02Z" },
     { event: "credential_filled", session: "S", item: "L1", field: "password", origin: "dominos.com", ts: "2026-08-10T10:00:03Z" },
-    { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:04Z" },
+    // The agent came back for more, and got it: this widening is part of what
+    // the session was allowed to do.
+    { event: "intent_received", intentId: "i2", agent: "313", agent_name: "Daniel's Test", request: "widen to paypal.com", capabilities: ["Browse: paypal.com", "Credentials: fill L1 into approved sites"], ts: "2026-08-10T10:00:04Z" },
+    { event: "intent_decision", intentId: "i2", decision: "allow_once", source: "approve", ts: "2026-08-10T10:00:05Z" },
+    { event: "browser_session_extended", intentId: "i2", session: "S", origins: ["paypal.com"], items: ["L1"], ts: "2026-08-10T10:00:06Z" },
+    // Sessions land back on the blank staging page; it is not where they went.
+    { event: "browser_navigated", session: "S", url: "about:blank", ts: "2026-08-10T10:00:06Z" },
+    { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:07Z" },
   ];
+
+  it("the session row says who drove the browser and everything they were allowed", () => {
+    // The reported bug, in one assertion set: the row that named the agent held
+    // no browsing and the row that held the browsing named nobody, so neither
+    // answered "was my browser used, and by whom". The session row now carries
+    // the request that authorised it — including every later widening, whose
+    // added origins and credential grants are otherwise invisible here and
+    // understate the session's real bound.
+    const browser = auditActivities(events).find((a) => a.id === "browser:S")!;
+    expect(browser.agentId).toBe("313");
+    expect(browser.agentDisplay).toBe("Daniel's Test");
+    expect(browser.goal).toBe("Order dinner");
+    expect(browser.capabilities).toEqual([
+      "Browse: dominos.com",
+      "Browse: paypal.com",
+      "Credentials: fill L1 into approved sites",
+    ]);
+    // Titled by where it actually went, never by the blank staging page it
+    // ends on — which titled real sessions "Browsing — about:blank".
+    expect(browser.title).toBe("Browsing — https://dominos.com/menu");
+    // The widening is in the session's own story, not only the intent's.
+    expect(browser.timeline.some((t) => t.text.startsWith("Session widened"))).toBe(true);
+    // The cage refused it something, so the Failed filter must hold it.
+    expect(browser.category).toBe("failed");
+    // The decision stays on the intent row: copying it in would outrank the
+    // browser branch and replace the live status with "Allowed once".
+    expect(browser.status).toBe("Closed · scope blocks");
+  });
 
   it("collapses one session into one activity (plus the opening intent's)", () => {
     const activities = auditActivities(events);
@@ -75,8 +112,10 @@ describe("audit grouping for browser sessions", () => {
     expect(browser.kind).toBe("browser");
     expect(browser.title).toContain("dominos.com/menu");
     expect(browser.status).toContain("scope blocks");
-    expect(browser.timeline.length).toBe(6);
-    expect(browser.timeline[0]!.text).toContain("Browser session opened");
+    expect(browser.timeline.length).toBe(10);
+    // The request that authorised the session opens its story.
+    expect(browser.timeline[0]!.text).toContain("Request: browse: dominos.com");
+    expect(browser.timeline[1]!.text).toContain("Browser session opened");
     const violation = browser.timeline.find((s) => s.text.includes("paypal.com"))!;
     expect(violation.state).toBe("bad");
     const filled = browser.timeline.find((s) => s.text.includes("Credential typed"))!;

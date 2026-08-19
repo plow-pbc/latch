@@ -142,15 +142,31 @@ export class BrowserSessions {
       lastUrl: "",
       knownPageCount: 1,
     };
+    // Same order as extend(), and for the same reason: a session the owner's
+    // log has no event for is a browser they cannot see being used at all.
+    try {
+      this.audit("browser_session_opened", {
+        intentId,
+        session: session.handle,
+        origins: session.origins,
+        credential_metadata: credentialMetadata,
+        headed: this.host.headed,
+      });
+    } catch (error: unknown) {
+      // The browser is already warm — ensureReady ran above, and headed means a
+      // window is on screen. If the opening cannot be recorded there is no
+      // session to close it later, so put it away here: a running browser with
+      // no session and no audit line is precisely the invisible browser this
+      // path exists to prevent.
+      try {
+        await this.stopBrowser();
+      } catch {
+        /* the browser is going away regardless; the failed open is the real error */
+      }
+      throw error;
+    }
     this.session = session;
     this.armIdleTimer();
-    this.audit("browser_session_opened", {
-      intentId,
-      session: session.handle,
-      origins: session.origins,
-      credential_metadata: credentialMetadata,
-      headed: this.host.headed,
-    });
     return {
       status: "completed",
       session: session.handle,
@@ -170,26 +186,55 @@ export class BrowserSessions {
   ): JSONValue {
     const s = this.validate(agentId, handle);
     if (typeof s === "string") return { status: "error", error: s };
+    // Work out the new bound without publishing it, because the record has to
+    // survive before the access does. Widening the live session first and
+    // auditing after means a failed append (full disk, bad permissions) leaves
+    // the agent holding origins and credential items that the owner's log has
+    // no event for — and the log is the only place they can see it. Recording
+    // first fails the call instead, and the session keeps its old bound.
+    const widened = [...s.origins];
     for (const o of origins) {
       const n = normalizeOrigin(o);
-      if (!s.origins.includes(n)) s.origins.push(n);
+      if (!widened.includes(n)) widened.push(n);
     }
-    s.origins.sort();
-    for (const i of items) s.credentialItems.add(i);
-    if (credentialMetadata) s.credentialMetadata = true;
-    s.lastActivity = Date.now();
+    widened.sort();
+    const widenedItems = new Set(s.credentialItems);
+    for (const i of items) widenedItems.add(i);
+    const itemList = [...widenedItems].sort();
     this.audit("browser_session_extended", {
       intentId,
       session: s.handle,
-      origins: s.origins,
-      items: [...s.credentialItems].sort(),
+      origins: widened,
+      items: itemList,
     });
+    s.origins = widened;
+    s.credentialItems = widenedItems;
+    if (credentialMetadata) s.credentialMetadata = true;
+    s.lastActivity = Date.now();
     return {
       status: "completed",
       session: s.handle,
       origins: s.origins,
-      items: [...s.credentialItems].sort(),
+      items: itemList,
     };
+  }
+
+  /**
+   * Stop the browser and clear the shutdown latch — one operation, never two.
+   * `shutdown()` sets `shuttingDown` and only `resetBreaker()` clears it, and
+   * `shutdown()` audits browser_stopped on its way out. Split across two calls,
+   * an audit failure in between leaves a host that will start, publish a
+   * session, and then fail every command at the `sendAction()` guard: an open
+   * the agent cannot use. Every caller wants the pair, so the pair is the API.
+   * Callers still choose what to do with a shutdown error; none of them get to
+   * skip the reset.
+   */
+  private async stopBrowser(): Promise<void> {
+    try {
+      await this.host.shutdown();
+    } finally {
+      this.host.resetBreaker();
+    }
   }
 
   async close(handle: string, reason: string): Promise<JSONValue> {
@@ -197,8 +242,7 @@ export class BrowserSessions {
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    await this.host.shutdown();
-    this.host.resetBreaker();
+    await this.stopBrowser();
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
