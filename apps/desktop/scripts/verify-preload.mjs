@@ -407,22 +407,33 @@ app.whenReady().then(async () => {
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "", inferenceProvider: "anthropic" });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Plow account" && c.classList.contains("disabled"))`,
-    "the Plow provider chip to go disabled while signed out");
-  const plowDisabledWhileSignedOut = await win.webContents.executeJavaScript(`(() => {
-    const plow = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Plow account");
-    return !!plow && plow.classList.contains("disabled");
-  })()`);
+  // The signal used to be the Plow chip going disabled. Nothing is disabled any
+  // more, so the observable proof that the pane re-read is the note: with the
+  // uncredentialled provider SELECTED it says what that will cost, and the
+  // sentence goes away when the credential comes back.
+  saveSettings(probeHome, { ...loadSettings(probeHome), inferenceProvider: "plow" });
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  await waitFor(
+    win,
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+    "the note to say what a signed-out Plow reviewer will cost",
+  );
+  const warnedWhileSignedOut = await win.webContents.executeJavaScript(
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+  );
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_now_signed_in" });
   win.webContents.send("status:changed");
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Plow account" && !c.classList.contains("disabled"))`,
-    "the open Settings pane to re-read the account and re-enable Plow");
+  await waitFor(
+    win,
+    `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+    "the open Settings pane to re-read the account and drop the warning",
+  );
   const staleSettingsPane = {
-    disabledWhileSignedOut: plowDisabledWhileSignedOut,
-    enabledAfterStatusChanged: await win.webContents.executeJavaScript(`(() => {
-      const plow = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Plow account");
-      return !!plow && !plow.classList.contains("disabled");
-    })()`),
+    disabledWhileSignedOut: warnedWhileSignedOut,
+    enabledAfterStatusChanged: await win.webContents.executeJavaScript(
+      `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+    ),
   };
 
   // THE RACE, specifically: typing that starts while a status-driven refresh is
