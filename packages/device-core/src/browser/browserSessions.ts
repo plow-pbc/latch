@@ -34,11 +34,25 @@ interface Session {
   lastActivity: number;
   lastUrl: string;
   knownPageCount: number;
+  /** A secret is sitting in a field on this page. See CONTENT_AFTER_FILL. */
+  holdsSecret: boolean;
 }
 
 /** Actions allowed while the active page is out of scope: only what an agent
  * needs to find its way back. Nothing that observes or touches page content. */
 const LOCKOUT_ALLOWED = new Set(["url", "pages", "use_page", "goto"]);
+
+/**
+ * Actions that would read the page back to the agent, refused while a secret
+ * is still sitting in a field on it.
+ *
+ * `fill_secret` types a value the agent is never given — and then `forms`
+ * serialises every input's value, `eval` returns whatever it is asked for, and
+ * a screenshot shows a revealed field. The value would come straight back by
+ * another door. Submitting (or going anywhere) clears it, which is what an
+ * agent does next anyway.
+ */
+const CONTENT_AFTER_FILL = new Set(["eval", "forms", "text", "tables", "links", "screenshot"]);
 
 /** Strip query/fragment for audit lines — they carry tokens. */
 export function stripQuery(url: string): string {
@@ -135,6 +149,7 @@ export class BrowserSessions {
     const session: Session = {
       handle: crypto.randomUUID(),
       agentId,
+      holdsSecret: false,
       origins: origins.map(normalizeOrigin),
       credentialMetadata,
       credentialItems: new Set(),
@@ -256,6 +271,18 @@ export class BrowserSessions {
     const action = p.get("action").str ?? "";
 
     try {
+      // A filled secret is still on this page: reading the page back is how it
+      // would reach the agent, so those actions wait until the page changes.
+      if (s.holdsSecret && CONTENT_AFTER_FILL.has(action)) {
+        this.audit("browser_command", { session: s.handle, action, refused: "holds a filled secret" });
+        return {
+          status: "error",
+          error:
+            `${action} is refused while a credential you cannot see is in a field on this page — ` +
+            `submit the form (or goto elsewhere) and try again`,
+        };
+      }
+
       // Lockout: on an out-of-scope page, only way-back actions run.
       if (!this.inScope(s, s.lastUrl) && !LOCKOUT_ALLOWED.has(action)) {
         const origin = hostOf(s.lastUrl) ?? s.lastUrl;
@@ -338,6 +365,8 @@ export class BrowserSessions {
 
     const navigated = url !== s.lastUrl;
     s.lastUrl = url;
+    // The page the secret was typed into is gone, so it is not there to read.
+    if (navigated) s.holdsSecret = false;
     if (navigated) {
       this.audit("browser_navigated", { session: s.handle, url: stripQuery(url) });
     }
@@ -530,6 +559,7 @@ export class BrowserSessions {
       field,
       origin: frameHost,
     });
+    s.holdsSecret = true;
     return { status: "completed", ok: true, frame };
   }
 }
