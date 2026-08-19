@@ -147,11 +147,19 @@ class OutputBuffer {
       });
     });
   }
+
+  onExit(cb: (exitCode: number) => void): void {
+    if (this.exitCode !== null) {
+      cb(this.exitCode);
+      return;
+    }
+    this.waiters.push(() => cb(this.exitCode ?? -1));
+  }
 }
 
 /**
  * Runs approved commands under /usr/bin/sandbox-exec with a per-run generated
- * profile, buffering merged stdout+stderr for the get_output streaming path.
+ * profile, buffering merged stdout+stderr for the plow_get_output streaming path.
  */
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
@@ -222,6 +230,13 @@ export class Executor {
       output: snap.output,
       outputLength: snap.total,
     };
+  }
+
+  /** Invoke cb when the run exits — immediately if it already has. */
+  onExit(handle: string, cb: (exitCode: number) => void): void {
+    const buffer = this.buffers.get(handle);
+    if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
+    buffer.onExit(cb);
   }
 
   output(handle: string, since: number): ExecResult {

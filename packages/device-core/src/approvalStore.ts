@@ -42,6 +42,17 @@ import { IntentDecision, PolicyDelegate } from "./policyEngine.js";
 /** Same fifteen minutes as a deferred handle — §4.3 uses one window. */
 export const APPROVAL_TTL_MS = 15 * 60_000;
 
+/**
+ * The `source` on a decision the deadline made, rather than a person.
+ *
+ * Exported because the difference matters to the agent that asked: a human
+ * saying no and nobody being at the desk are not the same answer, and until
+ * this was a shared constant they were literally the same sentence. Defined
+ * here, where the value is produced; `deviceAgent` imports it to decide what
+ * the caller is told.
+ */
+export const APPROVAL_SOURCE_EXPIRED = "expired";
+
 export type ApprovalStatus = "pending" | "decided" | "expired" | "abandoned";
 
 /** What is written to disk for one approval. */
@@ -70,6 +81,14 @@ function iso(ms: number): string {
 
 export class ApprovalStore implements PolicyDelegate {
   private readonly waiting = new Map<string, (d: IntentDecision, source: string) => void>();
+
+  /**
+   * Called for each pending record the startup sweep marks abandoned, so the
+   * abandonment can reach the audit log. Assign it in the same tick as
+   * construction: the sweep performs I/O before it can fire, so a hook set
+   * immediately never misses one.
+   */
+  onAbandoned?: (record: ApprovalRecord) => void;
 
   /**
    * Directory creation and the stale sweep, started at construction. Awaited by
@@ -158,7 +177,13 @@ export class ApprovalStore implements PolicyDelegate {
   private async reapStale(): Promise<void> {
     for (const record of await this.all()) {
       if (record.status !== "pending") continue;
-      await this.write({ ...record, status: "abandoned", decidedAt: iso(this.now()) });
+      const abandoned: ApprovalRecord = {
+        ...record,
+        status: "abandoned",
+        decidedAt: iso(this.now()),
+      };
+      await this.write(abandoned);
+      this.onAbandoned?.(abandoned);
     }
   }
 
@@ -201,8 +226,8 @@ export class ApprovalStore implements PolicyDelegate {
     // decides.
     const deadlineAt = started + this.ttlMs;
     const expiredAnswer = {
-      decision: { decision: "deny" as Decision, source: "expired" },
-      source: "expired",
+      decision: { decision: "deny" as Decision, source: APPROVAL_SOURCE_EXPIRED },
+      source: APPROVAL_SOURCE_EXPIRED,
     };
 
     let settle!: (d: IntentDecision, source: string) => void;
@@ -214,7 +239,10 @@ export class ApprovalStore implements PolicyDelegate {
     });
     this.waiting.set(intent.intentId, settle);
 
-    const timer = setTimeout(() => settle(expiredAnswer.decision, "expired"), this.ttlMs);
+    const timer = setTimeout(
+      () => settle(expiredAnswer.decision, APPROVAL_SOURCE_EXPIRED),
+      this.ttlMs,
+    );
     timer.unref?.();
     void answered.finally(() => clearTimeout(timer));
 
@@ -231,7 +259,7 @@ export class ApprovalStore implements PolicyDelegate {
     const resolved: Decision = typeof decision === "string" ? decision : decision.decision;
     await this.write({
       ...record,
-      status: source === "expired" ? "expired" : "decided",
+      status: source === APPROVAL_SOURCE_EXPIRED ? "expired" : "decided",
       decision: resolved,
       source,
       decidedAt: iso(this.now()),

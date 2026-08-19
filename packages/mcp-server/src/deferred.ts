@@ -5,7 +5,7 @@
  * 20 seconds, so nothing on this Mac may block past its call budget — not a
  * human who has walked away from an approval, not a slow command. Any
  * tool that cannot finish inside the budget returns a handle instead, keeps the
- * work running, and the agent retrieves the outcome later with `get_result`.
+ * work running, and the agent retrieves the outcome later with `plow_get_result`.
  *
  * Two rules make this safe rather than merely convenient:
  *
@@ -39,6 +39,51 @@ export const RETRY_AFTER_MS = 1_000;
 
 /** Why a call is still outstanding. */
 export type PendingReason = "awaiting_approval" | "running";
+
+/**
+ * What the agent should DO about a pending handle, in the envelope itself.
+ *
+ * The four machine fields say what is true; none of them say what to do, and
+ * an agent cannot see the dialog that just appeared on a screen in another
+ * room. So agents went quiet, and — worse — re-issued the original call, which
+ * mints a fresh intent and asks the human all over again.
+ *
+ * This rides the response rather than only the server's `instructions` block
+ * because a client may drop instructions, and because this is the moment the
+ * advice is actually needed. `retry_after_ms` next to it is advice too, never
+ * a gate: polling early is answered honestly.
+ *
+ * `awaiting_approval` must not claim a dialog is on screen, because often
+ * there is not one. It means "no decision yet", and that covers the work
+ * before anyone is asked (path resolution, writing the approval record), the
+ * adversarial reviewer thinking — a 30s budget against this 8s one, so in that
+ * mode deferring while nobody has been asked is the ORDINARY case — and the
+ * approve/deny modes, which never show a human anything at all.
+ *
+ * An earlier version of this note hedged on whether approval was *needed*,
+ * which is not the uncertain part: it always is. What varies is whether it has
+ * been ASKED yet.
+ */
+const PENDING_NOTES: Record<PendingReason, string> = {
+  awaiting_approval:
+    "not decided yet — it may be waiting on the user, on a policy check, or still being " +
+    "prepared. Tell the user it is waiting, then poll plow_get_result with this handle. " +
+    "Do not repeat the original call; that starts a second request.",
+  running:
+    "approved, and running now. Poll plow_get_result with this handle; do not repeat the " +
+    "original call.",
+};
+
+/** §4.3's pending envelope, with the advice the caller needs to act on it. */
+function pendingEnvelope(handle: string, reason: PendingReason): JSONValue {
+  return {
+    status: "pending",
+    handle,
+    reason,
+    note: PENDING_NOTES[reason],
+    retry_after_ms: RETRY_AFTER_MS,
+  };
+}
 
 /**
  * Thrown by a tool when a human or a policy rule refused the operation, as
@@ -168,7 +213,7 @@ export class DeferredResults {
       terminal: null,
       expiresAt: this.now() + this.ttlMs,
     });
-    return { status: "pending", handle, reason, retry_after_ms: RETRY_AFTER_MS };
+    return pendingEnvelope(handle, reason);
   }
 
   /**
@@ -182,12 +227,7 @@ export class DeferredResults {
     if (!entry || entry.agentId !== agentId) return { status: "unknown", handle };
     if (this.now() > entry.expiresAt) return { status: "expired", handle };
     if (entry.terminal !== null) return entry.terminal;
-    return {
-      status: "pending",
-      handle,
-      reason: entry.reason,
-      retry_after_ms: RETRY_AFTER_MS,
-    };
+    return pendingEnvelope(handle, entry.reason);
   }
 
   /**

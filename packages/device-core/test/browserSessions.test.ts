@@ -112,6 +112,19 @@ describe("session lifecycle", () => {
     );
   });
 
+  it("a crash closes the session's books instead of leaving it open forever", async () => {
+    const s = await openSession(["pizza.example"]);
+    // What DeviceAgent's host.onCrash wiring calls when the browser dies.
+    ctx.sessions.noteCrash();
+    const closed = ctx.events.find((e) => e.event === "browser_session_closed");
+    expect(closed?.fields.session).toBe(s);
+    expect(closed?.fields.reason).toBe("crashed");
+    expect(ctx.sessions.current()).toBeNull();
+    // The handle died with the browser.
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "url" }));
+    expect(r.get("status").str).toBe("error");
+  });
+
   it("exposes current() for the owner's live-browser view", async () => {
     expect(ctx.sessions.current()).toBeNull();
 

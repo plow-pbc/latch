@@ -145,7 +145,6 @@ body {
   user-select: none;
 }
 .chip.active { background: var(--sel); color: var(--blue-fg); border-color: var(--blue-bd); }
-.chip.disabled { opacity: 0.4; cursor: default; }
 .spacer { flex: 1; }
 .count { color: var(--faint); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
@@ -260,19 +259,19 @@ dl.meta dd { margin: 0; }
 .empty { color: var(--faint); padding: 40px; text-align: center; }
 
 /* Detail-pane timeline: one row per underlying raw event. */
-.timeline { display: flex; flex-direction: column; gap: 2px; }
+.timeline { display: flex; flex-direction: column; }
 .tl {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 6px 0 6px 16px;
+  padding: 7px 0 7px 16px;
   position: relative;
   border-left: 2px solid var(--border);
 }
 .tl::before {
   content: "";
   position: absolute;
-  left: -5px;
+  left: -7px; /* 12px outer width centered on the 2px border */
   top: 10px;
   width: 8px;
   height: 8px;
@@ -285,7 +284,7 @@ dl.meta dd { margin: 0; }
 .tl .tt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .tl .tm { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* Goals / Rules / Settings panels — fill the content area below the titlebar. */
+/* Rules / Settings panels — fill the content area below the titlebar. */
 .panel { padding: 16px; overflow: auto; flex: 1 1 auto; min-height: 0; }
 .item {
   background: var(--card);
@@ -342,62 +341,25 @@ textarea.text { min-height: 70px; resize: vertical; }
 .item p.conn-note { margin-bottom: 16px; }
 .item p.reviewer-note { margin-top: 14px; }
 
-/* Goal item: title + description on the left, action column on the right that
-   the description can never flow under (separate flex columns). */
-.goal-item { display: flex; align-items: center; gap: 12px; }
-.goal-main { flex: 1 1 auto; min-width: 0; }
-.goal-main h4 { margin: 0 0 4px; }
-.goal-main p { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
-.goal-actions { flex: none; display: flex; align-items: center; gap: 8px; }
-/* Buttons in an action column share one height. */
-.goal-actions .btn, .goal-actions .iconbtn { height: 28px; }
+/* Support rows. The Discord mark is filled, unlike the stroked .ico; the
+   globe is the shared line art scaled up, so its stroke thins to match. */
+.support-row { display: flex; align-items: center; gap: 14px; }
+.support-row + .support-row { margin-top: 14px; }
+.support-row .discord-ico { width: 28px; height: 22px; fill: currentColor; color: var(--muted); flex: none; }
+.support-row .support-globe { width: 26px; height: 26px; stroke-width: 1.5; color: var(--muted); flex: none; }
+.support-row .btn { white-space: nowrap; }
+.support-copy { min-width: 0; }
+.support-title { font-weight: 600; margin-bottom: 2px; }
 
-/* "⋯" overflow menu — a white button matching the Start Agent height, revealed
-   only when the goal group is hovered. */
-.iconbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-strong);
-  background: var(--card);
-  color: var(--muted);
-  border-radius: 8px;
-  padding: 0 10px;
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.goal-item:hover .iconbtn { opacity: 1; }
-.iconbtn:hover { background: var(--hover); color: var(--fg); }
-.menu-wrap { position: relative; }
-.menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  min-width: 130px;
-  background: var(--card);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow);
-  padding: 4px;
-  z-index: 20;
-}
-.menu.hidden { display: none; }
-.menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  color: var(--red-fg);
-  font: inherit;
-  padding: 7px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.menu-item:hover { background: var(--hover); }
+/* Capabilities: the row is a support-row; this adds the inline status beside
+   the title, reusing the titlebar's connection dot. */
+.cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
+.cap-title .support-title { margin-bottom: 0; }
+.cap-title .status-dot { flex: none; }
+/* The from-source note sits right under the Launch at Login checkbox line;
+   `.item p` zeroes margins, so it asks for its blank line. */
+.item p.cap-note { margin-top: 8px; }
+
 .agent-status {
   margin: 0;
   font-family: var(--mono);
@@ -415,12 +377,18 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve .fine {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px; margin-bottom: 14px;
-  flex: 1; overflow: auto;
+  /* A floor nothing above can take. `flex: 1` alone lets a sibling with a tall
+     natural height eat this block's share of a 560pt window, and the capability
+     list is the one thing on this card that must never be the part that
+     scrolled out of view. */
+  flex: 1; min-height: 120px; overflow: auto;
 }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
 .approve .actions { display: flex; gap: 8px; }
 .approve .actions .action-slot { flex: 1; position: relative; display: flex; }
-.approve .actions .btn { flex: 1; justify-content: center; padding: 9px; }
+/* The opacity transition makes the arming delay (buttons start disabled for a
+   beat so stray input can't land — approval.js) read as deliberate, not lag. */
+.approve .actions .btn { flex: 1; justify-content: center; padding: 9px; transition: opacity 0.3s ease; }
 .warn { color: var(--amber-fg); }
 
 /* A tiny rainbow spinner pinned to the window's bottom-right corner, shown while
@@ -657,3 +625,25 @@ textarea.text { min-height: 70px; resize: vertical; }
 
 /* The locked-vault explanation: an honest paragraph under the empty state. */
 .panel .vault-note { margin: 8px 0 0; max-width: 68ch; }
+
+/* The line under a chip row explaining what a faded chip is waiting for. */
+.settings .chip-note:empty { display: none; }
+.settings .chip-note { margin-top: 10px; }
+
+/* The Anthropic key field, folded into the AI Reviewer group. Always on screen:
+   selecting a provider is not gated on having its credential. */
+.settings .keyfield { margin-top: 14px; margin-bottom: 0; }
+.settings .keyfield-note { margin-top: 6px; }
+/* The purpose field, hanging off the reviewer chip that reveals it. Same 2px
+   rail the audit timeline uses, so it reads as belonging to the chip above
+   rather than as another row of the card. */
+.revealed {
+  margin: 14px 0 0 14px;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--border);
+}
+.revealed .field { margin-bottom: 8px; }
+/* `.item p` zeroes margins, so each caveat asks for its own line back. */
+.item .revealed p { margin: 6px 0 0; }
+/* What the selected mode does, where the purpose field would otherwise be. */
+.item p.mode-hint { margin: 10px 0 0; }

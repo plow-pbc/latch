@@ -19,23 +19,26 @@ describe("SkillRegistry", () => {
     reg.loadDir(dir);
     expect(reg.skill("my-skill")?.description).toBe("does things");
     expect(reg.skill("my-skill")?.body).toContain("content here");
-    expect((reg.manifest() as JSONValue[]).length).toBe(1);
+    expect(reg.manifest().length).toBe(1);
   });
 
-  it("manifest is sorted and carries bodies", () => {
+  // Sorted, and names/descriptions ONLY. A body is fetched one at a time by
+  // plow_read_skill; putting them all in the manifest would put a whole
+  // operator manual on every listing.
+  it("manifest is sorted and carries no bodies", () => {
     const reg = new SkillRegistry();
     reg.register({ name: "zeta", description: "z", body: "zz" });
     reg.register(BROWSING_SKILL);
-    const manifest = reg.manifest() as JSONValue[];
-    expect(jv(manifest[0]).get("name").str).toBe("camoufox-browsing");
-    expect(jv(manifest[0]).get("body").str).toContain("browser_open");
-    expect(jv(manifest[1]).get("name").str).toBe("zeta");
+    const manifest = reg.manifest();
+    expect(manifest.map((s) => s.name)).toEqual(["camoufox-browsing", "zeta"]);
+    expect(Object.keys(manifest[0])).toEqual(["name", "description"]);
+    expect(reg.skill("camoufox-browsing")?.body).toContain("plow_browser_open");
   });
 
   it("the built-in browsing skill documents the critical gotchas", () => {
     expect(BROWSING_SKILL.body).toContain("back");
     expect(BROWSING_SKILL.body).toContain("use_page");
     expect(BROWSING_SKILL.body).toContain("fill_secret");
-    expect(BROWSING_SKILL.body).toContain("browser_request");
+    expect(BROWSING_SKILL.body).toContain("plow_browser_request");
   });
 });

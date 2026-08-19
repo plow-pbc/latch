@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
 import { adversarialReview } from "../src/adversarialAgent.js";
 import type { ReviewArgs, ReviewFailureCause, Verdict } from "../src/adversarialAgent.js";
+import { DENIAL_SOURCE_NO_REVIEWER } from "@domo/device-core";
 import { Settings } from "../src/settings.js";
 import { auditActivities, decidedByLabel } from "../src/viewModel.js";
 import {
@@ -22,7 +23,6 @@ import {
   activeProvider,
   decideIntent,
   inferenceStatus,
-  modeAfterAvailabilityChange,
   providerAvailability,
   reviewerAvailable,
   reviewerInfo,
@@ -42,6 +42,7 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     showAgentSuggestions: true,
     anthropicApiKey: "",
     inferenceProvider: "plow",
+    agentPurpose: "",
     ...overrides,
   };
 }
@@ -256,32 +257,48 @@ describe("decideIntent — adversarial mode", () => {
   });
 
   // The security property, per shape of "the active provider cannot run": an
-  // unusable reviewer degrades to the dialog, never to an approval — and a
-  // credential belonging to the OTHER provider does not quietly stand in for
-  // the one that was selected.
-  const providerCredentialCases = [
-    { name: "no credential at all", over: {} },
-    { name: "only the other provider's credential", over: { anthropicApiKey: ANTHROPIC_KEY } },
+  // unusable reviewer DENIES, never approves — and a credential belonging to
+  // the OTHER provider does not quietly stand in for the one that was selected.
+  //
+  // This used to fall to the dialog, because selecting a provider without its
+  // credential was refused and the mode was retired to Ask behind the user. The
+  // gate is gone: the state is reachable, so it has to answer for itself. Deny
+  // is the fail-closed answer, and `no_reviewer` is what makes it legible
+  // instead of looking like a decision somebody made.
+  //
+  // Nothing is CALLED to find this out. The reviewer's absence is on disk, so
+  // asking it would only buy an audit pair naming a model that never saw the
+  // intent — which is why `reviewerAvailable` decides before `review()` runs.
+  const unusableReviewers = [
+    { name: "the Plow reviewer has no credential at all", over: { inferenceProvider: "plow" as const, relayCredential: "" } },
+    {
+      name: "the Plow reviewer has only the other provider's credential",
+      over: { inferenceProvider: "plow" as const, relayCredential: "", anthropicApiKey: ANTHROPIC_KEY },
+    },
+    { name: "the Anthropic reviewer has no key", over: { inferenceProvider: "anthropic" as const, anthropicApiKey: "" } },
   ];
 
-  for (const c of providerCredentialCases) {
-    it(`falls to the human when the Plow reviewer has ${c.name}`, async () => {
+  for (const c of unusableReviewers) {
+    it(`denies, explaining itself, when ${c.name}`, async () => {
       const h = harness(
-        settings({
-          approvalMode: "adversarial",
-          inferenceProvider: "plow",
-          relayCredential: "",
-          ...c.over,
-        }),
-        { verdict: "allow", decision: "deny" },
+        settings({ approvalMode: "adversarial", ...c.over }),
+        // What the dialog WOULD have said. It must not be reachable.
+        { verdict: "ask", reason: "nobody to call", decision: "allow_once" },
       );
       const result = await h.run();
+      expect(result.decision).toBe("deny");
+      // The sentence itself lives in device-core (EXPLAINED_DENIALS) and is
+      // pinned end to end by mcpServer.test.ts; here the contract is that this
+      // path picks the explained source rather than a bare deny.
+      expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
+      // No call, and therefore no timeline claiming a model started reviewing.
       expect(h.review).not.toHaveBeenCalled();
-      expect(h.openApproval).toHaveBeenCalledOnce();
-      expect(result.source).toBe("ask");
-      expect(result.decision).not.toBe("allow_once");
+      expect(h.records).toEqual([]);
+      // No dialog: the mode the user chose is honoured, not swapped for Ask.
+      expect(h.openApproval).not.toHaveBeenCalled();
     });
   }
+
 });
 
 describe("decideIntent — ask mode and suggestions", () => {
@@ -477,27 +494,12 @@ describe("the renderer's view of inference carries no credentials", () => {
   });
 });
 
-describe("losing the active credential retires Adversarial mode", () => {
-  it("falls back to ask when the credential is gone", () => {
-    const signedOut = settings({ approvalMode: "adversarial", inferenceProvider: "plow", relayCredential: "" });
-    expect(modeAfterAvailabilityChange(signedOut)).toBe("ask");
-  });
-
-  it("leaves the mode alone while the credential is present", () => {
-    const ok = settings({
-      approvalMode: "adversarial",
-      inferenceProvider: "plow",
-      relayCredential: PLOW_CREDENTIAL,
-    });
-    expect(modeAfterAvailabilityChange(ok)).toBe("adversarial");
-  });
-
-  it("does not disturb the other modes", () => {
-    for (const mode of ["approve", "ask", "deny"] as const) {
-      expect(modeAfterAvailabilityChange(settings({ approvalMode: mode }))).toBe(mode);
-    }
-  });
-});
+// What used to sit here: `modeAfterAvailabilityChange`, which retired
+// Adversarial to Ask whenever the active provider lost its credential. The
+// function is gone with the gate. Losing a credential no longer rewrites the
+// user's mode behind them — the mode stays, and every operation it decides is
+// denied with `no_reviewer` until the credential comes back. That contract is
+// pinned by the adversarial-mode describe above and by settingsActions.test.
 
 describe("settings defaults", () => {
   let loadSettings: typeof import("../src/settings.js").loadSettings;
@@ -552,7 +554,7 @@ describe("the audit tells one coherent story about who decided", () => {
     expect(lines.some((l) => l.includes("could not run"))).toBe(true);
     expect(lines.some((l) => l.includes("defer to you"))).toBe(false);
     // …and the decision that follows names the same thing, in human words.
-    expect(decidedByLabel(decision.source)).toBe("Adversarial Agent (out of credits)");
+    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (out of credits)");
     expect(decidedByLabel(decision.source)).not.toContain("no_credits");
   });
 
@@ -565,5 +567,63 @@ describe("the audit tells one coherent story about who decided", () => {
     const lines = narrative(h.records, decision, intent().intentId);
     expect(lines.some((l) => l.includes("defer to you"))).toBe(true);
     expect(lines.some((l) => l.includes("could not run"))).toBe(false);
+  });
+});
+
+/**
+ * The purpose statement reaches the reviewer from SETTINGS, never from the
+ * intent. That is the property the TRUSTED label in the prompt rests on, and it
+ * lives here — this is the only place the two sources meet.
+ */
+describe("what the reviewer is told about the owner's purpose", () => {
+  const PURPOSE = "Groceries and calendar only. Never touch ~/Developer.";
+
+  it("hands the reviewer the stored purpose, alongside the intent it did not come from", async () => {
+    const h = harness(
+      settings({
+        approvalMode: "adversarial",
+        relayCredential: PLOW_CREDENTIAL,
+        agentPurpose: PURPOSE,
+      }),
+      { verdict: "allow" },
+    );
+
+    await h.run();
+
+    expect(h.reviewCalls).toHaveLength(1);
+    expect(h.reviewCalls[0].agentPurpose).toBe(PURPOSE);
+    // And it is not, and never was, on the intent.
+    expect(JSON.stringify(h.reviewCalls[0].intent)).not.toContain("Groceries");
+  });
+
+  it("passes an empty string when the owner has said nothing", async () => {
+    const h = harness(
+      settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      { verdict: "allow" },
+    );
+    await h.run();
+    expect(h.reviewCalls[0].agentPurpose).toBe("");
+  });
+
+  /**
+   * The reviewer's own words are persisted to audit.ndjson and drawn in the
+   * activity view. The purpose is not: the audit log records what was decided
+   * and why the reviewer said so, not the standing instruction it was read
+   * against.
+   */
+  it("keeps the purpose out of the audit record the review writes", async () => {
+    const h = harness(
+      settings({
+        approvalMode: "adversarial",
+        relayCredential: PLOW_CREDENTIAL,
+        agentPurpose: PURPOSE,
+      }),
+      { verdict: "allow", reason: "fits routine shopping" },
+    );
+
+    await h.run();
+
+    expect(JSON.stringify(h.records)).not.toContain("Groceries");
+    expect(JSON.stringify(h.records)).not.toContain("~/Developer");
   });
 });

@@ -4,8 +4,8 @@
 **Audience:** Domo developers and agents working on this codebase.
 
 Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a person's
-Mac — read and write files, run CLI commands with streaming output, and invoke
-"blessed" tools built for our applications — through an **intent-based request
+Mac — read and write files, run CLI commands with streaming output, and drive a
+real browser on their machine — through an **intent-based request
 system**: every operation is a structured, signed intent that a human (later, an
 adversarial reviewer agent plus a human escalation path) can inspect and approve
 before it executes inside an on-the-fly sandbox derived from exactly the approved
@@ -67,29 +67,34 @@ redesigning.
 
 ## 3. Agent-facing protocol: MCP
 
-One MCP endpoint (the broker), device-addressed tools. Agents connect once and
-reach every Mac they hold grants for. Claude Code connects via the `domo-mcp`
-stdio shim (auth token + socket path via env; pure pipe thereafter).
-
-| Tool | Purpose |
-|---|---|
-| `list_devices()` | Devices visible to this agent: id, name, online, granted |
-| `request_device_access(device, goals)` | Ask the owner for access |
-| `read_file(device, path, goal?)` | Read a file (returned base64 for binary safety) |
-| `write_file(device, path, content, goal?)` | Write a file |
-| `run_command(device, argv, cwd?, read_paths?, write_paths?, network?, wait_ms?, goal?)` | Run a CLI command in the sandbox; returns full output or a handle |
-| `get_output(device, handle, since?)` | Incremental output of a running command |
-| `list_device_tools(device)` | That Mac's blessed tools with JSON schemas |
-| `use_tool(device, tool, args, goal?)` | Invoke a blessed tool |
+**Superseded.** This section described one MCP endpoint (the broker) serving
+device-addressed tools, so that an agent connected once and reached every Mac it
+held grants for. There is no broker: a Mac dials the Plow relay and serves its
+own tools, addressed by its own URL, so no tool takes a `device` argument and
+there is nothing to enumerate. The table that stood here listed
+`list_devices`, `request_device_access` and `device`-first signatures for
+tools that have since been renamed — it was a second, hand-maintained copy of a
+contract that lives in code, and it drifted, as the second copy always does.
+**The current surface is in [README-ts.md](README-ts.md); `TOOLS` in
+`packages/mcp-server/src/tools.ts` is authoritative.**
 
 Design points:
 
-- **Blessed tools are per-device and discovered dynamically** via
-  `list_device_tools` rather than flattened into the global MCP tool list —
-  different Macs have different tools, and devices come and go mid-session.
-- **Streaming:** MCP tool calls are request/response, so `run_command` waits up
-  to `wait_ms` (default 10 s); if the command is still running it returns a
-  `handle` plus output-so-far, and the agent polls `get_output(handle, since)`
+- **Blessed tools are gone (cut 2026-08-17).** They were per-device tools
+  discovered dynamically rather than flattened into the global MCP tool list,
+  because different Macs had different tools and devices came and went
+  mid-session. That was a *fleet* argument, and it died with the broker: one Mac
+  addressed by its own URL has one tool list. The registry never shipped
+  anything but a single demo tool (`mac_info`), and nothing but a rebuild could
+  add to it — while the same job is one `plow_run_command` away. The capability
+  kind `tool` survives in the protocol because it is frozen into
+  `fixtures/rulekeys.json`; nothing on this Mac constructs one any more.
+- **Skills are the surviving discovery surface.** `plow_list_skills` names what
+  this Mac publishes and `plow_read_skill` fetches the body, so a long operator
+  manual (`camoufox-browsing`) costs no manifest tokens until an agent asks.
+- **Streaming:** MCP tool calls are request/response, so `plow_run_command`
+  waits up to `wait_ms` (default 10 s); if the command is still running it
+  returns a `handle` plus output-so-far, and the agent polls `plow_get_output`
   for incremental bytes. stdout and stderr are merged into one stream.
 - **`goal`:** each mutating tool accepts an optional goal/justification string,
   displayed to the approver. Session-level goals (from the access request or
@@ -99,7 +104,7 @@ Design points:
 
 ## 4. The intent object
 
-Every operation (file read/write, command, blessed tool) becomes one signed
+Every operation (file read/write, command, browser session) becomes one signed
 intent — the single artifact that the approval UI renders, the sandbox is
 derived from, the audit log stores, and the future adversarial reviewer
 evaluates.
@@ -160,10 +165,10 @@ Decisions: **Always allow / Allow once / Deny.**
 
 ## 6. Execution & sandbox
 
-**Minimize what needs sandboxing.** `read_file`, `write_file`, and blessed
-tools execute *in-process* in the device app — trusted code, bounds-checked
-against the approved paths (canonicalized, symlink- and `..`-safe), inherently
-audited. Only `run_command` runs third-party code, and only it gets the cage.
+**Minimize what needs sandboxing.** `plow_read_file` and `plow_write_file`
+execute *in-process* in the device app — trusted code, bounds-checked against
+the approved paths (canonicalized, symlink- and `..`-safe), inherently audited.
+Only `plow_run_command` runs third-party code, and only it gets the cage.
 
 **Seatbelt (`sandbox-exec`) with a generated profile.** The profile is not
 authored by anyone — it is *mechanically derived* from the approved capability
@@ -247,7 +252,6 @@ $DOMO_HOME (default ~/Library/Application Support/Domo)
 ├── device/known_agents.json             # pinned agent pubkeys
 ├── device/rules.json                    # always-allow rules
 ├── device/audit.ndjson                  # append-only audit log
-├── device/goals.json                    # goals library
 └── device/scratch/…                     # per-run sandbox scratch dirs
 ```
 
@@ -272,7 +276,7 @@ repo can prove they broke nothing.
   `domo-broker` process, real `domo-device` process, a real MCP client speaking
   JSON-RPC over the agent socket — and drives full scenarios: enrollment →
   discovery → access request → file ops → sandboxed exec → streaming via
-  `get_output` → blessed tools → always-allow rule reuse (asserted via audit
+  `plow_get_output` → always-allow rule reuse (asserted via audit
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
@@ -354,8 +358,8 @@ log. The thumbnail appears only while a session is active and disappears when
 it closes.
 
 **Skills.** Devices publish skills (name/description/markdown body,
-`SkillRegistry`) in their register manifest; agents discover them via
-`list_device_tools` and read them with `read_skill`. The built-in
+`SkillRegistry`); agents discover them via `plow_list_skills` and read them
+with `plow_read_skill`. The built-in
 `camoufox-browsing` skill is the operator manual for this tool surface.
 
 **Runtime & packaging.** The stack ships inside the app: a relocated
@@ -616,7 +620,7 @@ Monorepo mirroring the current module seams one-to-one:
 | `@domo/protocol` | `DomoProtocol` | canonical JSON, identities, Capability/Intent/Grant, rule keys |
 | `@domo/transport` | `DomoTransport` | NDJSON framing, LineRPC, UDS, WebSocket (`ws`), E2EChannel |
 | `@domo/broker-core` | `DomoBrokerCore` | Broker, BrokerStore, MCP surface via `@modelcontextprotocol/sdk` |
-| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, BlessedTools, GoalsLibrary |
+| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, SkillRegistry |
 | `apps/broker` | `domo-broker` | Linux deploy target; TLS in-process or behind a reverse proxy per the runbook |
 | `apps/mcp` | `domo-mcp` | stdio shim on the official SDK |
 | `apps/desktop` | `DomoApp` | Electron: device-core in the main process; tray, approval windows, Goals/Rules/Audit |

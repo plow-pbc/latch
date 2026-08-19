@@ -1,7 +1,7 @@
 # Domo Desktop
 
 Lets a remote AI agent (Claude Code or any MCP client) use a Mac — read/write
-files, run CLI commands with streaming output, and invoke "blessed" tools —
+files, run CLI commands with streaming output, and drive a real browser —
 through an **intent-based approval system**. Every operation becomes a
 structured intent that a human approves before it runs inside an on-the-fly
 seatbelt sandbox derived from the approved capabilities. Note what that does and
@@ -37,10 +37,10 @@ just app         # launch the desktop app
 
 | App / package | Role |
 |---|---|
-| `apps/desktop` (Domo Desktop) | Electron app: runs the device core in its main process; approval windows, Goals Library, rules manager, audit viewer. |
+| `apps/desktop` (Domo Desktop) | Electron app: runs the device core in its main process; approval windows, rules manager, audit viewer. |
 | `packages/protocol` | Canonical JSON, Ed25519 identity, capabilities, intents, grants, rule keys. |
 | `packages/transport` | The Connection seam and the outbound WebSocket client. |
-| `packages/device-core` | The decision + execution path: policy engine, sandboxed executor, file ops, blessed tools, audit log. |
+| `packages/device-core` | The decision + execution path: policy engine, sandboxed executor, file ops, browsing subsystem, audit log. |
 
 ## Security posture
 

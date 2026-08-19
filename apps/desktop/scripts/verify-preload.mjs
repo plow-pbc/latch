@@ -11,12 +11,15 @@ import { fileURLToPath } from "node:url";
 // The REAL settings actions, so the inference handlers below are the ones the
 // app runs rather than stubs that agree with the renderer by construction.
 import {
+  readAgentPurpose,
   readInference,
+  setAgentPurpose,
   setAnthropicApiKey,
   setApprovalMode,
   setInferenceProvider,
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
+import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -36,13 +39,15 @@ saveSettings(probeHome, {
 // device — we're testing the bridge + render path, not the data.
 ipcMain.handle("audit:activities", async () => []);
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
-ipcMain.handle("goals:list", async () => []);
 ipcMain.handle("rules:list", async () => []);
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
 // A signed-in Mac: the credential itself is deliberately absent from this
 // shape, because the main process never hands it to the renderer.
 let relayGate = null; // when set, `settings:getRelay` blocks until released
+/** Flipped by the mid-flight test: the one account-group value a refresh still
+ *  visibly changes, now that the endpoint and UID rows are gone. */
+let relayConnected = true;
 /** Resolved BY the handler the moment a refresh actually parks on the gate. */
 let relayEntered = () => {};
 ipcMain.handle("settings:getRelay", async () => {
@@ -56,17 +61,35 @@ ipcMain.handle("settings:getRelay", async () => {
     accountUid: s.accountUid,
     mcpUrl: s.mcpUrl,
     hasCredential: !!(s.relayCredential ?? "").trim(),
-    connected: true,
+    connected: relayConnected,
   };
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
 ipcMain.handle("settings:getShowSuggestions", async () => true);
+// A Mac that has NOT granted Full Disk Access — the state the Capabilities
+// section exists to explain.
+ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
+// Launch at Login: the REAL rules from loginItem.js over a fake OS bit.
+// Packaged-looking at first so the toggle renders live; flipped unsupported
+// mid-run to prove the status refresh re-reads it and the note appears.
+let launchSupported = true;
+const fakeLoginBit = { openAtLogin: false };
+const loginItemApi = {
+  get: () => ({ openAtLogin: fakeLoginBit.openAtLogin }),
+  set: (s) => (fakeLoginBit.openAtLogin = s.openAtLogin),
+};
+ipcMain.handle("launch:get", async () => launchAtLoginState(launchSupported, loginItemApi));
+ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported, loginItemApi, on));
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
 ipcMain.handle("settings:getApiKey", async () => loadSettings(probeHome).anthropicApiKey ?? "");
 ipcMain.handle("settings:setApiKey", async (_e, key) => setAnthropicApiKey(probeHome, key));
 ipcMain.handle("settings:getInference", async () => readInference(probeHome));
+// The purpose statement, through the real setter — the one path that may write
+// it. Nothing an agent can reach registers a handler on either channel.
+ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
+ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
 ipcMain.handle("settings:setInference", async (_e, provider) =>
   setInferenceProvider(probeHome, provider),
 );
@@ -164,6 +187,21 @@ async function waitForNode(predicate, label, timeoutMs = 10000) {
   }
 }
 
+/**
+ * Capture the window to a PNG, after two frames have actually landed.
+ *
+ * The wait is the point: `capturePage()` will happily hand back the pane that
+ * was painted BEFORE the click we just asserted on, and an image of the wrong
+ * state is worse than no image — it is evidence for something that did not
+ * happen. `waitFor` cannot stand in for it; a poll sees state, not paint.
+ */
+async function captureAfterPaint(win, outputPath) {
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(outputPath, (await win.webContents.capturePage()).toPNG());
+}
+
 function offscreen() {
   const win = new BrowserWindow({
     show: false,
@@ -209,17 +247,85 @@ app.whenReady().then(async () => {
     const chip = (label) =>
       [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === label);
     const plow = chip("Plow account");
-    const anthropic = chip("Anthropic API key");
     return {
       hasAccountGroup: document.body.innerText.includes("Plow Account"),
+      // The account group is about this Mac now, not the wire. The endpoint is
+      // the Agents tab's job (where it can be copied) and the UID was noise.
+      showsThisMac: document.querySelector("#view").innerText.includes("This Mac"),
+      noEndpointRow: !document.querySelector("#view").innerText.includes("Agent endpoint"),
+      noAccountUid: !document.querySelector("#view").innerText.includes("u_probe"),
+      noPhonePromise: !document.querySelector("#view").innerText.includes("phone number"),
+      // Nothing is gated any more: every provider chip is selectable, credential
+      // or not, and so is Adversarial mode. What a missing credential costs is
+      // said, not enforced by fading.
+      noDisabledChips: [...document.querySelectorAll(".chip")].every(
+        (c) => !c.classList.contains("disabled"),
+      ),
+      // The note explains only the SELECTED provider — Plow here, which has a
+      // credential — so it says nothing about what is missing elsewhere.
+      noteSaysNothingMissing: !(document.querySelector(".reviewer-note")?.textContent ?? "").includes(
+        "is not configured",
+      ),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
-      // The new group, and its interlock: Plow has a credential so it is
-      // selected; Anthropic has none so its chip is disabled.
-      hasInferenceGroup: document.body.innerText.includes("Reviewer inference"),
+      // The reviewer's group. Plow has a credential so it is the selected one;
+      // Anthropic has none, which costs it nothing but a warning in the note.
+      hasInferenceGroup: document.body.innerText.includes("AI Reviewer"),
+      // The key is not a setting of its own any more — it is the credential one
+      // provider runs on, so it lives in that provider's group and nowhere else.
+      noSeparateKeyGroup: ![...document.querySelectorAll(".settings .item > .group-title")].some(
+        (t) => t.textContent.trim() === "Anthropic API Key",
+      ),
+      keyFieldInReviewerGroup: (() => {
+        const item = document.querySelector(".settings .keyfield")?.closest(".item");
+        return !!item && item.querySelector(".group-title")?.textContent.trim() === "AI Reviewer";
+      })(),
+      // Always on screen — there is nothing to reveal when nothing is gated.
+      keyFieldAlwaysVisible:
+        getComputedStyle(document.querySelector(".settings .keyfield")).display !== "none",
+      keyFieldMasked:
+        document.querySelector(".settings .keyfield input").type === "password",
+      // The mode chips left this pane for Agents, and the group that kept the
+      // suggestions checkbox says where they went.
+      noApprovalModeGroup: !document.body.innerText.includes("Approval Mode"),
+      noModeChipsHere: ![...document.querySelectorAll(".chip")].some((c) =>
+        ["Ask me every time", "AI Reviewer decides", "Approve everything", "Deny everything"]
+          .includes(c.textContent.trim()),
+      ),
+      pointsAtAgentsTab: document.body.innerText.includes(
+        "Whether the reviewer decides on its own is set in the Agents tab, under Approvals",
+      ),
+      hasSuggestionsCheckbox: document.body.innerText.includes(
+        "Let the reviewer suggest an answer when an approval window opens",
+      ),
+      // The word is gone from this pane's copy entirely.
+      saysNothingAdversarial: !/adversarial/i.test(document.querySelector("#view").innerText),
+      // The Capabilities section, on a Mac whose probe says denied: it names
+      // the permission, says so honestly, gives the Messages use case, and
+      // routes the grant through System Settings (a key into main's table —
+      // the renderer never holds the URL).
+      hasCapabilitiesGroup: document.body.innerText.includes("Capabilities"),
+      fdaSaysNotGranted:
+        document.body.innerText.includes("Full Disk Access") &&
+        document.body.innerText.includes("Not granted"),
+      fdaNamesMessages: document.body.innerText.includes("texted to you in Messages"),
+      fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
+        (b) => b.textContent.trim() === "Open System Settings",
+      ),
+      // Launch at Login, in Capabilities: on this packaged-looking probe the
+      // toggle is live and unchecked, and the from-source note is hidden
+      // (innerText omits hidden nodes).
+      launchTitle: document.body.innerText.includes("Launch at Login"),
+      launchToggleLive: (() => {
+        const box = [...document.querySelectorAll(".settings input")].find(
+          (i) => i.type === "checkbox" &&
+            (i.closest("label")?.textContent ?? "").includes("Open Plow when you log in"),
+        );
+        return !!box && !box.disabled && !box.checked;
+      })(),
+      launchNoteHidden: !document.body.innerText.includes("from-source run"),
       plowChipActive: !!plow && plow.classList.contains("active"),
-      anthropicChipDisabled: !!anthropic && anthropic.classList.contains("disabled"),
       showsActiveModel: document.body.innerText.includes("anthropic/claude-sonnet-4-6"),
       // Settings has a `.reviewer-note` of its own. The approval window's
       // advice-card styling must not reach it — same class name, different
@@ -234,13 +340,53 @@ app.whenReady().then(async () => {
   }})()`);
 
   // Settings changed with first-run login, and every UI change gets an image.
-  // Wait for two frames to actually land before capturing, so the image is the
-  // pane we just asserted on rather than whatever was painted before it.
   const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  await captureAfterPaint(win, settingsShot);
+
+  // …and the chip rows, scrolled to, because the explanation is the point of
+  // this change and it sits below the account group.
+  const chipsShot = process.env.CHIPS_OUT ?? "/tmp/settings-chips.png";
+  await win.webContents.executeJavaScript(`(() => {
+    const chips = [...document.querySelectorAll(".settings .item > .group-title")]
+      .find((t) => t.textContent.trim() === "AI Reviewer");
+    chips?.scrollIntoView({ block: "start" });
+    return true;
+  })()`);
+  await captureAfterPaint(win, chipsShot);
+
+  // Selecting a provider that has no credential must WORK — that is the whole
+  // change. The chip goes active, main stores it, and the note turns into the
+  // note: what the selected provider is missing, and how to fix it.
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".chip")]
+      .find((c) => c.textContent.trim() === "Anthropic API key")
+      .click();
+    return true;
+  })()`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Anthropic API key" && c.classList.contains("active"))`,
+    "the uncredentialled Anthropic provider to be selected",
   );
-  fs.writeFileSync(settingsShot, (await win.webContents.capturePage()).toPNG());
+  const ungated = await win.webContents.executeJavaScript(`(${() => {
+    const chip = [...document.querySelectorAll(".chip")].find(
+      (c) => c.textContent.trim() === "Anthropic API key",
+    );
+    return {
+      selected: chip.classList.contains("active"),
+      // Selectable, not merely clickable: main took it.
+      neverDisabled: !chip.classList.contains("disabled"),
+      // …and the pane says what is missing rather than pretending it is fine.
+      // What that COSTS depends on the mode, which lives in the Agents tab, so
+      // this note does not promise a denial the Ask path would not deliver.
+      warnsCredentialMissing: (document.querySelector(".reviewer-note")?.textContent ?? "").includes(
+        "Anthropic API key is not configured — add an Anthropic API key",
+      ),
+    };
+  }})()`);
+
+  const ungatedShot = process.env.UNGATED_OUT ?? "/tmp/settings-ungated.png";
+  await captureAfterPaint(win, ungatedShot);
 
   // What used to sit here: a provider round-trip through the bridge, and a
   // mode-fallback check. Both asserted the interlock in `settingsActions`, and
@@ -263,6 +409,21 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(win, `[...document.querySelectorAll("input")].some((i) => i.type === "password")`,
     "the Settings pane's API-key field");
+  // Freshly rendered on a home that HAS a key: the field is on screen with no
+  // click, and still masked. Reveal-on-intent is for the empty case only —
+  // hiding a stored credential behind a disclosure would hide the way to
+  // replace it too.
+  const storedKeyState = await win.webContents.executeJavaScript(`(${() => {
+    const field = document.querySelector(".settings .keyfield");
+    const input = field.querySelector("input");
+    return {
+      visibleWithoutClicking: getComputedStyle(field).display !== "none",
+      masked: input.type === "password",
+      // The value is in the DOM because the field must be editable; it must not
+      // be readable on screen, which is what `masked` above pins.
+      holdsTheStoredKey: input.value === "sk-ant-a-real-committed-key",
+    };
+  }})()`);
   const modeBeforeTyping = loadSettings(probeHome).approvalMode;
   // Clear the field the way someone does before pasting a replacement: `input`
   // fires, `change` does not (no blur, no Enter). Nothing is committed, so
@@ -281,28 +442,51 @@ app.whenReady().then(async () => {
     startedAdversarial: modeBeforeTyping === "adversarial",
     modeUntouched: afterTransientInput.approvalMode === "adversarial",
     storedKeyUntouched: afterTransientInput.anthropicApiKey === "sk-ant-a-real-committed-key",
+    ...storedKeyState,
   };
 
   // An open Settings pane must re-read when main says the account changed —
-  // otherwise signing in leaves Plow showing as unavailable until a tab switch.
-  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "", inferenceProvider: "anthropic" });
+  // otherwise signing back in leaves the pane describing yesterday's account
+  // until someone switches tabs.
+  //
+  // The signal used to be the Plow chip going disabled. Nothing is disabled any
+  // more, so the observable proof that the pane re-read is the note: with the
+  // uncredentialled provider SELECTED it says what that will cost, and the
+  // sentence goes away when the credential comes back.
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "", inferenceProvider: "plow" });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Plow account" && c.classList.contains("disabled"))`,
-    "the Plow provider chip to go disabled while signed out");
-  const plowDisabledWhileSignedOut = await win.webContents.executeJavaScript(`(() => {
-    const plow = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Plow account");
-    return !!plow && plow.classList.contains("disabled");
-  })()`);
+  await waitFor(
+    win,
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
+    "the note to say what a signed-out Plow reviewer will cost",
+  );
+  const warnedWhileSignedOut = await win.webContents.executeJavaScript(
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
+  );
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_now_signed_in" });
+  // The same refresh re-reads Launch at Login: the probe goes from-source here,
+  // and the pane must follow — toggle dead, note visible.
+  launchSupported = false;
   win.webContents.send("status:changed");
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Plow account" && !c.classList.contains("disabled"))`,
-    "the open Settings pane to re-read the account and re-enable Plow");
+  await waitFor(
+    win,
+    `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
+    "the open Settings pane to re-read the account and drop the warning",
+  );
+  await waitFor(win, `document.body.innerText.includes("from-source run")`,
+    "the Launch at Login row to follow the refresh into its unsupported state");
   const staleSettingsPane = {
-    disabledWhileSignedOut: plowDisabledWhileSignedOut,
-    enabledAfterStatusChanged: await win.webContents.executeJavaScript(`(() => {
-      const plow = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Plow account");
-      return !!plow && !plow.classList.contains("disabled");
+    warnedWhileSignedOut,
+    warningGoneAfterStatusChanged: await win.webContents.executeJavaScript(
+      `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
+    ),
+    launchUnsupportedFollowed: await win.webContents.executeJavaScript(`(() => {
+      const box = [...document.querySelectorAll(".settings input")].find(
+        (i) => i.type === "checkbox" &&
+          (i.closest("label")?.textContent ?? "").includes("Open Plow when you log in"),
+      );
+      return !!box && box.disabled && document.body.innerText.includes("from-source run");
     })()`),
   };
 
@@ -331,7 +515,10 @@ app.whenReady().then(async () => {
   const entered = new Promise((r) => {
     relayEntered = r;
   });
-  saveSettings(probeHome, { ...loadSettings(probeHome), accountUid: "u_mid_flight" });
+  // Something the refresh will visibly change. The account UID used to be that
+  // marker; the group shows "This Mac" now, which a refresh does not alter, so
+  // the connection line is the honest observable.
+  relayConnected = false;
   win.webContents.send("status:changed"); // refresh starts, parks on relayGet
   await entered;
   await win.webContents.executeJavaScript(`(() => {
@@ -342,8 +529,8 @@ app.whenReady().then(async () => {
   })()`);
   releaseRelay();
   relayGate = null;
-  await waitFor(win, `document.querySelector(".account")?.textContent.includes("u_mid_flight")`,
-    "the parked refresh to finish and redraw the account rows");
+  await waitFor(win, `document.body.innerText.includes("Not connected")`,
+    "the parked refresh to finish and redraw the connection line");
 
   const midFlight = await win.webContents.executeJavaScript(`(() => {
     const input = [...document.querySelectorAll("input")].find((i) => i.type === "password");
@@ -351,7 +538,9 @@ app.whenReady().then(async () => {
       kept: input.value === "sk-ant-typed-mid-refresh",
       // The same DOM node, not a rebuilt one that happens to hold the value.
       sameNode: input.dataset.probeMark === "original-node",
-      accountRefreshed: document.body.innerText.includes("u_mid_flight"),
+      // The parked refresh did land: the account group followed the flipped
+      // connection state rather than staying on the value it rendered before.
+      accountRefreshed: document.body.innerText.includes("Not connected"),
     };
   })()`);
   await win.webContents.executeJavaScript(`(() => {
@@ -367,11 +556,7 @@ app.whenReady().then(async () => {
     committed: loadSettings(probeHome).anthropicApiKey === "sk-ant-typed-mid-refresh",
   };
 
-  // REPRO (c): the renderer's optimistic mode. Adversarial is offered while a
-  // credential is present, so the chip is enabled and clickable — but the
-  // credential can go between the render and the click, and main REFUSES. The
-  // renderer assigned `currentMode` before asking, so it kept a selection main
-  // had already turned down: the pane says Adversarial while disk says Ask.
+  // REPRO (c): the renderer must show what main STORED, not what it asked for.
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
     relayCredential: "plow_sk_probe_credential",
@@ -380,26 +565,34 @@ app.whenReady().then(async () => {
     approvalMode: "ask",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && !c.classList.contains("disabled"))`,
-    "the Adversarial chip to render enabled");
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && !c.classList.contains("disabled"))`,
+    "the AI Reviewer chip to render enabled");
   // The credential goes AFTER the pane rendered, with no notification — so the
   // chip is still enabled and the renderer still believes it can select this.
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   await win.webContents.executeJavaScript(`(() => {
-    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Adversarial Agent");
+    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "AI Reviewer decides");
     chip.click();
     return true;
   })()`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Adversarial Agent" && !c.classList.contains("active"))`,
-    "the pane to follow main's refusal of Adversarial");
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
+    "the pane to follow main's acceptance of the reviewer mode");
   const optimisticMode = {
-    storedIsAsk: loadSettings(probeHome).approvalMode === "ask",
-    // What the pane claims, after main said no.
+    // Losing the credential no longer rewrites the mode behind the user.
+    storedIsAdversarial: loadSettings(probeHome).approvalMode === "adversarial",
+    // What the pane claims, against what main actually stored.
     chipAgrees: await win.webContents.executeJavaScript(`(() => {
-      const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Adversarial Agent");
-      return !!chip && !chip.classList.contains("active");
+      const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "AI Reviewer decides");
+      return !!chip && chip.classList.contains("active");
     })()`),
+    // …and the purpose field follows the MODE, not the credential. The owner
+    // picked "AI Reviewer decides" and that choice stands, so what the reviewer
+    // will read stays on offer — there is nothing to write it into yet, which
+    // the note beside it says.
+    purposeFieldStillOffered: await win.webContents.executeJavaScript(
+      `!!document.querySelector("#view textarea.text")?.checkVisibility()`,
+    ),
   };
 
   // Connecting a client lives in the Agents tab — first in the bar — and no
@@ -463,13 +656,100 @@ app.whenReady().then(async () => {
   }})()`);
 
   // The Agents pane gets an image of its own, for the same reason Settings does:
-  // every UI change gets one, and this one moved panes. Two frames first, so the
-  // capture is what was just asserted rather than the pane painted before it.
+  // every UI change gets one, and this one moved panes.
   const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
+  await captureAfterPaint(win, agentsShot);
+
+  // The Approvals card: the modes, and the owner's purpose statement. Two
+  // states, because the card has two — the field under the reviewer chip, and
+  // one honest line in its place under every other one.
+  saveSettings(probeHome, {
+    ...loadSettings(probeHome),
+    relayCredential: "plow_sk_probe_credential",
+    approvalMode: "adversarial",
+    inferenceProvider: "plow",
+    agentPurpose: "Groceries and calendar only.",
+  });
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
+    "the Approvals card in its reviewer state");
+  const approvalsReviewer = await win.webContents.executeJavaScript(`(${() => {
+    const pane = document.querySelector("#view");
+    const field = pane.querySelector("textarea.text");
+    return {
+      chipLabels: [...pane.querySelectorAll(".chips .chip")].map((c) => c.textContent.trim()),
+      inAgentsPane: !!pane.querySelector(".panel.agents"),
+      // The stored text, in the field, and the two things said beside it.
+      showsStoredPurpose: !!field && field.checkVisibility() && field.value === "Groceries and calendar only.",
+      labelled: pane.innerText.includes("What are agents for?"),
+      saysItOnlyNarrows: pane.innerText.includes("It can only narrow what gets approved"),
+      saysItMayApprove: pane.innerText.includes("Requests that fit may be approved without asking you."),
+      // The card is context, not enforcement: no capability list here, and the
+      // word this rename retired is nowhere on screen.
+      noAdversarialWord: !/adversarial/i.test(pane.innerText),
+      noHintLineTakingItsPlace: !pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
+    };
+  }})()`);
+  const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
+    const title = [...document.querySelectorAll(".agents .item > .group-title")]
+      .find((t) => t.textContent.trim() === "Approvals");
+    title?.scrollIntoView({ block: "start" });
+    return true;
+  })()`);
+  await scrollToApprovals();
+  const approvalsShot = process.env.APPROVALS_OUT ?? "/tmp/agents-approvals.png";
   await win.webContents.executeJavaScript(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
-  fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(approvalsShot, (await win.webContents.capturePage()).toPNG());
+
+  // The field commits on `change`, like the API key, and what goes back on
+  // screen is what the setter stored.
+  await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector("#view textarea.text");
+    field.value = "  Only household errands.  ";
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await waitForNode(() => loadSettings(probeHome).agentPurpose === "Only household errands.",
+    "the purpose to reach settings.json through the IPC pair");
+  const purposeRoundTrip = {
+    stored: loadSettings(probeHome).agentPurpose === "Only household errands.",
+    fieldShowsWhatWasStored: await win.webContents.executeJavaScript(
+      `document.querySelector("#view textarea.text").value === "Only household errands."`,
+    ),
+  };
+
+  // Ask mode: no field at all, and the line that replaces it.
+  await win.webContents.executeJavaScript(`(() => {
+    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Ask me every time");
+    chip.click();
+    return true;
+  })()`);
+  await waitForNode(() => loadSettings(probeHome).approvalMode === "ask",
+    "Ask mode to be stored");
+  // …and the card redraws off what main stored, one round-trip after the click.
+  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Ask me every time" && c.classList.contains("active"))`,
+    "the Approvals card to follow the stored mode");
+  const approvalsAsk = await win.webContents.executeJavaScript(`(${() => {
+    const pane = document.querySelector("#view");
+    const field = pane.querySelector("textarea.text");
+    return {
+      fieldGone: !field || !field.checkVisibility(),
+      // The label goes with it: nothing about the purpose is on screen in a
+      // mode whose reviewer never reads it…
+      purposeTextGone: !pane.innerText.includes("What are agents for?"),
+      // …and the card still says what this mode does.
+      showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
+    };
+  }})()`);
+  await scrollToApprovals();
+  const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/agents-approvals-ask.png";
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(approvalsShotAsk, (await win.webContents.capturePage()).toPNG());
 
   // …and the same pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -498,10 +778,7 @@ app.whenReady().then(async () => {
     };
   }})()`);
   const agentsOpenShot = process.env.AGENTS_OPEN_OUT ?? "/tmp/agents-open.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(agentsOpenShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, agentsOpenShot);
 
   // The vault's honest failure state: locked is not empty, and the screen has to
   // say so — the old copy sent people to debug a server that was running fine.
@@ -523,10 +800,7 @@ app.whenReady().then(async () => {
     };
   }})()`);
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(vaultShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, vaultShot);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane to come back");
 
@@ -625,24 +899,67 @@ app.whenReady().then(async () => {
     connect.clientCards.join(",") === "Claude" &&
     connect.noConnectTab &&
     settings.hasAccountGroup &&
+    settings.showsThisMac &&
+    settings.noEndpointRow &&
+    settings.noAccountUid &&
+    settings.noPhonePromise &&
+    settings.noDisabledChips &&
+    settings.noteSaysNothingMissing &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
     settings.hasInferenceGroup &&
+    settings.noSeparateKeyGroup &&
+    settings.keyFieldInReviewerGroup &&
+    settings.keyFieldAlwaysVisible &&
+    settings.keyFieldMasked &&
+    ungated.selected &&
+    ungated.neverDisabled &&
+    ungated.warnsCredentialMissing &&
+    settings.hasCapabilitiesGroup &&
+    settings.fdaSaysNotGranted &&
+    settings.fdaNamesMessages &&
+    settings.fdaOffersSystemSettings &&
+    settings.launchTitle &&
+    settings.launchToggleLive &&
+    settings.launchNoteHidden &&
+    staleSettingsPane.launchUnsupportedFollowed &&
     settings.plowChipActive &&
-    settings.anthropicChipDisabled &&
     settings.showsActiveModel &&
     settings.settingsNoteNotRestyled &&
     transientInput.startedAdversarial &&
     transientInput.modeUntouched &&
     transientInput.storedKeyUntouched &&
-    staleSettingsPane.disabledWhileSignedOut &&
-    staleSettingsPane.enabledAfterStatusChanged &&
+    transientInput.visibleWithoutClicking &&
+    transientInput.masked &&
+    transientInput.holdsTheStoredKey &&
+    staleSettingsPane.warnedWhileSignedOut &&
+    staleSettingsPane.warningGoneAfterStatusChanged &&
     raceDuringRefresh.kept &&
     raceDuringRefresh.sameNode &&
     raceDuringRefresh.accountRefreshed &&
     raceDuringRefresh.committed &&
-    optimisticMode.storedIsAsk &&
+    optimisticMode.storedIsAdversarial &&
     optimisticMode.chipAgrees &&
+    optimisticMode.purposeFieldStillOffered &&
+    approvalsReviewer.chipLabels.join(",") ===
+      "Ask me every time,AI Reviewer decides,Approve everything,Deny everything" &&
+    approvalsReviewer.inAgentsPane &&
+    approvalsReviewer.showsStoredPurpose &&
+    approvalsReviewer.labelled &&
+    approvalsReviewer.saysItOnlyNarrows &&
+    approvalsReviewer.saysItMayApprove &&
+    approvalsReviewer.noAdversarialWord &&
+    approvalsReviewer.noHintLineTakingItsPlace &&
+    purposeRoundTrip.stored &&
+    purposeRoundTrip.fieldShowsWhatWasStored &&
+    approvalsAsk.fieldGone &&
+    approvalsAsk.purposeTextGone &&
+    approvalsAsk.showsHint &&
+    settings.noApprovalModeGroup &&
+    settings.noModeChipsHere &&
+    settings.pointsAtAgentsTab &&
+    settings.hasSuggestionsCheckbox &&
+    settings.saysNothingAdversarial &&
     main.hasBridge &&
     main.viewChildren > 0 &&
     approval.showsCapability &&
@@ -657,7 +974,15 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, settingsPane, connect, agentsShot, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, ungated, ungatedShot, settingsPane, chipsShot, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, transientInput, staleSettingsPane, raceDuringRefresh, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
+}).catch((err) => {
+  // Without this, a throw in the probe above — a `waitFor` that times out
+  // because the behavior it waits for no longer exists — leaves Electron
+  // running with no window and nothing to end it, and CI sits on a live
+  // runner until the job's own timeout hours later. A failed check has to
+  // read as a failed check.
+  console.error("PROBE-FAILED:", err?.stack ?? err);
+  app.exit(1);
 });

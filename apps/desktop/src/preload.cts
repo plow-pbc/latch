@@ -10,10 +10,6 @@ contextBridge.exposeInMainWorld("domo", {
   auditList: () => ipcRenderer.invoke("audit:list"),
   auditActivities: () => ipcRenderer.invoke("audit:activities"),
   auditClear: () => ipcRenderer.invoke("audit:clear"),
-  goalsList: () => ipcRenderer.invoke("goals:list"),
-  goalsAdd: (title: string, text: string) => ipcRenderer.invoke("goals:add", title, text),
-  goalsRemove: (id: string) => ipcRenderer.invoke("goals:remove", id),
-  goalsRestoreDefaults: () => ipcRenderer.invoke("goals:restoreDefaults"),
   approvalsPending: () => ipcRenderer.invoke("approvals:pending"),
   rulesList: () => ipcRenderer.invoke("rules:list"),
   rulesRemove: (key: string) => ipcRenderer.invoke("rules:remove", key),
@@ -33,10 +29,23 @@ contextBridge.exposeInMainWorld("domo", {
   vaultDeleteItem: (itemId: string) => ipcRenderer.invoke("vault:deleteItem", itemId),
   apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
   apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
+  // What the owner says agents are for. The renderer's only route to the text
+  // in either direction — it is device-owner data, so nothing else may write it.
+  // The setter answers with what was stored, not what was sent.
+  agentPurposeGet: () => ipcRenderer.invoke("settings:getAgentPurpose"),
+  agentPurposeSet: (purpose: string) => ipcRenderer.invoke("settings:setAgentPurpose", purpose),
   // Availability booleans and the active model — never a credential.
   inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
   inferenceSet: (provider: string) => ipcRenderer.invoke("settings:setInference", provider),
   statusGet: () => ipcRenderer.invoke("status:get"),
+  // macOS permission ceilings (today just Full Disk Access). Read-only: the
+  // grant itself happens in System Settings, via openExternal("fullDiskSettings").
+  capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
+  // Launch at Login: one whole-state shape per read. macOS owns the bit
+  // (System Settings can flip it behind the app's back), so every read
+  // re-asks the OS, and set answers with what the OS then holds.
+  launchGet: () => ipcRenderer.invoke("launch:get"),
+  launchSet: (on: boolean) => ipcRenderer.invoke("launch:set", on),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
@@ -74,9 +83,11 @@ contextBridge.exposeInMainWorld("domo", {
   connectGet: () => ipcRenderer.invoke("connect:get"),
   connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
-  // A client NAME, not a URL: main owns the table of what may be opened.
-  connectOpenClient: (client: string) => ipcRenderer.invoke("connect:openClient", client),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
+
+  // Any web page the app links to (client connector cards, Settings' Support
+  // section). A KEY, not a URL: main owns the table of what may be opened.
+  openExternal: (key: string) => ipcRenderer.invoke("external:open", key),
 
   // Live browser thumbnail (audit detail pane). One whole-state shape per
   // poll; no push channel — the renderer's own interval is the clock.

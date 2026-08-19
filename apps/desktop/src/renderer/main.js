@@ -2,6 +2,24 @@
    `window.domo` bridge from preload. All agent-derived text is inserted with
    textContent (never innerHTML), so nothing on the wire can inject markup. */
 
+import {
+  APPROVAL_MODES,
+  PURPOSE_CAVEATS,
+  PURPOSE_LABEL,
+} from "./approvals.js";
+
+/**
+ * What the two panes call each reviewer provider, and what it takes to set one
+ * up. Two panes say different things about the same missing credential — the
+ * Agents card names the consequence, Settings names only the gap — so the
+ * sentences differ but the FACTS must not. Which providers exist, and whether
+ * each is usable, still comes from main; this is display knowledge only.
+ */
+const REVIEWER_PROVIDERS = {
+  plow: { label: "Plow account", setup: "sign in to Plow" },
+  anthropic: { label: "Anthropic API key", setup: "add an Anthropic API key" },
+};
+
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
@@ -44,15 +62,28 @@ function icon(kind) {
   return svg;
 }
 
+/** The Discord mark. Built apart from `icon()`: that helper draws stroked
+    line art, and this is a filled silhouette. */
+function discordIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 127.14 96.36");
+  svg.setAttribute("class", "discord-ico");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", "M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z");
+  svg.appendChild(p);
+  return svg;
+}
+
+/** The shared globe line art at the Support row's size. */
+function globeIcon() {
+  const svg = icon("browser");
+  svg.setAttribute("class", "ico support-globe");
+  return svg;
+}
+
 function badge(tone, text) {
   return el("span", { class: `badge b-${tone}` }, [el("span", { class: "dot" }), el("span", { text })]);
 }
-
-// Close any open "⋯" overflow menu when clicking elsewhere.
-function closeAllMenus() {
-  for (const m of document.querySelectorAll(".menu")) m.classList.add("hidden");
-}
-document.addEventListener("click", closeAllMenus);
 
 async function refreshStatus() {
   const status = await window.domo.statusGet();
@@ -382,59 +413,6 @@ function detailFor(a) {
   return el("div", {}, children.filter(Boolean));
 }
 
-// ---- Goals ----
-
-async function renderGoals() {
-  const goals = await window.domo.goalsList();
-  const titleInput = el("input", { class: "text", attrs: { placeholder: "Goal title" } });
-  const textInput = el("textarea", { class: "text", attrs: { placeholder: "What should the agent do?" } });
-  const addBtn = el("button", { class: "btn", text: "Add Goal" });
-  addBtn.addEventListener("click", async () => {
-    // A title is optional — the library derives one from the text if omitted.
-    // Only skip a completely empty entry.
-    if (!titleInput.value.trim() && !textInput.value.trim()) return;
-    await window.domo.goalsAdd(titleInput.value.trim(), textInput.value.trim());
-    renderGoals();
-  });
-  // Same 8px spacing as a goal item's action column.
-  const composeActions = el("div", { class: "goal-actions" }, [addBtn]);
-
-  const items = goals.map((g) => {
-    // "⋯" overflow menu with a Remove item.
-    const removeItem = el("button", { class: "menu-item", text: "Remove" });
-    removeItem.addEventListener("click", async () => { await window.domo.goalsRemove(g.id); renderGoals(); });
-    const menu = el("div", { class: "menu hidden" }, [removeItem]);
-    const menuBtn = el("button", { class: "iconbtn", text: "⋯", attrs: { title: "More" } });
-    menuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const wasHidden = menu.classList.contains("hidden");
-      closeAllMenus();
-      if (wasHidden) menu.classList.remove("hidden");
-    });
-
-    // Left column: title + description (kept clear of the action column).
-    const main = el("div", { class: "goal-main" }, [
-      el("h4", { text: g.title }),
-      el("p", { text: g.text }),
-    ]);
-    // Right column, top-aligned: the "⋯" menu in the top corner.
-    const actions = el("div", { class: "goal-actions" }, [
-      el("div", { class: "menu-wrap" }, [menuBtn, menu]),
-    ]);
-    return el("div", { class: "item goal-item" }, [main, actions]);
-  });
-
-  const children = [
-    el("div", { class: "item" }, [
-      el("div", { class: "field" }, [el("label", { text: "New goal" }), titleInput]),
-      el("div", { class: "field" }, [textInput]),
-      el("div", { class: "row" }, [el("div", { class: "spacer" }), composeActions]),
-    ]),
-  ];
-  children.push(...items);
-  view.replaceChildren(el("div", { class: "panel" }, children));
-}
-
 // ---- Rules ----
 
 async function renderRules() {
@@ -482,7 +460,7 @@ function copyRow(value, label) {
  * browser — the place the URL above gets pasted.
  *
  * A card exists only for a client whose link lands the user where they paste;
- * see `CLIENT_CONNECTOR_URLS` in main.ts. It is a shortcut past the clicks, not
+ * see `EXTERNAL_URLS` in main.ts. It is a shortcut past the clicks, not
  * the supported-client list — the group's subtitle names the others.
  *
  * From the designer's mock, minus the brand logo: an approximated or borrowed
@@ -494,7 +472,7 @@ function clientCard(key, name) {
     el("span", { class: "client-name", text: name }),
     el("span", { class: "client-arrow", text: "↗" }),
   ]);
-  card.addEventListener("click", () => window.domo.connectOpenClient(key));
+  card.addEventListener("click", () => window.domo.openExternal(key));
   return card;
 }
 
@@ -738,7 +716,79 @@ async function renderAgents() {
     if (s) syncStaticModal(s, refreshConnect);
   };
   await refreshConnect();
-  agentsMounted = { refreshConnect };
+
+  // ---- Approvals: what happens when one of those agents asks for something.
+  //
+  // It sits here, under the clients, because that is the order of the two
+  // questions: what can reach this Mac, and what it may do when it does. The
+  // stored mode values are untouched — every label below is display only.
+  let inference = await window.domo.inferenceGet();
+  const modeChips = el("div", { class: "chips" });
+  const modeNote = el("p", { class: "faint chip-note", text: "" });
+  const modeHintLine = el("p", { class: "faint mode-hint", text: "" });
+
+  // The purpose statement, and the two things that have to be said beside it.
+  // Device-owner text: it is read and written through the settings IPC pair and
+  // nowhere else, and it reaches no rule key, grant, or sandbox profile.
+  const purposeInput = el("textarea", { class: "text" });
+  purposeInput.value = await window.domo.agentPurposeGet();
+  // On commit only, like the API-key field: an `input` handler would persist
+  // every half-written sentence on the way to the real one. The stored value is
+  // what goes back on screen, so the field shows what the reviewer will read.
+  purposeInput.addEventListener("change", async () => {
+    purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
+  });
+  const purposeBlock = el("div", { class: "revealed" }, [
+    el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
+    ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
+  ]);
+
+  // What a reviewer with no credential costs, said rather than enforced. The
+  // remedy is a pane away in Settings, so the sentence names it — but the mode
+  // is still the owner's to choose, and choosing it is not an error to prevent.
+
+  const renderApprovals = () => {
+    const mode = inference.approvalMode;
+    const hasKey = inference.available[inference.provider];
+    // Only worth saying when the owner has actually asked the reviewer to
+    // decide. The second half is the part people get wrong: a denial here is
+    // not a freeze, because a rule already approved is a decision they made.
+    modeNote.textContent =
+      mode === "adversarial" && !hasKey
+        ? `The AI Reviewer has no credential: ${REVIEWER_PROVIDERS[inference.provider].setup} in Settings. ` +
+          "Until then it denies anything it is asked to decide — requests already " +
+          "covered by an always-allow rule keep running."
+        : "";
+    modeChips.replaceChildren(...APPROVAL_MODES.map(({ value, label }) => {
+      const chip = el("span", {
+        class: "chip" + (mode === value ? " active" : ""),
+      }, [el("span", { text: label })]);
+      chip.addEventListener("click", async () => {
+        // What MAIN stored, not what was asked for. Main takes any known mode
+        // now, but it is still the one that decides what is on disk, and the
+        // pane must show that rather than what it optimistically asked for.
+        await window.domo.approvalModeSet(value);
+        inference = await window.domo.inferenceGet();
+        renderApprovals();
+      });
+      return chip;
+    }));
+    // One lookup, and the row answers both questions. A stored value the app
+    // no longer offers falls back to the first mode rather than a blank card.
+    const active = APPROVAL_MODES.find((m) => m.value === mode) ?? APPROVAL_MODES[0];
+    purposeBlock.hidden = !active.showsPurpose;
+    modeHintLine.textContent = active.hint;
+    modeHintLine.hidden = active.showsPurpose;
+  };
+  renderApprovals();
+
+  // Signing in or out changes what the reviewer can do, not what the owner
+  // chose — the stored mode stays put — so this only re-reads and redraws.
+  const refreshApprovals = async () => {
+    inference = await window.domo.inferenceGet();
+    renderApprovals();
+  };
+  agentsMounted = { refreshConnect, refreshApprovals };
 
   // `settings` alongside `agents` on purpose: the group card, its title and its
   // description are the same furniture Settings uses, and this pane is one of
@@ -749,6 +799,12 @@ async function renderAgents() {
       "Connect an MCP client",
       "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
       [connectBox],
+    ),
+    group(
+      "Approvals",
+      "What happens when an agent asks to do something on this Mac. Requests already covered " +
+        "by an always-allow rule skip this — manage those in Rules.",
+      [modeChips, modeNote, purposeBlock, modeHintLine],
     ),
   ]));
 }
@@ -1342,6 +1398,9 @@ async function renderSettings() {
   // and the API origin is baked into the build (a token is only valid against
   // the environment that minted it, so an editable origin could only be wrong).
   const relay = await window.domo.relayGet();
+  // The machine's own name, for the one row this group keeps. Already on the
+  // bridge for the titlebar; no new IPC and no API call for it.
+  const status = await window.domo.statusGet();
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
   // The "Connect a Client" button that used to sit here is gone: connecting a
   // client is now a subsection of this same group, so a button navigating to it
@@ -1365,16 +1424,18 @@ async function renderSettings() {
     // button sitting next to Sign Out on an account that is already signed in.
     signIn.style.display = relay.hasCredential ? "none" : "";
     signOut.disabled = !relay.hasCredential;
+    // One row, and it is about this Mac rather than about the wire. The agent
+    // endpoint lived here too, which is the same string the Agents tab shows as
+    // step 1 of connecting a client — where it can actually be copied and used;
+    // printing it twice is most of what made this group read as diagnostics.
+    // The account UID went with it: nothing a person can act on, and support
+    // reads it out of the audit log.
     accountBox.replaceChildren(
       ...(relay.hasCredential
         ? [
             el("div", { class: "field" }, [
-              el("label", { text: "Agent endpoint" }),
-              el("div", { class: "mono faint", text: relay.mcpUrl || "—" }),
-            ]),
-            el("div", { class: "field" }, [
-              el("label", { text: "Account" }),
-              el("div", { class: "mono faint", text: relay.accountUid || "—" }),
+              el("label", { text: "This Mac" }),
+              el("div", { class: "mono faint", text: `Plow (${status.name || "Mac"})` }),
             ]),
           ]
         : []),
@@ -1384,123 +1445,182 @@ async function renderSettings() {
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
-  const u = await window.domo.updatesGet();
-  const updateStatus = el("p", { class: "faint", text: updateStatusText(u) });
-  const updateAction =
-    u.phase === "ready"
-      ? el("button", { class: "btn primary", text: "Restart to Update" })
-      : el("button", { class: "btn", text: "Check for Updates" });
-  updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+  // These nodes are stable for the pane's lifetime: controller transitions
+  // patch them in place (refreshUpdates below) rather than re-rendering the
+  // pane, which would reset its scroll position on every phase change.
+  let u = await window.domo.updatesGet();
+  const updateStatus = el("p", { class: "faint" });
+  const updateAction = el("button", { class: "btn" });
   updateAction.addEventListener("click", async () => {
     if (u.phase === "ready") await window.domo.updatesRestart();
     else await window.domo.updatesCheck();
-    // The controller's change events re-render this screen as the check runs.
+    // The controller's change events redraw these nodes as the check runs.
   });
   const autoCheckBox = el("input", { attrs: { type: "checkbox" } });
-  autoCheckBox.checked = u.autoCheck;
-  autoCheckBox.disabled = !u.supported;
   autoCheckBox.addEventListener("change", () => window.domo.updatesSetAutoCheck(autoCheckBox.checked));
-  const autoCheckLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+  const autoCheckLabel = el("label", { class: "check block" }, [
     autoCheckBox,
     el("span", { text: "Automatically check for updates" }),
   ]);
   const autoInstallBox = el("input", { attrs: { type: "checkbox" } });
-  autoInstallBox.checked = u.autoInstall;
-  autoInstallBox.disabled = !u.supported;
   autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
-  const autoInstallLabel = el("label", { class: "check block" + (u.supported ? "" : " disabled") }, [
+  const autoInstallLabel = el("label", { class: "check block" }, [
     autoInstallBox,
     el("span", { text: "Install downloaded updates when quitting Plow" }),
   ]);
+  const applyUpdates = () => {
+    const ready = u.phase === "ready";
+    updateStatus.textContent = updateStatusText(u);
+    updateAction.textContent = ready ? "Restart to Update" : "Check for Updates";
+    updateAction.className = ready ? "btn primary" : "btn";
+    updateAction.disabled = !u.supported || u.phase === "checking" || u.phase === "downloading";
+    autoCheckBox.checked = u.autoCheck;
+    autoCheckBox.disabled = !u.supported;
+    autoInstallBox.checked = u.autoInstall;
+    autoInstallBox.disabled = !u.supported;
+    autoCheckLabel.classList.toggle("disabled", !u.supported);
+    autoInstallLabel.classList.toggle("disabled", !u.supported);
+  };
+  applyUpdates();
 
-  const restoreNote = el("p", { class: "faint", text: "" });
-  const restore = el("button", { class: "btn", text: "Restore Default Goals" });
-  restore.addEventListener("click", async () => {
-    await window.domo.goalsRestoreDefaults();
-    restoreNote.textContent = "Default goals restored.";
+  // Launch at Login. macOS owns the actual bit — System Settings → General →
+  // Login Items can flip it while this pane is open — so the focus refresh
+  // re-reads it the same way it re-probes capabilities, and a toggle renders
+  // what the OS answered, not what was clicked.
+  let launch = await window.domo.launchGet();
+  const launchBox = el("input", { attrs: { type: "checkbox" } });
+  const launchLabel = el("label", { class: "check" }, [
+    launchBox,
+    el("span", { text: "Open Plow when you log in" }),
+  ]);
+  // Why the toggle is dead, when it is: a disabled control that says nothing
+  // is a dead end (the provider chips' rule).
+  const launchNote = el("p", { class: "faint cap-note", text:
+    "Only the installed app can add itself as a login item, so this from-source run can't." });
+  const applyLaunch = () => {
+    launchBox.checked = launch.openAtLogin;
+    launchBox.disabled = !launch.supported;
+    launchLabel.classList.toggle("disabled", !launch.supported);
+    launchNote.hidden = launch.supported;
+  };
+  launchBox.addEventListener("change", async () => {
+    launch = await window.domo.launchSet(launchBox.checked);
+    applyLaunch();
   });
+  applyLaunch();
+
+  // Capabilities: what macOS lets the app itself reach. Full Disk Access has
+  // no prompt an app can raise — the only grant path is the switch in System
+  // Settings — so the button deep-links there (a key into main's table, like
+  // every external open) and the status re-probes when focus comes back to
+  // this window (the boot()-installed focus listener), which is the first
+  // moment the pane can learn what happened over there.
+  const capDot = el("span", { class: "status-dot" });
+  const capStatus = el("span", { class: "faint", text: "…" });
+  const applyCapabilities = (caps) => {
+    capDot.className = "status-dot" + (caps.fullDiskAccess ? " on" : "");
+    capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
+  };
+  applyCapabilities(await window.domo.capabilitiesGet());
+  const openFullDisk = el("button", { class: "btn", text: "Open System Settings" });
+  openFullDisk.addEventListener("click", () => window.domo.openExternal("fullDiskSettings"));
+
+  // One Support destination: icon, title + blurb, and a button that asks main
+  // to open the URL behind `key` — the renderer never holds the URL itself.
+  const supportRow = (iconNode, title, desc, buttonLabel, key) => {
+    const open = el("button", { class: "btn", text: buttonLabel });
+    open.addEventListener("click", () => window.domo.openExternal(key));
+    return el("div", { class: "support-row" }, [
+      iconNode,
+      el("div", { class: "support-copy" }, [
+        el("div", { class: "support-title", text: title }),
+        el("p", { class: "faint", text: desc }),
+      ]),
+      el("div", { class: "spacer" }),
+      open,
+    ]);
+  };
 
   // Anthropic API key — one of the two ways to power the adversarial agent.
+  //
+  // It lives INSIDE Reviewer inference rather than in a group of its own,
+  // because it is not a setting: it is the credential one of the two providers
+  // runs on, and a heading of its own asked the reader to connect two boxes to
+  // work out why it was there. So it sits under the chip it enables, carrying
+  // its own label now that the group title no longer speaks for it.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
+  const apiKeyField = el("div", { class: "field keyfield" }, [
+    el("label", { text: "Anthropic API key" }),
+    apiKeyInput,
+    el("p", {
+      class: "faint keyfield-note",
+      text: "Runs the reviewer on your own Anthropic account instead of your Plow one. Stored on this Mac.",
+    }),
+  ]);
 
   // Which backend runs the reviewer. `inference` carries a per-provider
   // availability map and the active model — never a credential.
   let inference = await window.domo.inferenceGet();
   const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
   const providerChips = el("div", { class: "chips" });
-  // Labels are the only provider knowledge left here; which providers exist,
-  // and whether each is usable, comes from main.
-  const PROVIDER_LABELS = { plow: "Plow account", anthropic: "Anthropic API key" };
+  // This pane names the gap and nothing about the consequence, because the
+  // consequence depends on a mode it no longer owns: with the reviewer
+  // deciding, an unrunnable review denies; in Ask mode the same missing
+  // credential only costs the suggestion, and a human is asked as always. The
+  // Approvals card says which of those is happening.
 
-  // Approval mode for operations — read from the SAME snapshot as availability,
-  // because main decides both in one write.
-  let currentMode = inference.approvalMode;
+  // The mode itself is set in the Agents tab now; this pane only reads it, to
+  // decide whether the suggestions checkbox can do anything.
   const showSuggestions = await window.domo.showSuggestionsGet();
-  // Adversarial mode needs a credential for the ACTIVE provider — a pasted
+  // The reviewer needs a credential for the ACTIVE provider — a pasted
   // Anthropic key does not enable it while Plow is selected, and vice versa.
   let hasKey = inference.available[inference.provider];
-  const modeChips = el("div", { class: "chips" });
-  const MODES = [
-    ["approve", "Approve"],
-    ["adversarial", "Adversarial Agent"],
-    ["ask", "Ask"],
-    ["deny", "Deny"],
-  ];
 
   const suggestCheck = el("input", { attrs: { type: "checkbox" } });
   suggestCheck.checked = showSuggestions;
-  const suggestLabel = el("label", { class: "check" }, [
+  // Where the other half of this system lives. Said once, under the group that
+  // no longer holds it, so the move does not read as a removal.
+  const modeNote = el("p", { class: "faint chip-note", text:
+    "Whether the reviewer decides on its own is set in the Agents tab, under Approvals." });
+  const suggestLabel = el("label", { class: "check block" }, [
     suggestCheck,
-    el("span", { text: "Show Adversarial Agent suggestions in Ask mode" }),
+    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
   ]);
   suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
 
-  // Adversarial Agent needs an API key; the suggestions checkbox needs Ask mode
-  // AND a key. Re-render whenever the mode or key presence changes.
-  const renderModeChips = () => {
-    modeChips.replaceChildren(...MODES.map(([value, label]) => {
-      const disabled = value === "adversarial" && !hasKey;
-      const chip = el("span", {
-        class: "chip" + (currentMode === value ? " active" : "") + (disabled ? " disabled" : ""),
-      }, [el("span", { text: label })]);
-      if (!disabled) {
-        chip.addEventListener("click", async () => {
-          // What MAIN stored, not what was asked for. Adversarial is refused
-          // when the active provider has no credential, and the credential can
-          // go between this render and this click — so assuming the request
-          // succeeded leaves the pane claiming a mode disk never took.
-          currentMode = await window.domo.approvalModeSet(value);
-          renderModeChips();
-          updateSuggestEnabled();
-        });
-      }
-      return chip;
-    }));
-  };
+  // The suggestion is only ever shown in Ask mode, and only a reviewer with a
+  // credential can produce one.
   const updateSuggestEnabled = () => {
-    const on = currentMode === "ask" && hasKey;
+    const on = inference.approvalMode === "ask" && hasKey;
     suggestCheck.disabled = !on;
     suggestLabel.classList.toggle("disabled", !on);
   };
 
-  // A provider with no credential is disabled and cannot be selected; the main
-  // process enforces the same rule, this only keeps the UI honest.
+  // Every provider is selectable, credential or not. Main no longer refuses
+  // one, so the UI has nothing to mirror — what a missing credential costs is
+  // said in the note instead of being enforced by a faded chip.
   const renderProviderChips = () => {
-    reviewerNote.textContent = `Reviewer: ${inference.info}`;
-    providerChips.replaceChildren(...Object.entries(inference.available).map(([value, usable]) => {
-      const label = PROVIDER_LABELS[value] ?? value;
-      const disabled = !usable;
+    // No fallback copy: `available` comes from main's frozen provider list, so a
+    // key here that REVIEWER_PROVIDERS does not know is a bug to see, not to paper over.
+    const active = REVIEWER_PROVIDERS[inference.provider];
+    // The note carries both facts: which reviewer is running, and — when the
+    // SELECTED one has no credential — what that will cost. Only the selected
+    // provider matters here; what the other one is missing is not this Mac's
+    // problem until it is picked.
+    reviewerNote.textContent =
+      `Reviewer: ${inference.info}` +
+      (inference.available[inference.provider]
+        ? ""
+        : ` · ${active.label} is not configured — ${active.setup}.`);
+    providerChips.replaceChildren(...Object.keys(inference.available).map((value) => {
       const chip = el("span", {
-        class:
-          "chip" +
-          (inference.provider === value ? " active" : "") +
-          (disabled ? " disabled" : ""),
-      }, [el("span", { text: label })]);
-      if (!disabled && inference.provider !== value) {
+        class: "chip" + (inference.provider === value ? " active" : ""),
+      }, [el("span", { text: REVIEWER_PROVIDERS[value].label })]);
+      if (inference.provider !== value) {
         chip.addEventListener("click", async () => {
-          // What main stored, not what was asked for: an unavailable provider
-          // is refused there, and the answer is the refusal.
+          // Still what main stored rather than what was asked for: an unknown
+          // provider name is refused there, and the answer is the refusal.
           applyInference(await window.domo.inferenceSet(value));
         });
       }
@@ -1510,17 +1630,14 @@ async function renderSettings() {
 
   // Re-read the reviewer's state from main and redraw.
   //
-  // This only READS. Main owns the interlock — it retires Adversarial mode in
-  // the same write that takes a credential away — so the renderer's job is to
-  // show what main decided, never to decide it too. The renderer used to write
-  // the fallback itself from a half-typed field, which persisted Ask while the
-  // stored key was still there and never put it back.
+  // This only READS. Main owns what is stored, so the renderer's job is to show
+  // it, never to decide it too — it used to write a mode fallback itself from a
+  // half-typed field, which persisted Ask while the stored key was still there
+  // and never put it back.
   const applyInference = (next) => {
     inference = next;
-    currentMode = next.approvalMode;
     hasKey = next.available[next.provider];
     renderProviderChips();
-    renderModeChips();
     updateSuggestEnabled();
   };
 
@@ -1533,7 +1650,6 @@ async function renderSettings() {
   });
 
   renderProviderChips();
-  renderModeChips();
   updateSuggestEnabled();
 
   // What a status change re-reads. Display nodes only: `apiKeyInput` is not
@@ -1543,32 +1659,83 @@ async function renderSettings() {
     refresh: async () => {
       await refreshAccount();
       applyInference(await window.domo.inferenceGet());
+      applyCapabilities(await window.domo.capabilitiesGet());
+      launch = await window.domo.launchGet();
+      applyLaunch();
+    },
+    refreshUpdates: async () => {
+      u = await window.domo.updatesGet();
+      applyUpdates();
     },
   };
+  // Re-read updater state now that refreshUpdates is installed: a transition
+  // arriving during the awaits above found settingsMounted unset and was
+  // dropped — and a missed final transition (say, update-downloaded) would
+  // otherwise leave this pane stale with no later event to correct it.
+  await settingsMounted.refreshUpdates();
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    group("Plow Account", "Sign in with your phone number to let agents reach this Mac.", [
+    // The old subtitle promised a phone number this screen never shows — the
+    // activation flow learns it server-side from the inbound SMS, and the OTP
+    // fallback holds it in memory and drops it on reset. Say what is true of
+    // what is on screen.
+    group("Plow Account", "The account agents reach this Mac through.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
     ]),
-    group("Reviewer inference", "The provider you pick judges each operation, so it receives the command being reviewed, the paths it asks for, and that agent's recent activity on this Mac. It bills that account; nothing from other agents is sent.", [
+    group("AI Reviewer", "Who runs the reviewer that judges each request. It receives the command, the paths asked for, and that agent's recent activity on this Mac. Billed to that account; nothing from other agents is sent.", [
       providerChips,
       reviewerNote,
-    ]),
-    group("Anthropic API Key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
-      apiKeyInput,
-    ]),
-    group("Approval Mode", "How operations are decided.", [
-      modeChips,
+      apiKeyField,
       suggestLabel,
+      modeNote,
     ]),
-    group("Goals", "Re-add any default goals you've removed.", [
-      el("div", { class: "row" }, [restore, restoreNote]),
+    group("Capabilities", "Extended capabilities that let Plow reach parts of this Mac that macOS blocks by default.", [
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "cap-title" }, [
+            el("span", { class: "support-title", text: "Full Disk Access" }),
+            capDot,
+            capStatus,
+          ]),
+          el("p", { class: "faint", text:
+            "macOS blocks Messages, Mail, Safari data, and Time Machine backups until you grant this. " +
+            "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt. " +
+            "To grant it, turn on Plow under Privacy & Security → Full Disk Access. macOS may ask to quit and reopen the app." }),
+        ]),
+        el("div", { class: "spacer" }),
+        openFullDisk,
+      ]),
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "support-title", text: "Launch at Login" }),
+          el("p", { class: "faint", text:
+            "Agents can reach this Mac only while Plow is running." }),
+          launchLabel,
+          launchNote,
+        ]),
+      ]),
     ]),
     group("Software Updates", `Version ${u.currentVersion}`, [
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
       autoCheckLabel,
       autoInstallLabel,
+    ]),
+    group("Support", null, [
+      supportRow(
+        discordIcon(),
+        "Join our Discord",
+        "Get help, share feedback, and hear about updates — our community and team are here.",
+        "Join Discord",
+        "discord",
+      ),
+      supportRow(
+        globeIcon(),
+        "See Us Build",
+        "Watch the livestream to watch us build the Plow app in public.",
+        "Watch Livestream",
+        "website",
+      ),
     ]),
   ]));
 }
@@ -1576,7 +1743,6 @@ async function renderSettings() {
 function render() {
   if (currentTab === "agents") renderAgents();
   else if (currentTab === "audit") renderAudit();
-  else if (currentTab === "goals") renderGoals();
   else if (currentTab === "rules") renderRules();
   else if (currentTab === "vault") renderVault();
   else if (currentTab === "settings") renderSettings();
@@ -1615,24 +1781,37 @@ window.domo.onStatusChanged(() => {
   // person typing a key did not ask for and must not be punished by — so this
   // updates the account and provider nodes and leaves the field alone.
   if (currentTab === "settings") settingsMounted?.refresh();
-  // Signing in or out changes whether the flow has a URL to show at all.
-  if (currentTab === "agents") agentsMounted?.refreshConnect();
+  // Signing in or out changes whether the flow has a URL to show at all — and,
+  // since the Approvals card moved here, whether the reviewer can be selected.
+  if (currentTab === "agents") {
+    agentsMounted?.refreshConnect();
+    agentsMounted?.refreshApprovals();
+  }
 });
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
-  if (currentTab === "settings") renderSettings();
+  // In place, never renderSettings(): a full rebuild resets the pane's scroll
+  // (and would eat a half-typed API key) on every background phase change.
+  if (currentTab === "settings") settingsMounted?.refreshUpdates();
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 window.domo.onShowSettings(() => selectTab("settings"));
+// Granting Full Disk Access happens in System Settings, and no event reaches
+// this app when it does — the moment the pane can learn the outcome is when
+// the person comes back. `refresh` updates display nodes only, so a focus
+// change can never cost a half-typed key.
+window.addEventListener("focus", () => {
+  if (currentTab === "settings") settingsMounted?.refresh();
+});
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
 async function boot() {
   refreshStatus();
   refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
-  const known = ["agents", "goals", "audit", "rules", "vault", "settings"];
+  const known = ["agents", "audit", "rules", "vault", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
 }
 boot();

@@ -23,7 +23,6 @@ import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
-  GoalsLibrary,
   PolicyDelegate,
   readCredentialsState,
   resolveBrowserRuntime,
@@ -32,6 +31,8 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { probeFullDiskAccess } from "./fullDiskAccess.js";
+import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -44,7 +45,9 @@ import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
+  readAgentPurpose,
   readInference,
+  setAgentPurpose,
   setAnthropicApiKey,
   revokeAndSignOut,
   setApprovalMode,
@@ -125,7 +128,6 @@ const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
-let goals: GoalsLibrary | null = null;
 let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
@@ -340,7 +342,7 @@ function restorableBounds(saved: WindowBounds | undefined): WindowBounds | null 
   return onScreen ? saved : null;
 }
 
-// MARK: IPC for the main window (audit / goals / rules / settings / status)
+// MARK: IPC for the main window (audit / rules / settings / status)
 
 ipcMain.handle("audit:list", async () => device?.audit.entries() ?? []);
 // Group events into logical activities in the main process, so the sandboxed
@@ -362,16 +364,6 @@ ipcMain.handle("audit:clear", async () => {
   device.audit.clear();
   return true;
 });
-ipcMain.handle("goals:list", async () => goals?.all() ?? []);
-ipcMain.handle("goals:add", async (_e, title: string, text: string) => {
-  goals?.add({ title, text });
-  return goals?.all() ?? [];
-});
-ipcMain.handle("goals:remove", async (_e, id: string) => {
-  goals?.remove(id);
-  return goals?.all() ?? [];
-});
-ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? []);
 // Approvals still awaiting an answer, so the UI can show what is outstanding
 // rather than relying on a window that may have been closed.
 ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
@@ -465,30 +457,44 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 // re-reads on every change notification, so a getter that notifies is an
 // unbroken re-render loop.
 /**
- * Deep links into a client's "add a custom MCP connector" screen.
+ * Every web page the renderer may ask to open, in one table.
  *
- * The renderer names a CLIENT, never a URL. `openExternal` is pinned to URLs
- * the app composed itself — the `sms:` one and this table — because a renderer
- * that can hand main an arbitrary URL to open is a renderer that can open
- * anything. An unknown key opens nothing.
+ * The renderer names a KEY, never a URL. `openExternal` is pinned to URLs the
+ * app composed itself — the `sms:` one, the vault's own address, and this
+ * table — because a renderer that can hand main an arbitrary URL to open is a
+ * renderer that can open anything. An unknown key opens nothing.
  *
- * One entry, on purpose. A card earns its place by landing the user where they
- * paste the URL, and Claude's link opens the add-custom-connector modal
- * directly. ChatGPT has no equivalent deep link — the nearest target is a help
- * article about enabling developer mode — so it gets no card rather than a card
- * that promises one click and delivers a document. The step's own copy stays
- * client-agnostic, so this table growing is the only change a new client needs.
+ * `claude` deep-links into that client's "add a custom MCP connector" screen,
+ * and is the only client entry on purpose. A connect card earns its place by
+ * landing the user where they paste the URL, and Claude's link opens the
+ * add-custom-connector modal directly. ChatGPT has no equivalent deep link —
+ * the nearest target is a help article about enabling developer mode — so it
+ * gets no card rather than a card that promises one click and delivers a
+ * document. The connect step's own copy stays client-agnostic, so this table
+ * growing is the only change a new client needs.
+ *
+ * `discord` and `website` are Settings' Support section.
+ *
+ * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
+ * Access pane. macOS has no API an app can call to request that permission —
+ * sending the person to the switch IS the whole grant flow (see
+ * fullDiskAccess.ts), so the deep link belongs in this table like any other
+ * page the app may open.
  */
-const CLIENT_CONNECTOR_URLS: Readonly<Record<string, string>> = Object.freeze({
+const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
+  discord: "https://watchmepivot.com/discord",
+  website: "https://watchmepivot.com/",
+  fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
-ipcMain.handle("connect:openClient", async (_e, client: string) => {
-  const url = CLIENT_CONNECTOR_URLS[client];
+ipcMain.handle("external:open", async (_e, key: string) => {
+  const url = EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
   return true;
 });
+
 ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
 ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
 ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());
@@ -534,6 +540,13 @@ ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
 });
 ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
 ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
+// What the owner says agents are for. This pair is the only way the text is
+// written or read on the renderer's behalf; nothing an agent can reach touches
+// it, which is what makes it trusted context for the reviewer.
+ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
+ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
+  setAgentPurpose(home, purpose),
+);
 /**
  * Everything the renderer is allowed to know about inference: the selection,
  * which providers are usable, and the active model. Deliberately booleans and
@@ -617,6 +630,24 @@ ipcMain.handle("status:get", async () => ({
   name: device?.identity.name ?? "",
   connected: connected,
 }));
+// macOS permission ceilings on the app itself — today just Full Disk Access.
+// A fresh probe per read, because the answer changes outside the app (in
+// System Settings) and there is no event to invalidate a cache on.
+ipcMain.handle("capabilities:get", async () => ({
+  fullDiskAccess: await probeFullDiskAccess(),
+}));
+
+// Launch at Login. macOS owns the bit and loginItem.ts owns the rules (fresh
+// OS read per get, packaged-only writes); this is only the seam that hands it
+// the real Electron API.
+const loginItems: LoginItemApi = {
+  get: () => app.getLoginItemSettings(),
+  set: (settings) => app.setLoginItemSettings(settings),
+};
+ipcMain.handle("launch:get", async () => launchAtLoginState(app.isPackaged, loginItems));
+ipcMain.handle("launch:set", async (_e, on: boolean) =>
+  setLaunchAtLogin(app.isPackaged, loginItems, on),
+);
 
 // MARK: IPC for software updates (banner + Software Updates settings section).
 // One whole-state shape per read, renderer-side composition-free. In a
@@ -794,9 +825,13 @@ app.whenReady().then(async () => {
     home,
     hostName(),
     approvals,
-    undefined,
     resolveBrowserRuntime(process.resourcesPath),
   );
+  // Same tick as the store's construction (see onAbandoned): an approval that
+  // was pending when the app last quit gets closed out in the audit log too,
+  // not only in the approvals directory.
+  approvals.onAbandoned = (record) =>
+    device?.audit.record("approval_abandoned", { intentId: record.intentId });
   // An item the vault marked "ask again" is not opened on the strength of the
   // app being unlocked. There is no master password to ask for here — the vault
   // account is a random string this app generated — so the Mac asks who is at
@@ -823,8 +858,6 @@ app.whenReady().then(async () => {
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
-  goals = new GoalsLibrary(path.join(home, "device/goals.json"));
-
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
   mcp = createDomoMcpServer(device);
