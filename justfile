@@ -214,10 +214,12 @@ verify-preload: build
 # Drive the production approval-window path (real window, real IPC, real
 # continuation registry) and assert what it actually does.
 continuation-verify: build
+    node apps/desktop/scripts/electron-preflight.mjs
     DOMO_HOME="{{apphome}}" npx electron apps/desktop/scripts/continuation-verify.mjs
 
 # Walk the approval window through the continuation states and capture each.
 continuation-screenshots: build
+    node apps/desktop/scripts/electron-preflight.mjs
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/continuation-screenshots.mjs
 

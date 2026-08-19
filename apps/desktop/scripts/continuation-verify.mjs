@@ -24,9 +24,15 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { DeviceAgent } from "@domo/device-core";
 import { createDomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import { runApprovalWindow } from "../dist/approvalWindow.js";
-import { relayOptions } from "../dist/relayWiring.js";
-import { approvalViewModel } from "../dist/viewModel.js";
+import { preflightMessage } from "./electron-preflight.mjs";
+
+// The built modules are loaded AFTER the preflight, not imported at the top.
+// A static import of a file an unbuilt tree does not have fails during module
+// evaluation — before any of this can say why — which is the failure the
+// preflight exists to explain.
+let runApprovalWindow;
+let relayOptions;
+let approvalViewModel;
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -223,7 +229,18 @@ async function until(probe, tries = 60, ms = 100) {
 }
 
 app.whenReady().then(async () => {
+  // Electron clearly started, so this can only be a missing build — a window
+  // with no preload renders nothing and every check would fail for a reason
+  // that has nothing to do with what is being verified.
+  const blocked = preflightMessage();
+  if (blocked !== null) {
+    report({ error: "preflight failed", guidance: blocked }, 3);
+    return;
+  }
   try {
+    ({ runApprovalWindow } = await import("../dist/approvalWindow.js"));
+    ({ relayOptions } = await import("../dist/relayWiring.js"));
+    ({ approvalViewModel } = await import("../dist/viewModel.js"));
     await verify();
   } catch (error) {
     report({ error: `verify threw: ${error?.stack ?? error}` }, 2);

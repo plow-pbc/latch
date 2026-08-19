@@ -71,11 +71,20 @@ app by hand, drive it by hand — keyboard and mouse, not the inspector.
 | `just approval-screenshot` | The approval dialog names the calling agent. |
 | `just verify-preload` | The sandboxed preload bridge and both renderers still work. |
 | `just viewer-screenshot` | The audit screen's live-browser thumbnail. |
+| `just continuation-verify` | The approval window's continuation lifecycle, driven from relay frames through the real wiring: ack, delivery-unknown, resize, copy, destruction. Writes a pass/fail report. |
+| `just continuation-screenshots` | The three continuation states, as a visual fixture. Proves nothing on its own — see the run above. |
 
 Every `just` recipe above except `npx vitest run` launches Electron. **Run them on the M4, never on the head chef's Mac** —
 windows flash on screen otherwise. The wiki page has the rsync/build/capture procedure, including the
 two traps that waste an hour: exclude `*.tsbuildinfo` (or `tsc -b` emits nothing and you get blank
-PNGs), and repair Electron's binary when `node_modules/electron/path.txt` is missing.
+PNGs), and repair Electron's binary when `node_modules/electron/path.txt` is missing. The two
+continuation recipes preflight both traps (`apps/desktop/scripts/electron-preflight.mjs`) and refuse
+with the repair steps rather than dying quietly.
+
+What those runs proved, and when, is written down in `docs/verification/` — a reviewer reading a
+branch has no M4 and cannot re-run them. `docs/verification/2026-08-19-chunk3-continuation.md` is the
+first: the 18-check continuation run and the mutation matrix behind it, next to the raw report the
+run itself wrote.
 
 ---
 

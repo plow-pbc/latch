@@ -1,0 +1,95 @@
+{
+  "checks": [
+    {
+      "name": "the handshake configured the server's budgets",
+      "ok": true,
+      "detail": "budget=15000 ceiling=15000"
+    },
+    {
+      "name": "a relay frame opened the real approval window",
+      "ok": true,
+      "detail": "{\"type\":\"auth\",\"token\":\"plow_sk_verify\",\"client_kind\":\"relay-device\"}"
+    },
+    {
+      "name": "the window counts down the call it arrived on",
+      "ok": true,
+      "detail": "Claude Code\nwants to act\nsess_verify\nThe agent is still waiting on thi"
+    },
+    {
+      "name": "the deferred answer went back on that exchange",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "and it is a pending handle, not a result",
+      "ok": true,
+      "detail": "pending"
+    },
+    {
+      "name": "an ack FRAME moved the window to backgrounded",
+      "ok": true,
+      "detail": "Claude Code\nwants to act\nsess_verify\nThe agent stopped waiting on this"
+    },
+    {
+      "name": "and it names the phrase that brings the agent back",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "Allow Once was clickable",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "the real window resized to the confirmation",
+      "ok": true,
+      "detail": "460x532 -> 460x190"
+    },
+    {
+      "name": "the ready result offers the copy action",
+      "ok": true,
+      "detail": "Claude Code\nApproved — the result is ready and waiting.\nThe agent has "
+    },
+    {
+      "name": "copy IPC fired from a real click",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "the agent's lookup was served over the relay",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "and it carried the result",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "collection destroyed the window",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "second window opened",
+      "ok": true,
+      "detail": "{\"type\":\"auth\",\"token\":\"plow_sk_verify\",\"client_kind\":\"relay-device\"}"
+    },
+    {
+      "name": "a dropped socket told the window delivery is unconfirmed",
+      "ok": true,
+      "detail": "Claude Code\nwants to act\nsess_verify\nThis Mac could not confirm the ha"
+    },
+    {
+      "name": "and it claims neither waiting nor handed off",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "a denial closes the window even here",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "failed": 0
+}
