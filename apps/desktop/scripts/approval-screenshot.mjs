@@ -25,13 +25,6 @@ ipcMain.handle("approval:get", async () => ({
     goal: "Tidy up the quarterly report folder",
     request: "run: sips -Z 1600 ~/Documents/report/photos",
     planContext: null,
-    // Device-side, from settings — the one line on this card the owner wrote.
-    // PURPOSE overrides it, so the long-statement case (which is where the
-    // fixed 460x560 window is under pressure) is reproducible rather than a
-    // one-off edit someone made locally and threw away.
-    agentPurpose:
-      process.env.PURPOSE ??
-      "Help with the quarterly report and the calendar. Never touch code or email.",
     capabilities: [
       { kind: "process.exec", display: "Run: sips -Z 1600 photos" },
       { kind: "fs.read", display: "Read: /Users/you/Documents/report/photos" },
@@ -61,36 +54,44 @@ app.whenReady().then(async () => {
   const image = await win.webContents.capturePage();
   fs.writeFileSync(out, image.toPNG());
   const text = await win.webContents.executeJavaScript("document.body.innerText");
+
+  // Did the ENFORCED block lose content to the window's fixed height?
+  //
+  // This check outlived the feature that produced it. An owner-purpose row
+  // once sat below the block and starved it; the row is gone, but the shape of
+  // the failure is not — `.fine` is the flexible item in a fixed 460x560
+  // window, so anything that grows beside it takes space from the one part of
+  // this card that is a promise about what will happen, and at that size there
+  // is no scrollbar to admit it. `styles.css` now floors the block, and this is
+  // what proves the floor still holds.
+  //
+  // The obvious signal — are the buttons still on screen — is kept only to show
+  // why it was never enough: the actions row is last, so it holds its place and
+  // reports healthy while the block above it collapses.
+  const metrics = await win.webContents.executeJavaScript(
+    `(() => {
+       const fine = document.querySelector(".fine");
+       const actions = document.querySelector(".actions");
+       return {
+         enforcedClipped: fine.scrollHeight > fine.clientHeight,
+         enforcedHeight: Math.round(fine.getBoundingClientRect().height),
+         enforcedContentHeight: fine.scrollHeight,
+         actionsOnScreen:
+           actions.getBoundingClientRect().bottom <= window.innerHeight &&
+           actions.getBoundingClientRect().top >= 0,
+       };
+     })()`,
+  );
+
   console.log("SHOT:" + JSON.stringify({
     out,
     namesAgent: text.includes("Claude Code"),
     showsId: text.includes("sess_01HZX9K4M2QP"),
-    // Case-insensitive: the label is uppercased by CSS (`.section-label`), and
-    // innerText reports what is RENDERED, not what the source string said.
-    showsPurpose: /you said agents here are for/i.test(text),
-    // Whether the ENFORCED block lost content to the window's fixed height.
-    //
-    // The obvious signal — are the buttons still on screen — was the wrong one,
-    // and reported healthy on a card that had gone bad: the actions row is
-    // last, so it holds its place while `.fine` above it shrinks and clips.
-    // What matters is that a long purpose statement pushes the capability list
-    // (the one part of this card that is a promise about what will happen) out
-    // of view, with no scrollbar at that size to say so. `enforcedClipped`
-    // catches exactly that, and `enforcedHeight` says how little was left.
-    ...(await win.webContents.executeJavaScript(
-      `(() => {
-         const fine = document.querySelector(".fine");
-         const actions = document.querySelector(".actions");
-         return {
-           enforcedClipped: fine.scrollHeight > fine.clientHeight,
-           enforcedHeight: Math.round(fine.getBoundingClientRect().height),
-           enforcedContentHeight: fine.scrollHeight,
-           actionsOnScreen:
-             actions.getBoundingClientRect().bottom <= window.innerHeight &&
-             actions.getBoundingClientRect().top >= 0,
-         };
-       })()`,
-    )),
+    ...metrics,
   }));
-  app.exit(text.includes("Claude Code") ? 0 : 1);
+  // A clipped enforced block FAILS the run rather than being noted in passing.
+  // The capability list is this window's entire reason to exist, so a build
+  // that hides part of it is a broken build — and this is the only check that
+  // sees the real window at its real size.
+  app.exit(text.includes("Claude Code") && !metrics.enforcedClipped ? 0 : 1);
 });

@@ -154,17 +154,7 @@ class ElectronPolicy implements PolicyDelegate {
       review: adversarialReview,
       openApproval: async (hint) =>
         openApprovalWindow(
-          {
-            kind: "intent",
-            // The purpose comes from settings, on this side of the bridge —
-            // the intent never carries it, so the line the human reads as
-            // their own words cannot have been written by the agent asking.
-            view: approvalViewModel(
-              intent,
-              await resolveCredentialTitles(intent),
-              readAgentPurpose(home),
-            ),
-          },
+          { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
           hint,
         ),
     });
