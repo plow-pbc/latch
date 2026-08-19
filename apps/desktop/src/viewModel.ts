@@ -144,6 +144,7 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
   const order: string[] = [];
   const map = new Map<string, JSONValue[]>();
   const pendingAccess = new Map<string, string>(); // agent -> activity id
+  const requests = new Map<string, JSONValue>(); // intentId -> its intent_received
   let counter = 0;
   const push = (id: string, e: JSONValue) => {
     if (!map.has(id)) {
@@ -163,11 +164,30 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
       continue;
     const intentId = ev.get("intentId").str;
     const session = ev.get("session").str;
-    if (event === "browser_session_opened" && intentId !== null && session !== null) {
+    if (event === "intent_received" && intentId !== null) requests.set(intentId, e);
+    if (
+      (event === "browser_session_opened" || event === "browser_session_extended") &&
+      intentId !== null &&
+      session !== null
+    ) {
       // The open belongs to both stories: the intent row says how the session
       // was decided, and the session row must exist — and say "Browsing" —
       // from the moment the browser opens, not from its first command.
+      //
+      // A widening (`browser_session_extended`) belongs to both for the same
+      // reason: the origins and items it added are part of what this session
+      // was allowed to do, and reading them only off the opening intent
+      // understates the session's actual bound to the owner.
       push(`intent:${intentId}`, e);
+      // ...and the session row carries the request that authorised it, so it
+      // can say WHO drove the browser and WHAT they were allowed to reach.
+      // That was the reported bug: the row naming the agent held no browsing,
+      // and the row holding the browsing named nobody. The decision is
+      // deliberately NOT copied — it outranks the browser branch in
+      // classifyActivity, and would replace the session's live status with
+      // "Allowed once".
+      const request = requests.get(intentId);
+      if (request !== undefined) push(`browser:${session}`, request);
       push(`browser:${session}`, e);
     } else if (intentId !== null) {
       push(`intent:${intentId}`, e);
@@ -234,9 +254,19 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
       value("agent_spawned", "goal"),
     intentId: jv(events[0]).get("intentId").str,
     exitCode: entry("exec_end") ? jv(entry("exec_end")!).get("exit_code").int : null,
-    capabilities: (jv(entry("intent_received") ?? null).get("capabilities").arr ?? []).filter(
-      (c): c is string => typeof c === "string",
-    ),
+    // Every request in this row, not just the first: a session that was
+    // widened carries the opening intent AND each `browser_request` that
+    // extended it, and showing only the first understates to the owner what
+    // their browser was actually allowed to reach.
+    capabilities: [
+      ...new Set(
+        events
+          .filter((e) => jv(e).get("event").str === "intent_received")
+          .flatMap((e) =>
+            (jv(e).get("capabilities").arr ?? []).filter((c): c is string => typeof c === "string"),
+          ),
+      ),
+    ],
     decidedBy: decidedByLabel(value("intent_decision", "source")),
     timeline: events.map(describeStep),
   };
@@ -248,14 +278,18 @@ function activityTitle(
   value: (e: string, k: string) => string | null,
 ): string {
   const request = value("intent_received", "request");
-  if (request !== null) return request;
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
-    const lastNav = [...events]
+    // Where the browser actually went, not what was asked for — and never the
+    // blank staging page every session opens on, which titled real sessions
+    // "Browsing — about:blank" and told the owner nothing.
+    const url = [...events]
       .reverse()
-      .find((e) => jv(e).get("event").str === "browser_navigated");
-    const url = lastNav ? (jv(lastNav).get("url").str ?? "") : "";
-    return url ? `Browsing — ${url}` : "Browser session";
+      .map((e) => (jv(e).get("event").str === "browser_navigated" ? jv(e).get("url").str : null))
+      .find((u): u is string => u !== null && u !== "" && u !== "about:blank");
+    if (url !== undefined) return `Browsing — ${url}`;
+    return request ?? "Browser session";
   }
+  if (request !== null) return request;
   if (has("credential_metadata") && value("credential_metadata", "session") === null) {
     const item = value("credential_metadata", "item");
     return item !== null ? `Credential fields read — ${item}` : "Credential list read";
@@ -334,9 +368,13 @@ function classifyActivity(
         : { status: "Fill failed", tone: "amber", category: "failed" };
     }
     if (has("credential_denied") || has("browser_scope_violation")) {
+      // "failed", not "other": the cage refused the agent something, which is
+      // the first thing an owner scanning for trouble filters for. The amber
+      // badge already said so; the bucket disagreed, and the bucket is what
+      // the filter reads.
       return has("browser_session_closed")
-        ? { status: "Closed · scope blocks", tone: "amber", category: "other" }
-        : { status: "Scope blocked", tone: "amber", category: "other" };
+        ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
+        : { status: "Scope blocked", tone: "amber", category: "failed" };
     }
     if (has("browser_session_closed")) {
       const closed = entry("browser_session_closed")!;
