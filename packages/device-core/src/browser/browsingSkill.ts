@@ -30,7 +30,8 @@ secret values are typed into pages on the Mac and are NEVER shown to you.
   credentials. If they ask for it in the background ("don't take over my screen", "run it
   headless"), open with \`headed: false\`; if they ask to watch, say nothing or pass
   \`headed: true\`. Your screenshots are identical either way — only their view changes.
-  The choice lasts the session; a new mode means a new \`plow_browser_open\`.
+  The choice lasts the session; to switch, \`plow_browser_close\` first — reopening over a
+  live session is refused.
 - Every \`plow_browser\` action is checked against the approved origins. If a click or popup
   lands outside them, page content locks: you can only \`url\`, \`pages\`, \`use_page\`, or
   \`goto\` back in scope. To follow the flow (e.g. a payment popup went to paypal.com),
