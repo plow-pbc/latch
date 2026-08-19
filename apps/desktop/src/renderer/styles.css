@@ -309,6 +309,8 @@ dl.meta dd { margin: 0; }
   cursor: pointer;
 }
 .btn:hover { background: var(--hover); }
+/* The external-link ↗, on any control that opens something outside the app. */
+.ext-arrow { color: var(--faint); font-size: 13px; }
 .btn.danger { color: var(--red-fg); border-color: var(--red-bd); }
 .btn.primary { background: var(--blue-fg); color: white; border-color: var(--blue-fg); }
 input.text, textarea.text {
@@ -555,8 +557,6 @@ textarea.text { min-height: 70px; resize: vertical; }
   padding: 10px 14px; font: inherit; cursor: pointer; text-align: left;
 }
 .settings .connect .client-card:hover { background: var(--hover); }
-.settings .connect .client-name { font-weight: 600; }
-.settings .connect .client-arrow { color: var(--faint); font-size: 13px; }
 .settings .connect .conn-actions { margin-top: 14px; }
 
 /* The alternative to the flow, not the next thing in it. It is a bare link on

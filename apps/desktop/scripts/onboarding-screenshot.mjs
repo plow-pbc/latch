@@ -61,7 +61,7 @@ const SCREENS = [
       // Whoever texts the code gets the account, and the server cannot tell.
       "This code is a credential",
       "don't share it or post a screenshot",
-      "Open Messages",
+      "Open Messages…",
       "Use a phone code instead",
     ],
   },

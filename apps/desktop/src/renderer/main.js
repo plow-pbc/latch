@@ -437,16 +437,31 @@ function copyRow(value, label) {
  * the supported-client list — the group's subtitle names the others.
  *
  * From the designer's mock, minus the brand logo: an approximated or borrowed
- * mark is worse than none, so this is the name and the mock's ↗ until real
+ * mark is worse than none, so this is the label and the mock's ↗ until real
  * assets arrive.
  */
-function clientCard(key, name) {
+function clientCard(key, label) {
   const card = el("button", { class: "client-card" }, [
-    el("span", { class: "client-name", text: name }),
-    el("span", { class: "client-arrow", text: "↗" }),
+    el("span", { class: "client-name", text: label }),
+    extArrow(),
   ]);
   card.addEventListener("click", () => window.domo.openExternal(key));
   return card;
+}
+
+/** The external-link ↗, for buttons whose click IS the action — it just
+    happens in the browser. Hand-offs the user must still finish in another
+    app (System Settings, Messages) take the macOS ellipsis in their label
+    instead: "…" means more input needed, ↗ means it happens somewhere else. */
+function extArrow() {
+  return el("span", { class: "ext-arrow", text: "↗" });
+}
+
+/** A plain button that opens a web destination: the label, then the ↗. */
+function externalBtn(label, key) {
+  const btn = el("button", { class: "btn" }, [el("span", { text: label }), extArrow()]);
+  btn.addEventListener("click", () => window.domo.openExternal(key));
+  return btn;
 }
 
 /** One titled card: a prominent title, an optional description, then the body.
@@ -656,7 +671,7 @@ function connectNodes(s, redraw) {
     }),
     // One card. The mock's two-up grid is not kept for a single card — a
     // half-empty grid reads as a tile that failed to load.
-    el("div", { class: "client-cards" }, [clientCard("claude", "Claude")]),
+    el("div", { class: "client-cards" }, [clientCard("claude", "Open Claude")]),
     ...fallback,
     note,
   ].filter(Boolean));
@@ -975,14 +990,15 @@ async function renderSettings() {
     capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
   };
   applyCapabilities(await window.domo.capabilitiesGet());
-  const openFullDisk = el("button", { class: "btn", text: "Open System Settings" });
+  // Ellipsis, not ↗ (see extArrow): the click only starts this — the user
+  // still has to flip the toggle over there.
+  const openFullDisk = el("button", { class: "btn", text: "Open System Settings…" });
   openFullDisk.addEventListener("click", () => window.domo.openExternal("fullDiskSettings"));
 
   // One Support destination: icon, title + blurb, and a button that asks main
   // to open the URL behind `key` — the renderer never holds the URL itself.
   const supportRow = (iconNode, title, desc, buttonLabel, key) => {
-    const open = el("button", { class: "btn", text: buttonLabel });
-    open.addEventListener("click", () => window.domo.openExternal(key));
+    const open = externalBtn(buttonLabel, key);
     return el("div", { class: "support-row" }, [
       iconNode,
       el("div", { class: "support-copy" }, [

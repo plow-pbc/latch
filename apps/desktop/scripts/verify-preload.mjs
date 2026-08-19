@@ -311,8 +311,19 @@ app.whenReady().then(async () => {
         document.body.innerText.includes("Not granted"),
       fdaNamesMessages: document.body.innerText.includes("texted to you in Messages"),
       fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
-        (b) => b.textContent.trim() === "Open System Settings",
+        (b) => b.textContent.trim() === "Open System Settings…",
       ),
+      // The marks split by meaning: the macOS "…" on the one hand-off the user
+      // must finish over there (System Settings), the external-link ↗ on the
+      // buttons whose click just happens in the browser (Discord, Livestream)
+      // — and never both on one button.
+      supportMarks: (() => {
+        const btns = [...document.querySelectorAll(".support-row .btn")];
+        const arrowed = btns.filter((b) => b.querySelector(".ext-arrow"));
+        const handoffs = btns.filter((b) => b.textContent.trim().endsWith("…"));
+        return btns.length === 3 && arrowed.length === 2 && handoffs.length === 1 &&
+          !handoffs[0].querySelector(".ext-arrow");
+      })(),
       // Launch at Login, in Capabilities: on this packaged-looking probe the
       // toggle is live and unchecked, and the from-source note is hidden
       // (innerText omits hidden nodes).
@@ -652,6 +663,11 @@ app.whenReady().then(async () => {
       clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
         n.textContent.trim(),
       ),
+      // The card is an action, not a brand tile: plain-weight label, ↗ mark.
+      clientCardArrow: !!document.querySelector(".client-card .ext-arrow"),
+      clientNameNotBold: getComputedStyle(
+        document.querySelector(".client-card .client-name"),
+      ).fontWeight === "400",
     };
   }})()`);
 
@@ -901,7 +917,9 @@ app.whenReady().then(async () => {
     settingsPane.noConnectBlock &&
     settingsPane.noConnectText &&
     settingsPane.noSignInWhileSignedIn &&
-    connect.clientCards.join(",") === "Claude" &&
+    connect.clientCards.join(",") === "Open Claude" &&
+    connect.clientCardArrow &&
+    connect.clientNameNotBold &&
     connect.noConnectTab &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
@@ -924,6 +942,7 @@ app.whenReady().then(async () => {
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
     settings.fdaOffersSystemSettings &&
+    settings.supportMarks &&
     settings.launchTitle &&
     settings.launchToggleLive &&
     settings.launchNoteHidden &&
