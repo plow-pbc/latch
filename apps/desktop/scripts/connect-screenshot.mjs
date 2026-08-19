@@ -81,6 +81,10 @@ async function setUp() {
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("settings:getInference", async () => readInference(home));
   ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
+  // The Approvals card reads this for its suggestions checkbox. A missing
+  // handler rejects, and the pane throws before it paints anything.
+  ipcMain.handle("settings:getShowSuggestions", async () => true);
+  ipcMain.handle("settings:setShowSuggestions", async () => {});
   ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
   ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(home, purpose));
   ipcMain.handle("ui:getTab", async () => "agents");
@@ -125,6 +129,8 @@ const SCREENS = [
       "What are agents for?",
       "It can only narrow what gets approved",
       "Requests that fit may be approved without asking you.",
+      // The suggestions toggle, re-homed onto this card from Settings.
+      "Let the reviewer suggest an answer when an approval window opens",
     ],
   },
   {

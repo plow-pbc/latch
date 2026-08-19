@@ -33,7 +33,7 @@ apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
   }
 # Where the evidence scripts drop screenshots. Per-worktree so simultaneous
 # runs don't clobber each other's output; explicit OUT/OUT_DIR/SETTINGS_OUT/
-# CHIPS_OUT/AGENTS_OUT/AGENTS_OPEN_OUT/VAULT_OUT env vars still win inside the
+# AGENTS_OUT/AGENTS_OPEN_OUT/VAULT_OUT env vars still win inside the
 # recipes. EVERY capture a script can write needs its variable passed below —
 # one that is missed silently falls back to bare /tmp and two checkouts
 # overwrite each other's evidence while both runs still report success.
@@ -214,8 +214,6 @@ verify-preload: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" \
       SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" \
-      CHIPS_OUT="${CHIPS_OUT:-{{outdir}}/settings-chips.png}" \
-      UNGATED_OUT="${UNGATED_OUT:-{{outdir}}/settings-ungated.png}" \
       AGENTS_OUT="${AGENTS_OUT:-{{outdir}}/agents.png}" \
       AGENTS_OPEN_OUT="${AGENTS_OPEN_OUT:-{{outdir}}/agents-open.png}" \
       APPROVALS_OUT="${APPROVALS_OUT:-{{outdir}}/agents-approvals.png}" \
