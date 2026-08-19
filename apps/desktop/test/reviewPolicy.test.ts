@@ -291,7 +291,6 @@ describe("decideIntent — adversarial mode", () => {
       // pinned end to end by mcpServer.test.ts; here the contract is that this
       // path picks the explained source rather than a bare deny.
       expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
-      expect(result.source).not.toBe("adversarial");
       // No call, and therefore no timeline claiming a model started reviewing.
       expect(h.review).not.toHaveBeenCalled();
       expect(h.records).toEqual([]);

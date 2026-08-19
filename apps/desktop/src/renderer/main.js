@@ -1128,10 +1128,16 @@ async function renderSettings() {
   // knowledge only.
   //
   // `missing` follows the label in the note, so it does not repeat it: "Plow
-  // account: no credential — reviews will be denied until you sign in".
+  // account: no credential — sign in to run reviews".
+  //
+  // It says what is MISSING and nothing about the consequence, because the
+  // consequence depends on a mode this pane no longer owns: with the reviewer
+  // deciding, an unrunnable review denies; in Ask mode the same missing
+  // credential only costs the suggestion, and a human is asked as always. The
+  // Approvals card says which of those is happening.
   const PROVIDERS = {
-    plow: { label: "Plow account", missing: "no credential — reviews will be denied until you sign in" },
-    anthropic: { label: "Anthropic API key", missing: "no key — reviews will be denied until you add one" },
+    plow: { label: "Plow account", missing: "no credential — sign in to run reviews" },
+    anthropic: { label: "Anthropic API key", missing: "no key — add one to run reviews" },
   };
 
   // The mode itself is set in the Agents tab now; this pane only reads it, to

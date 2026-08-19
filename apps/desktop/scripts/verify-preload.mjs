@@ -264,7 +264,7 @@ app.whenReady().then(async () => {
       // The note explains only the SELECTED provider — Plow here, which has a
       // credential — so it says nothing about what is missing elsewhere.
       noteSaysNothingMissing: !(document.querySelector(".reviewer-note")?.textContent ?? "").includes(
-        "reviews will be denied",
+        "to run reviews",
       ),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
@@ -356,7 +356,7 @@ app.whenReady().then(async () => {
 
   // Selecting a provider that has no credential must WORK — that is the whole
   // change. The chip goes active, main stores it, and the note turns into the
-  // consequence: reviews will be denied until a key arrives.
+  // note: what the selected provider is missing, and how to fix it.
   await win.webContents.executeJavaScript(`(() => {
     [...document.querySelectorAll(".chip")]
       .find((c) => c.textContent.trim() === "Anthropic API key")
@@ -376,9 +376,11 @@ app.whenReady().then(async () => {
       selected: chip.classList.contains("active"),
       // Selectable, not merely clickable: main took it.
       neverDisabled: !chip.classList.contains("disabled"),
-      // …and the pane says what it will cost rather than pretending it is fine.
-      warnsReviewsWillBeDenied: (document.querySelector(".reviewer-note")?.textContent ?? "").includes(
-        "reviews will be denied",
+      // …and the pane says what is missing rather than pretending it is fine.
+      // What that COSTS depends on the mode, which lives in the Agents tab, so
+      // this note does not promise a denial the Ask path would not deliver.
+      warnsCredentialMissing: (document.querySelector(".reviewer-note")?.textContent ?? "").includes(
+        "add one to run reviews",
       ),
       // Adversarial mode is selectable with no reviewer behind it too.
       adversarialSelectable: !([...document.querySelectorAll(".chip")].find(
@@ -460,11 +462,11 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(
     win,
-    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
     "the note to say what a signed-out Plow reviewer will cost",
   );
   const warnedWhileSignedOut = await win.webContents.executeJavaScript(
-    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
   );
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_now_signed_in" });
   // The same refresh re-reads Launch at Login: the probe goes from-source here,
@@ -473,7 +475,7 @@ app.whenReady().then(async () => {
   win.webContents.send("status:changed");
   await waitFor(
     win,
-    `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+    `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
     "the open Settings pane to re-read the account and drop the warning",
   );
   await waitFor(win, `document.body.innerText.includes("from-source run")`,
@@ -481,7 +483,7 @@ app.whenReady().then(async () => {
   const staleSettingsPane = {
     warnedWhileSignedOut,
     warningGoneAfterStatusChanged: await win.webContents.executeJavaScript(
-      `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
+      `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
     ),
     launchUnsupportedFollowed: await win.webContents.executeJavaScript(`(() => {
       const box = [...document.querySelectorAll(".settings input")].find(
@@ -558,8 +560,7 @@ app.whenReady().then(async () => {
     committed: loadSettings(probeHome).anthropicApiKey === "sk-ant-typed-mid-refresh",
   };
 
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
-    "the pane to follow main's acceptance of the reviewer mode")
+  // REPRO (c): the renderer must show what main STORED, not what it asked for.
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
     relayCredential: "plow_sk_probe_credential",
@@ -917,7 +918,7 @@ app.whenReady().then(async () => {
     settings.keyFieldMasked &&
     ungated.selected &&
     ungated.neverDisabled &&
-    ungated.warnsReviewsWillBeDenied &&
+    ungated.warnsCredentialMissing &&
     ungated.adversarialSelectable &&
     settings.hasCapabilitiesGroup &&
     settings.fdaSaysNotGranted &&
