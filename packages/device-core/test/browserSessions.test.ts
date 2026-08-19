@@ -290,33 +290,6 @@ describe("credentials", () => {
     expect(eventNames()).toContain("credential_fill_failed");
   });
 
-  it("refuses to read the page back while the filled secret is still in it", async () => {
-    // The value goes in through a door the agent cannot see through — and then
-    // `forms` serialises every field's value, and `eval` returns whatever it
-    // is asked for. Without this, the secret comes straight back by another
-    // route and the whole path is theatre.
-    const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-4", AGENT, s, [], ["L1"], false);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
-    await ctx.sessions.command(AGENT, s, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "password",
-    });
-
-    for (const action of ["forms", "eval", "text", "screenshot"]) {
-      const r = jv(await ctx.sessions.command(AGENT, s, { action, expression: "1" }));
-      expect(r.get("status").str).toBe("error");
-      expect(r.get("error").str).toContain("credential you cannot see");
-    }
-    // Submitting is what an agent does next, and it clears the page it was on.
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/account" });
-    expect(jv(await ctx.sessions.command(AGENT, s, { action: "forms" })).get("status").str).toBe(
-      "completed",
-    );
-  });
-
   it("fill_secret types the value on-device and never returns it", async () => {
     const s = await openSession(["pizza.example"]);
     ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);

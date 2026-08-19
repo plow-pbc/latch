@@ -68,11 +68,6 @@ fields — with titles, usernames and sites, never a value. \`plow_vault {action
 identity's fields (first name, address, email, passport number…) exactly like any other
 item's, and \`fill_secret\` types them into the page the same way.
 
-**After a fill, the page is not readable until you leave it.** \`eval\`, \`forms\`,
-\`text\`, \`tables\`, \`links\` and \`screenshot\` are refused while a filled credential
-is still in a field — otherwise the value you were never given comes back through
-them. Submit the form, or \`goto\` elsewhere, and they work again.
-
 1. \`plow_vault {action: "list"}\` to see what is there; \`plow_vault {action: "describe", item: "<id>"}\`
    names the fields that item holds.
 2. Open the session with \`credentials_metadata: true\` (or add it later via plow_browser_request).
