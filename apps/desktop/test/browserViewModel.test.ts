@@ -39,7 +39,10 @@ describe("approvalViewModel for browser intents", () => {
     const cred = vm.capabilities.find((c) => c.kind === "credential")!;
     expect(cred.display).toContain("'Dominos' (LOGIN)");
     expect(cred.display).toContain("C1 (unknown item)");
-    expect(cred.display).toContain("values never leave this Mac");
+    // The card must not promise more than the browser keeps: the value is typed
+    // here, and the agent driving that page can read it back.
+    expect(cred.display).toContain("typed on this Mac");
+    expect(cred.display).not.toContain("never leave");
     expect(vm.credentialItems).toEqual([
       { id: "L1", title: "Dominos", category: "LOGIN" },
       { id: "C1", title: null, category: null },

@@ -438,8 +438,8 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
-      "(find item ids with plow_vault's 'list' action). Secret values are never " +
-      "revealed to you; they are typed into the page on this Mac.",
+      "(find item ids with plow_vault's 'list' action). A secret is never returned to you; " +
+      "it is typed into the page on this Mac, where it is page content like anything else.",
     inputSchema: {
       type: "object",
       required: ["session"],
