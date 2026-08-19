@@ -46,6 +46,23 @@ function homeWith(overrides: Partial<Settings> = {}): string {
 /** What actually survived to disk. */
 const stored = (home: string) => loadSettings(home);
 
+/**
+ * What every sign-out leaves behind, however it got there.
+ *
+ * The mode is the interesting half: Adversarial SURVIVES. It cannot run, and
+ * that is the point — every operation it decides is denied with `no_reviewer`
+ * until a credential comes back, instead of the mode being quietly swapped for
+ * Ask behind the person who chose it.
+ */
+function expectSignedOutWithAdversarial(home: string) {
+  expect(stored(home)).toMatchObject({
+    relayCredential: "",
+    accountUid: "",
+    mcpUrl: "",
+    approvalMode: "adversarial",
+  });
+}
+
 describe("any known provider is selectable, credential or not", () => {
   it("stores a provider that has no credential, and says it has none", () => {
     // The gate is gone. Parking the reviewer on a provider that cannot answer
@@ -178,14 +195,7 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
 
     signOutOfPlow(home);
 
-    const after = stored(home);
-    expect(after.relayCredential).toBe("");
-    expect(after.accountUid).toBe("");
-    expect(after.mcpUrl).toBe("");
-    // Adversarial survives signing out. It cannot run, and that is the point:
-    // every operation it decides is denied with `no_reviewer` until a
-    // credential comes back, instead of the mode being quietly swapped for Ask.
-    expect(after.approvalMode).toBe("adversarial");
+    expectSignedOutWithAdversarial(home);
   });
 
   it("signing out while Anthropic is the reviewer leaves the mode alone", () => {
@@ -299,14 +309,7 @@ describe("signing out retires the credential server-side, best effort", () => {
     await new Promise((r) => setImmediate(r));
 
     expect(onDiskWhenAsked).toBe("");
-    const after = stored(home);
-    expect(after.relayCredential).toBe("");
-    expect(after.accountUid).toBe("");
-    expect(after.mcpUrl).toBe("");
-    // Adversarial survives signing out. It cannot run, and that is the point:
-    // every operation it decides is denied with `no_reviewer` until a
-    // credential comes back, instead of the mode being quietly swapped for Ask.
-    expect(after.approvalMode).toBe("adversarial");
+    expectSignedOutWithAdversarial(home);
   });
 
   it("clears locally even when the revoke FAILS", async () => {
@@ -321,13 +324,7 @@ describe("signing out retires the credential server-side, best effort", () => {
       }),
     ).resolves.toBeUndefined();
 
-    const after = stored(home);
-    expect(after.relayCredential).toBe("");
-    expect(after.accountUid).toBe("");
-    expect(after.mcpUrl).toBe("");
-    // …and the mode is untouched: there is no interlock to fire. Adversarial
-    // with no credential denies and says why, rather than being rewritten.
-    expect(after.approvalMode).toBe("adversarial");
+    expectSignedOutWithAdversarial(home);
   });
 
   it("clears locally for every shape of failure", async () => {

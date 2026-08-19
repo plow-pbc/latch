@@ -264,7 +264,7 @@ app.whenReady().then(async () => {
       // The note explains only the SELECTED provider — Plow here, which has a
       // credential — so it says nothing about what is missing elsewhere.
       noteSaysNothingMissing: !(document.querySelector(".reviewer-note")?.textContent ?? "").includes(
-        "to run reviews",
+        "is not configured",
       ),
       // The only password field left is the Anthropic API key.
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
@@ -380,12 +380,8 @@ app.whenReady().then(async () => {
       // What that COSTS depends on the mode, which lives in the Agents tab, so
       // this note does not promise a denial the Ask path would not deliver.
       warnsCredentialMissing: (document.querySelector(".reviewer-note")?.textContent ?? "").includes(
-        "add one to run reviews",
+        "Anthropic API key is not configured — add an Anthropic API key",
       ),
-      // Adversarial mode is selectable with no reviewer behind it too.
-      adversarialSelectable: !([...document.querySelectorAll(".chip")].find(
-        (c) => c.textContent.trim() === "Adversarial Agent",
-      )?.classList.contains("disabled")),
     };
   }})()`);
 
@@ -462,11 +458,11 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(
     win,
-    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
     "the note to say what a signed-out Plow reviewer will cost",
   );
   const warnedWhileSignedOut = await win.webContents.executeJavaScript(
-    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
+    `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
   );
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_now_signed_in" });
   // The same refresh re-reads Launch at Login: the probe goes from-source here,
@@ -475,7 +471,7 @@ app.whenReady().then(async () => {
   win.webContents.send("status:changed");
   await waitFor(
     win,
-    `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
+    `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
     "the open Settings pane to re-read the account and drop the warning",
   );
   await waitFor(win, `document.body.innerText.includes("from-source run")`,
@@ -483,7 +479,7 @@ app.whenReady().then(async () => {
   const staleSettingsPane = {
     warnedWhileSignedOut,
     warningGoneAfterStatusChanged: await win.webContents.executeJavaScript(
-      `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("to run reviews")`,
+      `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("is not configured")`,
     ),
     launchUnsupportedFollowed: await win.webContents.executeJavaScript(`(() => {
       const box = [...document.querySelectorAll(".settings input")].find(
@@ -919,7 +915,6 @@ app.whenReady().then(async () => {
     ungated.selected &&
     ungated.neverDisabled &&
     ungated.warnsCredentialMissing &&
-    ungated.adversarialSelectable &&
     settings.hasCapabilitiesGroup &&
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&

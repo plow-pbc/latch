@@ -8,6 +8,18 @@ import {
   PURPOSE_LABEL,
 } from "./approvals.js";
 
+/**
+ * What the two panes call each reviewer provider, and what it takes to set one
+ * up. Two panes say different things about the same missing credential — the
+ * Agents card names the consequence, Settings names only the gap — so the
+ * sentences differ but the FACTS must not. Which providers exist, and whether
+ * each is usable, still comes from main; this is display knowledge only.
+ */
+const REVIEWER_PROVIDERS = {
+  plow: { label: "Plow account", setup: "sign in to Plow" },
+  anthropic: { label: "Anthropic API key", setup: "add an Anthropic API key" },
+};
+
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
@@ -734,10 +746,6 @@ async function renderAgents() {
   // What a reviewer with no credential costs, said rather than enforced. The
   // remedy is a pane away in Settings, so the sentence names it — but the mode
   // is still the owner's to choose, and choosing it is not an error to prevent.
-  const REVIEWER_BLOCKED = {
-    plow: "The AI Reviewer has no credential: sign in to Plow in Settings.",
-    anthropic: "The AI Reviewer has no credential: add an Anthropic API key in Settings.",
-  };
 
   const renderApprovals = () => {
     const mode = inference.approvalMode;
@@ -747,8 +755,9 @@ async function renderAgents() {
     // not a freeze, because a rule already approved is a decision they made.
     modeNote.textContent =
       mode === "adversarial" && !hasKey
-        ? `${REVIEWER_BLOCKED[inference.provider]} Until then it denies anything it is asked to decide — ` +
-          "requests already covered by an always-allow rule keep running."
+        ? `The AI Reviewer has no credential: ${REVIEWER_PROVIDERS[inference.provider].setup} in Settings. ` +
+          "Until then it denies anything it is asked to decide — requests already " +
+          "covered by an always-allow rule keep running."
         : "";
     modeChips.replaceChildren(...APPROVAL_MODES.map(({ value, label }) => {
       const chip = el("span", {
@@ -1122,23 +1131,11 @@ async function renderSettings() {
   let inference = await window.domo.inferenceGet();
   const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
   const providerChips = el("div", { class: "chips" });
-  // Everything this pane knows about a provider, in one place: what to call it,
-  // and what it costs to run it with nothing behind it. Which providers exist,
-  // and whether each is usable, still comes from main — this is display
-  // knowledge only.
-  //
-  // `missing` follows the label in the note, so it does not repeat it: "Plow
-  // account: no credential — sign in to run reviews".
-  //
-  // It says what is MISSING and nothing about the consequence, because the
-  // consequence depends on a mode this pane no longer owns: with the reviewer
+  // This pane names the gap and nothing about the consequence, because the
+  // consequence depends on a mode it no longer owns: with the reviewer
   // deciding, an unrunnable review denies; in Ask mode the same missing
   // credential only costs the suggestion, and a human is asked as always. The
   // Approvals card says which of those is happening.
-  const PROVIDERS = {
-    plow: { label: "Plow account", missing: "no credential — sign in to run reviews" },
-    anthropic: { label: "Anthropic API key", missing: "no key — add one to run reviews" },
-  };
 
   // The mode itself is set in the Agents tab now; this pane only reads it, to
   // decide whether the suggestions checkbox can do anything.
@@ -1172,19 +1169,21 @@ async function renderSettings() {
   // said in the note instead of being enforced by a faded chip.
   const renderProviderChips = () => {
     // No fallback copy: `available` comes from main's frozen provider list, so a
-    // key here that PROVIDERS does not know is a bug to see, not to paper over.
-    const active = PROVIDERS[inference.provider];
+    // key here that REVIEWER_PROVIDERS does not know is a bug to see, not to paper over.
+    const active = REVIEWER_PROVIDERS[inference.provider];
     // The note carries both facts: which reviewer is running, and — when the
     // SELECTED one has no credential — what that will cost. Only the selected
     // provider matters here; what the other one is missing is not this Mac's
     // problem until it is picked.
     reviewerNote.textContent =
       `Reviewer: ${inference.info}` +
-      (inference.available[inference.provider] ? "" : ` · ${active.label}: ${active.missing}.`);
+      (inference.available[inference.provider]
+        ? ""
+        : ` · ${active.label} is not configured — ${active.setup}.`);
     providerChips.replaceChildren(...Object.keys(inference.available).map((value) => {
       const chip = el("span", {
         class: "chip" + (inference.provider === value ? " active" : ""),
-      }, [el("span", { text: PROVIDERS[value].label })]);
+      }, [el("span", { text: REVIEWER_PROVIDERS[value].label })]);
       if (inference.provider !== value) {
         chip.addEventListener("click", async () => {
           // Still what main stored rather than what was asked for: an unknown

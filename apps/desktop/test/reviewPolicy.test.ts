@@ -283,7 +283,7 @@ describe("decideIntent — adversarial mode", () => {
       const h = harness(
         settings({ approvalMode: "adversarial", ...c.over }),
         // What the dialog WOULD have said. It must not be reachable.
-        { verdict: "ask", cause: "not_configured", reason: "nobody to call", decision: "allow_once" },
+        { verdict: "ask", reason: "nobody to call", decision: "allow_once" },
       );
       const result = await h.run();
       expect(result.decision).toBe("deny");
@@ -299,19 +299,6 @@ describe("decideIntent — adversarial mode", () => {
     });
   }
 
-  // The other way to have no reviewer: the credential is there but the rest of
-  // the configuration is not, which only the review call itself can discover.
-  it("maps a not_configured cause discovered mid-call to the same denial", async () => {
-    const h = harness(
-      settings({ approvalMode: "adversarial", inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL }),
-      { verdict: "ask", cause: "not_configured", reason: "no Plow API URL configured", decision: "allow_once" },
-    );
-    const result = await h.run();
-    expect(h.review).toHaveBeenCalledOnce();
-    expect(result.decision).toBe("deny");
-    expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
-    expect(h.openApproval).not.toHaveBeenCalled();
-  });
 });
 
 describe("decideIntent — ask mode and suggestions", () => {

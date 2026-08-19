@@ -190,13 +190,6 @@ export async function decideIntent(
     const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
-    // The reviewer could not be assembled from what is on disk — a missing API
-    // base URL, say, which the check above does not cover. Same answer: deny,
-    // naming the standing condition rather than prompting a human out of the
-    // blue for a mode they did not pick.
-    if (cause === "not_configured") {
-      return { decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER };
-    }
     // The account cannot pay for inference, so the reviewer the user chose can
     // never run. Deny — and say why, in a form the calling agent can read.
     // Quietly reverting to prompting a human would change the mode the user

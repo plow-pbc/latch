@@ -61,7 +61,7 @@ export type Verdict = "allow" | "deny" | "ask";
  * inference, so the configured reviewer cannot run at all — a standing
  * condition the operator has to fix, not a transient hiccup.
  */
-export type ReviewFailureCause = "no_credits" | "not_configured";
+export type ReviewFailureCause = "no_credits";
 
 const SYSTEM_PROMPT = `You are an adversarial security reviewer for "Plow", a system that lets a \
 remote AI agent operate a person's Mac through explicitly approved, sandboxed \
@@ -411,12 +411,12 @@ function plowCall(credential: string, apiBaseUrl: string): ProviderCall {
  * Pick the provider, or explain why there isn't one. A missing credential is a
  * configuration answer, not a network one — nothing is dialled.
  */
-function selectProvider(args: ReviewArgs): Provider | { reason: string; cause?: ReviewFailureCause } {
+function selectProvider(args: ReviewArgs): Provider | { reason: string } {
   if (args.provider === "plow") {
     const credential = (args.plowCredential ?? "").trim();
-    if (!credential) return { reason: "not signed in to Plow", cause: "not_configured" as const };
+    if (!credential) return { reason: "not signed in to Plow" };
     const base = normalizeApiBaseUrl(args.apiBaseUrl ?? "");
-    if (!base) return { reason: "no Plow API URL configured", cause: "not_configured" as const };
+    if (!base) return { reason: "no Plow API URL configured" };
     return {
       call: plowCall(credential, base),
       secret: credential,
@@ -424,7 +424,7 @@ function selectProvider(args: ReviewArgs): Provider | { reason: string; cause?: 
     };
   }
   const apiKey = (args.apiKey ?? "").trim();
-  if (!apiKey) return { reason: "no API key configured", cause: "not_configured" as const };
+  if (!apiKey) return { reason: "no API key configured" };
   return { call: anthropicCall(apiKey), secret: apiKey, headLength: ANTHROPIC_SECRET_HEAD };
 }
 
@@ -461,17 +461,10 @@ export async function adversarialReview(
   args: ReviewArgs,
 ): Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }> {
   const provider = selectProvider(args);
-  if (!("call" in provider)) {
-    // Not a verdict and not a failure to reach anyone — there was nobody to
-    // reach. `not_configured` is what lets the caller tell "the reviewer looked
-    // and could not decide" from "the reviewer does not exist", which are
-    // different answers to the human and to the agent.
-    return {
-      verdict: "ask",
-      reason: provider.reason,
-      ...(provider.cause ? { cause: provider.cause } : {}),
-    };
-  }
+  // Nobody to reach. Callers establish that themselves before asking — see
+  // `reviewerAvailable` — so this is the answer to a question that should not
+  // have been put: no verdict, and the reason it could not be reached.
+  if (!("call" in provider)) return { verdict: "ask", reason: provider.reason };
 
   // One budget, one timer: the same timeout that gives up on the review aborts
   // the request it gave up on, so nothing is left running (or billing) behind a
