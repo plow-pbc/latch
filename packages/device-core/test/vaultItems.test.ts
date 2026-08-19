@@ -106,63 +106,50 @@ describe("an edit", () => {
     });
   });
 
-  it("rewrites only the URLs that changed, and keeps the rest as they are", () => {
+  it("writes only the URL positions that changed, and drops the ones emptied", () => {
     const many = encryptCipher(
-      { type: "login", name: "GitHub", password: "x", urls: ["https://github.com", "https://gist.github.com"] },
+      { type: "login", name: "GitHub", password: "x",
+        urls: ["https://a.example", "https://b.example", "https://c.example"] },
       null,
       account,
     );
-    // The stored entries carry match rules the form does not show.
-    many.login.uris = [
-      { ...many.login.uris[0], match: 0 },
-      { ...many.login.uris[1], match: 4 },
-    ];
-    const stored = { ...many, id: "item-1" };
-
-    // The form sends every URL it displayed; only the first one changed.
-    const changed = encryptCipher(
-      { itemId: "item-1", urls: ["https://github.com/login", "https://gist.github.com"] },
-      stored,
-      account,
-    );
-    expect(decryptItem({ ...changed, id: "item-1" }, account).urls).toEqual([
-      "https://github.com/login",
-      "https://gist.github.com",
-    ]);
-    // Byte for byte: the entry whose address did not change is the object it was.
-    expect(changed.login.uris[1]).toEqual(many.login.uris[1]);
-    expect(changed.login.uris[0].match).toBeNull();
-
-    // And an edit that mentions no URL at all changes none of them.
-    const untouched = encryptCipher({ itemId: "item-1", username: "new" }, stored, account);
-    expect(untouched.login.uris).toEqual(many.login.uris);
-  });
-
-  it("drops the URL the owner emptied, and leaves the others where they were", () => {
-    const many = encryptCipher(
-      { type: "login", name: "GitHub", password: "x", urls: ["https://a.example", "https://b.example", "https://c.example"] },
-      null,
-      account,
-    );
+    // The stored entries carry match rules the form never shows.
     many.login.uris = many.login.uris.map((u, i) => ({ ...u, match: i }));
     const stored = { ...many, id: "item-1" };
-    // The middle box was emptied: its position is still sent, so the third URL
-    // is reconciled against the entry that held it rather than the one above.
-    const edited = encryptCipher(
-      { itemId: "item-1", urls: ["https://a.example", "", "https://c.example"] },
-      stored,
-      account,
-    );
-    expect(decryptItem({ ...edited, id: "item-1" }, account).urls).toEqual([
+    const edit = (urls) => encryptCipher({ itemId: "item-1", ...(urls ? { urls } : { username: "new" }) }, stored, account);
+
+    // Changed: only the first is written anew; the others are the objects they were.
+    const changed = edit(["https://a.example/login", "https://b.example", "https://c.example"]);
+    expect(changed.login.uris.slice(1)).toEqual(many.login.uris.slice(1));
+    expect(changed.login.uris[0].match).toBeNull();
+
+    // Emptied: the middle position still travels, so the third reconciles
+    // against its own entry rather than the one above it.
+    const dropped = edit(["https://a.example", "", "https://c.example"]);
+    expect(dropped.login.uris).toEqual([many.login.uris[0], many.login.uris[2]]);
+    expect(decryptItem({ ...dropped, id: "item-1" }, account).urls).toEqual([
       "https://a.example",
       "https://c.example",
     ]);
-    expect(edited.login.uris).toEqual([many.login.uris[0], many.login.uris[2]]);
+
+    // Omitted: an edit that mentions no URL changes none of them.
+    expect(edit(null).login.uris).toEqual(many.login.uris);
   });
 
   it("clears a field that is sent empty", () => {
     const second = encryptCipher({ itemId: "item-1", username: "" }, { ...first, id: "item-1" }, account);
     expect(decryptItem({ ...second, id: "item-1" }, account).fields.username).toBe("");
+  });
+});
+
+describe("an item this app cannot hold", () => {
+  it("is refused rather than shown as an empty login", () => {
+    // The vault's enum reserves 5-8 and its web page can create them; showing
+    // one as a login would take an edit and write it nowhere.
+    const sshKey = { ...encryptCipher({ type: "login", name: "server", password: "x", urls: ["https://a.example"] }, null, account), id: "k", type: 5 };
+    expect(() => decryptItem(sshKey, account)).toThrow(/cannot show item type 5/);
+    expect(() => decryptSummary(sshKey, account)).toThrow(/cannot show item type 5/);
+    expect(() => encryptCipher({ itemId: "k", name: "server" }, sshKey, account)).toThrow(/cannot show item type 5/);
   });
 });
 

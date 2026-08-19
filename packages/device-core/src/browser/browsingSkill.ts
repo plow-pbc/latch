@@ -59,12 +59,14 @@ url, title, links, forms, tables, pages.
 - Cookie banners/modals: \`eval 'document.querySelector("[id*=cookie] button, [class*=consent] button")?.click()'\`.
 - Captcha/blocked: tell the user; try an alternative site.
 
-## Credentials (logins, cards) — values never reach you
+## Credentials (logins, cards, identities) — values never reach you
 
 **This machine has its own password vault — do not go looking for 1Password or ask the
 owner to paste anything.** \`plow_vault {action: "list"}\` answers at any time, with no browser
-session: every item the owner keeps — logins, cards, secure notes, custom fields — with
-titles, usernames and sites, never a value.
+session: every item the owner keeps — logins, cards, identities, secure notes, custom
+fields — with titles, usernames and sites, never a value. \`describe-item\` names an
+identity's fields (first name, address, email, passport number…) exactly like any other
+item's, and \`fill_secret\` types them into the page the same way.
 
 1. \`plow_vault {action: "list"}\` to see what is there; \`plow_vault {action: "describe", item: "<id>"}\`
    names the fields that item holds.

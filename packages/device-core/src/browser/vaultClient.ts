@@ -23,6 +23,7 @@ import {
   encryptCipher,
   splitKey,
   TYPE_CODE,
+  TYPE_NAME,
   VaultItem,
   VaultItemInput,
   VaultItemSummary,
@@ -112,7 +113,15 @@ export class VaultClient {
   /** Everything in the vault, in the clear except the secrets themselves. */
   async list(): Promise<VaultItemSummary[]> {
     const { key } = await this.open();
-    return (await this.ciphers()).map((c) => decryptSummary(c, key));
+    // One item of a type this app cannot hold must not take the whole list
+    // down with it; it simply is not listed. Opening it is the loud path.
+    return (await this.ciphers()).flatMap((c) => {
+      try {
+        return [decryptSummary(c, key)];
+      } catch {
+        return [];
+      }
+    });
   }
 
   /** One whole item, with its secret values null — what a form is filled from. */
@@ -137,6 +146,9 @@ export class VaultClient {
     const { key } = await this.open();
     const existing = input.itemId ? await this.cleared(await this.cipher(input.itemId)) : null;
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
+    if (existing && !TYPE_NAME[type]) {
+      throw new Error(`this app cannot change item type ${type}; use the vault's own page for it`);
+    }
     // Every URL the form showed is checked, because every one of them is a URL
     // the owner just looked at; a login with none can never be filled.
     if (type === 1 && input.urls !== undefined) {

@@ -285,7 +285,15 @@ function vitem(summary, reload) {
   let loaded = false;
   row.addEventListener("click", async () => {
     article.classList.toggle("open");
-    if (loaded || !article.classList.contains("open")) return;
+    if (!article.classList.contains("open")) {
+      // Closing throws the form away, revealed values included. Keeping it
+      // would let a second look at a protected item skip the check the first
+      // one had to pass.
+      inner.replaceChildren();
+      loaded = false;
+      return;
+    }
+    if (loaded) return;
     loaded = true;
     inner.replaceChildren(el("p", { class: "use-note", text: "Opening…" }));
     try {
@@ -419,9 +427,9 @@ const PTYPE_BLURB = {
   note: "Freeform private text",
 };
 
-export async function renderVault(view) {
+export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
-  const renderVaultIn = () => renderVault(view);
+  const renderVaultIn = () => renderVault(view, isCurrent);
   // Everything the vault holds, edited here. This is why the tab exists: the
   // only other way in is the vault's own web page, and reaching it means a
   // browser warning about the certificate the app issued to itself.
@@ -432,6 +440,11 @@ export async function renderVault(view) {
   } catch (err) {
     failure = errText(err);
   }
+
+  // The vault answers over HTTPS, so an answer can arrive after the owner has
+  // moved to another tab. The view is shared: writing into it then would put
+  // this pane on top of theirs.
+  if (!isCurrent()) return;
 
   const pane = el("div", { class: "vaultui" });
   const masthead = el("div", { class: "masthead" }, [

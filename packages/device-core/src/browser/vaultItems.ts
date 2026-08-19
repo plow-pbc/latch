@@ -141,9 +141,25 @@ function subtitleOf(type: number, fields: Record<string, string>): string {
   return "";
 }
 
+/**
+ * The type this item is, or a refusal.
+ *
+ * The vault's enum reserves 5-8 (SSH key, bank account, licence, passport) and
+ * its web client can create them. Treating one of those as a login would show
+ * a form of empty login fields and accept a save that silently went nowhere —
+ * the item's real body is not the one being written.
+ */
+function typeOf(cipher: Cipher): number {
+  const type = cipher.type ?? 1;
+  if (!TYPE_NAME[type]) {
+    throw new Error(`this app cannot show item type ${type}; use the vault's own page for it`);
+  }
+  return type;
+}
+
 export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSummary {
   const key = itemKey(cipher, account);
-  const type = cipher.type ?? 1;
+  const type = typeOf(cipher);
   const raw = body(cipher);
   const shown: Record<string, string> = {};
   for (const field of KEYS_FOR[type] ?? []) {
@@ -152,7 +168,7 @@ export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSumm
   return {
     id: String(cipher.id ?? ""),
     title: dec(cipher.name, key),
-    type: TYPE_NAME[type] ?? "login",
+    type: TYPE_NAME[type],
     subtitle: subtitleOf(type, shown),
     urls: urlsOf(cipher, key),
   };
@@ -161,7 +177,7 @@ export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSumm
 /** The whole item an edit form is filled from — with every secret left out. */
 export function decryptItem(cipher: Cipher, account: VaultKey): VaultItem {
   const key = itemKey(cipher, account);
-  const type = cipher.type ?? 1;
+  const type = typeOf(cipher);
   const raw = body(cipher);
   const secret = SECRET_KEYS[type] ?? [];
   const fields: Record<string, string | null> = {};
@@ -177,7 +193,7 @@ export function decryptItem(cipher: Cipher, account: VaultKey): VaultItem {
   return {
     id: String(cipher.id ?? ""),
     name: dec(cipher.name, key),
-    type: TYPE_NAME[type] ?? "login",
+    type: TYPE_NAME[type],
     notes: dec(cipher.notes, key),
     urls: urlsOf(cipher, key),
     fields,
@@ -206,7 +222,7 @@ export function encryptCipher(
   existing: Cipher | null,
   account: VaultKey,
 ): Cipher {
-  const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
+  const type = existing ? typeOf(existing) : TYPE_CODE[input.type ?? "login"];
   // A new item gets its own key, the way current clients write them; an
   // existing one keeps whatever key it already has.
   const wrapped = existing ? existing.key ?? null : encString(crypto.randomBytes(64), account.enc, account.mac);
@@ -287,4 +303,4 @@ export function checkedUrls(urls: string[]): string[] {
   });
 }
 
-export { TYPE_CODE };
+export { TYPE_CODE, TYPE_NAME };

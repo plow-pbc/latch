@@ -1197,7 +1197,7 @@ function render() {
   if (currentTab === "agents") renderAgents();
   else if (currentTab === "audit") renderAudit();
   else if (currentTab === "rules") renderRules();
-  else if (currentTab === "vault") renderVault(view);
+  else if (currentTab === "vault") renderVault(view, () => currentTab === "vault");
   else if (currentTab === "settings") renderSettings();
 }
 

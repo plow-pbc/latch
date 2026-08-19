@@ -566,8 +566,9 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Check here before concluding you cannot sign in somewhere. " +
       "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
-      "notes, custom fields — with titles, usernames and sites but never a value. 'describe' " +
-      "names the fields one item holds. No browser session is needed to ask. To USE a secret, " +
+      "identities, notes, custom fields — with titles, usernames and sites but never a value. " +
+      "'describe' names the fields one item holds, an identity's address and ID numbers " +
+      "included. No browser session is needed to ask. To USE a secret, " +
       "open a browser session and call the plow_browser tool's fill_secret: values are typed into the " +
       "page and never returned to you.",
     inputSchema: {
