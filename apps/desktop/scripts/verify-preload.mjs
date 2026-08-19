@@ -169,6 +169,21 @@ async function waitForNode(predicate, label, timeoutMs = 10000) {
   }
 }
 
+/**
+ * Capture the window to a PNG, after two frames have actually landed.
+ *
+ * The wait is the point: `capturePage()` will happily hand back the pane that
+ * was painted BEFORE the click we just asserted on, and an image of the wrong
+ * state is worse than no image — it is evidence for something that did not
+ * happen. `waitFor` cannot stand in for it; a poll sees state, not paint.
+ */
+async function captureAfterPaint(win, outputPath) {
+  await win.webContents.executeJavaScript(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
+  );
+  fs.writeFileSync(outputPath, (await win.webContents.capturePage()).toPNG());
+}
+
 function offscreen() {
   const win = new BrowserWindow({
     show: false,
@@ -282,13 +297,8 @@ app.whenReady().then(async () => {
   }})()`);
 
   // Settings changed with first-run login, and every UI change gets an image.
-  // Wait for two frames to actually land before capturing, so the image is the
-  // pane we just asserted on rather than whatever was painted before it.
   const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(settingsShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, settingsShot);
 
   // …and the chip rows, scrolled to, because the explanation is the point of
   // this change and it sits below the account group.
@@ -299,10 +309,7 @@ app.whenReady().then(async () => {
     chips?.scrollIntoView({ block: "start" });
     return true;
   })()`);
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(chipsShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, chipsShot);
 
   // Selecting a provider that has no credential must WORK — that is the whole
   // change. The chip goes active, main stores it, and the note turns into the
@@ -338,10 +345,7 @@ app.whenReady().then(async () => {
   }})()`);
 
   const ungatedShot = process.env.UNGATED_OUT ?? "/tmp/settings-ungated.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(ungatedShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, ungatedShot);
 
   // What used to sit here: a provider round-trip through the bridge, and a
   // mode-fallback check. Both asserted the interlock in `settingsActions`, and
@@ -585,13 +589,9 @@ app.whenReady().then(async () => {
   }})()`);
 
   // The Agents pane gets an image of its own, for the same reason Settings does:
-  // every UI change gets one, and this one moved panes. Two frames first, so the
-  // capture is what was just asserted rather than the pane painted before it.
+  // every UI change gets one, and this one moved panes.
   const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(agentsShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, agentsShot);
 
   // …and the same pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -620,10 +620,7 @@ app.whenReady().then(async () => {
     };
   }})()`);
   const agentsOpenShot = process.env.AGENTS_OPEN_OUT ?? "/tmp/agents-open.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(agentsOpenShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, agentsOpenShot);
 
   // The vault's honest failure state: locked is not empty, and the screen has to
   // say so — the old copy sent people to debug a server that was running fine.
@@ -645,10 +642,7 @@ app.whenReady().then(async () => {
     };
   }})()`);
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
-  await win.webContents.executeJavaScript(
-    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
-  );
-  fs.writeFileSync(vaultShot, (await win.webContents.capturePage()).toPNG());
+  await captureAfterPaint(win, vaultShot);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane to come back");
 
