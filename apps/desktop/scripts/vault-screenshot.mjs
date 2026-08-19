@@ -175,9 +175,6 @@ const SCREENS = [
       await settle(win);
       await removable(win, 3, "before the removal");
       await dropUrl(win, 1);
-      // The website group sits below the fold in this window, and it is the
-      // whole subject of this shot.
-      await showUrls(win);
       await settle(win);
     },
     // The middle box is gone from the form; the two it kept are still there.
@@ -216,17 +213,18 @@ async function removable(win, n, when) {
   if (shown !== n) throw new Error(`${shown} remove buttons ${when}, wanted ${n}`);
 }
 
-/** Bring the website group into the frame. */
-async function showUrls(win) {
-  await win.webContents.executeJavaScript(
-    `(() => { const h = [...document.querySelectorAll(".vaultui .group-h")].find((e) => e.textContent.startsWith("Website")); h?.scrollIntoView({ block: "center" }); })()`,
-  );
-}
-
-/** Click the remove button on the nth website box, the way a person does. */
+/** Click the remove button on the nth website box, the way a person does —
+    scrolling to it first, which is also what leaves the group in the frame:
+    the website boxes sit below the fold in this window. */
 async function dropUrl(win, nth) {
   const found = await win.webContents.executeJavaScript(
-    `(() => { const b = document.querySelectorAll(".vaultui .mini.drop")[${nth}]; if (!b) return false; b.click(); return true; })()`,
+    `(() => {
+      const b = document.querySelectorAll(".vaultui .mini.drop")[${nth}];
+      if (!b) return false;
+      b.scrollIntoView({ block: "center" });
+      b.click();
+      return true;
+    })()`,
   );
   if (!found) throw new Error(`no remove button on website box ${nth}`);
 }

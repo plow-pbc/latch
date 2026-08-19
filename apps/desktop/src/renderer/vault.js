@@ -8,12 +8,6 @@ import { el, icon } from "./dom.js";
    Everything here is fed by the real vault: the list, the values, and the
    secrets that are fetched only when the owner asks for one. */
 
-/* ---- The Vault tab, built to Mary's design (vault.html) ----------------
-   Her markup and her class names; the styling lives in vault.css, scoped to
-   `.vaultui` so no other screen changes. Everything here is fed by the real
-   vault: the list, the values, and the secrets that are fetched only when the
-   owner asks to see one. */
-
 /* The four types, laid out as her forms lay them out. `secret` is a value the
    vault never hands over with the item — it is fetched one at a time, which is
    what the eye button does. */
