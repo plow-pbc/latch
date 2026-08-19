@@ -147,10 +147,72 @@ def _parse_args():
 
 
 class Session:
-    """One live browser + the currently active page."""
+    """One live browser + the currently active page.
+
+    It also remembers which fields on which page it has masked. That has to live
+    here rather than in the device: the device can name a selector, but only
+    this side can tell whether the node behind it is still the one that was
+    filled, still carries the mark, and is still on the page it was filled on.
+    A ledger kept at arm's length goes stale in exactly the ways that matter --
+    it survives a visible overwrite and a navigation, and re-marking from it
+    then hides ordinary data.
+    """
 
     def __init__(self, page):
         self.page = page
+        # page -> {(frame index, selector)} that hold something concealed.
+        self.masked = {}
+        # page -> the url it was on when we last looked, so a navigation can be
+        # noticed however it happened: goto, back, or the page's own script.
+        self.seen_url = {}
+
+    def _forget_navigated(self):
+        """A page that has moved is not the page anything was filled on."""
+        try:
+            url = self.page.url
+        except Exception:
+            return
+        if self.seen_url.get(self.page) != url:
+            self.seen_url[self.page] = url
+            self.masked.pop(self.page, None)
+
+    def remember_masked(self, frame_index, selector):
+        self.masked.setdefault(self.page, set()).add((frame_index, selector))
+
+    def forget_masked(self, frame_index, selector):
+        """Called when a field is filled with something the vault does not
+        conceal: whatever is in it now is not a secret, and re-marking it later
+        would hide an address the agent was told to check."""
+        targets = self.masked.get(self.page)
+        if targets:
+            targets.discard((frame_index, selector))
+
+    def reapply_masks(self):
+        """Put the mark back on every masked field of the active page.
+
+        Returns the selector of a field that could NOT be masked, or None when
+        every one of them is covered. A field whose node has gone is dropped: it
+        is not on the page, so it is not on the screenshot either.
+        """
+        targets = self.masked.get(self.page)
+        if not targets:
+            return None
+        frames = self.page.frames
+        for frame_index, selector in sorted(targets):
+            if not (0 <= frame_index < len(frames)):
+                targets.discard((frame_index, selector))
+                continue
+            try:
+                el = frames[frame_index].query_selector(selector)
+            except Exception:
+                targets.discard((frame_index, selector))
+                continue
+            if el is None:
+                targets.discard((frame_index, selector))
+                continue
+            if el.evaluate(MASK_JS) == "unmasked":
+                return selector
+        return None
 
     @property
     def pages(self):
@@ -180,6 +242,17 @@ class Session:
 
     def handle(self, cmd, screenshots_dir):
         action = cmd.get("action", "")
+        self._forget_navigated()
+
+        if action in ("screenshot", "forms"):
+            # Nothing the agent looks at goes out over a field that should be
+            # covered and is not. The mark is re-applied first, and if one of
+            # them will not take, the observation does not happen at all --
+            # returning the picture anyway is how the value ends up in the
+            # transcript, which is the whole thing this exists to stop.
+            exposed = self.reapply_masks()
+            if exposed is not None:
+                return {"ok": False, "mask": "unmasked"}
 
         if action == "goto":
             # 12s + 1s settle keeps the whole action under the device's 15s host
@@ -272,6 +345,7 @@ class Session:
                             if state == "unmasked":
                                 return {"ok": False, "mask": state, "frame": i}
                             el.fill(cmd["value"], timeout=3000)
+                            self.remember_masked(i, sel)
                             return {"ok": True, "mask": state, "frame": i}
                         # Not a secret. The mark comes off AFTER the value is
                         # in, never before: a fill that times out would
@@ -279,32 +353,13 @@ class Session:
                         # secret with nothing left to hide it.
                         el.fill(cmd["value"], timeout=3000)
                         el.evaluate(UNMASK_JS)
+                        self.forget_masked(i, sel)
                     if action == "click":
                         self.page.wait_for_timeout(1000)
                     return {"ok": True, "frame": i}
                 except Exception as exc:
                     last = exc
             raise last or RuntimeError("selector not found: %s" % sel)
-
-        if action == "mark":
-            # Re-apply a mark to a node that may have been replaced since it was
-            # filled. A framework that tears down and rebuilds an input hands
-            # back a fresh node carrying the value but not the attribute, and
-            # the caller asks for this before it lets the agent look at the
-            # page. Best effort by nature: a selector that no longer resolves is
-            # not an error, it is a field that is no longer there.
-            sel = cmd["selector"]
-            for i, fr in enumerate(self.page.frames):
-                if "frame" in cmd and i != int(cmd["frame"]):
-                    continue
-                try:
-                    el = fr.query_selector(sel)
-                except Exception:
-                    continue
-                if el is None:
-                    continue
-                return {"ok": True, "mask": el.evaluate(MASK_JS), "frame": i}
-            return {"ok": False, "mask": "gone"}
 
         if action == "locate":
             # Which frame owns this selector, and what URL is that frame on?

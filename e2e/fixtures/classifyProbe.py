@@ -82,6 +82,24 @@ def _release_shape(cli, item: dict, descriptor: dict) -> dict:
     }
 
 
+def _refuses_undescribed(cli, item: dict, descriptors: list) -> bool:
+    """True when every label this item can read, but does not offer, is refused."""
+    import argparse
+    import contextlib
+    import io
+
+    described = {d["label"] for d in descriptors}
+    for label in (cli._FULL_NAME,):
+        if label in described or cli._read_field(item, label) is None:
+            continue
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = cli._cmd_get_field(argparse.Namespace(item_id=item["id"], field=label, url=None))
+        if rc == 0:
+            return False
+    return True
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         sys.stderr.write("usage: classifyProbe.py <maskClassification.json>\n")
@@ -120,6 +138,13 @@ def main(argv: list[str]) -> int:
             # Whether a key the pinned client does not define can be read out
             # anyway. It must not be: an unknown key is refused, not released.
             "unknownKeyReadable": cli._read_field(item, "middleInitial") is not None,
+            # A label the item can READ but does not OFFER must be refused.
+            # `full name` is the live example: it exists so a linked field can
+            # point at it and is deliberately not one of the item's own fields,
+            # so `get-field` has no classification for it and must not hand it
+            # over. Anything releasable without a descriptor is releasable
+            # without a decision about whether it may be shown.
+            "undescribedRefused": _refuses_undescribed(cli, item, descriptors),
             # One command has to answer both questions, or a caller is back to
             # asking twice and acting on two different moments.
             "release": {

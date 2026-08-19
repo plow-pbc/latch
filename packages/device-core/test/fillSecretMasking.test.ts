@@ -30,6 +30,23 @@ const SERVER_PY = fileURLToPath(
 );
 const FILL_PROBE = fileURLToPath(new URL("../../../e2e/fixtures/fillProbe.py", import.meta.url));
 
+/**
+ * Python is run with its bytecode cache pointed at a throwaway directory.
+ *
+ * The system python3 here writes .pyc files to a cache OUTSIDE the source tree
+ * and validates them on (mtime, size) alone. An edit that changes neither —
+ * a mutation test that happens to be byte-length-neutral, applied and reverted
+ * inside one second — leaves a stale .pyc that Python believes is current, and
+ * every later run executes code that is not on disk. That cost an afternoon
+ * once. A fresh prefix per run means there is never a cache to be stale.
+ */
+function pythonEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-")),
+  };
+}
+
 /** The probe needs a python3; the rest of this file never does. */
 const HAVE_PYTHON = (() => {
   try {
@@ -141,29 +158,25 @@ async function session(): Promise<string> {
   return handle;
 }
 
-/**
- * The fill commands the device sent, projected to what this test is about. The
- * raw log carries the value being typed, so nothing here ever returns it — not
- * into an assertion, and not into a failure diff.
- */
 /** Every command the device sent, values already redacted by the fixture. */
-function commands(): { action: string; selector?: string }[] {
+function commands(): { action: string; selector?: string; mask?: boolean }[] {
   return fs
     .readFileSync(ctx.cmdLog, "utf8")
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l) as { action: string; selector?: string });
+    .map((l) => JSON.parse(l) as { action: string; selector?: string; mask?: boolean });
 }
 
+/**
+ * The fill commands, projected to what these tests are about. The fixture has
+ * already redacted the value; this keeps only the selector and the mask flag,
+ * so neither an assertion nor a failure diff can carry anything else.
+ */
 function fills(): { selector: string; mask?: boolean }[] {
-  return fs
-    .readFileSync(ctx.cmdLog, "utf8")
-    .trim()
-    .split("\n")
-    .map((l) => JSON.parse(l) as { action: string; selector: string; mask?: boolean })
+  return commands()
     .filter((c) => c.action === "fill")
-    .map((c) => ("mask" in c ? { selector: c.selector, mask: c.mask } : { selector: c.selector }));
+    .map((c) => ("mask" in c ? { selector: c.selector!, mask: c.mask } : { selector: c.selector! }));
 }
 
 beforeEach(() => {
@@ -359,49 +372,44 @@ describe("fill_secret marking", () => {
     expect(jv(result).get("ok").bool).toBe(true);
   });
 
-  it("puts the mark back before the agent looks at the page", async () => {
-    // A framework that rebuilds an input on re-render hands back a node holding
-    // the value and not the attribute. Re-applying before the two actions that
-    // show the agent the page closes the window that is reachable in ordinary
-    // use — it cannot close the one the page owns outright.
+  it("refuses to show the page when a concealed field will not stay covered", async () => {
+    // The browser re-applies every mark before an observation and says so when
+    // one will not take. Handing over the picture anyway is how the value ends
+    // up in the transcript.
+    await ctx.host.shutdown();
+    ctx = makeCtx({ FAKE_REMASK_FAILS: "1" });
     const handle = await session();
     await ctx.sessions.command("agent-1", handle, {
       action: "fill_secret", selector: "#pass", item: "L1", field: "password",
     });
-    await ctx.sessions.command("agent-1", handle, {
-      action: "fill_secret", selector: "#card-cvc", item: "C1", field: "code",
-    });
-    // A visible field is not tracked: there is nothing to hide.
-    await ctx.sessions.command("agent-1", handle, {
-      action: "fill_secret", selector: "#addr", item: "L1", field: "shipping address",
-    });
-    const marksBefore = commands().filter((c) => c.action === "mark");
-    expect(marksBefore).toEqual([]);
-
-    await ctx.sessions.command("agent-1", handle, { action: "screenshot" });
-    expect(commands().filter((c) => c.action === "mark").map((c) => c.selector)).toEqual([
-      "#pass",
-      "#card-cvc",
-    ]);
-
-    await ctx.sessions.command("agent-1", handle, { action: "forms" });
-    expect(commands().filter((c) => c.action === "mark").map((c) => c.selector)).toEqual([
-      "#pass",
-      "#card-cvc",
-      "#pass",
-      "#card-cvc",
-    ]);
+    for (const action of ["screenshot", "forms"]) {
+      const result = await ctx.sessions.command("agent-1", handle, { action });
+      expect(jv(result).get("status").str, action).toBe("error");
+      expect(jv(result).get("error").str).toContain("will not let it be hidden on screen");
+      // No picture, no field list — nothing of the page comes back.
+      expect(jv(result).get("data_b64").str).toBeNull();
+      expect(jv(result).get("forms").value ?? null).toBeNull();
+    }
+    expect(ctx.events.filter((e) => e.event === "credential_mask_failed").length).toBe(2);
   });
 
-  it("does not let a vanished field stop the agent seeing the page", async () => {
+  it("shows the page freely once nothing concealed is left on it", async () => {
+    // The same page, after the concealed field is overwritten with something
+    // the vault does not conceal: there is nothing left to cover, so there is
+    // nothing left to refuse.
     await ctx.host.shutdown();
-    ctx = makeCtx({ FAKE_MARK_GONE: "1" });
+    ctx = makeCtx({ FAKE_REMASK_FAILS: "1" });
     const handle = await session();
     await ctx.sessions.command("agent-1", handle, {
       action: "fill_secret", selector: "#pass", item: "L1", field: "password",
     });
-    const shot = await ctx.sessions.command("agent-1", handle, { action: "screenshot" });
-    expect(jv(shot).get("status").str).toBe("completed");
+    expect(jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" })).get("status").str)
+      .toBe("error");
+    await ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#pass", item: "L1", field: "shipping address",
+    });
+    expect(jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" })).get("status").str)
+      .toBe("completed");
   });
 
   it("keeps the filled value out of the fixture's own command log", async () => {
@@ -464,13 +472,21 @@ describe("fill_secret marking", () => {
  */
 describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () => {
   const probed = (() => {
-    const out = execFileSync("python3", [FILL_PROBE], { encoding: "utf8" });
+    const out = execFileSync("python3", [FILL_PROBE], { encoding: "utf8", env: pythonEnv() });
     return JSON.parse(out) as {
       [scenario: string]: {
         trace: string[];
         error: string | null;
         marked: boolean;
         result: { ok?: boolean; mask?: string; frame?: number } | null;
+      };
+    } & {
+      ledger: {
+        [scenario: string]: {
+          steps: { step: string; result: { ok?: boolean; mask?: string } | null }[];
+          tracked: string[];
+          marked: { [selector: string]: boolean };
+        };
       };
     };
   })();
@@ -507,6 +523,37 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.mask_blocked.trace).not.toContain("handle.fill");
     expect(probed.mask_blocked.trace).not.toContain("handle.fill-failed");
     expect(probed.mask_blocked.result).toEqual({ ok: false, mask: "unmasked", frame: 0 });
+  });
+
+  it("keeps a concealed field tracked, and lets the observation through", () => {
+    const kept = probed.ledger.kept;
+    expect(kept.tracked).toEqual(["0:#pass"]);
+    expect(kept.marked["#pass"]).toBe(true);
+    expect(kept.steps.at(-1)!.result).toEqual({});
+  });
+
+  it("forgets a field overwritten with something visible", () => {
+    // This ledger used to live on the device and was never pruned, so a
+    // selector reused for an address kept being re-marked before every
+    // observation — hiding ordinary data, and undoing the unmask on the way.
+    const over = probed.ledger.visible_overwrite;
+    expect(over.tracked).toEqual([]);
+    expect(over.marked["#pass"]).toBe(false);
+  });
+
+  it("forgets everything when the page navigates", () => {
+    // A page that has moved is not the page anything was filled on.
+    expect(probed.ledger.navigated.tracked).toEqual([]);
+  });
+
+  it("refuses the observation when a mark will not go back on", () => {
+    expect(probed.ledger.wont_take.steps.at(-1)!.result).toEqual({ ok: false, mask: "unmasked" });
+  });
+
+  it("drops a field whose node has gone, and shows the page", () => {
+    const gone = probed.ledger.node_gone;
+    expect(gone.tracked).toEqual([]);
+    expect(gone.steps.at(-1)!.result).toEqual({});
   });
 
   it("clears a stale mark only once the new value is in", () => {

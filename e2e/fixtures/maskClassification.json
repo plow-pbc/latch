@@ -18,20 +18,14 @@
     "vault/enums/linked-id-type.enum.ts, and what the client conceals in the",
     "cipher-view templates.",
     "",
-    "Item types 6-8 (bank account, driving licence, passport) exist in the client",
-    "but CANNOT be stored by the vault this app runs: vaultwarden 1.37.1",
     "(commit 2629bcbe1380c894e3a7f52cafcac3988edb8fbb) matches only types 1-5 in",
-    "src/api/core/ciphers.rs:508-515 and answers anything else with",
-    "err!(\"Invalid type\"). The three cases below pin that: an item of those types",
-    "reports nothing, because one cannot get into the vault to be reported. When",
-    "vaultwarden gains them, these are the cases to fill in.",
     "",
     "Consumed by packages/device-core/test/maskClassification.test.ts."
   ],
   "cases": [
     {
       "name": "login",
-      "why": "password hidden; username and the generated TOTP code are not; notes are not",
+      "why": "password hidden; username is not; the generated TOTP code is masked even though the client shows it, because an agent fills it and never reads it back; notes are not",
       "bitwarden": {
         "id": "L1",
         "name": "Pizza Login",
@@ -93,7 +87,7 @@
         },
         {
           "label": "totp",
-          "hidden": false,
+          "hidden": true,
           "custom": false,
           "alias": false
         },
@@ -627,76 +621,6 @@
       ]
     },
     {
-      "name": "bank account (type the vault cannot store)",
-      "why": "cannot exist in this vault: vaultwarden 1.37.1 rejects the type on every write path (src/api/core/ciphers.rs:508-515, err!(\"Invalid type\")), so there is nothing to classify. Field names below are the client's own, for whenever the vault catches up (models/export/bank-account.export.ts:60-69)",
-      "bitwarden": {
-        "id": "B1",
-        "name": "Current account",
-        "type": 6,
-        "bankAccount": {
-          "bankName": "Springfield Mutual",
-          "nameOnAccount": "Jon Doe",
-          "accountType": "checking",
-          "accountNumber": "12345678",
-          "routingNumber": "111000025",
-          "branchNumber": "04",
-          "pin": "9012",
-          "swiftCode": "SPMUUS33",
-          "iban": "GB33BUKB20201555555555",
-          "bankContactPhone": "555-0199"
-        }
-      },
-      "expect": []
-    },
-    {
-      "name": "driving licence (type the vault cannot store)",
-      "why": "cannot exist in this vault: vaultwarden 1.37.1 rejects the type on every write path (src/api/core/ciphers.rs:508-515, err!(\"Invalid type\")), so there is nothing to classify. Field names below are the client's own, for whenever the vault catches up (models/export/drivers-license.export.ts:63-73)",
-      "bitwarden": {
-        "id": "D1",
-        "name": "Licence",
-        "type": 7,
-        "driversLicense": {
-          "firstName": "Jon",
-          "middleName": "Q",
-          "lastName": "Doe",
-          "dateOfBirth": "1980-01-01",
-          "licenseNumber": "D9999",
-          "issuingCountry": "US",
-          "issuingState": "IL",
-          "issueDate": "2020-01-01",
-          "expirationDate": "2030-01-01",
-          "issuingAuthority": "IL SoS",
-          "licenseClass": "C"
-        }
-      },
-      "expect": []
-    },
-    {
-      "name": "passport (type the vault cannot store)",
-      "why": "cannot exist in this vault: vaultwarden 1.37.1 rejects the type on every write path (src/api/core/ciphers.rs:508-515, err!(\"Invalid type\")), so there is nothing to classify. Field names below are the client's own, for whenever the vault catches up (models/export/passport.export.ts:68-80)",
-      "bitwarden": {
-        "id": "T1",
-        "name": "Passport",
-        "type": 8,
-        "passport": {
-          "surname": "Doe",
-          "givenName": "Jon",
-          "dateOfBirth": "1980-01-01",
-          "sex": "X",
-          "birthPlace": "Springfield",
-          "nationality": "US",
-          "issuingCountry": "US",
-          "passportNumber": "X1234567",
-          "passportType": "P",
-          "nationalIdentificationNumber": "078-05-1120",
-          "issuingAuthority": "US DoS",
-          "issueDate": "2020-01-01",
-          "expirationDate": "2030-01-01"
-        }
-      },
-      "expect": []
-    },
-    {
       "name": "card with two custom fields of the same name",
       "why": "a token has to name one field: two custom fields called `number` would both qualify to custom:number, so neither is offered and neither can be released — refused rather than resolved by whichever came first",
       "bitwarden": {
@@ -724,6 +648,50 @@
           "label": "number",
           "hidden": true,
           "custom": false,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "linked field pointing at an empty slot",
+      "why": "a link names a fixed slot by number. This login has no username slot and a Hidden custom field that happens to be called `username`; the link must resolve to the slot or to nothing at all, never fall through to the custom field, which would release a concealed value classified from the absent slot as visible",
+      "bitwarden": {
+        "id": "L9",
+        "name": "Fallthrough",
+        "type": 1,
+        "login": {
+          "password": "pw",
+          "uris": [
+            {
+              "uri": "https://x.example/"
+            }
+          ]
+        },
+        "fields": [
+          {
+            "name": "username",
+            "type": 1,
+            "value": "concealed-custom"
+          },
+          {
+            "name": "who",
+            "type": 3,
+            "value": null,
+            "linkedId": 100
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "password",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "username",
+          "hidden": true,
+          "custom": true,
           "alias": false
         }
       ]

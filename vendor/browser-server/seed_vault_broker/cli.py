@@ -128,12 +128,6 @@ _LINKED_ID_LABELS = {
     413: _FIELD_USERNAME, 414: "passport number", 415: "license number",
     416: "first name", 417: "last name", 418: _FULL_NAME,
 }
-_ALLOWED_FIELDS = frozenset(
-    {_FIELD_PASSWORD, _FIELD_TOTP, _FIELD_USERNAME, _FIELD_EMAIL, _FIELD_LOGIN, _FIELD_USER}
-    | set(_CARD_FIELDS)
-    | set(_IDENTITY_FIELDS)
-    | set(_SSH_KEY_FIELDS)
-)
 # Which fields the vault itself renders masked -- the whole classification, and
 # the reason there is nothing bespoke to maintain: the vault (and thereby the
 # human who made the item) already decided. A card's number and security code
@@ -188,14 +182,9 @@ _EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
 
 # Vault item types, as the vault reports them, mapped onto the category names the
 # browser side already speaks.
-# cipher-type.ts:1-10. The client also has types 6-8 (bank account, driving
-# licence, passport) and they are deliberately absent here: the vault this app
-# runs cannot hold one. Vaultwarden 1.37.1 matches types 1-5 and answers
-# anything else with err!("Invalid type") on every write path -- create, edit,
-# import and share all funnel through the same check
-# (src/api/core/ciphers.rs:508-515). Supporting them here would classify items
-# that cannot exist. When vaultwarden gains them, the identity section below is
-# the pattern, and maskClassification.json already carries the three cases.
+# cipher-type.ts:1-10. Types 6-8 (bank account, driving licence, passport) are
+# absent because vaultwarden 1.37.1 rejects them on every write path
+# (src/api/core/ciphers.rs:508-515), so one cannot exist to be classified.
 _CATEGORY_BY_TYPE = {1: "LOGIN", 2: "SECURE_NOTE", 3: "CREDIT_CARD", 4: "IDENTITY", 5: "SSH_KEY"}
 
 
@@ -701,9 +690,12 @@ def _field_descriptors(item: dict) -> list[dict]:
     if login.get("password"):
         add(_FIELD_PASSWORD, True, False)
     if login.get("totp"):
-        # The seed is hidden in the vault, the generated code is not -- and the
-        # code is what `get-field totp` returns. Single-use, ~30s.
-        add(_FIELD_TOTP, False, False)
+        # The one place this masks something the client shows. The client
+        # renders the generated code because a person has to read it; an agent
+        # never does -- it fills the code and moves on -- so masking costs
+        # nothing, and not masking leaves a live credential in every screenshot
+        # taken in the thirty seconds it is good for.
+        add(_FIELD_TOTP, True, False)
     card = raw.get("card") or {}
     for key, label in (("number", "number"), ("code", "code"),
                        ("expMonth", "expiry month"), ("expYear", "expiry year"),
@@ -742,7 +734,7 @@ def _field_descriptors(item: dict) -> list[dict]:
             # is describable and impossible to ask for, because the slot answers
             # first every time.
             target = _LINKED_ID_LABELS.get(field.get("linkedId"))
-            if target and _read_field(item, target) is not None:
+            if target and _read_slot(item, target) is not None:
                 hidden = next(
                     (d["hidden"] for d in out if d["label"] == target and not d["custom"]),
                     False,
@@ -772,6 +764,43 @@ def _field_labels(item: dict) -> list[str]:
         if descriptor["label"] not in labels:
             labels.append(descriptor["label"])
     return labels
+
+
+def _read_slot(item: dict, label: str) -> str | None:
+    """The value of one of the item's own fixed slots -- never a custom field.
+
+    What a linked field points at is a slot, by number, out of Bitwarden's own
+    enum. Resolving one through the ordinary lookup let it fall through an empty
+    slot into a custom field that happened to share the name, and a Hidden one
+    at that: the link was classified from the (absent) slot, so it read as
+    visible, and released the concealed value. A link resolves here or not at
+    all.
+    """
+    raw = item.get("_raw") or {}
+
+    def text(value: object) -> str | None:
+        return str(value) if value not in (None, "") else None
+
+    login = raw.get("login") or {}
+    if label == _FIELD_PASSWORD:
+        return text(login.get("password"))
+    if label in _USERNAME_FIELDS and text(login.get("username")):
+        return text(login.get("username"))
+    card_key = _CARD_FIELDS.get(label)
+    if card_key:
+        return text((raw.get("card") or {}).get(card_key))
+    identity = raw.get("identity") or {}
+    identity_key = _IDENTITY_FIELDS.get(label)
+    if identity_key:
+        return text(identity.get(identity_key))
+    if label == _FULL_NAME:
+        parts = [identity.get(k) for k in ("title", "firstName", "middleName", "lastName")]
+        joined = " ".join(str(p).strip() for p in parts if p and str(p).strip())
+        return joined or None
+    ssh_key_field = _SSH_KEY_FIELDS.get(label)
+    if ssh_key_field:
+        return text((raw.get("sshKey") or {}).get(ssh_key_field))
+    return None
 
 
 def _read_field(item: dict, field: str) -> str | None:
@@ -829,7 +858,7 @@ def _read_field(item: dict, field: str) -> str | None:
         for custom in matches:
             if custom.get("type") == _CUSTOM_FIELD_LINKED:
                 target = _LINKED_ID_LABELS.get(custom.get("linkedId"))
-                return _read_field(item, target) if target else None
+                return _read_slot(item, target) if target else None
             return text(custom.get("value"))
     return None
 
@@ -957,26 +986,19 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
                 "item belongs to %s, not to %s" % (", ".join(keys), page),
             )
 
-    releasable = set(_field_labels(item)) | _USERNAME_FIELDS | {_FIELD_PASSWORD, _FIELD_TOTP} | set(_CARD_FIELDS)
-    if args.field not in releasable:
-        _audit(args.item_id, args.field, page or "SEM-URL", "ERROR %s" % _ERR_INVALID_ARG)
-        return _emit_error(
-            _ERR_INVALID_ARG,
-            "this item has no %r; it has: %s" % (args.field, ", ".join(_field_labels(item)) or "nothing"),
-        )
-
-    # The value and whether the vault conceals it come out of ONE resolved item,
-    # in one answer. Asking twice -- describe, then release -- let the two drift
-    # apart: an item edited between the calls could be released under the
-    # previous answer's flag, which is exactly how a concealed field ends up
-    # typed in the clear.
-    concealed = next((d["hidden"] for d in _field_descriptors(item) if d["label"] == args.field), None)
-    if concealed is None:
+    # ONE resolution answers everything: whether this item offers the field at
+    # all, and whether the vault conceals it. There used to be a separate,
+    # looser "releasable" set beside this, which could say yes where the
+    # descriptors said nothing -- two answers to one question, and the wrong one
+    # winning was how a field got released without a classification.
+    descriptor = next((d for d in _field_descriptors(item) if d["label"] == args.field), None)
+    if descriptor is None:
         _audit(args.item_id, args.field, page or "SEM-URL", "ERROR %s" % _ERR_INVALID_ARG)
         return _emit_error(
             _ERR_INVALID_ARG,
             "this item does not offer %r; it offers: %s" % (args.field, ", ".join(_field_labels(item)) or "nothing"),
         )
+    concealed = descriptor["hidden"]
 
     if args.field == _FIELD_TOTP:
         rc, stdout, stderr = _run_vault(["get", "totp", args.item_id])

@@ -15,6 +15,9 @@
  *   FAKE_CSP_BLOCKS_MASK=1   answer every masked fill "unmasked" and type
  *                            nothing, the way a page whose style-src omits
  *                            'unsafe-inline' defeats the mask
+ *   FAKE_REMASK_FAILS=1      refuse screenshot/forms while a field is masked,
+ *                            the way the real server refuses when a mark will
+ *                            not go back on
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
  *   FAKE_CMD_LOG=path  append the JSON of every command received, one per line
  *                      (proof of what the device asked the browser to do). The
@@ -34,6 +37,9 @@ const state = {
   pages: [{ url: "about:blank", title: "blank" }],
   active: 0,
   commands: 0,
+  // Selectors filled with something concealed, as the real server tracks them:
+  // added by a masked fill, dropped by a visible one.
+  masked: new Set(),
 };
 
 function current() {
@@ -51,6 +57,13 @@ function respond(obj) {
 
 function handle(cmd) {
   const a = cmd.action;
+  // The real server re-applies every mark before it lets anything be observed,
+  // and refuses the observation when one will not take. FAKE_REMASK_FAILS is
+  // how a test says "it will not take".
+  if ((a === "screenshot" || a === "forms") && state.masked.size > 0
+      && process.env.FAKE_REMASK_FAILS === "1") {
+    return { ok: false, mask: "unmasked" };
+  }
   if (a === "goto") {
     current().url = cmd.url;
     current().title = "page at " + cmd.url;
@@ -112,17 +125,14 @@ function handle(cmd) {
         `${cmd.selector}\t${cmd.value}\t${cmd.frame ?? 0}\n`,
       );
     }
+    const key = `${cmd.frame ?? 0}\u0000${cmd.selector}`;
+    if (cmd.mask) state.masked.add(key);
+    else state.masked.delete(key);
     return {
       ok: true,
       frame: cmd.frame ?? 0,
       ...(cmd.mask ? { mask: "stylesheet" } : {}),
     };
-  }
-  if (a === "mark") {
-    // Whether the node is still there is the page's business; the fixture just
-    // answers, and the command log is what a test reads.
-    if (process.env.FAKE_MARK_GONE === "1") return { ok: false, mask: "gone" };
-    return { ok: true, mask: "stylesheet", frame: cmd.frame ?? 0 };
   }
   if (a === "locate") {
     if (String(cmd.selector).startsWith("#card")) {

@@ -31,10 +31,6 @@ interface Session {
   origins: string[];
   credentialMetadata: boolean;
   credentialItems: Set<string>;
-  /** Every (frame, selector) this session has filled with something the vault
-   * conceals, so the mark can be put back before the agent looks at the page.
-   * See `remask`. */
-  maskedTargets: { frame: number; selector: string }[];
   lastActivity: number;
   lastUrl: string;
   knownPageCount: number;
@@ -142,7 +138,6 @@ export class BrowserSessions {
       origins: origins.map(normalizeOrigin),
       credentialMetadata,
       credentialItems: new Set(),
-      maskedTargets: [],
       lastActivity: Date.now(),
       lastUrl: "",
       knownPageCount: 1,
@@ -305,14 +300,6 @@ export class BrowserSessions {
           return await this.serverAction(s, { action: "goto", url: target });
         }
         default: {
-          // Before the agent gets to look at the page, put back any mark the
-          // page has thrown away. A framework that rebuilds an input on
-          // re-render hands back a node with the value and without the
-          // attribute, and a screenshot taken then shows the secret. This does
-          // not make that impossible — the value is in the page and the page
-          // owns it — but it closes the window that is actually reachable in
-          // ordinary use.
-          if (action === "screenshot" || action === "forms") await this.remask(s);
           // Pass-through actions; the server rejects unknown ones.
           const forwarded: { [k: string]: JSONValue } = { action };
           for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
@@ -364,6 +351,25 @@ export class BrowserSessions {
       url: stripQuery(url),
     });
 
+    // The browser puts the mark back on every concealed field before it lets
+    // anything be observed, and says so when one of them would not take. It
+    // sends no picture and no field list in that case, and neither does this:
+    // an observation that cannot be made safely is not made.
+    if (result.ok === false && result.mask === "unmasked") {
+      this.audit("credential_mask_failed", {
+        session: s.handle,
+        action: String(action.action),
+        url: stripQuery(url),
+      });
+      return {
+        status: "error",
+        error:
+          `${String(action.action)} was refused: a field on this page holds a value the vault ` +
+          `conceals and the page will not let it be hidden on screen. Navigate away from it, ` +
+          `or fill that field by hand.`,
+      };
+    }
+
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
@@ -388,22 +394,6 @@ export class BrowserSessions {
       delete out.title;
     }
     return out;
-  }
-
-  /**
-   * Re-apply the mark to every field this session filled with something the
-   * vault conceals. Best effort throughout: a target that no longer resolves is
-   * a field that is no longer on the page, and a failure here must not stop the
-   * owner's agent from seeing where it is.
-   */
-  private async remask(s: Session): Promise<void> {
-    for (const target of s.maskedTargets) {
-      try {
-        await this.host.sendAction({ action: "mark", selector: target.selector, frame: target.frame });
-      } catch {
-        /* the field is gone, or the page is mid-navigation */
-      }
-    }
   }
 
   private async sweepPages(s: Session): Promise<void> {
@@ -605,10 +595,6 @@ export class BrowserSessions {
       };
     } finally {
       secret = "";
-    }
-    // Remembered so the mark can be put back if the page replaces the node.
-    if (mask && !s.maskedTargets.some((t) => t.frame === frame && t.selector === selector)) {
-      s.maskedTargets.push({ frame, selector });
     }
     this.audit("credential_filled", {
       session: s.handle,

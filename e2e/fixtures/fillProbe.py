@@ -118,6 +118,93 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     return out
 
 
+class LedgerNode:
+    """A node that remembers whether it is marked, and may refuse to be."""
+
+    def __init__(self, refuses=False):
+        self.marked = False
+        self.refuses = refuses
+        self.value = ""
+
+    def evaluate(self, js):
+        if "removeAttribute" in js:
+            self.marked = False
+            return True
+        if self.refuses:
+            return "unmasked"
+        self.marked = True
+        return "stylesheet"
+
+    def fill(self, value, timeout=None):
+        self.value = value
+
+
+class LedgerFrame:
+    def __init__(self, nodes):
+        self.url = "https://pizza.example/login"
+        self.nodes = nodes
+
+    def evaluate(self, js, *a, **k):
+        return []          # the forms scanner, over no fields
+
+    def query_selector(self, selector):
+        return self.nodes.get(selector)
+
+    def wait_for_selector(self, selector, timeout=None):
+        node = self.nodes.get(selector)
+        if node is None:
+            raise RuntimeError("selector not found: %s" % selector)
+        return node
+
+
+class LedgerPage:
+    def __init__(self, frame):
+        self.url = "https://pizza.example/login"
+        self.frames = [frame]
+        self.context = type("Ctx", (), {"pages": [self]})()
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+    def inner_text(self, _sel):
+        return ""
+
+
+def ledger(server, script):
+    """Run a sequence of commands against ONE session and report what the
+    server's own mask ledger did. Values never leave this function."""
+    nodes = {"#pass": LedgerNode(), "#addr": LedgerNode()}
+    frame = LedgerFrame(nodes)
+    page = LedgerPage(frame)
+    session = server.Session(page)
+    steps = []
+    for step in script:
+        if step.get("navigate"):
+            page.url = step["navigate"]
+            frame.url = step["navigate"]
+            steps.append({"step": "navigate", "result": None})
+            continue
+        if step.get("vanish"):
+            nodes.pop(step["vanish"], None)
+            steps.append({"step": "vanish", "result": None})
+            continue
+        if step.get("refuse"):
+            nodes[step["refuse"]].refuses = True
+            steps.append({"step": "refuse", "result": None})
+            continue
+        try:
+            result = session.handle(dict(step["cmd"]), "/tmp")
+            keep = {k: v for k, v in result.items() if k in ("ok", "mask")}
+        except Exception as exc:  # noqa: BLE001
+            keep = {"error": type(exc).__name__}
+        steps.append({"step": step["cmd"]["action"], "result": keep})
+    return {
+        "steps": steps,
+        "tracked": sorted("%d:%s" % t for t in session.masked.get(page, set())),
+        "marked": {sel: node.marked for sel, node in nodes.items()},
+    }
+
+
 def main() -> int:
     # Taken BEFORE server.py claims fd 1 (see the module docstring).
     out = os.fdopen(os.dup(1), "w")
@@ -132,6 +219,24 @@ def main() -> int:
         # A visible fill that fails: the node still holds whatever was in it,
         # which may be the last secret, so the mark must still be there.
         "plain_failed": run(server, base, detach_before_fill=True, marked=True),
+    }
+    fill_pass = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0, "mask": True}
+    fill_addr_at_pass = {"action": "fill", "selector": "#pass", "value": "1 Elm St", "frame": 0}
+    observe = {"action": "forms"}
+    result["ledger"] = {
+        "kept": ledger(server, [{"cmd": fill_pass}, {"cmd": observe}]),
+        "visible_overwrite": ledger(server, [
+            {"cmd": fill_pass}, {"cmd": fill_addr_at_pass}, {"cmd": observe},
+        ]),
+        "navigated": ledger(server, [
+            {"cmd": fill_pass}, {"navigate": "https://pizza.example/done"}, {"cmd": observe},
+        ]),
+        "wont_take": ledger(server, [
+            {"cmd": fill_pass}, {"refuse": "#pass"}, {"cmd": observe},
+        ]),
+        "node_gone": ledger(server, [
+            {"cmd": fill_pass}, {"vanish": "#pass"}, {"cmd": observe},
+        ]),
     }
     out.write(json.dumps(result))
     out.flush()

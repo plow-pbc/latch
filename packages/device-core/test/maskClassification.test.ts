@@ -17,6 +17,8 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CredentialFieldInfo } from "@domo/device-core";
 
@@ -43,6 +45,7 @@ const SECRETS = [
   "078-05-1120",
   "X1234567",
   "BEGIN OPENSSH PRIVATE KEY",
+  "concealed-custom",
 ];
 
 function haveHost(bin: string): boolean {
@@ -54,17 +57,35 @@ function haveHost(bin: string): boolean {
   }
 }
 
+/**
+ * Python is run with its bytecode cache pointed at a throwaway directory.
+ *
+ * The system python3 here writes .pyc files to a cache OUTSIDE the source tree
+ * and validates them on (mtime, size) alone. An edit that changes neither —
+ * a mutation test that happens to be byte-length-neutral, applied and reverted
+ * inside one second — leaves a stale .pyc that Python believes is current, and
+ * every later run executes code that is not on disk. That cost an afternoon
+ * once. A fresh prefix per run means there is never a cache to be stale.
+ */
+function pythonEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-")),
+  };
+}
+
 const HAVE_PYTHON = haveHost("python3");
 
 describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
   const probed = (() => {
-    const out = execFileSync("python3", [PROBE, TABLE_PATH], { encoding: "utf8" });
+    const out = execFileSync("python3", [PROBE, TABLE_PATH], { encoding: "utf8", env: pythonEnv() });
     return JSON.parse(out) as {
       [name: string]: {
         descriptors: CredentialFieldInfo[];
         labels: string[];
         releasable: { [label: string]: boolean };
         release: { [label: string]: { answered: boolean; flagged: boolean; agrees: boolean } };
+        undescribedRefused: boolean;
         released: { [label: string]: string | null };
         unknownKeyReadable: boolean;
       };
@@ -183,21 +204,6 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
     expect(probed["identity with linked custom fields"].released["who"]).toBe(expected);
   });
 
-  it("reports nothing for an item type the vault cannot store", () => {
-    // Not an oversight and not a gap to close here: vaultwarden 1.37.1 rejects
-    // types 6-8 on every write path (src/api/core/ciphers.rs:508-515), so one
-    // cannot reach the broker to be classified. Pinned so that whoever upgrades
-    // the vault finds these cases waiting.
-    for (const name of [
-      "bank account (type the vault cannot store)",
-      "driving licence (type the vault cannot store)",
-      "passport (type the vault cannot store)",
-    ]) {
-      expect(probed[name].descriptors).toEqual([]);
-      expect(probed[name].labels).toEqual([]);
-    }
-  });
-
   for (const c of CASES) {
     it(`answers value and concealment in one release for ${c.name}`, () => {
       // The coherence property the design rests on: one command, one reading of
@@ -209,6 +215,25 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
         expect(shape.flagged, `${label} carried a concealment flag`).toBe(true);
         expect(shape.agrees, `${label} agreed with its descriptor`).toBe(true);
       }
+    });
+  }
+
+  it("resolves a link to a fixed slot or to nothing, never to a custom field", () => {
+    // The link points at LoginLinkedId.Username on an item with no username
+    // slot. Falling through to the Hidden custom field of that name would
+    // release a concealed value under a flag read from the absent slot.
+    const fell = probed["linked field pointing at an empty slot"];
+    expect(fell.descriptors.map((d) => d.label)).not.toContain("who");
+    expect(fell.releasable["who"]).toBeUndefined();
+  });
+
+  for (const c of CASES) {
+    it(`refuses a label it can read but does not offer, for ${c.name}`, () => {
+      // One resolution decides everything: a field with no descriptor has no
+      // decision about whether it may be shown, so it is not released at all.
+      // `full name` is the live case — it exists for a linked field to point
+      // at, and is not one of the item's own fields.
+      expect(probed[c.name].undescribedRefused).toBe(true);
     });
   }
 
