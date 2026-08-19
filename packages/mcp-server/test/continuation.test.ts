@@ -484,14 +484,24 @@ describe("through the server, over repeated reads", () => {
     expect(events).toEqual([CONTINUATION_EVENTS.ready, CONTINUATION_EVENTS.expired]);
   });
 
-  it("expires an idle uncollected result on its own, with nothing else running", async () => {
-    // Nothing polls, nothing else is called, and no other work touches the
-    // store. A swept-only expiry would leave this result "ready, uncollected"
-    // in the timeline for ever, which is the one ending a user cannot act on.
+  it("expires an idle uncollected result on its own — nothing polls, nothing sweeps", async () => {
+    // The autonomous path, isolated. After the one call that defers, NOTHING
+    // touches the server: no get_result, no second tool call, so neither the
+    // read path nor the insert sweep can be what expires this. A timer on the
+    // landed result is the only thing left that can, and the audit line is the
+    // proof it fired.
     const home = tempDir();
     const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
-    const server = createDomoMcpServer(device, { budgetMs: 20, ttlMs: 60 });
+    const server = createDomoMcpServer(device, { budgetMs: 20, ttlMs: 80 });
     cleanups.push(() => server.close());
+
+    // Count every way into the store, so the test can prove it used none.
+    let fetches = 0;
+    const realFetch = server.fetch.bind(server);
+    server.fetch = ((...args: Parameters<typeof realFetch>) => {
+      fetches += 1;
+      return realFetch(...args);
+    }) as typeof server.fetch;
 
     device.handleIntent = (async () => {
       await new Promise((r) => setTimeout(r, 40));
@@ -504,16 +514,95 @@ describe("through the server, over repeated reads", () => {
     expect(payload.status).toBe("pending");
     const handle = payload.handle as string;
     const intentId = server.continuations.intentOf(handle)!;
+    const callsSoFar = fetches;
 
-    // Wait it out without touching the server at all.
-    for (let i = 0; i < 60 && server.continuations.state(handle) !== "expired"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    // One flat wait: the result lands at ~40ms and retention runs out ~80ms
+    // after that. No polling of any kind in between.
+    await new Promise((r) => setTimeout(r, 400));
+
+    // Nothing was asked of the server in that window.
+    expect(fetches).toBe(callsSoFar);
     expect(server.continuations.state(handle)).toBe("expired");
     const events = timeline(device, intentId);
     expect(events.filter((e) => e === CONTINUATION_EVENTS.expired)).toEqual([
       CONTINUATION_EVENTS.expired,
     ]);
     expect(events).not.toContain(CONTINUATION_EVENTS.collected);
+  });
+
+  it("answers a slow approval as pending past retention, then ready — never expired", async () => {
+    // The revival this forbids, at the level the AGENT sees: a human who takes
+    // longer than retention used to get the handle answering `expired` while
+    // their approval was still on screen, and `ready` the moment they said yes.
+    const home = tempDir();
+    let approve = () => {};
+    const waited = new Promise<void>((r) => {
+      approve = () => r();
+    });
+    const device = new DeviceAgent(home, "Test Mac", {
+      decideIntent: async () => {
+        await waited;
+        return "allow_once" as const;
+      },
+    });
+    // Retention shorter than the human takes — the whole point.
+    const server = createDomoMcpServer(device, { budgetMs: 20, ttlMs: 40 });
+    cleanups.push(() => server.close());
+
+    const file = path.join(tempDir(), "hello.txt");
+    fs.writeFileSync(file, "the numbers");
+    const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
+    expect(payload.status).toBe("pending");
+    const handle = payload.handle as string;
+    const intentId = server.continuations.intentOf(handle)!;
+
+    // Well past retention, with the human still deciding.
+    await new Promise((r) => setTimeout(r, 200));
+    const stillWaiting = (await callTool(server, "get_result", { handle }, AGENT)).payload;
+    expect(stillWaiting.status).toBe("pending");
+    expect(server.continuations.state(handle)).toBe("waiting_inline");
+    expect(timeline(device, intentId)).not.toContain(CONTINUATION_EVENTS.expired);
+
+    approve();
+    let poll = stillWaiting;
+    for (let i = 0; i < 80 && poll.status === "pending"; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      poll = (await callTool(server, "get_result", { handle }, AGENT)).payload;
+    }
+    // Ready, and never having claimed to be expired on the way.
+    expect(poll.status).toBe("ready");
+    expect(poll.result.content).toBe("the numbers");
+    expect(server.continuations.state(handle)).toBe("collected");
+  });
+
+  it("keeps expired terminal: a late lookup never finds a result again", async () => {
+    const home = tempDir();
+    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
+    let clock = 1_000_000;
+    const server = createDomoMcpServer(device, { budgetMs: 20, ttlMs: 60_000, now: () => clock });
+    cleanups.push(() => server.close());
+
+    device.handleIntent = (async () => {
+      await new Promise((r) => setTimeout(r, 40));
+      return { status: "ok", content_base64: Buffer.from("gone").toString("base64") };
+    }) as never;
+
+    const file = path.join(tempDir(), "hello.txt");
+    fs.writeFileSync(file, "gone");
+    const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
+    const handle = payload.handle as string;
+    for (let i = 0; i < 40 && server.continuations.state(handle) !== "approved_uncollected"; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    clock += 60_001;
+    expect((await callTool(server, "get_result", { handle }, AGENT)).payload.status).toBe("expired");
+    // Every later read agrees. Expired is an ending, not a phase.
+    for (let i = 0; i < 3; i++) {
+      expect((await callTool(server, "get_result", { handle }, AGENT)).payload.status).toBe(
+        "expired",
+      );
+    }
+    expect(server.continuations.state(handle)).toBe("expired");
   });
 });

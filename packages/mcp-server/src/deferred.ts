@@ -13,11 +13,16 @@
  *  - **A handle belongs to the `agent_id` that created it.** Another agent
  *    presenting it gets `unknown` — indistinguishable from a handle that never
  *    existed, so a handle is not an oracle for what other agents are doing.
- *  - **Fifteen minutes.** A pending handle outlives a human walking away, and a
- *    terminal result stays retrievable for fifteen minutes after it lands.
+ *  - **Fifteen minutes, and only for a result.** A pending handle stays live
+ *    however long the human takes — retention is for something retained, and a
+ *    handle that answered `expired` mid-approval only to answer `ready`
+ *    afterwards told the agent the operation was dead and then alive. A
+ *    terminal payload stays retrievable for fifteen minutes after it lands,
+ *    and expiry is the end of it.
  *
- * There are no timers here: entries are swept lazily on access, so this holds
- * nothing open and cannot keep a process alive.
+ * A landed result carries one timer, so retention runs out on a Mac that has
+ * gone quiet rather than waiting for the next call to sweep. It is unref'd and
+ * cannot keep the process alive; everything else here is swept lazily.
  */
 import crypto from "node:crypto";
 import { JSONValue } from "@domo/protocol";
@@ -97,8 +102,17 @@ type Entry = {
   reason: PendingReason;
   /** Set once the work settles; until then the entry is pending. */
   terminal: JSONValue | null;
-  /** When this handle stops answering: creation + TTL, then re-stamped on landing. */
-  expiresAt: number;
+  /**
+   * When this handle stops answering — `null` while the work is still pending.
+   *
+   * Retention is for a RESULT, and pending work has none. Stamping it at
+   * creation meant a handle whose human took longer than retention answered
+   * `expired` while the approval was still on screen, and then answered `ready`
+   * the moment they said yes: an agent told the operation was dead, and told
+   * otherwise if it asked again. Expiry is terminal-only for that reason, and
+   * `expired` is the end of this entry rather than a phase of it.
+   */
+  expiresAt: number | null;
   /**
    * Fires when retention runs out on a terminal payload nobody collected.
    *
@@ -185,19 +199,22 @@ export class DeferredResults {
     const record = (value: JSONValue) => {
       settled = true;
       const status = (value as { status?: string }).status;
-      const tell = () => {
-        this.armExpiry(handle);
+      // Land the payload, start retention on it, and say what became of the
+      // work — in that order, and only once there is an entry to land it in.
+      const apply = () => {
+        const entry = this.entries.get(handle);
+        if (entry) {
+          entry.terminal = value;
+          entry.expiresAt = this.now() + this.ttlMs;
+          // Retention starts here, when there is finally something to retain.
+          this.armExpiry(handle);
+        }
         if (status === "ready") this.continuations?.ready(handle);
         else if (status === "denied") this.continuations?.denied(handle);
         else this.continuations?.failed(handle);
       };
-      if (this.entries.has(handle)) tell();
-      else announce = tell;
-      const entry = this.entries.get(handle);
-      if (entry) {
-        entry.terminal = value;
-        entry.expiresAt = this.now() + this.ttlMs;
-      }
+      if (this.entries.has(handle)) apply();
+      else announce = apply;
     };
     const done = started.then(
       (result) => {
@@ -245,7 +262,9 @@ export class DeferredResults {
       agentId,
       reason,
       terminal: null,
-      expiresAt: this.now() + this.ttlMs,
+      // Pending: live until the work lands. §6 — "records remain live while
+      // work or approval is pending".
+      expiresAt: null,
       expiry: null,
     });
     // The envelope is about to go back down one relay exchange; remember which,
@@ -265,9 +284,11 @@ export class DeferredResults {
    */
   private armExpiry(handle: string): void {
     const entry = this.entries.get(handle);
-    if (!entry || entry.expiry) return;
+    if (!entry || entry.expiry || entry.terminal === null) return;
     const timer = setTimeout(() => {
       entry.expiry = null;
+      // Only the audit needs telling: `expiresAt` was stamped when the payload
+      // landed, so by now the read path already answers `expired` on its own.
       this.continuations?.expired(handle);
     }, this.ttlMs);
     timer.unref?.();
@@ -283,7 +304,9 @@ export class DeferredResults {
     this.sweep();
     const entry = this.entries.get(handle);
     if (!entry || entry.agentId !== agentId) return { status: "unknown", handle };
-    if (this.now() > entry.expiresAt) {
+    // Only a landed result can have run out of retention. Pending work is
+    // answered as pending however long the human takes.
+    if (entry.expiresAt !== null && this.now() > entry.expiresAt) {
       this.continuations?.expired(handle);
       return { status: "expired", handle };
     }
@@ -317,8 +340,11 @@ export class DeferredResults {
     const now = this.now();
     const cutoff = now - this.ttlMs;
     for (const [handle, entry] of this.entries) {
-      // Retention elapsed. Recorded here as well as on a read, so an operation
-      // nobody ever came back for still ends up with an ending in the timeline.
+      // Pending work is never swept and never expired: it has no result to
+      // retain, and the only honest answer to "is it done" is "not yet".
+      if (entry.expiresAt === null) continue;
+      // Retention elapsed. Recorded here as well as on the scheduled timer, so
+      // a clock a test drives forward reaches the same ending.
       if (entry.expiresAt < now) this.continuations?.expired(handle);
       if (entry.expiresAt < cutoff) {
         if (entry.expiry) clearTimeout(entry.expiry);
