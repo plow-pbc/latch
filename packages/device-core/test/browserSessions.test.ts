@@ -415,5 +415,10 @@ describe("access the owner's log could not record is not granted", () => {
     // A live session with no opening event is a browser being used that the
     // owner cannot see at all — the bug this PR exists to close.
     expect(sessions.current()).toBeNull();
+    // ...and the browser itself must not be left running. open() warms it
+    // before it audits, and headed means a window is already on screen, so a
+    // failed open that walks away leaves exactly the unlogged browser the
+    // session check just prevented.
+    expect(ctx.host.running).toBe(false);
   });
 });

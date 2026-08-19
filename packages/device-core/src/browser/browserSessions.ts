@@ -144,13 +144,23 @@ export class BrowserSessions {
     };
     // Same order as extend(), and for the same reason: a session the owner's
     // log has no event for is a browser they cannot see being used at all.
-    this.audit("browser_session_opened", {
-      intentId,
-      session: session.handle,
-      origins: session.origins,
-      credential_metadata: credentialMetadata,
-      headed: this.host.headed,
-    });
+    try {
+      this.audit("browser_session_opened", {
+        intentId,
+        session: session.handle,
+        origins: session.origins,
+        credential_metadata: credentialMetadata,
+        headed: this.host.headed,
+      });
+    } catch (error: unknown) {
+      // The browser is already warm — ensureReady ran above, and headed means a
+      // window is on screen. If the opening cannot be recorded there is no
+      // session to close it later, so put it away here: a running browser with
+      // no session and no audit line is precisely the invisible browser this
+      // path exists to prevent.
+      await this.host.shutdown();
+      throw error;
+    }
     this.session = session;
     this.armIdleTimer();
     return {
