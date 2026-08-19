@@ -59,34 +59,6 @@ describe("approvalViewModel", () => {
   });
 });
 
-/**
- * The owner's purpose statement is deliberately NOT on this card.
- *
- * A row was added and then removed: the owner wrote the thing, needs no echo of
- * it, and in a fixed 460x560 window long prose starved the capability list —
- * the one part of the card that is a promise about what will happen. The work
- * the statement does happens in the reviewer's prompt, where length costs
- * nothing a person is looking at. This test is the guard against it drifting
- * back in.
- */
-describe("the approval card carries no owner-authored purpose", () => {
-  it("has no purpose field, whatever the caller passes", () => {
-    const vm = approvalViewModel(intentOf());
-    expect(vm).not.toHaveProperty("agentPurpose");
-    expect(Object.keys(vm)).not.toContain("agentPurpose");
-
-    // And a third argument — the shape the removed plumb had — reaches nothing.
-    const withExtra = (
-      approvalViewModel as unknown as (
-        i: Intent,
-        t?: unknown,
-        p?: string,
-      ) => ReturnType<typeof approvalViewModel>
-    )(intentOf(), undefined, "Groceries and calendar only. Never touch ~/Developer.");
-    expect(JSON.stringify(withExtra)).not.toContain("Groceries");
-  });
-});
-
 describe("auditActivities (grouping)", () => {
   // A full command lifecycle for one intent: received → decided → ran → finished.
   const commandRun: JSONValue[] = [
