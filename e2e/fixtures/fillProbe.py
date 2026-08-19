@@ -45,16 +45,27 @@ class Handle:
     stopped allowing it".
     """
 
-    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False):
+    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
+                 document_url="https://pizza.example/login", value="", partial_fill=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
+        self.partial_fill = partial_fill
         self.mask_result = mask_result
         self.marked = marked
+        # Which document this node is in, and what it currently holds. A fill
+        # that fails leaves the value alone; one that half-lands changes it.
+        self.document_url = document_url
+        self.value = value
 
     def evaluate(self, js):
         # Recorded as a fact about the script, not its text: which one it is.
-        if "__domoDocumentToken" in js:
-            return "doc-1"
+        # Ordered most specific first: MASK_JS mentions setAttribute,
+        # removeAttribute AND hasAttribute, so anything looser matches it by
+        # accident and the scenario quietly tests nothing.
+        if "ownerDocument" in js and "location" in js:
+            return self.document_url
+        if "charCodeAt" in js:
+            return "%d:%s" % (len(self.value), self.value)
         if "setAttribute" in js and "data-domo-secret" in js:
             self.marked = True
             self.trace.append("handle.evaluate:mark")
@@ -63,6 +74,8 @@ class Handle:
             self.marked = False
             self.trace.append("handle.evaluate:unmark")
             return True
+        if "hasAttribute" in js:
+            return self.marked
         self.trace.append("handle.evaluate:other")
         return None
 
@@ -70,9 +83,16 @@ class Handle:
         # A failed fill is traced too, and distinctly: "did it try" and "did it
         # land" are different questions, and what happens after a fill that did
         # not land is the whole point of one of these scenarios.
+        if self.partial_fill:
+            # Some of it went in and then the field went away: the node is
+            # holding something nobody can account for.
+            self.value = value
+            self.trace.append("handle.fill-failed")
+            raise RuntimeError("Element is not attached to the DOM")
         if self.detach_before_fill:
             self.trace.append("handle.fill-failed")
             raise RuntimeError("Element is not attached to the DOM")
+        self.value = value
         self.trace.append("handle.fill")
 
 
@@ -85,10 +105,12 @@ class Frame:
     """
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
-                 nodes=None):
+                 nodes=None, document_url="https://pizza.example/login", value="",
+                 partial_fill=False):
         self.trace = trace
         self.url = "https://pizza.example/login"
-        self.handle = Handle(trace, detach_before_fill, mask_result, marked)
+        self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
+                             partial_fill)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -137,11 +159,14 @@ class Page:
         return ""
 
 
-def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False):
+def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
+        document_url="https://pizza.example/login", value="", partial_fill=False):
     trace: list[str] = []
-    frame = Frame(trace, detach_before_fill, mask_result, marked)
+    frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
+                  value=value, partial_fill=partial_fill)
     session = server.Session(Page(frame))
-    out = {"trace": trace, "error": None, "marked": False, "result": None}
+    out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
+           "ledgered": False}
     try:
         result = session.handle(dict(cmd), "/tmp")
         # The value is never part of this: only whether the fill happened.
@@ -149,6 +174,8 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     except Exception as exc:  # noqa: BLE001 — the scenario under test
         out["error"] = type(exc).__name__
     out["marked"] = frame.handle.marked
+    out["value_kept"] = frame.handle.value == value
+    out["ledgered"] = bool(session.masked)
     return out
 
 
@@ -206,8 +233,27 @@ def main() -> int:
     out = os.fdopen(os.dup(1), "w")
     server = load_server()
     base = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0}
+    # The device approved THIS document before it went to the vault.
+    approved = {"frame_url": "https://pizza.example/login"}
     result = {
         "masked": run(server, {**base, "mask": True}),
+        # Same index, different document: the frame was swapped while the value
+        # was being fetched.
+        "frame_moved": run(server, {**base, "mask": True, **approved},
+                           document_url="https://ads.example/tracker"),
+        "frame_same": run(server, {**base, "mask": True, **approved}),
+        # The mark takes and the fill then times out, over a field that already
+        # held something ordinary.
+        "orphan_mark": run(server, {**base, "mask": True}, detach_before_fill=True,
+                           value="1 Elm St"),
+        # Half of it landed before the field went away: the node is holding
+        # something unaccounted for, so the mark stays on and is ledgered.
+        "orphan_mark_partial": run(server, {**base, "mask": True}, partial_fill=True,
+                                   value="1 Elm St"),
+        # The node was already carrying a secret when this fill failed: its mark
+        # is not ours to take off.
+        "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
+                                     marked=True, value="hunter2"),
         "plain": run(server, base),
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.

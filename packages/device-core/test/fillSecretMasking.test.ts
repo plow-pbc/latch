@@ -136,13 +136,13 @@ async function session(): Promise<string> {
 }
 
 /** Every command the device sent, values already redacted by the fixture. */
-function commands(): { action: string; selector?: string; mask?: boolean }[] {
+function commands(): { action: string; selector?: string; mask?: boolean; frame_url?: string }[] {
   return fs
     .readFileSync(ctx.cmdLog, "utf8")
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l) as { action: string; selector?: string; mask?: boolean });
+    .map((l) => JSON.parse(l) as { action: string; selector?: string; mask?: boolean; frame_url?: string });
 }
 
 /**
@@ -370,6 +370,41 @@ describe("fill_secret marking", () => {
     expect(ctx.events.filter((e) => e.event === "credential_mask_failed").length).toBe(2);
   });
 
+  it("tells the browser which document it approved", async () => {
+    const handle = await session();
+    await ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
+    });
+    // The fill carries the frame's URL, not just its index — an index is not an
+    // identity once the site can swap the frame out.
+    const fill = commands().find((c) => c.action === "fill")!;
+    expect(fill.frame_url).toBe("https://payframe.example/card");
+  });
+
+  it("refuses when the browser says the frame moved", async () => {
+    await ctx.host.shutdown();
+    ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("was replaced while the vault");
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_denied",
+      fields: {
+        session: handle,
+        item: "C1",
+        field: "number",
+        origin: "payframe.example",
+        selector: "#card-number",
+        reason: "the frame was replaced after its origin was approved",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("4111");
+  });
+
   it("keeps the filled value out of the fixture's own command log", async () => {
     const handle = await session();
     await ctx.sessions.command("agent-1", handle, {
@@ -436,6 +471,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         error: string | null;
         marked: boolean;
         result: { ok?: boolean; mask?: string; frame?: number } | null;
+        value_kept: boolean;
+        ledgered: boolean;
       };
     } & {
       ledger: {
@@ -457,17 +494,62 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
-  it("never re-resolves the selector for the fill", () => {
-    // frame.fill(selector, ...) is the second resolution. It must not appear.
-    expect(probed.masked.trace).not.toContain("frame.fill");
-    expect(probed.plain.trace).not.toContain("frame.fill");
+  it("refuses when the frame behind the index is no longer the approved one", () => {
+    // The device checks an origin, then goes away to fetch the value. A site
+    // can swap that iframe out in between, and the index still points at
+    // something — so the browser is told which document was approved and
+    // compares it against the node it actually resolved.
+    const moved = probed.frame_moved;
+    expect(moved.result).toEqual({ ok: false, mask: "moved", frame: 0 });
+    expect(moved.trace).toEqual(["frame.wait_for_selector"]);
+    expect(moved.marked).toBe(false);
+    expect(moved.value_kept).toBe(true);
+    // Same document, same check, and it proceeds.
+    expect(probed.frame_same.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+  });
+
+  it("takes the mark back off when the fill it went with never landed", () => {
+    // Marked, then the fill timed out over a field that already held an
+    // ordinary value. Left alone, that field is tagged and blanked from
+    // `forms` for the life of the page.
+    const orphan = probed.orphan_mark;
+    expect(orphan.trace).toEqual([
+      "frame.wait_for_selector",
+      "handle.evaluate:mark",
+      "handle.fill-failed",
+      "handle.evaluate:unmark",
+    ]);
+    expect(orphan.marked).toBe(false);
+    expect(orphan.value_kept).toBe(true);
+  });
+
+  it("keeps and ledgers the mark when part of the value did land", () => {
+    // The field is holding something nobody can account for. Taking the mark
+    // off would show it; forgetting it would leave it uncovered at the next
+    // screenshot. So it stays marked and the ledger learns about it.
+    const partial = probed.orphan_mark_partial;
+    expect(partial.marked).toBe(true);
+    expect(partial.ledgered).toBe(true);
+    expect(partial.value_kept).toBe(false);
+  });
+
+  it("never strips a mark it did not put on", () => {
+    // This node was already carrying a secret when the fill failed. Rolling
+    // back to "as found" means leaving that mark exactly where it was.
+    const pre = probed.orphan_mark_premarked;
+    expect(pre.marked).toBe(true);
+    expect(pre.value_kept).toBe(true);
   });
 
   it("does not type the value when the marked node went away", () => {
-    expect(probed.detached.marked).toBe(true);
     expect(probed.detached.trace).not.toContain("handle.fill");
     expect(probed.detached.trace).toContain("handle.fill-failed");
     expect(probed.detached.error).toBe("RuntimeError");
+    // Nothing landed, so the mark does not survive either — a node that went
+    // away mid-fill is put back as it was found, same as any other fill that
+    // did not happen.
+    expect(probed.detached.marked).toBe(false);
+    expect(probed.detached.value_kept).toBe(true);
   });
 
   it("does not type the value when the page defeated the mark", () => {
@@ -682,11 +764,15 @@ describe("the mark the page ends up carrying", () => {
   const mark = loadScript("MASK_JS") as (el: StubEl) => string;
   const unmark = loadScript("UNMASK_JS") as (el: StubEl) => boolean;
 
-  it("puts the attribute the forms scan looks for on the element", () => {
+  it("puts the attribute the forms scan looks for on the element, and nothing else", () => {
     const page = stubPage();
     const el = page.el();
     expect(mark(el)).toBe("stylesheet");
     expect(el.attrs).toEqual({ "data-domo-secret": "" });
+    // One attribute, one stylesheet, no inline fallback needed on a page that
+    // allows the stylesheet.
+    expect(page.doc.styles.length).toBe(1);
+    expect(el.style.props).toEqual({});
   });
 
   it("injects the stylesheet once across repeated fills", () => {
@@ -696,15 +782,6 @@ describe("the mark the page ends up carrying", () => {
     expect(mark(page.el())).toBe("stylesheet");
     expect(page.doc.styles.length).toBe(1);
     expect(page.doc.styles[0].textContent).toBe("[data-domo-secret]{-webkit-text-security:disc}");
-  });
-
-  it("adds one attribute and one style element on an ordinary page", () => {
-    const page = stubPage();
-    const el = page.el();
-    mark(el);
-    expect(Object.keys(el.attrs)).toEqual(["data-domo-secret"]);
-    expect(page.doc.styles.length).toBe(1);
-    expect(el.style.props).toEqual({});
   });
 
   it("falls back to the element's own style when a CSP blocks the stylesheet", () => {

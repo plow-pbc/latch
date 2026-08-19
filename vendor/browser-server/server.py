@@ -149,10 +149,34 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
+# Where a resolved node actually lives. The device names a frame by index, and
+# an index is not an identity: a site can swap an iframe out between the moment
+# the device located the field and the moment the value arrives, and the number
+# still points at something. This asks the node itself which document it is in,
+# so the answer cannot be stale.
+DOC_URL_JS = """(el) => {
+    const doc = el.ownerDocument;
+    const win = doc && doc.defaultView;
+    return (win && win.location && win.location.href) || "";
+}"""
+
+# A fingerprint of what a field currently holds -- never the value. Enough to
+# tell "unchanged" from "something landed in it", which is the only question
+# asked of it, and nothing more: a 32-bit hash of a secret is not a secret.
+VALUE_FINGERPRINT_JS = """(el) => {
+    const v = el.value || "";
+    let h = 0;
+    for (let i = 0; i < v.length; i++) h = (Math.imul(h, 31) + v.charCodeAt(i)) | 0;
+    return v.length + ":" + h;
+}"""
+
 # Undoing the mark, for a node being filled with something the vault does not
 # conceal. A node is not a fresh one just because the field is: a login form
 # reused for a username after a password leaves the old mark behind, and the
 # field would render as discs and report as a secret it is not.
+# Whether a node is already carrying the mark, asked before anything touches it.
+WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
+
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
     if (el.style) {
@@ -375,15 +399,41 @@ class Session:
                         el = fr.wait_for_selector(sel, timeout=3000)
                         if el is None:
                             raise RuntimeError("selector not found: %s" % sel)
+                        # The device checked an origin before it went away to
+                        # fetch the value. If the document behind this index is
+                        # no longer the one it checked, nothing here is what was
+                        # approved -- so nothing is marked, and nothing is
+                        # typed.
+                        expected = cmd.get("frame_url")
+                        if expected is not None and el.evaluate(DOC_URL_JS) != expected:
+                            return {"ok": False, "mask": "moved", "frame": i}
                         if cmd.get("mask"):
                             # Marked first, and only typed once the mark is
                             # known to have taken. An unmasked answer means the
                             # page defeated it, and the value is not typed at
                             # all -- the caller turns that into its own refusal.
+                            # Marking and filling are one step or neither: a
+                            # mark that goes on and a fill that then times out
+                            # would leave an ordinary field tagged and withheld
+                            # from `forms` for the life of the page.
+                            was_marked = el.evaluate(WAS_MARKED_JS)
+                            before = el.evaluate(VALUE_FINGERPRINT_JS)
                             state = el.evaluate(MASK_JS)
                             if state == "unmasked":
                                 return {"ok": False, "mask": state, "frame": i}
-                            el.fill(cmd["value"], timeout=3000)
+                            try:
+                                el.fill(cmd["value"], timeout=3000)
+                            except Exception:
+                                # Nothing landed: put the node back as it was
+                                # found. Something did: it is holding a value
+                                # nobody can account for, so the mark stays and
+                                # the ledger learns about it.
+                                if el.evaluate(VALUE_FINGERPRINT_JS) == before:
+                                    if not was_marked:
+                                        el.evaluate(UNMASK_JS)
+                                else:
+                                    self.remember_masked(i, sel)
+                                raise
                             self.remember_masked(i, sel)
                             return {"ok": True, "mask": state, "frame": i}
                         # Not a secret. The mark comes off AFTER the value is

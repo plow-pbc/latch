@@ -73,10 +73,16 @@ titles, usernames and sites, never a value.
 4. Ask for fill rights: \`plow_browser_request {session, credential_items: ["<item-id>"]}\` —
    the owner approves the named items.
 5. \`plow_browser {action: "fill_secret", selector: "#password", item: "<item-id>", field: "password"}\`
-   types the value on the Mac. You get \`{ok: true}\` — never the value. Works for card
-   number/expiry/CVC fields too (cards may fill on any approved origin; logins only on
-   their own site).
-6. Non-secret fields (username, email you can see in metadata) use plain \`fill\`.
+   types the value on the Mac. You get \`{ok: true}\` — never the value. Use it for EVERY
+   field that comes out of the vault, not only the secret ones: an address, a cardholder
+   name and a username are vault fields too, and \`fill_secret\` is the only way to put one
+   in a page. Plain \`fill\` is for text you already have, not for anything the vault holds.
+   Cards may fill on any approved origin; logins only on their own site.
+6. What is hidden afterwards is what the vault itself hides: a password, a card number and
+   security code, an ssn, a Hidden custom field. Those render as dots and \`forms\` reports
+   them present without their characters. Everything else the vault holds — addresses,
+   names, expiry dates — fills as ordinary text you can read back with \`screenshot\` or
+   \`forms\` to check you put it in the right box.
 
 ## Order of operations for a purchase
 

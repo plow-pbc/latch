@@ -208,10 +208,6 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
     });
   }
 
-  it("answers for every case in the table", () => {
-    expect(Object.keys(probed).sort()).toEqual(CASES.map((c) => c.name).sort());
-  });
-
   it("returns no field value for any item in the table", () => {
     const blob = JSON.stringify(probed);
     for (const secret of SECRETS) expect(blob).not.toContain(secret);

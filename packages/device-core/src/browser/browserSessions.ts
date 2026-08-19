@@ -541,6 +541,11 @@ export class BrowserSessions {
         selector,
         value: secret,
         frame,
+        // The origin was checked against this document before the vault was
+        // asked for the value. A frame index is not an identity — the site can
+        // swap the iframe out while that is in flight — so the browser is told
+        // which document was approved and refuses if the node is in another.
+        frame_url: frameUrl,
         // Only a masked field carries the mark; a visible one — an address, a
         // username, a cardholder name — is filled exactly as it always was,
         // with nothing added to the page.
@@ -552,6 +557,23 @@ export class BrowserSessions {
       // nothing was typed: the value would have been legible in every
       // screenshot from that moment on, which is the whole thing this exists to
       // prevent. Refused rather than filled.
+      if (filled.mask === "moved") {
+        this.audit("credential_denied", {
+          session: s.handle,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: "the frame was replaced after its origin was approved",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: the frame holding ${selector} was replaced while the vault ` +
+            `was being asked for the value, so it is no longer the one whose origin was approved. ` +
+            `Screenshot the page and locate the field again.`,
+        };
+      }
       if (filled.ok !== true) {
         this.audit("credential_denied", {
           session: s.handle,

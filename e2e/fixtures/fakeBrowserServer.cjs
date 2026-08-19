@@ -15,6 +15,9 @@
  *   FAKE_CSP_BLOCKS_MASK=1   answer every masked fill "unmasked" and type
  *                            nothing, the way a page whose style-src omits
  *                            'unsafe-inline' defeats the mask
+ *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
+ *                            server does when the resolved node is in a
+ *                            different document than the one approved
  *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
  *                            server refuses when a mark will not go back on
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
@@ -106,6 +109,10 @@ function handle(cmd) {
     // is told the value would have been legible.
     if (cmd.mask && process.env.FAKE_CSP_BLOCKS_MASK === "1") {
       return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
+    }
+    // The frame behind the index is no longer the document the device approved.
+    if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_url) {
+      return { ok: false, mask: "moved", frame: cmd.frame ?? 0 };
     }
     // Playwright puts the value it tried to type into its own failure message.
     // Reproduce that shape so the leak this guards against is testable.
