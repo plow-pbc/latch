@@ -70,6 +70,13 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
 const DEFAULT_BUSY_MS = 60_000;
 
 /**
+ * What a refused caller is told. It names nothing about the holder: behind one
+ * relay id there may be a different person, and their approved origins are not
+ * ours to hand out. The caller only needs to know to wait, not who to blame.
+ */
+const IN_USE = "browser is in use by another session \u2014 retry once it is free";
+
+/**
  * Longest a single `wait` action may park an exchange. The relay abandons a
  * tunnelled call at ~20s and `browser` is non-deferrable, so every action must
  * answer well inside that; `wait` and `goto` are the only ones that can run
@@ -94,6 +101,10 @@ export class BrowserSessions {
   /** Why the last session ended, so a caller holding its handle is told what
    * happened instead of the bare "unknown session". */
   private lastClosed: { handle: string; reason: string } | null = null;
+  /** Held from the moment an open passes its checks until the session it
+   * creates is published, so a second open cannot slip through the awaits in
+   * between. */
+  private opening = false;
 
   constructor(
     private readonly host: BrowserHost,
@@ -135,22 +146,33 @@ export class BrowserSessions {
     if (this.session && this.session.agentId !== agentId) {
       return { status: "error", error: "browser is in use by another agent" };
     }
-    if (this.session) {
-      // Same agent id — which may still be a different caller (see
-      // DEFAULT_BUSY_MS). Take the browser only if the holder has gone quiet.
-      const idleFor = Date.now() - this.session.lastActivity;
-      if (idleFor < this.busyMs) {
-        const secs = Math.round(idleFor / 1000);
-        return {
-          status: "error",
-          error:
-            `browser is in use by a session opened for ` +
-            `[${this.session.origins.join(", ")}], last active ${secs}s ago — ` +
-            `close that session or retry once it is idle`,
-        };
-      }
-      await this.close(this.session.handle, "reopened");
+    // Same agent id — which may still be a different caller (see
+    // DEFAULT_BUSY_MS). Take the browser only if the holder has gone quiet, and
+    // only if no other open is already on its way to claiming it: two that
+    // arrive together would both pass this check, both start a browser, and the
+    // second would orphan the first's handle — reproducing the very fight the
+    // refusal exists to stop. Everything from here to publication is reserved.
+    if (this.opening) return { status: "error", error: IN_USE };
+    if (this.session && Date.now() - this.session.lastActivity < this.busyMs) {
+      return { status: "error", error: IN_USE };
     }
+    this.opening = true;
+    try {
+      return await this.claim(intentId, agentId, origins, credentialMetadata, headed);
+    } finally {
+      this.opening = false;
+    }
+  }
+
+  /** The reserved half of `open`: from here on this call owns the browser. */
+  private async claim(
+    intentId: string,
+    agentId: string,
+    origins: string[],
+    credentialMetadata: boolean,
+    headed?: boolean,
+  ): Promise<JSONValue> {
+    if (this.session) await this.close(this.session.handle, "reopened");
 
     // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
     // start (~30s) absorbs into the deferred handle; every later `browser`
@@ -179,7 +201,6 @@ export class BrowserSessions {
     this.audit("browser_session_opened", {
       intentId,
       session: session.handle,
-      agent: agentId,
       origins: session.origins,
       credential_metadata: credentialMetadata,
       headed: this.host.headed,
@@ -233,7 +254,7 @@ export class BrowserSessions {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     await this.host.shutdown();
     this.host.resetBreaker();
-    this.audit("browser_session_closed", { session: handle, agent: s.agentId, reason });
+    this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
 

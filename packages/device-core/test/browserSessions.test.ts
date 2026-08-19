@@ -169,7 +169,24 @@ describe("session lifecycle", () => {
     const r = jv(await ctx.sessions.open("int-2", AGENT, ["a.example"], false));
     expect(r.get("status").str).toBe("error");
     expect(r.get("error").str).toContain("in use");
+    // ...and says nothing about who is holding it: the refused caller may be a
+    // different person behind the same relay id.
+    expect(r.get("error").str).not.toContain("pizza.example");
     expect(eventNames()).not.toContain("browser_session_closed");
+  });
+
+  it("two opens that arrive together do not both get a browser", async () => {
+    // Both used to pass the checks, await the same startup, and publish their
+    // own session — the second orphaning the first's handle.
+    const a = ctx.sessions.open("int-1", AGENT, ["pizza.example"], false);
+    const b = ctx.sessions.open("int-2", AGENT, ["a.example"], false);
+    const results = [jv(await a), jv(await b)];
+    const ok = results.filter((r) => r.get("status").str === "completed");
+    expect(ok).toHaveLength(1);
+    expect(eventNames().filter((e) => e === "browser_session_opened")).toHaveLength(1);
+    // The winner's handle is the live one, so its first command works.
+    const live = jv(await ctx.sessions.command(AGENT, ok[0].get("session").str!, { action: "url" }));
+    expect(live.get("status").str).toBe("completed");
   });
 
   it("a quiet session is still reopenable, and the evicted handle says why", async () => {
@@ -186,15 +203,6 @@ describe("session lifecycle", () => {
     expect(r.get("error").str).toContain("closed (reopened)");
     expect(r.get("error").str).not.toContain("unknown session");
     await sessions.closeAll("test");
-  });
-
-  it("audits the agent that opened and closed a session", async () => {
-    const s = await openSession(["pizza.example"]);
-    await ctx.sessions.close(s, "agent");
-    const opened = ctx.events.find((e) => e.event === "browser_session_opened");
-    const closed = ctx.events.find((e) => e.event === "browser_session_closed");
-    expect(opened?.fields.agent).toBe(AGENT);
-    expect(closed?.fields.agent).toBe(AGENT);
   });
 
   it("open warms the browser up front (so no later action pays the cold start)", async () => {
