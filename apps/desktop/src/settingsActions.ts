@@ -45,6 +45,32 @@ export function setAnthropicApiKey(home: string, key: unknown): void {
   update(home, (s) => (s.anthropicApiKey = typeof key === "string" ? key.trim() : ""));
 }
 
+/** What the owner wrote about what agents are for. Empty until they write it. */
+export function readAgentPurpose(home: string): string {
+  return loadSettings(home).agentPurpose ?? "";
+}
+
+/**
+ * Store (or clear) the purpose statement.
+ *
+ * The ONLY writer. It is reached from the renderer's settings IPC and nowhere
+ * else — no tool, no intent, and no relay message can land here — which is what
+ * lets the reviewer prompt label the text as owner-authored rather than
+ * agent-supplied.
+ *
+ * Anything that is not a string stores as empty, the same coercion the API key
+ * gets: the renderer is sandboxed but still the untrusted side of the bridge,
+ * and a hand-made call must not be able to park a non-string in a field the
+ * prompt builder will interpolate.
+ *
+ * Returns what was stored, so a caller shows what the file holds rather than
+ * what it hoped to write.
+ */
+export function setAgentPurpose(home: string, purpose: unknown): string {
+  return update(home, (s) => (s.agentPurpose = typeof purpose === "string" ? purpose.trim() : ""))
+    .agentPurpose;
+}
+
 /**
  * Forget this Mac's Plow credential.
  *

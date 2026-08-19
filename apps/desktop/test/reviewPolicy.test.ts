@@ -42,6 +42,7 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     showAgentSuggestions: true,
     anthropicApiKey: "",
     inferenceProvider: "plow",
+    agentPurpose: "",
     ...overrides,
   };
 }
@@ -567,7 +568,7 @@ describe("the audit tells one coherent story about who decided", () => {
     expect(lines.some((l) => l.includes("could not run"))).toBe(true);
     expect(lines.some((l) => l.includes("defer to you"))).toBe(false);
     // …and the decision that follows names the same thing, in human words.
-    expect(decidedByLabel(decision.source)).toBe("Adversarial Agent (out of credits)");
+    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (out of credits)");
     expect(decidedByLabel(decision.source)).not.toContain("no_credits");
   });
 
@@ -580,5 +581,63 @@ describe("the audit tells one coherent story about who decided", () => {
     const lines = narrative(h.records, decision, intent().intentId);
     expect(lines.some((l) => l.includes("defer to you"))).toBe(true);
     expect(lines.some((l) => l.includes("could not run"))).toBe(false);
+  });
+});
+
+/**
+ * The purpose statement reaches the reviewer from SETTINGS, never from the
+ * intent. That is the property the TRUSTED label in the prompt rests on, and it
+ * lives here — this is the only place the two sources meet.
+ */
+describe("what the reviewer is told about the owner's purpose", () => {
+  const PURPOSE = "Groceries and calendar only. Never touch ~/Developer.";
+
+  it("hands the reviewer the stored purpose, alongside the intent it did not come from", async () => {
+    const h = harness(
+      settings({
+        approvalMode: "adversarial",
+        relayCredential: PLOW_CREDENTIAL,
+        agentPurpose: PURPOSE,
+      }),
+      { verdict: "allow" },
+    );
+
+    await h.run();
+
+    expect(h.reviewCalls).toHaveLength(1);
+    expect(h.reviewCalls[0].agentPurpose).toBe(PURPOSE);
+    // And it is not, and never was, on the intent.
+    expect(JSON.stringify(h.reviewCalls[0].intent)).not.toContain("Groceries");
+  });
+
+  it("passes an empty string when the owner has said nothing", async () => {
+    const h = harness(
+      settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      { verdict: "allow" },
+    );
+    await h.run();
+    expect(h.reviewCalls[0].agentPurpose).toBe("");
+  });
+
+  /**
+   * The reviewer's own words are persisted to audit.ndjson and drawn in the
+   * activity view. The purpose is not: the audit log records what was decided
+   * and why the reviewer said so, not the standing instruction it was read
+   * against.
+   */
+  it("keeps the purpose out of the audit record the review writes", async () => {
+    const h = harness(
+      settings({
+        approvalMode: "adversarial",
+        relayCredential: PLOW_CREDENTIAL,
+        agentPurpose: PURPOSE,
+      }),
+      { verdict: "allow", reason: "fits routine shopping" },
+    );
+
+    await h.run();
+
+    expect(JSON.stringify(h.records)).not.toContain("Groceries");
+    expect(JSON.stringify(h.records)).not.toContain("~/Developer");
   });
 });

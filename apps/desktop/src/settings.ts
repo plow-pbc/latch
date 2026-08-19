@@ -79,6 +79,18 @@ export interface Settings {
   anthropicApiKey: string;
   /** Which backend runs the reviewer. An absent field reads as `plow`. */
   inferenceProvider: InferenceProvider;
+  /**
+   * What the owner of this Mac says agents are for, in their own words.
+   *
+   * DEVICE-SIDE DATA, and the distinction is the whole point: it is typed here
+   * by the person who owns the Mac, so the reviewer may be told to trust it —
+   * unlike an intent's goal text, which the agent writes. It never rides on an
+   * intent and no agent-reachable path can set it.
+   *
+   * Display and review only. It never reaches a rule key, a grant, or a
+   * sandbox profile; enforcement still derives from the capability set alone.
+   */
+  agentPurpose: string;
   /** Check the update feed in the background (default on). A manual
    * "Check for Updates" always works regardless. */
   autoCheckUpdates: boolean;
@@ -104,6 +116,7 @@ export function loadSettings(home: string): Settings {
     showAgentSuggestions: true,
     anthropicApiKey: "",
     inferenceProvider: "plow",
+    agentPurpose: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
   };

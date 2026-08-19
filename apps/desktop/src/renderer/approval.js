@@ -145,7 +145,7 @@ async function render() {
     // the capability set and nothing written here may look like part of it.
     if (data.reason) {
       reviewerNote.replaceChildren(
-        el("span", { class: "lbl", text: "Adversarial agent (advice only)" }),
+        el("span", { class: "lbl", text: "AI Reviewer (advice only)" }),
         el("span", { text: data.reason }),
       );
     }

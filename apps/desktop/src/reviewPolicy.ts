@@ -162,6 +162,9 @@ export async function decideIntent(
       // A SECRET. It reaches the Authorization header of the Plow request and
       // nothing else — never the audit record below, never the renderer.
       plowCredential: (settings.relayCredential ?? "").trim(),
+      // Device-side and human-authored: it comes from the settings file, so no
+      // agent-reachable path can write what the prompt will label TRUSTED.
+      agentPurpose: settings.agentPurpose ?? "",
       apiBaseUrl: deps.apiBaseUrl,
     });
     deps.record("adversarial_review_result", {

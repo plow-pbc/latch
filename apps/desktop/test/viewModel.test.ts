@@ -96,10 +96,10 @@ describe("auditActivities (grouping)", () => {
         { event: "intent_decision", intentId: "i", decision, source, ts: "2026-08-09T12:00:01Z" },
       ])[0]!;
     expect(mk("approve").decidedBy).toBe("Auto-approved");
-    expect(mk("adversarial").decidedBy).toBe("Adversarial Agent");
+    expect(mk("adversarial").decidedBy).toBe("AI Reviewer");
     // Not the raw source string: the human's view says what happened, and
     // "no_credits" is a label for us, not for them.
-    expect(mk("no_credits").decidedBy).toBe("Adversarial Agent (out of credits)");
+    expect(mk("no_credits").decidedBy).toBe("AI Reviewer (out of credits)");
     expect(mk("ask").decidedBy).toBe("You (asked)");
     expect(mk("policy", "deny").decidedBy).toBe("Policy (deny mode)");
     // A rule-matched decision (source set by the engine) reads as the rule.
