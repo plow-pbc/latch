@@ -88,7 +88,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(JSON.stringify(creds.payload)).not.toContain("pizza-time-99");
 
     const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
-    expect(described.payload.fields).toContain("password");
+    expect(described.payload.fields).toContainEqual({ label: "password", hidden: true, custom: false, alias: false });
 
     await callTool(server, "browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
 

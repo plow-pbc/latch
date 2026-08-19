@@ -1,0 +1,1034 @@
+{
+  "note": [
+    "The §3.1 masking table as data: which fields the vault renders masked, and",
+    "therefore which ones fill_secret marks in the page.",
+    "",
+    "Two classifiers have to agree on it — the real one in",
+    "vendor/browser-server/seed_vault_broker/cli.py (_field_descriptors) and the",
+    "one in the JS fake broker that the python-free unit tier runs against. Each",
+    "case therefore carries the SAME item twice: 'bitwarden' as the real vault",
+    "stores it, 'fake' in the fake broker's vault format. 'expect' is the single",
+    "source of truth both are asserted against, so a rule that drifts on one side",
+    "fails rather than passing quietly.",
+    "",
+    "Entries with alias:true are the other names get-field accepts for a slot",
+    "already listed (a card's code answers to cvv; a login's username to email).",
+    "They carry the slot's own hidden flag, so no caller above the broker needs a",
+    "copy of the mapping.",
+    "",
+    "",
+    "Shapes and concealment come from the pinned Bitwarden client source, tag",
+    "cli-v2026.7.0 (commit 82186c3d92c0da14aa86c848b781d949a8a6202a): item types",
+    "in vault/enums/cipher-type.ts, identity keys in models/export/identity.export.ts,",
+    "ssh key keys in models/export/ssh-key.export.ts, linked ids in",
+    "vault/enums/linked-id-type.enum.ts, and what the client conceals in the",
+    "cipher-view templates.",
+    "",
+    "",
+    "Item types 6-8 (bank account, driving licence, passport) exist in the client",
+    "but CANNOT be stored by the vault this app runs: vaultwarden 1.37.1",
+    "(commit 2629bcbe1380c894e3a7f52cafcac3988edb8fbb) matches only types 1-5 in",
+    "src/api/core/ciphers.rs:508-515 and answers anything else with",
+    "err!(\"Invalid type\"). The three cases below pin that: an item of those types",
+    "reports nothing, because one cannot get into the vault to be reported. When",
+    "vaultwarden gains them, these are the cases to fill in.",
+    "",
+    "Consumed by packages/device-core/test/maskClassification.test.ts and",
+    "e2e/fixtures/classifyProbe.py."
+  ],
+  "cases": [
+    {
+      "name": "login",
+      "why": "password hidden; username and the generated TOTP code are not; notes are not",
+      "bitwarden": {
+        "id": "L1",
+        "name": "Pizza Login",
+        "type": 1,
+        "login": {
+          "username": "jon",
+          "password": "hunter2",
+          "totp": "otpauth://totp/x",
+          "uris": [
+            {
+              "uri": "https://pizza.example/"
+            }
+          ]
+        },
+        "fields": [
+          {
+            "name": "recovery",
+            "type": 1,
+            "value": "recovery-code-9f2a"
+          },
+          {
+            "name": "account nickname",
+            "type": 0,
+            "value": "the pizza one"
+          }
+        ],
+        "notes": "delivery goes to the side door"
+      },
+      "fake": {
+        "id": "L1",
+        "title": "Pizza Login",
+        "category": "LOGIN",
+        "username": "jon",
+        "urls": [
+          "https://pizza.example/"
+        ],
+        "fields": [
+          {
+            "name": "username",
+            "value": "jon"
+          },
+          {
+            "name": "password",
+            "value": "hunter2"
+          },
+          {
+            "name": "totp",
+            "value": "123456"
+          },
+          {
+            "name": "recovery",
+            "custom": true,
+            "type": 1,
+            "value": "recovery-code-9f2a"
+          },
+          {
+            "name": "account nickname",
+            "custom": true,
+            "type": 0,
+            "value": "the pizza one"
+          },
+          {
+            "name": "notes",
+            "value": "delivery goes to the side door"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "username",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "email",
+          "hidden": false,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "login",
+          "hidden": false,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "user",
+          "hidden": false,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "password",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "totp",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "recovery",
+          "hidden": true,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "account nickname",
+          "hidden": false,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "notes",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "card with a colliding custom field",
+      "why": "number and code hidden, and code's aliases with it; expiry, cardholder name and brand not; both a plain custom field and a LINKED one sharing a built-in's name keep their own descriptor AND their own token (custom:cardholder name, custom:number), so either can actually be asked for — a linked field collides exactly as any other custom field does",
+      "bitwarden": {
+        "id": "C1",
+        "name": "Visa",
+        "type": 3,
+        "card": {
+          "number": "4111111111111111",
+          "code": "737",
+          "expMonth": "04",
+          "expYear": "2031",
+          "cardholderName": "Jon Doe",
+          "brand": "Visa"
+        },
+        "fields": [
+          {
+            "name": "cardholder name",
+            "type": 0,
+            "value": "shipping only"
+          },
+          {
+            "name": "number",
+            "type": 3,
+            "value": null,
+            "linkedId": 305
+          }
+        ]
+      },
+      "fake": {
+        "id": "C1",
+        "title": "Visa",
+        "category": "CREDIT_CARD",
+        "username": "",
+        "urls": [],
+        "fields": [
+          {
+            "name": "number",
+            "value": "4111111111111111"
+          },
+          {
+            "name": "code",
+            "value": "737"
+          },
+          {
+            "name": "expiry month",
+            "value": "04"
+          },
+          {
+            "name": "expiry year",
+            "value": "2031"
+          },
+          {
+            "name": "cardholder name",
+            "value": "Jon Doe"
+          },
+          {
+            "name": "brand",
+            "value": "Visa"
+          },
+          {
+            "name": "cardholder name",
+            "custom": true,
+            "type": 0,
+            "value": "shipping only"
+          },
+          {
+            "name": "number",
+            "linked": "number"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "number",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "code",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "cvv",
+          "hidden": true,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "security code",
+          "hidden": true,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "expiry month",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "expiry year",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "cardholder name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "brand",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "custom:cardholder name",
+          "hidden": false,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "custom:number",
+          "hidden": true,
+          "custom": true,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "card with a hidden custom field of the same name",
+      "why": "the collision resolves per entry: the built-in stays visible under its own name while the custom one is masked under custom:cardholder name",
+      "bitwarden": {
+        "id": "C2",
+        "name": "Amex",
+        "type": 3,
+        "card": {
+          "cardholderName": "Jon Doe"
+        },
+        "fields": [
+          {
+            "name": "cardholder name",
+            "type": 1,
+            "value": "the real one"
+          }
+        ]
+      },
+      "fake": {
+        "id": "C2",
+        "title": "Amex",
+        "category": "CREDIT_CARD",
+        "username": "",
+        "urls": [],
+        "fields": [
+          {
+            "name": "cardholder name",
+            "value": "Jon Doe"
+          },
+          {
+            "name": "cardholder name",
+            "custom": true,
+            "type": 1,
+            "value": "the real one"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "cardholder name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "custom:cardholder name",
+          "hidden": true,
+          "custom": true,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "identity",
+      "why": "every part of an identity is listed and releasable; the client conceals the social security and passport numbers and nothing else, so a licence number, a name, an address and a contact detail all stay readable; a key the pinned client does not define — here middleInitial — is neither listed nor releasable, because what is concealed is Bitwarden's answer to give and for that key there is none to read",
+      "bitwarden": {
+        "id": "I1",
+        "name": "Home",
+        "type": 4,
+        "identity": {
+          "title": "Mx",
+          "firstName": "Jon",
+          "middleName": "Q",
+          "lastName": "Doe",
+          "username": "jdoe",
+          "company": "Initech",
+          "ssn": "078-05-1120",
+          "passportNumber": "X1234567",
+          "licenseNumber": "D9999",
+          "email": "jon@home.example",
+          "phone": "555-0100",
+          "address1": "1 Elm St",
+          "address2": "Apt 2",
+          "address3": "Rear",
+          "city": "Springfield",
+          "state": "IL",
+          "postalCode": "11111",
+          "country": "US",
+          "middleInitial": "Q"
+        }
+      },
+      "fake": {
+        "id": "I1",
+        "title": "Home",
+        "category": "IDENTITY",
+        "username": "",
+        "urls": [],
+        "fields": [
+          {
+            "name": "title",
+            "value": "Mx"
+          },
+          {
+            "name": "first name",
+            "value": "Jon"
+          },
+          {
+            "name": "middle name",
+            "value": "Q"
+          },
+          {
+            "name": "last name",
+            "value": "Doe"
+          },
+          {
+            "name": "username",
+            "value": "jdoe"
+          },
+          {
+            "name": "company",
+            "value": "Initech"
+          },
+          {
+            "name": "ssn",
+            "value": "078-05-1120"
+          },
+          {
+            "name": "passport number",
+            "value": "X1234567"
+          },
+          {
+            "name": "license number",
+            "value": "D9999"
+          },
+          {
+            "name": "email",
+            "value": "jon@home.example"
+          },
+          {
+            "name": "phone",
+            "value": "555-0100"
+          },
+          {
+            "name": "address1",
+            "value": "1 Elm St"
+          },
+          {
+            "name": "address2",
+            "value": "Apt 2"
+          },
+          {
+            "name": "address3",
+            "value": "Rear"
+          },
+          {
+            "name": "city",
+            "value": "Springfield"
+          },
+          {
+            "name": "state",
+            "value": "IL"
+          },
+          {
+            "name": "postal code",
+            "value": "11111"
+          },
+          {
+            "name": "country",
+            "value": "US"
+          },
+          {
+            "name": "middleInitial",
+            "value": "Q"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "title",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "first name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "middle name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "last name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "username",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "company",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "ssn",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "passport number",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "license number",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "email",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "phone",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "address1",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "address2",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "address3",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "city",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "state",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "postal code",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "country",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "secure note with every custom field type",
+      "why": "a Hidden custom field is masked and a Text or Boolean one is not, which is what the client shows; a Linked field carries a reference rather than a value and is not reported — the one field kind still unsupported",
+      "bitwarden": {
+        "id": "N1",
+        "name": "Notes",
+        "type": 2,
+        "fields": [
+          {
+            "name": "plain",
+            "type": 0,
+            "value": "visible text"
+          },
+          {
+            "name": "concealed",
+            "type": 1,
+            "value": "masked text"
+          },
+          {
+            "name": "agreed",
+            "type": 2,
+            "value": "true"
+          },
+          {
+            "name": "points at username",
+            "type": 3,
+            "value": null,
+            "linkedId": 100
+          }
+        ],
+        "notes": "a note body"
+      },
+      "fake": {
+        "id": "N1",
+        "title": "Notes",
+        "category": "SECURE_NOTE",
+        "username": "",
+        "urls": [],
+        "fields": [
+          {
+            "name": "plain",
+            "custom": true,
+            "type": 0,
+            "value": "visible text"
+          },
+          {
+            "name": "concealed",
+            "custom": true,
+            "type": 1,
+            "value": "masked text"
+          },
+          {
+            "name": "agreed",
+            "custom": true,
+            "type": 2,
+            "value": "true"
+          },
+          {
+            "name": "notes",
+            "value": "a note body"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "plain",
+          "hidden": false,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "concealed",
+          "hidden": true,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "agreed",
+          "hidden": false,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "notes",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "ssh key",
+      "why": "the client shows the private key in a password box with a reveal toggle and the other two as plain text (sshkey-view.component.html:13,39,58), so the private key is the one part concealed",
+      "bitwarden": {
+        "id": "S1",
+        "name": "deploy key",
+        "type": 5,
+        "sshKey": {
+          "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----",
+          "publicKey": "ssh-ed25519 AAAAC3Nz",
+          "keyFingerprint": "SHA256:2f9c1a"
+        }
+      },
+      "fake": {
+        "id": "S1",
+        "title": "deploy key",
+        "category": "SSH_KEY",
+        "username": "",
+        "urls": [],
+        "fields": [
+          {
+            "name": "private key",
+            "value": "-----BEGIN OPENSSH PRIVATE KEY-----"
+          },
+          {
+            "name": "public key",
+            "value": "ssh-ed25519 AAAAC3Nz"
+          },
+          {
+            "name": "fingerprint",
+            "value": "SHA256:2f9c1a"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "private key",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "public key",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "fingerprint",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "identity with linked custom fields",
+      "why": "a linked field holds no value of its own: it is released under its own name, with the value and the concealment of whatever it points at (linked-id-type.enum.ts). Full name is composed the way the client composes it",
+      "bitwarden": {
+        "id": "I2",
+        "name": "Linked",
+        "type": 4,
+        "identity": {
+          "title": "Mx",
+          "firstName": "Jon",
+          "middleName": "Q",
+          "lastName": "Doe",
+          "ssn": "078-05-1120",
+          "address1": "1 Elm St"
+        },
+        "fields": [
+          {
+            "name": "tax id",
+            "type": 3,
+            "value": null,
+            "linkedId": 412
+          },
+          {
+            "name": "ship to",
+            "type": 3,
+            "value": null,
+            "linkedId": 402
+          },
+          {
+            "name": "who",
+            "type": 3,
+            "value": null,
+            "linkedId": 418
+          }
+        ]
+      },
+      "fake": {
+        "id": "I2",
+        "title": "Linked",
+        "category": "IDENTITY",
+        "username": "",
+        "urls": [],
+        "fields": [
+          {
+            "name": "title",
+            "value": "Mx"
+          },
+          {
+            "name": "first name",
+            "value": "Jon"
+          },
+          {
+            "name": "middle name",
+            "value": "Q"
+          },
+          {
+            "name": "last name",
+            "value": "Doe"
+          },
+          {
+            "name": "ssn",
+            "value": "078-05-1120"
+          },
+          {
+            "name": "address1",
+            "value": "1 Elm St"
+          },
+          {
+            "name": "tax id",
+            "linked": "ssn"
+          },
+          {
+            "name": "ship to",
+            "linked": "address1"
+          },
+          {
+            "name": "who",
+            "linked": "first name"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "title",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "first name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "middle name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "last name",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "ssn",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "address1",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "tax id",
+          "hidden": true,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "ship to",
+          "hidden": false,
+          "custom": true,
+          "alias": false
+        },
+        {
+          "label": "who",
+          "hidden": false,
+          "custom": true,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "login with a passkey",
+      "why": "a passkey is not fillable text — there is no value to type into a form — so it is deliberately not listed and not releasable. Everything else on the login is",
+      "bitwarden": {
+        "id": "P1",
+        "name": "Passkey Login",
+        "type": 1,
+        "login": {
+          "username": "jon",
+          "password": "hunter2",
+          "uris": [
+            {
+              "uri": "https://passkey.example/"
+            }
+          ],
+          "fido2Credentials": [
+            {
+              "credentialId": "abc",
+              "rpId": "passkey.example",
+              "userName": "jon",
+              "keyValue": "not-a-field"
+            }
+          ]
+        }
+      },
+      "fake": {
+        "id": "P1",
+        "title": "Passkey Login",
+        "category": "LOGIN",
+        "username": "jon",
+        "urls": [
+          "https://passkey.example/"
+        ],
+        "fields": [
+          {
+            "name": "username",
+            "value": "jon"
+          },
+          {
+            "name": "password",
+            "value": "hunter2"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "username",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "email",
+          "hidden": false,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "login",
+          "hidden": false,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "user",
+          "hidden": false,
+          "custom": false,
+          "alias": true
+        },
+        {
+          "label": "password",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        }
+      ]
+    },
+    {
+      "name": "bank account (type the vault cannot store)",
+      "why": "cannot exist in this vault: vaultwarden 1.37.1 rejects the type on every write path (src/api/core/ciphers.rs:508-515, err!(\"Invalid type\")), so there is nothing to classify. Field names below are the client's own, for whenever the vault catches up (models/export/bank-account.export.ts:60-69)",
+      "bitwarden": {
+        "id": "B1",
+        "name": "Current account",
+        "type": 6,
+        "bankAccount": {
+          "bankName": "Springfield Mutual",
+          "nameOnAccount": "Jon Doe",
+          "accountType": "checking",
+          "accountNumber": "12345678",
+          "routingNumber": "111000025",
+          "branchNumber": "04",
+          "pin": "9012",
+          "swiftCode": "SPMUUS33",
+          "iban": "GB33BUKB20201555555555",
+          "bankContactPhone": "555-0199"
+        }
+      },
+      "fake": {
+        "id": "B1",
+        "title": "Current account",
+        "category": "UNKNOWN",
+        "username": "",
+        "urls": [],
+        "fields": []
+      },
+      "expect": []
+    },
+    {
+      "name": "driving licence (type the vault cannot store)",
+      "why": "cannot exist in this vault: vaultwarden 1.37.1 rejects the type on every write path (src/api/core/ciphers.rs:508-515, err!(\"Invalid type\")), so there is nothing to classify. Field names below are the client's own, for whenever the vault catches up (models/export/drivers-license.export.ts:63-73)",
+      "bitwarden": {
+        "id": "D1",
+        "name": "Licence",
+        "type": 7,
+        "driversLicense": {
+          "firstName": "Jon",
+          "middleName": "Q",
+          "lastName": "Doe",
+          "dateOfBirth": "1980-01-01",
+          "licenseNumber": "D9999",
+          "issuingCountry": "US",
+          "issuingState": "IL",
+          "issueDate": "2020-01-01",
+          "expirationDate": "2030-01-01",
+          "issuingAuthority": "IL SoS",
+          "licenseClass": "C"
+        }
+      },
+      "fake": {
+        "id": "D1",
+        "title": "Licence",
+        "category": "UNKNOWN",
+        "username": "",
+        "urls": [],
+        "fields": []
+      },
+      "expect": []
+    },
+    {
+      "name": "passport (type the vault cannot store)",
+      "why": "cannot exist in this vault: vaultwarden 1.37.1 rejects the type on every write path (src/api/core/ciphers.rs:508-515, err!(\"Invalid type\")), so there is nothing to classify. Field names below are the client's own, for whenever the vault catches up (models/export/passport.export.ts:68-80)",
+      "bitwarden": {
+        "id": "T1",
+        "name": "Passport",
+        "type": 8,
+        "passport": {
+          "surname": "Doe",
+          "givenName": "Jon",
+          "dateOfBirth": "1980-01-01",
+          "sex": "X",
+          "birthPlace": "Springfield",
+          "nationality": "US",
+          "issuingCountry": "US",
+          "passportNumber": "X1234567",
+          "passportType": "P",
+          "nationalIdentificationNumber": "078-05-1120",
+          "issuingAuthority": "US DoS",
+          "issueDate": "2020-01-01",
+          "expirationDate": "2030-01-01"
+        }
+      },
+      "fake": {
+        "id": "T1",
+        "title": "Passport",
+        "category": "UNKNOWN",
+        "username": "",
+        "urls": [],
+        "fields": []
+      },
+      "expect": []
+    }
+  ]
+}

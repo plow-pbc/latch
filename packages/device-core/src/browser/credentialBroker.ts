@@ -37,6 +37,28 @@ export interface CredentialBrokerConfig {
   beforeRun?: () => Promise<void>;
 }
 
+/**
+ * One field of a vault item, as `describe-item` reports it.
+ *
+ * A type alias rather than an interface so it stays assignable to `JSONValue`:
+ * these travel out to the agent as-is through `vaultDescribe`.
+ */
+export type CredentialFieldInfo = {
+  /** Exactly the token `get-field` accepts for this field. */
+  label: string;
+  /** True when the vault itself renders this field masked (a login password, a
+   * card number or security code, a Hidden custom field). The classification is
+   * the vault's, and thereby the human's who made the item. */
+  hidden: boolean;
+  /** A named custom field rather than a built-in slot. A custom field may share
+   * a built-in's name, so this is what tells the two apart. */
+  custom: boolean;
+  /** An alternative name `get-field` accepts for a slot already listed (`cvv`
+   * for a card's `code`, `email` for a login's `username`). The broker decides
+   * what these are and what they mean; nothing above it keeps a second copy. */
+  alias: boolean;
+};
+
 export interface CredentialItemSummary {
   id: string;
   title: string;
@@ -44,6 +66,28 @@ export interface CredentialItemSummary {
   username: string;
   urls: string[];
   matchesThisPage: boolean;
+}
+
+/**
+ * One `describe-item` field entry, or nothing when it is not one.
+ *
+ * `hidden` is never inferred: a field the broker did not describe as masked is
+ * dropped rather than reported visible, because a wrong `false` is exactly the
+ * mistake that puts a secret back on the agent's screen.
+ */
+function fieldInfo(raw: JSONValue): CredentialFieldInfo[] {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
+  const entry = raw as { [k: string]: JSONValue };
+  if (typeof entry.label !== "string" || entry.label === "") return [];
+  if (typeof entry.hidden !== "boolean") return [];
+  return [
+    {
+      label: entry.label,
+      hidden: entry.hidden,
+      custom: entry.custom === true,
+      alias: entry.alias === true,
+    },
+  ];
 }
 
 export class CredentialBroker {
@@ -124,15 +168,17 @@ export class CredentialBroker {
     }));
   }
 
-  /** One item's field labels — never values. */
-  async describeItem(itemId: string): Promise<{ id: string; title: string; category: string; fields: string[] }> {
+  /** One item's fields — labels and whether the vault masks them, never values. */
+  async describeItem(
+    itemId: string,
+  ): Promise<{ id: string; title: string; category: string; fields: CredentialFieldInfo[] }> {
     const out = await this.run(["describe-item", "--item-id", itemId]);
     const item = JSON.parse(out) as { [k: string]: JSONValue };
     return {
       id: String(item.id ?? ""),
       title: String(item.title ?? ""),
       category: String(item.category ?? ""),
-      fields: Array.isArray(item.fields) ? item.fields.map(String) : [],
+      fields: Array.isArray(item.fields) ? item.fields.flatMap(fieldInfo) : [],
     };
   }
 

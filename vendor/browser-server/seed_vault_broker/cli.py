@@ -64,11 +64,84 @@ _CARD_FIELDS = {
     "expiry month": "expMonth",
     "expiry year": "expYear",
     "cardholder name": "cardholderName",
+    "brand": "brand",
+}
+# An identity item, by the label each part is released under. The order is the
+# order they are reported in; the keys are the vault's own. Everything Bitwarden
+# keeps on an identity is here, so there is no part of one we cannot hand over.
+_IDENTITY_FIELDS = {
+    "title": "title",
+    "first name": "firstName",
+    "middle name": "middleName",
+    "last name": "lastName",
+    "username": "username",
+    "company": "company",
+    "ssn": "ssn",
+    "passport number": "passportNumber",
+    "license number": "licenseNumber",
+    "email": "email",
+    "phone": "phone",
+    "address1": "address1",
+    "address2": "address2",
+    "address3": "address3",
+    "city": "city",
+    "state": "state",
+    "postal code": "postalCode",
+    "country": "country",
+}
+# What the client conceals on an identity, and all it conceals: the social
+# security number and the passport number. The list above is the whole of what
+# an identity is, as far as this broker is concerned -- see _field_descriptors
+# for why a key outside it is refused rather than guessed at. A licence number is shown, as is
+# every name, address and contact part -- which is the point, because verifying
+# a shipping address before submitting a form is work the agent has to do.
+_HIDDEN_IDENTITY_LABELS = frozenset({"ssn", "passport number"})
+# An identity's full name is not stored; the client composes it from the title
+# and the three name parts (identity.view.ts:88-113) and offers it as something
+# a linked field can point at. Releasable for that reason, and for that reason
+# only -- it is not one of the item's own fields, so it is not listed as one.
+_FULL_NAME = "full name"
+# An SSH key item. The client shows the private key in a password box with a
+# reveal toggle and the other two as plain text (sshkey-view.component.html:13,
+# 39, 58), so the private key is the one part concealed.
+_SSH_KEY_FIELDS = {
+    "private key": "privateKey",
+    "public key": "publicKey",
+    "fingerprint": "keyFingerprint",
+}
+_HIDDEN_SSH_KEY_LABELS = frozenset({"private key"})
+# Bitwarden custom field types: 0 text, 1 hidden, 2 boolean, 3 linked.
+_CUSTOM_FIELD_LINKED = 3
+# What a linked custom field can point at, by the label this broker releases the
+# target under. The numbers are Bitwarden's own (linked-id-type.enum.ts:9-12 for
+# a login, 15-22 for a card, 26-46 for an identity); a login's username and an
+# identity's own username share a label because they are the same question asked
+# of two different item types.
+_LINKED_ID_LABELS = {
+    100: _FIELD_USERNAME, 101: _FIELD_PASSWORD,
+    300: "cardholder name", 301: "expiry month", 302: "expiry year",
+    303: "code", 304: "brand", 305: "number",
+    400: "title", 401: "middle name", 402: "address1", 403: "address2",
+    404: "address3", 405: "city", 406: "state", 407: "postal code",
+    408: "country", 409: "company", 410: "email", 411: "phone", 412: "ssn",
+    413: _FIELD_USERNAME, 414: "passport number", 415: "license number",
+    416: "first name", 417: "last name", 418: _FULL_NAME,
 }
 _ALLOWED_FIELDS = frozenset(
     {_FIELD_PASSWORD, _FIELD_TOTP, _FIELD_USERNAME, _FIELD_EMAIL, _FIELD_LOGIN, _FIELD_USER}
     | set(_CARD_FIELDS)
+    | set(_IDENTITY_FIELDS)
+    | set(_SSH_KEY_FIELDS)
 )
+# Which fields the vault itself renders masked -- the whole classification, and
+# the reason there is nothing bespoke to maintain: the vault (and thereby the
+# human who made the item) already decided. A card's number and security code
+# are hidden; its expiry and cardholder name are not. A login's password is
+# hidden; its username and generated TOTP code are not. Notes are not.
+_HIDDEN_CARD_LABELS = frozenset({"number", "code"})
+_CUSTOM_FIELD_HIDDEN = 1
+# How a custom field is named when a fixed slot already owns its name.
+_CUSTOM_PREFIX = "custom:"
 
 _MAX_ENTRIES = 50
 
@@ -112,7 +185,15 @@ _EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
 
 # Vault item types, as the vault reports them, mapped onto the category names the
 # browser side already speaks.
-_CATEGORY_BY_TYPE = {1: "LOGIN", 2: "SECURE_NOTE", 3: "CREDIT_CARD", 4: "IDENTITY"}
+# cipher-type.ts:1-10. The client also has types 6-8 (bank account, driving
+# licence, passport) and they are deliberately absent here: the vault this app
+# runs cannot hold one. Vaultwarden 1.37.1 matches types 1-5 and answers
+# anything else with err!("Invalid type") on every write path -- create, edit,
+# import and share all funnel through the same check
+# (src/api/core/ciphers.rs:508-515). Supporting them here would classify items
+# that cannot exist. When vaultwarden gains them, the identity section below is
+# the pattern, and maskClassification.json already carries the three cases.
+_CATEGORY_BY_TYPE = {1: "LOGIN", 2: "SECURE_NOTE", 3: "CREDIT_CARD", 4: "IDENTITY", 5: "SSH_KEY"}
 
 
 def _etld1(url: str) -> str | None:
@@ -547,53 +628,197 @@ def _item_host_keys(item: dict) -> list[str]:
     return [k for k in (_host_key(u["href"]) for u in _urls_for(item)) if k]
 
 
-def _field_labels(item: dict) -> list[str]:
+def _aliases_of(label: str, custom: bool) -> list[str]:
+    """The other names `get-field` takes for this built-in slot.
+
+    Derived from the two tables that already define them -- `_USERNAME_FIELDS`
+    and `_CARD_FIELDS` -- rather than a third list that could drift from either.
+    A custom field is named by whoever made it and has no aliases.
+    """
+    if custom:
+        return []
+    if label == _FIELD_USERNAME:
+        return sorted(_USERNAME_FIELDS - {_FIELD_USERNAME})
+    slot = _CARD_FIELDS.get(label)
+    if slot is None:
+        return []
+    return sorted(a for a, key in _CARD_FIELDS.items() if key == slot and a != label)
+
+
+def _custom_label(name: str, so_far: list[dict]) -> str:
+    """The token `get-field` takes for one custom field.
+
+    Its own name, except when a fixed slot has already claimed that name -- a
+    custom field literally called `cardholder name` on a card. Describing both
+    under one token left the custom one impossible to ASK for, because the slot
+    answers first; qualifying the second one gives it a name of its own. Only
+    the colliding field is qualified, so every token that worked before still
+    does.
+    """
+    if any(d["label"] == name and not d["custom"] for d in so_far):
+        return "%s%s" % (_CUSTOM_PREFIX, name)
+    return name
+
+
+def _field_descriptors(item: dict) -> list[dict]:
     """What this item actually has, by label, so the agent can match the form.
 
     A vault item keeps the login parts in fixed slots and anything else in named
-    custom fields; both are reported, values never are.
+    custom fields; both are reported, values never are. Entries marked `alias`
+    are alternative names `get-field` accepts for a slot already listed.
+
+    Each entry also says whether the vault renders that field masked, which is
+    what the caller needs to decide whether the value may be shown back to the
+    agent once it has been typed into a page. `label` stays the exact token
+    `get-field` accepts. A custom field may share its name with a built-in slot
+    (a custom field literally called `number` on a card), so `custom` keeps the
+    two tellable apart rather than collapsing them into one entry.
     """
     raw = item.get("_raw") or {}
-    labels: list[str] = []
+    is_card = item.get("category") == "CREDIT_CARD"
+    out: list[dict] = []
+
+    def add(label: str, hidden: bool, custom: bool, aliases: bool = True) -> None:
+        out.append({"label": label, "hidden": hidden, "custom": custom, "alias": False})
+        if not aliases:
+            # An identity's own `username`/`email` are separate parts of one
+            # item, not two names for one slot; aliasing them would report the
+            # same label twice and make which one answers a matter of order.
+            return
+        # `get-field` accepts more names than describe-item reports for a slot:
+        # a card's code answers to `cvv`, a login's username to `email`. Those
+        # names are classified here, beside the slot they release, so no caller
+        # has to keep a second copy of the mapping to know what a name means.
+        for alias in _aliases_of(label, custom):
+            out.append({"label": alias, "hidden": hidden, "custom": False, "alias": True})
+
     login = raw.get("login") or {}
     if login.get("username"):
-        labels.append(_FIELD_USERNAME)
+        add(_FIELD_USERNAME, False, False)
     if login.get("password"):
-        labels.append(_FIELD_PASSWORD)
+        add(_FIELD_PASSWORD, True, False)
     if login.get("totp"):
-        labels.append(_FIELD_TOTP)
+        # The seed is hidden in the vault, the generated code is not -- and the
+        # code is what `get-field totp` returns. Single-use, ~30s.
+        add(_FIELD_TOTP, False, False)
     card = raw.get("card") or {}
     for key, label in (("number", "number"), ("code", "code"),
                        ("expMonth", "expiry month"), ("expYear", "expiry year"),
-                       ("cardholderName", "cardholder name")):
+                       ("cardholderName", "cardholder name"), ("brand", "brand")):
         if card.get(key):
-            labels.append(label)
+            add(label, is_card and label in _HIDDEN_CARD_LABELS, False)
+    identity = raw.get("identity") or {}
+    if identity:
+        # Driven by what the item actually holds rather than by this list alone:
+        # a part the vault grows later is still reported, under its own name.
+        # Only the labels are spelled out here, and only for readability.
+        for label, key in _IDENTITY_FIELDS.items():
+            if identity.get(key):
+                add(label, label in _HIDDEN_IDENTITY_LABELS, False, aliases=False)
+        # A key outside that list is NOT reported and NOT released. Whether a
+        # field is concealed is Bitwarden's answer to give, and for a key the
+        # pinned client does not define there is no answer to read -- so this
+        # refuses, the way it refuses an item type the vault cannot store,
+        # rather than inventing a classification. Reporting it masked would be
+        # the same guess wearing a safer-looking hat.
+    ssh_key = raw.get("sshKey") or {}
+    for label, key in _SSH_KEY_FIELDS.items():
+        if ssh_key.get(key):
+            add(label, label in _HIDDEN_SSH_KEY_LABELS, False, aliases=False)
     for field in raw.get("fields") or []:
         name = field.get("name")
-        if name and name not in labels and (field.get("value") is not None or field.get("type") == 1):
-            labels.append(name)
+        if not name:
+            continue
+        if field.get("type") == _CUSTOM_FIELD_LINKED:
+            # A linked field holds no value of its own: it names another field of
+            # the same item. It is reported under its own name, and it is as
+            # concealed as whatever it points at -- pointing at a password does
+            # not make it safe to show. Its name can collide with a fixed slot's
+            # exactly as any other custom field's can, and it is qualified the
+            # same way: without that, a linked field called `number` on a card
+            # is describable and impossible to ask for, because the slot answers
+            # first every time.
+            target = _LINKED_ID_LABELS.get(field.get("linkedId"))
+            if target and _read_field(item, target) is not None:
+                hidden = next(
+                    (d["hidden"] for d in out if d["label"] == target and not d["custom"]),
+                    False,
+                )
+                add(_custom_label(name, out), hidden, True, aliases=False)
+            continue
+        if field.get("value") is not None or field.get("type") == _CUSTOM_FIELD_HIDDEN:
+            add(_custom_label(name, out), field.get("type") == _CUSTOM_FIELD_HIDDEN, True)
     if raw.get("notes"):
-        labels.append("notes")
+        add("notes", False, False)
+    return out
+
+
+def _field_labels(item: dict) -> list[str]:
+    """Just the labels, in order -- what the releasable set and the "it has:"
+    error message have always been written against. Deduped, because a custom
+    field sharing a built-in's name is one releasable token, not two."""
+    labels: list[str] = []
+    for descriptor in _field_descriptors(item):
+        if descriptor["alias"]:
+            continue  # an alternative name for a slot already listed, not a field
+        if descriptor["label"] not in labels:
+            labels.append(descriptor["label"])
     return labels
 
 
 def _read_field(item: dict, field: str) -> str | None:
+    """The value behind one label.
+
+    Each slot is tried in turn and an EMPTY one falls through rather than
+    answering None: `email` names a login's username on a login item and an
+    identity's own email on an identity, and a custom field may carry a name a
+    fixed slot also uses. Falling through is what keeps this in step with
+    `_field_descriptors`, which only reports the slots that are actually filled.
+    """
     raw = item.get("_raw") or {}
-    login = raw.get("login") or {}
-    if field == _FIELD_PASSWORD:
-        return login.get("password")
-    if field in _USERNAME_FIELDS:
-        return login.get("username")
-    card_key = _CARD_FIELDS.get(field)
-    if card_key:
-        value = (raw.get("card") or {}).get(card_key)
+
+    def text(value: object) -> str | None:
         return str(value) if value not in (None, "") else None
-    if field == "notes":
-        return raw.get("notes") or None
-    for custom in raw.get("fields") or []:
-        if custom.get("name") == field:
-            value = custom.get("value")
-            return str(value) if value not in (None, "") else None
+
+    login = raw.get("login") or {}
+    if field == _FIELD_PASSWORD and text(login.get("password")):
+        return text(login.get("password"))
+    if field in _USERNAME_FIELDS and text(login.get("username")):
+        return text(login.get("username"))
+    card_key = _CARD_FIELDS.get(field)
+    if card_key and text((raw.get("card") or {}).get(card_key)):
+        return text((raw.get("card") or {}).get(card_key))
+    identity = raw.get("identity") or {}
+    # Only the parts the pinned client defines. An unknown key has no label
+    # here, and a label this does not know is not a way to reach one.
+    identity_key = _IDENTITY_FIELDS.get(field)
+    if identity_key and text(identity.get(identity_key)):
+        return text(identity.get(identity_key))
+    if field == _FULL_NAME:
+        # Composed exactly as the client composes it (identity.view.ts:88-113):
+        # title, first, middle, last, single-spaced, trimmed.
+        parts = [identity.get(k) for k in ("title", "firstName", "middleName", "lastName")]
+        joined = " ".join(str(p).strip() for p in parts if p and str(p).strip())
+        return joined or None
+    ssh_key = raw.get("sshKey") or {}
+    ssh_key_field = _SSH_KEY_FIELDS.get(field)
+    if ssh_key_field and text(ssh_key.get(ssh_key_field)):
+        return text(ssh_key.get(ssh_key_field))
+    if field == "notes" and raw.get("notes"):
+        return raw.get("notes")
+    customs = raw.get("fields") or []
+    # An exact name always wins, so a custom field genuinely called
+    # "custom:something" is still reachable; only then is the qualifier peeled
+    # off and the name behind it looked up.
+    for wanted in (field, field[len(_CUSTOM_PREFIX):] if field.startswith(_CUSTOM_PREFIX) else None):
+        if wanted is None:
+            continue
+        for custom in customs:
+            if custom.get("name") == wanted:
+                if custom.get("type") == _CUSTOM_FIELD_LINKED:
+                    target = _LINKED_ID_LABELS.get(custom.get("linkedId"))
+                    return _read_field(item, target) if target else None
+                return text(custom.get("value"))
     return None
 
 
@@ -635,7 +860,11 @@ def _cmd_whats_here(args: argparse.Namespace) -> int:
 
 
 def _cmd_describe_item(args: argparse.Namespace) -> int:
-    """Field LABELS of one item -- never their values."""
+    """Field LABELS of one item -- never their values.
+
+    Each label carries whether the vault masks that field, so the caller can
+    keep a masked value out of the agent's sight after it has been filled.
+    """
     try:
         item = _get_item(args.item_id)
     except _VaultToolError as exc:
@@ -643,7 +872,7 @@ def _cmd_describe_item(args: argparse.Namespace) -> int:
     _audit(args.item_id, "(labels)", "-", "DESCRIBED")
     sys.stdout.write(json.dumps({
         "id": item.get("id", ""), "title": item.get("title", ""),
-        "category": item.get("category", ""), "fields": _field_labels(item),
+        "category": item.get("category", ""), "fields": _field_descriptors(item),
     }) + "\n")
     return 0
 

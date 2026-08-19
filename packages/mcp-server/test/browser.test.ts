@@ -141,7 +141,7 @@ describe("browser tools (fake runtime)", () => {
     const cold = await callTool(server, "vault", { action: "list" }, AGENT);
     expect((cold.payload.items as unknown[]).length).toBe(ids.length);
     const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
-    expect(described.payload.fields).toContain("password");
+    expect(described.payload.fields).toContainEqual({ label: "password", hidden: true, custom: false, alias: false });
     expect(JSON.stringify(described.payload)).not.toContain("hunter2");
     expect(ids).toEqual(expect.arrayContaining(["L1", "C1"]));
     expect(JSON.stringify(creds.payload)).not.toContain("hunter2");
