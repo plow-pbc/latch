@@ -375,3 +375,45 @@ describe("audit hygiene", () => {
     expect(all).toContain("https://pizza.example/cb");
   });
 });
+
+describe("access the owner's log could not record is not granted", () => {
+  /** A session store whose audit append fails for one event, as a full disk
+   * or a bad permission would. */
+  function failingAudit(failOn: string): BrowserSessions {
+    return new BrowserSessions(
+      ctx.host,
+      null,
+      (event: string) => {
+        if (event === failOn) throw new Error("audit append failed");
+      },
+      60_000,
+    );
+  }
+
+  it("does not widen a session it could not record", async () => {
+    const sessions = failingAudit("browser_session_extended");
+    const opened = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const handle = opened.get("session").str!;
+
+    expect(() =>
+      sessions.extend("int-2", AGENT, handle, ["paypal.example"], ["L1"], true),
+    ).toThrow(/audit append failed/);
+
+    // The agent must not be left holding origins and credential items that the
+    // owner's log has no event for — that is access they cannot see.
+    const live = sessions.current()!;
+    expect(live.origins).toEqual(["pizza.example"]);
+    expect(live.origins).not.toContain("paypal.example");
+    await sessions.closeAll("test");
+  });
+
+  it("does not open a session it could not record", async () => {
+    const sessions = failingAudit("browser_session_opened");
+    await expect(sessions.open("int-1", AGENT, ["pizza.example"], true)).rejects.toThrow(
+      /audit append failed/,
+    );
+    // A live session with no opening event is a browser being used that the
+    // owner cannot see at all — the bug this PR exists to close.
+    expect(sessions.current()).toBeNull();
+  });
+});

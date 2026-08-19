@@ -142,8 +142,8 @@ export class BrowserSessions {
       lastUrl: "",
       knownPageCount: 1,
     };
-    this.session = session;
-    this.armIdleTimer();
+    // Same order as extend(), and for the same reason: a session the owner's
+    // log has no event for is a browser they cannot see being used at all.
     this.audit("browser_session_opened", {
       intentId,
       session: session.handle,
@@ -151,6 +151,8 @@ export class BrowserSessions {
       credential_metadata: credentialMetadata,
       headed: this.host.headed,
     });
+    this.session = session;
+    this.armIdleTimer();
     return {
       status: "completed",
       session: session.handle,
@@ -170,25 +172,36 @@ export class BrowserSessions {
   ): JSONValue {
     const s = this.validate(agentId, handle);
     if (typeof s === "string") return { status: "error", error: s };
+    // Work out the new bound without publishing it, because the record has to
+    // survive before the access does. Widening the live session first and
+    // auditing after means a failed append (full disk, bad permissions) leaves
+    // the agent holding origins and credential items that the owner's log has
+    // no event for — and the log is the only place they can see it. Recording
+    // first fails the call instead, and the session keeps its old bound.
+    const widened = [...s.origins];
     for (const o of origins) {
       const n = normalizeOrigin(o);
-      if (!s.origins.includes(n)) s.origins.push(n);
+      if (!widened.includes(n)) widened.push(n);
     }
-    s.origins.sort();
-    for (const i of items) s.credentialItems.add(i);
-    if (credentialMetadata) s.credentialMetadata = true;
-    s.lastActivity = Date.now();
+    widened.sort();
+    const widenedItems = new Set(s.credentialItems);
+    for (const i of items) widenedItems.add(i);
+    const itemList = [...widenedItems].sort();
     this.audit("browser_session_extended", {
       intentId,
       session: s.handle,
-      origins: s.origins,
-      items: [...s.credentialItems].sort(),
+      origins: widened,
+      items: itemList,
     });
+    s.origins = widened;
+    s.credentialItems = widenedItems;
+    if (credentialMetadata) s.credentialMetadata = true;
+    s.lastActivity = Date.now();
     return {
       status: "completed",
       session: s.handle,
       origins: s.origins,
-      items: [...s.credentialItems].sort(),
+      items: itemList,
     };
   }
 
