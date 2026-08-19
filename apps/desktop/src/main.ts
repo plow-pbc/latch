@@ -473,7 +473,9 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * document. The connect step's own copy stays client-agnostic, so this table
  * growing is the only change a new client needs.
  *
- * `discord` and `website` are Settings' Support section.
+ * `discord` and `website` are Settings' Support section; `account` is the
+ * Plow web console, Settings' View Account button. It follows the build's API
+ * origin so a `DOMO_API_BASE_URL` run opens the environment it signed into.
  *
  * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
  * Access pane. macOS has no API an app can call to request that permission —
@@ -482,6 +484,7 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * page the app may open.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
+  account: `${apiBaseUrl}/app/`,
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
   discord: "https://watchmepivot.com/discord",
   website: "https://watchmepivot.com/",

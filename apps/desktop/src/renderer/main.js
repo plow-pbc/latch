@@ -877,6 +877,9 @@ async function renderSettings() {
   // goes somewhere real rather than nowhere.
   const signIn = el("button", { class: "btn primary", text: "Sign In" });
   signIn.addEventListener("click", () => window.domo.onboardingOpen());
+  // The account itself lives on the web; this is the shortcut to it, shown
+  // only when there is an account to view.
+  const viewAccount = externalBtn("View Account", "account");
   const signOut = el("button", { class: "btn danger", text: "Sign Out" });
   // No explicit refresh: signing out restarts the relay, which publishes
   // `status:changed`, which is already the one thing that redraws this pane.
@@ -891,6 +894,7 @@ async function renderSettings() {
     // the user-agent `[hidden] { display: none }` rule and leaves a Sign In
     // button sitting next to Sign Out on an account that is already signed in.
     signIn.style.display = relay.hasCredential ? "none" : "";
+    viewAccount.style.display = relay.hasCredential ? "" : "none";
     signOut.disabled = !relay.hasCredential;
     // One row, and it is about this Mac rather than about the wire. The agent
     // endpoint lived here too, which is the same string the Agents tab shows as
@@ -1150,7 +1154,7 @@ async function renderSettings() {
     // what is on screen.
     group("Plow Account", "The account agents reach this Mac through.", [
       accountBox,
-      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), signOut, signIn]),
+      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), viewAccount, signOut, signIn]),
     ]),
     group("AI Reviewer", "Who runs the reviewer that judges each request. It receives the command, the paths asked for, and that agent's recent activity on this Mac. Billed to that account; nothing from other agents is sent.", [
       providerChips,
