@@ -106,26 +106,30 @@ describe("an edit", () => {
     });
   });
 
-  it("touches only the URL it showed, and leaves every other entry alone", () => {
+  it("rewrites only the URLs that changed, and keeps the rest as they are", () => {
     const many = encryptCipher(
       { type: "login", name: "GitHub", password: "x", urls: ["https://github.com", "https://gist.github.com"] },
       null,
       account,
     );
-    // The stored entries carry match rules this screen never shows, and the
-    // second is not even a URL — a rule the vault understands and we do not.
+    // The stored entries carry match rules the form does not show.
     many.login.uris = [
       { ...many.login.uris[0], match: 0 },
-      { uri: many.login.uris[1].uri, match: 4 },
+      { ...many.login.uris[1], match: 4 },
     ];
     const stored = { ...many, id: "item-1" };
 
-    const changed = encryptCipher({ itemId: "item-1", url: "https://github.com/login" }, stored, account);
+    // The form sends every URL it displayed; only the first one changed.
+    const changed = encryptCipher(
+      { itemId: "item-1", urls: ["https://github.com/login", "https://gist.github.com"] },
+      stored,
+      account,
+    );
     expect(decryptItem({ ...changed, id: "item-1" }, account).urls).toEqual([
       "https://github.com/login",
       "https://gist.github.com",
     ]);
-    // Byte for byte: the entry that was not shown is the object it was.
+    // Byte for byte: the entry whose address did not change is the object it was.
     expect(changed.login.uris[1]).toEqual(many.login.uris[1]);
     expect(changed.login.uris[0].match).toBeNull();
 

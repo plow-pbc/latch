@@ -81,6 +81,9 @@ async function setUp() {
     ciphers.set(id, { ...encryptCipher(given, existing, account), id });
     return { id, title: String(input.name ?? "") };
   });
+  ipcMain.handle("vault:deleteItem", async (_e, itemId) => {
+    ciphers.delete(itemId);
+  });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("ui:getTab", async () => "vault");
   ipcMain.handle("ui:setTab", async () => {});
@@ -103,59 +106,60 @@ const SCREENS = [
   {
     name: "list",
     prepare: async () => {},
-    // The heading is uppercased by the stylesheet, so that is how it reads back.
-    expect: ["YOUR SECRETS", "New", "Product Hunt", "Login", "Amex", "Card"],
+    expect: ["Vault", "They never see the raw values", "Saved items", "2 items", "Product Hunt", "Login", "Amex", "Card"],
   },
   {
     name: "types",
     prepare: async (win) => clickText(win, "New"),
     // Every type the vault models is offered, not only logins.
-    expect: ["What are you saving?", "Login", "Card", "Identity", "Secure note"],
+    expect: ["What are you saving to the vault?", "Login", "Card", "Identity", "Secure note",
+             "Username, password & 2FA for a site"],
   },
   {
     name: "card-form",
     prepare: async (win) => {
       await clickText(win, "New");
-      await clickText(win, "Card");
+      await clickText(win, "Payment card for checkout");
     },
-    expect: ["Item name", "Cardholder name", "Brand", "Number", "Expiry month", "Expiry year", "Security code", "Add card"],
+    expect: ["New card", "Card details", "Cardholder name", "Number", "Expiration month",
+             "Security code (CVV)", "Notes", "Required"],
   },
   {
     name: "identity-form",
     prepare: async (win) => {
       await clickText(win, "New");
-      await clickText(win, "Identity");
+      await clickText(win, "Name, address & contact details");
     },
-    expect: ["First name", "Last name", "Address 1", "Postal code", "SSN", "Passport number", "Licence number"],
+    expect: ["Name", "First name", "Last name", "Address 1", "ZIP / Postal code", "Social Security number", "Passport number"],
   },
   {
     name: "open-login",
     prepare: async (win) => {
-      await clickText(win, "Open");
+      await clickText(win, "Product Hunt");
       await settle(win);
-      await clickText(win, "Show");
+      await clickEye(win);
       await settle(win);
     },
     // Opened, and the stored password fetched because the owner asked for it.
-    // The value lands in a field, so it is checked as a value, not as page text.
-    expect: ["Site URL", "TOTP secret", "Shown"],
+    expect: ["Login credentials", "Authenticator key (TOTP)", "Website (URI)", "Add website",
+             "Used by agents on approval", "Delete", "Save"],
     expectValues: ["already-stored"],
   },
   {
     name: "added",
     prepare: async (win) => {
       await clickText(win, "New");
-      await clickText(win, "Login");
+      await clickText(win, "Username, password & 2FA for a site");
       await type(win, "Item name", "GitHub");
       await type(win, "Username", "daniel@plow.co");
-      await type(win, "Site URL", "https://github.com");
       await type(win, "Password", "a-new-password");
-      await clickText(win, "Add login");
+      await typeUrl(win, "https://github.com");
+      await clickText(win, "Save");
       await settle(win);
     },
-    // Written through the broker and read back from the vault — no browser page
+    // Written through the real encryption and read back — no browser page
     // anywhere in that loop.
-    expect: ["GitHub", "Product Hunt", "Amex"],
+    expect: ["GitHub", "Product Hunt", "Amex", "3 items"],
   },
 ];
 
@@ -174,12 +178,34 @@ async function clickText(win, label) {
   await new Promise((r) => setTimeout(r, 250));
 }
 
+/** The first eye button on screen — how a person asks to see a stored secret. */
+async function clickEye(win) {
+  const found = await win.webContents.executeJavaScript(
+    `(() => { const b = document.querySelector(".vaultui .mini.eye"); if (!b) return false; b.click(); return true; })()`,
+  );
+  if (!found) throw new Error("no reveal button on screen");
+  await new Promise((r) => setTimeout(r, 250));
+}
+
+/** The website box, which carries no label of its own in her design. */
+async function typeUrl(win, url) {
+  const found = await win.webContents.executeJavaScript(
+    `(() => {
+      const el = document.querySelector('.vaultui .sheet input[placeholder="https://"]');
+      if (!el) return false;
+      el.value = ${JSON.stringify("URL")};
+      return true;
+    })()`.replace(JSON.stringify("URL"), JSON.stringify(url)),
+  );
+  if (!found) throw new Error("no website field on screen");
+}
+
 /** Type into the field under a label, the way the form is filled by hand. */
 async function type(win, label, text) {
   const found = await win.webContents.executeJavaScript(`
     (() => {
       const field = [...document.querySelectorAll(".field")]
-        .find((f) => (f.querySelector("label")?.textContent || "").replace(" (optional)", "") === ${JSON.stringify(label)});
+        .find((f) => (f.querySelector("label")?.textContent || "").replace(/[\\s*]+$/, "") === ${JSON.stringify(label)});
       const el = field?.querySelector("input");
       if (!el) return false;
       el.value = ${JSON.stringify(text)};
@@ -198,7 +224,7 @@ async function settle(win) {
 async function listed(win) {
   for (let i = 0; i < 40; i++) {
     const ready = await win.webContents.executeJavaScript(
-      `!!document.querySelector(".item, .empty")`,
+      `!!document.querySelector(".vaultui .vitem, .vaultui .empty")`,
     );
     if (ready) {
       // The text is in the DOM one tick before it is painted; a shot taken on
@@ -231,6 +257,11 @@ app.whenReady().then(async () => {
     },
   });
 
+  // A renderer exception must not read as "the screen lost its content".
+  win.webContents.on("console-message", (_e, level, message) => {
+    if (level >= 2) console.log("RENDERER:" + message);
+  });
+
   let failures = 0;
   for (const screen of SCREENS) {
     await win.loadFile(path.join(dist, "renderer/index.html"));
@@ -240,12 +271,14 @@ app.whenReady().then(async () => {
     const out = path.join(outDir, `vault-${screen.name}.png`);
     fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
 
-    const text = await win.webContents.executeJavaScript("document.body.innerText");
+    // Case-folded: her labels and tags are uppercased by the stylesheet, and
+    // this check is about what the screen says, not how it is set.
+    const text = (await win.webContents.executeJavaScript("document.body.innerText")).toLowerCase();
     const values = await win.webContents.executeJavaScript(
       `[...document.querySelectorAll("input, textarea")].map((f) => f.value).join("\\n")`,
     );
     const missing = [
-      ...screen.expect.filter((needle) => !text.includes(needle)),
+      ...screen.expect.filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.expectValues ?? []).filter((needle) => !values.includes(needle)),
     ];
     if (missing.length) failures += 1;

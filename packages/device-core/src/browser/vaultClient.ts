@@ -120,15 +120,10 @@ export class VaultClient {
     const { key } = await this.open();
     const existing = input.itemId ? await this.cipher(input.itemId) : null;
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
-    // Only what the owner actually typed is checked. A new login needs a site;
-    // an edit re-states the one URL it displayed, and the rest of the item's
-    // URLs are never revalidated — they may hold match rules this screen does
-    // not speak, and an edit to a username must not fail on one.
-    if (type === 1) {
-      if (!existing) input = { ...input, urls: checkedUrls(input.urls ?? []) };
-      // Blank included: emptying the field would leave a login the fill path
-      // can never match, which is the same item the check exists to refuse.
-      else if (typeof input.url === "string") input = { ...input, url: checkedUrls([input.url])[0] };
+    // Every URL the form showed is checked, because every one of them is a URL
+    // the owner just looked at; a login with none can never be filled.
+    if (type === 1 && input.urls !== undefined) {
+      input = { ...input, urls: checkedUrls(input.urls) };
     }
     if (!existing && !String(input.name ?? "").trim()) throw new Error("a new item needs a name");
 
@@ -140,6 +135,13 @@ export class VaultClient {
     ) as Cipher;
     this.audit(String(saved.id ?? ""), "(item)", input.itemId ? "UPDATED" : "CREATED");
     return { id: String(saved.id ?? ""), title: String(input.name ?? "") };
+  }
+
+  /** Throw an item away. The vault keeps it in its trash, as it does for its
+   * own clients, so this is reversible there and final here. */
+  async remove(itemId: string): Promise<void> {
+    await this.call("DELETE", `/api/ciphers/${encodeURIComponent(itemId)}`);
+    this.audit(itemId, "(item)", "DELETED");
   }
 
   private audit(itemId: string, field: string, outcome: string): void {

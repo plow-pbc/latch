@@ -583,6 +583,12 @@ ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
   return vault.reveal(String(itemId), field);
 });
 
+ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.remove(String(itemId));
+});
+
 ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");

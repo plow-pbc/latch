@@ -816,213 +816,446 @@ async function refreshUpdateBanner() {
 
 // ---- Settings ----
 
-/* The four types this vault models, and the fields each one carries. The order
-   here is the order on screen; `secret` means the value is never in a listing
-   and is fetched only when the owner asks for it. */
+/* ---- The Vault tab, built to Mary's design (vault.html) ----------------
+   Her markup and her class names; the styling lives in vault.css, scoped to
+   `.vaultui` so no other screen changes. Everything here is fed by the real
+   vault: the list, the values, and the secrets that are fetched only when the
+   owner asks to see one. */
+
+/** Her icons, as path data — the renderer builds SVG rather than taking markup. */
+const VAULT_ICONS = {
+  KEY: [["circle", { cx: "8", cy: "15", r: "4" }], ["path", { d: "M10.8 12.2L20 3" }],
+        ["path", { d: "M17 6l2.5 2.5" }], ["path", { d: "M15 8l2.5 2.5" }]],
+  CARD: [["rect", { x: "2.5", y: "5", width: "19", height: "14", rx: "2.5" }],
+         ["path", { d: "M2.5 9.5h19" }], ["path", { d: "M6 15h4" }]],
+  USER: [["circle", { cx: "12", cy: "8", r: "4" }], ["path", { d: "M5 20c0-3.3 3.1-5 7-5s7 1.7 7 5" }]],
+  NOTE: [["path", { d: "M6 3h9l4 4v14H6z" }], ["path", { d: "M14 3v5h5" }], ["path", { d: "M9 13h7M9 17h5" }]],
+  CHEV: [["path", { d: "M8 10l4 4 4-4" }]],
+  EYE: [["path", { d: "M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" }], ["circle", { cx: "12", cy: "12", r: "3" }]],
+  EYEOFF: [["path", { d: "M17.9 17.9A10.4 10.4 0 0 1 12 19c-7 0-11-7-11-7a19.6 19.6 0 0 1 5.1-5.9M9.9 4.2A10.6 10.6 0 0 1 12 4c7 0 11 7 11 7a19.7 19.7 0 0 1-2.3 3.3M9.9 9.9a3 3 0 0 0 4.2 4.2" }],
+           ["path", { d: "M1 1l22 22" }]],
+  SHIELD: [["path", { d: "M12 3l7 4v6c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7z" }]],
+  GEN: [["path", { d: "M21 12a9 9 0 1 1-2.6-6.4" }], ["path", { d: "M21 3v5h-5" }]],
+  PLUS: [["path", { d: "M12 5v14M5 12h14" }]],
+  CLOSE: [["path", { d: "M18 6L6 18M6 6l12 12" }]],
+};
+
+function vsvg(name, strokeWidth = "1.8") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", strokeWidth);
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  for (const [tag, attrs] of VAULT_ICONS[name] ?? []) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    svg.appendChild(node);
+  }
+  return svg;
+}
+
+/* The four types, laid out as her forms lay them out. `secret` is a value the
+   vault never hands over with the item — it is fetched one at a time, which is
+   what the eye button does. */
 const VAULT_TYPES = {
   login: {
-    label: "Login",
-    fields: [
-      { key: "username", label: "Username" },
-      { key: "password", label: "Password", secret: true },
-      { key: "url", label: "Site URL", required: true },
-      { key: "totp", label: "TOTP secret", secret: true },
+    label: "Login", icon: "KEY", placeholder: "e.g. Notion",
+    groups: [
+      { head: "Login credentials", fields: [
+        { key: "username", label: "Username", placeholder: "you@example.com" },
+        { key: "password", label: "Password", secret: true, generate: true, placeholder: "••••••••••••",
+          hint: "Use the generator to create a strong, unique password" },
+        { key: "totp", label: "Authenticator key (TOTP)", secret: true, placeholder: "Optional — for 2FA codes" },
+      ] },
+      { head: "Website (URI)", required: true, urls: true },
+      { head: "Notes", fields: [{ key: "notes", placeholder: "Optional", textarea: true }] },
     ],
   },
   card: {
-    label: "Card",
-    fields: [
-      { key: "cardholderName", label: "Cardholder name" },
-      { key: "brand", label: "Brand" },
-      { key: "number", label: "Number", secret: true },
-      { key: "expMonth", label: "Expiry month" },
-      { key: "expYear", label: "Expiry year" },
-      { key: "code", label: "Security code", secret: true },
+    label: "Card", icon: "CARD", placeholder: "e.g. Visa •••• 4242",
+    groups: [
+      { head: "Card details", fields: [
+        { key: "cardholderName", label: "Cardholder name", placeholder: "Name on card" },
+        { key: "number", label: "Number", secret: true, placeholder: "•••• •••• •••• ••••" },
+        { key: "brand", label: "Brand", placeholder: "Visa, Mastercard…" },
+        { key: "expMonth", label: "Expiration month", placeholder: "MM", half: true },
+        { key: "expYear", label: "Expiration year", placeholder: "YYYY", half: true },
+        { key: "code", label: "Security code (CVV)", secret: true, placeholder: "•••" },
+      ] },
+      { head: "Notes", fields: [{ key: "notes", placeholder: "Optional", textarea: true }] },
     ],
   },
   identity: {
-    label: "Identity",
-    fields: [
-      { key: "title", label: "Title" },
-      { key: "firstName", label: "First name" },
-      { key: "middleName", label: "Middle name" },
-      { key: "lastName", label: "Last name" },
-      { key: "company", label: "Company" },
-      { key: "address1", label: "Address 1" },
-      { key: "address2", label: "Address 2" },
-      { key: "address3", label: "Address 3" },
-      { key: "city", label: "City" },
-      { key: "state", label: "State" },
-      { key: "postalCode", label: "Postal code" },
-      { key: "country", label: "Country" },
-      { key: "email", label: "Email" },
-      { key: "phone", label: "Phone" },
-      { key: "ssn", label: "SSN", secret: true },
-      { key: "username", label: "Username" },
-      { key: "passportNumber", label: "Passport number" },
-      { key: "licenseNumber", label: "Licence number" },
+    label: "Identity", icon: "USER", placeholder: "e.g. Personal identity",
+    groups: [
+      { head: "Name", fields: [
+        { key: "title", label: "Title", placeholder: "Mr, Ms, Dr…", half: true },
+        { key: "firstName", label: "First name", half: true },
+        { key: "middleName", label: "Middle name", placeholder: "Optional", half: true },
+        { key: "lastName", label: "Last name", half: true },
+        { key: "company", label: "Company", placeholder: "Optional" },
+      ] },
+      { head: "Contact", fields: [
+        { key: "email", label: "Email", half: true },
+        { key: "phone", label: "Phone", half: true },
+        { key: "username", label: "Username", placeholder: "Optional" },
+      ] },
+      { head: "Address", fields: [
+        { key: "address1", label: "Address 1" },
+        { key: "address2", label: "Address 2", placeholder: "Optional" },
+        { key: "address3", label: "Address 3", placeholder: "Optional" },
+        { key: "city", label: "City / Town", half: true },
+        { key: "state", label: "State / Province", half: true },
+        { key: "postalCode", label: "ZIP / Postal code", half: true },
+        { key: "country", label: "Country", half: true },
+      ] },
+      { head: "Numbers", fields: [
+        { key: "ssn", label: "Social Security number", secret: true, placeholder: "•••-••-••••" },
+        { key: "passportNumber", label: "Passport number", placeholder: "Optional" },
+        { key: "licenseNumber", label: "License number", placeholder: "Optional" },
+      ] },
+      { head: "Notes", fields: [{ key: "notes", placeholder: "Optional", textarea: true }] },
     ],
   },
-  note: { label: "Secure note", fields: [] },
+  note: {
+    label: "Secure note", icon: "NOTE", placeholder: "e.g. Recovery codes",
+    groups: [
+      { head: "Note", fields: [{ key: "notes", textarea: true,
+        placeholder: "Anything you want your agents to be able to reference on approval…" }] },
+    ],
+  },
 };
 
 function errText(err) {
   return err && err.message ? String(err.message).replace(/^Error: /, "") : String(err);
 }
 
-/* One saved item, as a card: what it is, and — once opened — every field it
-   has, with the secret ones fetched only when asked for. */
-function itemCard(summary, reload) {
-  const type = summary.type || "login";
-  const context = summary.subtitle || (summary.urls && summary.urls[0]) || "";
-  const slot = el("div", {});
-  const open = el("button", { class: "btn small", text: "Open" });
-  open.addEventListener("click", async () => {
-    if (slot.firstChild) {
-      slot.replaceChildren();
-      open.textContent = "Open";
-      return;
-    }
-    open.disabled = true;
-    try {
-      const item = await window.domo.vaultItem(summary.id);
-      slot.replaceChildren(itemForm(item, reload, () => {
-        slot.replaceChildren();
-        open.textContent = "Open";
-      }));
-      open.textContent = "Close";
-    } catch (err) {
-      slot.replaceChildren(el("p", { class: "faint", text: "Could not open it: " + errText(err) }));
-    }
-    open.disabled = false;
-  });
+/** Her toast: one line, bottom of the pane, gone on its own. */
+let toastTimer = null;
+function vtoast(message) {
+  const node = document.querySelector(".vaultui .toast");
+  if (!node) return;
+  node.textContent = message;
+  node.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.remove("show"), 2200);
+}
 
-  return el("div", { class: "item" }, [
-    el("div", { class: "row" }, [
-      el("h4", { text: summary.title || "(untitled)" }),
-      badge("zinc", VAULT_TYPES[type].label),
-    ]),
-    context ? el("p", { text: context }) : null,
-    el("div", { class: "row" }, [open]),
-    slot,
-  ]);
+/** A password worth generating: 20 characters from the machine's own RNG. */
+function generatedPassword() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+";
+  const bytes = new Uint32Array(20);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
 }
 
 /**
- * The one form, for a new item and for one already saved.
- *
- * A secret starts empty with a Show button beside it: empty means "leave what
- * the vault holds alone", so an edit never has to retype a password, and the
- * value only ever reaches this window when the owner asks for it.
+ * One field, her way: label, a wrapping box, and the small buttons that belong
+ * to it. A secret starts blank — the vault has not handed it over — and the eye
+ * asks for it, which is the request the vault's audit records.
  */
-function itemForm(item, reload, done) {
-  const saved = !!item.id;             // a new item comes in blank, with no id
-  const type = item.type;
-  const spec = VAULT_TYPES[type];
-  const name = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
-  const notes = el("textarea", { class: "text" });
-  name.value = item.name || "";
-  notes.value = item.notes || "";
+function vfield(spec, ctx) {
+  const input = spec.textarea
+    ? el("textarea", { class: "inp", attrs: { placeholder: spec.placeholder ?? "" } })
+    : el("input", {
+        class: "inp",
+        attrs: {
+          type: spec.secret ? "password" : "text",
+          spellcheck: "false",
+          placeholder: spec.placeholder ?? "",
+          ...(spec.key === "name" ? { "data-name": "1" } : {}),
+        },
+      });
+  const stored = ctx.item ? (spec.key === "notes" ? ctx.item.notes : ctx.item.fields[spec.key]) : "";
+  if (!spec.secret && stored) input.value = stored;
+  ctx.inputs[spec.key] = input;
 
-  const inputs = {};
-  const rows = [];
-  for (const field of spec.fields) {
-    const input = el("input", {
-      class: field.secret ? "text mono" : "text",
-      attrs: { type: field.secret ? "password" : "text", spellcheck: "false" },
-    });
-    const stored = field.key === "url" ? (item.urls || [])[0] : item.fields[field.key];
-    if (!field.secret && stored) input.value = stored;
-    inputs[field.key] = input;
-
-    // A stored secret is fetched on demand, one field at a time — that request
-    // is what the vault's audit records.
-    const held = saved && (item.secrets || []).includes(field.key);
-    const show = el("button", { class: "btn small", text: "Show" });
-    show.addEventListener("click", async () => {
-      show.disabled = true;
-      try {
-        input.value = await window.domo.vaultReveal(item.id, field.key);
-        input.setAttribute("type", "text");
-        show.textContent = "Shown";
-      } catch (err) {
-        show.textContent = "Failed";
-        show.title = errText(err);
+  const buttons = [];
+  if (spec.secret) {
+    const held = ctx.saved && (ctx.item.secrets || []).includes(spec.key);
+    const eye = el("button", { class: "mini eye", attrs: { type: "button", title: "Reveal" } }, [vsvg("EYE")]);
+    eye.addEventListener("click", async () => {
+      if (input.getAttribute("type") === "text") {
+        input.setAttribute("type", "password");
+        eye.replaceChildren(vsvg("EYE"));
+        return;
       }
-      show.disabled = false;
-    });
-
-    rows.push(el("div", { class: "field" }, [
-      el("label", { text: field.label + (field.required ? "" : " (optional)") }),
-      held ? el("div", { class: "copyrow" }, [input, show]) : input,
-    ]));
-  }
-
-  const note = el("p", {
-    class: "faint",
-    text: saved
-      ? "Secret fields are blank until you press Show; leave one blank and it keeps the value already stored."
-      : type === "login"
-        ? "The site URL is what lets the agent fill this login later."
-        : "",
-  });
-  const save = el("button", { class: "btn primary", text: saved ? "Save" : "Add " + spec.label.toLowerCase() });
-  save.addEventListener("click", async () => {
-    save.disabled = true;
-    note.textContent = "Saving…";
-    try {
-      const payload = { type, name: name.value.trim(), notes: notes.value };
-      if (saved) payload.itemId = item.id;
-      for (const field of spec.fields) {
-        const value = inputs[field.key].value;
-        // A blank secret means "unchanged"; a blank anything else means empty.
-        if (field.secret && !value) continue;
-        // Only the first URL is on screen, so an edit says just that one and
-        // the item's other URLs are never mentioned — nothing this screen did
-        // not show can be rewritten by it.
-        if (field.key === "url") {
-          if (saved) payload.url = value.trim();
-          else payload.urls = value.trim() ? [value.trim()] : [];
+      if (held && !input.value) {
+        eye.disabled = true;
+        try {
+          input.value = await window.domo.vaultReveal(ctx.item.id, spec.key);
+        } catch (err) {
+          vtoast("Could not read it: " + errText(err));
+          eye.disabled = false;
+          return;
         }
-        else payload[field.key] = value;
+        eye.disabled = false;
       }
-      await window.domo.vaultSaveItem(payload);
-      done();
-      await reload();
-      return;
-    } catch (err) {
-      note.textContent = "Could not save it: " + errText(err);
-    }
-    save.disabled = false;
-  });
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  cancel.addEventListener("click", () => done());
-
-  return el("div", {}, [
-    el("div", { class: "field" }, [el("label", { text: "Item name" }), name]),
-    ...rows,
-    el("div", { class: "field" }, [el("label", { text: type === "note" ? "Note" : "Notes (optional)" }), notes]),
-    note,
-    el("div", { class: "row" }, [save, cancel]),
-  ]);
-}
-
-/** The New button: pick a type, get that type's form. */
-function newItemPicker(reload, done) {
-  const buttons = Object.entries(VAULT_TYPES).map(([key, spec]) => {
-    const b = el("button", { class: "btn", text: spec.label });
-    b.addEventListener("click", () => {
-      slot.replaceChildren(itemForm({ type: key, name: "", notes: "", urls: [], fields: {}, secrets: [], id: "" }, reload, done));
+      input.setAttribute("type", "text");
+      eye.replaceChildren(vsvg("EYEOFF"));
     });
-    return b;
-  });
-  const slot = el("div", {});
-  return el("div", { class: "item" }, [
-    el("p", { class: "faint", text: "What are you saving?" }),
-    el("div", { class: "row" }, buttons),
-    slot,
+    buttons.push(eye);
+  }
+  if (spec.generate) {
+    const gen = el("button", { class: "mini gen", attrs: { type: "button", title: "Generate password" } }, [vsvg("GEN")]);
+    gen.addEventListener("click", () => {
+      input.value = generatedPassword();
+      input.setAttribute("type", "text");
+      ctx.onChange?.();
+    });
+    buttons.push(gen);
+  }
+  input.addEventListener("input", () => ctx.onChange?.());
+
+  const label = spec.label
+    ? el("label", { text: spec.label + " " }, spec.required ? [el("span", { class: "req", text: "*" })] : [])
+    : null;
+  const hint = spec.hint ? el("span", { class: "gen-hint" }, [vsvg("GEN"), el("span", { text: " " + spec.hint })]) : null;
+  return el("div", { class: "field" + (spec.secret ? " secret" : "") + (spec.half ? "" : " span2") },
+    [label, el("div", { class: "inwrap" }, [input, ...buttons]), hint].filter(Boolean));
+}
+
+/** The website group: one box per URL the item has, and her "Add website". */
+function vurls(ctx) {
+  const rows = el("div", {});
+  const add = () => {
+    const input = el("input", { class: "inp", attrs: { type: "text", spellcheck: "false", placeholder: "https://" } });
+    input.addEventListener("input", () => ctx.onChange?.());
+    ctx.urlInputs.push(input);
+    rows.appendChild(el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input])]));
+    return input;
+  };
+  const existing = ctx.item ? ctx.item.urls || [] : [];
+  if (existing.length === 0) add();
+  else for (const url of existing) add().value = url;
+
+  const more = el("button", { class: "add-link", attrs: { type: "button" } }, [vsvg("PLUS", "2"), el("span", { text: " Add website" })]);
+  more.addEventListener("click", () => add().focus());
+  return el("div", { class: "group" }, [
+    el("div", { class: "group-h", text: "Website (URI) " }, [el("span", { class: "req", text: "*" })]),
+    rows,
+    more,
   ]);
 }
+
+/** Every group of a type's form, built once and shared by the sheet and the row. */
+function vformBody(type, item, onChange) {
+  const spec = VAULT_TYPES[type];
+  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [], onChange };
+  const name = vfield(
+    { key: "name", label: "Item name", required: true, placeholder: spec.placeholder },
+    { ...ctx, item: item ? { ...item, fields: { ...item.fields, name: item.name } } : null },
+  );
+  const nameInput = name.querySelector("input");
+  ctx.inputs.name = nameInput;
+
+  const groups = spec.groups.map((group) =>
+    group.urls
+      ? vurls(ctx)
+      : el("div", { class: "group" }, [
+          el("div", { class: "group-h", text: group.head }),
+          el("div", { class: "grid2" }, group.fields.map((f) => vfield(f, ctx))),
+        ]),
+  );
+  return { nodes: [name, ...groups], ctx };
+}
+
+/** What the form sends: only what it holds, and a secret only when it has one. */
+function vpayload(type, ctx) {
+  const payload = { type, name: ctx.inputs.name.value.trim() };
+  for (const group of VAULT_TYPES[type].groups) {
+    if (group.urls) {
+      payload.urls = ctx.urlInputs.map((i) => i.value.trim()).filter(Boolean);
+      continue;
+    }
+    for (const field of group.fields) {
+      const value = ctx.inputs[field.key].value;
+      // Blank secret means "leave the stored one alone"; blank anything else
+      // means the owner cleared it.
+      if (field.secret && !value) continue;
+      payload[field.key] = value;
+    }
+  }
+  return payload;
+}
+
+/** Her confirm card, for the one action that cannot be undone here. */
+function vconfirm(title, body, confirmLabel, onConfirm) {
+  const overlay = el("div", { class: "overlay confirm-overlay show" });
+  const close = () => overlay.remove();
+  const keep = el("button", { class: "btn ghost", attrs: { type: "button" }, text: "Cancel" });
+  keep.addEventListener("click", close);
+  const go = el("button", { class: "btn danger", attrs: { type: "button" }, text: confirmLabel });
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    await onConfirm();
+    close();
+  });
+  overlay.appendChild(el("div", { class: "confirm-card", attrs: { role: "alertdialog" } }, [
+    el("div", { class: "confirm-h", text: title }),
+    el("p", { class: "confirm-p", text: body }),
+    el("div", { class: "confirm-acts" }, [keep, go]),
+  ]));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.querySelector(".vaultui").appendChild(overlay);
+}
+
+/** One saved item: her row, and the form it opens into. */
+function vitem(summary, reload) {
+  const type = summary.type || "login";
+  const spec = VAULT_TYPES[type];
+  const article = el("article", { class: "vitem", attrs: { "data-type": type } });
+
+  const row = el("button", { class: "vrow", attrs: { type: "button" } }, [
+    el("span", { class: "vicon" }, [vsvg(spec.icon)]),
+    el("span", { class: "vmain" }, [
+      el("span", { class: "vtitle", text: summary.title || "(untitled)" }),
+      el("span", { class: "vctx", text: [summary.subtitle, (summary.urls || [])[0]].filter(Boolean).join(" · ") }),
+    ]),
+    el("span", { class: "vtag", text: spec.label }),
+    el("span", { class: "vchev" }, [vsvg("CHEV", "2")]),
+  ]);
+  const inner = el("div", { class: "vbody-inner" });
+  const body = el("div", { class: "vbody" }, [inner]);
+
+  let loaded = false;
+  row.addEventListener("click", async () => {
+    article.classList.toggle("open");
+    if (loaded || !article.classList.contains("open")) return;
+    loaded = true;
+    inner.replaceChildren(el("p", { class: "use-note", text: "Opening…" }));
+    try {
+      const item = await window.domo.vaultItem(summary.id);
+      const { nodes, ctx } = vformBody(type, item);
+      const del = el("button", { class: "btn danger", attrs: { type: "button" }, text: "Delete" });
+      del.addEventListener("click", () =>
+        vconfirm(
+          "Delete this item?",
+          `"${item.name}" goes to the vault's trash. Agents lose it immediately, and anything filled with it stops working.`,
+          "Delete",
+          async () => {
+            try {
+              await window.domo.vaultDeleteItem(item.id);
+              vtoast("Deleted");
+              await reload();
+            } catch (err) {
+              vtoast("Could not delete it: " + errText(err));
+            }
+          },
+        ),
+      );
+      const save = el("button", { class: "btn save", attrs: { type: "button" }, text: "Save" });
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id });
+          vtoast("Saved");
+          await reload();
+          return;
+        } catch (err) {
+          vtoast("Could not save it: " + errText(err));
+        }
+        save.disabled = false;
+      });
+      inner.replaceChildren(...nodes, el("div", { class: "vfoot" }, [
+        el("span", { class: "use-note" }, [vsvg("SHIELD"), el("span", { text: " Used by agents on approval" })]),
+        el("span", { class: "acts" }, [del, save]),
+      ]));
+    } catch (err) {
+      loaded = false;
+      inner.replaceChildren(el("p", { class: "use-note", text: "Could not open it: " + errText(err) }));
+    }
+  });
+
+  article.replaceChildren(row, body);
+  return article;
+}
+
+/** Her sheet: pick a type, fill that type's form, save. */
+function vsheet(reload) {
+  const overlay = el("div", { class: "overlay show" });
+  const close = () => overlay.remove();
+
+  const title = el("h2", { text: "New item" });
+  const tag = el("span", { class: "htag", attrs: { hidden: "" } });
+  const back = el("button", { class: "sheet-back", attrs: { type: "button", title: "Back", hidden: "" } }, [vsvg("CHEV", "2.2")]);
+  const x = el("button", { class: "sheet-x", attrs: { type: "button", title: "Close" } }, [vsvg("CLOSE", "2.2")]);
+  x.addEventListener("click", close);
+
+  const bodyEl = el("div", { class: "sheet-body" });
+  const cancel = el("button", { class: "btn ghost", attrs: { type: "button" }, text: "Cancel" });
+  cancel.addEventListener("click", close);
+  const save = el("button", { class: "btn save", attrs: { type: "button" }, text: "Save" });
+  const foot = el("div", { class: "sheet-foot", attrs: { hidden: "" } }, [
+    el("span", { class: "req-note" }, [el("span", { class: "req", text: "*" }), el("span", { text: " Required" })]),
+    cancel,
+    save,
+  ]);
+
+  const picker = () => {
+    title.textContent = "New item";
+    tag.setAttribute("hidden", "");
+    back.setAttribute("hidden", "");
+    foot.setAttribute("hidden", "");
+    bodyEl.replaceChildren(
+      el("p", { class: "sheet-sub", text: "What are you saving to the vault?" }),
+      el("div", { class: "picker-grid" }, Object.entries(VAULT_TYPES).map(([key, spec]) => {
+        const button = el("button", { class: "ptype", attrs: { type: "button", "data-new": key } }, [
+          el("span", { class: "pi" }, [vsvg(spec.icon)]),
+          el("span", {}, [
+            el("span", { class: "pn", text: spec.label }),
+            el("span", { class: "pd", text: PTYPE_BLURB[key] }),
+          ]),
+        ]);
+        button.addEventListener("click", () => form(key));
+        return button;
+      })),
+    );
+  };
+
+  const form = (type) => {
+    title.textContent = "New " + VAULT_TYPES[type].label.toLowerCase();
+    tag.textContent = VAULT_TYPES[type].label;
+    tag.removeAttribute("hidden");
+    back.removeAttribute("hidden");
+    foot.removeAttribute("hidden");
+    const { nodes, ctx } = vformBody(type, null);
+    bodyEl.replaceChildren(el("form", { class: "sheet-form", attrs: { autocomplete: "off" } }, nodes));
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        await window.domo.vaultSaveItem(vpayload(type, ctx));
+        close();
+        vtoast("Saved");
+        await reload();
+        return;
+      } catch (err) {
+        vtoast("Could not save it: " + errText(err));
+      }
+      save.disabled = false;
+    };
+  };
+  back.addEventListener("click", picker);
+
+  overlay.appendChild(el("div", { class: "sheet", attrs: { role: "dialog", "aria-modal": "true" } }, [
+    el("div", { class: "sheet-top" }, [back, el("div", { class: "sheet-titlewrap" }, [title, tag]), x]),
+    bodyEl,
+    foot,
+  ]));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  picker();
+  document.querySelector(".vaultui").appendChild(overlay);
+}
+
+/** Her one-line description of each type, on the picker cards. */
+const PTYPE_BLURB = {
+  login: "Username, password & 2FA for a site",
+  card: "Payment card for checkout",
+  identity: "Name, address & contact details",
+  note: "Freeform private text",
+};
 
 async function renderVault() {
   // Everything the vault holds, edited here. This is why the tab exists: the
@@ -1036,14 +1269,25 @@ async function renderVault() {
     failure = errText(err);
   }
 
+  const pane = el("div", { class: "vaultui" });
+  const masthead = el("div", { class: "masthead" }, [
+    el("div", {}, [
+      el("h1", { text: "Vault" }),
+      el("p", { class: "trust" }, [
+        el("span", { text: "Your agents can use these to act for you. " }),
+        el("span", { class: "lk", text: "They never see the raw values" }),
+        el("span", { text: " — every use needs your approval and is logged." }),
+      ]),
+    ]),
+  ]);
+
   if ((items === null || (items && items.locked)) && !failure) {
     // Locked and empty are different facts and get different words. A vault
     // whose key has moved — a Keychain reset, a Mac restored from backup — used
     // to render as "has not started yet", which sent people looking for a
     // server that was running fine.
     const locked = !!(items && items.locked);
-    view.replaceChildren(el("div", { class: "panel" }, [
-      el("div", { class: "section-label", text: "Your secrets" }),
+    pane.replaceChildren(masthead, el("div", { class: "col" }, [
       el("div", { class: "empty", text: locked
         ? "This Mac can't unlock its vault account."
         : "The vault has not started yet." }),
@@ -1052,40 +1296,44 @@ async function renderVault() {
       // damaged file, so the copy leads with what is certain, names the likely
       // cause as likely, and gives the remedy — the same either way.
       locked
-        ? el("p", { class: "faint vault-note", text: items.reason === "no-storage"
+        ? el("p", { class: "use-note", text: items.reason === "no-storage"
             ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
-            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." }
-          )
+            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
         : null,
     ].filter(Boolean)));
+    view.replaceChildren(pane);
     return;
   }
 
-  const list = el("div", {});
-  const newSlot = el("div", {});
-  const add = el("button", { class: "btn primary", text: "New" });
-  add.addEventListener("click", () => {
-    if (newSlot.firstChild) {
-      newSlot.replaceChildren();
-      return;
-    }
-    newSlot.replaceChildren(newItemPicker(renderVault, () => newSlot.replaceChildren()));
-  });
+  const newBtn = el("button", { class: "btn-primary", attrs: { type: "button" } }, [
+    vsvg("PLUS", "2.2"),
+    el("span", { text: " New" }),
+  ]);
+  newBtn.addEventListener("click", () => vsheet(renderVault));
+  masthead.appendChild(newBtn);
 
+  const list = el("div", { class: "vlist" });
   if (failure) {
     list.replaceChildren(el("div", { class: "empty", text: "Could not read the vault: " + failure }));
   } else if (items.length === 0) {
     list.replaceChildren(el("div", { class: "empty", text: "Nothing saved yet." }));
   } else {
-    list.replaceChildren(...items.map((i) => itemCard(i, renderVault)));
+    list.replaceChildren(...items.map((i) => vitem(i, renderVault)));
   }
 
-  view.replaceChildren(el("div", { class: "panel" }, [
-    el("div", { class: "section-label", text: "Your secrets" }),
-    el("div", { class: "row" }, [add]),
-    newSlot,
-    list,
-  ]));
+  const count = failure ? "" : `${items.length} item${items.length === 1 ? "" : "s"}`;
+  pane.replaceChildren(
+    masthead,
+    el("div", { class: "col" }, [
+      el("div", { class: "list-head" }, [
+        el("span", { class: "lt", text: "Saved items" }),
+        el("span", { class: "lc", text: count }),
+      ]),
+      list,
+    ]),
+    el("div", { class: "toast" }),
+  );
+  view.replaceChildren(pane);
 }
 
 async function renderSettings() {

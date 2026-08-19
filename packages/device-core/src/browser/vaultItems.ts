@@ -100,10 +100,8 @@ export interface VaultItemInput {
   type?: VaultItemType;
   name?: string;
   notes?: string;
-  /** Every URL of a NEW item. */
+  /** Every URL the form showed, in order. Omitted means "leave them alone". */
   urls?: string[];
-  /** The one URL an edit showed, replacing index 0 and nothing else. */
-  url?: string;
   [field: string]: string | string[] | undefined;
 }
 
@@ -235,21 +233,16 @@ export function encryptCipher(
   cipher.card = null;
   cipher.identity = null;
   if (type === 1) {
-    // The screen shows one URL — the first — so an edit may only touch that
-    // one. Every other entry is passed through untouched, match rule and all:
-    // they were never displayed, so nothing here is entitled to reinterpret
-    // them, and two entries that happen to share a URL stay two entries.
+    // The form shows every URL, so an edit sends every URL. Entry by entry:
+    // one whose address did not change is passed through exactly as stored —
+    // match rule and all — and only a changed or added one is written anew.
     const previous = existing?.login?.uris ?? [];
     delete out.uris;
     let uris = previous;
     if (input.urls !== undefined) {
-      uris = input.urls.map((u) => ({ uri: enc(u, key), match: null }));   // a new item
-    } else if (typeof input.url === "string") {
-      const rest = previous.slice(1);
-      const unchanged = previous[0] && dec(previous[0].uri, key) === input.url;
-      uris = input.url
-        ? [unchanged ? previous[0] : { uri: enc(input.url, key), match: null }, ...rest]
-        : rest;
+      uris = input.urls.map((u, i) =>
+        previous[i] && dec(previous[i].uri, key) === u ? previous[i] : { uri: enc(u, key), match: null },
+      );
     }
     cipher.login = { ...out, uris } as Cipher["login"];
   } else if (type === 2) {
