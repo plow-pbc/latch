@@ -12,11 +12,12 @@
 // a Map here instead of behind HTTPS, but they are encrypted and decrypted by
 // the shipping code with a real account key, so what the screens show came
 // through the same crypto the app uses against the real vault.
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
 import {
   checkedUrls,
   decryptField,
@@ -106,7 +107,8 @@ const SCREENS = [
   {
     name: "list",
     prepare: async () => {},
-    expect: ["Vault", "They never see the raw values", "Saved items", "2 items", "Product Hunt", "Login", "Amex", "Card"],
+    expect: ["Vault", "typed on this Mac, never handed to them", "Saved items", "2 items",
+             "Product Hunt", "Login", "Amex", "Card"],
   },
   {
     name: "types",
@@ -163,21 +165,6 @@ const SCREENS = [
   },
 ];
 
-/** Click by visible label, the way a person picks a button out of the page. */
-async function clickText(win, label) {
-  const found = await win.webContents.executeJavaScript(`
-    (() => {
-      const el = [...document.querySelectorAll("button")]
-        .find((b) => b.textContent.includes(${JSON.stringify(label)}));
-      if (!el) return false;
-      el.click();
-      return true;
-    })()
-  `);
-  if (!found) throw new Error(`no button labelled ${label}`);
-  await new Promise((r) => setTimeout(r, 250));
-}
-
 /** The first eye button on screen — how a person asks to see a stored secret. */
 async function clickEye(win) {
   const found = await win.webContents.executeJavaScript(
@@ -220,69 +207,24 @@ async function settle(win) {
   await new Promise((r) => setTimeout(r, 400));
 }
 
-/** Wait for the listing to arrive, rather than guessing how long it takes. */
-async function listed(win) {
-  for (let i = 0; i < 40; i++) {
-    const ready = await win.webContents.executeJavaScript(
-      `!!document.querySelector(".vaultui .vitem, .vaultui .empty")`,
-    );
-    if (ready) {
-      // The text is in the DOM one tick before it is painted; a shot taken on
-      // that tick is a blank window with the right innerText.
-      await new Promise((r) => setTimeout(r, 400));
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  throw new Error("the vault tab never listed anything");
-}
-
-process.on("unhandledRejection", (error) => {
-  console.error("SHOT-FAILED:", error);
-  app.exit(1);
-});
+failLoudly();
 
 app.whenReady().then(async () => {
   await setUp();
-  fs.mkdirSync(outDir, { recursive: true });
-  const win = new BrowserWindow({
-    width: 940,
-    height: 620,
-    show: false,
-    webPreferences: {
-      preload: path.join(dist, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+  const win = shotWindow(dist);
+  const failures = await shootScreens({
+    win,
+    outDir,
+    prefix: "vault",
+    screens: SCREENS,
+    load: async () => {
+      await win.loadFile(path.join(dist, "renderer/index.html"));
+      // The tab is empty until the vault answers, and the text is in the DOM one
+      // tick before it is painted: a shot on that tick is a blank window with
+      // the right innerText.
+      await waitFor(win, `document.querySelector(".vaultui .vitem, .vaultui .empty")`, "the vault tab to list");
+      await new Promise((r) => setTimeout(r, 400));
     },
   });
-
-  // A renderer exception must not read as "the screen lost its content".
-  win.webContents.on("console-message", (_e, level, message) => {
-    if (level >= 2) console.log("RENDERER:" + message);
-  });
-
-  let failures = 0;
-  for (const screen of SCREENS) {
-    await win.loadFile(path.join(dist, "renderer/index.html"));
-    await listed(win); // the tab is empty until the broker answers
-    await screen.prepare(win);
-
-    const out = path.join(outDir, `vault-${screen.name}.png`);
-    fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
-
-    // Case-folded: her labels and tags are uppercased by the stylesheet, and
-    // this check is about what the screen says, not how it is set.
-    const text = (await win.webContents.executeJavaScript("document.body.innerText")).toLowerCase();
-    const values = await win.webContents.executeJavaScript(
-      `[...document.querySelectorAll("input, textarea")].map((f) => f.value).join("\\n")`,
-    );
-    const missing = [
-      ...screen.expect.filter((needle) => !text.includes(needle.toLowerCase())),
-      ...(screen.expectValues ?? []).filter((needle) => !values.includes(needle)),
-    ];
-    if (missing.length) failures += 1;
-    console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing }));
-  }
   app.exit(failures ? 1 : 0);
 });

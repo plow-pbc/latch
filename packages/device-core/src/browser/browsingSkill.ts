@@ -10,7 +10,8 @@ export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
-    "owner's local credentials (their vault) without ever seeing the secret values. Use when " +
+    "owner's local credentials (their vault): a secret is typed into the page rather than "
+    + "returned to you. Use when " +
     "the task needs the OWNER'S browser rather than any browser: signing in as them, filling " +
     "forms, buying things, or reading a page only their session can see. General web reading " +
     "belongs in your own tools, which are faster at it.",

@@ -452,7 +452,7 @@ export async function renderVault(view, isCurrent = () => true) {
       el("h1", { text: "Vault" }),
       el("p", { class: "trust" }, [
         el("span", { text: "Your agents can use these to act for you. " }),
-        el("span", { class: "lk", text: "They never see the raw values" }),
+        el("span", { class: "lk", text: "The values are typed on this Mac, never handed to them" }),
         el("span", { text: " — every use needs your approval and is logged." }),
       ]),
     ]),

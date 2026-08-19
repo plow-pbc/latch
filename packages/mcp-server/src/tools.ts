@@ -371,7 +371,7 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser_open",
     description:
       "Open a browser on the user's own Mac. Its profile persists between sessions and it can " +
-      "fill passwords from their vault without revealing them to you — so use it for sites that " +
+      "fill passwords from their vault without returning them to you — so use it for sites that " +
       "must be signed in as them, not for general web reading, which your own tools do faster. " +
       "One session at a time. It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
