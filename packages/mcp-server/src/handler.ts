@@ -106,14 +106,31 @@ function refusal(id: unknown, method: string): Response {
  * The work is not cancelled — nothing here can cancel a browser action already
  * in flight — but the caller stops waiting, so the answer reaches it inside the
  * relay's exchange rather than after the relay has given up on it.
+ *
+ * Takes a THUNK, not a promise. Passing the promise meant the tool body was
+ * invoked while evaluating the argument — before this function existed, let
+ * alone before its timer was scheduled — so a body's synchronous prologue, and
+ * any I/O it kicked off, ran outside the ceiling it was supposed to be under.
+ * The deferred path arms its budget before calling the work for the same
+ * reason; this is that rule on the direct path.
  */
-function bounded<T>(work: Promise<T>, ceilingMs: number, tool: string): Promise<T> {
+export function bounded<T>(work: () => Promise<T>, ceilingMs: number, tool: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`${tool} did not finish within this Mac's ${ceilingMs}ms call ceiling`));
     }, ceilingMs);
     timer.unref?.();
-    work.then(
+    // Only now is anything invoked. A body that throws synchronously must still
+    // land on this promise rather than escaping to the caller of `bounded`.
+    let started: Promise<T>;
+    try {
+      started = work();
+    } catch (error: unknown) {
+      clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    started.then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -223,7 +240,7 @@ export function createDomoMcpServer(
                   : // A direct tool has no handle to fall back on, so it is
                     // held to the same ceiling the budget sets: answering late
                     // is answering into an exchange the relay has abandoned.
-                    await bounded(body({ decided: () => {} }), directCeiling, spec.name);
+                    await bounded(() => body({ decided: () => {} }), directCeiling, spec.name);
               // Most results are one text block; a screenshot expands into an
               // image + text block via `__mcpContent`.
               return { content: toolBlocks(result) };

@@ -189,11 +189,15 @@ export function deferrableBudgetMs(advertised: unknown): number | null {
  * unrelated questions moving together because they happened to share a
  * constant. `DIRECT_CEILING_MS` is that second answer, and it lives in
  * `@domo/mcp-server` because the relay has no stake in it.
+ *
+ * Flat: the same ceiling whatever the relay advertises, including the
+ * old-relay fallback. Scaling it down against a shorter deadline would cut a
+ * browser action short to buy margin the direct path never spends — it has no
+ * deferred result to register, only an answer to frame and send.
  */
 export function directCeilingMs(advertised: unknown): number | null {
-  const deadline = advertisedDeadlineMs(advertised);
   if (deferrableBudgetMs(advertised) === null) return null;
-  return Math.min(DIRECT_CEILING_MS, deadline - MIN_DELIVERY_MARGIN_MS);
+  return DIRECT_CEILING_MS;
 }
 
 /**

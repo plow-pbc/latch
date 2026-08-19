@@ -74,24 +74,28 @@ describe("the shared timeout contract", () => {
     }
   });
 
-  it("never configures a budget or ceiling that eats its own delivery margin", () => {
+  it("never configures a budget that eats its own delivery margin", () => {
     for (const deadline of [30_000, 25_000, 24_999, 20_000, 18_000]) {
       const budget = deferrableBudgetMs(deadline);
-      const ceiling = directCeilingMs(deadline);
       expect(budget).not.toBeNull();
-      expect(ceiling).not.toBeNull();
       expect(deadline - budget!).toBeGreaterThanOrEqual(MIN_DELIVERY_MARGIN_MS);
-      expect(deadline - ceiling!).toBeGreaterThanOrEqual(MIN_DELIVERY_MARGIN_MS);
     }
   });
 
-  it("keeps the direct ceiling short whatever the human's budget grows to", () => {
-    // The two answer different questions. A wedged browser action has no handle
-    // to hand back, so it must fail while the agent is still there to hear it —
-    // lengthening the window a human gets must not lengthen that.
+  it("holds the direct ceiling flat at fifteen seconds, old relay included", () => {
+    // Its own knob, but the same fifteen seconds — and it does NOT scale down
+    // against a shorter deadline. A direct answer has no deferred result to
+    // register, only framing and delivery, so shrinking the ceiling would cut a
+    // browser action short to buy margin this path never spends.
+    expect(DIRECT_CEILING_MS).toBe(15_000);
     expect(directCeilingMs(RELAY_EXCHANGE_DEADLINE_MS)).toBe(DIRECT_CEILING_MS);
     expect(directCeilingMs(60_000)).toBe(DIRECT_CEILING_MS);
-    expect(directCeilingMs(RELAY_EXCHANGE_DEADLINE_MS)).toBeLessThan(DEFERRABLE_BUDGET_MS);
+    // The old-relay fallback, where a scaled ceiling would have been 10s.
+    expect(directCeilingMs(undefined)).toBe(DIRECT_CEILING_MS);
+    expect(directCeilingMs(LEGACY_EXCHANGE_DEADLINE_MS)).toBe(DIRECT_CEILING_MS);
+    // Still bounded by the deadline itself: it answers inside the exchange,
+    // with what is left over going to framing and delivery.
+    expect(DIRECT_CEILING_MS).toBeLessThan(LEGACY_EXCHANGE_DEADLINE_MS);
   });
 });
 
@@ -173,6 +177,7 @@ describe("the budget the client adopts from a handshake", () => {
     );
     expect(client.exchangeDeadlineMs).toBe(LEGACY_EXCHANGE_DEADLINE_MS);
     expect(client.callBudgetMs).toBe(LEGACY_CALL_BUDGET_MS);
+    // Unchanged by the shorter deadline — the ceiling is flat.
     expect(client.directCeilingMs).toBe(DIRECT_CEILING_MS);
     // No acknowledgement capability means none is coming — and nothing here may
     // read meaning into never seeing one.

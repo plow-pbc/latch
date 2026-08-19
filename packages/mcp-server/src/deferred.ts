@@ -39,11 +39,19 @@ export const CALL_BUDGET_MS = 8_000;
  *
  * A different question from the call budget, which is how long a human may
  * take: this one has no handle behind it, so overrunning is not "answer later"
- * but "answer into an exchange the relay has abandoned". It stays short even
- * when the relay's deadline grows — a wedged browser action should fail while
- * the agent is still there to hear it, not sit out the whole window.
+ * but "answer into an exchange the relay has abandoned". It is its own knob for
+ * that reason — nothing about a human's window should move it.
+ *
+ * The same fifteen seconds, and a flat constant: a direct tool is real work an
+ * agent is waiting on, and cutting a browser action short to buy margin the
+ * direct path does not spend is a worse trade than it looks. What the ten
+ * seconds behind the *budget* buy is registering a deferred result and framing
+ * it; a direct answer only has to be framed and sent, which is not seconds of
+ * work. Against a relay that advertises nothing this leaves five seconds of a
+ * twenty-second exchange for that — less headroom than the deferrable path
+ * keeps, deliberately.
  */
-export const DIRECT_CEILING_MS = 8_000;
+export const DIRECT_CEILING_MS = 15_000;
 
 /** Both halves of §4.3's fifteen minutes: pending lifetime, and result retention. */
 export const HANDLE_TTL_MS = 15 * 60_000;

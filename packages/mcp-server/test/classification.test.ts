@@ -11,9 +11,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeviceAgent, HeadlessPolicy } from "@domo/device-core";
-import { createDomoMcpServer, CALL_BUDGET_MS, DIRECT_CEILING_MS, TOOLS } from "@domo/mcp-server";
+import {
+  bounded,
+  createDomoMcpServer,
+  CALL_BUDGET_MS,
+  DIRECT_CEILING_MS,
+  TOOLS,
+} from "@domo/mcp-server";
 import { callTool } from "./client.js";
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
@@ -133,6 +139,53 @@ describe("tool classification", () => {
     expect(String(payload.error)).toContain("40ms call ceiling");
     // Not a handle: a direct tool has nothing to hand back.
     expect(payload.status).toBeUndefined();
+  });
+});
+
+describe("the direct ceiling is armed before the tool body runs", () => {
+  it("schedules the timer before invoking the work, not while evaluating it", () => {
+    // The bug this pins: passing the body's PROMISE meant the body was invoked
+    // while evaluating the argument, so its synchronous prologue — and any I/O
+    // that prologue kicked off — ran before the ceiling existed at all.
+    const scheduled: number[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const spy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((fn: () => void, ms?: number) => {
+        scheduled.push(ms ?? 0);
+        return realSetTimeout(fn, ms);
+      }) as typeof globalThis.setTimeout);
+    try {
+      let armedWhenTheBodyStarted: number[] = [];
+      const work = () => {
+        // Read at the top of the body — the moment a synchronous prologue runs.
+        armedWhenTheBodyStarted = [...scheduled];
+        return Promise.resolve("done");
+      };
+      const result = bounded(work, 5_000, "browser");
+      expect(armedWhenTheBodyStarted).toEqual([5_000]);
+      return expect(result).resolves.toBe("done");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps a body that throws synchronously on the bounded promise", async () => {
+    // With the work invoked at the call site, such a throw escaped past the
+    // ceiling entirely and the tool's error mapping never saw it.
+    await expect(
+      bounded(() => {
+        throw new Error("bad arguments");
+      }, 5_000, "browser"),
+    ).rejects.toThrow("bad arguments");
+  });
+
+  it("times a slow body from before it started, not from its first await", async () => {
+    const started = Date.now();
+    await expect(bounded(() => new Promise(() => {}), 30, "browser")).rejects.toThrow(
+      "30ms call ceiling",
+    );
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });
 
