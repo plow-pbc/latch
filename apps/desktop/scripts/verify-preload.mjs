@@ -403,15 +403,14 @@ app.whenReady().then(async () => {
   };
 
   // An open Settings pane must re-read when main says the account changed —
-  // otherwise signing in leaves Plow showing as unavailable until a tab switch.
-  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "", inferenceProvider: "anthropic" });
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  // otherwise signing back in leaves the pane describing yesterday's account
+  // until someone switches tabs.
+  //
   // The signal used to be the Plow chip going disabled. Nothing is disabled any
   // more, so the observable proof that the pane re-read is the note: with the
   // uncredentialled provider SELECTED it says what that will cost, and the
   // sentence goes away when the credential comes back.
-  saveSettings(probeHome, { ...loadSettings(probeHome), inferenceProvider: "plow" });
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "", inferenceProvider: "plow" });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(
@@ -430,8 +429,8 @@ app.whenReady().then(async () => {
     "the open Settings pane to re-read the account and drop the warning",
   );
   const staleSettingsPane = {
-    disabledWhileSignedOut: warnedWhileSignedOut,
-    enabledAfterStatusChanged: await win.webContents.executeJavaScript(
+    warnedWhileSignedOut,
+    warningGoneAfterStatusChanged: await win.webContents.executeJavaScript(
       `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
     ),
   };
@@ -782,8 +781,8 @@ app.whenReady().then(async () => {
     transientInput.visibleWithoutClicking &&
     transientInput.masked &&
     transientInput.holdsTheStoredKey &&
-    staleSettingsPane.disabledWhileSignedOut &&
-    staleSettingsPane.enabledAfterStatusChanged &&
+    staleSettingsPane.warnedWhileSignedOut &&
+    staleSettingsPane.warningGoneAfterStatusChanged &&
     raceDuringRefresh.kept &&
     raceDuringRefresh.sameNode &&
     raceDuringRefresh.accountRefreshed &&
