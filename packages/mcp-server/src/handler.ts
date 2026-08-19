@@ -290,6 +290,7 @@ export function createDomoMcpServer(
                     operationFingerprint(spec.name, argv),
                     attempt,
                     (handle) => deferred.get(agent.agentId, handle),
+                    (handle) => deferred.settled(handle),
                   )
                 : await attempt();
               // Most results are one text block; a screenshot expands into an

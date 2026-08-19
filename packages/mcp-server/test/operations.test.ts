@@ -397,6 +397,178 @@ describe("retention, then a tombstone", () => {
   });
 });
 
+describe("a deferred operation reaches its ending too", () => {
+  it("starts retention when the WORK lands, not when the envelope went out", async () => {
+    // Without this the record never settles: the id it reserved is reserved for
+    // the life of the process, and a caller can never reuse it.
+    let clock = 1_000_000;
+    let approve = () => {};
+    const waited = new Promise<void>((r) => {
+      approve = () => r();
+    });
+    const home = tempDir();
+    const asked: string[] = [];
+    const device = new DeviceAgent(home, "Test Mac", {
+      decideIntent: async (intent) => {
+        asked.push(intent.request);
+        await waited;
+        return "allow_once" as const;
+      },
+    });
+    const server = createDomoMcpServer(device, {
+      budgetMs: 30,
+      operationTtlMs: 60_000,
+      operationTombstoneMs: 60_000,
+      now: () => clock,
+    });
+    cleanups.push(() => server.close());
+    const dir = tempDir();
+    const file = path.join(dir, "slow.txt");
+    fs.writeFileSync(file, "slow result");
+
+    const first = await callTool(
+      server,
+      "read_file",
+      { path: file, operation_id: "op-deferred-ttl" },
+      ALICE,
+    );
+    expect(first.payload.status).toBe("pending");
+
+    // While the human is still deciding, moving the clock changes nothing:
+    // there is no result to retain yet, so retention has not started.
+    clock += 200_000;
+    const stillPending = await callTool(
+      server,
+      "read_file",
+      { path: file, operation_id: "op-deferred-ttl" },
+      ALICE,
+    );
+    expect(stillPending.payload.status).toBe("pending");
+    expect(asked.length).toBe(1);
+
+    approve();
+    for (let i = 0; i < 200; i++) {
+      const state = (
+        await callTool(server, "get_result", { operation_id: "op-deferred-ttl" }, ALICE)
+      ).payload;
+      if (state.status === "ready") break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    // NOW the clock matters. Past retention, the id is a tombstone: reserved,
+    // its result gone, and a retry must not re-run the read.
+    clock += 70_000;
+    const tombstoned = await callTool(
+      server,
+      "read_file",
+      { path: file, operation_id: "op-deferred-ttl" },
+      ALICE,
+    );
+    expect(tombstoned.payload).toEqual({ status: "expired", operation_id: "op-deferred-ttl" });
+    expect(asked.length).toBe(1);
+
+    // Past the tombstone as well, the id is free and using it is new work.
+    clock += 70_000;
+    const reused = await callTool(
+      server,
+      "read_file",
+      { path: file, operation_id: "op-deferred-ttl" },
+      ALICE,
+    );
+    // Freed means FREE: the work ran again, and this time it was fast enough
+    // to answer inline.
+    expect(reused.isError).toBe(false);
+    expect(JSON.stringify(reused.payload)).toContain("slow result");
+    expect(asked.length).toBe(2);
+  });
+});
+
+describe("what a tombstoned id answers", () => {
+  it("conflicts on different arguments rather than reporting expiry", async () => {
+    // A caller reusing an id for new work has a bug whether or not the original
+    // result is still around. "Expired" would let that bug look like an
+    // ordinary retry that arrived late.
+    let clock = 1_000_000;
+    const { server, asked } = makeServer({ ttl: 60_000, now: () => clock });
+    const dir = tempDir();
+    const one = path.join(dir, "one.txt");
+    const two = path.join(dir, "two.txt");
+
+    await callTool(server, "write_file", { path: one, content: "1", operation_id: "op-tomb" }, ALICE);
+    clock += 70_000; // past retention, inside the tombstone
+
+    const clash = await callTool(
+      server,
+      "write_file",
+      { path: two, content: "2", operation_id: "op-tomb" },
+      ALICE,
+    );
+    expect(clash.isError).toBe(true);
+    expect(clash.payload.status).toBe("conflict");
+    expect(fs.existsSync(two)).toBe(false);
+    expect(asked.length).toBe(1);
+
+    // The matching retry still gets the tombstone's honest answer.
+    const same = await callTool(
+      server,
+      "write_file",
+      { path: one, content: "1", operation_id: "op-tomb" },
+      ALICE,
+    );
+    expect(same.payload).toEqual({ status: "expired", operation_id: "op-tomb" });
+  });
+});
+
+describe("a refusal keeps its name", () => {
+  it("answers a denied operation as denied, not as failed", async () => {
+    const home = tempDir();
+    const device = new DeviceAgent(home, "Test Mac", {
+      decideIntent: async () => "deny" as const,
+    });
+    const server = createDomoMcpServer(device, { budgetMs: 30_000 });
+    cleanups.push(() => server.close());
+    const dir = tempDir();
+    const file = path.join(dir, "nope.txt");
+    fs.writeFileSync(file, "x");
+
+    const first = await callTool(
+      server,
+      "read_file",
+      { path: file, operation_id: "op-denied" },
+      ALICE,
+    );
+    expect(first.isError).toBe(true);
+    expect(first.payload.status).toBe("denied");
+
+    // The retry gets the same refusal, and the lookup by id calls it a refusal
+    // too — "denied" is a decision, "failed" is a fault, and §4.3 keeps them
+    // apart everywhere else.
+    const retry = await callTool(
+      server,
+      "read_file",
+      { path: file, operation_id: "op-denied" },
+      ALICE,
+    );
+    expect(retry.payload.status).toBe("denied");
+    const looked = await callTool(server, "get_result", { operation_id: "op-denied" }, ALICE);
+    expect(looked.payload.status).toBe("denied");
+    expect(JSON.stringify(looked.payload)).not.toContain("failed");
+  });
+});
+
+describe("a lookup by id is validated like everything else", () => {
+  it("refuses a malformed id rather than answering unknown", async () => {
+    const { server } = makeServer();
+    for (const bad of ["not safe/at all", "x".repeat(129), ""]) {
+      const looked = await callTool(server, "get_result", { operation_id: bad }, ALICE);
+      expect(looked.isError).toBe(true);
+      // Not `unknown`: an id this Mac would never have stored names nothing,
+      // and answering "unknown" would hide the caller's mistake.
+      expect(JSON.stringify(looked.payload)).not.toContain("unknown");
+    }
+  });
+});
+
 describe("the registry itself", () => {
   it("runs the work once for a repeat that arrives mid-flight", async () => {
     // Two callers racing: the record is registered before the work starts, so

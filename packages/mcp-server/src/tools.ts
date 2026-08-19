@@ -25,7 +25,7 @@ import {
 import { DeviceAgent, MAX_FILE_BYTES, MAX_OUTPUT_BYTES } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
-import { OperationRecords } from "./operations.js";
+import { checkOperationId, OperationRecords } from "./operations.js";
 
 /** A tool argument was missing or unusable — the agent's problem, not ours. */
 export class ToolError extends Error {}
@@ -705,6 +705,10 @@ export const TOOLS: ToolSpec[] = [
       }
       if (handle !== null) return ctx.deferred.get(ctx.agent.agentId, handle);
       if (operationId === null) throw new ToolError("missing 'handle' or 'operation_id'");
+      // Validated on the way in, exactly as it is on the way out. An id this
+      // Mac would never have stored cannot name anything here, and answering
+      // `unknown` to a malformed one would hide the caller's mistake.
+      checkOperationId(operationId);
       // An id nobody here has seen — never used, or used by another agent — is
       // `unknown`, exactly as an invented handle is. An operation id is not an
       // oracle for what other agents are doing.

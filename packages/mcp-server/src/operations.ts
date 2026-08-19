@@ -23,6 +23,7 @@
  *    at-most-once for a cooperating caller inside one run of this app.
  */
 import { canonicalJSON, JSONValue } from "@domo/protocol";
+import { DeniedError } from "./deferred.js";
 
 /**
  * URL-safe, 1–128 characters.
@@ -111,15 +112,23 @@ type Record_ = {
   value: JSONValue | null;
   /** Why it failed, for the same lookup. A failure is an answer too. */
   failure: string | null;
+  /**
+   * Whether that failure was a refusal rather than a fault.
+   *
+   * "The owner said no" and "it broke" are different answers, and §4.3 keeps
+   * them apart everywhere else; a lookup that flattened a denial into a failure
+   * would be the one place an agent could not tell.
+   */
+  denied: boolean;
   /** When the work settled, or null while it is still running. */
   settledAt: number | null;
 };
 
 /** What a lookup by operation id found. */
 export type OperationLookup =
-  | { kind: "none" }
-  | { kind: "live"; record: Record_ }
-  | { kind: "tombstone" };
+  | { kind: "none"; fingerprint?: undefined }
+  | { kind: "live"; record: Record_; fingerprint: string }
+  | { kind: "tombstone"; fingerprint: string };
 
 export class OperationRecords {
   /** `agentId` → `operationId` → record. One namespace per agent, by shape. */
@@ -144,9 +153,19 @@ export class OperationRecords {
     fingerprint: string,
     work: () => Promise<JSONValue>,
     readState: (handle: string) => JSONValue,
+    /** Resolves when a DEFERRED attempt's work finally lands. */
+    settledSignal: (handle: string) => Promise<void> = () => new Promise<void>(() => {}),
   ): Promise<JSONValue> {
     this.sweep();
     const found = this.lookup(agentId, operationId);
+
+    // The fingerprint is checked FIRST, tombstone or not. An id reused for
+    // different work is a caller bug whether or not the original result is
+    // still around, and answering "expired" would let that bug look like an
+    // ordinary retry that arrived late.
+    if (found.kind !== "none" && found.fingerprint !== fingerprint) {
+      throw new OperationConflictError(operationId);
+    }
 
     if (found.kind === "tombstone") {
       // The id is still reserved: its result is gone, but re-running the work
@@ -155,9 +174,6 @@ export class OperationRecords {
     }
 
     if (found.kind === "live") {
-      if (found.record.fingerprint !== fingerprint) {
-        throw new OperationConflictError(operationId);
-      }
       return this.replay(found.record, readState);
     }
 
@@ -169,6 +185,7 @@ export class OperationRecords {
       handle: null,
       value: null,
       failure: null,
+      denied: false,
       settledAt: null,
     };
     this.namespace(agentId).set(operationId, record);
@@ -180,6 +197,14 @@ export class OperationRecords {
         if (record.handle === null) {
           record.value = value;
           record.settledAt = this.now();
+        } else {
+          // Deferred: retention starts when the WORK lands, not when the
+          // envelope went out. Without this the record never settles, so it
+          // never reaches its tombstone and the id is reserved for ever.
+          const handle = record.handle;
+          void settledSignal(handle).then(() => {
+            if (record.settledAt === null) record.settledAt = this.now();
+          });
         }
         return value;
       },
@@ -187,6 +212,7 @@ export class OperationRecords {
         // A failure is an outcome too: the caller's retry gets the same answer
         // rather than a second attempt at something that did not work.
         record.failure = error instanceof Error ? error.message : String(error);
+        record.denied = error instanceof DeniedError;
         record.settledAt = this.now();
         throw error;
       },
@@ -213,7 +239,10 @@ export class OperationRecords {
     if (record.handle !== null) return readState(record.handle);
     if (record.settledAt === null) return { status: "pending", operation_id: operationId };
     if (record.failure !== null) {
-      return { status: "failed", operation_id: operationId, error: record.failure };
+      // A refusal keeps its own name. Denied is a decision; failed is a fault.
+      return record.denied
+        ? { status: "denied", operation_id: operationId, reason: record.failure }
+        : { status: "failed", operation_id: operationId, error: record.failure };
     }
     // Answered inside its budget: the result the lost response carried.
     return { status: "ready", operation_id: operationId, result: record.value };
@@ -250,9 +279,9 @@ export class OperationRecords {
     const record = this.namespace(agentId).get(operationId);
     if (!record) return { kind: "none" };
     if (record.settledAt !== null && this.now() - record.settledAt > this.ttlMs) {
-      return { kind: "tombstone" };
+      return { kind: "tombstone", fingerprint: record.fingerprint };
     }
-    return { kind: "live", record };
+    return { kind: "live", record, fingerprint: record.fingerprint };
   }
 
   private namespace(agentId: string): Map<string, Record_> {

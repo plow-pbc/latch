@@ -126,6 +126,14 @@ type Entry = {
 
 export class DeferredResults {
   private readonly entries = new Map<string, Entry>();
+  /**
+   * Who is waiting to hear that a handle's work has landed.
+   *
+   * The retry records need that moment: an operation whose call deferred has
+   * not finished when the envelope goes out, and its retention cannot start
+   * until it has — otherwise the id it reserved is reserved for ever.
+   */
+  private readonly settledWaiters = new Map<string, (() => void)[]>();
 
   constructor(
     private budgetMs = CALL_BUDGET_MS,
@@ -135,6 +143,21 @@ export class DeferredResults {
     /** Where the continuation lifecycle is recorded, when there is one. */
     private readonly continuations: Continuations | null = null,
   ) {}
+
+  /**
+   * Resolves when this handle's work has landed, or at once if it already has.
+   *
+   * An unknown handle resolves immediately too: nothing is coming for it, and
+   * a caller waiting for ever on a handle that does not exist is worse than one
+   * told "there is nothing to wait for".
+   */
+  settled(handle: string): Promise<void> {
+    const entry = this.entries.get(handle);
+    if (!entry || entry.terminal !== null) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.settledWaiters.set(handle, [...(this.settledWaiters.get(handle) ?? []), resolve]);
+    });
+  }
 
   /**
    * Re-point the budget at what the relay's advertised deadline allows.
@@ -210,6 +233,9 @@ export class DeferredResults {
           entry.expiresAt = this.now() + this.ttlMs;
           // Retention starts here, when there is finally something to retain.
           this.armExpiry(handle);
+          // And anyone whose own clock starts with this one is told.
+          for (const wake of this.settledWaiters.get(handle) ?? []) wake();
+          this.settledWaiters.delete(handle);
         }
         if (status === "ready") this.continuations?.ready(handle);
         else if (status === "denied") this.continuations?.denied(handle);

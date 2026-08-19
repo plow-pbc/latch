@@ -84,7 +84,9 @@ with the repair steps rather than dying quietly.
 What those runs proved, and when, is written down in `docs/verification/` — a reviewer reading a
 branch has no M4 and cannot re-run them. `docs/verification/2026-08-19-chunk3-continuation.md` is the
 first: the 18-check continuation run and the mutation matrix behind it, next to the raw report the
-run itself wrote.
+run itself wrote. `2026-08-19-chunk4-retry-safety.md` is the second, and needs no Electron at all —
+retry deduplication is the kind of feature whose tests pass whether or not it works, so the mutation
+matrix is the evidence rather than a footnote to it.
 
 ---
 
