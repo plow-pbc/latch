@@ -43,11 +43,11 @@ class Handle:
     stylesheet and whose style object will not take the property either.
     """
 
-    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet"):
+    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.mask_result = mask_result
-        self.marked = False
+        self.marked = marked
 
     def evaluate(self, js):
         # Recorded as a fact about the script, not its text: which one it is.
@@ -63,16 +63,20 @@ class Handle:
         return None
 
     def fill(self, value, timeout=None):
+        # A failed fill is traced too, and distinctly: "did it try" and "did it
+        # land" are different questions, and what happens after a fill that did
+        # not land is the whole point of one of these scenarios.
         if self.detach_before_fill:
+            self.trace.append("handle.fill-failed")
             raise RuntimeError("Element is not attached to the DOM")
         self.trace.append("handle.fill")
 
 
 class Frame:
-    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet"):
+    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False):
         self.trace = trace
         self.url = "https://pizza.example/login"
-        self.handle = Handle(trace, detach_before_fill, mask_result)
+        self.handle = Handle(trace, detach_before_fill, mask_result, marked)
 
     def wait_for_selector(self, selector, timeout=None):
         self.trace.append("frame.wait_for_selector")
@@ -99,9 +103,9 @@ class Page:
         pass
 
 
-def run(server, cmd, detach_before_fill=False, mask_result="stylesheet"):
+def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False):
     trace: list[str] = []
-    frame = Frame(trace, detach_before_fill, mask_result)
+    frame = Frame(trace, detach_before_fill, mask_result, marked)
     session = server.Session(Page(frame))
     out = {"trace": trace, "error": None, "marked": False, "result": None}
     try:
@@ -125,6 +129,9 @@ def main() -> int:
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.
         "mask_blocked": run(server, {**base, "mask": True}, mask_result="unmasked"),
+        # A visible fill that fails: the node still holds whatever was in it,
+        # which may be the last secret, so the mark must still be there.
+        "plain_failed": run(server, base, detach_before_fill=True, marked=True),
     }
     out.write(json.dumps(result))
     out.flush()

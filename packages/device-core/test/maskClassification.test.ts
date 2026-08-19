@@ -1,38 +1,33 @@
 /**
- * The §3.1 masking rule, asserted against BOTH classifiers from one table.
+ * The §3.1 masking rule, asserted against the classifier that implements it:
+ * `seed_vault_broker/cli.py`.
  *
- * Two of them exist: the real one in `seed_vault_broker/cli.py`, and the copy in
- * the JS fake broker that the python-free tier runs against. Asserting only the
- * fake would let a cli.py mutation stay green — the whole point of this file is
- * that it does not.
+ * There used to be a second one — the JS fake carried its own copy of the rules
+ * so the python-free tier had something to assert against, and this file
+ * checked the two agreed. The fake now answers with whatever a fixture states,
+ * so there is no second opinion to keep honest and nothing to compare. What is
+ * left is the real classifier and the table it has to satisfy.
  *
- * The unit tier still needs no Python: the probe block skips when python3 is
- * missing, and the fake-broker block never wanted it. Where a python3 exists —
- * every dev Mac, since it ships with the OS — the real classifier is executed.
+ * The unit tier still needs no Python: this block skips when python3 is
+ * missing. Where one exists — every dev Mac, since it ships with the OS — the
+ * real classifier is executed.
  *
  * No field value is asserted on; the last test proves none come back.
  */
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CredentialBroker, CredentialFieldInfo } from "@domo/device-core";
+import { CredentialFieldInfo } from "@domo/device-core";
 
 const TABLE_PATH = fileURLToPath(
   new URL("../../../e2e/fixtures/maskClassification.json", import.meta.url),
 );
 const PROBE = fileURLToPath(new URL("../../../e2e/fixtures/classifyProbe.py", import.meta.url));
-const FAKE_BROKER = fileURLToPath(
-  new URL("../../../e2e/fixtures/fakeVaultBroker.cjs", import.meta.url),
-);
-
 interface Case {
   name: string;
   why: string;
   bitwarden: { [k: string]: unknown };
-  fake: { id: string; [k: string]: unknown };
   expect: CredentialFieldInfo[];
 }
 
@@ -61,49 +56,6 @@ function haveHost(bin: string): boolean {
 
 const HAVE_PYTHON = haveHost("python3");
 
-describe("the fake broker's classifier", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-table-"));
-  const vaultPath = path.join(dir, "vault.json");
-  fs.writeFileSync(vaultPath, JSON.stringify(CASES.map((c) => c.fake)));
-  const broker = new CredentialBroker({
-    command: [process.execPath, FAKE_BROKER],
-    env: { FAKE_BROKER_VAULT: vaultPath },
-  });
-
-  for (const c of CASES) {
-    it(`classifies ${c.name} as the table says`, async () => {
-      expect((await broker.describeItem(c.fake.id)).fields).toEqual(c.expect);
-    });
-  }
-
-  it("does not list a passkey — it is not fillable text", async () => {
-    // Absence is invisible in a table, so it is stated: a login with a passkey
-    // reports its username and password and nothing about the credential.
-    const { fields } = await broker.describeItem("P1");
-    const labels = fields.map((f) => f.label);
-    for (const term of ["passkey", "fido2", "credential", "keyValue", "rpId"]) {
-      expect(labels.join(" ").toLowerCase()).not.toContain(term.toLowerCase());
-    }
-    expect(labels).toContain("password");
-  });
-
-  it("refuses an identity key it has no label for, rather than guessing", async () => {
-    // The fixture item carries `middleInitial`. Classifying it either way would
-    // be this side inventing an answer only Bitwarden gets to give, so it is
-    // not listed at all — and what is not listed cannot be filled.
-    const { fields } = await broker.describeItem("I1");
-    expect(fields.find((f) => f.label === "middleInitial")).toBeUndefined();
-    await expect(broker.getField("I1", "middleInitial", "https://x.example/")).rejects.toThrow();
-  });
-
-  it("returns no field value for any item in the table", async () => {
-    for (const c of CASES) {
-      const described = JSON.stringify(await broker.describeItem(c.fake.id));
-      for (const secret of SECRETS) expect(described).not.toContain(secret);
-    }
-  });
-});
-
 describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
   const probed = (() => {
     const out = execFileSync("python3", [PROBE, TABLE_PATH], { encoding: "utf8" });
@@ -112,6 +64,7 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
         descriptors: CredentialFieldInfo[];
         labels: string[];
         releasable: { [label: string]: boolean };
+        release: { [label: string]: { answered: boolean; flagged: boolean; agrees: boolean } };
         released: { [label: string]: string | null };
         unknownKeyReadable: boolean;
       };
@@ -198,8 +151,10 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
     });
   }
 
-  it("refuses an identity key it has no label for, in production too", () => {
-    // The fake and production must answer the same way; they diverged once.
+  it("refuses an identity key it has no label for, rather than guessing", () => {
+    // Classifying it either way would be this side inventing an answer only
+    // Bitwarden gets to give, so it is not offered at all — and what is not
+    // offered cannot be filled.
     const identity = probed["identity"];
     expect(identity.descriptors.find((d) => d.label === "middleInitial")).toBeUndefined();
     expect(identity.labels).not.toContain("middleInitial");
@@ -209,6 +164,7 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
   });
 
   it("does not list a passkey — it is not fillable text", () => {
+    // Absence is invisible in a table, so it is stated.
     const labels = probed["login with a passkey"].descriptors.map((d) => d.label).join(" ");
     for (const term of ["passkey", "fido2", "credential", "keyvalue", "rpid"]) {
       expect(labels.toLowerCase()).not.toContain(term);
@@ -242,9 +198,21 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
     }
   });
 
-  it("agrees with the fake, case for case", () => {
-    // Belt and braces: the two are asserted against the table above, so this can
-    // only fail if the table itself grew a case one side never saw.
+  for (const c of CASES) {
+    it(`answers value and concealment in one release for ${c.name}`, () => {
+      // The coherence property the design rests on: one command, one reading of
+      // the item, both answers. Ask twice and an edit between the two releases a
+      // concealed value under the flag the old one carried.
+      const shapes = Object.entries(probed[c.name].release);
+      for (const [label, shape] of shapes) {
+        expect(shape.answered, `${label} answered`).toBe(true);
+        expect(shape.flagged, `${label} carried a concealment flag`).toBe(true);
+        expect(shape.agrees, `${label} agreed with its descriptor`).toBe(true);
+      }
+    });
+  }
+
+  it("answers for every case in the table", () => {
     expect(Object.keys(probed).sort()).toEqual(CASES.map((c) => c.name).sort());
   });
 

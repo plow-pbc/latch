@@ -3,19 +3,13 @@
     "The §3.1 masking table as data: which fields the vault renders masked, and",
     "therefore which ones fill_secret marks in the page.",
     "",
-    "Two classifiers have to agree on it — the real one in",
-    "vendor/browser-server/seed_vault_broker/cli.py (_field_descriptors) and the",
-    "one in the JS fake broker that the python-free unit tier runs against. Each",
-    "case therefore carries the SAME item twice: 'bitwarden' as the real vault",
-    "stores it, 'fake' in the fake broker's vault format. 'expect' is the single",
-    "source of truth both are asserted against, so a rule that drifts on one side",
-    "fails rather than passing quietly.",
-    "",
-    "Entries with alias:true are the other names get-field accepts for a slot",
-    "already listed (a card's code answers to cvv; a login's username to email).",
-    "They carry the slot's own hidden flag, so no caller above the broker needs a",
-    "copy of the mapping.",
-    "",
+    "Every case is one raw Bitwarden item and the descriptors the broker must",
+    "derive from it. It is asserted against the REAL classifier in",
+    "vendor/browser-server/seed_vault_broker/cli.py, through",
+    "e2e/fixtures/classifyProbe.py — the only classifier there is. The JS fake",
+    "used to carry a second copy of these rules and was asserted alongside; it",
+    "now returns whatever a fixture states, so there is nothing left to compare",
+    "and nothing left to diverge.",
     "",
     "Shapes and concealment come from the pinned Bitwarden client source, tag",
     "cli-v2026.7.0 (commit 82186c3d92c0da14aa86c848b781d949a8a6202a): item types",
@@ -23,7 +17,6 @@
     "ssh key keys in models/export/ssh-key.export.ts, linked ids in",
     "vault/enums/linked-id-type.enum.ts, and what the client conceals in the",
     "cipher-view templates.",
-    "",
     "",
     "Item types 6-8 (bank account, driving licence, passport) exist in the client",
     "but CANNOT be stored by the vault this app runs: vaultwarden 1.37.1",
@@ -33,8 +26,7 @@
     "reports nothing, because one cannot get into the vault to be reported. When",
     "vaultwarden gains them, these are the cases to fill in.",
     "",
-    "Consumed by packages/device-core/test/maskClassification.test.ts and",
-    "e2e/fixtures/classifyProbe.py."
+    "Consumed by packages/device-core/test/maskClassification.test.ts."
   ],
   "cases": [
     {
@@ -67,45 +59,6 @@
           }
         ],
         "notes": "delivery goes to the side door"
-      },
-      "fake": {
-        "id": "L1",
-        "title": "Pizza Login",
-        "category": "LOGIN",
-        "username": "jon",
-        "urls": [
-          "https://pizza.example/"
-        ],
-        "fields": [
-          {
-            "name": "username",
-            "value": "jon"
-          },
-          {
-            "name": "password",
-            "value": "hunter2"
-          },
-          {
-            "name": "totp",
-            "value": "123456"
-          },
-          {
-            "name": "recovery",
-            "custom": true,
-            "type": 1,
-            "value": "recovery-code-9f2a"
-          },
-          {
-            "name": "account nickname",
-            "custom": true,
-            "type": 0,
-            "value": "the pizza one"
-          },
-          {
-            "name": "notes",
-            "value": "delivery goes to the side door"
-          }
-        ]
       },
       "expect": [
         {
@@ -193,49 +146,6 @@
           }
         ]
       },
-      "fake": {
-        "id": "C1",
-        "title": "Visa",
-        "category": "CREDIT_CARD",
-        "username": "",
-        "urls": [],
-        "fields": [
-          {
-            "name": "number",
-            "value": "4111111111111111"
-          },
-          {
-            "name": "code",
-            "value": "737"
-          },
-          {
-            "name": "expiry month",
-            "value": "04"
-          },
-          {
-            "name": "expiry year",
-            "value": "2031"
-          },
-          {
-            "name": "cardholder name",
-            "value": "Jon Doe"
-          },
-          {
-            "name": "brand",
-            "value": "Visa"
-          },
-          {
-            "name": "cardholder name",
-            "custom": true,
-            "type": 0,
-            "value": "shipping only"
-          },
-          {
-            "name": "number",
-            "linked": "number"
-          }
-        ]
-      },
       "expect": [
         {
           "label": "number",
@@ -317,25 +227,6 @@
           }
         ]
       },
-      "fake": {
-        "id": "C2",
-        "title": "Amex",
-        "category": "CREDIT_CARD",
-        "username": "",
-        "urls": [],
-        "fields": [
-          {
-            "name": "cardholder name",
-            "value": "Jon Doe"
-          },
-          {
-            "name": "cardholder name",
-            "custom": true,
-            "type": 1,
-            "value": "the real one"
-          }
-        ]
-      },
       "expect": [
         {
           "label": "cardholder name",
@@ -379,91 +270,6 @@
           "country": "US",
           "middleInitial": "Q"
         }
-      },
-      "fake": {
-        "id": "I1",
-        "title": "Home",
-        "category": "IDENTITY",
-        "username": "",
-        "urls": [],
-        "fields": [
-          {
-            "name": "title",
-            "value": "Mx"
-          },
-          {
-            "name": "first name",
-            "value": "Jon"
-          },
-          {
-            "name": "middle name",
-            "value": "Q"
-          },
-          {
-            "name": "last name",
-            "value": "Doe"
-          },
-          {
-            "name": "username",
-            "value": "jdoe"
-          },
-          {
-            "name": "company",
-            "value": "Initech"
-          },
-          {
-            "name": "ssn",
-            "value": "078-05-1120"
-          },
-          {
-            "name": "passport number",
-            "value": "X1234567"
-          },
-          {
-            "name": "license number",
-            "value": "D9999"
-          },
-          {
-            "name": "email",
-            "value": "jon@home.example"
-          },
-          {
-            "name": "phone",
-            "value": "555-0100"
-          },
-          {
-            "name": "address1",
-            "value": "1 Elm St"
-          },
-          {
-            "name": "address2",
-            "value": "Apt 2"
-          },
-          {
-            "name": "address3",
-            "value": "Rear"
-          },
-          {
-            "name": "city",
-            "value": "Springfield"
-          },
-          {
-            "name": "state",
-            "value": "IL"
-          },
-          {
-            "name": "postal code",
-            "value": "11111"
-          },
-          {
-            "name": "country",
-            "value": "US"
-          },
-          {
-            "name": "middleInitial",
-            "value": "Q"
-          }
-        ]
       },
       "expect": [
         {
@@ -608,37 +414,6 @@
         ],
         "notes": "a note body"
       },
-      "fake": {
-        "id": "N1",
-        "title": "Notes",
-        "category": "SECURE_NOTE",
-        "username": "",
-        "urls": [],
-        "fields": [
-          {
-            "name": "plain",
-            "custom": true,
-            "type": 0,
-            "value": "visible text"
-          },
-          {
-            "name": "concealed",
-            "custom": true,
-            "type": 1,
-            "value": "masked text"
-          },
-          {
-            "name": "agreed",
-            "custom": true,
-            "type": 2,
-            "value": "true"
-          },
-          {
-            "name": "notes",
-            "value": "a note body"
-          }
-        ]
-      },
       "expect": [
         {
           "label": "plain",
@@ -678,27 +453,6 @@
           "publicKey": "ssh-ed25519 AAAAC3Nz",
           "keyFingerprint": "SHA256:2f9c1a"
         }
-      },
-      "fake": {
-        "id": "S1",
-        "title": "deploy key",
-        "category": "SSH_KEY",
-        "username": "",
-        "urls": [],
-        "fields": [
-          {
-            "name": "private key",
-            "value": "-----BEGIN OPENSSH PRIVATE KEY-----"
-          },
-          {
-            "name": "public key",
-            "value": "ssh-ed25519 AAAAC3Nz"
-          },
-          {
-            "name": "fingerprint",
-            "value": "SHA256:2f9c1a"
-          }
-        ]
       },
       "expect": [
         {
@@ -754,51 +508,6 @@
             "type": 3,
             "value": null,
             "linkedId": 418
-          }
-        ]
-      },
-      "fake": {
-        "id": "I2",
-        "title": "Linked",
-        "category": "IDENTITY",
-        "username": "",
-        "urls": [],
-        "fields": [
-          {
-            "name": "title",
-            "value": "Mx"
-          },
-          {
-            "name": "first name",
-            "value": "Jon"
-          },
-          {
-            "name": "middle name",
-            "value": "Q"
-          },
-          {
-            "name": "last name",
-            "value": "Doe"
-          },
-          {
-            "name": "ssn",
-            "value": "078-05-1120"
-          },
-          {
-            "name": "address1",
-            "value": "1 Elm St"
-          },
-          {
-            "name": "tax id",
-            "linked": "ssn"
-          },
-          {
-            "name": "ship to",
-            "linked": "address1"
-          },
-          {
-            "name": "who",
-            "linked": "first name"
           }
         ]
       },
@@ -884,25 +593,6 @@
           ]
         }
       },
-      "fake": {
-        "id": "P1",
-        "title": "Passkey Login",
-        "category": "LOGIN",
-        "username": "jon",
-        "urls": [
-          "https://passkey.example/"
-        ],
-        "fields": [
-          {
-            "name": "username",
-            "value": "jon"
-          },
-          {
-            "name": "password",
-            "value": "hunter2"
-          }
-        ]
-      },
       "expect": [
         {
           "label": "username",
@@ -956,14 +646,6 @@
           "bankContactPhone": "555-0199"
         }
       },
-      "fake": {
-        "id": "B1",
-        "title": "Current account",
-        "category": "UNKNOWN",
-        "username": "",
-        "urls": [],
-        "fields": []
-      },
       "expect": []
     },
     {
@@ -986,14 +668,6 @@
           "issuingAuthority": "IL SoS",
           "licenseClass": "C"
         }
-      },
-      "fake": {
-        "id": "D1",
-        "title": "Licence",
-        "category": "UNKNOWN",
-        "username": "",
-        "urls": [],
-        "fields": []
       },
       "expect": []
     },
@@ -1020,15 +694,39 @@
           "expirationDate": "2030-01-01"
         }
       },
-      "fake": {
-        "id": "T1",
-        "title": "Passport",
-        "category": "UNKNOWN",
-        "username": "",
-        "urls": [],
-        "fields": []
-      },
       "expect": []
+    },
+    {
+      "name": "card with two custom fields of the same name",
+      "why": "a token has to name one field: two custom fields called `number` would both qualify to custom:number, so neither is offered and neither can be released — refused rather than resolved by whichever came first",
+      "bitwarden": {
+        "id": "A1",
+        "name": "Ambiguous",
+        "type": 3,
+        "card": {
+          "number": "4111111111111111"
+        },
+        "fields": [
+          {
+            "name": "number",
+            "type": 0,
+            "value": "one"
+          },
+          {
+            "name": "number",
+            "type": 1,
+            "value": "two"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "label": "number",
+          "hidden": true,
+          "custom": false,
+          "alias": false
+        }
+      ]
     }
   ]
 }

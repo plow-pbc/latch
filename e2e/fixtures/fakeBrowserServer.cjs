@@ -118,6 +118,12 @@ function handle(cmd) {
       ...(cmd.mask ? { mask: "stylesheet" } : {}),
     };
   }
+  if (a === "mark") {
+    // Whether the node is still there is the page's business; the fixture just
+    // answers, and the command log is what a test reads.
+    if (process.env.FAKE_MARK_GONE === "1") return { ok: false, mask: "gone" };
+    return { ok: true, mask: "stylesheet", frame: cmd.frame ?? 0 };
+  }
   if (a === "locate") {
     if (String(cmd.selector).startsWith("#card")) {
       return {

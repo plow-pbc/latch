@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import ipaddress
 import json
 import os
@@ -175,8 +176,10 @@ _FILTER_LOGINS_DESC = (
     "never matched against."
 )
 _GET_FIELD_DESC = (
-    "Read a single field from a vault item. The value is written to stdout "
-    "with no trailing newline. Pass --url to bind the release to the page on "
+    "Read a single field from a vault item. One JSON object is written to "
+    "stdout: the value, and whether the vault conceals that field -- together, "
+    "from one reading of the item, so a caller can never act on a stale answer "
+    "to the second question. Pass --url to bind the release to the page on "
     "screen; without it NO origin check runs and the audit records SEM-URL."
 )
 _STATUS_DESC = "Probe whether the vault can be reached and unlocked. Always exits 0 unless the tool is missing."
@@ -750,7 +753,12 @@ def _field_descriptors(item: dict) -> list[dict]:
             add(_custom_label(name, out), field.get("type") == _CUSTOM_FIELD_HIDDEN, True)
     if raw.get("notes"):
         add("notes", False, False)
-    return out
+    # A token has to name ONE field. Two custom fields with the same name --
+    # which, when a fixed slot owns that name too, both qualify to the same
+    # `custom:` token -- name neither, so both are dropped: whichever one order
+    # happened to favour would be a guess, and this refuses instead of guessing.
+    seen = collections.Counter(d["label"] for d in out)
+    return [d for d in out if seen[d["label"]] == 1]
 
 
 def _field_labels(item: dict) -> list[str]:
@@ -809,16 +817,20 @@ def _read_field(item: dict, field: str) -> str | None:
     customs = raw.get("fields") or []
     # An exact name always wins, so a custom field genuinely called
     # "custom:something" is still reachable; only then is the qualifier peeled
-    # off and the name behind it looked up.
+    # off and the name behind it looked up. A name held by more than one custom
+    # field names none of them -- see _field_descriptors, which drops the
+    # ambiguous token rather than picking by order.
     for wanted in (field, field[len(_CUSTOM_PREFIX):] if field.startswith(_CUSTOM_PREFIX) else None):
         if wanted is None:
             continue
-        for custom in customs:
-            if custom.get("name") == wanted:
-                if custom.get("type") == _CUSTOM_FIELD_LINKED:
-                    target = _LINKED_ID_LABELS.get(custom.get("linkedId"))
-                    return _read_field(item, target) if target else None
-                return text(custom.get("value"))
+        matches = [c for c in customs if c.get("name") == wanted]
+        if len(matches) > 1:
+            return None
+        for custom in matches:
+            if custom.get("type") == _CUSTOM_FIELD_LINKED:
+                target = _LINKED_ID_LABELS.get(custom.get("linkedId"))
+                return _read_field(item, target) if target else None
+            return text(custom.get("value"))
     return None
 
 
@@ -953,6 +965,19 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
             "this item has no %r; it has: %s" % (args.field, ", ".join(_field_labels(item)) or "nothing"),
         )
 
+    # The value and whether the vault conceals it come out of ONE resolved item,
+    # in one answer. Asking twice -- describe, then release -- let the two drift
+    # apart: an item edited between the calls could be released under the
+    # previous answer's flag, which is exactly how a concealed field ends up
+    # typed in the clear.
+    concealed = next((d["hidden"] for d in _field_descriptors(item) if d["label"] == args.field), None)
+    if concealed is None:
+        _audit(args.item_id, args.field, page or "SEM-URL", "ERROR %s" % _ERR_INVALID_ARG)
+        return _emit_error(
+            _ERR_INVALID_ARG,
+            "this item does not offer %r; it offers: %s" % (args.field, ", ".join(_field_labels(item)) or "nothing"),
+        )
+
     if args.field == _FIELD_TOTP:
         rc, stdout, stderr = _run_vault(["get", "totp", args.item_id])
         if rc != 0 or not stdout.strip():
@@ -967,7 +992,9 @@ def _cmd_get_field(args: argparse.Namespace) -> int:
             return _emit_error(_ERR_VAULT_NOT_FOUND, "item has no %s" % args.field)
 
     _audit(args.item_id, args.field, page or "SEM-URL", "RELEASED")
-    sys.stdout.write(value)
+    # JSON rather than a bare value, because the caller needs the flag with it
+    # and must never have to ask a second time to get it.
+    sys.stdout.write(json.dumps({"value": value, "hidden": concealed}))
     return 0
 
 

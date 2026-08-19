@@ -273,16 +273,38 @@ class Session:
                                 return {"ok": False, "mask": state, "frame": i}
                             el.fill(cmd["value"], timeout=3000)
                             return {"ok": True, "mask": state, "frame": i}
-                        # Not a secret: clear any mark this node still carries
-                        # from a previous fill before the value goes in.
-                        el.evaluate(UNMASK_JS)
+                        # Not a secret. The mark comes off AFTER the value is
+                        # in, never before: a fill that times out would
+                        # otherwise leave the node holding the previous
+                        # secret with nothing left to hide it.
                         el.fill(cmd["value"], timeout=3000)
+                        el.evaluate(UNMASK_JS)
                     if action == "click":
                         self.page.wait_for_timeout(1000)
                     return {"ok": True, "frame": i}
                 except Exception as exc:
                     last = exc
             raise last or RuntimeError("selector not found: %s" % sel)
+
+        if action == "mark":
+            # Re-apply a mark to a node that may have been replaced since it was
+            # filled. A framework that tears down and rebuilds an input hands
+            # back a fresh node carrying the value but not the attribute, and
+            # the caller asks for this before it lets the agent look at the
+            # page. Best effort by nature: a selector that no longer resolves is
+            # not an error, it is a field that is no longer there.
+            sel = cmd["selector"]
+            for i, fr in enumerate(self.page.frames):
+                if "frame" in cmd and i != int(cmd["frame"]):
+                    continue
+                try:
+                    el = fr.query_selector(sel)
+                except Exception:
+                    continue
+                if el is None:
+                    continue
+                return {"ok": True, "mask": el.evaluate(MASK_JS), "frame": i}
+            return {"ok": False, "mask": "gone"}
 
         if action == "locate":
             # Which frame owns this selector, and what URL is that frame on?

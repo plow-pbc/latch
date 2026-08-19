@@ -59,6 +59,12 @@ export type CredentialFieldInfo = {
   alias: boolean;
 };
 
+/** One released field: the value, and whether the vault conceals it. */
+export interface CredentialRelease {
+  value: string;
+  hidden: boolean;
+}
+
 export interface CredentialItemSummary {
   id: string;
   title: string;
@@ -185,9 +191,21 @@ export class CredentialBroker {
   /**
    * One field of one item, bound to the page URL the DEVICE observed (the
    * broker refuses a login off its own site; cards deliberately pass).
-   * The returned secret must go straight into a fill and be dropped.
+   *
+   * The value arrives with `hidden` beside it, out of one reading of the item,
+   * because the two have to be true of the same field at the same moment: ask
+   * separately and an item edited in between releases a concealed value under
+   * the answer given for the old one. The secret must go straight into a fill
+   * and be dropped.
    */
-  getField(itemId: string, field: string, pageUrl: string): Promise<string> {
-    return this.run(["get-field", "--item-id", itemId, "--field", field, "--url", pageUrl]);
+  async getField(itemId: string, field: string, pageUrl: string): Promise<CredentialRelease> {
+    const out = await this.run(["get-field", "--item-id", itemId, "--field", field, "--url", pageUrl]);
+    const parsed = JSON.parse(out) as { [k: string]: JSONValue };
+    if (typeof parsed.value !== "string" || typeof parsed.hidden !== "boolean") {
+      // Never guess the flag: a shape this side cannot read is a refusal, not a
+      // value released under an assumed classification.
+      throw new CredentialError("BrokerFailed", "the vault did not say whether this field is concealed");
+    }
+    return { value: parsed.value, hidden: parsed.hidden };
   }
 }

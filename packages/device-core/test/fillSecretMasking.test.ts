@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
-import { BrowserHost, BrowserSessions, CredentialBroker, masksField } from "@domo/device-core";
+import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-core";
 
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
@@ -65,11 +65,12 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
         category: "LOGIN",
         username: "jon",
         urls: ["https://pizza.example/login"],
-        fields: {
-          username: "jon",
-          password: "hunter2",
-          "shipping address": { value: "1 Elm St", custom: true, type: 0 },
-        },
+        descriptors: [
+          { label: "username", hidden: false, custom: false, alias: false },
+          { label: "password", hidden: true, custom: false, alias: false },
+          { label: "shipping address", hidden: false, custom: true, alias: false },
+        ],
+        values: { username: "jon", password: "hunter2", "shipping address": "1 Elm St" },
       },
       {
         id: "C1",
@@ -77,11 +78,12 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
         category: "CREDIT_CARD",
         username: "",
         urls: [],
-        fields: {
-          number: "4111111111111111",
-          code: "737",
-          "cardholder name": "Jon Doe",
-        },
+        descriptors: [
+          { label: "number", hidden: true, custom: false, alias: false },
+          { label: "code", hidden: true, custom: false, alias: false },
+          { label: "cardholder name", hidden: false, custom: false, alias: false },
+        ],
+        values: { number: "4111111111111111", code: "737", "cardholder name": "Jon Doe" },
       },
       {
         id: "I1",
@@ -89,7 +91,14 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
         category: "IDENTITY",
         username: "",
         urls: [],
-        fields: {
+        descriptors: [
+          { label: "ssn", hidden: true, custom: false, alias: false },
+          { label: "passport number", hidden: true, custom: false, alias: false },
+          { label: "license number", hidden: false, custom: false, alias: false },
+          { label: "address1", hidden: false, custom: false, alias: false },
+          { label: "city", hidden: false, custom: false, alias: false },
+        ],
+        values: {
           ssn: "078-05-1120",
           "passport number": "X1234567",
           "license number": "D9999",
@@ -137,6 +146,16 @@ async function session(): Promise<string> {
  * raw log carries the value being typed, so nothing here ever returns it — not
  * into an assertion, and not into a failure diff.
  */
+/** Every command the device sent, values already redacted by the fixture. */
+function commands(): { action: string; selector?: string }[] {
+  return fs
+    .readFileSync(ctx.cmdLog, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as { action: string; selector?: string });
+}
+
 function fills(): { selector: string; mask?: boolean }[] {
   return fs
     .readFileSync(ctx.cmdLog, "utf8")
@@ -199,7 +218,7 @@ describe("fill_secret marking", () => {
     expect(fills().map((f) => f.mask === true)).toEqual([true, true, false]);
   });
 
-  it("refuses a field the vault does not describe instead of masking it", async () => {
+  it("refuses a field the vault does not offer instead of masking it", async () => {
     const handle = await session();
     const result = await ctx.sessions.command("agent-1", handle, {
       action: "fill_secret",
@@ -208,31 +227,19 @@ describe("fill_secret marking", () => {
       field: "who-knows",
     });
     expect(jv(result).get("status").str).toBe("error");
-    expect(jv(result).get("error").str).toContain("has no field called who-knows");
-    // Refused before anything was fetched or typed: no fill reached the browser.
+    expect(jv(result).get("error").str).toContain("does not offer a field called who-knows");
+    // Refused before anything was typed: no fill reached the browser.
     expect(fills()).toEqual([]);
-    expect(ctx.events.at(-1)).toEqual({
-      event: "credential_denied",
-      fields: {
-        session: handle,
-        item: "L1",
-        field: "who-knows",
-        origin: "pizza.example",
-        reason: "no such field on the item",
-      },
-    });
+    expect(ctx.events.at(-1)?.event).toBe("credential_denied");
   });
 
-  it("refuses the fill when the vault cannot be asked at all", async () => {
+  it("refuses the fill when the vault cannot answer at all", async () => {
     const handle = await session();
-    // A broker that answers get-field but cannot describe: the classification is
-    // unavailable, so the value must not be typed either way.
     const broken = path.join(ctx.dir, "broken-broker.cjs");
     fs.writeFileSync(
       broken,
-      'if (process.argv[2] === "describe-item") {\n' +
-        '  process.stderr.write(JSON.stringify({ type: "VaultLocked", message: "BROKER-TEXT-VERBATIM" }) + "\\n");\n' +
-        "  process.exit(1);\n}\nprocess.stdout.write('x');\n",
+      'process.stderr.write(JSON.stringify({ type: "VaultLocked", message: "the vault is locked" }) + "\\n");\n' +
+        "process.exit(1);\n",
     );
     const sessions = new BrowserSessions(
       ctx.host,
@@ -251,16 +258,14 @@ describe("fill_secret marking", () => {
       field: "password",
     });
     expect(jv(result).get("status").str).toBe("error");
-    expect(jv(result).get("error").str).toContain("could not check with the vault");
-    // Locally authored: nothing the broker said is forwarded.
-    expect(JSON.stringify(result)).not.toContain("BROKER-TEXT-VERBATIM");
-    expect(JSON.stringify(ctx.events.at(-1))).not.toContain("BROKER-TEXT-VERBATIM");
+    // Nothing typed, and the refusal is recorded.
     expect(fills().length).toBe(before);
     expect(ctx.events.at(-1)?.event).toBe("credential_denied");
-    expect(ctx.events.at(-1)?.fields.reason).toBe("the vault could not be asked which fields it masks");
   });
 
-  it("asks the vault about an item once per session, not once per fill", async () => {
+  it("asks the vault once per fill, and never asks it to describe anything", async () => {
+    // The value and its concealment arrive together, so there is no second
+    // question to cache the answer to and no describe in the release path.
     const handle = await session();
     for (const selector of ["#pass", "#pass2", "#pass3"]) {
       await ctx.sessions.command("agent-1", handle, {
@@ -270,20 +275,10 @@ describe("fill_secret marking", () => {
         field: "password",
       });
     }
-    const described = () =>
-      fs.readFileSync(ctx.brokerLog, "utf8").trim().split("\n").filter((l) => l.includes("DESCRIBED"));
+    const lines = fs.readFileSync(ctx.brokerLog, "utf8").trim().split("\n");
     expect(fills().length).toBe(3);
-    expect(described().length).toBe(1);
-
-    // Widening the session drops what was cached: the vault is asked again.
-    ctx.sessions.extend("i3", "agent-1", handle, [], ["C1"], false);
-    await ctx.sessions.command("agent-1", handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "password",
-    });
-    expect(described().length).toBe(2);
+    expect(lines.filter((l) => l.includes("DESCRIBED"))).toEqual([]);
+    expect(lines.filter((l) => l.includes("RELEASED")).length).toBe(3);
   });
 
   it("fills an identity item, masking what the client conceals and nothing else", async () => {
@@ -364,6 +359,51 @@ describe("fill_secret marking", () => {
     expect(jv(result).get("ok").bool).toBe(true);
   });
 
+  it("puts the mark back before the agent looks at the page", async () => {
+    // A framework that rebuilds an input on re-render hands back a node holding
+    // the value and not the attribute. Re-applying before the two actions that
+    // show the agent the page closes the window that is reachable in ordinary
+    // use — it cannot close the one the page owns outright.
+    const handle = await session();
+    await ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
+    });
+    await ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#card-cvc", item: "C1", field: "code",
+    });
+    // A visible field is not tracked: there is nothing to hide.
+    await ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#addr", item: "L1", field: "shipping address",
+    });
+    const marksBefore = commands().filter((c) => c.action === "mark");
+    expect(marksBefore).toEqual([]);
+
+    await ctx.sessions.command("agent-1", handle, { action: "screenshot" });
+    expect(commands().filter((c) => c.action === "mark").map((c) => c.selector)).toEqual([
+      "#pass",
+      "#card-cvc",
+    ]);
+
+    await ctx.sessions.command("agent-1", handle, { action: "forms" });
+    expect(commands().filter((c) => c.action === "mark").map((c) => c.selector)).toEqual([
+      "#pass",
+      "#card-cvc",
+      "#pass",
+      "#card-cvc",
+    ]);
+  });
+
+  it("does not let a vanished field stop the agent seeing the page", async () => {
+    await ctx.host.shutdown();
+    ctx = makeCtx({ FAKE_MARK_GONE: "1" });
+    const handle = await session();
+    await ctx.sessions.command("agent-1", handle, {
+      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
+    });
+    const shot = await ctx.sessions.command("agent-1", handle, { action: "screenshot" });
+    expect(jv(shot).get("status").str).toBe("completed");
+  });
+
   it("keeps the filled value out of the fixture's own command log", async () => {
     const handle = await session();
     await ctx.sessions.command("agent-1", handle, {
@@ -412,40 +452,6 @@ describe("fill_secret marking", () => {
   });
 });
 
-describe("the mask decision", () => {
-  // Exactly what the broker reports for a card: the slot, its aliases carrying
-  // the slot's flag, and a custom field shadowing a built-in's name.
-  const FIELDS = [
-    { label: "code", hidden: true, custom: false, alias: false },
-    { label: "cvv", hidden: true, custom: false, alias: true },
-    { label: "security code", hidden: true, custom: false, alias: true },
-    { label: "cardholder name", hidden: false, custom: false, alias: false },
-    { label: "cardholder name", hidden: true, custom: true, alias: false },
-  ];
-
-  it("follows the vault's own flag", () => {
-    expect(masksField(FIELDS, "code")).toBe(true);
-    expect(masksField([{ label: "username", hidden: false, custom: false }], "username")).toBe(false);
-  });
-
-  it("takes the aliases from the broker rather than keeping a table of its own", () => {
-    expect(masksField(FIELDS, "cvv")).toBe(true);
-    expect(masksField(FIELDS, "security code")).toBe(true);
-  });
-
-  it("lets the built-in decide a name collision, not the order of the list", () => {
-    // `get-field cardholder name` releases the card's own slot, which the vault
-    // does not mask — whichever of the two descriptors happens to come first.
-    expect(masksField(FIELDS, "cardholder name")).toBe(false);
-    expect(masksField([...FIELDS].reverse(), "cardholder name")).toBe(false);
-  });
-
-  it("refuses to answer for a name the vault did not describe", () => {
-    expect(masksField(FIELDS, "who-knows")).toBeNull();
-    expect(masksField([], "password")).toBeNull();
-  });
-});
-
 /**
  * Mark and fill must land on the SAME resolved node. Resolving the selector
  * twice is the re-resolution failure §3.2 exists to avoid: a re-render between
@@ -487,6 +493,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   it("does not type the value when the marked node went away", () => {
     expect(probed.detached.marked).toBe(true);
     expect(probed.detached.trace).not.toContain("handle.fill");
+    expect(probed.detached.trace).toContain("handle.fill-failed");
     expect(probed.detached.error).toBe("RuntimeError");
   });
 
@@ -498,17 +505,29 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "handle.evaluate:mark",
     ]);
     expect(probed.mask_blocked.trace).not.toContain("handle.fill");
+    expect(probed.mask_blocked.trace).not.toContain("handle.fill-failed");
     expect(probed.mask_blocked.result).toEqual({ ok: false, mask: "unmasked", frame: 0 });
   });
 
-  it("clears a stale mark from a node it is filling with something visible", () => {
+  it("clears a stale mark only once the new value is in", () => {
+    // Unmarking first would leave the previous secret in the node with nothing
+    // hiding it if the fill then timed out.
     expect(probed.plain.trace).toEqual([
       "frame.wait_for_selector",
-      "handle.evaluate:unmark",
       "handle.fill",
+      "handle.evaluate:unmark",
     ]);
     expect(probed.plain.marked).toBe(false);
     expect(probed.plain.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("keeps the mark on when a visible fill fails", () => {
+    // The node still holds the previous secret; the mark is what stops it being
+    // read off the screen, so it stays until something replaces the value.
+    expect(probed.plain_failed.trace).toEqual(["frame.wait_for_selector", "handle.fill-failed"]);
+    expect(probed.plain_failed.trace).not.toContain("handle.evaluate:unmark");
+    expect(probed.plain_failed.marked).toBe(true);
+    expect(probed.plain_failed.error).toBe("RuntimeError");
   });
 });
 

@@ -21,6 +21,7 @@ masked one cannot appear here whatever a test asks for.
 import json
 import os
 import sys
+import tempfile
 import types
 
 
@@ -52,11 +53,43 @@ def _releasable(cli, item: dict, label: str) -> bool:
     return cli._read_field(item, label) is not None
 
 
+def _release_shape(cli, item: dict, descriptor: dict) -> dict:
+    """What `get-field` actually answers for one label.
+
+    Only the SHAPE is reported — whether the answer carried a concealment flag
+    and whether it agreed with the descriptor. The value is read and thrown
+    away here; releasing it into a test file would be the very thing the whole
+    change exists to prevent.
+    """
+    import argparse
+    import contextlib
+    import io
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        rc = cli._cmd_get_field(argparse.Namespace(item_id=item["id"], field=descriptor["label"], url=None))
+    if rc != 0:
+        return {"answered": False, "flagged": False, "agrees": False}
+    try:
+        answer = json.loads(out.getvalue())
+    except json.JSONDecodeError:
+        return {"answered": True, "flagged": False, "agrees": False}
+    flagged = isinstance(answer.get("hidden"), bool)
+    return {
+        "answered": isinstance(answer.get("value"), str),
+        "flagged": flagged,
+        "agrees": flagged and answer["hidden"] == descriptor["hidden"],
+    }
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         sys.stderr.write("usage: classifyProbe.py <maskClassification.json>\n")
         return 2
     _stub_tldextract()
+    # The broker audits every release. Point that at a scratch file rather than
+    # the state directory of whoever is running the suite.
+    os.environ.setdefault("SEED_VAULT_AUDIT", os.path.join(tempfile.mkdtemp(), "audit.log"))
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                     "..", "..", "vendor", "browser-server"))
     from seed_vault_broker import cli
@@ -67,6 +100,8 @@ def main(argv: list[str]) -> int:
     out = {}
     for case in table["cases"]:
         item = cli._normalize(case["bitwarden"])
+        # `get-field` looks the item up for itself; there is no vault here.
+        cli._get_item = lambda _id, _item=item: _item
         descriptors = cli._field_descriptors(item)
         out[case["name"]] = {
             "descriptors": descriptors,
@@ -85,6 +120,13 @@ def main(argv: list[str]) -> int:
             # Whether a key the pinned client does not define can be read out
             # anyway. It must not be: an unknown key is refused, not released.
             "unknownKeyReadable": cli._read_field(item, "middleInitial") is not None,
+            # One command has to answer both questions, or a caller is back to
+            # asking twice and acting on two different moments.
+            "release": {
+                d["label"]: _release_shape(cli, item, d)
+                for d in descriptors
+                if d["label"] != cli._FIELD_TOTP
+            },
             "released": {
                 d["label"]: cli._read_field(item, d["label"])
                 for d in descriptors
