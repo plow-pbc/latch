@@ -39,11 +39,25 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 // Nothing is imported or registered at the top level: Electron does not emit
 // `ready` until this entry module finishes evaluating, and a top-level await
 // makes that a race nobody wants to debug. `setUp` runs inside whenReady.
-const DEVICE_SETTINGS = { relayCredential: DEVICE_TOKEN, accountUid: "u_7Qk2p9", mcpUrl: MCP_URL };
+const DEVICE_SETTINGS = {
+  relayCredential: DEVICE_TOKEN,
+  accountUid: "u_7Qk2p9",
+  mcpUrl: MCP_URL,
+  // The Approvals card shares this tab, and its interesting state is the one
+  // with a reviewer running and a purpose written for it to read.
+  approvalMode: "adversarial",
+  agentPurpose: "Help with grocery orders and calendar. Never touch code or SSH keys.",
+};
 
 async function setUp() {
   const { ConnectClient } = await import(path.join(dist, "connectClient.js"));
   const { saveSettings, loadSettings } = await import(path.join(dist, "settings.js"));
+  // The Agents tab carries the Approvals card too, so this screen now needs the
+  // reviewer's state and the purpose statement. Real actions against the same
+  // throwaway home, for the reason the connect handlers are real.
+  const { readAgentPurpose, readInference, setAgentPurpose, setApprovalMode } = await import(
+    path.join(dist, "settingsActions.js")
+  );
 
   // A Mac that has been through login: a device credential and an endpoint.
   saveSettings(home, { ...loadSettings(home), ...DEVICE_SETTINGS });
@@ -64,6 +78,10 @@ async function setUp() {
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
+  ipcMain.handle("settings:getInference", async () => readInference(home));
+  ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
+  ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
+  ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(home, purpose));
   ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});
   // The main window's boot also asks for the update banner's state; without a
@@ -99,6 +117,13 @@ const SCREENS = [
       // The shortcut to where the URL gets pasted.
       "Claude",
       "Can't use OAuth? Create a static credential",
+      // Approvals moved onto this tab with the clients it governs.
+      "Approvals",
+      "What happens when an agent asks to do something on this Mac.",
+      "AI Reviewer decides",
+      "What are agents for?",
+      "It can only narrow what gets approved",
+      "Requests that fit may be approved without asking you.",
     ],
   },
   {

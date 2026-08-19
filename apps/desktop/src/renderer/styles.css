@@ -382,7 +382,11 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve .fine {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px; margin-bottom: 14px;
-  flex: 1; overflow: auto;
+  /* A floor nothing above can take. `flex: 1` alone lets a sibling with a tall
+     natural height eat this block's share of a 560pt window, and the capability
+     list is the one thing on this card that must never be the part that
+     scrolled out of view. */
+  flex: 1; min-height: 120px; overflow: auto;
 }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
 .approve .actions { display: flex; gap: 8px; }
@@ -630,3 +634,17 @@ textarea.text { min-height: 70px; resize: vertical; }
 /* The line under a chip row explaining what a faded chip is waiting for. */
 .settings .chip-note:empty { display: none; }
 .settings .chip-note { margin-top: 10px; }
+
+/* The purpose field, hanging off the reviewer chip that reveals it. Same 2px
+   rail the audit timeline uses, so it reads as belonging to the chip above
+   rather than as another row of the card. */
+.revealed {
+  margin: 14px 0 0 14px;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--border);
+}
+.revealed .field { margin-bottom: 8px; }
+/* `.item p` zeroes margins, so each caveat asks for its own line back. */
+.item .revealed p { margin: 6px 0 0; }
+/* What the selected mode does, where the purpose field would otherwise be. */
+.item p.mode-hint { margin: 10px 0 0; }
