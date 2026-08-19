@@ -10,7 +10,9 @@
  *   interacted with except finding the way back (url/pages/use_page/goto) —
  *   recovery is a plow_browser_request intent that widens the scope;
  * - credential values flow op → here → a frame-targeted fill on an approved
- *   origin, and are dropped immediately. They never appear in results or audit.
+ *   origin, and are dropped immediately. They never appear in the results these
+ *   tools return, nor in either audit log. `eval` is the documented exception:
+ *   it reads page values directly, so a filled field is readable through it.
  *
  * This layer is the cage: seatbelt cannot confine a browser (network is
  * all-or-nothing), so scope enforcement lives in trusted TS. What the origin

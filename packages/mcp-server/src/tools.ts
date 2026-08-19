@@ -371,7 +371,9 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser_open",
     description:
       "Open a browser on the user's own Mac. Its profile persists between sessions and it can " +
-      "fill passwords from their vault without returning them to you — so use it for sites that " +
+      "fill passwords from their vault without returning them to you ('eval' is the exception: " +
+      "it reads page values directly, and must not be pointed at a field you filled) — so use " +
+      "it for sites that " +
       "must be signed in as them, not for general web reading, which your own tools do faster. " +
       "One session at a time. It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
@@ -438,8 +440,9 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
-      "(find item ids with plow_vault's 'list' action). A secret is never returned to you; " +
-      "it is typed into the page on this Mac, where it is page content like anything else.",
+      "(find item ids with plow_vault's 'list' action). A secret is never returned to you by " +
+      "these tools; it is typed into the page on this Mac, where it is page content like " +
+      "anything else — readable through 'eval', which you must not point at a field you filled.",
     inputSchema: {
       type: "object",
       required: ["session"],
@@ -578,8 +581,9 @@ export const TOOLS: ToolSpec[] = [
       "included. No browser session is needed to ask. To USE any vault field, secret or not, " +
       "open a browser session and call the plow_browser tool's fill_secret — that is the only " +
       "way to put one into a page: the value is typed in on the Mac and is never returned by " +
-      "these tools. It is in the page you are driving, so treat it as you would anything else " +
-      "on that page: do not copy it out or repeat it.",
+      "these tools, nor by a screenshot or 'forms' if the vault conceals it. It is in the page " +
+      "you are driving and 'eval' can read it, so treat it as you would anything else on that " +
+      "page: do not go looking for it, copy it out, or repeat it.",
     inputSchema: {
       type: "object",
       required: ["action"],

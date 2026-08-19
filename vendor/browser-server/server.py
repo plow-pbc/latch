@@ -383,6 +383,11 @@ class Session:
             return {"text": self.page.inner_text("body")[:limit]}
 
         if action == "eval":
+            # The one action that hands page values back verbatim. Masking makes
+            # a filled secret unreadable to SCREENSHOTS and to `forms`; it
+            # cannot reach this, which reads `input.value` directly. Deliberate
+            # and documented (DESIGN.md §11a): the threat model is accidental
+            # exposure, and an agent going looking with eval is outside it.
             return {"result": self.page.evaluate(cmd["expression"])}
 
         if action in ("click", "fill"):
