@@ -40,7 +40,9 @@ class Handle:
 
     `mask_result` is what the page would answer when asked to mark this node:
     "stylesheet" on an ordinary page, "unmasked" on one whose CSP blocks the
-    stylesheet and whose style object will not take the property either.
+    stylesheet and whose style object will not take the property either. It can
+    be changed after the fact, which is how a scenario says "and then the page
+    stopped allowing it".
     """
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False):
@@ -51,6 +53,8 @@ class Handle:
 
     def evaluate(self, js):
         # Recorded as a fact about the script, not its text: which one it is.
+        if "__domoDocumentToken" in js:
+            return "doc-1"
         if "setAttribute" in js and "data-domo-secret" in js:
             self.marked = True
             self.trace.append("handle.evaluate:mark")
@@ -73,14 +77,35 @@ class Handle:
 
 
 class Frame:
-    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False):
+    """One frame, with as many nodes as a scenario needs.
+
+    `nodes` maps selector -> Handle. The default frame has one node under every
+    selector asked for, which is what the single-command scenarios want; the
+    ledger scenarios name their nodes and can take one away.
+    """
+
+    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
+                 nodes=None):
         self.trace = trace
         self.url = "https://pizza.example/login"
         self.handle = Handle(trace, detach_before_fill, mask_result, marked)
+        self.nodes = nodes
+
+    def _node(self, selector):
+        return self.handle if self.nodes is None else self.nodes.get(selector)
+
+    def evaluate(self, expression, *args, **kwargs):
+        return []          # the forms scanner, over no fields
+
+    def query_selector(self, selector):
+        return self._node(selector)
 
     def wait_for_selector(self, selector, timeout=None):
         self.trace.append("frame.wait_for_selector")
-        return self.handle
+        node = self._node(selector)
+        if node is None:
+            raise RuntimeError("selector not found: %s" % selector)
+        return node
 
     def fill(self, selector, value, timeout=None):
         self.trace.append("frame.fill")
@@ -93,14 +118,23 @@ class Page:
     def __init__(self, frame):
         self.url = "https://pizza.example/login"
         self.frames = [frame]
+        # What `DOC_TOKEN_JS` would return. A scenario changes it to say "a new
+        # document"; changing only `url` says "a route change within this one".
+        self.document_token = "doc-1"
 
         class _Context:
             pages = [self]
 
         self.context = _Context()
 
+    def evaluate(self, expression, *args, **kwargs):
+        return self.document_token
+
     def wait_for_timeout(self, _ms):
         pass
+
+    def inner_text(self, _selector):
+        return ""
 
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False):
@@ -118,78 +152,40 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     return out
 
 
-class LedgerNode:
-    """A node that remembers whether it is marked, and may refuse to be."""
-
-    def __init__(self, refuses=False):
-        self.marked = False
-        self.refuses = refuses
-        self.value = ""
-
-    def evaluate(self, js):
-        if "removeAttribute" in js:
-            self.marked = False
-            return True
-        if self.refuses:
-            return "unmasked"
-        self.marked = True
-        return "stylesheet"
-
-    def fill(self, value, timeout=None):
-        self.value = value
-
-
-class LedgerFrame:
-    def __init__(self, nodes):
-        self.url = "https://pizza.example/login"
-        self.nodes = nodes
-
-    def evaluate(self, js, *a, **k):
-        return []          # the forms scanner, over no fields
-
-    def query_selector(self, selector):
-        return self.nodes.get(selector)
-
-    def wait_for_selector(self, selector, timeout=None):
-        node = self.nodes.get(selector)
-        if node is None:
-            raise RuntimeError("selector not found: %s" % selector)
-        return node
-
-
-class LedgerPage:
-    def __init__(self, frame):
-        self.url = "https://pizza.example/login"
-        self.frames = [frame]
-        self.context = type("Ctx", (), {"pages": [self]})()
-
-    def wait_for_timeout(self, _ms):
-        pass
-
-    def inner_text(self, _sel):
-        return ""
-
-
 def ledger(server, script):
     """Run a sequence of commands against ONE session and report what the
     server's own mask ledger did. Values never leave this function."""
-    nodes = {"#pass": LedgerNode(), "#addr": LedgerNode()}
-    frame = LedgerFrame(nodes)
-    page = LedgerPage(frame)
+    trace: list[str] = []
+    nodes = {"#pass": Handle(trace), "#addr": Handle(trace)}
+    frame = Frame(trace, nodes=nodes)
+    page = Page(frame)
     session = server.Session(page)
     steps = []
     for step in script:
         if step.get("navigate"):
+            # A new document: fresh window, fresh token.
             page.url = step["navigate"]
             frame.url = step["navigate"]
+            page.document_token = "doc-%s" % step["navigate"]
             steps.append({"step": "navigate", "result": None})
+            continue
+        if step.get("route"):
+            # pushState: the URL moves, the document does not.
+            page.url = step["route"]
+            frame.url = step["route"]
+            steps.append({"step": "route", "result": None})
+            continue
+        if step.get("rerender"):
+            # The framework rebuilds the input: the value stays, the mark goes.
+            nodes[step["rerender"]].marked = False
+            steps.append({"step": "rerender", "result": None})
             continue
         if step.get("vanish"):
             nodes.pop(step["vanish"], None)
             steps.append({"step": "vanish", "result": None})
             continue
         if step.get("refuse"):
-            nodes[step["refuse"]].refuses = True
+            nodes[step["refuse"]].mask_result = "unmasked"
             steps.append({"step": "refuse", "result": None})
             continue
         try:
@@ -236,6 +232,14 @@ def main() -> int:
         ]),
         "node_gone": ledger(server, [
             {"cmd": fill_pass}, {"vanish": "#pass"}, {"cmd": observe},
+        ]),
+        # An SPA route change plus a re-render: the URL moved, the document did
+        # not, and the mark has to go back on before anything is observed.
+        "same_document_route": ledger(server, [
+            {"cmd": fill_pass},
+            {"route": "https://pizza.example/step2"},
+            {"rerender": "#pass"},
+            {"cmd": observe},
         ]),
     }
     out.write(json.dumps(result))

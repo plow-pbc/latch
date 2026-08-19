@@ -15,12 +15,10 @@
  * No field value is asserted on; the last test proves none come back.
  */
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CredentialFieldInfo } from "@domo/device-core";
+import { havePython, runProbe } from "./pythonProbe.js";
 
 const TABLE_PATH = fileURLToPath(
   new URL("../../../e2e/fixtures/maskClassification.json", import.meta.url),
@@ -48,38 +46,11 @@ const SECRETS = [
   "concealed-custom",
 ];
 
-function haveHost(bin: string): boolean {
-  try {
-    execFileSync(bin, ["-c", "pass"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Python is run with its bytecode cache pointed at a throwaway directory.
- *
- * The system python3 here writes .pyc files to a cache OUTSIDE the source tree
- * and validates them on (mtime, size) alone. An edit that changes neither —
- * a mutation test that happens to be byte-length-neutral, applied and reverted
- * inside one second — leaves a stale .pyc that Python believes is current, and
- * every later run executes code that is not on disk. That cost an afternoon
- * once. A fresh prefix per run means there is never a cache to be stale.
- */
-function pythonEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-")),
-  };
-}
-
-const HAVE_PYTHON = haveHost("python3");
+const HAVE_PYTHON = havePython();
 
 describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
   const probed = (() => {
-    const out = execFileSync("python3", [PROBE, TABLE_PATH], { encoding: "utf8", env: pythonEnv() });
-    return JSON.parse(out) as {
+    return runProbe<{
       [name: string]: {
         descriptors: CredentialFieldInfo[];
         labels: string[];
@@ -89,7 +60,7 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
         released: { [label: string]: string | null };
         unknownKeyReadable: boolean;
       };
-    };
+    }>(PROBE, [TABLE_PATH]);
   })();
 
   for (const c of CASES) {

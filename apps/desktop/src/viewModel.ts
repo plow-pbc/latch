@@ -335,6 +335,15 @@ function classifyActivity(
         ? { status: "Closed · fill failed", tone: "amber", category: "failed" }
         : { status: "Fill failed", tone: "amber", category: "failed" };
     }
+    // The page would not let a filled secret stay hidden on screen, so the
+    // agent was refused a look at it. The owner should see that as plainly as a
+    // failed fill: it means a credential of theirs is sitting legible on a page
+    // their agent is working in.
+    if (has("credential_mask_failed")) {
+      return has("browser_session_closed")
+        ? { status: "Closed · mask failed", tone: "amber", category: "failed" }
+        : { status: "Mask failed", tone: "amber", category: "failed" };
+    }
     if (has("credential_denied") || has("browser_scope_violation")) {
       return has("browser_session_closed")
         ? { status: "Closed · scope blocks", tone: "amber", category: "other" }
@@ -504,6 +513,11 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     case "credential_denied":
       text = `Credential refused: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} — ${ev.get("reason").str ?? ""}`;
+      state = "bad";
+      break;
+    case "credential_mask_failed":
+      text = `Page not shown to the agent: a filled credential on ${ev.get("url").str ?? ""} `
+        + `could not be kept hidden on screen, so ${ev.get("action").str ?? "the view"} was refused`;
       state = "bad";
       break;
     case "browser_crashed": text = "Browser crashed"; state = "bad"; break;

@@ -806,49 +806,24 @@ def _read_slot(item: dict, label: str) -> str | None:
 def _read_field(item: dict, field: str) -> str | None:
     """The value behind one label.
 
-    Each slot is tried in turn and an EMPTY one falls through rather than
-    answering None: `email` names a login's username on a login item and an
-    identity's own email on an identity, and a custom field may carry a name a
-    fixed slot also uses. Falling through is what keeps this in step with
-    `_field_descriptors`, which only reports the slots that are actually filled.
+    The item's own fixed slots answer first, through the same resolution a
+    linked field uses -- there is one notion of "the item's `email`" and it
+    lives in `_read_slot`. Everything a slot cannot answer is the note body or a
+    custom field, and a name held by more than one custom field names none of
+    them (see `_field_descriptors`, which drops the ambiguous token rather than
+    picking by order).
     """
     raw = item.get("_raw") or {}
-
-    def text(value: object) -> str | None:
-        return str(value) if value not in (None, "") else None
-
-    login = raw.get("login") or {}
-    if field == _FIELD_PASSWORD and text(login.get("password")):
-        return text(login.get("password"))
-    if field in _USERNAME_FIELDS and text(login.get("username")):
-        return text(login.get("username"))
-    card_key = _CARD_FIELDS.get(field)
-    if card_key and text((raw.get("card") or {}).get(card_key)):
-        return text((raw.get("card") or {}).get(card_key))
-    identity = raw.get("identity") or {}
-    # Only the parts the pinned client defines. An unknown key has no label
-    # here, and a label this does not know is not a way to reach one.
-    identity_key = _IDENTITY_FIELDS.get(field)
-    if identity_key and text(identity.get(identity_key)):
-        return text(identity.get(identity_key))
-    if field == _FULL_NAME:
-        # Composed exactly as the client composes it (identity.view.ts:88-113):
-        # title, first, middle, last, single-spaced, trimmed.
-        parts = [identity.get(k) for k in ("title", "firstName", "middleName", "lastName")]
-        joined = " ".join(str(p).strip() for p in parts if p and str(p).strip())
-        return joined or None
-    ssh_key = raw.get("sshKey") or {}
-    ssh_key_field = _SSH_KEY_FIELDS.get(field)
-    if ssh_key_field and text(ssh_key.get(ssh_key_field)):
-        return text(ssh_key.get(ssh_key_field))
+    slot = _read_slot(item, field)
+    if slot is not None:
+        return slot
     if field == "notes" and raw.get("notes"):
         return raw.get("notes")
+
     customs = raw.get("fields") or []
     # An exact name always wins, so a custom field genuinely called
     # "custom:something" is still reachable; only then is the qualifier peeled
-    # off and the name behind it looked up. A name held by more than one custom
-    # field names none of them -- see _field_descriptors, which drops the
-    # ambiguous token rather than picking by order.
+    # off and the name behind it looked up.
     for wanted in (field, field[len(_CUSTOM_PREFIX):] if field.startswith(_CUSTOM_PREFIX) else None):
         if wanted is None:
             continue
@@ -859,7 +834,8 @@ def _read_field(item: dict, field: str) -> str | None:
             if custom.get("type") == _CUSTOM_FIELD_LINKED:
                 target = _LINKED_ID_LABELS.get(custom.get("linkedId"))
                 return _read_slot(item, target) if target else None
-            return text(custom.get("value"))
+            value = custom.get("value")
+            return str(value) if value not in (None, "") else None
     return None
 
 

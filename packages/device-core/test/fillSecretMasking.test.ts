@@ -11,13 +11,13 @@
  * No secret value is asserted on anywhere below.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
 import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-core";
+import { havePython, runProbe } from "./pythonProbe.js";
 
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
@@ -30,32 +30,9 @@ const SERVER_PY = fileURLToPath(
 );
 const FILL_PROBE = fileURLToPath(new URL("../../../e2e/fixtures/fillProbe.py", import.meta.url));
 
-/**
- * Python is run with its bytecode cache pointed at a throwaway directory.
- *
- * The system python3 here writes .pyc files to a cache OUTSIDE the source tree
- * and validates them on (mtime, size) alone. An edit that changes neither —
- * a mutation test that happens to be byte-length-neutral, applied and reverted
- * inside one second — leaves a stale .pyc that Python believes is current, and
- * every later run executes code that is not on disk. That cost an afternoon
- * once. A fresh prefix per run means there is never a cache to be stale.
- */
-function pythonEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-")),
-  };
-}
 
 /** The probe needs a python3; the rest of this file never does. */
-const HAVE_PYTHON = (() => {
-  try {
-    execFileSync("python3", ["-c", "pass"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-})();
+const HAVE_PYTHON = havePython();
 
 interface Ctx {
   sessions: BrowserSessions;
@@ -393,25 +370,6 @@ describe("fill_secret marking", () => {
     expect(ctx.events.filter((e) => e.event === "credential_mask_failed").length).toBe(2);
   });
 
-  it("shows the page freely once nothing concealed is left on it", async () => {
-    // The same page, after the concealed field is overwritten with something
-    // the vault does not conceal: there is nothing left to cover, so there is
-    // nothing left to refuse.
-    await ctx.host.shutdown();
-    ctx = makeCtx({ FAKE_REMASK_FAILS: "1" });
-    const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
-      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
-    });
-    expect(jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" })).get("status").str)
-      .toBe("error");
-    await ctx.sessions.command("agent-1", handle, {
-      action: "fill_secret", selector: "#pass", item: "L1", field: "shipping address",
-    });
-    expect(jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" })).get("status").str)
-      .toBe("completed");
-  });
-
   it("keeps the filled value out of the fixture's own command log", async () => {
     const handle = await session();
     await ctx.sessions.command("agent-1", handle, {
@@ -472,8 +430,7 @@ describe("fill_secret marking", () => {
  */
 describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () => {
   const probed = (() => {
-    const out = execFileSync("python3", [FILL_PROBE], { encoding: "utf8", env: pythonEnv() });
-    return JSON.parse(out) as {
+    return runProbe<{
       [scenario: string]: {
         trace: string[];
         error: string | null;
@@ -488,7 +445,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
           marked: { [selector: string]: boolean };
         };
       };
-    };
+    }>(FILL_PROBE);
   })();
 
   it("resolves the node once and marks it before the value goes in", () => {
@@ -544,6 +501,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   it("forgets everything when the page navigates", () => {
     // A page that has moved is not the page anything was filled on.
     expect(probed.ledger.navigated.tracked).toEqual([]);
+  });
+
+  it("keeps the marks across a route change inside one document", () => {
+    // An SPA moving from /step1 to /step2 replaces neither the document nor the
+    // fields on it. Treating that as a new page threw the record away, and a
+    // re-rendered controlled input then kept the secret and lost the marker —
+    // so the very next screenshot showed it.
+    const spa = probed.ledger.same_document_route;
+    expect(spa.tracked).toEqual(["0:#pass"]);
+    expect(spa.marked["#pass"]).toBe(true);
+    expect(spa.steps.at(-1)!.result).toEqual({});
   });
 
   it("refuses the observation when a mark will not go back on", () => {
@@ -749,7 +717,28 @@ describe("the mark the page ends up carrying", () => {
     expect(el.style.props["-webkit-text-security"]).toBe("disc");
   });
 
-  it("reports unmasked when neither route takes", () => {
+  it("takes its own tag back off when the mark did not take", () => {
+    // The tag goes on before the mark is verified. Leaving it on a field that
+    // was never masked would withhold an ordinary value from `forms` for the
+    // life of the page — a field the agent was told to check, silently blanked.
+    const page = stubPage({ stylesheets: false, inlineProperties: false });
+    const el = page.el();
+    expect(mark(el)).toBe("unmasked");
+    expect(el.attrs).toEqual({});
+    expect(el.style.props).toEqual({});
+  });
+
+  it("leaves the tag alone on a field that was already masked", () => {
+    // Same failure, different node: this one is holding a secret already, so
+    // taking its tag off would expose it.
+    const page = stubPage({ stylesheets: false, inlineProperties: false });
+    const el = page.el();
+    el.setAttribute("data-domo-secret", "");
+    expect(mark(el)).toBe("unmasked");
+    expect(el.attrs).toEqual({ "data-domo-secret": "" });
+  });
+
+  it("reports unmasked when neither route takes", () =>{
     // Nothing the page will honour. The caller must not type into this.
     const page = stubPage({ stylesheets: false, inlineProperties: false });
     expect(mark(page.el())).toBe("unmasked");

@@ -130,3 +130,39 @@ describe("a failed credential fill is visible to the owner", () => {
     expect(browser.category).toBe("failed");
   });
 });
+
+describe("a page that would not keep a secret hidden is visible to the owner", () => {
+  const events: JSONValue[] = [
+    { event: "browser_session_opened", intentId: "i3", session: "M", origins: ["dominos.com"], ts: "2026-08-10T12:00:00Z" },
+    { event: "browser_command", session: "M", action: "goto", url: "https://dominos.com/pay", ts: "2026-08-10T12:00:01Z" },
+    {
+      event: "credential_filled",
+      session: "M",
+      item: "C1",
+      field: "number",
+      origin: "dominos.com",
+      ts: "2026-08-10T12:00:02Z",
+    },
+    {
+      event: "credential_mask_failed",
+      session: "M",
+      action: "screenshot",
+      url: "https://dominos.com/pay",
+      ts: "2026-08-10T12:00:03Z",
+    },
+  ];
+
+  it("does not read as a healthy browsing session", () => {
+    const browser = auditActivities(events).find((a) => a.id === "browser:M")!;
+    // Green "Browsing" would say all is well while a card number sits legible
+    // on a page the agent is working in.
+    expect(browser.status).toBe("Mask failed");
+    expect(browser.category).toBe("failed");
+    const line = browser.timeline.find((s) => s.text.includes("could not be kept hidden"))!;
+    expect(line.state).toBe("bad");
+    expect(line.text).toContain("dominos.com/pay");
+    expect(line.text).toContain("screenshot");
+    // The value itself is nowhere near any of this.
+    expect(JSON.stringify(browser)).not.toContain("4111");
+  });
+});

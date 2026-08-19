@@ -89,6 +89,11 @@ TABLES_JS = """() => Array.from(document.querySelectorAll("table")).map(t => ({
 # attributes it has never heard of alone. The rule is injected at most once --
 # a document that already carries it is left as it is.
 MASK_JS = """(el) => {
+    // Whether this node was ALREADY masked decides what to undo if the mark
+    // does not take: a field that was carrying a secret keeps its tag, while
+    // one that was not must be handed back exactly as it was found. Leaving the
+    // tag on an ordinary field withholds its value from `forms` for good.
+    const wasMarked = el.hasAttribute("data-domo-secret");
     el.setAttribute("data-domo-secret", "");
     const doc = el.ownerDocument;
     const win = doc.defaultView;
@@ -116,7 +121,32 @@ MASK_JS = """(el) => {
     el.style.setProperty("-webkit-text-security", "disc");
     el.style.webkitTextSecurity = "disc";
     if (masked()) return "inline";
+    if (!wasMarked) {
+        el.removeAttribute("data-domo-secret");
+        el.style.removeProperty("-webkit-text-security");
+    }
     return "unmasked";
+}"""
+
+# Which document this is. A token is stamped on `window` the first time it is
+# asked for and read back afterwards: a new document gets a fresh `window` and
+# therefore a fresh token, while a same-document navigation -- pushState, a
+# hash change, history.back within an SPA -- keeps both. Non-enumerable, so it
+# does not show up in anything the page or the agent enumerates.
+#
+# The URL cannot answer this question. An SPA route change rewrites it without
+# replacing the document, and treating that as a new page threw away the record
+# of which fields were masked -- while a re-rendered controlled input kept the
+# secret and lost the marker, so the next screenshot showed it.
+DOC_TOKEN_JS = """() => {
+    const w = window;
+    if (!w.__domoDocumentToken) {
+        Object.defineProperty(w, "__domoDocumentToken", {
+            value: Math.random().toString(36).slice(2) + Date.now().toString(36),
+            configurable: true,
+        });
+    }
+    return w.__domoDocumentToken;
 }"""
 
 # Undoing the mark, for a node being filled with something the vault does not
@@ -162,18 +192,27 @@ class Session:
         self.page = page
         # page -> {(frame index, selector)} that hold something concealed.
         self.masked = {}
-        # page -> the url it was on when we last looked, so a navigation can be
-        # noticed however it happened: goto, back, or the page's own script.
-        self.seen_url = {}
+        # page -> the document it was showing when we last looked, so a real
+        # navigation can be noticed however it happened and a route change
+        # within one document is not mistaken for one.
+        self.seen_document = {}
 
     def _forget_navigated(self):
-        """A page that has moved is not the page anything was filled on."""
+        """A page showing a NEW DOCUMENT is not the page anything was filled on.
+
+        A same-document navigation is not that: the nodes are still there, the
+        values are still in them, and the marks still have to go back on.
+        """
         try:
-            url = self.page.url
+            token = self.page.evaluate(DOC_TOKEN_JS)
         except Exception:
+            # Mid-navigation, or a page that will not evaluate. Keeping the
+            # record is the safe answer: a mask that no longer matches anything
+            # is dropped when it fails to resolve, whereas a record thrown away
+            # here is a field nobody puts the mark back on.
             return
-        if self.seen_url.get(self.page) != url:
-            self.seen_url[self.page] = url
+        if self.seen_document.get(self.page) != token:
+            self.seen_document[self.page] = token
             self.masked.pop(self.page, None)
 
     def remember_masked(self, frame_index, selector):
