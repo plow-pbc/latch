@@ -839,9 +839,9 @@ const updateBanner = document.getElementById("updateBanner");
 function updateStatusText(u) {
   if (!u.supported) return "This build updates with git, not the feed — only the packaged app self-updates.";
   if (u.phase === "checking") return "Checking for updates…";
-  if (u.phase === "downloading") return `Downloading Plow ${u.availableVersion}…`;
+  if (u.phase === "downloading") return `Downloading Plow Latch ${u.availableVersion}…`;
   if (u.phase === "ready")
-    return `Plow ${u.availableVersion} is downloaded — restart to install${u.autoInstall ? ", or it installs when you quit" : ""}.`;
+    return `Plow Latch ${u.availableVersion} is downloaded — restart to install${u.autoInstall ? ", or it installs when you quit" : ""}.`;
   if (u.phase === "error") return `Last check failed: ${u.error}`;
   // "You're up to date" only when a check THIS session confirmed it; a
   // timestamp persisted from an earlier launch only proves we once looked.
@@ -863,7 +863,7 @@ async function refreshUpdateBanner() {
   close.addEventListener("click", () => window.domo.updatesDismiss());
   updateBanner.replaceChildren(
     close,
-    el("span", { text: `Plow ${u.availableVersion} is ready to install.` }),
+    el("span", { text: `Plow Latch ${u.availableVersion} is ready to install.` }),
     el("div", { class: "spacer" }),
     later,
     restart,
@@ -1002,7 +1002,7 @@ async function renderSettings() {
         ? [
             el("div", { class: "field" }, [
               el("label", { text: "This Mac" }),
-              el("div", { class: "mono faint", text: `Plow (${status.name || "Mac"})` }),
+              el("div", { class: "mono faint", text: `Plow Latch (${status.name || "Mac"})` }),
             ]),
           ]
         : []),
@@ -1033,7 +1033,7 @@ async function renderSettings() {
   autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
   const autoInstallLabel = el("label", { class: "check block" }, [
     autoInstallBox,
-    el("span", { text: "Install downloaded updates when quitting Plow" }),
+    el("span", { text: "Install downloaded updates when quitting Plow Latch" }),
   ]);
   const applyUpdates = () => {
     const ready = u.phase === "ready";
@@ -1058,7 +1058,7 @@ async function renderSettings() {
   const launchBox = el("input", { attrs: { type: "checkbox" } });
   const launchLabel = el("label", { class: "check" }, [
     launchBox,
-    el("span", { text: "Open Plow when you log in" }),
+    el("span", { text: "Open Plow Latch when you log in" }),
   ]);
   // Why the toggle is dead, when it is: a disabled control that says nothing
   // is a dead end (the provider chips' rule).
@@ -1257,7 +1257,7 @@ async function renderSettings() {
       suggestLabel,
       modeNote,
     ]),
-    group("Capabilities", "Extended capabilities that let Plow reach parts of this Mac that macOS blocks by default.", [
+    group("Capabilities", "Extended capabilities that let Plow Latch reach parts of this Mac that macOS blocks by default.", [
       el("div", { class: "support-row" }, [
         el("div", { class: "support-copy" }, [
           el("div", { class: "cap-title" }, [
@@ -1268,7 +1268,7 @@ async function renderSettings() {
           el("p", { class: "faint", text:
             "macOS blocks Messages, Mail, Safari data, and Time Machine backups until you grant this. " +
             "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt. " +
-            "To grant it, turn on Plow under Privacy & Security → Full Disk Access. macOS may ask to quit and reopen the app." }),
+            "To grant it, turn on Plow Latch under Privacy & Security → Full Disk Access. macOS may ask to quit and reopen the app." }),
         ]),
         el("div", { class: "spacer" }),
         openFullDisk,
@@ -1277,7 +1277,7 @@ async function renderSettings() {
         el("div", { class: "support-copy" }, [
           el("div", { class: "support-title", text: "Launch at Login" }),
           el("p", { class: "faint", text:
-            "Agents can reach this Mac only while Plow is running." }),
+            "Agents can reach this Mac only while Plow Latch is running." }),
           launchLabel,
           launchNote,
         ]),
@@ -1299,7 +1299,7 @@ async function renderSettings() {
       supportRow(
         globeIcon(),
         "See Us Build",
-        "Watch the livestream to watch us build the Plow app in public.",
+        "Watch the livestream to watch us build the Plow Latch app in public.",
         "Watch Livestream",
         "website",
       ),

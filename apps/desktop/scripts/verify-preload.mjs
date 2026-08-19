@@ -320,7 +320,7 @@ app.whenReady().then(async () => {
       launchToggleLive: (() => {
         const box = [...document.querySelectorAll(".settings input")].find(
           (i) => i.type === "checkbox" &&
-            (i.closest("label")?.textContent ?? "").includes("Open Plow when you log in"),
+            (i.closest("label")?.textContent ?? "").includes("Open Plow Latch when you log in"),
         );
         return !!box && !box.disabled && !box.checked;
       })(),
@@ -484,7 +484,7 @@ app.whenReady().then(async () => {
     launchUnsupportedFollowed: await win.webContents.executeJavaScript(`(() => {
       const box = [...document.querySelectorAll(".settings input")].find(
         (i) => i.type === "checkbox" &&
-          (i.closest("label")?.textContent ?? "").includes("Open Plow when you log in"),
+          (i.closest("label")?.textContent ?? "").includes("Open Plow Latch when you log in"),
       );
       return !!box && box.disabled && document.body.innerText.includes("from-source run");
     })()`),

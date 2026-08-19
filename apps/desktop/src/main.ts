@@ -58,11 +58,11 @@ import {
 
 // One folder per instance (paths.ts): the home carries everything, including
 // Chromium's userData/sessionData at <home>/electron — never a second
-// name-keyed "Plow*" folder. Two instances sharing one userData
+// name-keyed "Plow Latch*" folder. Two instances sharing one userData
 // contend on Chromium's LevelDB locks, so per-branch homes also keep
 // from-source runs from tripping over each other or the packaged install.
 // All of it must be set before the app is ready: the name so the macOS app
-// menu, About/Hide/Quit items, and dock title read "Plow" instead of
+// menu, About/Hide/Quit items, and dock title read "Plow Latch" instead of
 // "Electron", the paths so Chromium never opens the default locations.
 const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
 // THE NAME SET HERE IS THE ONE THE KEYCHAIN SEES. Chromium captures the string
@@ -84,7 +84,7 @@ const rendererDir = path.join(dirname, "renderer");
 // package`); a from-source run has neither and says so.
 const pkg = createRequire(import.meta.url)("../package.json") as { gitCommit?: string };
 console.log(
-  `[app] Plow ${app.getVersion()}${app.isPackaged ? ` (${pkg.gitCommit ?? "no commit stamp"})` : " (from source)"}`,
+  `[app] Plow Latch ${app.getVersion()}${app.isPackaged ? ` (${pkg.gitCommit ?? "no commit stamp"})` : " (from source)"}`,
 );
 
 // setName above rebrands the menus and dock title, but a from-source run is
@@ -205,7 +205,7 @@ function openApprovalWindow(
         height: 560,
         resizable: false,
         fullscreenable: false,
-        title: "Plow — Approve",
+        title: "Plow Latch — Approve",
         webPreferences: {
           preload: path.join(dirname, "preload.cjs"),
           contextIsolation: true,
@@ -292,7 +292,7 @@ function createMainWindow(): void {
     height: bounds?.height ?? 620,
     x: bounds?.x,
     y: bounds?.y,
-    title: "Plow",
+    title: "Plow Latch",
     titleBarStyle: "hiddenInset",
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
@@ -684,7 +684,7 @@ function openOnboardingWindow(): void {
     height: 560,
     resizable: false,
     fullscreenable: false,
-    title: "Plow — Set Up",
+    title: "Plow Latch — Set Up",
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
       contextIsolation: true,
@@ -828,7 +828,7 @@ app.whenReady().then(async () => {
     home,
     startRelay,
     isConnected: () => connected,
-    deviceName: `Plow (${hostName()})`,
+    deviceName: `Plow Latch (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.
@@ -920,7 +920,7 @@ app.on("before-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  // Stay resident in the tray — Plow is a menu-bar agent, not a document app.
+  // Stay resident in the tray — Plow Latch is a menu-bar agent, not a document app.
 });
 
 // Block any attempt to navigate to remote content or open external windows —
@@ -948,7 +948,7 @@ function refreshTray(): void {
   const menu = Menu.buildFromTemplate([
     // Through the gate, so the tray cannot hand back a main window this Mac is
     // not entitled to.
-    { label: "Open Plow", click: () => gate.sync() },
+    { label: "Open Plow Latch", click: () => gate.sync() },
     // Update items only when an updater exists (packaged runs) — a dead menu
     // item in a from-source run would just be a lie.
     ...(updates
@@ -962,7 +962,7 @@ function refreshTray(): void {
         ]
       : []),
     { type: "separator" },
-    { label: "Quit Plow", click: () => app.quit() },
+    { label: "Quit Plow Latch", click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
 }

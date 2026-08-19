@@ -184,16 +184,16 @@ describe("PlowApi", () => {
 
   it("mints this Mac's credential and retires the calling session in the same call", async () => {
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: { token: "plow_devicetok", key_prefix: "devicet", name: "Plow" } },
+      { status: 200, body: { token: "plow_devicetok", key_prefix: "devicet", name: "Plow Latch" } },
     ]);
-    await new PlowApi("https://api.plow.co", fetchImpl).mintDeviceCredential("plow_session", "Plow");
+    await new PlowApi("https://api.plow.co", fetchImpl).mintDeviceCredential("plow_session", "Plow Latch");
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices");
     // The flag is the whole reason there is no client-side cleanup: the session
     // that authorised this call can mint any credential on the account, and it
     // is gone server-side before this returns.
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      name: "Plow",
+      name: "Plow Latch",
       revoke_calling_session: true,
     });
     expect(calls[0].url).not.toContain("plow_session");
