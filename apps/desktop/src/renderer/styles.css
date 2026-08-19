@@ -259,19 +259,19 @@ dl.meta dd { margin: 0; }
 .empty { color: var(--faint); padding: 40px; text-align: center; }
 
 /* Detail-pane timeline: one row per underlying raw event. */
-.timeline { display: flex; flex-direction: column; gap: 2px; }
+.timeline { display: flex; flex-direction: column; }
 .tl {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 6px 0 6px 16px;
+  padding: 7px 0 7px 16px;
   position: relative;
   border-left: 2px solid var(--border);
 }
 .tl::before {
   content: "";
   position: absolute;
-  left: -5px;
+  left: -7px; /* 12px outer width centered on the 2px border */
   top: 10px;
   width: 8px;
   height: 8px;
@@ -356,8 +356,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
 .cap-title .support-title { margin-bottom: 0; }
 .cap-title .status-dot { flex: none; }
-/* `.item p` zeroes margins, so the how-to-grant line asks for its blank line. */
-.item p.cap-grant { margin-top: 10px; }
+/* The from-source note sits right under the Launch at Login checkbox line;
+   `.item p` zeroes margins, so it asks for its blank line. */
+.item p.cap-note { margin-top: 8px; }
 
 .agent-status {
   margin: 0;
@@ -381,7 +382,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
 .approve .actions { display: flex; gap: 8px; }
 .approve .actions .action-slot { flex: 1; position: relative; display: flex; }
-.approve .actions .btn { flex: 1; justify-content: center; padding: 9px; }
+/* The opacity transition makes the arming delay (buttons start disabled for a
+   beat so stray input can't land — approval.js) read as deliberate, not lag. */
+.approve .actions .btn { flex: 1; justify-content: center; padding: 9px; transition: opacity 0.3s ease; }
 .warn { color: var(--amber-fg); }
 
 /* A tiny rainbow spinner pinned to the window's bottom-right corner, shown while

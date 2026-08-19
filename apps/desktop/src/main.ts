@@ -33,6 +33,7 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
+import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -602,6 +603,18 @@ ipcMain.handle("capabilities:get", async () => ({
   fullDiskAccess: await probeFullDiskAccess(),
 }));
 
+// Launch at Login. macOS owns the bit and loginItem.ts owns the rules (fresh
+// OS read per get, packaged-only writes); this is only the seam that hands it
+// the real Electron API.
+const loginItems: LoginItemApi = {
+  get: () => app.getLoginItemSettings(),
+  set: (settings) => app.setLoginItemSettings(settings),
+};
+ipcMain.handle("launch:get", async () => launchAtLoginState(app.isPackaged, loginItems));
+ipcMain.handle("launch:set", async (_e, on: boolean) =>
+  setLaunchAtLogin(app.isPackaged, loginItems, on),
+);
+
 // MARK: IPC for software updates (banner + Software Updates settings section).
 // One whole-state shape per read, renderer-side composition-free. In a
 // from-source run there is no controller: supported=false and the section
@@ -780,6 +793,11 @@ app.whenReady().then(async () => {
     approvals,
     resolveBrowserRuntime(process.resourcesPath),
   );
+  // Same tick as the store's construction (see onAbandoned): an approval that
+  // was pending when the app last quit gets closed out in the audit log too,
+  // not only in the approvals directory.
+  approvals.onAbandoned = (record) =>
+    device?.audit.record("approval_abandoned", { intentId: record.intentId });
   // Say, once, whether this Mac can open its vault account. It is the one fact
   // about the vault that a log is good at: no secret, no noise, and it turns
   // "the vault screen looks wrong" into a one-line answer. `locked` means the

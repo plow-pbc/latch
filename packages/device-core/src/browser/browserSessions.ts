@@ -203,6 +203,19 @@ export class BrowserSessions {
     return { status: "completed" };
   }
 
+  /**
+   * The browser died under a live session. There is no host left to shut
+   * down; close the books so the audit shows the session ended rather than
+   * browsing forever. The circuit breaker is deliberately not reset.
+   */
+  noteCrash(): void {
+    const s = this.session;
+    if (!s) return;
+    this.session = null;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
+  }
+
   /** Close whatever session an agent holds (revocation/disconnect path). */
   async closeForAgent(agentId: string, reason: string): Promise<void> {
     if (this.session?.agentId === agentId) await this.close(this.session.handle, reason);

@@ -65,19 +65,39 @@ describe("audit grouping for browser sessions", () => {
 
   it("collapses one session into one activity (plus the opening intent's)", () => {
     const activities = auditActivities(events);
-    // The opened event carries an intentId so it groups as the intent activity;
-    // everything else shares the browser:S activity.
+    // The opened event carries both ids, so it opens the intent activity AND
+    // the browser:S activity, which the rest of the session's events share.
     const browser = activities.find((a) => a.id === "browser:S")!;
     expect(browser).toBeDefined();
     expect(browser.kind).toBe("browser");
     expect(browser.title).toContain("dominos.com/menu");
     expect(browser.status).toContain("scope blocks");
-    expect(browser.timeline.length).toBe(5);
+    expect(browser.timeline.length).toBe(6);
+    expect(browser.timeline[0]!.text).toContain("Browser session opened");
     const violation = browser.timeline.find((s) => s.text.includes("paypal.com"))!;
     expect(violation.state).toBe("bad");
     const filled = browser.timeline.find((s) => s.text.includes("Credential typed"))!;
     expect(filled.text).toContain("L1");
     expect(filled.text).not.toContain("password: "); // never a value
+  });
+
+  it("a session ended by a crash reads as Crashed, not Closed or Browsing", () => {
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      { event: "browser_session_closed", session: "S", reason: "crashed", ts: "2026-08-10T10:00:05Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Crashed");
+    expect(acts[0]!.tone).toBe("red");
+    expect(acts[0]!.category).toBe("failed");
+  });
+
+  it("a session-scoped metadata read stays with its session, not a row of its own", () => {
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      { event: "credential_metadata", session: "S", op: "list", ts: "2026-08-10T10:00:01Z" },
+    ]);
+    expect(acts).toHaveLength(1);
+    expect(acts[0]!.status).toBe("Browsing"); // the vault-read "Completed" is for sessionless reads
   });
 });
 

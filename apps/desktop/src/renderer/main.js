@@ -954,6 +954,32 @@ async function renderSettings() {
   };
   applyUpdates();
 
+  // Launch at Login. macOS owns the actual bit — System Settings → General →
+  // Login Items can flip it while this pane is open — so the focus refresh
+  // re-reads it the same way it re-probes capabilities, and a toggle renders
+  // what the OS answered, not what was clicked.
+  let launch = await window.domo.launchGet();
+  const launchBox = el("input", { attrs: { type: "checkbox" } });
+  const launchLabel = el("label", { class: "check" }, [
+    launchBox,
+    el("span", { text: "Open Plow when you log in" }),
+  ]);
+  // Why the toggle is dead, when it is: a disabled control that says nothing
+  // is a dead end (the provider chips' rule).
+  const launchNote = el("p", { class: "faint cap-note", text:
+    "Only the installed app can add itself as a login item, so this from-source run can't." });
+  const applyLaunch = () => {
+    launchBox.checked = launch.openAtLogin;
+    launchBox.disabled = !launch.supported;
+    launchLabel.classList.toggle("disabled", !launch.supported);
+    launchNote.hidden = launch.supported;
+  };
+  launchBox.addEventListener("change", async () => {
+    launch = await window.domo.launchSet(launchBox.checked);
+    applyLaunch();
+  });
+  applyLaunch();
+
   // Capabilities: what macOS lets the app itself reach. Full Disk Access has
   // no prompt an app can raise — the only grant path is the switch in System
   // Settings — so the button deep-links there (a key into main's table, like
@@ -1147,6 +1173,8 @@ async function renderSettings() {
       await refreshAccount();
       applyInference(await window.domo.inferenceGet());
       applyCapabilities(await window.domo.capabilitiesGet());
+      launch = await window.domo.launchGet();
+      applyLaunch();
     },
     refreshUpdates: async () => {
       u = await window.domo.updatesGet();
@@ -1188,12 +1216,20 @@ async function renderSettings() {
           ]),
           el("p", { class: "faint", text:
             "macOS blocks Messages, Mail, Safari data, and Time Machine backups until you grant this. " +
-            "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt." }),
-          el("p", { class: "faint cap-grant", text:
+            "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt. " +
             "To grant it, turn on Plow under Privacy & Security → Full Disk Access. macOS may ask to quit and reopen the app." }),
         ]),
         el("div", { class: "spacer" }),
         openFullDisk,
+      ]),
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "support-title", text: "Launch at Login" }),
+          el("p", { class: "faint", text:
+            "Agents can reach this Mac only while Plow is running." }),
+          launchLabel,
+          launchNote,
+        ]),
       ]),
     ]),
     group("Software Updates", `Version ${u.currentVersion}`, [

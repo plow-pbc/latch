@@ -202,10 +202,16 @@ describe("across a restart", () => {
     // A new process opens the same directory. The call that was waiting is gone
     // with the process; nothing can answer that record any more.
     const second = new ApprovalStore(dir, silent, 5_000);
+    // Assigned in the same tick as construction, which the hook's contract
+    // requires — the sweep must not have fired yet.
+    const abandoned: string[] = [];
+    second.onAbandoned = (r) => abandoned.push(r.intentId);
     await second.ready;
     const [record] = await second.all();
     expect(record.status).toBe("abandoned");
     expect(record.decidedAt).toBeTypeOf("string");
+    // The hook saw it, so the abandonment can reach the audit log.
+    expect(abandoned).toEqual([intent.intentId]);
     // And it is no longer offered as something answerable.
     expect(await second.pending()).toHaveLength(0);
     expect(second.resolve(intent.intentId, "allow_once")).toBe(false);

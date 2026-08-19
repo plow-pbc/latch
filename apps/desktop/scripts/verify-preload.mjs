@@ -17,6 +17,7 @@ import {
   setInferenceProvider,
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
+import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -66,6 +67,17 @@ ipcMain.handle("settings:getShowSuggestions", async () => true);
 // A Mac that has NOT granted Full Disk Access — the state the Capabilities
 // section exists to explain.
 ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
+// Launch at Login: the REAL rules from loginItem.js over a fake OS bit.
+// Packaged-looking at first so the toggle renders live; flipped unsupported
+// mid-run to prove the status refresh re-reads it and the note appears.
+let launchSupported = true;
+const fakeLoginBit = { openAtLogin: false };
+const loginItemApi = {
+  get: () => ({ openAtLogin: fakeLoginBit.openAtLogin }),
+  set: (s) => (fakeLoginBit.openAtLogin = s.openAtLogin),
+};
+ipcMain.handle("launch:get", async () => launchAtLoginState(launchSupported, loginItemApi));
+ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported, loginItemApi, on));
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
@@ -280,6 +292,18 @@ app.whenReady().then(async () => {
       fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
         (b) => b.textContent.trim() === "Open System Settings",
       ),
+      // Launch at Login, in Capabilities: on this packaged-looking probe the
+      // toggle is live and unchecked, and the from-source note is hidden
+      // (innerText omits hidden nodes).
+      launchTitle: document.body.innerText.includes("Launch at Login"),
+      launchToggleLive: (() => {
+        const box = [...document.querySelectorAll(".settings input")].find(
+          (i) => i.type === "checkbox" &&
+            (i.closest("label")?.textContent ?? "").includes("Open Plow when you log in"),
+        );
+        return !!box && !box.disabled && !box.checked;
+      })(),
+      launchNoteHidden: !document.body.innerText.includes("from-source run"),
       plowChipActive: !!plow && plow.classList.contains("active"),
       showsActiveModel: document.body.innerText.includes("anthropic/claude-sonnet-4-6"),
       // Settings has a `.reviewer-note` of its own. The approval window's
@@ -422,17 +446,29 @@ app.whenReady().then(async () => {
     `(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
   );
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "plow_sk_now_signed_in" });
+  // The same refresh re-reads Launch at Login: the probe goes from-source here,
+  // and the pane must follow — toggle dead, note visible.
+  launchSupported = false;
   win.webContents.send("status:changed");
   await waitFor(
     win,
     `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
     "the open Settings pane to re-read the account and drop the warning",
   );
+  await waitFor(win, `document.body.innerText.includes("from-source run")`,
+    "the Launch at Login row to follow the refresh into its unsupported state");
   const staleSettingsPane = {
     warnedWhileSignedOut,
     warningGoneAfterStatusChanged: await win.webContents.executeJavaScript(
       `!(document.querySelector(".reviewer-note")?.textContent ?? "").includes("reviews will be denied")`,
     ),
+    launchUnsupportedFollowed: await win.webContents.executeJavaScript(`(() => {
+      const box = [...document.querySelectorAll(".settings input")].find(
+        (i) => i.type === "checkbox" &&
+          (i.closest("label")?.textContent ?? "").includes("Open Plow when you log in"),
+      );
+      return !!box && box.disabled && document.body.innerText.includes("from-source run");
+    })()`),
   };
 
   // THE RACE, specifically: typing that starts while a status-driven refresh is
@@ -772,6 +808,10 @@ app.whenReady().then(async () => {
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
     settings.fdaOffersSystemSettings &&
+    settings.launchTitle &&
+    settings.launchToggleLive &&
+    settings.launchNoteHidden &&
+    staleSettingsPane.launchUnsupportedFollowed &&
     settings.plowChipActive &&
     settings.showsActiveModel &&
     settings.settingsNoteNotRestyled &&

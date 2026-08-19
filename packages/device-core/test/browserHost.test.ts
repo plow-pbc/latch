@@ -61,9 +61,13 @@ describe("BrowserHost", () => {
 
   it("rejects pending on crash and lazily restarts", async () => {
     const { host, events } = makeHost({ CRASH_AFTER: "1" });
+    let crashes = 0;
+    host.onCrash = () => crashes++;
     await host.sendAction({ action: "url" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
     expect(events).toContain("browser_crashed");
+    // The session layer is told, so it can close its books.
+    expect(crashes).toBe(1);
     // Next action restarts a fresh server (state reset to about:blank).
     const r = await host.sendAction({ action: "url" });
     expect(r.url).toBe("about:blank");
