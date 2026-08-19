@@ -8,7 +8,7 @@
  * device. `main.ts` keeps only the Electron-shaped adapter around it.
  */
 import { Intent, JSONValue } from "@domo/protocol";
-import { DENIAL_SOURCE_NO_CREDITS } from "@domo/device-core";
+import { DENIAL_SOURCE_NO_CREDITS, DENIAL_SOURCE_NO_REVIEWER } from "@domo/device-core";
 import {
   agentHistory,
   PLOW_REVIEWER_INFO,
@@ -52,10 +52,9 @@ export interface InferenceStatus {
   /** Model + limits of the *active* provider, for display. */
   info: string;
   /**
-   * The stored approval mode, in the SAME snapshot. It is decided by the same
-   * write that takes a credential away — `update` re-applies the interlock —
-   * so reading it separately gave the renderer two async views of one decision
-   * and a window where they disagreed.
+   * The stored approval mode, in the SAME snapshot as availability. Reading the
+   * two separately gave the renderer two async views of one settings file, and
+   * a window where they disagreed.
    */
   approvalMode: Settings["approvalMode"];
 }
@@ -107,20 +106,6 @@ export function reviewerAvailable(settings: Settings): boolean {
   return providerAvailability(settings)[activeProvider(settings)];
 }
 
-/**
- * Adversarial mode is only meaningful with a working reviewer. When the active
- * provider has no credential — the key was cleared, the Mac was signed out, the
- * provider was switched — the mode falls back to Ask, exactly as it always has
- * when the Anthropic key was cleared.
- *
- * Returns the mode to store, so the caller decides whether to persist.
- */
-export function modeAfterAvailabilityChange(settings: Settings): Settings["approvalMode"] {
-  const mode = settings.approvalMode ?? "ask";
-  if (mode === "adversarial" && !reviewerAvailable(settings)) return "ask";
-  return mode;
-}
-
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;
@@ -154,7 +139,6 @@ export async function decideIntent(
   if (mode === "deny") return { decision: "deny", source: "policy" };
 
   const provider = activeProvider(settings);
-  const available = providerAvailability(settings)[provider];
 
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
@@ -195,7 +179,14 @@ export async function decideIntent(
     return r;
   };
 
-  if (mode === "adversarial" && available) {
+  if (mode === "adversarial") {
+    // Decide this BEFORE `review()`, which opens the timeline with "adversarial
+    // agent started" and names the model it is about to use. With no credential
+    // there is no call and no model, so recording one would put a reviewer that
+    // never ran into the audit log — and the audit log is the oracle.
+    if (!reviewerAvailable(settings)) {
+      return { decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER };
+    }
     const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
@@ -214,11 +205,15 @@ export async function decideIntent(
     };
   }
 
-  // Ask mode (or adversarial with no credential): show the dialog, optionally
-  // with the reviewer's hint when both the toggle and a credential are present.
-  // A 402 here costs only the hint — the human was always the decider.
+  // Ask mode: show the dialog, optionally with the reviewer's hint when both
+  // the toggle and a credential are present. A 402 here costs only the hint —
+  // the human was always the decider.
+  //
+  // A hint is a nicety, so it is skipped when the provider has no credential:
+  // running a review that cannot run would buy an audit pair and a null
+  // suggestion. Not a gate — nothing the human chose is refused by it.
   const hint =
-    settings.showAgentSuggestions && available
+    settings.showAgentSuggestions && reviewerAvailable(settings)
       ? review().then((r) => ({
           decision:
             r.verdict === "allow"

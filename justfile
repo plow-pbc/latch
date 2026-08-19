@@ -215,6 +215,7 @@ verify-preload: build
     DOMO_HOME="{{apphome}}" \
       SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" \
       CHIPS_OUT="${CHIPS_OUT:-{{outdir}}/settings-chips.png}" \
+      UNGATED_OUT="${UNGATED_OUT:-{{outdir}}/settings-ungated.png}" \
       AGENTS_OUT="${AGENTS_OUT:-{{outdir}}/agents.png}" \
       AGENTS_OPEN_OUT="${AGENTS_OPEN_OUT:-{{outdir}}/agents-open.png}" \
       APPROVALS_OUT="${APPROVALS_OUT:-{{outdir}}/agents-approvals.png}" \

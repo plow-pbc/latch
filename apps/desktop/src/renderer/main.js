@@ -8,6 +8,18 @@ import {
   PURPOSE_LABEL,
 } from "./approvals.js";
 
+/**
+ * What the two panes call each reviewer provider, and what it takes to set one
+ * up. Two panes say different things about the same missing credential — the
+ * Agents card names the consequence, Settings names only the gap — so the
+ * sentences differ but the FACTS must not. Which providers exist, and whether
+ * each is usable, still comes from main; this is display knowledge only.
+ */
+const REVIEWER_PROVIDERS = {
+  plow: { label: "Plow account", setup: "sign in to Plow" },
+  anthropic: { label: "Anthropic API key", setup: "add an Anthropic API key" },
+};
+
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
@@ -731,30 +743,30 @@ async function renderAgents() {
     ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
   ]);
 
-  // What the reviewer is waiting for when it cannot be selected. Both remedies
-  // live in Settings, so the faded chip goes there rather than nowhere.
-  const REVIEWER_BLOCKED = {
-    plow: "The AI Reviewer needs you signed in to Plow.",
-    anthropic: "The AI Reviewer needs an Anthropic API key — add one in Settings.",
-  };
+  // What a reviewer with no credential costs, said rather than enforced. The
+  // remedy is a pane away in Settings, so the sentence names it — but the mode
+  // is still the owner's to choose, and choosing it is not an error to prevent.
 
   const renderApprovals = () => {
     const mode = inference.approvalMode;
     const hasKey = inference.available[inference.provider];
-    const blocked = REVIEWER_BLOCKED[inference.provider];
-    modeNote.textContent = hasKey ? "" : blocked;
+    // Only worth saying when the owner has actually asked the reviewer to
+    // decide. The second half is the part people get wrong: a denial here is
+    // not a freeze, because a rule already approved is a decision they made.
+    modeNote.textContent =
+      mode === "adversarial" && !hasKey
+        ? `The AI Reviewer has no credential: ${REVIEWER_PROVIDERS[inference.provider].setup} in Settings. ` +
+          "Until then it denies anything it is asked to decide — requests already " +
+          "covered by an always-allow rule keep running."
+        : "";
     modeChips.replaceChildren(...APPROVAL_MODES.map(({ value, label }) => {
-      const disabled = value === "adversarial" && !hasKey;
       const chip = el("span", {
-        class:
-          "chip" + (mode === value ? " active" : "") + (disabled ? " disabled actionable" : ""),
-        attrs: disabled ? { title: blocked } : {},
+        class: "chip" + (mode === value ? " active" : ""),
       }, [el("span", { text: label })]);
       chip.addEventListener("click", async () => {
-        if (disabled) return goToSettings();
-        // What MAIN stored, not what was asked for: the reviewer is refused
-        // when its provider has no credential, and the credential can go
-        // between this render and this click.
+        // What MAIN stored, not what was asked for. Main takes any known mode
+        // now, but it is still the one that decides what is on disk, and the
+        // pane must show that rather than what it optimistically asked for.
         await window.domo.approvalModeSet(value);
         inference = await window.domo.inferenceGet();
         renderApprovals();
@@ -770,8 +782,8 @@ async function renderAgents() {
   };
   renderApprovals();
 
-  // Signing in or out changes whether the reviewer can be selected at all, and
-  // main retires the mode in the same write — so this only re-reads.
+  // Signing in or out changes what the reviewer can do, not what the owner
+  // chose — the stored mode stays put — so this only re-reads and redraws.
   const refreshApprovals = async () => {
     inference = await window.domo.inferenceGet();
     renderApprovals();
@@ -795,18 +807,6 @@ async function renderAgents() {
       [modeChips, modeNote, purposeBlock, modeHintLine],
     ),
   ]));
-}
-
-/**
- * Send someone to Settings, where the reviewer's credentials live.
- *
- * The Approvals card can say what the reviewer is missing, but not fix it —
- * the account and the API key are a pane away. A disabled chip that explains
- * itself and goes nowhere is still a dead end, so it goes there.
- */
-function goToSettings() {
-  selectTab("settings");
-  window.domo.uiSetTab("settings");
 }
 
 /** One honest line about the relay link, from what the main process reports. */
@@ -1109,25 +1109,33 @@ async function renderSettings() {
   };
 
   // Anthropic API key — one of the two ways to power the adversarial agent.
+  //
+  // It lives INSIDE Reviewer inference rather than in a group of its own,
+  // because it is not a setting: it is the credential one of the two providers
+  // runs on, and a heading of its own asked the reader to connect two boxes to
+  // work out why it was there. So it sits under the chip it enables, carrying
+  // its own label now that the group title no longer speaks for it.
   const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
   apiKeyInput.value = await window.domo.apiKeyGet();
+  const apiKeyField = el("div", { class: "field keyfield" }, [
+    el("label", { text: "Anthropic API key" }),
+    apiKeyInput,
+    el("p", {
+      class: "faint keyfield-note",
+      text: "Runs the reviewer on your own Anthropic account instead of your Plow one. Stored on this Mac.",
+    }),
+  ]);
 
   // Which backend runs the reviewer. `inference` carries a per-provider
   // availability map and the active model — never a credential.
   let inference = await window.domo.inferenceGet();
   const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
   const providerChips = el("div", { class: "chips" });
-  // Everything this pane knows about a provider, in one place: what to call it,
-  // what it is waiting for when it cannot be picked, and where that lives.
-  // Which providers exist, and whether each is usable, still comes from main —
-  // this is display knowledge only.
-  //
-  // `hint` follows the chip's own label, so it must not repeat it: "Anthropic
-  // API key: add one below to select it" reads; "Anthropic API key needs an
-  // Anthropic API key" is what happens when it does.
-  //
-  // Declared after the reveal helpers it references (see below).
-  let PROVIDERS;
+  // This pane names the gap and nothing about the consequence, because the
+  // consequence depends on a mode it no longer owns: with the reviewer
+  // deciding, an unrunnable review denies; in Ask mode the same missing
+  // credential only costs the suggestion, and a human is asked as always. The
+  // Approvals card says which of those is happening.
 
   // The mode itself is set in the Agents tab now; this pane only reads it, to
   // decide whether the suggestions checkbox can do anything.
@@ -1156,64 +1164,30 @@ async function renderSettings() {
     suggestLabel.classList.toggle("disabled", !on);
   };
 
-  /**
-   * Put the thing that would enable a chip in front of the user.
-   *
-   * A disabled control that says nothing is a dead end; the app knows exactly
-   * what is missing, so the chip becomes the way to go fix it.
-   */
-  const revealApiKeyField = () => {
-    apiKeyInput.scrollIntoView({ block: "center" });
-    apiKeyInput.focus();
-  };
-  const revealAccount = () => {
-    accountBox.scrollIntoView({ block: "center" });
-    (signIn.style.display === "none" ? signOut : signIn).focus();
-  };
-  PROVIDERS = {
-    plow: {
-      label: "Plow account",
-      hint: "sign in to select it",
-      go: revealAccount,
-    },
-    anthropic: {
-      label: "Anthropic API key",
-      hint: "add one below to select it",
-      go: revealApiKeyField,
-    },
-  };
-
-  // A provider with no credential is disabled and cannot be selected; the main
-  // process enforces the same rule, this only keeps the UI honest.
+  // Every provider is selectable, credential or not. Main no longer refuses
+  // one, so the UI has nothing to mirror — what a missing credential costs is
+  // said in the note instead of being enforced by a faded chip.
   const renderProviderChips = () => {
     // No fallback copy: `available` comes from main's frozen provider list, so a
-    // key here that PROVIDERS does not know is a bug to see, not to paper over.
-    const unavailable = Object.entries(inference.available)
-      .filter(([, usable]) => !usable)
-      .map(([value]) => `${PROVIDERS[value].label}: ${PROVIDERS[value].hint}`);
-    // The note carries both facts: which reviewer is running, and — when a chip
-    // is faded — what would un-fade it. Until now the only signal was opacity.
+    // key here that REVIEWER_PROVIDERS does not know is a bug to see, not to paper over.
+    const active = REVIEWER_PROVIDERS[inference.provider];
+    // The note carries both facts: which reviewer is running, and — when the
+    // SELECTED one has no credential — what that will cost. Only the selected
+    // provider matters here; what the other one is missing is not this Mac's
+    // problem until it is picked.
     reviewerNote.textContent =
       `Reviewer: ${inference.info}` +
-      (unavailable.length ? ` · ${unavailable.join("; ")}.` : "");
-    providerChips.replaceChildren(...Object.entries(inference.available).map(([value, usable]) => {
-      const provider = PROVIDERS[value];
-      const disabled = !usable;
+      (inference.available[inference.provider]
+        ? ""
+        : ` · ${active.label} is not configured — ${active.setup}.`);
+    providerChips.replaceChildren(...Object.keys(inference.available).map((value) => {
       const chip = el("span", {
-        class:
-          "chip" +
-          (inference.provider === value ? " active" : "") +
-          (disabled ? " disabled actionable" : ""),
-        attrs: disabled ? { title: `${provider.label} — ${provider.hint}` } : {},
-      }, [el("span", { text: provider.label })]);
-      if (disabled) {
-        // Still clickable, deliberately: it cannot select the provider, but it
-        // can take you to the field that would make selecting it possible.
-        chip.addEventListener("click", provider.go);
-      } else if (inference.provider !== value) {
+        class: "chip" + (inference.provider === value ? " active" : ""),
+      }, [el("span", { text: REVIEWER_PROVIDERS[value].label })]);
+      if (inference.provider !== value) {
         chip.addEventListener("click", async () => {
-          // What main stored, not what was asked for: an unavailable provider
-          // is refused there, and the answer is the refusal.
+          // Still what main stored rather than what was asked for: an unknown
+          // provider name is refused there, and the answer is the refusal.
           applyInference(await window.domo.inferenceSet(value));
         });
       }
@@ -1223,11 +1197,10 @@ async function renderSettings() {
 
   // Re-read the reviewer's state from main and redraw.
   //
-  // This only READS. Main owns the interlock — it retires Adversarial mode in
-  // the same write that takes a credential away — so the renderer's job is to
-  // show what main decided, never to decide it too. The renderer used to write
-  // the fallback itself from a half-typed field, which persisted Ask while the
-  // stored key was still there and never put it back.
+  // This only READS. Main owns what is stored, so the renderer's job is to show
+  // it, never to decide it too — it used to write a mode fallback itself from a
+  // half-typed field, which persisted Ask while the stored key was still there
+  // and never put it back.
   const applyInference = (next) => {
     inference = next;
     hasKey = next.available[next.provider];
@@ -1280,11 +1253,9 @@ async function renderSettings() {
     group("AI Reviewer", "Who runs the reviewer that judges each request. It receives the command, the paths asked for, and that agent's recent activity on this Mac. Billed to that account; nothing from other agents is sent.", [
       providerChips,
       reviewerNote,
+      apiKeyField,
       suggestLabel,
       modeNote,
-    ]),
-    group("Anthropic API Key", "Only needed to run the reviewer on your own Anthropic account. Stored locally.", [
-      apiKeyInput,
     ]),
     group("Capabilities", "Extended capabilities that let Plow reach parts of this Mac that macOS blocks by default.", [
       el("div", { class: "support-row" }, [

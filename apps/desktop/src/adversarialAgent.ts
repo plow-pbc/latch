@@ -461,6 +461,9 @@ export async function adversarialReview(
   args: ReviewArgs,
 ): Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }> {
   const provider = selectProvider(args);
+  // Nobody to reach. Callers establish that themselves before asking — see
+  // `reviewerAvailable` — so this is the answer to a question that should not
+  // have been put: no verdict, and the reason it could not be reached.
   if (!("call" in provider)) return { verdict: "ask", reason: provider.reason };
 
   // One budget, one timer: the same timeout that gives up on the review aborts
