@@ -1010,16 +1010,16 @@ async function renderSettings() {
   const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
   const providerChips = el("div", { class: "chips" });
   // Everything this pane knows about a provider, in one place: what to call it,
-  // what it is waiting for when it cannot be picked, and where that lives.
-  // Which providers exist, and whether each is usable, still comes from main —
-  // this is display knowledge only.
+  // and what it costs to run it with nothing behind it. Which providers exist,
+  // and whether each is usable, still comes from main — this is display
+  // knowledge only.
   //
-  // `hint` follows the chip's own label, so it must not repeat it: "Anthropic
-  // API key: add one below to select it" reads; "Anthropic API key needs an
-  // Anthropic API key" is what happens when it does.
-  //
-  // Declared after the reveal helpers it references (see below).
-  let PROVIDERS;
+  // `missing` follows the label in the note, so it does not repeat it: "Plow
+  // account: no credential — reviews will be denied until you sign in".
+  const PROVIDERS = {
+    plow: { label: "Plow account", missing: "no credential — reviews will be denied until you sign in" },
+    anthropic: { label: "Anthropic API key", missing: "no key — reviews will be denied until you add one" },
+  };
 
   // Approval mode for operations — read from the SAME snapshot as availability,
   // because main decides both in one write.
@@ -1080,21 +1080,6 @@ async function renderSettings() {
     const on = currentMode === "ask" && hasKey;
     suggestCheck.disabled = !on;
     suggestLabel.classList.toggle("disabled", !on);
-  };
-
-  /**
-   * Put the thing that would enable a chip in front of the user.
-   *
-   * A disabled control that says nothing is a dead end; the app knows exactly
-   * what is missing, so the chip becomes the way to go fix it.
-   */
-  // No reveal, and nothing hidden: the field is always on screen inside this
-  // group. Selecting a provider is no longer gated on having its credential —
-  // a provider with none is a state you are allowed to be in, and one that
-  // answers for itself at review time — so there is nothing left to disclose.
-  PROVIDERS = {
-    plow: { label: "Plow account", missing: "no credential — reviews will be denied until you sign in" },
-    anthropic: { label: "Anthropic API key", missing: "no key — reviews will be denied until you add one" },
   };
 
   // Every provider is selectable, credential or not. Main no longer refuses

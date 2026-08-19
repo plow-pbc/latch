@@ -145,11 +145,6 @@ body {
   user-select: none;
 }
 .chip.active { background: var(--sel); color: var(--blue-fg); border-color: var(--blue-bd); }
-.chip.disabled { opacity: 0.4; cursor: default; }
-/* A disabled chip that CAN take you to the thing that would enable it. Opacity
-   alone said "not for you"; this says "not yet, and here is where you fix it". */
-.chip.disabled.actionable { cursor: pointer; }
-.chip.disabled.actionable:hover { opacity: 0.65; }
 .spacer { flex: 1; }
 .count { color: var(--faint); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
