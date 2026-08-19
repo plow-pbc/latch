@@ -10,16 +10,44 @@
  */
 
 /**
- * The four modes, in the order they are shown.
+ * The four modes, in the order they are shown, and everything the card needs to
+ * know about each.
  *
  * `value` is the stored `ApprovalMode` and never changes; `label` is what the
  * person reads. The word "adversarial" survives only in the value.
+ *
+ * `showsPurpose` and `hint` are two halves of one decision and live on the same
+ * row as the mode they describe: only the reviewer reads the purpose, so only
+ * its mode offers the field, and every other mode puts a sentence where the
+ * field is not — a card with nothing under its chips reads as unfinished. They
+ * were a predicate and a switch keyed on `value`, which is three places to
+ * update when a mode is added and two of them easy to miss.
  */
 export const APPROVAL_MODES = [
-  { value: "ask", label: "Ask me every time" },
-  { value: "adversarial", label: "AI Reviewer decides" },
-  { value: "approve", label: "Approve everything" },
-  { value: "deny", label: "Deny everything" },
+  {
+    value: "ask",
+    label: "Ask me every time",
+    showsPurpose: false,
+    hint: "Every request opens an approval window. The AI Reviewer can still suggest an answer — turn that on in Settings.",
+  },
+  {
+    value: "adversarial",
+    label: "AI Reviewer decides",
+    showsPurpose: true,
+    hint: "",
+  },
+  {
+    value: "approve",
+    label: "Approve everything",
+    showsPurpose: false,
+    hint: "Every request is allowed without asking you and without review.",
+  },
+  {
+    value: "deny",
+    label: "Deny everything",
+    showsPurpose: false,
+    hint: "Every request is refused without asking you.",
+  },
 ];
 
 /** The purpose field's own label, which carries its explanation with it. */
@@ -38,27 +66,3 @@ export const PURPOSE_CAVEATS = [
   "It can only narrow what gets approved — each approval still lists the capabilities this Mac will enforce.",
   "Requests that fit may be approved without asking you.",
 ];
-
-/** Only the reviewer reads the purpose, so only its mode offers the field. */
-export function showsPurpose(mode) {
-  return mode === "adversarial";
-}
-
-/**
- * The line that stands in for the field in every other mode.
- *
- * A card with nothing under the chips reads as unfinished; each of these says
- * what the selected mode actually does when an agent asks for something.
- */
-export function modeHint(mode) {
-  switch (mode) {
-    case "ask":
-      return "Every request opens an approval window. The AI Reviewer can still suggest an answer — turn that on in Settings.";
-    case "approve":
-      return "Every request is allowed without asking you and without review.";
-    case "deny":
-      return "Every request is refused without asking you.";
-    default:
-      return "";
-  }
-}

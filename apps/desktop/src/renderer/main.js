@@ -6,8 +6,6 @@ import {
   APPROVAL_MODES,
   PURPOSE_CAVEATS,
   PURPOSE_LABEL,
-  modeHint,
-  showsPurpose,
 } from "./approvals.js";
 
 const view = document.getElementById("view");
@@ -763,10 +761,12 @@ async function renderAgents() {
       });
       return chip;
     }));
-    const showing = showsPurpose(mode);
-    purposeBlock.hidden = !showing;
-    modeHintLine.textContent = showing ? "" : modeHint(mode);
-    modeHintLine.hidden = showing;
+    // One lookup, and the row answers both questions. A stored value the app
+    // no longer offers falls back to the first mode rather than a blank card.
+    const active = APPROVAL_MODES.find((m) => m.value === mode) ?? APPROVAL_MODES[0];
+    purposeBlock.hidden = !active.showsPurpose;
+    modeHintLine.textContent = active.hint;
+    modeHintLine.hidden = active.showsPurpose;
   };
   renderApprovals();
 
