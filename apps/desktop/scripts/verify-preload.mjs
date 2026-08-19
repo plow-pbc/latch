@@ -516,8 +516,8 @@ app.whenReady().then(async () => {
       // `undecryptable` covers a wrong key AND a damaged file. The copy must not
       // pick one and state it as fact.
       hedgesTheCause: text.includes("Usually that means") && text.includes("damaged"),
-      // The copy must NOT promise a recovery that does not exist:
-      // `changeCredentials` refuses when the account cannot be read.
+      // The copy must NOT promise a recovery that does not exist: an account
+      // that cannot be decrypted cannot be signed in with either.
       promisesNoFakeRecovery: !text.includes("Signing in again"),
       saysNothingDeleted: text.includes("Nothing has been deleted"),
     };

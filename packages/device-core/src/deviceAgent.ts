@@ -128,9 +128,9 @@ export class DeviceAgent {
       this.vaultClient = vault
         ? new VaultClient(vault, path.join(browserDir, "credential-audit.log"))
         : null;
-      // Up with the app, not on first use: the owner has to be able to open
-      // the vault's own page whenever Domo is running, not only after an agent
-      // happens to ask for a credential.
+      // Up with the app, not on first use: the Vault tab has to be able to show
+      // the owner their own items whenever Domo is running, not only after an
+      // agent happens to ask for a credential.
       void vault
         ?.start()
         .then(() => this.credentialBroker?.warm())

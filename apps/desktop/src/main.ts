@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -797,6 +797,21 @@ app.whenReady().then(async () => {
     undefined,
     resolveBrowserRuntime(process.resourcesPath),
   );
+  // An item the vault marked "ask again" is not opened on the strength of the
+  // app being unlocked. There is no master password to ask for here — the vault
+  // account is a random string this app generated — so the Mac asks who is at
+  // the keyboard instead, and refuses when it cannot.
+  if (device.vaultClient) {
+    device.vaultClient.onReprompt = async () => {
+      if (!systemPreferences.canPromptTouchID()) return false;
+      try {
+        await systemPreferences.promptTouchID("show a vault item that asks for you");
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  }
   // Say, once, whether this Mac can open its vault account. It is the one fact
   // about the vault that a log is good at: no secret, no noise, and it turns
   // "the vault screen looks wrong" into a one-line answer. `locked` means the

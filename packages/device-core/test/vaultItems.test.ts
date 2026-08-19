@@ -144,6 +144,15 @@ describe("an edit", () => {
   });
 });
 
+describe("an item that asks for the owner", () => {
+  it("keeps its reprompt flag through an edit", () => {
+    const stored = { ...encryptCipher({ type: "login", name: "Bank", password: "x", urls: ["https://bank.example"] }, null, account), id: "item-1", reprompt: 1 };
+    // The flag is the vault's, not this screen's: an edit may not drop it, or
+    // the item quietly stops asking.
+    expect(encryptCipher({ itemId: "item-1", username: "me" }, stored, account).reprompt).toBe(1);
+  });
+});
+
 describe("the other three types", () => {
   it("keeps a card's number and code back, and shows the rest", () => {
     const cipher = encryptCipher(

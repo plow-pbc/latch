@@ -52,8 +52,8 @@ export async function ensureVaultAccount(
     );
   }
 
-  // One account for this machine: the human signs into it on the vault's page
-  // and the agent signs into it to read what is there.
+  // One account for this machine: the app signs into it for the owner's Vault
+  // tab, and the agent signs into it to read what is there. Nobody types it.
   const email = `${person.split("@")[0]}-${crypto.randomBytes(3).toString("hex")}@local`;
   const password = crypto.randomBytes(32).toString("base64url");
 

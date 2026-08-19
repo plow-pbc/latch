@@ -60,6 +60,9 @@ export interface Cipher {
   key?: string | null;
   name?: string;
   notes?: string | null;
+  /** Nonzero when the vault has been told to ask for the password again
+   * before this item is shown or changed. */
+  reprompt?: number;
   login?: {
     username?: string | null;
     password?: string | null;

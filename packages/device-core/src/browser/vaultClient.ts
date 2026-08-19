@@ -92,6 +92,23 @@ export class VaultClient {
     return JSON.parse(await this.call("GET", `/api/ciphers/${encodeURIComponent(itemId)}`)) as Cipher;
   }
 
+  /**
+   * Prove the owner is here, for an item the vault marked `reprompt`.
+   *
+   * The vault's own clients ask for the master password again. This app has no
+   * password to ask for — its vault account is a random string it generated
+   * for itself — so the honest equivalent is the Mac asking who is at the
+   * keyboard. Set by whoever can do that; until then, such an item stays shut.
+   */
+  onReprompt: (() => Promise<boolean>) | null = null;
+
+  /** Refuse an item that asks for the owner, unless the owner answers. */
+  private async cleared(cipher: Cipher): Promise<Cipher> {
+    if (!cipher.reprompt) return cipher;
+    if (this.onReprompt && (await this.onReprompt())) return cipher;
+    throw new Error("this item asks for you to confirm it is you, and that was not confirmed");
+  }
+
   /** Everything in the vault, in the clear except the secrets themselves. */
   async list(): Promise<VaultItemSummary[]> {
     const { key } = await this.open();
@@ -101,7 +118,7 @@ export class VaultClient {
   /** One whole item, with its secret values null — what a form is filled from. */
   async read(itemId: string): Promise<VaultItem> {
     const { key } = await this.open();
-    return decryptItem(await this.cipher(itemId), key);
+    return decryptItem(await this.cleared(await this.cipher(itemId)), key);
   }
 
   /**
@@ -110,7 +127,7 @@ export class VaultClient {
    */
   async reveal(itemId: string, field: string): Promise<string> {
     const { key } = await this.open();
-    const value = decryptField(await this.cipher(itemId), key, field);
+    const value = decryptField(await this.cleared(await this.cipher(itemId)), key, field);
     this.audit(itemId, field, "SHOWN in app");
     return value;
   }
@@ -118,7 +135,7 @@ export class VaultClient {
   /** Create an item, or change one that is already there. */
   async save(input: VaultItemInput): Promise<{ id: string; title: string }> {
     const { key } = await this.open();
-    const existing = input.itemId ? await this.cipher(input.itemId) : null;
+    const existing = input.itemId ? await this.cleared(await this.cipher(input.itemId)) : null;
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
     // Every URL the form showed is checked, because every one of them is a URL
     // the owner just looked at; a login with none can never be filled.

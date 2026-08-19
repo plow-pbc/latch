@@ -429,10 +429,16 @@ Two rejected alternatives, recorded so they are not re-proposed:
   the only copy of their credentials.
 
 There is no recovery for a genuinely lost key, and the UI must not invent one:
-`changeCredentials` refuses outright when the account cannot be read, and signing
-in on the vault's own page needs the very password that state cannot produce. The
-copy says so — the account is on disk, nothing is deleted, and if the key is gone
-the vault has to be set up again.
+an account that cannot be decrypted cannot be signed in with, here or anywhere,
+because the password it would need is the thing that is unreadable. The copy says
+so — the account is on disk, nothing is deleted, and if the key is gone the vault
+has to be set up again.
+
+The owner reaches the vault's CONTENTS in the app, never on the vault's own page:
+`VaultClient` signs in with the account this Mac already holds and reads and
+writes items over the vault's API, so there is no CLI process, no local port and
+no session key on disk. The tab shows the locked state from
+`readCredentialsState()` and nothing else about the account.
 
 A locked vault must also never be reported as an empty one. `readState()`
 distinguishes empty / locked / ok, because a Keychain reset or a Mac restored
