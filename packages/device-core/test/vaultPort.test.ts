@@ -48,24 +48,20 @@ const servers: tls.Server[] = [];
 afterAll(() => servers.forEach((s) => s.close()));
 
 describe("servesCertificate", () => {
-  it("says yes to our own vault", async () => {
-    const server = await listen(ours);
+  // The stranger is the old install still holding 8222 after its app went away.
+  it.each([
+    ["our own vault", ours, true],
+    ["somebody else's vault on our port", stranger, false],
+  ])("identifies %s", async (_name, pair, expected) => {
+    const server = await listen(pair);
     servers.push(server);
-    expect(await servesCertificate(server.port, ours.cert)).toBe(true);
+    expect(await servesCertificate(server.port, ours.cert)).toBe(expected);
   });
 
-  it("says no to somebody else's vault on our port", async () => {
-    // This is the old install still holding 8222 after its app went away.
-    const server = await listen(stranger);
-    servers.push(server);
-    expect(await servesCertificate(server.port, ours.cert)).toBe(false);
-  });
-
-  it("says no when nothing is listening, and when we have no certificate yet", async () => {
+  it("says no when nothing is listening", async () => {
     const server = await listen(ours);
     const port = server.port;
     await new Promise((r) => server.close(r));
     expect(await servesCertificate(port, ours.cert)).toBe(false);
-    expect(await servesCertificate(port, path.join(dir, "nothing.pem"))).toBe(false);
   });
 });

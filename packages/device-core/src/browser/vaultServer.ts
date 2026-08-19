@@ -40,13 +40,7 @@ export interface VaultServerConfig {
  */
 export function servesCertificate(port: number, certPath: string, timeoutMs = 1_000): Promise<boolean> {
   return new Promise((resolve) => {
-    let ca: Buffer;
-    try {
-      ca = fs.readFileSync(certPath);
-    } catch {
-      resolve(false); // nothing of our own to compare against
-      return;
-    }
+    const ca = fs.readFileSync(certPath);
     const done = (ok: boolean) => {
       sock.destroy();
       resolve(ok);
@@ -152,18 +146,20 @@ export class VaultServer {
   private starting: Promise<void> | null = null;
 
   /**
-   * A port to serve on: this one, or the next one nobody else is holding.
+   * Settle on a port to serve on: this one, or the next one nobody else is
+   * holding. True when our own vault is already up on it, false when it is free
+   * for us to spawn on.
    *
    * Refusing to start because someone else has 8222 would leave the owner with
    * a vault they cannot open and nothing to do about it. Everything that talks
    * to the vault reads `url` from here, so moving is invisible.
    */
-  private async freePort(): Promise<number> {
+  private async selectPort(): Promise<boolean> {
     const first = this.port;
     for (let i = 0; i < 20; i++) {
       this.port = first + i;
-      if (!(await this.portOpen())) return this.port;
-      if (await this.oursOnPort()) return this.port; // our own server, already up
+      if (!(await this.portOpen())) return false;
+      if (await this.oursOnPort()) return true; // our own server, already up
     }
     this.port = first;
     throw new Error(`nothing is free between ${first} and ${first + 19} for this Mac's vault`);
@@ -180,7 +176,7 @@ export class VaultServer {
     // Whose server is on the port matters more than whether one is: see
     // `oursOnPort`. If ours is already up we join it; if a stranger is there,
     // we serve beside it rather than talking to it.
-    if ((await this.freePort()) && (await this.portOpen()) && (await this.oursOnPort())) {
+    if (await this.selectPort()) {
       await this.bootstrap();
       return;
     }
