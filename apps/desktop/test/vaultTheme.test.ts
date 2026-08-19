@@ -35,11 +35,12 @@ describe("vault.css uses the app's colour scheme", () => {
     expect([...used].filter((t) => !defined.has(t))).toEqual([]);
   });
 
-  it("redefines no app token as itself, which would resolve to nothing", () => {
-    const block = vaultCss.slice(vaultCss.indexOf(".vaultui {"), vaultCss.indexOf("}", vaultCss.indexOf(".vaultui {")));
-    const cycles = [...block.matchAll(/(--[\w-]+)\s*:\s*var\((--[\w-]+)\)/g)]
-      .filter((m) => m[1] === m[2])
-      .map((m) => m[1]);
-    expect(cycles).toEqual([]);
+  it("declares no palette of its own on the pane", () => {
+    const start = vaultCss.indexOf(".vaultui {");
+    const block = vaultCss.slice(start, vaultCss.indexOf("}", start));
+    const declared = [...block.matchAll(DECL)].map((m) => m[1]);
+    // Fonts and the scrim only. A colour token here is a second palette
+    // starting over, which is the thing this file stopped doing.
+    expect(declared.sort()).toEqual(["--mono", "--sans", "--scrim"]);
   });
 });
