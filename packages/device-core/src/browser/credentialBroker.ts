@@ -144,4 +144,5 @@ export class CredentialBroker {
   getField(itemId: string, field: string, pageUrl: string): Promise<string> {
     return this.run(["get-field", "--item-id", itemId, "--field", field, "--url", pageUrl]);
   }
+
 }

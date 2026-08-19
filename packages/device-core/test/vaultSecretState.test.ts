@@ -70,13 +70,12 @@ describe("readCredentialsState", () => {
     });
   });
 
-  it("hands over the credentials when it can read them", () => {
+  it("says ok when it can read the account — and hands over nothing else", () => {
     const dir = tempDir();
     new VaultSecretStore(dir).write({ email: "a@local", password: "pw" });
-    expect(readCredentialsState("https://vault.local", dir)).toEqual({
-      status: "ok",
-      credentials: { url: "https://vault.local", email: "a@local", password: "pw" },
-    });
+    // The state is a fact about the account, never the account: the only code
+    // that needs the password reads the store itself.
+    expect(readCredentialsState("https://vault.local", dir)).toEqual({ status: "ok" });
   });
 
   it("says empty when there is genuinely nothing", () => {

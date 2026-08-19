@@ -20,6 +20,9 @@ const REVIEWER_PROVIDERS = {
   anthropic: { label: "Anthropic API key", setup: "add an Anthropic API key" },
 };
 
+import { el, icon } from "./dom.js";
+import { renderVault } from "./vault.js";
+
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
@@ -31,36 +34,6 @@ let filter = "all";
 // updates the display nodes in place — the editable key field is never rebuilt,
 // so no amount of re-reading can take a half-typed key with it.
 let settingsMounted = null;
-
-function el(tag, opts = {}, children = []) {
-  const node = document.createElement(tag);
-  if (opts.class) node.className = opts.class;
-  if (opts.text !== undefined) node.textContent = opts.text;
-  if (opts.attrs) for (const [k, v] of Object.entries(opts.attrs)) node.setAttribute(k, v);
-  for (const c of children) if (c) node.appendChild(c);
-  return node;
-}
-
-const ICONS = {
-  command: "m4 17 6-6-6-6 M12 19h8",
-  file: "M14 3v5h5 M7 3h8l5 5v11a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z",
-  access: "M12 3 4 6v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V6z",
-  agent: "M4 8h16v12H4z M12 8V4",
-  info: "M12 2v10 M18.4 6.6a9 9 0 1 1-12.8 0",
-  browser: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M3 12h18 M12 3a14 14 0 0 1 0 18 M12 3a14 14 0 0 0 0 18",
-};
-function icon(kind) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("class", "ico");
-  const d = (ICONS[kind] || ICONS.info).split(" M");
-  for (let i = 0; i < d.length; i++) {
-    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    p.setAttribute("d", (i === 0 ? "" : "M") + d[i]);
-    svg.appendChild(p);
-  }
-  return svg;
-}
 
 /** The Discord mark. Built apart from `icon()`: that helper draws stroked
     line art, and this is a filled silhouette. */
@@ -872,93 +845,6 @@ async function refreshUpdateBanner() {
 
 // ---- Settings ----
 
-/**
- * The vault's own account. Shown, not hidden: this is what the owner types into
- * the vault's page to read their own secrets, and either half can be replaced
- * with something they choose — the account key is re-wrapped underneath, so
- * what is already stored stays readable.
- */
-/** One editable value with a Copy button beside it — never two of the same. */
-function fieldRow(input) {
-  const copy = el("button", { class: "btn small", text: "Copy" });
-  copy.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(input.value);
-    copy.textContent = "Copied";
-    setTimeout(() => { copy.textContent = "Copy"; }, 1200);
-  });
-  return el("div", { class: "copyrow" }, [input, copy]);
-}
-
-async function renderVault() {
-  const state = (await window.domo.vaultGet()) ?? { status: "empty" };
-  if (state.status !== "ok") {
-    // Locked and empty are different facts and get different words. A vault
-    // whose key has moved — a Keychain reset, a Mac restored from backup — used
-    // to render as "has not started yet", which sent people looking for a
-    // server that was running fine.
-    const locked = state.status === "locked";
-    view.replaceChildren(el("div", { class: "panel" }, [
-      el("div", { class: "section-label", text: "Your vault" }),
-      el("div", { class: "empty", text: locked
-        ? "This Mac can't unlock its vault account."
-        : "The vault has not started yet." }),
-      // Two rules here, both learned the hard way. No invented recovery:
-      // `changeCredentials` refuses outright when the account cannot be read
-      // ("this machine has no vault account yet"), and signing in on the vault's
-      // own page needs the very password this state cannot produce. And no
-      // asserting a cause the code cannot tell apart: `undecryptable` is one
-      // `catch` covering a wrong key AND a damaged file, so the copy leads with
-      // what is certain (the file is there and will not open), names the likely
-      // cause as likely, and gives the remedy — which is the same either way.
-      locked
-        ? el("p", { class: "faint vault-note", text: state.reason === "no-storage"
-            ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
-            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." }
-          )
-        : null,
-    ].filter(Boolean)));
-    return;
-  }
-  const creds = state.credentials;
-
-  // Anchors go nowhere inside Electron; the main process opens the browser.
-  const link = el("a", { class: "mono", text: creds.url, attrs: { href: creds.url } });
-  link.addEventListener("click", (e) => {
-    e.preventDefault();
-    window.domo.vaultOpen();
-  });
-
-  const emailInput = el("input", { class: "text", attrs: { type: "text", spellcheck: "false" } });
-  emailInput.value = creds.email;
-  const passwordInput = el("input", { class: "text mono", attrs: { type: "text", spellcheck: "false" } });
-  passwordInput.value = creds.password;
-
-  const note = el("p", { class: "faint", text: "Sign in on that page with these two." });
-  const save = el("button", { class: "btn primary", text: "Save changes" });
-  save.addEventListener("click", async () => {
-    save.disabled = true;
-    note.textContent = "Changing…";
-    try {
-      const updated = await window.domo.vaultSet(emailInput.value.trim(), passwordInput.value);
-      emailInput.value = updated.email;
-      passwordInput.value = updated.password;
-      note.textContent = "Saved. Sign in with these from now on.";
-    } catch (err) {
-      note.textContent = "Could not change it: " + (err && err.message ? err.message : String(err));
-    }
-    save.disabled = false;
-  });
-
-  view.replaceChildren(el("div", { class: "panel" }, [
-    el("div", { class: "section-label", text: "Your vault" }),
-    el("div", { class: "field" }, [el("label", { text: "Address" }), link]),
-    el("div", { class: "field" }, [el("label", { text: "Email" }), fieldRow(emailInput)]),
-    el("div", { class: "field" }, [el("label", { text: "Password" }), fieldRow(passwordInput)]),
-    note,
-    el("div", { class: "row" }, [save]),
-  ]));
-}
-
 async function renderSettings() {
   // The Plow account. There is no credential field and no URL field here: the
   // credential is minted by first-run login and never leaves the main process,
@@ -1311,7 +1197,7 @@ function render() {
   if (currentTab === "agents") renderAgents();
   else if (currentTab === "audit") renderAudit();
   else if (currentTab === "rules") renderRules();
-  else if (currentTab === "vault") renderVault();
+  else if (currentTab === "vault") renderVault(view, () => currentTab === "vault");
   else if (currentTab === "settings") renderSettings();
 }
 

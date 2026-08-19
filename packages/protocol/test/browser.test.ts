@@ -111,7 +111,7 @@ describe("capabilityDisplay", () => {
       "Credentials: list vault item names & field labels (no secret values)",
     );
     expect(capabilityDisplay({ kind: "credential", access: "fill", items: ["a1", "b2"] })).toBe(
-      "Credentials: fill a1, b2 into approved sites (values never leave this Mac)",
+      "Credentials: fill a1, b2 into approved sites (typed on this Mac; the agent can see the page it types into)",
     );
   });
 });

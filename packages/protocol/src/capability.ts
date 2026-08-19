@@ -64,7 +64,7 @@ export function capabilityDisplay(c: Capability): string {
     case "credential":
       return c.access === "metadata"
         ? "Credentials: list vault item names & field labels (no secret values)"
-        : `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (values never leave this Mac)`;
+        : `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
   }
 }
 
