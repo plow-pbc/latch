@@ -8,6 +8,6 @@ export const DomoPaths = {
   get defaultHome(): string {
     const env = process.env.DOMO_HOME;
     if (env && env.length > 0) return env;
-    return os.homedir() + "/Library/Application Support/Domo";
+    return os.homedir() + "/Library/Application Support/Plow-Latch";
   },
 };

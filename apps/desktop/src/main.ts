@@ -34,6 +34,7 @@ import { approvalViewModel, auditActivities, CredentialTitles } from "./viewMode
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
+import { migrateLegacyHome } from "./migrateHome.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
@@ -64,6 +65,17 @@ import {
 // menu, About/Hide/Quit items, and dock title read "Plow Latch" instead of
 // "Electron", the paths so Chromium never opens the default locations.
 const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
+// A pre-rename "Domo…" home is moved to the new name here, before Chromium
+// opens anything under it (migrateHome.ts explains why a rename is the whole
+// migration). If the move fails the app still starts, on a fresh home — the
+// old folder is left intact, so nothing is lost, just not signed in.
+try {
+  if (migrateLegacyHome(instance)) {
+    console.log(`[app] moved legacy home ${instance.legacyHome} -> ${instance.home}`);
+  }
+} catch (err) {
+  console.error(`[app] could not move legacy home ${instance.legacyHome}: ${String(err)}`);
+}
 // THE NAME SET HERE IS THE ONE THE KEYCHAIN SEES. Chromium captures the string
 // it derives `<name> Safe Storage` from at startup, BEFORE `app.whenReady`, and
 // a later `setName` does not move it (measured: an item is created under the
