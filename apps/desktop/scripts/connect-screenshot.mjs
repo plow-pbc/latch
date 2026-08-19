@@ -116,7 +116,7 @@ const SCREENS = [
       "signs in with OAuth the first time it connects",
       "no token to copy, store, or rotate",
       // The shortcut to where the URL gets pasted.
-      "Claude",
+      "Open Claude",
       "Can't use OAuth? Create a static credential",
       // Approvals moved onto this tab with the clients it governs.
       "Approvals",

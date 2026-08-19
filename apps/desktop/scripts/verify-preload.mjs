@@ -311,8 +311,14 @@ app.whenReady().then(async () => {
         document.body.innerText.includes("Not granted"),
       fdaNamesMessages: document.body.innerText.includes("texted to you in Messages"),
       fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
-        (b) => b.textContent.trim() === "Open System Settings",
+        (b) => b.querySelector("span")?.textContent === "Open System Settings",
       ),
+      // Every button that leaves the app carries the external-link ↗: Full
+      // Disk Access, Join Discord, Watch Livestream.
+      externalButtonsCarryArrow: (() => {
+        const btns = [...document.querySelectorAll(".support-row .btn")];
+        return btns.length >= 3 && btns.every((b) => b.querySelector(".ext-arrow"));
+      })(),
       // Launch at Login, in Capabilities: on this packaged-looking probe the
       // toggle is live and unchecked, and the from-source note is hidden
       // (innerText omits hidden nodes).
@@ -652,6 +658,11 @@ app.whenReady().then(async () => {
       clientCards: [...document.querySelectorAll(".client-card .client-name")].map((n) =>
         n.textContent.trim(),
       ),
+      // The card is an action, not a brand tile: plain-weight label, ↗ mark.
+      clientCardArrow: !!document.querySelector(".client-card .ext-arrow"),
+      clientNameNotBold: getComputedStyle(
+        document.querySelector(".client-card .client-name"),
+      ).fontWeight === "400",
     };
   }})()`);
 
@@ -901,7 +912,9 @@ app.whenReady().then(async () => {
     settingsPane.noConnectBlock &&
     settingsPane.noConnectText &&
     settingsPane.noSignInWhileSignedIn &&
-    connect.clientCards.join(",") === "Claude" &&
+    connect.clientCards.join(",") === "Open Claude" &&
+    connect.clientCardArrow &&
+    connect.clientNameNotBold &&
     connect.noConnectTab &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
@@ -924,6 +937,7 @@ app.whenReady().then(async () => {
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
     settings.fdaOffersSystemSettings &&
+    settings.externalButtonsCarryArrow &&
     settings.launchTitle &&
     settings.launchToggleLive &&
     settings.launchNoteHidden &&
