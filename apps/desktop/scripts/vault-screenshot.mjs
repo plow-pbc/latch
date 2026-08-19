@@ -211,7 +211,7 @@ const SCREENS = [
 /** How many websites can be removed right now, and how many should be. */
 async function removable(win, n, when) {
   const shown = await win.webContents.executeJavaScript(
-    `document.querySelectorAll(".vaultui .mini.drop:not([hidden])").length`,
+    `[...document.querySelectorAll(".vaultui .mini.drop")].filter((b) => getComputedStyle(b).display !== "none").length`,
   );
   if (shown !== n) throw new Error(`${shown} remove buttons ${when}, wanted ${n}`);
 }

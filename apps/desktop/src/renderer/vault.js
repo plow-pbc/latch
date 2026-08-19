@@ -179,13 +179,11 @@ function vfield(spec, ctx) {
 /** The website group: one box per URL the item has, her "Add website", and a
     way back off each one. */
 function vurls(ctx) {
-  const rows = el("div", {});
   // The last remaining site cannot be removed: a login with no URL can never be
   // filled, and the save refuses it — so the form never offers that dead end.
-  const sync = () => {
-    const only = rows.children.length === 1;
-    for (const row of rows.children) row.querySelector(".drop").hidden = only;
-  };
+  // That is a fact about this list, and vault.css reads it off :only-child
+  // rather than anything here keeping a second copy of it in step.
+  const rows = el("div", { class: "url-rows" });
   const add = () => {
     const input = el("input", { class: "inp", attrs: { type: "text", spellcheck: "false", placeholder: "https://" } });
     input.addEventListener("input", () => ctx.onChange?.());
@@ -199,11 +197,9 @@ function vurls(ctx) {
       // this one against the entry that belongs to the row above it.
       input.value = "";
       row.remove();
-      sync();
       ctx.onChange?.();
     });
     rows.appendChild(row);
-    sync();
     return input;
   };
   const existing = ctx.item ? ctx.item.urls || [] : [];
