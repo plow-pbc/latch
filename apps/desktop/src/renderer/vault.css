@@ -1,10 +1,11 @@
 /* The Vault tab, from Mary's design (vault.html) — her rules, kept as she
    wrote them and scoped to `.vaultui` so no other screen changes.
 
-   Her palette is not here. Every colour below is one of the app-wide tokens
-   from styles.css, read directly, so this tab follows light and dark with
-   every other screen: the layout is hers, the colours are the app's, and the
-   scheme she drew ships nowhere yet.
+   Her palette is not here. Every colour below is an app-wide token from
+   styles.css, read directly — the one exception is the modal scrim, which the
+   app has no token for. So this tab follows light and dark with every other
+   screen: the layout is hers, the colours are the app's, and the scheme she
+   drew ships nowhere yet.
 
    The fonts are hers too, vendored beside this file: a packaged app has no
    network, and a design that falls back to the system face is not the design.
@@ -61,19 +62,11 @@
   src: url("fonts/DMMono-500.woff2") format("woff2");
 }
 
+/* The pane itself: her content surface, filling the tab. Her two faces are the
+   only thing this file still declares. */
 .vaultui {
-    /* Modal scrim: the one colour the app has no token for, and the only
-       literal in this file. Zinc-950, the neutral both palettes are built
-       from, so it dims the window behind without tinting it. */
-    --scrim: rgba(9, 9, 11, 0.55);
-
-    /* Hers, and the reason this block still exists. */
-    --sans: 'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-    --mono: 'DM Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-}
-
-/* The pane itself: her content surface, filling the tab. */
-.vaultui {
+  --sans: 'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --mono: 'DM Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   flex: 1 1 auto; min-height: 0; overflow: auto;
   background: var(--bg); color: var(--fg);
   font-family: var(--sans); padding: 26px 30px 40px;
@@ -158,8 +151,10 @@
 .vaultui .btn.save:hover { filter: brightness(1.06); background: var(--blue-fg); color: var(--card); }
 .vaultui .btn.danger { background: transparent; border-color: var(--red-bd); color: var(--red-fg); }
 .vaultui .btn.danger:hover { background: var(--red-bg); color: var(--red-fg); }
+/* Scrim: zinc-950, the neutral both palettes are built from, so it dims the
+   window behind without tinting it. The app has no token for one. */
 .vaultui .overlay { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; padding: 28px 24px;
-    background: var(--scrim); backdrop-filter: blur(5px); }
+    background: rgba(9, 9, 11, 0.55); backdrop-filter: blur(5px); }
 .vaultui .overlay.show { display: flex; animation: fade .16s ease; }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 .vaultui .sheet { width: 100%; max-width: 520px; max-height: 88vh; display: flex; flex-direction: column;
