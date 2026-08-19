@@ -64,7 +64,7 @@ url, title, links, forms, tables, pages.
 **This machine has its own password vault — do not go looking for 1Password or ask the
 owner to paste anything.** \`plow_vault {action: "list"}\` answers at any time, with no browser
 session: every item the owner keeps — logins, cards, identities, secure notes, custom
-fields — with titles, usernames and sites, never a value. \`describe-item\` names an
+fields — with titles, usernames and sites, never a value. \`plow_vault {action: "describe"}\` names an
 identity's fields (first name, address, email, passport number…) exactly like any other
 item's, and \`fill_secret\` types them into the page the same way.
 

@@ -113,15 +113,10 @@ export class VaultClient {
   /** Everything in the vault, in the clear except the secrets themselves. */
   async list(): Promise<VaultItemSummary[]> {
     const { key } = await this.open();
-    // One item of a type this app cannot hold must not take the whole list
-    // down with it; it simply is not listed. Opening it is the loud path.
-    return (await this.ciphers()).flatMap((c) => {
-      try {
-        return [decryptSummary(c, key)];
-      } catch {
-        return [];
-      }
-    });
+    // An item of a type this app cannot hold makes the listing fail, and the
+    // tab says so. Skipping it quietly was worse: a vault holding only such an
+    // item read as an empty vault.
+    return (await this.ciphers()).map((c) => decryptSummary(c, key));
   }
 
   /** One whole item, with its secret values null — what a form is filled from. */
