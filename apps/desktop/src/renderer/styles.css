@@ -507,7 +507,7 @@ textarea.text { min-height: 70px; resize: vertical; }
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 10px 0 0;
+  margin: 0 0 14px;
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--sel);
