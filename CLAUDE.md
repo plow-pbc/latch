@@ -61,12 +61,16 @@ the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-AP
   sends a capability set or an intent — it calls a tool, and `mcp-server`
   derives the capabilities the policy engine and the sandbox will enforce. Goal
   text rides along for the human to read and never influences the bound.
-- **Nothing may block past the call budget.** The relay's pending future times
-  out at **20 seconds**, so a tunnelled call has to answer well inside that. Any
-  tool that cannot returns a deferred handle and keeps working; `get_result`
-  retrieves it. A handle belongs to the `agent_id` that created it. This is why
-  file operations are async and size-capped: synchronous work blocks the event
-  loop and the budget timer never fires.
+- **Nothing may block past the call budget.** The relay advertises its exchange
+  deadline at the handshake and abandons the exchange on it, so a tunnelled call
+  has to answer with at least the delivery margin to spare — the desktop derives
+  its budget from what was advertised and keeps the old, shorter one when a relay
+  advertises nothing (`packages/relay-client/src/wire.ts`). Every tool is
+  classified: a **deferrable** one returns a deferred handle and keeps working,
+  and `get_result` retrieves it; a **direct-bounded** one has no handle to hand
+  back and is held to a hard ceiling instead. A handle belongs to the `agent_id`
+  that created it. This is why file operations are async and size-capped:
+  synchronous work blocks the event loop and the budget timer never fires.
 - **`agent_id` is the isolation key; `agent_name` is display-only.** Jobs,
   deferred handles and always-allow rules key on the id. The name is nullable
   and not unique — two credentials can share one — so it identifies nothing.

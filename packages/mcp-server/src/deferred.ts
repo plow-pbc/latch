@@ -1,8 +1,9 @@
 /**
  * The deferred-result contract (design §4.3).
  *
- * A tunnelled call has a hard ceiling: the relay's pending future times out at
- * 20 seconds, so nothing on this Mac may block past its call budget — not a
+ * A tunnelled call has a hard ceiling: the relay abandons the exchange on a
+ * deadline it advertises at the handshake, so nothing on this Mac may block
+ * past its call budget — not a
  * human who has walked away from an approval, not a slow command. Any
  * tool that cannot finish inside the budget returns a handle instead, keeps the
  * work running, and the agent retrieves the outcome later with `get_result`.
@@ -22,12 +23,14 @@ import crypto from "node:crypto";
 import { JSONValue } from "@domo/protocol";
 
 /**
- * How long a tool may block before it must hand back a handle.
+ * How long a tool may block before it must hand back a handle, until a relay
+ * says otherwise.
  *
- * The relay's pending future times out at 20 seconds and the MCP client
- * abandons at ~30s. This has to leave room for the tunnel round-trip on top of
- * itself, not merely be smaller than the relay's timeout — hence well under
- * half of it.
+ * This is the floor, not the contract: a relay that advertises its exchange
+ * deadline raises the budget through `setBudgetMs` (see the relay client's
+ * `deferrableBudgetMs`). Absent that advertisement the old 20-second deadline
+ * is assumed, and this leaves room for the tunnel round-trip on top of itself
+ * rather than merely being smaller than that deadline.
  */
 export const CALL_BUDGET_MS = 8_000;
 
@@ -74,11 +77,28 @@ export class DeferredResults {
   private readonly entries = new Map<string, Entry>();
 
   constructor(
-    private readonly budgetMs = CALL_BUDGET_MS,
+    private budgetMs = CALL_BUDGET_MS,
     private readonly ttlMs = HANDLE_TTL_MS,
     /** Injectable for tests; the real one is Date.now. */
     private readonly now: () => number = () => Date.now(),
   ) {}
+
+  /**
+   * Re-point the budget at what the relay's advertised deadline allows.
+   *
+   * Calls already racing their budget keep the one they were armed with: a
+   * timer that has been scheduled cannot honestly be moved, and the agent on
+   * the other end is waiting against the deadline that was in force when its
+   * exchange started.
+   */
+  setBudgetMs(ms: number): void {
+    this.budgetMs = ms;
+  }
+
+  /** The budget the next call will be armed with. */
+  get budget(): number {
+    return this.budgetMs;
+  }
 
   /**
    * Run one tool body against the call budget. If it finishes in time the

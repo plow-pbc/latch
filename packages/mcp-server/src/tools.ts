@@ -55,11 +55,18 @@ export interface ToolSpec {
   description: string;
   inputSchema: JSONValue;
   /**
-   * Whether this tool constructs an intent and can therefore block on a human.
-   * The three that cannot — retrieving output, listing tools, polling a handle
-   * — must never be deferred: deferring the poller would be absurd.
+   * How this tool answers inside the relay's exchange deadline.
+   *
+   * `deferrable` — it constructs an intent and can therefore block on a human,
+   * so when the call budget expires it hands back a handle and keeps working.
+   * Every tool that can open an approval prompt must be this.
+   *
+   * `direct_bounded` — it opens no prompt (polling, manifests, work already
+   * riding an approved grant) and must return within a hard ceiling, because
+   * there is no handle for the caller to come back to. Deferring a poller
+   * would be absurd; blocking one past the deadline would be worse.
    */
-  deferrable: boolean;
+  classification: "deferrable" | "direct_bounded";
   run(args: JSONValue, ctx: ToolContext, progress: Progress): Promise<JSONValue>;
 }
 
@@ -142,7 +149,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
-    deferrable: true,
+    classification: "deferrable",
     async run(args, ctx, progress) {
       const a = jv(args);
       const raw = a.get("path").str;
@@ -174,7 +181,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { path: { type: "string" }, content: { type: "string" }, goal: GOAL },
       additionalProperties: false,
     },
-    deferrable: true,
+    classification: "deferrable",
     async run(args, ctx, progress) {
       const a = jv(args);
       const raw = a.get("path").str;
@@ -247,7 +254,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
-    deferrable: true,
+    classification: "deferrable",
     async run(args, ctx, progress) {
       const a = jv(args);
       const argvValues = a.get("argv").arr;
@@ -305,7 +312,7 @@ export const TOOLS: ToolSpec[] = [
     },
     // Output retrieval is bound to an already-approved run: no new intent, no
     // approval, and nothing slow to wait on.
-    deferrable: false,
+    classification: "direct_bounded",
     async run(args, ctx) {
       const handle = jv(args).get("handle").str;
       if (handle === null) throw new ToolError("missing 'handle'");
@@ -321,7 +328,7 @@ export const TOOLS: ToolSpec[] = [
       "it publishes (how-to guides for a task — read one with read_skill before starting). " +
       "Blessed tools are trusted in-process capabilities, distinct from the tools in this list.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    deferrable: false,
+    classification: "direct_bounded",
     async run(_args, ctx) {
       return {
         tools: ctx.device.blessedTools.manifest(),
@@ -343,7 +350,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { name: { type: "string", description: "Skill name from list_tools" } },
       additionalProperties: false,
     },
-    deferrable: false,
+    classification: "direct_bounded",
     async run(args, ctx) {
       const name = jv(args).get("name").str;
       if (name === null) throw new ToolError("missing 'name'");
@@ -361,7 +368,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { tool: { type: "string" }, args: { type: "object" }, goal: GOAL },
       additionalProperties: false,
     },
-    deferrable: true,
+    classification: "deferrable",
     async run(args, ctx, progress) {
       const a = jv(args);
       const tool = a.get("tool").str;
@@ -411,7 +418,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
-    deferrable: true,
+    classification: "deferrable",
     async run(args, ctx, progress) {
       const a = jv(args);
       const origins = strings(a.get("origins").arr);
@@ -462,7 +469,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
-    deferrable: true,
+    classification: "deferrable",
     async run(args, ctx, progress) {
       const a = jv(args);
       const session = a.get("session").str;
@@ -533,7 +540,7 @@ export const TOOLS: ToolSpec[] = [
     // Rides the session grant — no new intent, no approval. Non-deferrable so a
     // screenshot's image block reaches the agent directly (a deferred result
     // would be re-serialized as text by get_result).
-    deferrable: false,
+    classification: "direct_bounded",
     async run(args, ctx) {
       const a = jv(args);
       const session = a.get("session").str;
@@ -585,7 +592,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
-    deferrable: false,
+    classification: "direct_bounded",
     async run(args, ctx) {
       const a = jv(args);
       const action = a.get("action").str;
@@ -603,7 +610,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { session: { type: "string" } },
       additionalProperties: false,
     },
-    deferrable: false,
+    classification: "direct_bounded",
     async run(args, ctx) {
       const session = jv(args).get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
@@ -623,7 +630,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { handle: { type: "string" } },
       additionalProperties: false,
     },
-    deferrable: false,
+    classification: "direct_bounded",
     async run(args, ctx) {
       const handle = jv(args).get("handle").str;
       if (handle === null) throw new ToolError("missing 'handle'");

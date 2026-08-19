@@ -720,6 +720,13 @@ async function startRelay(): Promise<void> {
     url: relaySocketUrl(apiBaseUrl),
     credential,
     serve: (request, auth) => server.fetch(request, auth),
+    // The relay owns the exchange deadline and advertises it; the budget a
+    // deferrable tool runs against has to fit inside it with delivery margin to
+    // spare. A relay that advertises nothing keeps this Mac on the old budget.
+    onBudgetChange: (budgetMs, deadlineMs) => {
+      server.setCallBudgetMs(budgetMs);
+      console.log(`[relay] call budget ${budgetMs}ms (exchange deadline ${deadlineMs}ms)`);
+    },
     onStatusChange: (isConnected) => {
       connected = isConnected;
       notifyRenderer("status:changed");

@@ -103,3 +103,84 @@ export function isRequestFrame(value: unknown): value is RelayRequestFrame {
     typeof f.path === "string"
   );
 }
+
+/**
+ * The exchange deadline this contract is written against: the relay abandons a
+ * tunnelled HTTP exchange 25 seconds after it forwards it.
+ *
+ * The relay owns this number and advertises it (see `EXCHANGE_DEADLINE_FIELD`);
+ * the constant here is what a relay must advertise before this Mac will use the
+ * longer deferrable budget, not something this side gets to choose.
+ */
+export const RELAY_EXCHANGE_DEADLINE_MS = 25_000;
+
+/**
+ * What a relay that advertises nothing is assumed to enforce. The deployed
+ * relay abandoned at 20 seconds before it learned to advertise, so an absent
+ * field means the old deadline — never "no deadline".
+ */
+export const LEGACY_EXCHANGE_DEADLINE_MS = 20_000;
+
+/** The `auth.ok` field carrying the relay's exchange deadline, in ms. */
+export const EXCHANGE_DEADLINE_FIELD = "exchange_deadline_ms";
+
+/**
+ * How long a deferrable tool may block against a 25-second exchange, measured
+ * from tool callback entry — validation, path resolution and approval
+ * persistence all inside it.
+ */
+export const DEFERRABLE_BUDGET_MS = 15_000;
+
+/** The budget kept for a relay that does not advertise the longer deadline. */
+export const LEGACY_CALL_BUDGET_MS = 8_000;
+
+/**
+ * What is reserved between the budget expiring and the agent holding the
+ * answer: registering the deferred result, framing the response, and the relay
+ * matching it to the waiting HTTP exchange. This Mac refuses to configure a
+ * budget that leaves less than this.
+ */
+export const MIN_DELIVERY_MARGIN_MS = 10_000;
+
+/**
+ * The deferrable budget to run against a relay advertising `advertised`.
+ *
+ * Rollout is relay-first, so this has to answer for three relays: one that
+ * advertises 25s or more (the long budget), one that advertises less, and one
+ * that advertises nothing at all because it predates the field (the old 20s
+ * deadline, and with it the old 8s budget). In every case the result is capped
+ * so at least `MIN_DELIVERY_MARGIN_MS` is left for delivery — a budget that
+ * eats its own delivery margin would produce handles the agent never receives.
+ */
+export function deferrableBudgetMs(advertised: unknown): number {
+  const deadline =
+    typeof advertised === "number" && Number.isFinite(advertised) && advertised > 0
+      ? advertised
+      : LEGACY_EXCHANGE_DEADLINE_MS;
+  const wanted =
+    deadline >= RELAY_EXCHANGE_DEADLINE_MS ? DEFERRABLE_BUDGET_MS : LEGACY_CALL_BUDGET_MS;
+  return Math.max(0, Math.min(wanted, deadline - MIN_DELIVERY_MARGIN_MS));
+}
+
+/**
+ * relay → Mac: the relay matched our response for `rid` to the HTTP exchange
+ * still waiting on it.
+ *
+ * This is the only evidence this side ever has that a deferred handle reached
+ * the agent's transport. It says nothing about a model having read it, and its
+ * absence is not proof of failure — but nothing may claim an operation was
+ * backgrounded without it.
+ */
+export const FRAME_RESPONSE_ACK = "relay.response.ack";
+
+export interface RelayResponseAckFrame {
+  type: typeof FRAME_RESPONSE_ACK;
+  rid: string;
+}
+
+/** True when `value` is an acknowledgement frame naming a rid. */
+export function isResponseAckFrame(value: unknown): value is RelayResponseAckFrame {
+  if (typeof value !== "object" || value === null) return false;
+  const f = value as Record<string, unknown>;
+  return f.type === FRAME_RESPONSE_ACK && typeof f.rid === "string" && f.rid.length > 0;
+}

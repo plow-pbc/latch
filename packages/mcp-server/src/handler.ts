@@ -94,6 +94,32 @@ function refusal(id: unknown, method: string): Response {
   );
 }
 
+/**
+ * Hold a direct-bounded tool to its ceiling.
+ *
+ * The work is not cancelled — nothing here can cancel a browser action already
+ * in flight — but the caller stops waiting, so the answer reaches it inside the
+ * relay's exchange rather than after the relay has given up on it.
+ */
+function bounded<T>(work: Promise<T>, ceilingMs: number, tool: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${tool} did not finish within this Mac's ${ceilingMs}ms call ceiling`));
+    }, ceilingMs);
+    timer.unref?.();
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
 export interface McpServerOptions {
   /** Overridable so tests do not have to wait out the real budget. */
   budgetMs?: number;
@@ -104,6 +130,13 @@ export interface DomoMcpServer {
   fetch(request: Request, auth?: RelayAuth): Promise<Response>;
   /** The tool names this server advertises, for logging and tests. */
   toolNames: string[];
+  /**
+   * Adopt the call budget the relay's advertised exchange deadline allows.
+   * Until this is called the server runs the conservative default.
+   */
+  setCallBudgetMs(ms: number): void;
+  /** The budget the next deferrable call will be armed with. */
+  callBudgetMs(): number;
   close(): Promise<void>;
 }
 
@@ -116,7 +149,7 @@ export function createDomoMcpServer(
   device: DeviceAgent,
   options: McpServerOptions = {},
 ): DomoMcpServer {
-  const budgetMs = options.budgetMs ?? CALL_BUDGET_MS;
+  let budgetMs = options.budgetMs ?? CALL_BUDGET_MS;
   const deferred = new DeferredResults(budgetMs);
   const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
@@ -166,9 +199,13 @@ export function createDomoMcpServer(
             const body = (progress: Progress) =>
               spec.run((args ?? null) as JSONValue, toolCtx, progress);
             try {
-              const result = spec.deferrable
-                ? await deferred.run(agent.agentId, body)
-                : await body({ decided: () => {} });
+              const result =
+                spec.classification === "deferrable"
+                  ? await deferred.run(agent.agentId, body)
+                  : // A direct tool has no handle to fall back on, so it is
+                    // held to the same ceiling the budget sets: answering late
+                    // is answering into an exchange the relay has abandoned.
+                    await bounded(body({ decided: () => {} }), budgetMs, spec.name);
               // Most results are one text block; a screenshot expands into an
               // image + text block via `__mcpContent`.
               return { content: toolBlocks(result) };
@@ -225,6 +262,11 @@ export function createDomoMcpServer(
 
   return {
     toolNames: TOOLS.map((t) => t.name),
+    setCallBudgetMs(ms: number) {
+      budgetMs = ms;
+      deferred.setBudgetMs(ms);
+    },
+    callBudgetMs: () => budgetMs,
     async fetch(request, auth) {
       // Modern MCP requires Mcp-Method, and the SDK rejects a request whose
       // header and body disagree — so the header is a sound place to refuse

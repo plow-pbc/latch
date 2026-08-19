@@ -16,9 +16,13 @@
 import { Connection, ConnectionDialer, WebSocketDialer } from "@domo/transport";
 import { RelayAuth } from "@domo/mcp-server";
 import {
+  deferrableBudgetMs,
+  EXCHANGE_DEADLINE_FIELD,
   FRAME_RESPONSE,
   HEARTBEAT_INTERVAL_MS,
   isRequestFrame,
+  isResponseAckFrame,
+  LEGACY_EXCHANGE_DEADLINE_MS,
   RELAY_CLIENT_KIND,
   RelayRequestFrame,
   RelayResponseFrame,
@@ -36,6 +40,19 @@ export interface RelayClientOptions {
   /** Where a tunnelled request goes. */
   serve: ServeRequest;
   onStatusChange?: (connected: boolean) => void;
+  /**
+   * The relay said how long it will hold an exchange open, so the call budget
+   * that has to fit inside it is now known. Fires on every successful
+   * handshake, including reconnects onto a differently-configured relay.
+   */
+  onBudgetChange?: (budgetMs: number, exchangeDeadlineMs: number) => void;
+  /**
+   * The relay matched our response for `rid` to the exchange waiting on it.
+   * Only ever fires for a rid this client actually answered — an ack naming
+   * anything else is dropped, so nothing downstream can claim delivery the
+   * relay never confirmed.
+   */
+  onResponseAck?: (rid: string) => void;
   /**
    * The relay refused this credential. Terminal: it will not become valid by
    * waiting, so the client has stopped and the owner has to sign in again.
@@ -62,6 +79,10 @@ export class RelayClient {
   private heartbeat: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+  private exchangeDeadline = LEGACY_EXCHANGE_DEADLINE_MS;
+  private budgetMs = deferrableBudgetMs(undefined);
+  /** Rids this client has answered, awaiting the relay's acknowledgement. */
+  private readonly awaitingAck = new Set<string>();
   /** Requests being served right now, so shutdown can wait for them. */
   private readonly inFlight = new Set<Promise<void>>();
 
@@ -69,6 +90,16 @@ export class RelayClient {
 
   get isConnected(): boolean {
     return this.connected;
+  }
+
+  /** What the relay last advertised as its exchange deadline. */
+  get exchangeDeadlineMs(): number {
+    return this.exchangeDeadline;
+  }
+
+  /** The deferrable call budget that fits inside that deadline. */
+  get callBudgetMs(): number {
+    return this.budgetMs;
   }
 
   /**
@@ -198,6 +229,17 @@ export class RelayClient {
             ? Math.min(advertised, HEARTBEAT_INTERVAL_MS)
             : HEARTBEAT_INTERVAL_MS;
         this.startHeartbeat(conn);
+        // Relay-first rollout: an old relay advertises nothing and keeps this
+        // Mac on the old budget. `deferrableBudgetMs` decides; this only
+        // reports what it decided.
+        const deadline = msg[EXCHANGE_DEADLINE_FIELD];
+        this.exchangeDeadline =
+          typeof deadline === "number" && Number.isFinite(deadline) && deadline > 0
+            ? deadline
+            : LEGACY_EXCHANGE_DEADLINE_MS;
+        this.budgetMs = deferrableBudgetMs(deadline);
+        this.options.onBudgetChange?.(this.budgetMs, this.exchangeDeadline);
+        this.say(`exchange deadline ${this.exchangeDeadline}ms, call budget ${this.budgetMs}ms`);
         this.setConnected(true);
         this.say("authenticated");
         return;
@@ -231,6 +273,13 @@ export class RelayClient {
 
       default:
         break;
+    }
+
+    if (isResponseAckFrame(msg)) {
+      // Fail closed: an ack for a rid we never answered proves nothing about
+      // our delivery, so it is dropped rather than reported.
+      if (this.awaitingAck.delete(msg.rid)) this.options.onResponseAck?.(msg.rid);
+      return;
     }
 
     if (isRequestFrame(msg)) {
@@ -291,6 +340,7 @@ export class RelayClient {
         body: JSON.stringify({ error: message }),
       };
     }
+    this.awaitingAck.add(response.rid);
     this.send(conn, response);
   }
 
@@ -304,6 +354,10 @@ export class RelayClient {
 
   private onClose(): void {
     this.conn = null;
+    // The socket is gone, so no acknowledgement is coming for anything still
+    // outstanding: its delivery is unknown, and a later reconnect must not
+    // resolve a stale rid.
+    this.awaitingAck.clear();
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.setConnected(false);
