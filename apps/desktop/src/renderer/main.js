@@ -1082,7 +1082,8 @@ async function renderSettings() {
     const provider = PROVIDERS[inference.provider];
     modeNote.textContent =
       currentMode === "adversarial" && !hasKey
-        ? `${provider.label}: ${provider.missing}. Adversarial Agent denies every operation until then.`
+        ? `${provider.label}: ${provider.missing}. Until then Adversarial Agent denies anything it is asked to decide — ` +
+          `operations already covered by an always-allow rule keep running, because a rule is a decision you already made.`
         : "";
     modeChips.replaceChildren(...MODES.map(([value, label]) => {
       const chip = el("span", {
@@ -1139,11 +1140,10 @@ async function renderSettings() {
 
   // Re-read the reviewer's state from main and redraw.
   //
-  // This only READS. Main owns the interlock — it retires Adversarial mode in
-  // the same write that takes a credential away — so the renderer's job is to
-  // show what main decided, never to decide it too. The renderer used to write
-  // the fallback itself from a half-typed field, which persisted Ask while the
-  // stored key was still there and never put it back.
+  // This only READS. Main owns what is stored, so the renderer's job is to show
+  // it, never to decide it too — it used to write a mode fallback itself from a
+  // half-typed field, which persisted Ask while the stored key was still there
+  // and never put it back.
   const applyInference = (next) => {
     inference = next;
     currentMode = next.approvalMode;

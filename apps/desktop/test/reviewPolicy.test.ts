@@ -264,48 +264,53 @@ describe("decideIntent — adversarial mode", () => {
   // gate is gone: the state is reachable, so it has to answer for itself. Deny
   // is the fail-closed answer, and `no_reviewer` is what makes it legible
   // instead of looking like a decision somebody made.
-  const providerCredentialCases = [
-    { name: "no credential at all", over: {} },
-    { name: "only the other provider's credential", over: { anthropicApiKey: ANTHROPIC_KEY } },
+  //
+  // Nothing is CALLED to find this out. The reviewer's absence is on disk, so
+  // asking it would only buy an audit pair naming a model that never saw the
+  // intent — which is why `reviewerAvailable` decides before `review()` runs.
+  const unusableReviewers = [
+    { name: "the Plow reviewer has no credential at all", over: { inferenceProvider: "plow" as const, relayCredential: "" } },
+    {
+      name: "the Plow reviewer has only the other provider's credential",
+      over: { inferenceProvider: "plow" as const, relayCredential: "", anthropicApiKey: ANTHROPIC_KEY },
+    },
+    { name: "the Anthropic reviewer has no key", over: { inferenceProvider: "anthropic" as const, anthropicApiKey: "" } },
   ];
 
-  for (const c of providerCredentialCases) {
-    it(`denies, explaining itself, when the Plow reviewer has ${c.name}`, async () => {
+  for (const c of unusableReviewers) {
+    it(`denies, explaining itself, when ${c.name}`, async () => {
       const h = harness(
-        settings({
-          approvalMode: "adversarial",
-          inferenceProvider: "plow",
-          relayCredential: "",
-          ...c.over,
-        }),
-        // What the real reviewer returns with nobody to call: no verdict, and
-        // the cause that says so. `decision` is what the dialog WOULD have said
-        // — it must not be reachable.
-        { verdict: "ask", cause: "not_configured", reason: "not signed in to Plow", decision: "allow_once" },
+        settings({ approvalMode: "adversarial", ...c.over }),
+        // What the dialog WOULD have said. It must not be reachable.
+        { verdict: "ask", cause: "not_configured", reason: "nobody to call", decision: "allow_once" },
       );
       const result = await h.run();
-      // The review IS attempted now — that is how the cause is discovered.
-      expect(h.review).toHaveBeenCalledOnce();
+      expect(result.decision).toBe("deny");
+      // The sentence itself lives in device-core (EXPLAINED_DENIALS) and is
+      // pinned end to end by mcpServer.test.ts; here the contract is that this
+      // path picks the explained source rather than a bare deny.
+      expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
+      expect(result.source).not.toBe("adversarial");
+      // No call, and therefore no timeline claiming a model started reviewing.
+      expect(h.review).not.toHaveBeenCalled();
+      expect(h.records).toEqual([]);
       // No dialog: the mode the user chose is honoured, not swapped for Ask.
       expect(h.openApproval).not.toHaveBeenCalled();
-      expect(result.decision).toBe("deny");
-      expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
     });
   }
 
-  // …and the denial carries a reason the calling agent can act on, rather than
-  // the sentence a human pressing Deny produces.
-  it("the explained denial names the standing condition, not a refusal", async () => {
+  // The other way to have no reviewer: the credential is there but the rest of
+  // the configuration is not, which only the review call itself can discover.
+  it("maps a not_configured cause discovered mid-call to the same denial", async () => {
     const h = harness(
-      settings({ approvalMode: "adversarial", inferenceProvider: "anthropic", anthropicApiKey: "" }),
-      { verdict: "ask", cause: "not_configured", reason: "no API key configured", decision: "allow_once" },
+      settings({ approvalMode: "adversarial", inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL }),
+      { verdict: "ask", cause: "not_configured", reason: "no Plow API URL configured", decision: "allow_once" },
     );
     const result = await h.run();
-    // The sentence itself lives in device-core (EXPLAINED_DENIALS) and is
-    // pinned end to end by mcpServer.test.ts; here the contract is that this
-    // path picks the explained source rather than a bare deny.
+    expect(h.review).toHaveBeenCalledOnce();
+    expect(result.decision).toBe("deny");
     expect(result.source).toBe(DENIAL_SOURCE_NO_REVIEWER);
-    expect(result.source).not.toBe("adversarial");
+    expect(h.openApproval).not.toHaveBeenCalled();
   });
 });
 

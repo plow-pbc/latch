@@ -198,63 +198,46 @@ describe("a tool call end to end, in process", () => {
     expect(events(device)).not.toContain("file_read");
   });
 
-  it("out of credits is distinguishable by the calling agent, and still runs nothing", async () => {
-    // The ask: an agent must be able to tell "your account cannot pay for the
-    // review" from "the owner is thinking" — and it must still be a denial.
-    const { server, device } = makeServer(
-      new ScriptedPolicy("deny", 0, DENIAL_SOURCE_NO_CREDITS),
-    );
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    const { isError, payload } = await callTool(
-      server,
-      "plow_read_file",
-      { path: path.join(dir, "a.txt") },
-      AGENT,
-    );
-    expect(isError).toBe(true);
-    expect(payload.status).toBe("denied");
-    expect(payload.reason).toMatch(/out of credits/);
-    expect(payload.reason).toMatch(/could not run/);
-    expect(events(device)).not.toContain("file_read");
-    // It is a fixed sentence for exactly this reason: nothing upstream, and
-    // nothing about the account, can reach a caller through it.
-    const serialized = JSON.stringify(payload);
-    expect(serialized).not.toMatch(/plow_sk|sk-ant|Bearer/i);
-    expect(serialized).not.toMatch(/https?:\/\//);
-    expect(serialized).not.toMatch(/\bu_[a-z0-9]/i); // account uid shape
-  });
+  // An agent must be able to tell a standing condition — "nobody could review
+  // this" — from "the owner decided against it", because only the first is
+  // something a human can go and fix. Each denial source carries its own fixed
+  // sentence, and the shared contract is the interesting half: it denies, it
+  // runs nothing, and the sentence is fixed text that cannot carry anything
+  // upstream back to the caller.
+  const explainedDenials = [
+    { name: "out of credits", source: DENIAL_SOURCE_NO_CREDITS, fragments: [/out of credits/, /could not run/] },
+    {
+      name: "a reviewer that does not exist",
+      source: DENIAL_SOURCE_NO_REVIEWER,
+      fragments: [/no credential/, /could not run/, /Settings/],
+    },
+  ];
 
-  it("a reviewer that does not exist is distinguishable too, and still runs nothing", async () => {
-    // Selecting a provider is no longer gated on having its credential, so
-    // "Adversarial mode with nothing behind it" is a state a user can be in.
-    // It denies — and the agent must be able to tell that from the owner
-    // deciding against it, because only one of the two is worth reporting to
-    // the human as something they can fix.
-    const { server, device } = makeServer(
-      new ScriptedPolicy("deny", 0, DENIAL_SOURCE_NO_REVIEWER),
-    );
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    const { isError, payload } = await callTool(
-      server,
-      "plow_read_file",
-      { path: path.join(dir, "a.txt") },
-      AGENT,
-    );
-    expect(isError).toBe(true);
-    expect(payload.status).toBe("denied");
-    expect(payload.reason).toMatch(/no credential/);
-    expect(payload.reason).toMatch(/could not run/);
-    expect(payload.reason).toMatch(/Settings/);
-    // Not the sentence a human pressing Deny produces.
-    expect(payload.reason).not.toBe("the owner of this Mac denied the request");
-    expect(events(device)).not.toContain("file_read");
-    // Fixed text, like the credits one: nothing upstream reaches the caller.
-    const serialized = JSON.stringify(payload);
-    expect(serialized).not.toMatch(/plow_sk|sk-ant|Bearer/i);
-    expect(serialized).not.toMatch(/https?:\/\//);
-  });
+  for (const c of explainedDenials) {
+    it(`${c.name} is distinguishable by the calling agent, and still runs nothing`, async () => {
+      const { server, device } = makeServer(new ScriptedPolicy("deny", 0, c.source));
+      const dir = tempDir();
+      fs.writeFileSync(path.join(dir, "a.txt"), "x");
+      const { isError, payload } = await callTool(
+        server,
+        "plow_read_file",
+        { path: path.join(dir, "a.txt") },
+        AGENT,
+      );
+      expect(isError).toBe(true);
+      expect(payload.status).toBe("denied");
+      for (const fragment of c.fragments) expect(payload.reason).toMatch(fragment);
+      // Not the sentence a human pressing Deny produces.
+      expect(payload.reason).not.toBe("the owner of this Mac denied the request");
+      expect(events(device)).not.toContain("file_read");
+      // Fixed text for exactly this reason: nothing upstream, and nothing about
+      // the account, can reach a caller through it.
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toMatch(/plow_sk|sk-ant|Bearer/i);
+      expect(serialized).not.toMatch(/https?:\/\//);
+      expect(serialized).not.toMatch(/\bu_[a-z0-9]/i); // account uid shape
+    });
+  }
 
 });
 

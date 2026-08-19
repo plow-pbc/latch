@@ -52,10 +52,9 @@ export interface InferenceStatus {
   /** Model + limits of the *active* provider, for display. */
   info: string;
   /**
-   * The stored approval mode, in the SAME snapshot. It is decided by the same
-   * write that takes a credential away — `update` re-applies the interlock —
-   * so reading it separately gave the renderer two async views of one decision
-   * and a window where they disagreed.
+   * The stored approval mode, in the SAME snapshot as availability. Reading the
+   * two separately gave the renderer two async views of one settings file, and
+   * a window where they disagreed.
    */
   approvalMode: Settings["approvalMode"];
 }
@@ -178,17 +177,20 @@ export async function decideIntent(
   };
 
   if (mode === "adversarial") {
+    // Decide this BEFORE `review()`, which opens the timeline with "adversarial
+    // agent started" and names the model it is about to use. With no credential
+    // there is no call and no model, so recording one would put a reviewer that
+    // never ran into the audit log — and the audit log is the oracle.
+    if (!reviewerAvailable(settings)) {
+      return { decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER };
+    }
     const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
-    // The selected provider has no credential, so the reviewer the user chose
-    // does not exist. Deny, and say which standing condition caused it.
-    //
-    // NOTE this is a CHANGE, not a description of what came before. Selecting a
-    // provider used to be gated on having its credential, and Adversarial with
-    // no credential silently became Ask — the configured mode quietly replaced
-    // by a dialog. Selection is ungated now, so this state is reachable and has
-    // to answer for itself: deny (fail closed) with a reason that names the fix.
+    // The reviewer could not be assembled from what is on disk — a missing API
+    // base URL, say, which the check above does not cover. Same answer: deny,
+    // naming the standing condition rather than prompting a human out of the
+    // blue for a mode they did not pick.
     if (cause === "not_configured") {
       return { decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER };
     }
@@ -207,13 +209,13 @@ export async function decideIntent(
     };
   }
 
-  // Ask mode (or adversarial with no credential): show the dialog, optionally
-  // with the reviewer's hint when both the toggle and a credential are present.
-  // A 402 here costs only the hint — the human was always the decider.
-  // A hint is a nicety, so it is still skipped when the provider has no
-   // credential: running a review that cannot run would buy an audit pair and a
-   // null suggestion. This is not a gate — nothing the human chose is refused
-   // by it, and Adversarial mode is unaffected.
+  // Ask mode: show the dialog, optionally with the reviewer's hint when both
+  // the toggle and a credential are present. A 402 here costs only the hint —
+  // the human was always the decider.
+  //
+  // A hint is a nicety, so it is skipped when the provider has no credential:
+  // running a review that cannot run would buy an audit pair and a null
+  // suggestion. Not a gate — nothing the human chose is refused by it.
   const hint =
     settings.showAgentSuggestions && reviewerAvailable(settings)
       ? review().then((r) => ({

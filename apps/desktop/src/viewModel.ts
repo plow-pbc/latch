@@ -122,9 +122,11 @@ export function decidedByLabel(source: string | null): string | null {
     case "adversarial": return "Adversarial Agent";
     case "rule": return "Always-allow rule";
     case "policy": return "Policy (deny mode)";
-    // Not an internal label in the human's view: the operation was denied
-    // because the reviewer could not be paid for, not because anyone chose.
+    // Not internal labels in the human's view: the operation was denied because
+    // the reviewer could not run, not because anyone chose. One cannot be paid
+    // for; the other was never configured.
     case "no_credits": return "Adversarial Agent (out of credits)";
+    case "no_reviewer": return "Adversarial Agent (not configured)";
     case "ask":
     case "prompt": return "You (asked)";
     // The deadline, not a person — see APPROVAL_SOURCE_EXPIRED.
@@ -434,9 +436,10 @@ function describeStep(e: JSONValue): AuditStep {
       const cause = ev.get("cause").str;
       // "defer to you" is only true when the agent ran and chose not to decide.
       // A review that could not run at all defers to nobody — saying it did
-      // would misdescribe who decided the operation that follows.
+      // would misdescribe who decided the operation that follows. ANY cause
+      // means it could not run; that is what a cause is for.
       const label =
-        cause === "no_credits"
+        cause
           ? "could not run"
           : verdict === "allow"
             ? "allow"
