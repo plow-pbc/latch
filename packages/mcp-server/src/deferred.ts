@@ -21,6 +21,7 @@
  */
 import crypto from "node:crypto";
 import { JSONValue } from "@domo/protocol";
+import { Continuations } from "./continuation.js";
 
 /**
  * How long a tool may block before it must hand back a handle, until a relay
@@ -81,6 +82,14 @@ export class DeniedError extends Error {
  */
 export interface Progress {
   decided(): void;
+  /**
+   * The intent this call is about, as soon as the tool has built one.
+   *
+   * The continuation record is opened before the work runs — there is no other
+   * moment at which the handle is known — but it cannot be audited until it can
+   * name the operation a human was asked about.
+   */
+  intent(intentId: string): void;
 }
 
 type Entry = {
@@ -100,6 +109,8 @@ export class DeferredResults {
     private readonly ttlMs = HANDLE_TTL_MS,
     /** Injectable for tests; the real one is Date.now. */
     private readonly now: () => number = () => Date.now(),
+    /** Where the continuation lifecycle is recorded, when there is one. */
+    private readonly continuations: Continuations | null = null,
   ) {}
 
   /**
@@ -130,6 +141,7 @@ export class DeferredResults {
     work: (progress: Progress) => Promise<JSONValue>,
   ): Promise<JSONValue> {
     const handle = crypto.randomUUID().toUpperCase();
+    this.continuations?.open(handle, agentId);
     let reason: PendingReason = "awaiting_approval";
     const progress: Progress = {
       decided: () => {
@@ -137,6 +149,7 @@ export class DeferredResults {
         const entry = this.entries.get(handle);
         if (entry) entry.reason = "running";
       },
+      intent: (intentId: string) => this.continuations?.linkIntent(handle, intentId),
     };
 
     // Arm the budget BEFORE the work is invoked. Nothing here needs to know
@@ -155,8 +168,21 @@ export class DeferredResults {
     // after we have already returned a pending envelope, nothing else is
     // listening and Node would report an unhandled rejection.
     let settled = false;
+    // The outcome, held back until we know the call actually deferred. A call
+    // answered inside its budget has no continuation for anyone to come back
+    // to, and recording "result ready" for one would put a lifecycle in the
+    // timeline of an operation that never had one.
+    let announce: (() => void) | null = null;
     const record = (value: JSONValue) => {
       settled = true;
+      const status = (value as { status?: string }).status;
+      const tell = () => {
+        if (status === "ready") this.continuations?.ready(handle);
+        else if (status === "denied") this.continuations?.denied(handle);
+        else this.continuations?.failed(handle);
+      };
+      if (this.entries.has(handle)) tell();
+      else announce = tell;
       const entry = this.entries.get(handle);
       if (entry) {
         entry.terminal = value;
@@ -186,12 +212,16 @@ export class DeferredResults {
     const raced = await Promise.race([done, budgetExpired]);
 
     if (raced !== "budget") {
+      // Answered inside the budget: nothing outlived the call, so there is no
+      // continuation for anyone to come back to.
+      this.continuations?.closeInline(handle);
       if (raced.ok) return raced.result;
       throw raced.error;
     }
     // The budget expired first. Register the handle so the outcome has
     // somewhere to land — unless it landed in the same tick as the timeout.
     if (settled) {
+      this.continuations?.closeInline(handle);
       const landed = await done;
       if (landed.ok) return landed.result;
       throw landed.error;
@@ -207,6 +237,12 @@ export class DeferredResults {
       terminal: null,
       expiresAt: this.now() + this.ttlMs,
     });
+    // The envelope is about to go back down one relay exchange; remember which,
+    // because an acknowledgement names only the exchange.
+    this.continuations?.deferred(handle);
+    // An outcome that landed between the budget firing and this registration
+    // has been waiting to be told.
+    (announce as (() => void) | null)?.();
     return { status: "pending", handle, reason, retry_after_ms: RETRY_AFTER_MS };
   }
 
@@ -219,8 +255,15 @@ export class DeferredResults {
     this.sweep();
     const entry = this.entries.get(handle);
     if (!entry || entry.agentId !== agentId) return { status: "unknown", handle };
-    if (this.now() > entry.expiresAt) return { status: "expired", handle };
-    if (entry.terminal !== null) return entry.terminal;
+    if (this.now() > entry.expiresAt) {
+      this.continuations?.expired(handle);
+      return { status: "expired", handle };
+    }
+    if (entry.terminal !== null) {
+      // Non-consuming: the payload stays, and only the FIRST reader is recorded.
+      this.continuations?.collected(handle);
+      return entry.terminal;
+    }
     return {
       status: "pending",
       handle,
@@ -243,8 +286,12 @@ export class DeferredResults {
    * expired handle keeps answering `expired` rather than lying with `unknown`.
    */
   private sweep(): void {
-    const cutoff = this.now() - this.ttlMs;
+    const now = this.now();
+    const cutoff = now - this.ttlMs;
     for (const [handle, entry] of this.entries) {
+      // Retention elapsed. Recorded here as well as on a read, so an operation
+      // nobody ever came back for still ends up with an ending in the timeline.
+      if (entry.expiresAt < now) this.continuations?.expired(handle);
       if (entry.expiresAt < cutoff) this.entries.delete(handle);
     }
   }

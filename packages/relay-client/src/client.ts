@@ -46,8 +46,17 @@ export interface RelayBudget {
   acknowledgesResponses: boolean;
 }
 
-/** Serves one tunnelled HTTP exchange — chunk 7's MCP handler. */
-export type ServeRequest = (request: Request, auth?: RelayAuth) => Promise<Response>;
+/**
+ * Serves one tunnelled HTTP exchange — chunk 7's MCP handler.
+ *
+ * `rid` names the exchange, so whatever this call defers can be matched to the
+ * acknowledgement that arrives for it later.
+ */
+export type ServeRequest = (
+  request: Request,
+  auth?: RelayAuth,
+  rid?: string,
+) => Promise<Response>;
 
 export interface RelayClientOptions {
   /** The relay's device endpoint, e.g. `wss://api.plow.co/v1/relay/ws`. */
@@ -76,6 +85,12 @@ export interface RelayClientOptions {
    * relay never confirmed.
    */
   onResponseAck?: (rid: string) => void;
+  /**
+   * A response went out on `rid` and no acknowledgement is coming: the socket
+   * died, or the exchange can no longer be open. Delivery is unknown — not
+   * failed — and only the audit has anything to say about it.
+   */
+  onDeliveryUnknown?: (rid: string) => void;
   /**
    * The relay refused this credential. Terminal: it will not become valid by
    * waiting, so the client has stopped and the owner has to sign in again.
@@ -289,7 +304,10 @@ export class RelayClient {
   /** Forget rids nobody can still acknowledge — the exchange is long over. */
   private sweepAcks(now: number): void {
     for (const [rid, entry] of this.awaitingAck) {
-      if (entry.expiresAt <= now) this.awaitingAck.delete(rid);
+      if (entry.expiresAt <= now) {
+        this.awaitingAck.delete(rid);
+        this.options.onDeliveryUnknown?.(rid);
+      }
     }
   }
 
@@ -430,7 +448,7 @@ export class RelayClient {
         headers,
         body: frame.body ?? undefined,
       });
-      const served = await this.options.serve(request, frame.auth);
+      const served = await this.options.serve(request, frame.auth, frame.rid);
       response = {
         type: FRAME_RESPONSE,
         rid: frame.rid,
@@ -477,7 +495,9 @@ export class RelayClient {
     // The socket is gone, so no acknowledgement is coming for anything still
     // outstanding: its delivery is unknown, and a later reconnect must not
     // resolve a stale rid.
+    const stranded = [...this.awaitingAck.keys()];
     this.awaitingAck.clear();
+    for (const rid of stranded) this.options.onDeliveryUnknown?.(rid);
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.setConnected(false);

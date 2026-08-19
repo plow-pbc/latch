@@ -117,6 +117,9 @@ async function decideAndRun(
     capabilities,
     sessionId: ctx.sessionId,
   });
+  // Name the operation before it can block: from here the continuation record
+  // can be audited against the same intent id the human is shown.
+  progress.intent(intent.intentId);
   const response = await ctx.device.handleIntent(intent, payload, () => progress.decided());
   const r = jv(response);
   switch (r.get("status").str) {

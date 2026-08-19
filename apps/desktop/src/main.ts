@@ -719,7 +719,7 @@ async function startRelay(): Promise<void> {
     // relay path appended. Two URL fields that must agree is a support burden.
     url: relaySocketUrl(apiBaseUrl),
     credential,
-    serve: (request, auth) => server.fetch(request, auth),
+    serve: (request, auth, rid) => server.fetch(request, auth, rid),
     // The relay owns the exchange deadline and advertises it; the budgets that
     // run inside it have to leave delivery margin to spare. A relay that
     // advertises nothing keeps this Mac on the old budget.
@@ -737,6 +737,11 @@ async function startRelay(): Promise<void> {
     onBudgetRefused: (deadlineMs) => {
       console.log(`[relay] refused an exchange deadline of ${deadlineMs}ms; keeping safe defaults`);
     },
+    // The one thing that may say an operation was backgrounded — and the one
+    // thing that says its delivery is unknown. Both are observations off the
+    // socket; neither is ever inferred from elapsed time.
+    onResponseAck: (rid) => server.acknowledgeExchange(rid),
+    onDeliveryUnknown: (rid) => server.exchangeDeliveryUnknown(rid),
     onStatusChange: (isConnected) => {
       connected = isConnected;
       notifyRenderer("status:changed");

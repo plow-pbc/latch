@@ -28,6 +28,7 @@ import {
   DIRECT_CEILING_MS,
   Progress,
 } from "./deferred.js";
+import { Continuations, exchangeContext } from "./continuation.js";
 import { JobOwners } from "./jobs.js";
 import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./tools.js";
 
@@ -148,11 +149,19 @@ export interface McpServerOptions {
   budgetMs?: number;
   /** The direct-bounded ceiling, likewise overridable for tests. */
   directCeilingMs?: number;
+  /** Deferred-result retention. Overridable so a test need not wait it out. */
+  ttlMs?: number;
+  /** The clock retention is measured against. Injectable for the same reason. */
+  now?: () => number;
 }
 
 export interface DomoMcpServer {
-  /** Serve one HTTP exchange. `auth` is who the relay says is calling. */
-  fetch(request: Request, auth?: RelayAuth): Promise<Response>;
+  /**
+   * Serve one HTTP exchange. `auth` is who the relay says is calling; `rid`
+   * names the relay exchange it arrived on, so a later acknowledgement can be
+   * matched to whatever this call deferred.
+   */
+  fetch(request: Request, auth?: RelayAuth, rid?: string): Promise<Response>;
   /** The tool names this server advertises, for logging and tests. */
   toolNames: string[];
   /**
@@ -169,6 +178,15 @@ export interface DomoMcpServer {
   setDirectCeilingMs(ms: number): void;
   /** The ceiling the next direct-bounded call will be held to. */
   directCeilingMs(): number;
+  /**
+   * The relay matched our response for `rid` to the exchange waiting on it.
+   * The only thing that may move an operation to `backgrounded`.
+   */
+  acknowledgeExchange(rid: string): void;
+  /** The response for `rid` went out and will never be acknowledged. */
+  exchangeDeliveryUnknown(rid: string): void;
+  /** The continuation lifecycle, for the approval window and for tests. */
+  continuations: Continuations;
   close(): Promise<void>;
 }
 
@@ -185,7 +203,8 @@ export function createDomoMcpServer(
   // Defaults to the budget when a test names only that one, so a scripted short
   // budget still bounds the direct tools it exercises.
   let directCeiling = options.directCeilingMs ?? options.budgetMs ?? DIRECT_CEILING_MS;
-  const deferred = new DeferredResults(budgetMs);
+  const continuations = new Continuations(device.audit);
+  const deferred = new DeferredResults(budgetMs, options.ttlMs, options.now, continuations);
   const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
 
@@ -240,7 +259,11 @@ export function createDomoMcpServer(
                   : // A direct tool has no handle to fall back on, so it is
                     // held to the same ceiling the budget sets: answering late
                     // is answering into an exchange the relay has abandoned.
-                    await bounded(() => body({ decided: () => {} }), directCeiling, spec.name);
+                    await bounded(
+                      () => body({ decided: () => {}, intent: () => {} }),
+                      directCeiling,
+                      spec.name,
+                    );
               // Most results are one text block; a screenshot expands into an
               // image + text block via `__mcpContent`.
               return { content: toolBlocks(result) };
@@ -306,7 +329,10 @@ export function createDomoMcpServer(
       directCeiling = ms;
     },
     directCeilingMs: () => directCeiling,
-    async fetch(request, auth) {
+    acknowledgeExchange: (rid: string) => continuations.acknowledgeExchange(rid),
+    exchangeDeliveryUnknown: (rid: string) => continuations.exchangeDeliveryUnknown(rid),
+    continuations,
+    async fetch(request, auth, rid) {
       // Modern MCP requires Mcp-Method, and the SDK rejects a request whose
       // header and body disagree — so the header is a sound place to refuse
       // from, and costs nothing on the path every real call takes.
@@ -321,7 +347,12 @@ export function createDomoMcpServer(
         }
         return refusal(id, method);
       }
-      return handler.fetch(request, auth ? { authInfo: toAuthInfo(auth) } : undefined);
+      const serve = () => handler.fetch(request, auth ? { authInfo: toAuthInfo(auth) } : undefined);
+      // Everything this exchange defers is tagged with the rid, inside the
+      // async context rather than beside it: several agents are served at once,
+      // and a shared "current rid" would hand one agent's handle to another's
+      // acknowledgement.
+      return rid === undefined ? serve() : exchangeContext.run({ rid }, serve);
     },
     close: () => handler.close(),
   };
