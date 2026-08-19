@@ -100,6 +100,12 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
+  /** The first-run launch-at-login default has been applied
+   * (`applyLaunchAtLoginDefault`). NOT a mirror of the OS's login-item bit —
+   * loginItem.ts explains why none exists — only the record that the one-time
+   * default ran, so it can never run twice and a user who turns the toggle off
+   * stays off. Deliberately survives sign-out: a re-setup is not a first run. */
+  launchAtLoginDefaulted: boolean;
 }
 
 function settingsPath(home: string): string {
@@ -119,6 +125,7 @@ export function loadSettings(home: string): Settings {
     agentPurpose: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
+    launchAtLoginDefaulted: false,
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };

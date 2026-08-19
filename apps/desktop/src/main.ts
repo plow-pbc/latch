@@ -32,7 +32,12 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
-import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
+import {
+  applyLaunchAtLoginDefault,
+  launchAtLoginState,
+  LoginItemApi,
+  setLaunchAtLogin,
+} from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -649,6 +654,29 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
   setLaunchAtLogin(app.isPackaged, loginItems, on),
 );
 
+/**
+ * The one-time first-run default: a user who just set this Mac up wants it
+ * reachable, so launch at login turns ON the moment setup hands over to the
+ * app — and never again after that (`Settings.launchAtLoginDefaulted`), so
+ * turning it off in Settings sticks. Set only by Onboarding's `onSignedIn`,
+ * which fires when a credential is minted THIS session — an install that was
+ * already signed in (or someone reopening the setup window from Settings)
+ * never trips it.
+ */
+let setupSignedInThisRun = false;
+function applyFirstRunLaunchAtLogin(): void {
+  if (!setupSignedInThisRun) return;
+  const settings = loadSettings(home);
+  if (settings.launchAtLoginDefaulted) return;
+  // Signed out again between completing setup and this hand-over — the Mac the
+  // default was for no longer exists.
+  if (!settings.relayCredential.trim()) return;
+  if (applyLaunchAtLoginDefault(app.isPackaged, loginItems, false)) {
+    settings.launchAtLoginDefaulted = true;
+    saveSettings(home, settings);
+  }
+}
+
 // MARK: IPC for software updates (banner + Software Updates settings section).
 // One whole-state shape per read, renderer-side composition-free. In a
 // from-source run there is no controller: supported=false and the section
@@ -721,6 +749,10 @@ function openOnboardingWindow(): void {
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
+    // Every hand-over from a completed setup to the main window closes this
+    // window — Continue, the close box, the tray — so this is the one place
+    // the first-run launch-at-login default lands.
+    applyFirstRunLaunchAtLogin();
     // Closing the gate quits; closing the confirmation behind it hands over to
     // the app, the same as Continue. See WindowGate.setupClosed.
     gate.setupClosed();
@@ -870,6 +902,9 @@ app.whenReady().then(async () => {
     isConnected: () => connected,
     deviceName: `Plow (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
+    onSignedIn: () => {
+      setupSignedInThisRun = true;
+    },
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.
     warn: (message) => console.log(`[onboarding] ${message}`),

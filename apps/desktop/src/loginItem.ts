@@ -9,6 +9,8 @@
  * mirror could only drift. So every read asks the OS fresh (the same reason
  * `capabilities:get` re-probes Full Disk Access) and a write reports back
  * what the OS then holds, not what was asked for.
+ * (`Settings.launchAtLoginDefaulted` is not that field: it records that the
+ * one-time first-run default below has run, never what the bit is.)
  *
  * Only the packaged install is supported. A from-source run is the stock
  * Electron.app bundle, so registering it would enroll the development binary
@@ -50,4 +52,29 @@ export function setLaunchAtLogin(
 ): LaunchAtLoginState {
   if (supported) api.set({ openAtLogin: !!on });
   return launchAtLoginState(supported, api);
+}
+
+/**
+ * The one-time first-run default: the moment setup completes and hands the
+ * user over to the app, launch at login switches ON — once, ever.
+ * `alreadyDefaulted` is the persisted record of that moment
+ * (`Settings.launchAtLoginDefaulted`); once it is true the bit belongs to the
+ * user, so turning the toggle off STAYS off.
+ *
+ * Returns whether the default now counts as applied — the value to persist.
+ * An unsupported (from-source) run returns false rather than burning the one
+ * shot: it must not enroll the stock Electron binary (the refusal above), and
+ * a packaged install's real first run still deserves its default.
+ *
+ * The attempt is the shot. If the OS declines the write we do not come back
+ * and try again on every launch — the Settings toggle is the recourse.
+ */
+export function applyLaunchAtLoginDefault(
+  supported: boolean,
+  api: LoginItemApi,
+  alreadyDefaulted: boolean,
+): boolean {
+  if (alreadyDefaulted || !supported) return alreadyDefaulted;
+  api.set({ openAtLogin: true });
+  return true;
 }

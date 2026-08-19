@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "../src/loginItem.js";
+import {
+  applyLaunchAtLoginDefault,
+  launchAtLoginState,
+  LoginItemApi,
+  setLaunchAtLogin,
+} from "../src/loginItem.js";
 
 /** A stand-in for Electron's login-item API: a settable bit plus a call log. */
 function fakeOs(openAtLogin = false) {
@@ -58,5 +63,27 @@ describe("setLaunchAtLogin", () => {
     const { api } = fakeOs(false);
     const stubborn: LoginItemApi = { get: api.get, set: () => {} };
     expect(setLaunchAtLogin(true, stubborn, true)).toEqual({ supported: true, openAtLogin: false });
+  });
+});
+
+describe("applyLaunchAtLoginDefault — the one-time first-run default", () => {
+  it("turns the bit on and reports the default as applied", () => {
+    const { os, api } = fakeOs(false);
+    expect(applyLaunchAtLoginDefault(true, api, false)).toBe(true);
+    expect(os.openAtLogin).toBe(true);
+    expect(os.writes).toEqual([true]);
+  });
+
+  it("never touches the OS once applied — a toggle the user turned off STAYS off", () => {
+    const { os, api } = fakeOs(false); // off because the user switched it off
+    expect(applyLaunchAtLoginDefault(true, api, true)).toBe(true);
+    expect(os.writes).toEqual([]);
+    expect(os.openAtLogin).toBe(false);
+  });
+
+  it("refuses from a from-source run WITHOUT burning the one shot", () => {
+    const { os, api } = fakeOs(false);
+    expect(applyLaunchAtLoginDefault(false, api, false)).toBe(false);
+    expect(os.writes).toEqual([]);
   });
 });

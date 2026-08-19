@@ -7,6 +7,7 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   Onboarding,
+  OnboardingDeps,
 } from "../src/onboarding.js";
 import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
@@ -877,3 +878,46 @@ describe("a sign-out while startRelay is dialling", () => {
   });
 });
 
+
+describe("onSignedIn — the seam behind the first-run launch-at-login default", () => {
+  it("fires exactly once when activation completes", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    let signedIn = 0;
+    const onboarding = build({ onSignedIn: () => (signedIn += 1) });
+    await onboarding.begin();
+    await settle();
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(signedIn).toBe(1);
+  });
+
+  it("fires on the phone-code path too", async () => {
+    let signedIn = 0;
+    const onboarding = build({ onSignedIn: () => (signedIn += 1) });
+    onboarding.usePhoneCode();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(signedIn).toBe(1);
+  });
+
+  it("does NOT fire for a code that fails, and not merely for reaching the connected screen", async () => {
+    plow.verifyFails = "unauthorized";
+    let signedIn = 0;
+    const onboarding = build({ onSignedIn: () => (signedIn += 1) });
+    onboarding.usePhoneCode();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+    expect(signedIn).toBe(0);
+
+    // A constructor that finds an old credential opens on "connected" without
+    // any mint this session — that must not count as signing in either.
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    const relaunched = build({ onSignedIn: () => (signedIn += 1) });
+    expect(relaunched.state().step).toBe("connected");
+    expect(signedIn).toBe(0);
+  });
+});
