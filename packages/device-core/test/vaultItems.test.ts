@@ -187,12 +187,11 @@ describe("the other three types", () => {
 });
 
 describe("the site a login is saved with", () => {
-  it("completes a bare host, because that is what a person types", () => {
-    expect(checkedUrls(["Daniel.com"])).toEqual(["https://Daniel.com"]);
-  });
-
-  it("keeps a real URL as it is", () => {
-    expect(checkedUrls(["https://github.com/login"])).toEqual(["https://github.com/login"]);
+  it.each([
+    ["completes a bare host, because that is what a person types", "Daniel.com", "https://Daniel.com"],
+    ["keeps a real URL as it is", "https://github.com/login", "https://github.com/login"],
+  ])("%s", (_case, typed, stored) => {
+    expect(checkedUrls([typed])).toEqual([stored]);
   });
 
   it("refuses a login with no site, which could never be filled", () => {
