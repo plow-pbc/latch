@@ -67,14 +67,10 @@ import {
 const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
 // A pre-rename "Domo…" home is moved to the new name here, before Chromium
 // opens anything under it (migrateHome.ts explains why a rename is the whole
-// migration). If the move fails the app still starts, on a fresh home — the
-// old folder is left intact, so nothing is lost, just not signed in.
-try {
-  if (migrateLegacyHome(instance)) {
-    console.log(`[app] moved legacy home ${instance.legacyHome} -> ${instance.home}`);
-  }
-} catch (err) {
-  console.error(`[app] could not move legacy home ${instance.legacyHome}: ${String(err)}`);
+// migration). A failed move ABORTS startup — deliberately uncaught: see
+// migrateHome.ts for why continuing would strand the old home for good.
+if (migrateLegacyHome(instance.home)) {
+  console.log(`[app] moved legacy home into ${instance.home}`);
 }
 // THE NAME SET HERE IS THE ONE THE KEYCHAIN SEES. Chromium captures the string
 // it derives `<name> Safe Storage` from at startup, BEFORE `app.whenReady`, and
