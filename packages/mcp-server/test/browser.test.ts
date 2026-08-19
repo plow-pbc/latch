@@ -64,7 +64,7 @@ function makeServer(
     },
     camoufoxInstallDir: null,
   };
-  const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, undefined, runtime);
+  const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, runtime);
   const server = createDomoMcpServer(device);
   cleanups.push(() => server.close());
   cleanups.push(() => device.shutdown());
@@ -81,7 +81,7 @@ const events = (device: DeviceAgent): string[] =>
 async function open(server: DomoMcpServer, origins: string[], metadata = true): Promise<string> {
   const { payload, isError } = await callTool(
     server,
-    "browser_open",
+    "plow_browser_open",
     { origins, credentials_metadata: metadata },
     AGENT,
   );
@@ -90,15 +90,15 @@ async function open(server: DomoMcpServer, origins: string[], metadata = true): 
 }
 
 const act = (server: DomoMcpServer, session: string, action: string, extra: Record<string, unknown> = {}) =>
-  callTool(server, "browser", { session, action, ...extra }, AGENT);
+  callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
 
 describe("browser tools (fake runtime)", () => {
-  it("advertises the browsing skill via list_tools + read_skill", async () => {
+  it("advertises the browsing skill via plow_list_skills + plow_read_skill", async () => {
     const { server } = makeServer();
-    const list = parse(await rpc(server, "tools/call", { name: "list_tools", arguments: {} }, AGENT));
+    const list = parse(await rpc(server, "tools/call", { name: "plow_list_skills", arguments: {} }, AGENT));
     const skills = JSON.parse(list.result!.content![0].text).skills as { name: string }[];
     expect(skills.map((s) => s.name)).toContain("camoufox-browsing");
-    const { payload } = await callTool(server, "read_skill", { name: "camoufox-browsing" }, AGENT);
+    const { payload } = await callTool(server, "plow_read_skill", { name: "camoufox-browsing" }, AGENT);
     expect(payload.body).toContain("fill_secret");
   });
 
@@ -112,7 +112,7 @@ describe("browser tools (fake runtime)", () => {
 
     // Screenshot arrives as a real MCP image content block.
     const shot = parse(await rpc(
-      server, "tools/call", { name: "browser", arguments: { session, action: "screenshot" } }, AGENT,
+      server, "tools/call", { name: "plow_browser", arguments: { session, action: "screenshot" } }, AGENT,
     ));
     const blocks = shot.result!.content as { type: string; data?: string; text?: string }[];
     expect(blocks[0].type).toBe("image");
@@ -128,26 +128,26 @@ describe("browser tools (fake runtime)", () => {
     await act(server, session, "click", { selector: "#popup" });
     await act(server, session, "use_page", { index: 1 });
     expect((await act(server, session, "text")).isError).toBe(true);
-    const ext = await callTool(server, "browser_request", { session, origins: ["popup.example"] }, AGENT);
+    const ext = await callTool(server, "plow_browser_request", { session, origins: ["popup.example"] }, AGENT);
     expect(ext.isError).toBe(false);
     expect((await act(server, session, "text")).isError).toBe(false);
 
     // The vault answers on its own tool now, with no session involved; filling
     // still needs an approved item inside the session.
     await act(server, session, "use_page", { index: 0 });
-    const creds = await callTool(server, "vault", { action: "list" }, AGENT);
+    const creds = await callTool(server, "plow_vault", { action: "list" }, AGENT);
     const ids = (creds.payload.items as { id: string }[]).map((i) => i.id);
     // Asked without ever opening a session, which is the point of the split.
-    const cold = await callTool(server, "vault", { action: "list" }, AGENT);
+    const cold = await callTool(server, "plow_vault", { action: "list" }, AGENT);
     expect((cold.payload.items as unknown[]).length).toBe(ids.length);
-    const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
+    const described = await callTool(server, "plow_vault", { action: "describe", item: "L1" }, AGENT);
     expect(described.payload.fields).toContainEqual({ label: "password", hidden: true, custom: false, alias: false });
     expect(JSON.stringify(described.payload)).not.toContain("hunter2");
     expect(ids).toEqual(expect.arrayContaining(["L1", "C1"]));
     expect(JSON.stringify(creds.payload)).not.toContain("hunter2");
 
     expect((await act(server, session, "fill_secret", { selector: "#pass", item: "L1", field: "password" })).isError).toBe(true);
-    const grant = await callTool(server, "browser_request", { session, credential_items: ["L1"] }, AGENT);
+    const grant = await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
     expect(grant.isError).toBe(false);
 
     const filled = await act(server, session, "fill_secret", { selector: "#pass", item: "L1", field: "password" });
@@ -157,7 +157,7 @@ describe("browser tools (fake runtime)", () => {
     expect(fs.readFileSync(fillLog, "utf8")).toContain("#pass\thunter2");
     expect(JSON.stringify(filled.payload)).not.toContain("hunter2");
 
-    const closed = await callTool(server, "browser_close", { session }, AGENT);
+    const closed = await callTool(server, "plow_browser_close", { session }, AGENT);
     expect(closed.payload.closed).toBe(true);
 
     const names = events(device);
@@ -175,7 +175,7 @@ describe("browser tools (fake runtime)", () => {
     const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once", denyKinds: ["credential"] }));
     const session = await open(server, ["pizza.example"], false);
     expect((await act(server, session, "goto", { url: "https://pizza.example/" })).isError).toBe(false);
-    const denied = await callTool(server, "browser_request", { session, credential_items: ["L1"] }, AGENT);
+    const denied = await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied.payload)).toContain("denied");
   });
@@ -186,13 +186,13 @@ describe("browser tools (fake runtime)", () => {
     const { server, device, argvLog } = makeServer();
 
     const hidden = await callTool(
-      server, "browser_open", { origins: ["pizza.example"], headed: false }, AGENT,
+      server, "plow_browser_open", { origins: ["pizza.example"], headed: false }, AGENT,
     );
     expect(hidden.isError, JSON.stringify(hidden.payload)).toBe(false);
     expect(hidden.payload.headed).toBe(false);
-    await callTool(server, "browser_close", { session: hidden.payload.session }, AGENT);
+    await callTool(server, "plow_browser_close", { session: hidden.payload.session }, AGENT);
 
-    const watched = await callTool(server, "browser_open", { origins: ["pizza.example"] }, AGENT);
+    const watched = await callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT);
     expect(watched.payload.headed).toBe(true);
 
     // The flag only exists on the command line, so the launches are the oracle.
@@ -212,9 +212,9 @@ describe("browser tools (fake runtime)", () => {
     const runOnce = async () => {
       const session = await open(server, ["pizza.example"]);
       await act(server, session, "goto", { url: "https://pizza.example/" });
-      await callTool(server, "browser_request", { session, credential_items: ["L1"] }, AGENT);
+      await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
       await act(server, session, "fill_secret", { selector: "#pass", item: "L1", field: "password" });
-      await callTool(server, "browser_close", { session }, AGENT);
+      await callTool(server, "plow_browser_close", { session }, AGENT);
     };
     await runOnce(); // rules stored here
     const before = events(device).filter((e) => e === "intent_decision").length;

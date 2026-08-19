@@ -1,7 +1,7 @@
 /**
  * Per-agent ownership of running command jobs (design §4.4).
  *
- * `run_command` hands back a job handle and `get_output` reads more of it. The
+ * `plow_run_command` hands back a job handle and `plow_get_output` reads more of it. The
  * executor that mints those handles knows nothing about agents — it is one
  * registry for the whole process — so without this, any agent holding or
  * guessing a handle could read another agent's command output, and two agents

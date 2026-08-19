@@ -16,15 +16,15 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   (`Connection`/`ConnectionDialer`) and the WebSocket (`ws`) **client** half.
   This Mac only ever dials out, so there is no listener.
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
-  `FileOps`, `Executor` (+ generated seatbelt profile), `BlessedToolRegistry`,
-  `AuditLog`, `GoalsLibrary`, identity/key store; `src/browser/` is the local
+  `FileOps`, `Executor` (+ generated seatbelt profile), `SkillRegistry`,
+  `AuditLog`, identity/key store; `src/browser/` is the local
   browsing subsystem (session grants, origin enforcement, credential gate —
   DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
   Camoufox server + 1Password broker (pins in `runtime.lock.json`;
   `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
   tests use fake servers and need no Python).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
-  (revision 2026-07-28): the reduced tool surface (including the `browser_*`
+  (revision 2026-07-28): the reduced tool surface (including the `plow_browser_*`
   tools), capability construction from tool arguments, and the deferred-result
   contract. Binds no port; takes a `Request`, returns a `Response`.
 - `packages/relay-client` (`@domo/relay-client`) — dials the Plow relay, speaks
@@ -63,7 +63,7 @@ the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-AP
   text rides along for the human to read and never influences the bound.
 - **Nothing may block past the call budget.** The relay's pending future times
   out at **20 seconds**, so a tunnelled call has to answer well inside that. Any
-  tool that cannot returns a deferred handle and keeps working; `get_result`
+  tool that cannot returns a deferred handle and keeps working; `plow_get_result`
   retrieves it. A handle belongs to the `agent_id` that created it. This is why
   file operations are async and size-capped: synchronous work blocks the event
   loop and the budget timer never fires.

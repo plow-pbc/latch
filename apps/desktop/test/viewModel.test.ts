@@ -96,10 +96,10 @@ describe("auditActivities (grouping)", () => {
         { event: "intent_decision", intentId: "i", decision, source, ts: "2026-08-09T12:00:01Z" },
       ])[0]!;
     expect(mk("approve").decidedBy).toBe("Auto-approved");
-    expect(mk("adversarial").decidedBy).toBe("Adversarial Agent");
+    expect(mk("adversarial").decidedBy).toBe("AI Reviewer");
     // Not the raw source string: the human's view says what happened, and
     // "no_credits" is a label for us, not for them.
-    expect(mk("no_credits").decidedBy).toBe("Adversarial Agent (out of credits)");
+    expect(mk("no_credits").decidedBy).toBe("AI Reviewer (out of credits)");
     expect(mk("ask").decidedBy).toBe("You (asked)");
     expect(mk("policy", "deny").decidedBy).toBe("Policy (deny mode)");
     // A rule-matched decision (source set by the engine) reads as the rule.
@@ -162,9 +162,88 @@ describe("auditActivities (grouping)", () => {
     expect(activityMatches(a, "nonexistent")).toBe(false);
   });
 
-  it("survives unknown event types", () => {
+  it("a vault metadata read is over when logged — never Pending", () => {
+    const acts = auditActivities([
+      { event: "credential_metadata", op: "list", source: "vault", ts: "2026-08-18T12:00:00Z" },
+      { event: "credential_metadata", op: "describe", item: "L1", source: "vault", ts: "2026-08-18T12:00:05Z" },
+    ]);
+    expect(acts).toHaveLength(2); // standalone events, one row each (newest first)
+    const describeRead = acts[0]!;
+    const listRead = acts[1]!;
+    expect(listRead.title).toBe("Credential list read");
+    expect(listRead.status).toBe("Completed");
+    expect(listRead.tone).toBe("green");
+    expect(listRead.category).toBe("approved");
+    expect(describeRead.title).toBe("Credential fields read — L1");
+    expect(describeRead.status).toBe("Completed");
+    expect(listRead.timeline.map((s) => s.text)).toEqual(["Credential list read (names only)"]);
+  });
+
+  it("survives unknown event types — as a record, not a pending operation", () => {
     const acts = auditActivities([{ event: "future_event", ts: "2026-08-09T12:00:00Z" }]);
-    expect(acts[0]!.status).toBe("Pending");
+    expect(acts[0]!.status).toBe("Info");
     expect(acts[0]!.title).toBe("future_event");
+  });
+
+  it("an expired approval reads as a timeout, not a refusal", () => {
+    const acts = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: df -h", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "deny", source: "expired", ts: "2026-08-18T12:15:00Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Timed out");
+    expect(acts[0]!.tone).toBe("amber");
+    expect(acts[0]!.decidedBy).toBe("No one (timed out)");
+    expect(acts[0]!.category).toBe("denied"); // still failed closed
+  });
+
+  it("an approval abandoned by an app quit reads as unanswered, not pending", () => {
+    const acts = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: df -h", ts: "2026-08-18T12:00:00Z" },
+      { event: "approval_abandoned", intentId: "i1", ts: "2026-08-18T12:05:00Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Not answered");
+    expect(acts[0]!.tone).toBe("zinc");
+    expect(acts[0]!.timeline.map((s) => s.text)).toContain(
+      "Never answered — the app closed while the approval was pending",
+    );
+  });
+
+  it("a browser_open intent shows its decision; the session row is live from the open", () => {
+    const acts = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "open browser: dominos.com", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "browser_session_opened", intentId: "i1", session: "S", origins: ["dominos.com"], ts: "2026-08-18T12:00:02Z" },
+    ]);
+    // The open event belongs to both stories: the intent row says how it was
+    // decided, and browser:S exists — Browsing — before any command runs.
+    const intent = acts.find((a) => a.id === "intent:i1")!;
+    expect(intent.status).toBe("Allowed once");
+    expect(intent.tone).toBe("green");
+    const session = acts.find((a) => a.id === "browser:S")!;
+    expect(session.status).toBe("Browsing");
+    expect(session.tone).toBe("green");
+  });
+
+  it("a handle-only exec_end from an old log shows its exit, not Pending", () => {
+    const acts = auditActivities([
+      { event: "exec_end", handle: "H1", exit_code: 0, ts: "2026-08-18T12:00:00Z" },
+      { event: "exec_end", handle: "H2", exit_code: 3, ts: "2026-08-18T12:00:05Z" },
+    ]);
+    const [failed, finished] = [acts[0]!, acts[1]!]; // newest first
+    expect(finished.status).toBe("Finished");
+    expect(finished.tone).toBe("green");
+    expect(finished.category).toBe("approved");
+    expect(finished.title).toBe("Command finished");
+    expect(failed.status).toBe("Failed (exit 3)");
+    expect(failed.tone).toBe("amber");
+    expect(failed.category).toBe("failed");
+  });
+
+  it("browser runtime start/stop are lifecycle noise, never rows", () => {
+    const acts = auditActivities([
+      { event: "browser_started", pid: 12, browser_version: "1.0", ts: "2026-08-18T12:00:00Z" },
+      { event: "browser_stopped", ts: "2026-08-18T12:01:00Z" },
+    ]);
+    expect(acts).toHaveLength(0);
   });
 });

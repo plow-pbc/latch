@@ -54,7 +54,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       credentialBrokerCommand: [path.join(fixtures, "fake-broker", "seed-vault-broker")],
       env: { ...base.env, FAKE_BROKER_VAULT: vaultPath },
     };
-    device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), undefined, runtime);
+    device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), runtime);
     server = createDomoMcpServer(device);
   }, 60_000);
 
@@ -65,14 +65,14 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
   });
 
   const act = async (action: string, extra: Record<string, unknown> = {}, expectOk = true) => {
-    const r = await callTool(server, "browser", { session, action, ...extra }, AGENT);
+    const r = await callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
     if (expectOk) expect(r.isError, `${action}: ${JSON.stringify(r.payload)}`).toBe(false);
     return r;
   };
 
   it("logs in, orders, pays in the iframe, confirms — secrets never cross MCP", async () => {
     const opened = await callTool(
-      server, "browser_open",
+      server, "plow_browser_open",
       { origins: ["127.0.0.1"], credentials_metadata: true, goal: "order a pizza on the test site" },
       AGENT,
     );
@@ -82,15 +82,15 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await act("goto", { url: site.url + "/" });
 
     // The vault answers on its own tool, with no session involved.
-    const creds = await callTool(server, "vault", { action: "list" }, AGENT);
+    const creds = await callTool(server, "plow_vault", { action: "list" }, AGENT);
     const login = (creds.payload.items as { id: string }[]).find((i) => i.id === "L1")!;
     expect(login).toBeTruthy();
     expect(JSON.stringify(creds.payload)).not.toContain("pizza-time-99");
 
-    const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
+    const described = await callTool(server, "plow_vault", { action: "describe", item: "L1" }, AGENT);
     expect(described.payload.fields).toContainEqual({ label: "password", hidden: true, custom: false, alias: false });
 
-    await callTool(server, "browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
+    await callTool(server, "plow_browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
 
     await act("fill", { selector: "#user", value: "jon@example.com" });
     await act("fill_secret", { selector: "#pass", item: "L1", field: "password" });
@@ -117,7 +117,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(site.state.orders.at(-1)).toMatchObject({ pizza: "pepperoni", cardNumber: "4111111111111111", cvv: "123" });
 
     // A real screenshot arrives as an image block.
-    const shot = parse(await rpc(server, "tools/call", { name: "browser", arguments: { session, action: "screenshot" } }, AGENT));
+    const shot = parse(await rpc(server, "tools/call", { name: "plow_browser", arguments: { session, action: "screenshot" } }, AGENT));
     const blocks = shot.result!.content as { type: string; data?: string }[];
     expect(blocks[0].type).toBe("image");
     expect(Buffer.from(blocks[0].data ?? "", "base64").length).toBeGreaterThan(5000);
@@ -128,7 +128,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(frame!.mime).toBe("image/jpeg");
     expect(Buffer.from(frame!.dataB64, "base64").length).toBeGreaterThan(5000);
 
-    await callTool(server, "browser_close", { session }, AGENT);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
 
     // …and never resurrects a browser the session close shut down.
     expect(await device.browserViewFrame()).toBeNull();

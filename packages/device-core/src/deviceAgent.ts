@@ -12,8 +12,8 @@
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import os from "node:os";
 import path from "node:path";
+import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
-import { BlessedToolRegistry } from "./blessedTools.js";
 import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
@@ -34,6 +34,14 @@ import { SkillRegistry } from "./skills.js";
 export const DENIAL_SOURCE_NO_CREDITS = "no_credits";
 
 /**
+ * A delegate that denies because the reviewer it was told to use does not
+ * exist — no credential for the selected provider. Same channel as
+ * `no_credits`, and the same reasoning: a standing condition the caller can
+ * act on, so it says so instead of looking like a decision someone made.
+ */
+export const DENIAL_SOURCE_NO_REVIEWER = "no_reviewer";
+
+/**
  * Denial sources whose reason is worth telling the calling agent, and the exact
  * sentence it gets.
  *
@@ -45,15 +53,35 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   [DENIAL_SOURCE_NO_CREDITS]:
     "inference unavailable: this Plow account is out of credits, so the " +
     "adversarial reviewer could not run and the operation was denied",
+  // Nobody answered. This used to fall through to the default sentence, so an
+  // agent was told "the owner of this Mac denied the request" — byte-identical
+  // to a human pressing Deny — and stopped, correctly, on a refusal that never
+  // happened. The owner had simply walked away from the dialog. Distinguishing
+  // the two is the whole fix: one is a decision, the other is a timeout, and
+  // only one of them is worth trying again.
+  //
+  // RETRY FIRST, and say the old prompt is dead. Expiry settles this call from
+  // a timer; it does not close the window, which stays on screen and inert. An
+  // earlier version of this sentence said "ask the user to approve it on their
+  // Mac, then try again" — following it, the user clicks a dead prompt, nothing
+  // runs, and the retry's dialog (queued behind that window) appears as if they
+  // had been asked twice. That is the loop, driven by our own copy.
+  [DENIAL_SOURCE_NO_REVIEWER]:
+    "inference unavailable: Adversarial mode is selected but its provider has " +
+    "no credential on this Mac, so the reviewer could not run and the " +
+    "operation was denied — the owner needs to add one in Settings",
+  [APPROVAL_SOURCE_EXPIRED]:
+    "no one answered in time, so the request expired and was denied — a timeout, " +
+    "not a refusal. Try again to raise a fresh request; any prompt still on the " +
+    "user's screen from the first attempt is expired and does nothing",
 };
 
 export class DeviceAgent {
   readonly identity: DeviceIdentity;
   readonly audit: AuditLog;
   readonly policy: PolicyEngine;
-  readonly blessedTools: BlessedToolRegistry;
   readonly executor: Executor;
-  /** Owner-published skills (how-to guides), surfaced via list_tools/read_skill. */
+  /** Owner-published skills (how-to guides), surfaced via plow_list_skills/plow_read_skill. */
   readonly skills: SkillRegistry;
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
@@ -68,14 +96,12 @@ export class DeviceAgent {
     public readonly home: string,
     name: string,
     private readonly delegate: PolicyDelegate,
-    blessedTools?: BlessedToolRegistry,
     browserRuntime?: ResolvedBrowserRuntime | null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
-    this.blessedTools = blessedTools ?? BlessedToolRegistry.standard();
     this.skills = new SkillRegistry();
     this.skills.loadDir(path.join(home, "device/skills"));
     if (browserRuntime) {
@@ -88,7 +114,7 @@ export class DeviceAgent {
         // Visible by default: the owner should be able to watch what is being
         // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
         // which is what the test tiers and any unattended run want. This is only
-        // the default — browser_open carries the agent's per-session choice, so
+        // the default — plow_browser_open carries the agent's per-session choice, so
         // the owner can ask for the background (or to watch) in the moment.
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
@@ -100,7 +126,7 @@ export class DeviceAgent {
         // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
         // a hung page/eval returns an error in time instead of a torn 504. The
         // cold start is separate (startTimeoutMs) and paid by the deferrable
-        // browser_open, so it does not need to fit this bound.
+        // plow_browser_open, so it does not need to fit this bound.
         actionTimeoutMs: 15_000,
         audit: auditFn,
       });
@@ -161,6 +187,7 @@ export class DeviceAgent {
       });
       this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
+      this.browserHost.onCrash = () => this.browserSessions?.noteCrash();
     }
   }
 
@@ -275,8 +302,6 @@ export class DeviceAgent {
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
-    const toolCap = intent.capabilities.find((c) => c.kind === "tool");
-    if (toolCap) return this.executeTool(intent, toolCap, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -357,6 +382,25 @@ export class DeviceAgent {
           intentId: intent.intentId,
           exit_code: result.exitCode ?? -1,
         });
+      } else {
+        // A deferred run's end is recorded when it actually ends, keyed to the
+        // intent — never from the polling path, which may run many times or
+        // not at all.
+        this.executor.onExit(result.handle, (exitCode) => {
+          // Fires from the child's exit event, possibly mid-shutdown; a failed
+          // append must not become an uncaught exception in the event loop.
+          try {
+            this.audit.record("exec_end", {
+              intentId: intent.intentId,
+              handle: result.handle,
+              exit_code: exitCode,
+            });
+          } catch (error) {
+            // Nowhere durable left to write it — the durable sink is what
+            // failed — but the loss should at least be visible in a terminal.
+            console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
+          }
+        });
       }
       const response: { [k: string]: JSONValue } = {
         status: result.running ? "running" : "completed",
@@ -369,25 +413,6 @@ export class DeviceAgent {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-      return { status: "error", error: message };
-    }
-  }
-
-  private async executeTool(
-    intent: Intent,
-    toolCap: { tool?: string },
-    payload: JSONValue,
-  ): Promise<JSONValue> {
-    const name = toolCap.tool;
-    const tool = name !== undefined ? this.blessedTools.tool(name) : null;
-    if (!tool || name === undefined) return { status: "error", error: "unknown tool" };
-    try {
-      const result = await tool.invoke(jv(payload).get("args").value ?? null);
-      this.audit.record("tool_invoked", { intentId: intent.intentId, tool: name });
-      return { status: "completed", result };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: message });
       return { status: "error", error: message };
     }
   }
@@ -421,7 +446,7 @@ export class DeviceAgent {
       );
     }
     if (origins.length === 0) {
-      return { status: "error", error: "browser_open requires at least one origin" };
+      return { status: "error", error: "plow_browser_open requires at least one origin" };
     }
     // Window mode is delivery detail too: it changes nothing about what the
     // owner approved, so it rides the payload and leaves the capability set —
@@ -453,9 +478,6 @@ export class DeviceAgent {
 
   getOutput(handle: string, since = 0): JSONValue {
     const result = this.executor.output(handle, since);
-    if (!result.running && result.exitCode !== null) {
-      this.audit.record("exec_end", { handle, exit_code: result.exitCode });
-    }
     const response: { [k: string]: JSONValue } = {
       status: result.running ? "running" : "completed",
       output: result.output.toString("utf8"),

@@ -92,6 +92,33 @@ describe("settings storage", () => {
     expect(settings.relayCredential).toBe("plow_sk_secret");
   });
 
+  /**
+   * The purpose statement is the one field here that a human writes in prose,
+   * and the reviewer is told to trust it. A home that has never been told
+   * anything must say exactly that — empty, never a seeded sentence someone
+   * did not write.
+   */
+  it("starts with no agent purpose, and round-trips what the owner writes", () => {
+    const home = tempHome();
+    expect(loadSettings(home).agentPurpose).toBe("");
+
+    const settings = loadSettings(home);
+    settings.agentPurpose = "Groceries and calendar only.\nNever touch ~/Developer.";
+    saveSettings(home, settings);
+
+    expect(loadSettings(home).agentPurpose).toBe(
+      "Groceries and calendar only.\nNever touch ~/Developer.",
+    );
+  });
+
+  it("gives a settings file written before the purpose existed the empty default", () => {
+    const home = tempHome();
+    const file = path.join(home, "app/settings.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ relayCredential: "plow_sk_secret" }));
+    expect(loadSettings(home).agentPurpose).toBe("");
+  });
+
   it("no longer carries a connection string or a certificate pin", () => {
     const home = tempHome();
     const settings = loadSettings(home);
