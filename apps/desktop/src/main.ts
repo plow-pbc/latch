@@ -572,12 +572,12 @@ ipcMain.handle("vault:items", async () => {
   // vault that has not started — that sent people to debug a running server.
   // Read BEFORE starting: a locked account is the very case where the vault's
   // own bootstrap cannot finish, and the explanation has to survive that.
-  const locked = readCredentialsState(server.url, server.dataDir);
+  const locked = readCredentialsState(server.dataDir);
   if (locked.status === "locked") return { locked: true, reason: locked.reason };
   // Started, not merely launched: the account is written by the vault's first
   // run, so reading its state before that finishes reports an empty vault.
   await server.start();
-  if (readCredentialsState(server.url, server.dataDir).status !== "ok") return null;
+  if (readCredentialsState(server.dataDir).status !== "ok") return null;
   // Every type, not only logins: a card and a note are things the owner keeps
   // here too, and the tab is where they are kept.
   return vault.list();
@@ -891,7 +891,7 @@ app.whenReady().then(async () => {
   // "the vault screen looks wrong" into a one-line answer. `locked` means the
   // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
   if (device.vaultServer) {
-    const vaultState = readCredentialsState(device.vaultServer.url, device.vaultServer.dataDir);
+    const vaultState = readCredentialsState(device.vaultServer.dataDir);
     console.log(
       `[vault] account: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),

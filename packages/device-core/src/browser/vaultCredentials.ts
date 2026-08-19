@@ -21,7 +21,7 @@ export type VaultCredentialsState =
  * The account itself is deliberately NOT returned: nothing needs it but the
  * code that signs in, which reads the store directly.
  */
-export function readCredentialsState(url: string, storeDir: string): VaultCredentialsState {
+export function readCredentialsState(storeDir: string): VaultCredentialsState {
   const state: VaultSecretState = new VaultSecretStore(storeDir).readState();
   if (state.status === "ok") return { status: "ok" };
   return state.status === "locked" ? { status: "locked", reason: state.reason } : { status: "empty" };
