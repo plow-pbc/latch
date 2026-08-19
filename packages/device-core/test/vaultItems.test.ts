@@ -136,6 +136,30 @@ describe("an edit", () => {
     expect(edit(null).login.uris).toEqual(many.login.uris);
   });
 
+  it("stores every URL with the checksum other clients verify", () => {
+    // Every current client silently drops a URL whose checksum is missing on an
+    // item that carries its own key — the guard against a server slipping an
+    // extra site into a login. Ours all carry one, so a URL written without a
+    // checksum is a URL only this app can see: the vault's own page shows none,
+    // the CLI lists none, and a fill refuses for want of a site.
+    const url = "https://checksummed.example/login";
+    const written = encryptCipher({ itemId: "item-1", urls: [url] }, { ...first, id: "item-1" }, account);
+    const [entry] = written.login.uris;
+    // Read back through the item's own key, which is what decryptField uses.
+    const probe = { ...written, login: { ...written.login, username: entry.uriChecksum } };
+    expect(decryptField(probe, account, "username")).toBe(
+      crypto.createHash("sha256").update(url, "utf8").digest("base64"),
+    );
+
+    // An item already stored without one — every login this app wrote before
+    // this fix — is repaired the next time it is saved, address and rule intact.
+    const legacy = { ...written, id: "item-1", login: { ...written.login, uris: [{ uri: entry.uri, match: 3 }] } };
+    const [repaired] = encryptCipher({ itemId: "item-1", urls: [url] }, legacy, account).login.uris;
+    expect(repaired.uriChecksum).toBeTruthy();
+    expect(repaired.match).toBe(3);
+    expect(decryptItem({ ...legacy, login: { ...legacy.login, uris: [repaired] } }, account).urls).toEqual([url]);
+  });
+
   it("clears a field that is sent empty", () => {
     const second = encryptCipher({ itemId: "item-1", username: "" }, { ...first, id: "item-1" }, account);
     expect(decryptItem({ ...second, id: "item-1" }, account).fields.username).toBe("");

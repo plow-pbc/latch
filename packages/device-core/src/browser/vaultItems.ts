@@ -67,8 +67,9 @@ export interface Cipher {
     username?: string | null;
     password?: string | null;
     totp?: string | null;
-    /** A stored entry carries a match rule this app does not interpret. */
-    uris?: Array<{ uri?: string | null; match?: number | null }> | null;
+    /** A stored entry carries a match rule this app does not interpret, and a
+     * checksum of its address that every other client verifies. */
+    uris?: Array<{ uri?: string | null; uriChecksum?: string | null; match?: number | null }> | null;
   } | null;
   card?: Record<string, string | null> | null;
   identity?: Record<string, string | null> | null;
@@ -127,6 +128,20 @@ const enc = (value: string, key: VaultKey): string | null =>
 function body(cipher: Cipher): Record<string, string | null> {
   const at = TYPE_BODY[cipher.type ?? 1];
   return ((cipher[at] as Record<string, string | null> | null) ?? {}) as Record<string, string | null>;
+}
+
+/**
+ * The checksum a URL is stored with: base64 SHA-256 of the address itself,
+ * encrypted like everything else.
+ *
+ * Every current client drops, silently, a URL whose checksum is missing on an
+ * item that carries its own key — the guard against a server slipping an extra
+ * site into a login. Ours carry their own key, so a URL written without one is
+ * a URL that only this app can see: the vault's page shows none, the CLI lists
+ * none, and a fill refuses for want of a site.
+ */
+function checksum(url: string, key: VaultKey): string | null {
+  return enc(crypto.createHash("sha256").update(url, "utf8").digest("base64"), key);
 }
 
 function urlsOf(cipher: Cipher, key: VaultKey): string[] {
@@ -260,13 +275,14 @@ export function encryptCipher(
     let uris = previous;
     if (input.urls !== undefined) {
       uris = input.urls
-        .map((u, i) =>
-          u === ""
-            ? null                                            // the owner emptied this row
-            : previous[i] && dec(previous[i].uri, key) === u
-              ? previous[i]                                   // unchanged: the stored entry, as it is
-              : { uri: enc(u, key), match: null },
-        )
+        .map((u, i) => {
+          if (u === "") return null;                          // the owner emptied this row
+          const same = previous[i] && dec(previous[i].uri, key) === u;
+          // Unchanged: the stored entry, as it is — unless it has no checksum,
+          // which is a URL nothing else can see, and rewriting it is the repair.
+          if (same && previous[i].uriChecksum) return previous[i];
+          return { uri: enc(u, key), uriChecksum: checksum(u, key), match: same ? previous[i].match ?? null : null };
+        })
         .filter((u): u is NonNullable<typeof u> => u !== null);
     }
     cipher.login = { ...out, uris } as Cipher["login"];
