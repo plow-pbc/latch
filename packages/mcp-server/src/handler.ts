@@ -21,7 +21,13 @@ import {
 } from "@modelcontextprotocol/server";
 import { JSONValue } from "@domo/protocol";
 import { DeviceAgent } from "@domo/device-core";
-import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
+import {
+  CALL_BUDGET_MS,
+  DeferredResults,
+  DeniedError,
+  DIRECT_CEILING_MS,
+  Progress,
+} from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./tools.js";
 
@@ -123,6 +129,8 @@ function bounded<T>(work: Promise<T>, ceilingMs: number, tool: string): Promise<
 export interface McpServerOptions {
   /** Overridable so tests do not have to wait out the real budget. */
   budgetMs?: number;
+  /** The direct-bounded ceiling, likewise overridable for tests. */
+  directCeilingMs?: number;
 }
 
 export interface DomoMcpServer {
@@ -137,6 +145,13 @@ export interface DomoMcpServer {
   setCallBudgetMs(ms: number): void;
   /** The budget the next deferrable call will be armed with. */
   callBudgetMs(): number;
+  /**
+   * Adopt the ceiling a direct-bounded tool answers within. Separate from the
+   * budget on purpose — see `DIRECT_CEILING_MS`.
+   */
+  setDirectCeilingMs(ms: number): void;
+  /** The ceiling the next direct-bounded call will be held to. */
+  directCeilingMs(): number;
   close(): Promise<void>;
 }
 
@@ -150,6 +165,9 @@ export function createDomoMcpServer(
   options: McpServerOptions = {},
 ): DomoMcpServer {
   let budgetMs = options.budgetMs ?? CALL_BUDGET_MS;
+  // Defaults to the budget when a test names only that one, so a scripted short
+  // budget still bounds the direct tools it exercises.
+  let directCeiling = options.directCeilingMs ?? options.budgetMs ?? DIRECT_CEILING_MS;
   const deferred = new DeferredResults(budgetMs);
   const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
@@ -205,7 +223,7 @@ export function createDomoMcpServer(
                   : // A direct tool has no handle to fall back on, so it is
                     // held to the same ceiling the budget sets: answering late
                     // is answering into an exchange the relay has abandoned.
-                    await bounded(body({ decided: () => {} }), budgetMs, spec.name);
+                    await bounded(body({ decided: () => {} }), directCeiling, spec.name);
               // Most results are one text block; a screenshot expands into an
               // image + text block via `__mcpContent`.
               return { content: toolBlocks(result) };
@@ -267,6 +285,10 @@ export function createDomoMcpServer(
       deferred.setBudgetMs(ms);
     },
     callBudgetMs: () => budgetMs,
+    setDirectCeilingMs(ms: number) {
+      directCeiling = ms;
+    },
+    directCeilingMs: () => directCeiling,
     async fetch(request, auth) {
       // Modern MCP requires Mcp-Method, and the SDK rejects a request whose
       // header and body disagree — so the header is a sound place to refuse

@@ -22,7 +22,7 @@ import {
   jv,
   makeIntent,
 } from "@domo/protocol";
-import { DeviceAgent, MAX_FILE_BYTES } from "@domo/device-core";
+import { DeviceAgent, MAX_FILE_BYTES, MAX_OUTPUT_BYTES } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 
@@ -302,16 +302,19 @@ export const TOOLS: ToolSpec[] = [
     name: "get_output",
     description:
       "Fetch incremental output of a command still running from run_command. " +
-      "Pass 'since' = the output_length you last saw. Takes the job handle run_command returned, " +
-      "not a handle from get_result.",
+      "Pass 'since' = the next_since you last saw. Takes the job handle run_command returned, " +
+      "not a handle from get_result. One call carries at most " +
+      `${MAX_OUTPUT_BYTES} bytes; when next_since is below output_length, ask again from it.`,
     inputSchema: {
       type: "object",
       required: ["handle"],
       properties: { handle: { type: "string" }, since: { type: "integer" } },
       additionalProperties: false,
     },
-    // Output retrieval is bound to an already-approved run: no new intent, no
-    // approval, and nothing slow to wait on.
+    // Output retrieval is bound to an already-approved run: no new intent and
+    // no approval. It is also the one direct tool whose work is synchronous,
+    // which is why the *bytes* are capped rather than the wait: a ceiling
+    // cannot interrupt a copy already running on the event loop.
     classification: "direct_bounded",
     async run(args, ctx) {
       const handle = jv(args).get("handle").str;

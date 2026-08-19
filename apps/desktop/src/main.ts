@@ -720,12 +720,22 @@ async function startRelay(): Promise<void> {
     url: relaySocketUrl(apiBaseUrl),
     credential,
     serve: (request, auth) => server.fetch(request, auth),
-    // The relay owns the exchange deadline and advertises it; the budget a
-    // deferrable tool runs against has to fit inside it with delivery margin to
-    // spare. A relay that advertises nothing keeps this Mac on the old budget.
-    onBudgetChange: (budgetMs, deadlineMs) => {
-      server.setCallBudgetMs(budgetMs);
-      console.log(`[relay] call budget ${budgetMs}ms (exchange deadline ${deadlineMs}ms)`);
+    // The relay owns the exchange deadline and advertises it; the budgets that
+    // run inside it have to leave delivery margin to spare. A relay that
+    // advertises nothing keeps this Mac on the old budget.
+    onBudgetChange: (budget) => {
+      server.setCallBudgetMs(budget.budgetMs);
+      server.setDirectCeilingMs(budget.directCeilingMs);
+      console.log(
+        `[relay] call budget ${budget.budgetMs}ms, direct ceiling ${budget.directCeilingMs}ms ` +
+          `(exchange deadline ${budget.exchangeDeadlineMs}ms)`,
+      );
+    },
+    // Too short to plan against — nothing is reconfigured, and the reason is
+    // worth a line because every call now runs against a deadline this Mac
+    // disagrees with.
+    onBudgetRefused: (deadlineMs) => {
+      console.log(`[relay] refused an exchange deadline of ${deadlineMs}ms; keeping safe defaults`);
     },
     onStatusChange: (isConnected) => {
       connected = isConnected;

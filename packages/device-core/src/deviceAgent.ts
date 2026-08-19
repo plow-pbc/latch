@@ -20,7 +20,7 @@ import { CredentialBroker } from "./browser/credentialBroker.js";
 import { VaultServer } from "./browser/vaultServer.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
-import { Executor } from "./executor.js";
+import { Executor, MAX_OUTPUT_BYTES } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
@@ -363,6 +363,9 @@ export class DeviceAgent {
         handle: result.handle,
         output: result.output.toString("utf8"),
         output_length: result.outputLength,
+        // Where to resume from. Less than output_length when the byte cap cut
+        // this slice short.
+        next_since: result.nextSince,
       };
       if (result.exitCode !== null) response.exit_code = result.exitCode;
       return response;
@@ -451,8 +454,8 @@ export class DeviceAgent {
     return this.browserSessions.command(agentId, session, params);
   }
 
-  getOutput(handle: string, since = 0): JSONValue {
-    const result = this.executor.output(handle, since);
+  getOutput(handle: string, since = 0, maxBytes = MAX_OUTPUT_BYTES): JSONValue {
+    const result = this.executor.output(handle, since, maxBytes);
     if (!result.running && result.exitCode !== null) {
       this.audit.record("exec_end", { handle, exit_code: result.exitCode });
     }
@@ -460,6 +463,7 @@ export class DeviceAgent {
       status: result.running ? "running" : "completed",
       output: result.output.toString("utf8"),
       output_length: result.outputLength,
+      next_since: result.nextSince,
     };
     if (result.exitCode !== null) response.exit_code = result.exitCode;
     return response;

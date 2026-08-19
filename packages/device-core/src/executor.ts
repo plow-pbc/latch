@@ -99,12 +99,30 @@ export const SandboxProfile = {
 
 export class ExecutorError extends Error {}
 
+/**
+ * The most output one call may carry back.
+ *
+ * Reading output is synchronous — it walks buffers the child already filled —
+ * and synchronous work of unbounded size is the one thing no call ceiling can
+ * save us from: a timer that cannot run while the event loop is copying a
+ * gigabyte fires after the answer was already too late. So the *work* is
+ * bounded rather than merely raced. A caller wanting the rest asks again from
+ * `nextSince`.
+ */
+export const MAX_OUTPUT_BYTES = 1024 * 1024;
+
 export interface ExecResult {
   handle: string;
   running: boolean;
   exitCode: number | null;
   output: Buffer;
+  /** Total bytes produced so far — not the length of `output`. */
   outputLength: number;
+  /**
+   * The offset just past `output`. Equal to `outputLength` when this slice
+   * reached the end; less when the cap cut it short and there is more to fetch.
+   */
+  nextSince: number;
 }
 
 class OutputBuffer {
@@ -124,12 +142,36 @@ class OutputBuffer {
     this.waiters = [];
   }
 
-  snapshot(since: number): { output: Buffer; total: number; running: boolean; exitCode: number | null } {
-    const all = Buffer.concat(this.chunks);
-    const start = Math.min(Math.max(since, 0), all.length);
+  /**
+   * At most `maxBytes` of output from `since`.
+   *
+   * Deliberately does NOT concatenate the whole buffer: the old version copied
+   * every byte the command had ever produced on every poll, so a chatty command
+   * made each `get_output` cost more than the last and blocked the event loop
+   * while it did — with the call ceiling's timer sitting behind that copy,
+   * unable to fire. This walks only the chunks the slice actually needs.
+   */
+  snapshot(
+    since: number,
+    maxBytes: number = MAX_OUTPUT_BYTES,
+  ): { output: Buffer; total: number; nextSince: number; running: boolean; exitCode: number | null } {
+    const total = this.length;
+    const start = Math.min(Math.max(since, 0), total);
+    const end = Math.min(start + Math.max(maxBytes, 0), total);
+    const wanted: Buffer[] = [];
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      const chunkEnd = offset + chunk.length;
+      if (chunkEnd > start && offset < end) {
+        wanted.push(chunk.subarray(Math.max(start - offset, 0), Math.min(end - offset, chunk.length)));
+      }
+      offset = chunkEnd;
+      if (offset >= end) break;
+    }
     return {
-      output: all.subarray(start),
-      total: all.length,
+      output: Buffer.concat(wanted),
+      total,
+      nextSince: end,
       running: this.exitCode === null,
       exitCode: this.exitCode,
     };
@@ -221,19 +263,21 @@ export class Executor {
       exitCode: snap.exitCode,
       output: snap.output,
       outputLength: snap.total,
+      nextSince: snap.nextSince,
     };
   }
 
-  output(handle: string, since: number): ExecResult {
+  output(handle: string, since: number, maxBytes: number = MAX_OUTPUT_BYTES): ExecResult {
     const buffer = this.buffers.get(handle);
     if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
-    const snap = buffer.snapshot(since);
+    const snap = buffer.snapshot(since, maxBytes);
     return {
       handle,
       running: snap.running,
       exitCode: snap.exitCode,
       output: snap.output,
       outputLength: snap.total,
+      nextSince: snap.nextSince,
     };
   }
 }

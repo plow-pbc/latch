@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { DeviceAgent, HeadlessPolicy } from "@domo/device-core";
-import { createDomoMcpServer, CALL_BUDGET_MS, TOOLS } from "@domo/mcp-server";
+import { createDomoMcpServer, CALL_BUDGET_MS, DIRECT_CEILING_MS, TOOLS } from "@domo/mcp-server";
 import { callTool } from "./client.js";
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
@@ -83,6 +83,34 @@ describe("tool classification", () => {
         .map(([n]) => n)
         .sort(),
     );
+  });
+
+  it("bounds a direct tool by its own ceiling, not by the human's budget", async () => {
+    // The two are different questions — how long a human may take, versus how
+    // long a tool with no handle to hand back may block — and sharing one
+    // number meant lengthening the first silently lengthened the second.
+    const home = tempDir();
+    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
+    const server = createDomoMcpServer(device);
+    cleanups.push(() => server.close());
+    expect(server.directCeilingMs()).toBe(DIRECT_CEILING_MS);
+
+    // A long budget for the human leaves the direct ceiling where it was.
+    server.setCallBudgetMs(15_000);
+    expect(server.directCeilingMs()).toBe(DIRECT_CEILING_MS);
+
+    // And it is the ceiling, not the budget, that a wedged direct tool hits.
+    server.setDirectCeilingMs(40);
+    device.browserCommand = () => new Promise(() => {});
+    const { payload, isError } = await callTool(
+      server,
+      "browser",
+      { session: "S1", action: "goto", url: "https://example.com/" },
+      AGENT,
+    );
+    expect(isError).toBe(true);
+    expect(String(payload.error)).toContain("40ms call ceiling");
+    expect(server.callBudgetMs()).toBe(15_000);
   });
 
   it("holds a direct-bounded tool to the ceiling instead of blocking past it", async () => {

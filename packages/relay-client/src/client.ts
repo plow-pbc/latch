@@ -16,18 +16,35 @@
 import { Connection, ConnectionDialer, WebSocketDialer } from "@domo/transport";
 import { RelayAuth } from "@domo/mcp-server";
 import {
+  advertisedDeadlineMs,
+  advertisesResponseAck,
   deferrableBudgetMs,
+  directCeilingMs,
   EXCHANGE_DEADLINE_FIELD,
   FRAME_RESPONSE,
   HEARTBEAT_INTERVAL_MS,
   isRequestFrame,
   isResponseAckFrame,
+  LEGACY_CALL_BUDGET_MS,
   LEGACY_EXCHANGE_DEADLINE_MS,
   RELAY_CLIENT_KIND,
+  RESPONSE_ACK_FIELD,
   RelayRequestFrame,
   RelayResponseFrame,
   stripHopByHop,
 } from "./wire.js";
+
+/** The timing contract this Mac adopted from one relay handshake. */
+export interface RelayBudget {
+  /** How long a deferrable tool may block before it hands back a handle. */
+  budgetMs: number;
+  /** How long a direct-bounded tool may block, having no handle to hand back. */
+  directCeilingMs: number;
+  /** What the relay said it will hold the exchange open for. */
+  exchangeDeadlineMs: number;
+  /** Whether this relay acknowledges a response it matched to an exchange. */
+  acknowledgesResponses: boolean;
+}
 
 /** Serves one tunnelled HTTP exchange — chunk 7's MCP handler. */
 export type ServeRequest = (request: Request, auth?: RelayAuth) => Promise<Response>;
@@ -41,11 +58,17 @@ export interface RelayClientOptions {
   serve: ServeRequest;
   onStatusChange?: (connected: boolean) => void;
   /**
-   * The relay said how long it will hold an exchange open, so the call budget
-   * that has to fit inside it is now known. Fires on every successful
-   * handshake, including reconnects onto a differently-configured relay.
+   * The relay said how long it will hold an exchange open, so the budgets that
+   * have to fit inside it are now known. Fires on every successful handshake,
+   * including reconnects onto a differently-configured relay.
    */
-  onBudgetChange?: (budgetMs: number, exchangeDeadlineMs: number) => void;
+  onBudgetChange?: (budget: RelayBudget) => void;
+  /**
+   * The relay advertised a deadline this Mac will not plan against — one too
+   * short to carry even the shortest budget with its delivery margin intact.
+   * Nothing is reconfigured; the safe defaults stay in force.
+   */
+  onBudgetRefused?: (exchangeDeadlineMs: number) => void;
   /**
    * The relay matched our response for `rid` to the exchange waiting on it.
    * Only ever fires for a rid this client actually answered — an ack naming
@@ -64,6 +87,8 @@ export interface RelayClientOptions {
   /** Injectable for tests. */
   dial?: (url: string) => ConnectionDialer;
   random?: () => number;
+  /** Injectable for tests; the real one is Date.now. */
+  now?: () => number;
 }
 
 const MAX_BACKOFF_MS = 30_000;
@@ -80,9 +105,16 @@ export class RelayClient {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
   private exchangeDeadline = LEGACY_EXCHANGE_DEADLINE_MS;
-  private budgetMs = deferrableBudgetMs(undefined);
-  /** Rids this client has answered, awaiting the relay's acknowledgement. */
-  private readonly awaitingAck = new Set<string>();
+  private budgetMs = LEGACY_CALL_BUDGET_MS;
+  private ceilingMs = directCeilingMs(undefined) ?? LEGACY_CALL_BUDGET_MS;
+  private ackAdvertised = false;
+  /**
+   * Rids this client has answered, awaiting the relay's acknowledgement, each
+   * tagged with the socket it went out on and when it stops being answerable.
+   */
+  private readonly awaitingAck = new Map<string, { generation: number; expiresAt: number }>();
+  /** Bumped on every connection, so an ack can never cross socket lifetimes. */
+  private generation = 0;
   /** Requests being served right now, so shutdown can wait for them. */
   private readonly inFlight = new Set<Promise<void>>();
 
@@ -102,6 +134,16 @@ export class RelayClient {
     return this.budgetMs;
   }
 
+  /** The ceiling a direct-bounded tool is held to. */
+  get directCeilingMs(): number {
+    return this.ceilingMs;
+  }
+
+  /** Whether the relay said it acknowledges matched responses. */
+  get acknowledgesResponses(): boolean {
+    return this.ackAdvertised;
+  }
+
   /**
    * Strip the credential out of anything on its way to a log or an error.
    *
@@ -113,6 +155,10 @@ export class RelayClient {
     const credential = this.options.credential;
     if (!credential) return text;
     return text.split(credential).join("[redacted]");
+  }
+
+  private now(): number {
+    return (this.options.now ?? Date.now)();
   }
 
   private say(message: string): void {
@@ -186,6 +232,9 @@ export class RelayClient {
       return;
     }
     this.conn = conn;
+    // A new socket is a new generation: nothing answered on the old one can be
+    // acknowledged on this one.
+    this.generation += 1;
 
     conn.onLine = (line) => this.onFrame(conn, line);
     conn.onClose = () => this.onClose();
@@ -194,6 +243,54 @@ export class RelayClient {
 
   private send(conn: Connection, frame: unknown): void {
     conn.sendLine(Buffer.from(JSON.stringify(frame), "utf8"));
+  }
+
+  /**
+   * Take the timing contract off an `auth.ok`.
+   *
+   * Relay-first rollout: an old relay advertises nothing, which means the old
+   * deadline and the old budget. A relay advertising a deadline too short to
+   * carry even that budget with its margin intact is refused outright — the
+   * previous configuration stands and nothing pretends otherwise.
+   *
+   * Acknowledgement is a capability, not an assumption. A relay that does not
+   * advertise it will never send one, so waiting on an ack from it — or reading
+   * anything into its absence — would be waiting forever on a promise nobody
+   * made.
+   */
+  private adopt(msg: Record<string, unknown>): void {
+    const advertised = msg[EXCHANGE_DEADLINE_FIELD];
+    const deadline = advertisedDeadlineMs(advertised);
+    const budget = deferrableBudgetMs(advertised);
+    const ceiling = directCeilingMs(advertised);
+    if (budget === null || ceiling === null) {
+      this.say(
+        `refusing an exchange deadline of ${deadline}ms: no budget leaves the delivery margin intact`,
+      );
+      this.options.onBudgetRefused?.(deadline);
+      return;
+    }
+    this.exchangeDeadline = deadline;
+    this.budgetMs = budget;
+    this.ceilingMs = ceiling;
+    this.ackAdvertised = advertisesResponseAck(msg[RESPONSE_ACK_FIELD]);
+    this.options.onBudgetChange?.({
+      budgetMs: budget,
+      directCeilingMs: ceiling,
+      exchangeDeadlineMs: deadline,
+      acknowledgesResponses: this.ackAdvertised,
+    });
+    this.say(
+      `exchange deadline ${deadline}ms, call budget ${budget}ms, direct ceiling ${ceiling}ms, ` +
+        `response ack ${this.ackAdvertised ? "advertised" : "unavailable"}`,
+    );
+  }
+
+  /** Forget rids nobody can still acknowledge — the exchange is long over. */
+  private sweepAcks(now: number): void {
+    for (const [rid, entry] of this.awaitingAck) {
+      if (entry.expiresAt <= now) this.awaitingAck.delete(rid);
+    }
   }
 
   private onFrame(conn: Connection, line: Buffer): void {
@@ -229,23 +326,14 @@ export class RelayClient {
             ? Math.min(advertised, HEARTBEAT_INTERVAL_MS)
             : HEARTBEAT_INTERVAL_MS;
         this.startHeartbeat(conn);
-        // Relay-first rollout: an old relay advertises nothing and keeps this
-        // Mac on the old budget. `deferrableBudgetMs` decides; this only
-        // reports what it decided.
-        const deadline = msg[EXCHANGE_DEADLINE_FIELD];
-        this.exchangeDeadline =
-          typeof deadline === "number" && Number.isFinite(deadline) && deadline > 0
-            ? deadline
-            : LEGACY_EXCHANGE_DEADLINE_MS;
-        this.budgetMs = deferrableBudgetMs(deadline);
-        this.options.onBudgetChange?.(this.budgetMs, this.exchangeDeadline);
-        this.say(`exchange deadline ${this.exchangeDeadline}ms, call budget ${this.budgetMs}ms`);
+        this.adopt(msg);
         this.setConnected(true);
         this.say("authenticated");
         return;
       }
 
       case "auth.error": {
+
         // `reason` is the relay's text. Redacted anyway — an error string is
         // exactly where a credential must never appear.
         const reason = String(msg.reason ?? "");
@@ -276,9 +364,18 @@ export class RelayClient {
     }
 
     if (isResponseAckFrame(msg)) {
-      // Fail closed: an ack for a rid we never answered proves nothing about
-      // our delivery, so it is dropped rather than reported.
-      if (this.awaitingAck.delete(msg.rid)) this.options.onResponseAck?.(msg.rid);
+      // Fail closed on all three counts: an ack for a rid we never answered
+      // proves nothing about our delivery; one for a response that went out on
+      // an earlier socket is answering a delivery that died with that socket;
+      // and one arriving after the exchange could possibly still be open is
+      // stale. Any of them is dropped rather than reported.
+      const now = this.now();
+      this.sweepAcks(now);
+      const entry = this.awaitingAck.get(msg.rid);
+      if (!entry) return;
+      this.awaitingAck.delete(msg.rid);
+      if (entry.generation !== this.generation) return;
+      this.options.onResponseAck?.(msg.rid);
       return;
     }
 
@@ -286,7 +383,10 @@ export class RelayClient {
       // Deliberately NOT awaited. Serving a request can take the whole call
       // budget, and awaiting here would stall the heartbeat — after two missed
       // beats the relay treats this socket as stale and every call fails.
-      const task = this.serveRequest(conn, msg).finally(() => this.inFlight.delete(task));
+      const generation = this.generation;
+      const task = this.serveRequest(conn, msg, generation).finally(() =>
+        this.inFlight.delete(task),
+      );
       this.inFlight.add(task);
       return;
     }
@@ -294,7 +394,18 @@ export class RelayClient {
     this.say(`ignoring unknown frame type ${String(msg.type)}`);
   }
 
-  private async serveRequest(conn: Connection, frame: RelayRequestFrame): Promise<void> {
+  private async serveRequest(
+    conn: Connection,
+    frame: RelayRequestFrame,
+    /**
+     * The socket generation this request ARRIVED on, captured before any await.
+     * Serving can outlive the socket — a slow tool finishes after a reconnect —
+     * and reading the generation at send time would stamp such a response with
+     * the new socket's, letting the new relay session acknowledge a delivery
+     * that belongs to a connection nobody can vouch for any more.
+     */
+    generation: number,
+  ): Promise<void> {
     let response: RelayResponseFrame;
     try {
       const headers = new Headers();
@@ -340,7 +451,16 @@ export class RelayClient {
         body: JSON.stringify({ error: message }),
       };
     }
-    this.awaitingAck.add(response.rid);
+    // Only worth tracking when an ack is actually coming, and only for as long
+    // as the relay could still be holding the exchange open.
+    if (this.ackAdvertised) {
+      const now = this.now();
+      this.sweepAcks(now);
+      this.awaitingAck.set(response.rid, {
+        generation,
+        expiresAt: now + this.exchangeDeadline,
+      });
+    }
     this.send(conn, response);
   }
 

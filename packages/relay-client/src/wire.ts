@@ -18,6 +18,8 @@
  * relay picks different strings, this file is the only place that changes.
  */
 
+import { DIRECT_CEILING_MS } from "@domo/mcp-server";
+
 /** Constant client kind for the device socket. The uid is the other half of
  * the registry key, so it is deliberately not embedded here. */
 export const RELAY_CLIENT_KIND = "relay-device";
@@ -143,23 +145,67 @@ export const LEGACY_CALL_BUDGET_MS = 8_000;
 export const MIN_DELIVERY_MARGIN_MS = 10_000;
 
 /**
- * The deferrable budget to run against a relay advertising `advertised`.
+ * The deadline to plan against, given what the relay advertised. A relay that
+ * advertises nothing predates the field, which means the old 20s deadline —
+ * never "no deadline".
+ */
+export function advertisedDeadlineMs(advertised: unknown): number {
+  return typeof advertised === "number" && Number.isFinite(advertised) && advertised > 0
+    ? advertised
+    : LEGACY_EXCHANGE_DEADLINE_MS;
+}
+
+/**
+ * The deferrable budget to run against a relay advertising `advertised`, or
+ * `null` when there is no budget worth configuring.
  *
  * Rollout is relay-first, so this has to answer for three relays: one that
- * advertises 25s or more (the long budget), one that advertises less, and one
- * that advertises nothing at all because it predates the field (the old 20s
- * deadline, and with it the old 8s budget). In every case the result is capped
- * so at least `MIN_DELIVERY_MARGIN_MS` is left for delivery — a budget that
- * eats its own delivery margin would produce handles the agent never receives.
+ * advertises 25s or more (the long budget), one that advertises less (the old
+ * 8s budget), and one that advertises nothing at all because it predates the
+ * field (the old deadline, and with it the old budget).
+ *
+ * REFUSES rather than shrinks. An earlier version quietly clamped the budget
+ * to whatever the deadline left — a 12s deadline produced a 2s budget, which
+ * is not a shorter version of this contract but a different one: every
+ * approval defers instantly and the delivery margin is gone anyway. A deadline
+ * that cannot carry even the short budget with its margin intact is a relay
+ * this Mac cannot plan against, and saying so is the honest answer.
  */
-export function deferrableBudgetMs(advertised: unknown): number {
-  const deadline =
-    typeof advertised === "number" && Number.isFinite(advertised) && advertised > 0
-      ? advertised
-      : LEGACY_EXCHANGE_DEADLINE_MS;
-  const wanted =
-    deadline >= RELAY_EXCHANGE_DEADLINE_MS ? DEFERRABLE_BUDGET_MS : LEGACY_CALL_BUDGET_MS;
-  return Math.max(0, Math.min(wanted, deadline - MIN_DELIVERY_MARGIN_MS));
+export function deferrableBudgetMs(advertised: unknown): number | null {
+  const deadline = advertisedDeadlineMs(advertised);
+  if (deadline - LEGACY_CALL_BUDGET_MS < MIN_DELIVERY_MARGIN_MS) return null;
+  return deadline >= RELAY_EXCHANGE_DEADLINE_MS ? DEFERRABLE_BUDGET_MS : LEGACY_CALL_BUDGET_MS;
+}
+
+/**
+ * The ceiling a direct-bounded tool answers within, or `null` on a deadline
+ * this Mac refuses to plan against.
+ *
+ * Deliberately NOT the deferrable budget, though both are measured against the
+ * same deadline. The budget is how long a human may take before the call hands
+ * back a handle; this is how long a tool with no handle to hand back may block.
+ * Sharing one number meant that lengthening the human's window silently
+ * lengthened how long a wedged browser action sat on an exchange — two
+ * unrelated questions moving together because they happened to share a
+ * constant. `DIRECT_CEILING_MS` is that second answer, and it lives in
+ * `@domo/mcp-server` because the relay has no stake in it.
+ */
+export function directCeilingMs(advertised: unknown): number | null {
+  const deadline = advertisedDeadlineMs(advertised);
+  if (deferrableBudgetMs(advertised) === null) return null;
+  return Math.min(DIRECT_CEILING_MS, deadline - MIN_DELIVERY_MARGIN_MS);
+}
+
+/**
+ * The `auth.ok` field by which a relay says it will acknowledge a matched
+ * response. Absent or false means no acknowledgement is coming, so nothing on
+ * this Mac may wait for one or read anything into its absence.
+ */
+export const RESPONSE_ACK_FIELD = "response_ack";
+
+/** Whether the relay advertised that it acknowledges matched responses. */
+export function advertisesResponseAck(value: unknown): boolean {
+  return value === true;
 }
 
 /**

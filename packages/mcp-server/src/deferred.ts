@@ -34,6 +34,17 @@ import { JSONValue } from "@domo/protocol";
  */
 export const CALL_BUDGET_MS = 8_000;
 
+/**
+ * How long a direct-bounded tool may block.
+ *
+ * A different question from the call budget, which is how long a human may
+ * take: this one has no handle behind it, so overrunning is not "answer later"
+ * but "answer into an exchange the relay has abandoned". It stays short even
+ * when the relay's deadline grows — a wedged browser action should fail while
+ * the agent is still there to hear it, not sit out the whole window.
+ */
+export const DIRECT_CEILING_MS = 8_000;
+
 /** Both halves of §4.3's fifteen minutes: pending lifetime, and result retention. */
 export const HANDLE_TTL_MS = 15 * 60_000;
 
