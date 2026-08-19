@@ -58,10 +58,57 @@ const CLASSIFIED: Record<string, "deferrable" | "direct_bounded"> = {
   get_result: "direct_bounded",
 };
 
+/**
+ * Which tools make the caller name the operation (§6).
+ *
+ * The rule is "everything that can act twice": every deferrable tool, plus the
+ * two direct ones that drive an approved browser session. The exempt four are
+ * the ones whose whole purpose is being asked again.
+ */
+const NAMES_ITS_OPERATION: Record<string, boolean> = {
+  read_file: true,
+  write_file: true,
+  run_command: true,
+  use_tool: true,
+  browser_open: true,
+  browser_request: true,
+  browser: true,
+  browser_close: true,
+  get_output: false,
+  list_tools: false,
+  read_skill: false,
+  vault: false,
+  get_result: false,
+};
+
 describe("tool classification", () => {
   it("classifies every tool, and only the tools that exist", () => {
     const actual = Object.fromEntries(TOOLS.map((t) => [t.name, t.classification]));
     expect(actual).toEqual(CLASSIFIED);
+  });
+
+  it("requires an operation id from everything that can act twice", () => {
+    const actual = Object.fromEntries(TOOLS.map((t) => [t.name, t.requiresOperationId]));
+    expect(actual).toEqual(NAMES_ITS_OPERATION);
+    // Every deferrable tool is one of them: a call that can outlive its
+    // response is a call whose response can be lost.
+    for (const tool of TOOLS) {
+      if (tool.classification === "deferrable") expect(tool.requiresOperationId).toBe(true);
+    }
+  });
+
+  it("declares the id in the schema of every tool that requires one", () => {
+    for (const tool of TOOLS) {
+      const schema = tool.inputSchema as {
+        required?: string[];
+        properties?: Record<string, unknown>;
+      };
+      if (!tool.requiresOperationId) continue;
+      // Declared AND required: a tool that took it optionally would silently
+      // skip deduplication for any caller that left it out.
+      expect(schema.properties?.operation_id, tool.name).toBeTruthy();
+      expect(schema.required ?? [], tool.name).toContain("operation_id");
+    }
   });
 
   it("makes every tool that can open an approval prompt deferrable", () => {

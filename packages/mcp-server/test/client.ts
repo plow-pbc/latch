@@ -7,7 +7,7 @@
  * with the body. That is the whole client — writing it here rather than pulling
  * one in keeps the test exercising the real wire shape a relay will tunnel.
  */
-import { DomoMcpServer, PROTOCOL_REVISION, RelayAuth } from "@domo/mcp-server";
+import { DomoMcpServer, PROTOCOL_REVISION, RelayAuth, TOOLS } from "@domo/mcp-server";
 
 const META = {
   "io.modelcontextprotocol/protocolVersion": PROTOCOL_REVISION,
@@ -24,6 +24,23 @@ export interface RawResponse {
 }
 
 let nextId = 1;
+let nextOperation = 1;
+
+/**
+ * Give an acting tool a fresh `operation_id` unless the test named one itself.
+ *
+ * §6 requires the id on every tool that can act twice, but almost no test here
+ * is ABOUT retrying — they call a tool once and check what it did. A fresh id
+ * per call is what "this is a new operation" means, so this keeps those tests
+ * saying what they were written to say. A test that cares about retry passes
+ * its own id, and then it is the id under test rather than one this helper
+ * invented.
+ */
+function withOperationId(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  const spec = TOOLS.find((t) => t.name === name);
+  if (!spec?.requiresOperationId || args.operation_id !== undefined) return args;
+  return { ...args, operation_id: `auto-${nextOperation++}` };
+}
 
 /** POST one JSON-RPC request through the server exactly as the relay would. */
 export async function rpc(
@@ -81,7 +98,7 @@ export async function callTool(
   args: Record<string, unknown>,
   auth?: RelayAuth,
 ): Promise<{ payload: any; isError: boolean; status: number }> {
-  const raw = await rpc(server, "tools/call", { name, arguments: args }, auth);
+  const raw = await rpc(server, "tools/call", { name, arguments: withOperationId(name, args) }, auth);
   const parsed = parse(raw);
   const text = parsed.result?.content?.[0]?.text;
   if (text === undefined) {

@@ -112,7 +112,10 @@ describe("browser tools (fake runtime)", () => {
 
     // Screenshot arrives as a real MCP image content block.
     const shot = parse(await rpc(
-      server, "tools/call", { name: "browser", arguments: { session, action: "screenshot" } }, AGENT,
+      server,
+      "tools/call",
+      { name: "browser", arguments: { session, action: "screenshot", operation_id: "shot-1" } },
+      AGENT,
     ));
     const blocks = shot.result!.content as { type: string; data?: string; text?: string }[];
     expect(blocks[0].type).toBe("image");

@@ -19,7 +19,7 @@ import {
   fromJsonSchema,
   McpServer,
 } from "@modelcontextprotocol/server";
-import { JSONValue } from "@domo/protocol";
+import { JSONValue, jv } from "@domo/protocol";
 import { DeviceAgent } from "@domo/device-core";
 import {
   CALL_BUDGET_MS,
@@ -29,6 +29,13 @@ import {
   Progress,
 } from "./deferred.js";
 import { Continuations, exchangeContext } from "./continuation.js";
+import {
+  checkOperationId,
+  OperationConflictError,
+  OperationError,
+  OperationRecords,
+  operationFingerprint,
+} from "./operations.js";
 import { JobOwners } from "./jobs.js";
 import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./tools.js";
 
@@ -151,6 +158,9 @@ export interface McpServerOptions {
   directCeilingMs?: number;
   /** Deferred-result retention. Overridable so a test need not wait it out. */
   ttlMs?: number;
+  /** Operation-record retention, and the tombstone that follows it. */
+  operationTtlMs?: number;
+  operationTombstoneMs?: number;
   /** The clock retention is measured against. Injectable for the same reason. */
   now?: () => number;
 }
@@ -204,6 +214,8 @@ export function createDomoMcpServer(
   // budget still bounds the direct tools it exercises.
   let directCeiling = options.directCeilingMs ?? options.budgetMs ?? DIRECT_CEILING_MS;
   const continuations = new Continuations(device.audit);
+  // Retry safety, keyed on (agent, operation_id). Process-local by design.
+  const operations = new OperationRecords(options.operationTtlMs, options.operationTombstoneMs, options.now);
   const deferred = new DeferredResults(budgetMs, options.ttlMs, options.now, continuations);
   const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
@@ -246,24 +258,40 @@ export function createDomoMcpServer(
               device,
               deferred,
               jobs,
+              operations,
               agent,
               sessionId,
               commandWaitCapMs: budgetMs,
             };
             const body = (progress: Progress) =>
               spec.run((args ?? null) as JSONValue, toolCtx, progress);
+            // What this tool would do if nothing had done it already.
+            const attempt = () =>
+              spec.classification === "deferrable"
+                ? deferred.run(agent.agentId, body)
+                : // A direct tool has no handle to fall back on, so it is held
+                  // to the same ceiling the budget sets: answering late is
+                  // answering into an exchange the relay has abandoned.
+                  bounded(
+                    () => body({ decided: () => {}, intent: () => {} }),
+                    directCeiling,
+                    spec.name,
+                  );
             try {
-              const result =
-                spec.classification === "deferrable"
-                  ? await deferred.run(agent.agentId, body)
-                  : // A direct tool has no handle to fall back on, so it is
-                    // held to the same ceiling the budget sets: answering late
-                    // is answering into an exchange the relay has abandoned.
-                    await bounded(
-                      () => body({ decided: () => {}, intent: () => {} }),
-                      directCeiling,
-                      spec.name,
-                    );
+              // A tool that can act twice is a tool a lost response can make
+              // act twice, so the caller names the operation and this Mac
+              // remembers it. `get_result` and the read-only tools are exempt:
+              // asking again is the whole point of them.
+              const argv = (args ?? null) as JSONValue;
+              const result = spec.requiresOperationId
+                ? await operations.run(
+                    agent.agentId,
+                    checkOperationId(jv(argv).get("operation_id").value),
+                    operationFingerprint(spec.name, argv),
+                    attempt,
+                    (handle) => deferred.get(agent.agentId, handle),
+                  )
+                : await attempt();
               // Most results are one text block; a screenshot expands into an
               // image + text block via `__mcpContent`.
               return { content: toolBlocks(result) };
@@ -274,7 +302,11 @@ export function createDomoMcpServer(
                   toolContent(
                     error instanceof DeniedError
                       ? { status: "denied", reason: message }
-                      : { error: message },
+                      : error instanceof OperationConflictError
+                        ? { status: "conflict", reason: message }
+                        : error instanceof OperationError
+                          ? { status: "invalid_operation_id", reason: message }
+                          : { error: message },
                   ),
                 ],
                 isError: true,

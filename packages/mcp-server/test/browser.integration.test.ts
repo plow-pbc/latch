@@ -117,7 +117,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(site.state.orders.at(-1)).toMatchObject({ pizza: "pepperoni", cardNumber: "4111111111111111", cvv: "123" });
 
     // A real screenshot arrives as an image block.
-    const shot = parse(await rpc(server, "tools/call", { name: "browser", arguments: { session, action: "screenshot" } }, AGENT));
+    const shot = parse(await rpc(server, "tools/call", { name: "browser", arguments: { session, action: "screenshot", operation_id: "shot-live" } }, AGENT));
     const blocks = shot.result!.content as { type: string; data?: string }[];
     expect(blocks[0].type).toBe("image");
     expect(Buffer.from(blocks[0].data ?? "", "base64").length).toBeGreaterThan(5000);

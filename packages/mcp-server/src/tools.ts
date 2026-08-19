@@ -25,6 +25,7 @@ import {
 import { DeviceAgent, MAX_FILE_BYTES, MAX_OUTPUT_BYTES } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
+import { OperationRecords } from "./operations.js";
 
 /** A tool argument was missing or unusable — the agent's problem, not ours. */
 export class ToolError extends Error {}
@@ -42,6 +43,8 @@ export interface ToolContext {
   deferred: DeferredResults;
   /** Which agent started which command job (§4.4). */
   jobs: JobOwners;
+  /** Retry records, so `get_result` can answer by operation id (§6). */
+  operations: OperationRecords;
   agent: AgentIdentity;
   /** Stable for the life of this Mac process; intents carry it for grouping. */
   sessionId: string;
@@ -67,6 +70,16 @@ export interface ToolSpec {
    * would be absurd; blocking one past the deadline would be worse.
    */
   classification: "deferrable" | "direct_bounded";
+  /**
+   * Whether a caller must name this operation with an `operation_id` (§6).
+   *
+   * True for everything that can act twice: every deferrable tool, plus the
+   * two direct ones that touch an approved browser session. False for the
+   * tools whose whole purpose is being asked again — polling a handle, reading
+   * a manifest or a skill, listing vault metadata — where an id would be
+   * ceremony with nothing behind it.
+   */
+  requiresOperationId: boolean;
   run(args: JSONValue, ctx: ToolContext, progress: Progress): Promise<JSONValue>;
 }
 
@@ -139,20 +152,38 @@ async function decideAndRun(
 
 const GOAL = { type: "string", description: "Why (shown to the approver)" };
 
+/**
+ * The caller's name for this operation (§6).
+ *
+ * Required on everything that can act twice, because only the caller knows
+ * whether a second identical call is a retry of the first or a second thing it
+ * genuinely wants done. Repeat it verbatim to retry; use a new one for new
+ * work.
+ */
+const OPERATION_ID = {
+  type: "string",
+  description:
+    "Your id for this operation: 1-128 URL-safe characters. Repeat it EXACTLY to retry after a " +
+    "lost response — the retry answers with the original operation's state instead of doing the " +
+    "work twice. Use a fresh id for new work; reusing one with different arguments is a conflict.",
+};
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "read_file",
     description: "Read a file on this Mac. The owner may be asked to approve.",
     inputSchema: {
       type: "object",
-      required: ["path"],
+      required: ["path", "operation_id"],
       properties: {
+        operation_id: OPERATION_ID,
         path: { type: "string", description: "Absolute path (~ allowed)" },
         goal: GOAL,
       },
       additionalProperties: false,
     },
     classification: "deferrable",
+    requiresOperationId: true,
     async run(args, ctx, progress) {
       const a = jv(args);
       const raw = a.get("path").str;
@@ -180,11 +211,13 @@ export const TOOLS: ToolSpec[] = [
     description: "Write a file on this Mac. The owner may be asked to approve.",
     inputSchema: {
       type: "object",
-      required: ["path", "content"],
-      properties: { path: { type: "string" }, content: { type: "string" }, goal: GOAL },
+      required: ["path", "content", "operation_id"],
+      properties: {
+        operation_id: OPERATION_ID, path: { type: "string" }, content: { type: "string" }, goal: GOAL },
       additionalProperties: false,
     },
     classification: "deferrable",
+    requiresOperationId: true,
     async run(args, ctx, progress) {
       const a = jv(args);
       const raw = a.get("path").str;
@@ -223,8 +256,9 @@ export const TOOLS: ToolSpec[] = [
       "get_result, and the ready payload is the run_command result — including its job handle.",
     inputSchema: {
       type: "object",
-      required: ["argv"],
+      required: ["argv", "operation_id"],
       properties: {
+        operation_id: OPERATION_ID,
         argv: {
           type: "array",
           items: { type: "string" },
@@ -258,6 +292,7 @@ export const TOOLS: ToolSpec[] = [
       additionalProperties: false,
     },
     classification: "deferrable",
+    requiresOperationId: true,
     async run(args, ctx, progress) {
       const a = jv(args);
       const argvValues = a.get("argv").arr;
@@ -319,6 +354,7 @@ export const TOOLS: ToolSpec[] = [
     // which is why the *bytes* are capped rather than the wait: a ceiling
     // cannot interrupt a copy already running on the event loop.
     classification: "direct_bounded",
+    requiresOperationId: false,
     async run(args, ctx) {
       const handle = jv(args).get("handle").str;
       if (handle === null) throw new ToolError("missing 'handle'");
@@ -335,6 +371,7 @@ export const TOOLS: ToolSpec[] = [
       "Blessed tools are trusted in-process capabilities, distinct from the tools in this list.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     classification: "direct_bounded",
+    requiresOperationId: false,
     async run(_args, ctx) {
       return {
         tools: ctx.device.blessedTools.manifest(),
@@ -357,6 +394,7 @@ export const TOOLS: ToolSpec[] = [
       additionalProperties: false,
     },
     classification: "direct_bounded",
+    requiresOperationId: false,
     async run(args, ctx) {
       const name = jv(args).get("name").str;
       if (name === null) throw new ToolError("missing 'name'");
@@ -370,11 +408,13 @@ export const TOOLS: ToolSpec[] = [
     description: "Invoke a blessed tool on this Mac (discover them with list_tools).",
     inputSchema: {
       type: "object",
-      required: ["tool"],
-      properties: { tool: { type: "string" }, args: { type: "object" }, goal: GOAL },
+      required: ["tool", "operation_id"],
+      properties: {
+        operation_id: OPERATION_ID, tool: { type: "string" }, args: { type: "object" }, goal: GOAL },
       additionalProperties: false,
     },
     classification: "deferrable",
+    requiresOperationId: true,
     async run(args, ctx, progress) {
       const a = jv(args);
       const tool = a.get("tool").str;
@@ -402,8 +442,9 @@ export const TOOLS: ToolSpec[] = [
       "skill first.",
     inputSchema: {
       type: "object",
-      required: ["origins"],
+      required: ["origins", "operation_id"],
       properties: {
+        operation_id: OPERATION_ID,
         origins: {
           type: "array",
           items: { type: "string" },
@@ -425,6 +466,7 @@ export const TOOLS: ToolSpec[] = [
       additionalProperties: false,
     },
     classification: "deferrable",
+    requiresOperationId: true,
     async run(args, ctx, progress) {
       const a = jv(args);
       const origins = strings(a.get("origins").arr);
@@ -462,8 +504,9 @@ export const TOOLS: ToolSpec[] = [
       "revealed to you; they are typed into the page on this Mac.",
     inputSchema: {
       type: "object",
-      required: ["session"],
+      required: ["session", "operation_id"],
       properties: {
+        operation_id: OPERATION_ID,
         session: { type: "string" },
         origins: { type: "array", items: { type: "string" } },
         credential_items: {
@@ -476,6 +519,7 @@ export const TOOLS: ToolSpec[] = [
       additionalProperties: false,
     },
     classification: "deferrable",
+    requiresOperationId: true,
     async run(args, ctx, progress) {
       const a = jv(args);
       const session = a.get("session").str;
@@ -519,8 +563,9 @@ export const TOOLS: ToolSpec[] = [
       "page_count (watch it for popups; switch with use_page).",
     inputSchema: {
       type: "object",
-      required: ["session", "action"],
+      required: ["session", "action", "operation_id"],
       properties: {
+        operation_id: OPERATION_ID,
         session: { type: "string" },
         action: {
           type: "string",
@@ -547,6 +592,7 @@ export const TOOLS: ToolSpec[] = [
     // screenshot's image block reaches the agent directly (a deferred result
     // would be re-serialized as text by get_result).
     classification: "direct_bounded",
+    requiresOperationId: true,
     async run(args, ctx) {
       const a = jv(args);
       const session = a.get("session").str;
@@ -599,6 +645,7 @@ export const TOOLS: ToolSpec[] = [
       additionalProperties: false,
     },
     classification: "direct_bounded",
+    requiresOperationId: false,
     async run(args, ctx) {
       const a = jv(args);
       const action = a.get("action").str;
@@ -612,11 +659,13 @@ export const TOOLS: ToolSpec[] = [
     description: "Close a browser session when the task is done.",
     inputSchema: {
       type: "object",
-      required: ["session"],
-      properties: { session: { type: "string" } },
+      required: ["session", "operation_id"],
+      properties: {
+        operation_id: OPERATION_ID, session: { type: "string" } },
       additionalProperties: false,
     },
     classification: "direct_bounded",
+    requiresOperationId: true,
     async run(args, ctx) {
       const session = jv(args).get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
@@ -632,15 +681,37 @@ export const TOOLS: ToolSpec[] = [
       "A ready result is exactly what the original call would have returned had it been fast enough.",
     inputSchema: {
       type: "object",
-      required: ["handle"],
-      properties: { handle: { type: "string" } },
+      properties: {
+        handle: { type: "string", description: "The handle a pending call returned" },
+        operation_id: {
+          type: "string",
+          description:
+            "The operation_id you gave the original call. Use this when the pending handle was " +
+            "lost with the response that carried it.",
+        },
+      },
       additionalProperties: false,
     },
     classification: "direct_bounded",
+    requiresOperationId: false,
     async run(args, ctx) {
-      const handle = jv(args).get("handle").str;
-      if (handle === null) throw new ToolError("missing 'handle'");
-      return ctx.deferred.get(ctx.agent.agentId, handle);
+      const a = jv(args);
+      const handle = a.get("handle").str;
+      const operationId = a.get("operation_id").str;
+      // Exactly one. Two ways of naming the same lookup can disagree, and the
+      // answer to "which did you mean" is not this Mac's to guess.
+      if (handle !== null && operationId !== null) {
+        throw new ToolError("pass either 'handle' or 'operation_id', not both");
+      }
+      if (handle !== null) return ctx.deferred.get(ctx.agent.agentId, handle);
+      if (operationId === null) throw new ToolError("missing 'handle' or 'operation_id'");
+      // An id nobody here has seen — never used, or used by another agent — is
+      // `unknown`, exactly as an invented handle is. An operation id is not an
+      // oracle for what other agents are doing.
+      const state = ctx.operations.lookupState(ctx.agent.agentId, operationId, (h) =>
+        ctx.deferred.get(ctx.agent.agentId, h),
+      );
+      return state ?? { status: "unknown", operation_id: operationId };
     },
   },
 ];
