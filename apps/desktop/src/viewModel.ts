@@ -79,7 +79,13 @@ export function approvalViewModel(
 }
 
 export type BadgeTone = "green" | "red" | "amber" | "blue" | "zinc";
-export type StepState = "neutral" | "ok" | "bad";
+/**
+ * `warn` is for a step that is neither success nor failure: the operation did
+ * what it was asked, but something about its delivery is unresolved — the
+ * relay never confirmed the handoff, or nobody collected the result. Marking
+ * those "bad" would say the work failed, which it did not.
+ */
+export type StepState = "neutral" | "ok" | "bad" | "warn";
 
 export interface AuditStep {
   time: string;
@@ -289,6 +295,19 @@ function activityStatus(
     const decision = jv(dec).get("decision").str ?? "";
     if (decision === "deny") return { status: "Denied", tone: "red" };
     const base = decision === "always_allow" ? "Always allowed" : "Allowed once";
+    // The continuation's own endings, which say something the decision cannot:
+    // whether the answer ever reached the agent. Checked before the outcome
+    // suffixes below because "the agent never came back for it" is the more
+    // useful thing to read on the row.
+    if (has("continuation_result_expired")) {
+      return { status: `${base} · result expired`, tone: "amber" };
+    }
+    if (has("continuation_delivery_unknown") && !has("continuation_result_requested")) {
+      return { status: `${base} · delivery unconfirmed`, tone: "amber" };
+    }
+    if (has("continuation_result_ready") && !has("continuation_result_requested")) {
+      return { status: `${base} · awaiting collection`, tone: "blue" };
+    }
     // Failures/blocks keep their suffix; plain successes show just the base
     // (no "· done"/"· finished").
     if (entry("denied_operation")) return { status: `${base} · blocked`, tone: "red" };
@@ -355,6 +374,11 @@ function activityCategory(
   if (dec) {
     if (jv(dec).get("decision").str === "deny") return "denied";
     if (entry("denied_operation")) return "failed"; // sandbox/scope block
+    // An approved operation whose result nobody ever collected did not fail —
+    // the work ran and the answer was there — but it did not land either, so
+    // it belongs with the things worth looking at rather than with the clean
+    // successes.
+    if (has("continuation_result_expired")) return "failed";
     if (has("exec_error") || has("tool_error")) return "failed";
     const ee = entry("exec_end");
     if (ee && (jv(ee).get("exit_code").int ?? 0) !== 0) return "failed";
@@ -416,6 +440,23 @@ function describeStep(e: JSONValue): AuditStep {
       state = ev.get("decision").str === "deny" ? "bad" : "ok";
       break;
     case "intent_rejected": text = `Rejected: ${ev.get("reason").str ?? ""}`; state = "bad"; break;
+    // The continuation lifecycle — what happened to this approval after the
+    // call that asked for it stopped waiting. Wording matters here: the only
+    // thing this Mac ever observes is that the relay matched its response and
+    // that a lookup arrived, never that a model read anything.
+    case "continuation_backgrounded":
+      text = "Agent's call handed off — the relay confirmed it received the pending handle";
+      break;
+    case "continuation_delivery_unknown":
+      text = "Delivery unconfirmed — the connection dropped before the relay acknowledged the handoff";
+      state = "warn";
+      break;
+    case "continuation_result_ready": text = "Result ready, waiting to be collected"; state = "ok"; break;
+    case "continuation_result_requested": text = "Agent requested the result"; state = "ok"; break;
+    case "continuation_result_expired":
+      text = "Result expired — nobody collected it before retention ran out";
+      state = "warn";
+      break;
     case "exec_start": text = `Run started: ${argv()}`; break;
     case "exec_end":
       text = `Run finished (exit ${ev.get("exit_code").int ?? -1})`;

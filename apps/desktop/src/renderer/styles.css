@@ -282,6 +282,8 @@ dl.meta dd { margin: 0; }
 }
 .tl.ok::before { background: var(--green-fg); }
 .tl.bad::before { background: var(--red-fg); }
+/* Neither done nor failed: the work happened, but its delivery is unresolved. */
+.tl.warn::before { background: var(--amber-fg); }
 .tl .tt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .tl .tm { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 

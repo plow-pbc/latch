@@ -40,18 +40,65 @@ describe("waiting inline", () => {
     expect(view.closed).toBe(false);
   });
 
-  it("never counts below zero, and never says a passed deadline changed anything", () => {
+  it("never counts below zero", () => {
+    const view = continuationView({
+      state: "waiting_inline",
+      deadlineAt: NOW + 1,
+      now: NOW,
+      decided: false,
+    });
+    expect(view.remainingMs).toBe(1);
+  });
+
+  it("stops claiming the agent is waiting once the deadline passes unconfirmed", () => {
+    // The neutral state. The call's own deadline has gone by with no
+    // acknowledgement, so "still waiting" would be a guess in one direction
+    // and "handed off" a guess in the other — and the window may make neither.
     const view = continuationView({
       state: "waiting_inline",
       deadlineAt: NOW - 5_000,
       now: NOW,
       decided: false,
     });
-    expect(view.remainingMs).toBe(0);
-    // Still `waiting_inline`: the call running out of budget is not an
-    // observation that the agent stopped waiting. Only the relay says that.
-    expect(view.headline).toContain("still waiting");
-    expect(view.detail).not.toContain(CONTINUE_PHRASE);
+    expect(view.headline).toContain("could not confirm");
+    expect(view.headline).not.toContain("still waiting");
+    expect(view.headline).not.toContain("stopped waiting");
+    // No countdown to a deadline that has gone, and no copy action: there is
+    // no result to come back for yet.
+    expect(view.remainingMs).toBeNull();
+    expect(view.showCopy).toBe(false);
+    // The user's next move is the same either way, so it is offered — hedged.
+    expect(view.detail).toContain("may need to");
+    expect(view.detail).toContain(CONTINUE_PHRASE);
+  });
+
+  it("shows the neutral state the moment the relay says the exchange died", () => {
+    // Before the deadline, too: a dropped socket is an observation, and it is
+    // not the same observation as a successful handoff.
+    const view = continuationView({
+      state: "waiting_inline",
+      deadlineAt: NOW + 9_000,
+      now: NOW,
+      decided: false,
+      deliveryUnknown: true,
+    });
+    expect(view.headline).toContain("could not confirm");
+    expect(view.remainingMs).toBeNull();
+  });
+
+  it("keeps the window open on a decision made after the deadline passed", () => {
+    // The close-on-decision shortcut belongs to a call that was DEMONSTRABLY
+    // still open. Past the deadline nobody knows, so the window stays and says
+    // what to do about it.
+    const view = continuationView({
+      state: "waiting_inline",
+      deadlineAt: NOW - 1,
+      now: NOW,
+      decided: true,
+    });
+    expect(view.closed).toBe(false);
+    expect(view.confirmation).toBe(true);
+    expect(view.headline).toContain("could not confirm");
   });
 
   it("says nothing about time when there is no deadline to measure", () => {

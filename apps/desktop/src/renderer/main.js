@@ -373,7 +373,7 @@ function detailFor(a) {
   if (a.timeline && a.timeline.length) {
     children.push(el("div", { class: "section-label", text: "Timeline" }));
     children.push(el("div", { class: "timeline" }, a.timeline.map((s) =>
-      el("div", { class: "tl" + (s.state === "ok" ? " ok" : s.state === "bad" ? " bad" : "") }, [
+      el("div", { class: "tl" + (s.state === "ok" ? " ok" : s.state === "bad" ? " bad" : s.state === "warn" ? " warn" : "") }, [
         el("div", { class: "tt", text: s.text }),
         el("div", { class: "tm", text: s.time }),
       ]),

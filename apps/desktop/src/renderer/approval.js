@@ -52,6 +52,9 @@ async function render() {
   const strip = el("div", { class: "continuation" });
   let phase = req.continuation?.state ?? null;
   const deadlineAt = req.continuation?.deadlineAt ?? null;
+  /* Recorded separately from the state, because it IS separate: the relay
+     never confirming the handoff says nothing about what became of the work. */
+  let deliveryUnknown = req.continuation?.deliveryUnknown === true;
   let decided = false;
 
   const copyButton = button("Copy phrase", "btn small", () => {
@@ -63,7 +66,13 @@ async function render() {
   });
 
   function paintContinuation() {
-    const view = continuationView({ state: phase, deadlineAt, now: Date.now(), decided });
+    const view = continuationView({
+      state: phase,
+      deadlineAt,
+      now: Date.now(),
+      decided,
+      deliveryUnknown,
+    });
     if (view.headline === null) {
       strip.replaceChildren();
       strip.classList.remove("shown");
@@ -92,6 +101,7 @@ async function render() {
   window.domo.onApprovalContinuation((data) => {
     if (data.intentId !== v.intentId) return;
     phase = data.state;
+    if (data.deliveryUnknown === true) deliveryUnknown = true;
     paintContinuation();
     if (decided) collapseToConfirmation();
   });

@@ -403,6 +403,28 @@ describe("what the approval window is told", () => {
     for (const c of seen) expect(c.intentId).toBe(INTENT);
   });
 
+  it("tells the window that delivery could not be confirmed, and keeps saying so", () => {
+    // The window needs this as a FACT it can read, not only as an audit line:
+    // it is what stops the countdown claiming the agent is still waiting.
+    const seen: { state: string; deliveryUnknown?: boolean }[] = [];
+    const cont = new Continuations({ record: () => {} });
+    cont.events.on("change", (c: { state: string; deliveryUnknown?: boolean }) => seen.push(c));
+    cont.open("H1", AGENT.agent_id, 1_000);
+    cont.linkIntent("H1", INTENT);
+    exchangeContext.run({ rid: "RID-U" }, () => cont.deferred("H1"));
+    expect(cont.deliveryUnknownOfIntent(INTENT)).toBe(false);
+
+    cont.exchangeDeliveryUnknown("RID-U");
+    expect(cont.deliveryUnknownOfIntent(INTENT)).toBe(true);
+    expect(seen.at(-1)).toMatchObject({ state: "waiting_inline", deliveryUnknown: true });
+
+    // It survives everything that happens afterwards: the result landing does
+    // not retroactively confirm a handoff nobody ever confirmed.
+    cont.ready("H1");
+    expect(cont.deliveryUnknownOfIntent(INTENT)).toBe(true);
+    expect(seen.at(-1)).toMatchObject({ state: "approved_uncollected", deliveryUnknown: true });
+  });
+
   it("hands the window the absolute deadline of the call, keyed by intent", () => {
     const cont = new Continuations({ record: () => {} });
     cont.open("H1", AGENT.agent_id, 9_876);
@@ -492,7 +514,10 @@ describe("through the server, over repeated reads", () => {
 
     approve();
     let poll = payload;
-    for (let i = 0; i < 80 && poll.status === "pending"; i++) {
+    // Generous: under a loaded suite the approval and the read are both
+    // competing for the same event loop, and a tight bound here fails for
+    // reasons that have nothing to do with what is being tested.
+    for (let i = 0; i < 200 && poll.status === "pending"; i++) {
       await new Promise((r) => setTimeout(r, 25));
       poll = (await callTool(server, "get_result", { handle }, AGENT)).payload;
     }
@@ -546,7 +571,7 @@ describe("through the server, over repeated reads", () => {
     const handle = payload.handle as string;
     const intentId = server.continuations.intentOf(handle)!;
 
-    for (let i = 0; i < 40 && server.continuations.state(handle) !== "approved_uncollected"; i++) {
+    for (let i = 0; i < 200 && server.continuations.state(handle) !== "approved_uncollected"; i++) {
       await new Promise((r) => setTimeout(r, 25));
     }
     expect(server.continuations.state(handle)).toBe("approved_uncollected");
@@ -579,7 +604,7 @@ describe("through the server, over repeated reads", () => {
     // proof it fired.
     const home = tempDir();
     const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
-    const server = createDomoMcpServer(device, { budgetMs: 20, ttlMs: 80 });
+    const server = createDomoMcpServer(device, { budgetMs: 20, ttlMs: 100 });
     cleanups.push(() => server.close());
 
     // Count every way into the store, so the test can prove it used none.
@@ -591,7 +616,7 @@ describe("through the server, over repeated reads", () => {
     }) as typeof server.fetch;
 
     device.handleIntent = (async () => {
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 200));
       return { status: "ok", content_base64: Buffer.from("nobody reads me").toString("base64") };
     }) as never;
 
@@ -603,9 +628,9 @@ describe("through the server, over repeated reads", () => {
     const intentId = server.continuations.intentOf(handle)!;
     const callsSoFar = fetches;
 
-    // One flat wait: the result lands at ~40ms and retention runs out ~80ms
+    // One flat wait: the result lands at ~200ms and retention runs out ~100ms
     // after that. No polling of any kind in between.
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 1_200));
 
     // Nothing was asked of the server in that window.
     expect(fetches).toBe(callsSoFar);
@@ -670,17 +695,21 @@ describe("through the server, over repeated reads", () => {
     cleanups.push(() => server.close());
 
     device.handleIntent = (async () => {
-      await new Promise((r) => setTimeout(r, 40));
+      // An order of magnitude past the budget: a work delay close to it lets a
+      // loaded machine answer the call inline, and then there is no handle.
+      await new Promise((r) => setTimeout(r, 250));
       return { status: "ok", content_base64: Buffer.from("gone").toString("base64") };
     }) as never;
 
     const file = path.join(tempDir(), "hello.txt");
     fs.writeFileSync(file, "gone");
     const { payload } = await callTool(server, "read_file", { path: file }, AGENT);
+    expect(payload.status).toBe("pending");
     const handle = payload.handle as string;
-    for (let i = 0; i < 40 && server.continuations.state(handle) !== "approved_uncollected"; i++) {
+    for (let i = 0; i < 200 && server.continuations.state(handle) !== "approved_uncollected"; i++) {
       await new Promise((r) => setTimeout(r, 10));
     }
+    expect(server.continuations.state(handle)).toBe("approved_uncollected");
 
     clock += 60_001;
     expect((await callTool(server, "get_result", { handle }, AGENT)).payload.status).toBe("expired");

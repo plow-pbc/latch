@@ -44,6 +44,11 @@ export interface ContinuationInput {
   now: number;
   /** Whether the human has already answered this prompt. */
   decided: boolean;
+  /**
+   * The relay will never confirm the handoff for this operation — the socket
+   * died, or the exchange deadline passed with no acknowledgement.
+   */
+  deliveryUnknown?: boolean;
 }
 
 export interface ContinuationView {
@@ -75,17 +80,32 @@ export function secondsLeft(remainingMs: number): number {
 }
 
 export function continuationView(input: ContinuationInput): ContinuationView {
-  const { state, deadlineAt, now, decided } = input;
+  const { state, deadlineAt, now, decided, deliveryUnknown } = input;
   if (state === null) return EMPTY;
 
   switch (state) {
     case "waiting_inline": {
-      if (decided) {
-        // Answered while the call was still open: the result goes back on that
-        // call, and there is nothing for the user to do next.
+      if (decided && deliveryUnknown !== true && (deadlineAt === null || now < deadlineAt)) {
+        // Answered while the call was demonstrably still open: the result goes
+        // back on that call, and there is nothing for the user to do next.
         return { ...EMPTY, closed: true };
       }
       const remainingMs = deadlineAt === null ? null : Math.max(0, deadlineAt - now);
+      // Neither waiting nor backgrounded. Once the call's own deadline has
+      // passed with no acknowledgement — or the relay told us the exchange
+      // died — the honest answer is that this Mac cannot tell whether the
+      // agent got the handoff. Saying "still waiting" would be a guess in one
+      // direction and "handed off" a guess in the other, and the user's next
+      // move is the same either way.
+      const unconfirmed = deliveryUnknown === true || remainingMs === 0;
+      if (unconfirmed) {
+        return {
+          ...EMPTY,
+          headline: "This Mac could not confirm the handoff to your agent.",
+          detail: `Your answer still counts. After approving, you may need to return to your agent and say: “${CONTINUE_PHRASE}”`,
+          confirmation: decided,
+        };
+      }
       return {
         ...EMPTY,
         // The clock lives in ONE place — the countdown line. Spelling the

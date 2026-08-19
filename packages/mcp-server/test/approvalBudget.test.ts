@@ -141,7 +141,11 @@ describe("the budget fires while persisting the approval is still in flight", ()
     // written first, which is the whole point of writing it.
     expect(asked).toBe(false);
     openGate();
+    // `call` resolves at the budget, which is BEFORE the unblocked write
+    // finishes and the human is finally asked — so waiting on the call alone
+    // is waiting on the wrong thing.
     await call;
+    for (let i = 0; i < 100 && !asked; i++) await new Promise((r) => setTimeout(r, 10));
     expect(asked).toBe(true);
   });
 });

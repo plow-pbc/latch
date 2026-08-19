@@ -107,6 +107,15 @@ interface Record_ {
   acknowledged: boolean;
   /** An authorized lookup reached this Mac. */
   collected: boolean;
+  /**
+   * The exchange that carried the envelope will never be acknowledged.
+   *
+   * Not a state: it says nothing about what became of the work, and it is not
+   * the opposite of backgrounded — only that this Mac cannot tell. The window
+   * needs it so it can stop claiming the agent is still waiting without
+   * claiming the handoff succeeded either.
+   */
+  deliveryUnknown: boolean;
   /** The exchange the pending envelope went out on, once it has gone out. */
   rid: string | null;
   /**
@@ -153,6 +162,7 @@ export class Continuations {
       outcome: "pending",
       acknowledged: false,
       collected: false,
+      deliveryUnknown: false,
       rid: null,
       buffered: [],
     });
@@ -303,6 +313,17 @@ export class Continuations {
     return this.byHandle.get(handle)?.acknowledged ?? false;
   }
 
+  /** Whether this Mac gave up on ever hearing the handoff confirmed. */
+  deliveryUnknown(handle: string): boolean {
+    return this.byHandle.get(handle)?.deliveryUnknown ?? false;
+  }
+
+  /** The same, by intent — what the approval window asks. */
+  deliveryUnknownOfIntent(intentId: string): boolean {
+    const handle = this.byIntent.get(intentId);
+    return handle === undefined ? false : this.deliveryUnknown(handle);
+  }
+
   /** Whether an authorized lookup has reached this Mac for it. */
   wasCollected(handle: string): boolean {
     return this.byHandle.get(handle)?.collected ?? false;
@@ -334,7 +355,10 @@ export class Continuations {
     const rec = this.byHandle.get(handle);
     if (!rec) return;
     if (delivery === "unknown") {
+      if (rec.deliveryUnknown) return;
+      rec.deliveryUnknown = true;
       this.emit(rec, CONTINUATION_EVENTS.deliveryUnknown);
+      this.announce(rec);
       return;
     }
     if (rec.acknowledged) return;
@@ -375,7 +399,11 @@ export class Continuations {
     if (rec.intentId === null) return;
     const handle = this.byIntent.get(rec.intentId);
     if (handle === undefined) return;
-    this.events.emit("change", { intentId: rec.intentId, state: this.state(handle) });
+    this.events.emit("change", {
+      intentId: rec.intentId,
+      state: this.state(handle),
+      deliveryUnknown: rec.deliveryUnknown,
+    });
   }
 
   private forget(handle: string): void {

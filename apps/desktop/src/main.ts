@@ -44,7 +44,8 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
-import { CONFIRMATION_LINGER_MS, CONTINUE_PHRASE, ContinuationPhase } from "./continuationView.js";
+import { CONTINUE_PHRASE, ContinuationPhase } from "./continuationView.js";
+import { ContinuationSource, ReviewSay, runApprovalWindow } from "./approvalWindow.js";
 import { devIconScript } from "./devIcon.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
@@ -204,15 +205,21 @@ type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewMod
  *
  * Read from the continuation registry rather than guessed: the window is only
  * allowed to say "backgrounded" because something observed the relay
- * acknowledging the handoff.
+ * acknowledging the handoff, and only allowed to say the handoff could not be
+ * confirmed because something observed that too.
  */
-function continuationOf(intentId: string): { state: ContinuationPhase | null; deadlineAt: number | null } {
-  const cont = mcp?.continuations;
-  return {
-    state: (cont?.stateOfIntent(intentId) ?? null) as ContinuationPhase | null,
-    deadlineAt: cont?.deadlineOfIntent(intentId) ?? null,
-  };
-}
+const continuationSource: ContinuationSource = {
+  snapshot: (intentId) => ({
+    state: (mcp?.continuations.stateOfIntent(intentId) ?? null) as ContinuationPhase | null,
+    deadlineAt: mcp?.continuations.deadlineOfIntent(intentId) ?? null,
+    deliveryUnknown: mcp?.continuations.deliveryUnknownOfIntent(intentId) ?? false,
+  }),
+  subscribe: (listener) => {
+    const events = mcp?.continuations.events;
+    events?.on("change", listener);
+    return () => events?.removeListener("change", listener);
+  },
+};
 
 /** Serialize approval windows so two prompts never overlap. */
 let approvalChain: Promise<unknown> = Promise.resolve();
@@ -224,129 +231,29 @@ function openApprovalWindow(
   hint: Promise<ReviewHint> | null = null,
 ): Promise<ApprovalDecision> {
   const run = () =>
-    new Promise<ApprovalDecision>((resolve) => {
-      const win = new BrowserWindow({
-        width: 460,
-        height: 560,
-        resizable: false,
-        fullscreenable: false,
-        title: "Plow — Approve",
-        webPreferences: {
-          preload: path.join(dirname, "preload.cjs"),
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-        },
-      });
-      let settled = false;
-      const intentId = approvalId(request);
-      // The window follows RECORDED state. Nothing here infers a transition
-      // from elapsed time — the renderer's countdown is a prediction about the
-      // deadline and says so, and never moves the window between states.
-      const onContinuation = (change: { intentId: string; state: string }) => {
-        if (change.intentId !== intentId || win.isDestroyed()) return;
-        win.webContents.send("approval:continuation", change);
-      };
-      mcp?.continuations.events.on("change", onContinuation);
-      /** Closes the window once nothing is left to watch. */
-      let linger: NodeJS.Timeout | null = null;
-      // The renderer subscribes only after it has built its DOM, and Electron
-      // IPC has no replay — so a hint that resolved first would land on nobody.
-      // An adversarial fallback hands over an ALREADY-RESOLVED promise, so that
-      // is the common case, not a rare race. Waiting on both is what makes the
-      // ordering stop mattering.
-      let markReady = () => {};
-      const ready = new Promise<void>((r) => {
-        markReady = r;
-      });
-      const finish = (decision: ApprovalDecision) => {
-        if (settled) return;
-        settled = true;
-        ipcMain.removeHandler("approval:get");
-        ipcMain.removeHandler("approval:ready");
-        resolve(decision);
-        // An inline approval closes on the decision, as it always has. One that
-        // has already been backgrounded does not: the user's next move is with
-        // their agent, and this is where they are told so. It stays until the
-        // agent collects, until they dismiss it, or for thirty seconds.
-        const { state } = continuationOf(intentId);
-        const keepOpen = state === "backgrounded" || state === "approved_uncollected";
-        if (!keepOpen) {
-          win.close();
-          return;
-        }
-        // §4's "compact confirmation": the question is answered, so the window
-        // shrinks to the size of what is left to say instead of leaving a
-        // card's worth of empty space under two lines of text.
-        win.setContentSize(460, 190);
-        win.webContents.send("approval:decided", { intentId });
-        linger = setTimeout(() => {
-          if (!win.isDestroyed()) win.close();
-        }, CONFIRMATION_LINGER_MS);
-        linger.unref?.();
-      };
-      // The renderer pulls its model (never pushed with executable content).
-      // `suggesting` tells it whether an adversarial review is in flight, so it
-      // can show an indeterminate "reviewing…" indicator until the hint lands.
-      ipcMain.handleOnce("approval:get", async () => ({
-        ...request,
-        suggesting: !!hint,
-        continuation: continuationOf(intentId),
-      }));
-      // The renderer calls this once its suggestion listener is installed.
-      // `handle`, not `handleOnce`: a second call must be a harmless no-op
-      // rather than a rejected invoke in the renderer. Resolving twice is
-      // already one. Both exits below remove it.
-      ipcMain.handle("approval:ready", async () => markReady());
-      const onDecision = (_e: unknown, id: string, decision: ApprovalDecision) => {
-        if (id !== approvalId(request)) return;
-        ipcMain.removeListener("approval:decide", onDecision);
-        finish(decision);
-      };
-      ipcMain.on("approval:decide", onDecision);
-      // The confirmation's own dismiss. Only ever closes a window whose
-      // decision is already in — a dismiss before that would be a silent deny.
-      const onDismiss = (_e: unknown, id: string) => {
-        if (id !== intentId || !settled) return;
-        if (!win.isDestroyed()) win.close();
-      };
-      ipcMain.on("approval:dismiss", onDismiss);
-      // When the adversarial agent responds, tell the window which button to
-      // highlight (or that there's no hint) so it can clear the "reviewing…"
-      // indicator. Only meaningful while the window is still open and unanswered.
-      // Display-only, both fields. The enforceable bound the window shows is
-      // the capability set in the view model, never this.
-      if (hint) {
-        void Promise.all([hint.catch(() => null), ready]).then(([said]) => {
-          if (settled || win.isDestroyed()) return;
-          win.webContents.send("approval:suggestion", {
-            id: approvalId(request),
-            decision: said?.decision ?? null,
-            reason: said?.reason ?? "",
-          });
-        });
-      }
-      // Closing the window without a choice is a denial (fail safe).
-      win.on("closed", () => {
-        ipcMain.removeHandler("approval:ready");
-        ipcMain.removeListener("approval:decide", onDecision);
-        mcp?.continuations.events.removeListener("change", onContinuation);
-        ipcMain.removeListener("approval:dismiss", onDismiss);
-        if (linger) clearTimeout(linger);
-        if (!settled) {
-          settled = true;
-          resolve("deny");
-        }
-      });
-      void win.loadFile(path.join(rendererDir, "approval.html"));
+    runApprovalWindow(request, {
+      ipc: ipcMain,
+      createWindow: () =>
+        new BrowserWindow({
+          width: 460,
+          height: 560,
+          resizable: false,
+          fullscreenable: false,
+          title: "Plow — Approve",
+          webPreferences: {
+            preload: path.join(dirname, "preload.cjs"),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        }),
+      loadFile: (win) => win.loadFile(path.join(rendererDir, "approval.html")),
+      continuation: continuationSource,
+      hint: hint as Promise<ReviewSay | null> | null,
     });
   const result = approvalChain.then(run, run);
   approvalChain = result.catch(() => {});
   return result;
-}
-
-function approvalId(request: ApprovalRequest): string {
-  return request.view.intentId;
 }
 
 function createMainWindow(): void {
