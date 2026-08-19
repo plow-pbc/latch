@@ -70,7 +70,7 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   [DENIAL_SOURCE_NO_REVIEWER]:
     "inference unavailable: Adversarial mode is selected but its provider has " +
     "no credential on this Mac, so the reviewer could not run and the " +
-    "operation was denied — the owner needs to add one in Settings",
+    "operation was denied",
   [APPROVAL_SOURCE_EXPIRED]:
     "no one answered in time, so the request expired and was denied — a timeout, " +
     "not a refusal. Try again to raise a fresh request; any prompt still on the " +
