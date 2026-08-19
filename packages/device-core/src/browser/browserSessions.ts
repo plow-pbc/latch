@@ -158,7 +158,19 @@ export class BrowserSessions {
       // session to close it later, so put it away here: a running browser with
       // no session and no audit line is precisely the invisible browser this
       // path exists to prevent.
-      await this.host.shutdown();
+      try {
+        await this.host.shutdown();
+      } catch {
+        /* the browser is going away regardless; the failed open is the real error */
+      } finally {
+        // shutdown() latches `shuttingDown`, and only resetBreaker() clears it —
+        // close() pairs the two, so this path has to as well. Left latched, a
+        // retry starts a browser and publishes a session whose every command
+        // then fails with "browser host is shut down": a successful open the
+        // agent cannot use. `finally`, because shutdown() audits browser_stopped
+        // and the same failing append that brought us here can throw on the way out.
+        this.host.resetBreaker();
+      }
       throw error;
     }
     this.session = session;

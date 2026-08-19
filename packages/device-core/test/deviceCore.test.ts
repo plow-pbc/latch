@@ -187,12 +187,9 @@ describe("AuditLog", () => {
       .filter((l) => l.length > 0);
     expect(lines).toHaveLength(2);
   });
-});
 
-describe("a recorded event is recorded, whatever the UI does", () => {
   it("does not fail record() when a change listener throws", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-audit-"));
-    const log = new AuditLog(path.join(dir, "audit.ndjson"));
+    const log = new AuditLog(path.join(tempDir(), "audit.ndjson"));
     // The desktop listener calls webContents.send, which throws once the
     // renderer is torn down.
     log.events.on("change", () => {

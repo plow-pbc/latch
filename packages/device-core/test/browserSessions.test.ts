@@ -380,11 +380,15 @@ describe("access the owner's log could not record is not granted", () => {
   /** A session store whose audit append fails for one event, as a full disk
    * or a bad permission would. */
   function failingAudit(failOn: string): BrowserSessions {
+    let fired = false;
     return new BrowserSessions(
       ctx.host,
       null,
       (event: string) => {
-        if (event === failOn) throw new Error("audit append failed");
+        if (event === failOn && !fired) {
+          fired = true; // fails once, so a retry can be observed
+          throw new Error("audit append failed");
+        }
       },
       60_000,
     );
@@ -420,5 +424,23 @@ describe("access the owner's log could not record is not granted", () => {
     // failed open that walks away leaves exactly the unlogged browser the
     // session check just prevented.
     expect(ctx.host.running).toBe(false);
+  });
+
+  it("leaves the browser usable for the next attempt", async () => {
+    const sessions = failingAudit("browser_session_opened");
+    await expect(sessions.open("int-1", AGENT, ["pizza.example"], true)).rejects.toThrow();
+
+    // Cleaning up after the failed open must not latch the host shut.
+    // shutdown() sets `shuttingDown` and only resetBreaker() clears it, so a
+    // retry could publish a session whose every command then failed with
+    // "browser host is shut down" — a successful open the agent cannot use.
+    const retry = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    expect(retry.get("status").str).toBe("completed");
+    const handle = retry.get("session").str!;
+    const r = jv(
+      await sessions.command(AGENT, handle, { action: "goto", url: "https://pizza.example/" }),
+    );
+    expect(r.get("status").str).toBe("completed");
+    await sessions.closeAll("test");
   });
 });
