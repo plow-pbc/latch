@@ -660,9 +660,11 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
  * `finishWithSession` writes both fields, a home signed in from before the
  * marker existed reads as already defaulted (`loadSettings`), and sign-out
  * keeps the marker. So someone reopening the setup window from Settings never
- * trips this, and no in-memory "signed in this session" flag is needed —
- * persisted state even survives a crash between setup and the hand-over,
- * which a session flag would not.
+ * trips this, no in-memory "signed in this session" flag is needed, and the
+ * hook is idempotent — which is why it runs at BOTH the hand-over (the setup
+ * window's closed handler) and startup: a crash between setup and the
+ * hand-over leaves the default pending on disk, and the next launch opens the
+ * main window directly, never closing a setup window.
  *
  * The attempt is the shot: if the OS declines the write we do not come back on
  * every launch — the Settings toggle is the recourse. A from-source run is the
@@ -975,6 +977,11 @@ app.whenReady().then(async () => {
       (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
     );
   }
+  // A crash between setup saving the credential and the hand-over would leave
+  // the first-run default pending on disk with no setup window left to close —
+  // and this launch goes straight to the main window, so the hand-over hook
+  // never runs. Settle it here; every already-settled home returns early.
+  applyFirstRunLaunchAtLogin();
   // The gate decides what opens. A Mac with no credential cannot do anything
   // until it has one, so it gets the setup window and nothing else — not the
   // main window with a setup window floating beside it.
