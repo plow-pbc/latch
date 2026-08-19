@@ -266,7 +266,10 @@ function render() {
     : state.step === "code" ? codeScreen()
     : connectedScreen();
   root.replaceChildren(...screen.filter(Boolean));
-  const focus = root.querySelector("input[autofocus]");
+  // Return should trigger the action the blue button advertises, so something
+  // always holds focus: the screen's input if it has one, else its primary
+  // button (Enter on a focused button clicks it).
+  const focus = root.querySelector("input[autofocus]") ?? root.querySelector("button.primary");
   if (focus && !state.busy) focus.focus();
   for (const b of root.querySelectorAll("button:not(.local)")) b.disabled = !!state.busy;
 }
