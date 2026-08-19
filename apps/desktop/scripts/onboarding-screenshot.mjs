@@ -64,6 +64,8 @@ const SCREENS = [
       "Open Messages",
       "Use a phone code instead",
     ],
+    // The blue button answers Return: nothing to type here, so it holds focus.
+    expectFocus: "Open Messages",
   },
   {
     name: "waiting",
@@ -76,6 +78,7 @@ const SCREENS = [
       "Listening for 4:",
       "Get a New Code",
     ],
+    expectFocus: "Get a New Code",
   },
   {
     name: "waiting-gave-up",
@@ -91,12 +94,15 @@ const SCREENS = [
     // The one failure the user gets no other signal about: a wrong prefix is
     // answered with silence on both channels.
     expect: ["Still nothing", "it has to start with", "Plow Activate:", "Get a New Code"],
+    expectFocus: "Get a New Code",
   },
   {
     name: "phone",
     state: { ...newUser, step: "phone", phone: "" },
     // The lede has to promise a text, not claim one was sent.
     expect: ["Sign in to Plow", "We'll text you a code", "Send Code"],
+    // A screen WITH a field focuses the field — its Enter handler submits.
+    expectFocus: "+1 555 123 4567",
   },
   {
     name: "code",
@@ -109,6 +115,7 @@ const SCREENS = [
       codeExpiresAt: Date.now() + 4 * 60_000 + 30_000,
     },
     expect: ["Check your phone", "If +1 555 123 4567 is on a Plow account", "Expires in 4:", "Resend"],
+    expectFocus: "12345678",
   },
   {
     // The end of the wizard, and the door into the app: past this button the
@@ -117,6 +124,7 @@ const SCREENS = [
     name: "connected",
     state: { ...base, step: "connected" },
     expect: ["This Mac is connected", "u_7Qk2p9", "under Agents", "Continue"],
+    expectFocus: "Continue",
   },
 ];
 

@@ -60,7 +60,9 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
  * `expect` is matched against the page's text case-insensitively — several of
  * these panes uppercase their labels in CSS, and this checks what the screen
  * says, not how it is set. `expectValues` is matched against field values,
- * which is where a revealed secret lands.
+ * which is where a revealed secret lands. `expectFocus` is matched against the
+ * focused element's label (its text, or an input's placeholder) — the screen's
+ * promise that Return does what the highlighted control advertises.
  */
 export async function shootScreens({ win, outDir, prefix, screens, load, beforeShot }) {
   fs.mkdirSync(outDir, { recursive: true });
@@ -77,9 +79,15 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     const values = await win.webContents.executeJavaScript(
       `[...document.querySelectorAll("input, textarea")].map((f) => f.value).join("\\n")`,
     );
+    const focused = await win.webContents.executeJavaScript(
+      `(document.activeElement?.textContent || document.activeElement?.getAttribute("placeholder") || "").trim()`,
+    );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.expectValues ?? []).filter((needle) => !values.includes(needle)),
+      ...(screen.expectFocus && !focused.includes(screen.expectFocus)
+        ? [`focus on "${screen.expectFocus}" (focused: "${focused}")`]
+        : []),
     ];
     if (missing.length) failures += 1;
     console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing }));
