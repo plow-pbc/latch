@@ -417,30 +417,27 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
-            # A click searches every frame, so a per-frame timeout is really
-            # N x itself -- past the caps the number was chosen against. Its
-            # timeout is therefore the budget for the WHOLE action, and the way
-            # to spend it is to find the frame first: `query_selector` is
-            # instant, so waiting for the selector to APPEAR is a scan of every
-            # frame at once, not a wait carved up between them (which spends
-            # each frame's share blind to the others -- an element arriving in
-            # the first frame a moment after its share ran out was missed with
-            # most of the budget still unspent). Whatever holds it then gets
-            # what remains, and nothing holding it by the deadline is an honest
-            # "not found" rather than a timeout.
-            # (`fill` keeps its per-frame default: a credential field is found
-            # by searching frames, and shortening the later ones would drop
-            # fills that work today.)
             budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
             deadline = time.monotonic() + budget_ms / 1000.0
             frames = self.indexed_frames(cmd)
-            # Which frame holds it is only a question when the caller did not
-            # say. Then the budget goes on scanning every frame until one does
-            # -- re-enumerating each pass, because a consent or payment iframe
+            # A click that names no frame searches all of them, so a per-frame
+            # timeout would really be N x itself -- past the caps the number was
+            # chosen against. Its timeout is the budget for the WHOLE action,
+            # and the way to spend it is to find the frame first: since
+            # `query_selector` is instant, waiting for the selector to APPEAR is
+            # a scan of every frame at once rather than a wait carved up between
+            # them (which spends each frame's share blind to the others -- an
+            # element arriving in the first frame a moment after its share ran
+            # out was missed with most of the budget unspent). The scan
+            # re-enumerates each pass, because a consent or payment iframe
             # injected while we wait is a NEW frame object and the selector
-            # often arrives inside exactly that one -- and whichever holds it
-            # gets what remains. A frame the caller named is resolved once and
-            # simply waited in, which is what the click below does anyway.
+            # often arrives inside exactly that one; whatever holds it gets what
+            # remains, and nothing holding it by the deadline is an honest "not
+            # found" rather than a timeout. A frame the caller NAMED skips all
+            # of that and is simply waited in, which is what the click does
+            # anyway -- as does `fill`, which keeps its per-frame default
+            # because a credential field is found by searching the frames and
+            # shortening the later ones would drop fills that work today.
             if action == "click" and "frame" not in cmd:
                 while True:
                     holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]

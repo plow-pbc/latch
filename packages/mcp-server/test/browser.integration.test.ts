@@ -164,19 +164,19 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // under test is that the budget goes on watching every frame for the thing
     // to become clickable — not on waiting in each frame in turn, which spends
     // a quarter of it blind to the other three.
+    const cover = (ms: number) =>
+      "const c = document.createElement('div');" +
+      "c.style.cssText = 'position:fixed;inset:0';" +
+      `document.body.appendChild(c); setTimeout(() => c.remove(), ${ms})`;
     const arrivals = [
       // A cover that clears at 1.2 s — already past the quarter a naive split
       // would give the frame that matters.
       { label: "cover clears at 1.2s", selector: "#continue", timeout: undefined,
-        setup: "const c = document.createElement('div');" +
-               "c.style.cssText = 'position:fixed;inset:0';" +
-               "document.body.appendChild(c); setTimeout(() => c.remove(), 1200)" },
+        setup: cover(1200) },
       // …and one that clears at 4 s, past the 3 s the tool allowed at all
       // before this change. This is the recovery `timeout_ms` exists for.
       { label: "cover clears at 4s, timeout_ms 6000", selector: "#continue", timeout: 6000,
-        setup: "const c = document.createElement('div');" +
-               "c.style.cssText = 'position:fixed;inset:0';" +
-               "document.body.appendChild(c); setTimeout(() => c.remove(), 4000)" },
+        setup: cover(4000) },
       // The element itself arriving late, rather than being uncovered.
       { label: "element returns at 1s", selector: "#continue", timeout: undefined,
         setup: "const b = document.getElementById('continue'); b.remove();" +
@@ -192,7 +192,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     for (const { label, selector, timeout, setup } of arrivals) {
       await act("goto", { url: site.url + "/blocked" });
       await act("eval", { expression: "document.querySelector('.modal-backdrop').remove();" + setup });
-      await act("click", { selector, ...(timeout ? { timeout_ms: timeout } : {}) });
+      await act("click", { selector, ...(timeout === undefined ? {} : { timeout_ms: timeout }) });
       expect(await text(), label).toContain("clicked isTrusted=true");
     }
 
