@@ -296,13 +296,10 @@ export class BrowserHost {
   /** Directories left live by a crash, or given up. Nothing can claim one, and
    * no browser is running on the way to a spawn, so they go. */
   private sweepUnpublished(root: string): void {
-    let names: string[];
-    try {
-      names = fs.readdirSync(root);
-    } catch {
-      return; // not created yet
-    }
-    for (const name of names) {
+    // No guard on the read: the only caller creates `root` on the line above,
+    // so a failure here is a real one — an unreadable profile store means the
+    // next line would put a browser somewhere it cannot account for.
+    for (const name of fs.readdirSync(root)) {
       if (!name.includes(".live-")) continue;
       // Best-effort: an undeletable profile is wasted disk, but throwing here
       // would abort the start, and three of those trip the circuit breaker.
