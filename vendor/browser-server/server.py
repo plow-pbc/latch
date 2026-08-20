@@ -183,11 +183,13 @@ DOC_TOKEN_JS = """() => {
 # taken off, which is the one outcome this must never produce.
 VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
 
-# Whether a node's value is the characters it is given. A segmented date or
-# time widget composes its value out of something else entirely -- typing
+# Whether a node's value is the characters it is given. A date or a
+# datetime-local composes its out of something else entirely -- typing
 # "2026-08-19" into one lands 6081-02-02, silently -- and a colour or a range
-# is not textual at all and refuses keys outright. Neither is a field an
-# interrogating defense samples, so both are assigned the way they always were.
+# is not textual at all and refuses keys outright. The rest of the date and
+# time family does take its characters, and is assigned anyway for the other
+# reason: none of the family is a field an interrogating defense samples, so
+# there is nothing to weigh against keeping the path they always had.
 # Everything else takes characters as characters, `number` included: a
 # one-time code or a CVV is routinely declared that way, and those are exactly
 # the fields the keystrokes are for. Anything not an <input> -- a textarea, a

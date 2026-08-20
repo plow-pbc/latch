@@ -64,8 +64,8 @@ class Handle:
         # The keystrokes fail before the first one lands, so the node is left
         # holding what the clear left it: nothing.
         self.type_fails = type_fails
-        # False is a date/number/colour widget: its value is not the characters
-        # it is handed, so it is assigned rather than typed.
+        # False is a date, colour or range widget: assigned rather than typed,
+        # because its value is not the characters it is handed.
         self.typeable = typeable
         self.mask_result = mask_result
         self.marked = marked
