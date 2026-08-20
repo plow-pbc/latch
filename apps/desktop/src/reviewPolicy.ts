@@ -12,7 +12,6 @@ import {
   DENIAL_SOURCE_NO_CREDITS,
   DENIAL_SOURCE_NO_REVIEWER,
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
-  DENIAL_SOURCE_REVIEWER_UNDECIDED,
 } from "@domo/device-core";
 import {
   agentHistory,
@@ -103,6 +102,12 @@ export async function decideIntent(
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
   // the request and the final decision.
+  // Adversarial mode has no human in it, and the reviewer is told so rather
+  // than left to infer it from the owner's freeform purpose text. Ask mode is
+  // the other way round: the dialog is coming either way, so a reviewer that
+  // wants to defer is saying something the human will actually see.
+  const humanAvailable = mode !== "adversarial";
+
   const review = async () => {
     const history = agentHistory(deps.auditEntries(), intent.agentId);
     deps.record("adversarial_review_started", {
@@ -122,6 +127,7 @@ export async function decideIntent(
       // agent-reachable path can write what the prompt will label TRUSTED.
       agentPurpose: settings.agentPurpose ?? "",
       apiBaseUrl: deps.apiBaseUrl,
+      humanAvailable,
     });
     deps.record("adversarial_review_result", {
       intentId: intent.intentId,
@@ -159,17 +165,17 @@ export async function decideIntent(
     // fifteen minutes, and holds every request behind it while it does, because
     // approvals are serialized. So the fallback is a verdict.
     //
-    // Deny, because it is the fail-closed answer and because none of the ways
-    // of arriving here are an argument for access: the reviewer looked and
-    // would not commit, or it never answered. Which of those it was is the
-    // source, so a log tells a reviewer that hesitated from one that was down.
-    return {
-      decision: "deny",
-      source:
-        cause === "unavailable"
-          ? DENIAL_SOURCE_REVIEWER_UNAVAILABLE
-          : DENIAL_SOURCE_REVIEWER_UNDECIDED,
-    };
+    // Deny, because it is the fail-closed answer and because nothing that
+    // arrives here is an argument for access: the reviewer never reached a
+    // verdict.
+    //
+    // One source, not two. There used to be a second — a reviewer that ran and
+    // declined to decide — but `ask` is no longer in the schema the model
+    // answers into, and an `ask` that arrives anyway is refused at the parse
+    // and comes back carrying `unavailable`. Nothing can reach this line
+    // without that cause, so a branch on it would be picking between a live
+    // source and a dead one.
+    return { decision: "deny", source: DENIAL_SOURCE_REVIEWER_UNAVAILABLE };
   }
 
   // Ask mode: show the dialog, optionally with the reviewer's hint when both
