@@ -341,43 +341,43 @@ worked; it used to say nothing about whether the *page* worked. A click whose
 XHR came back 401/403/429 answered `{ok: true}` on a page that had not moved,
 and the owner's log recorded a plain click — the gap cost a 27-minute blind
 retry loop against a sign-in that was being rate-limited, and the only way to
-see the status was to hand-instrument `XMLHttpRequest` through `eval`, which is
-itself an automation signal. So the server keeps the last five 4xx/5xx per
+see the status was to hand-instrument `XMLHttpRequest` through `eval`, which
+is itself an automation signal. So the server keeps the last five 4xx/5xx per
 action (context-level, popups included) and every result carries them as
 `failed_requests` — status, method, a **query-stripped** url (B2C hangs
-`tx=StateProperties=` there), size, `Retry-After` and `Server`. Never a body: a
-body can echo a submitted credential. Bounded because the relay buffers a whole
-exchange. The browser reports and forgets; **`BrowserHost` holds them** until
-an agent action carries them out. That is deliberate: most of what asks the
-browser anything is the device itself — the owner's ~1/s viewer poll, the popup
-sweep, the frame lookup before a credential fill — and whichever of those was
-in flight would otherwise be the one that consumed a 429 and dropped it.
-Every response passes through one place, so that is where they wait.
-Each entry names the document that asked (`frame_url`) as well as what it asked
-for. A navigation names itself, but only when it answers the **`goto` this
-session issued** — the active page's main frame going where that `goto` sent
-it, through however many redirects. That exception exists because the frame has
-not committed the new url yet when the headers arrive, so asking it would name
-the page being left, and a refused `goto` would be credited to the page the
-agent was leaving. Everything else is named by whoever drove it: a subframe by
-the frame that embedded it, and a background popup or a page scripting its own
-`location` by the document that frame is still showing — never by the url it
-chose. `back` lands somewhere not
-known in advance, so it claims nothing, and `use_page` clears the pointer along
-with the page it belonged to. A frame that cannot be resolved at all (a service
-worker's request, a popup before its frame exists) names nothing. The rule
-behind all of it: a page must never get to write the agent's evidence by
-choosing a url.
-`BrowserSessions` re-strips the query from both `frame_url` and
-the requested url before either reaches the agent or the audit log.
+`tx=StateProperties=` there), size, `Retry-After` and `Server`. Never a body:
+a body can echo a submitted credential. Bounded because the relay buffers a
+whole exchange. The browser reports and forgets; **`BrowserHost` holds them**
+until an agent action carries them out. That is deliberate: most of what asks
+the browser anything is the device itself — the owner's ~1/s viewer poll, the
+popup sweep, the frame lookup before a credential fill — and whichever of
+those was in flight would otherwise be the one that consumed a 429 and dropped
+it. Every response passes through one place, so that is where they wait.
+Each entry names the document that asked (`frame_url`) as well as what it
+asked for. A navigation names itself, but only when it answers the **`goto`
+this session issued** — the active page's main frame going where that `goto`
+sent it, through however many redirects. That exception exists because the
+frame has not committed the new url yet when the headers arrive, so asking it
+would name the page being left, and a refused `goto` would be credited to the
+page the agent was leaving. Everything else is named by whoever drove it: a
+subframe by the frame that embedded it, and a background popup or a page
+scripting its own `location` by the document that frame is still showing —
+never by the url it chose. `back` lands somewhere not known in advance, so it
+claims nothing, and `use_page` clears the pointer along with the page it
+belonged to. A frame that cannot be resolved at all (a service worker's
+request, a popup before its frame exists) names nothing. The rule behind all
+of it: a page must never get to write the agent's evidence by choosing a url.
+`BrowserSessions` re-strips the query from both `frame_url` and the requested
+url before either reaches the agent or the audit log.
 
-**The owner's log gets every entry** — an out-of-scope page being refused
-is exactly what they are watching for, and whatever is still held when a session
+**The owner's log gets every entry** — an out-of-scope page being refused is
+exactly what they are watching for, and whatever is still held when a session
 closes or the browser dies goes on the closing line. **The agent gets only the
 entries with both ends inside the approved origins**, judged per entry rather
 than by where the action landed: a refusal on the approved page still matters
-when a sign-in redirect has parked the session elsewhere, and an unapproved page
-must not get to choose the text it hands the agent by choosing what to fetch.
+when a sign-in redirect has parked the session elsewhere, and an unapproved
+page must not get to choose the text it hands the agent by choosing what to
+fetch.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —
