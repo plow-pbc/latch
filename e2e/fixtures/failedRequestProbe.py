@@ -91,11 +91,27 @@ class Page:
     def __init__(self):
         self.url = "https://pizza.example/checkout"
         self.main_frame = Frame(self.url)
+        self.went_to = None
         self.context = Context()
         self.context.pages.append(self)
 
     def evaluate(self, expression, *args, **kwargs):
         return "doc-1"
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+    def goto(self, url, **_kw):
+        """One scenario drives the REAL command handler through here, so the
+        line that records what the agent asked for is exercised rather than
+        assigned by hand."""
+        self.went_to = url
+
+    def title(self):
+        return "checkout"
+
+    def bring_to_front(self):
+        pass
 
 
 def feed(session, responses):
@@ -139,12 +155,16 @@ def main():
     # to that page would withhold it from the agent that asked for the new one.
     # The frame's url stays stale here on purpose — only self-attribution can
     # produce the answer this asserts.
+    # Driven through the real command handler, query and all: the goto records
+    # what was asked for, stripped, and the refusal that answers it is the
+    # agent's own.
     session = server.Session(Page())
-    session.goto_url = "https://pizza.example/checkout"
+    session.handle({"action": "goto", "url": "https://pizza.example/checkout?tx=SECRET"}, "/tmp")
     session.page.main_frame.url = "https://pizza.example/cart"
     feed(session, [Response(429, "https://pizza.example/checkout", navigation=True,
                             frame=session.page.main_frame)])
     out["navigation"] = session.envelope({"ok": True})
+    out["navigation_asked_for"] = session.page.went_to
 
     # Through a redirect: the site answered the requested url with a 302 and
     # then refused. The agent still asked for it.
@@ -166,9 +186,23 @@ def main():
                             frame=session.page.main_frame)])
     out["self_navigation"] = session.envelope({"ok": True})
 
+    # A chain longer than the browser's own ceiling gives up rather than
+    # walking forever, and gives up on the safe side.
+    session = server.Session(Page())
+    session.goto_url = "https://pizza.example/start"
+    session.page.main_frame.url = "https://pizza.example/cart"
+    root = server_request = Request("GET", True, "https://pizza.example/start")
+    for hop in range(server.MAX_REDIRECT_HOPS + 1):
+        server_request = Request("GET", True, "https://pizza.example/hop%d" % hop, server_request)
+    feed(session, [Response(429, "https://pizza.example/end", navigation=True,
+                            frame=session.page.main_frame,
+                            redirected_from=server_request)])
+    out["over_the_hop_limit"] = session.envelope({"ok": True})
+    assert root is not None
+
     # use_page moves the active page, and the check follows it: a goto in the
-    # popup the agent switched to is the agent's, and one in the page it left
-    # is not.
+    # popup the agent switched to is the agent's, one in the page it left is
+    # not, and the pointer does not survive the switch.
     session = server.Session(Page())
     popup = Page()
     popup.main_frame.url = "https://pizza.example/opened"
@@ -181,6 +215,18 @@ def main():
     feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
                             frame=left.main_frame)])
     out["page_left_behind"] = session.envelope({"ok": True})
+
+    # Switching pages clears what the previous page was sent to, so the page
+    # switched to cannot name itself by navigating there.
+    session = server.Session(Page())
+    popup = Page()
+    popup.main_frame.url = "https://offsite.example/lander"
+    session.page.context.pages.append(popup)
+    session.goto_url = "https://pizza.example/pay"
+    session.handle({"action": "use_page", "index": 1}, "/tmp")
+    feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
+                            frame=popup.main_frame)])
+    out["stale_pointer"] = session.envelope({"ok": True})
 
     # A navigation in a frame the agent is NOT driving -- a popup opened in the
     # background and then pointed somewhere -- is named by the document it is

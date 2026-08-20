@@ -37,6 +37,9 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     self_navigation: Envelope;
     after_use_page: Envelope;
     page_left_behind: Envelope;
+    stale_pointer: Envelope;
+    over_the_hop_limit: Envelope;
+    navigation_asked_for: string;
     unattributable: Envelope;
     unattributable_navigation: Envelope;
     quiet: Envelope;
@@ -83,6 +86,25 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.navigation.failed_requests?.[0]).toMatchObject({
       url: "https://pizza.example/checkout",
       frame_url: "https://pizza.example/checkout",
+    });
+  });
+
+  it("records what the goto asked for, stripped, on the way in", () => {
+    // The plumbing, not just the predicate: the real command handler ran.
+    expect(probed.navigation_asked_for).toBe("https://pizza.example/checkout?tx=SECRET");
+  });
+
+  it("gives up on a redirect chain longer than the browser's own ceiling", () => {
+    expect(probed.over_the_hop_limit.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/end",
+      frame_url: "https://pizza.example/cart",
+    });
+  });
+
+  it("does not let the page switched to inherit what the last one was sent to", () => {
+    expect(probed.stale_pointer.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/pay",
+      frame_url: "https://offsite.example/lander",
     });
   });
 

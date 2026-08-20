@@ -354,9 +354,11 @@ popup sweep, the frame lookup before a credential fill — and whichever of thos
 was in flight would otherwise be the one that consumed a 429 and dropped it.
 Every response passes through one place, so that is where they wait.
 Each entry names the document that asked (`frame_url`) as well as what it asked
-for. A navigation names itself, but only when it is the one the **agent** asked
-for — the active page's main frame going where `goto` sent it, through however
-many redirects. That exception exists because the frame has not committed the
+for. A navigation names itself, but only when it answers the **`goto` this
+session issued** — the active page's main frame going where that `goto` sent
+it, through however many redirects. `back` lands somewhere not known in
+advance, so it claims nothing and a refusal during one is named by the document
+being left; `use_page` clears the pointer with the page it belonged to. That exception exists because the frame has not committed the
 new url yet when the headers arrive, so asking it would name the page being
 left, and a refused `goto` would be credited to the page the agent was leaving.
 Every other navigation was pointed somewhere by a page rather than by the agent

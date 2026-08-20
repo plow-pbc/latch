@@ -67,7 +67,10 @@ FAILED_REQUEST_HEADERS = ("retry-after", "server")
 MAX_FAILED_REQUEST_URL = 200
 
 # How far back a refused navigation is traced to the url the agent asked for.
-MAX_REDIRECT_HOPS = 10
+# The browser's own redirect ceiling is 20, so a chain it followed is a chain
+# this can follow: the walk only has to terminate, and every hop is compared
+# against the same one string.
+MAX_REDIRECT_HOPS = 20
 
 
 def _strip_query(url):
@@ -464,12 +467,12 @@ class Session:
                 return {"ok": False, "mask": "unmasked"}
 
         if action == "goto":
-            # 12s + 1s settle keeps the whole action under the device's 15s host
-            # cap and the relay's ~20s exchange ceiling; a genuinely slower page
-            # fails cleanly (the agent retries) rather than parking a torn 504.
             # What the agent asked for, so the refusal of THIS navigation can be
             # told apart from one the page arranged for itself.
             self.goto_url = _strip_query(cmd["url"])
+            # 12s + 1s settle keeps the whole action under the device's 15s host
+            # cap and the relay's ~20s exchange ceiling; a genuinely slower page
+            # fails cleanly (the agent retries) rather than parking a torn 504.
             self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title()}
@@ -488,6 +491,10 @@ class Session:
             if not (0 <= i < len(pages)):
                 raise RuntimeError("no page %d (have %d)" % (i, len(pages)))
             self.page = pages[i]
+            # The pointer belonged to the page being left. Carried over, it
+            # would let the page switched to name itself by navigating to the
+            # url the previous one was sent to.
+            self.goto_url = ""
             self.page.bring_to_front()
             return {"ok": True, "title": self.page.title()}
 
@@ -495,6 +502,11 @@ class Session:
             # Neither history.back() nor page.go_back() actually moves a tab
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
+            # Where `back` lands is not known until it lands, so no navigation
+            # can be claimed as the agent's during it. A refusal here is named
+            # by the document being left -- always, rather than by whether the
+            # last goto happened to point at the same place.
+            self.goto_url = ""
             self.page.go_back(timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title(), "moved": self.page.url != was}
