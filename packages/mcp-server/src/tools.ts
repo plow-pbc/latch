@@ -378,8 +378,8 @@ export const TOOLS: ToolSpec[] = [
       "it for sites that " +
       "must be signed in as them, not for general web reading, which your own tools do faster. " +
       "The session id you get back IS your browser, and it is a secret: pass it on every call "
-    + "and you keep the same window; anyone holding it can drive that browser, and holding "
-    + "somebody else's is the only way to reach theirs. Every open gives you a browser of your "
+    + "and you keep the same window; anyone on this Plow credential holding it can drive that "
+    + "browser, and holding theirs is the only way to reach one of theirs. Every open gives you a browser of your "
     + "own — even when other agents on this Mac connect with the same Plow credential — so "
     + "nobody takes yours and you never inherit theirs. The Mac runs a few at once and says so "
     + "plainly when it is full. "

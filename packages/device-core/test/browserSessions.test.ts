@@ -751,28 +751,14 @@ describe("one profile per session, and never a shared one", () => {
     expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
   });
 
-  it("closes once, however many callers and clocks arrive at the same time", async () => {
-    // The session stays registered while its browser shuts down, so it is
-    // still reachable then: a second close, or the idle clock coming due
-    // mid-shutdown, used to run a whole second teardown and write the owner a
-    // second "closed" line for the one session.
-    const handle = await openSession(["pizza.example"]);
-    const before = ctx.events.length;
-    await Promise.all([
-      ctx.sessions.close(handle, "agent"),
-      ctx.sessions.close(handle, "idle"),
-    ]);
-    const closed = ctx.events
-      .slice(before)
-      .filter((e) => e.event === "browser_session_closed");
-    expect(closed).toHaveLength(1);
-    expect(closed[0].fields.reason).toBe("agent");
-  });
-
-  it("waits for a close that is already running before it says the Mac is clear", async () => {
-    // Quitting settles on closeAll(). A session mid-teardown is still in the
-    // map, and answering for it early — "somebody else is closing it" — let
-    // Electron exit while that browser was still going down, profile and all.
+  it("closes once, and nothing calls the Mac clear until that close is done", async () => {
+    // A session stays registered while its browser shuts down, so it is still
+    // reachable in that window — and a second close, the idle clock coming due
+    // and the quit's closeAll all arrive in it. Each used to run its own
+    // teardown and write the owner a second "closed" line for one session, and
+    // an early answer from closeAll let Electron exit while the browser was
+    // still going down, profile and all. The fake browser takes its time here
+    // so the window is real.
     const sessions = new BrowserSessions(
       { ...ctx.browsers, env: { ...ctx.browsers.env, FAKE_QUIT_DELAY_MS: "300" } },
       new CredentialBroker({ command: ["node", FAKE_BROKER], env: {} }),
@@ -780,11 +766,17 @@ describe("one profile per session, and never a shared one", () => {
       60_000,
     );
     const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
-    const agentClose = sessions.close(handle, "agent");
+    const before = ctx.events.length;
 
+    const agentClose = sessions.close(handle, "agent");
+    const idleClose = sessions.close(handle, "idle");
     await sessions.closeAll("shutdown");
     expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
-    await agentClose;
+
+    await Promise.all([agentClose, idleClose]);
+    const closed = ctx.events.slice(before).filter((e) => e.event === "browser_session_closed");
+    expect(closed).toHaveLength(1);
+    expect(closed[0].fields.reason).toBe("agent");
   });
 
   it("refuses to open once the app is on its way out", async () => {

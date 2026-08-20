@@ -49,8 +49,8 @@ the page; that is the one way round it, and it is not one you have any reason to
 \`plow_browser_open\` gave you on every call and you keep the same window. Every open
 gives you a browser of your own, even when other agents on this Mac connect with the
 same Plow credential — so yours is never taken and you never inherit theirs. The id is
-the capability: anyone holding it can drive that browser, and holding somebody else's is
-the only way to reach theirs, so do not paste it anywhere. When the Mac is already
+the capability: anyone on this Plow credential holding it can drive that browser, and
+holding theirs is the only way to reach one of theirs, so do not paste it anywhere. When the Mac is already
 running as many browsers as it will, the open says so. Every session starts from a clean
 profile and takes it away when it closes: nothing you sign into survives your session,
 and nothing you leave behind reaches the next agent. Sign in inside the session you are
