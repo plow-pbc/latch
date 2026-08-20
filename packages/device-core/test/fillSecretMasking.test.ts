@@ -531,9 +531,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         };
       };
       ranked: { error: string | null; tried: number };
-      click_shared: { shares: number[]; tried: number; out_of_budget: boolean };
-      click_alone: { shares: number[]; tried: number; out_of_budget: boolean };
-      click_crowded: { shares: number[]; tried: number; out_of_budget: boolean };
       ranked_only_gone: { error: string | null; tried: number };
       ranked_gone_first: { error: string | null; tried: number };
     }>(FILL_PROBE);
@@ -552,32 +549,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "handle.type",
     ]);
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
-  });
-
-  // The click budget, spent across the frames that hold the selector. The
-  // pointer travels INSIDE an attempt, so an equal division hands each of three
-  // holders 500ms on the smallest budget the device passes — exactly the travel
-  // cap, nothing left to click with — and the attempt expires mid-flight. The
-  // shares are floored at the journey plus room to click instead, borrowed from
-  // the frames below, so a budget buys attempts that can land rather than a
-  // longer row of attempts that cannot. The probe drives a clock it controls,
-  // and every failed attempt spends what it cost.
-  it("spends a click's budget on attempts that can land", () => {
-    // One holder is handed the whole budget rather than a share of it.
-    expect(probed.click_alone.shares).toEqual([1500]);
-    // Three: the first two get a workable share, the third the remainder.
-    expect(probed.click_shared.shares).toEqual([750, 750, 700]);
-  });
-
-  it("stops when the budget runs out, and lets a real failure speak first", () => {
-    // Six holders on a budget for four. The frames that get an attempt get a
-    // real one; the rest are not tried at all, because a share too small to
-    // reach the target is not an attempt. And what the agent hears is the
-    // refusal of a frame that WAS tried — the budget message is what it gets
-    // when nothing was.
-    expect(probed.click_crowded.tried).toBe(4);
-    expect(probed.click_crowded.shares).toEqual([750, 750, 700, 299]);
-    expect(probed.click_crowded.out_of_budget).toBe(false);
   });
 
   it("reports the frame that had the field, wherever the one that went away sits", () => {
@@ -979,6 +950,10 @@ describe("which nodes take typing", () => {
     tagName: "TEXTAREA", type: "textarea", disabled: false, readOnly: false,
     isContentEditable: false, getAttribute: () => null, ...extra,
   });
+  const select = (extra: Record<string, unknown> = {}) => ({
+    tagName: "SELECT", type: "select-one", disabled: false, isContentEditable: false,
+    getAttribute: () => null, ...extra,
+  });
   const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
     tagName, isContentEditable: false, getAttribute: () => null, ...extra,
   });
@@ -998,6 +973,9 @@ describe("which nodes take typing", () => {
     // rewritten to read the attribute — as every other literal in this file does
     // — would send every one of them back to assignment.
     { what: "an input with no type attribute", el: input("text", { getAttribute: () => null }), typed: true },
+    // The attribute is case-insensitive and the property is not: ordinary
+    // markup where the two disagree on more than presence.
+    { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), typed: true },
     { what: "a textarea", el: textarea(), typed: true },
     { what: "a contenteditable div, which has no disabled or readOnly at all", el: element("DIV", { isContentEditable: true }), typed: true },
     { what: "a checkbox", el: input("checkbox"), typed: false },
@@ -1009,7 +987,12 @@ describe("which nodes take typing", () => {
     { what: "a range slider", el: input("range"), typed: false },
     { what: "a read-only textarea", el: textarea({ readOnly: true }), typed: false },
     { what: "a disabled textarea", el: textarea({ disabled: true }), typed: false },
-    { what: "a select, which has disabled but no readOnly", el: element("SELECT", { type: "select-one", disabled: false }), typed: false },
+    { what: "a select, which has disabled but no readOnly", el: select(), typed: false },
+    // isContentEditable is inherited, so a form control inside a rich-text
+    // region answers true. Typing at a select there picks an option by
+    // type-ahead and reports ok.
+    { what: "a select inside a contenteditable region", el: select({ isContentEditable: true }), typed: false },
+    { what: "a button inside a contenteditable region", el: element("BUTTON", { disabled: false, isContentEditable: true }), typed: false },
     { what: "a plain div", el: element("DIV"), typed: false },
     { what: "a read-only text field", el: input("text", { readOnly: true }), typed: false },
     { what: "a disabled text field", el: input("text", { disabled: true }), typed: false },

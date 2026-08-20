@@ -133,12 +133,9 @@ const MAX_WAIT_SECONDS = 12;
  * server's 1 s post-click settle, and overrunning the 15 s host cap does not
  * fail the click — it tears the browser down. The floor exists because
  * Playwright reads a zero timeout as *no* timeout, so an agent asking for 0
- * would park the click until exactly that happened; it sits above the browser's
- * humanized pointer travel (`HUMANIZE_MAX_SECONDS`, half a second) because that
- * travel is spent INSIDE the click's timeout. A budget that cannot cover the
- * journey is a click that can never land, however long the page has been ready.
+ * would park the click until exactly that happened.
  */
-const MIN_CLICK_TIMEOUT_MS = 1500;
+const MIN_CLICK_TIMEOUT_MS = 500;
 /** Exported because the agent-facing copy quotes it; one number, one source. */
 export const MAX_CLICK_TIMEOUT_MS = (MAX_WAIT_SECONDS - 1) * 1000;
 

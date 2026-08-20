@@ -94,32 +94,6 @@ DEFAULT_ACTION_TIMEOUT_MS = 3000
 # appear. The scan itself is instant; this is just how long it sleeps between.
 SCAN_INTERVAL_MS = 50
 
-# The CAP on how long Camoufox may spend moving the pointer to a target. With it
-# set, a mouse move is interpolated along a path; without it -- upstream's
-# default, and what shipped here -- every click teleports the cursor, and the
-# movement entropy an interrogation-style defense samples is simply absent
-# (issue #86).
-#
-# It has to be a float. Measured on the bundled build, 30 clicks per setting:
-# off, 31ms median; 0.25, 316ms (408 worst); 0.5, 638ms (672 worst); `True` --
-# camoufox's own "up to 1.5s", and what issue #86 proposed -- never returned at
-# all, timing out past 8s on the first click.
-#
-# The travel is spent INSIDE a click's timeout rather than added to it, so a
-# quarter second is what leaves the 3s default action budget still looking like
-# a budget: a whole path drawn, and better than 2.5s left for the click itself
-# and whatever the page does about it.
-HUMANIZE_MAX_SECONDS = 0.25
-
-# The smallest share of a click's budget worth handing a frame: the pointer's
-# journey (HUMANIZE_MAX_SECONDS at its longest) plus room to click once it
-# arrives. Below this an attempt cannot land however ready the page is, so the
-# shares are floored here and borrowed from the frames underneath -- and when
-# there is not even one share left, the loop says so in the words the agent can
-# act on ("no time left to click it") rather than handing back a Playwright
-# timeout that reads as "the page refused".
-MIN_CLICK_SHARE_MS = int(HUMANIZE_MAX_SECONDS * 1000) + 500
-
 # Keystroke cadence, and the ceiling on what one value may spend on it. A field
 # that goes from empty to complete with no keydown/keyup at all is the cheapest
 # bot tell there is, so a value is typed. A long one trades cadence for the
@@ -154,8 +128,15 @@ KEY_CHARS = ("\n", "\r", "\t")
 TYPEABLE_JS = """(el) => {
     const typed = ["text", "email", "password", "search", "tel", "url", "number"];
     const tag = el.tagName.toLowerCase();
+    if (tag !== "input" && tag !== "textarea") {
+        // `isContentEditable` is the COMPUTED, inherited state, not "does this
+        // node carry the attribute": every element inside an editable region
+        // answers true, a <select> in a rich-text box among them. What tells a
+        // text host from a form control sitting in one is the `disabled`
+        // property -- every form control has it, and nothing else does.
+        return el.isContentEditable === true && el.disabled === undefined;
+    }
     if (tag === "input" && !typed.includes(el.type)) return false;
-    if (tag !== "input" && tag !== "textarea" && !el.isContentEditable) return false;
     return !el.disabled && !el.readOnly;
 }"""
 
@@ -636,15 +617,8 @@ class Session:
 
         last = None
         for tried, (i, fr) in enumerate(frames):
-            # Humanized pointer travel is spent INSIDE an attempt, so an equal
-            # division can hand a frame less than the journey and expire with the
-            # cursor still moving. Each attempt therefore gets at least
-            # MIN_CLICK_SHARE_MS, borrowed from the shares below it: earlier
-            # frames spend what an attempt actually costs, later ones inherit
-            # what is left, and the budget as a whole is what runs out -- which
-            # is the thing the answer below can say honestly.
-            remaining = int((deadline - time.monotonic()) * 1000)
-            if remaining <= 0:
+            left = int((deadline - time.monotonic()) * 1000 / (len(frames) - tried))
+            if left <= 0:
                 # The selector IS somewhere -- the scan said so -- but the
                 # budget went on waiting for it. Saying "not found" here would
                 # be false and would send the agent looking elsewhere when what
@@ -654,8 +628,6 @@ class Session:
                     "found %s with no time left to click it" % sel
                 )
                 break
-            left = min(remaining, max(remaining // (len(frames) - tried),
-                                      MIN_CLICK_SHARE_MS))
             try:
                 fr.click(sel, timeout=left)
                 self.page.wait_for_timeout(1000)
@@ -908,11 +880,7 @@ def main():
     # Always present a macOS fingerprint: this device IS a Mac, and the pin is
     # what lets the packaged app drop Camoufox's bundled Windows/Linux spoofing
     # fonts (~360 MB/arch) — a macOS fingerprint renders with the system fonts.
-    kwargs = {
-        "headless": not args.headed,
-        "os": "macos",
-        "humanize": HUMANIZE_MAX_SECONDS,
-    }
+    kwargs = {"headless": not args.headed, "os": "macos"}
     if args.executable:
         kwargs["executable_path"] = args.executable
     if args.profile_dir:
