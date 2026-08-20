@@ -47,11 +47,16 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     ]);
   });
 
-  it("keeps only what a page asked for, never a navigation", () => {
+  it("drops a top-level navigation, keeps a frame's document load", () => {
     // An agent that goes somewhere and is refused SEES that on its next
-    // screenshot. The refusal nobody can see is the one a page makes on its own
-    // account, which is the whole reason for this.
-    expect((probed.navigations.failed_requests ?? []).map((r) => r.status)).toEqual([403]);
+    // screenshot. A payment or sign-in iframe that will not load is invisible
+    // in exactly the way this exists for, and is named by whoever embedded it —
+    // the frame itself is still blank when it asks.
+    expect((probed.navigations.failed_requests ?? []).map((r) => [r.status, r.initiator]))
+      .toEqual([
+        [404, "https://offsite.example"],
+        [403, "https://pizza.example"],
+      ]);
   });
 
   it("reads who asked when the request was MADE, not when it was answered", () => {

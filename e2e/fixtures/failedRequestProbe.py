@@ -31,9 +31,10 @@ class Request:
     """One request, and the document that made it — whose url the server reads
     when the REQUEST is made, never when the response comes back."""
 
-    def __init__(self, method, page, navigation=False):
+    def __init__(self, method, page, navigation=False, embedder=None):
         self.method = method
-        self.frame = type("Frame", (), {"url": page})()
+        parent = None if embedder is None else type("Frame", (), {"url": embedder})()
+        self.frame = type("Frame", (), {"url": page, "parent_frame": parent})()
         self._navigation = navigation
 
     def is_navigation_request(self):
@@ -48,12 +49,13 @@ class Response:
     quietly answered would let that regress unnoticed.
     """
 
-    def __init__(self, status, url, method="GET", headers=None, page="", navigation=False):
+    def __init__(self, status, url, method="GET", headers=None, page="", navigation=False,
+                 embedder=None):
         self.status = status
         self.url = url
         # One request object per response, since the server remembers who asked
-        # by its identity.
-        self.request = Request(method, page, navigation)
+        # by the request itself.
+        self.request = Request(method, page, navigation, embedder)
         self.headers = headers or {}
 
     def body(self):
@@ -114,14 +116,18 @@ def main():
         "POST", {"retry-after": "30", "server": "cloudfront"},
         page="https://pizza.example/checkout")])
 
-    # A navigation is not this feature's business: an agent that goes somewhere
-    # and is refused SEES that, on the very next screenshot. Only what a page
-    # asked for on its own account is invisible, so only that is kept.
+    # A TOP-LEVEL navigation is not this feature's business: an agent that goes
+    # somewhere and is refused SEES that, on the very next screenshot. A FRAME's
+    # document load is invisible in exactly the way this exists for — a payment
+    # or sign-in iframe that will not load — and is named by whoever embedded
+    # it, since the frame itself is still blank when it asks.
     session = server.Session(Page())
     out["navigations"] = feed(session, [
         Response(429, "https://pizza.example/checkout", navigation=True,
                  page="https://offsite.example/lander"),
-        Response(403, "https://pizza.example/api/x", page="https://offsite.example/lander"),
+        Response(403, "https://payframe.example/pay", navigation=True, page="about:blank",
+                 embedder="https://pizza.example/checkout"),
+        Response(404, "https://pizza.example/api/x", page="https://offsite.example/lander"),
     ])
 
     # Who asked is read when the request is MADE. A page that asks for something

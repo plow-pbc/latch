@@ -259,7 +259,7 @@ class Session:
         # per-page listener would be blind to exactly the ones worth seeing.
         # Attached here so a Session cannot exist without it.
         self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
-        # request id -> the origin of the document that asked, oldest first.
+        # request -> the origin of the document that asked, oldest first.
         self.asked_by = collections.OrderedDict()
         page.context.on("request", self.note_request)
         page.context.on("response", self.note_response)
@@ -355,7 +355,19 @@ class Session:
         an unremembered request simply names nobody.
         """
         try:
-            self.asked_by[id(request)] = _origin(request.frame.url)
+            origin = ""
+            try:
+                frame = request.frame
+                # A frame's own document load was asked for by whoever embedded
+                # it: at this moment the frame itself is still blank or gone.
+                asking = frame.parent_frame if request.is_navigation_request() else frame
+                origin = "" if asking is None else _origin(asking.url)
+            except Exception:  # noqa: BLE001 — an unattributable request is still a request
+                origin = ""
+            # Keyed on the request itself, and holding it: an id alone can be
+            # reused by a later object once this one is collected, and the next
+            # refusal would then be stamped with a stranger's origin.
+            self.asked_by[request] = origin
             while len(self.asked_by) > MAX_REMEMBERED_REQUESTS:
                 self.asked_by.popitem(last=False)
         except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
@@ -367,20 +379,28 @@ class Session:
         Only 4xx/5xx: a sign-in flow is mostly redirects, and keeping those
         would push the one refusal that matters out of a short ring.
 
-        Only what a page asked for, too, never a navigation: an agent that
-        navigates somewhere and is refused SEES that -- the page is right there
-        in its next screenshot. The refusal nobody can see is the one a page
-        makes on its own account, which is the whole reason for this.
+        Never a TOP-LEVEL navigation: an agent that goes somewhere and is
+        refused SEES that -- the page is right there in its next screenshot. A
+        frame's document load is not that; a payment or sign-in iframe coming
+        back 403 is exactly the "it said ok and nothing worked" case this is
+        for, so it is kept and named by whoever embedded it.
 
         Nothing here may raise -- this runs on Playwright's event thread, where
         an exception is nobody's to catch -- and nothing here reads a body.
         """
         try:
-            if response.status < 400 or response.request.is_navigation_request():
+            request = response.request
+            # A TOP-LEVEL navigation only: that is the one the agent sees for
+            # itself, on its next screenshot. A frame's document load coming
+            # back 403 is exactly the "it said ok and nothing worked" case, so
+            # it stays.
+            if response.status < 400 or (
+                request.is_navigation_request() and request.frame.parent_frame is None
+            ):
                 return
             entry = {
                 "status": response.status,
-                "method": response.request.method,
+                "method": request.method,
                 "origin": _origin(response.url),
                 # WHICH document asked. Both ends have to be approved before the
                 # device shows an entry to the agent: destination alone lets a
@@ -388,7 +408,7 @@ class Session:
                 # fail on an approved host and pass that off as the approved
                 # page's own trouble. An origin is all this is, so there is
                 # nothing here a page can write text into either.
-                "initiator": self.asked_by.pop(id(response.request), ""),
+                "initiator": self.asked_by.pop(request, ""),
             }
             for name in FAILED_REQUEST_HEADERS:
                 value = response.headers.get(name)

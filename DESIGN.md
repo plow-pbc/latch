@@ -351,11 +351,12 @@ because most of what asks the browser anything is the device itself (the ~1/s
 viewer poll, the popup sweep, a credential fill's `locate`) and whichever was
 in flight would otherwise consume a 429 and drop it.
 
-**What a page asked for, not where the agent went.** A refused navigation is
-the visible case — the agent goes somewhere, is refused, and the page is right
-there in its next screenshot. The one nobody can see is the request a page makes
-on its own account, so that is the only kind kept, and the attribution question
-shrinks with it.
+**What a page asked for, not where the agent went.** A refused *top-level*
+navigation is the visible case — the agent goes somewhere, is refused, and the
+page is right there in its next screenshot. Everything else a page asks for on
+its own account is invisible, a payment or sign-in iframe that will not load
+included, and that is what is kept. A frame's own document load is named by
+whoever embedded it, since the frame is still blank when it asks.
 
 **Origins, and both ends of them.** A url is the page's to choose, and every
 part of one but the origin can carry a secret — a query, userinfo, and a path
