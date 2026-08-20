@@ -9,6 +9,9 @@
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
  *   CRASH_AFTER=n      exit(9) after n commands (crash/restart tests)
+ *   NO_QUIT_ACK=1      exit on quit without answering it
+ *   VIEW_TOUCHES=url   report `url` as touched on the next `view` poll, which
+ *                      the session layer never sees the response to
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
@@ -89,6 +92,10 @@ function handle(cmd) {
   }
   if (a === "back") return { title: current().title, moved: false };
   if (a === "view") {
+    // The owner's viewer polls straight through BrowserHost, so nothing in the
+    // session layer ever sees this response — a touch reported here is one the
+    // scope check only gets if the host is the thing accumulating them.
+    if (process.env.VIEW_TOUCHES) state.touched.push(process.env.VIEW_TOUCHES);
     return {
       data_b64: Buffer.from("fake-view-jpeg").toString("base64"),
       mime: "image/jpeg",
@@ -205,7 +212,9 @@ function main() {
       return;
     }
     if (cmd.action === "quit") {
-      respond({ id: cmd.id, result: { ok: true } });
+      // NO_QUIT_ACK: stop without ever answering, the way a browser that died
+      // of its own accord inside the shutdown window does.
+      if (!process.env.NO_QUIT_ACK) respond({ id: cmd.id, result: envelope({ ok: true }) });
       process.exit(0);
     }
     if (process.env.FAKE_CMD_LOG) {

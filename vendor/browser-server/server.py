@@ -311,6 +311,11 @@ class Session:
                 return selector
         return None
 
+    def drain_touched(self):
+        touched = self.touched
+        self.touched = []
+        return touched
+
     @property
     def pages(self):
         return self.page.context.pages
@@ -319,8 +324,7 @@ class Session:
         """Every response carries where we are, so the client can enforce scope
         and notice popups without extra round-trips."""
         out = dict(result)
-        out["touched"] = self.touched
-        self.touched = []
+        out["touched"] = self.drain_touched()
         try:
             out["url"] = self.page.url
             out["page_count"] = len(self.pages)
@@ -666,14 +670,25 @@ def main():
 
             rid = cmd.get("id")
             if cmd.get("action") == "quit":
-                _respond({"id": rid, "result": {"ok": True}})
+                # Through envelope(), so the last touches leave with it rather
+                # than dying with the process unclassified.
+                _respond({"id": rid, "result": session.envelope({"ok": True})})
                 break
 
             try:
                 result = session.handle(cmd, args.screenshots_dir)
                 _respond({"id": rid, "result": session.envelope(result)})
             except Exception as exc:  # noqa: BLE001 — every failure must answer
-                _respond({"id": rid, "error": str(exc)[:MAX_ERROR_LEN]})
+                # Touches ride the error too: a navigation that ended in one
+                # still reached the origin it reached, and the scope check has
+                # to hear about it.
+                _respond(
+                    {
+                        "id": rid,
+                        "error": str(exc)[:MAX_ERROR_LEN],
+                        "touched": session.drain_touched(),
+                    }
+                )
         # EOF on stdin: supervisor died — fall through and let the context close.
 
 

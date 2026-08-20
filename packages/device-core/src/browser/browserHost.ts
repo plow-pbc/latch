@@ -93,6 +93,15 @@ export class BrowserHost {
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
+  /**
+   * Top-level URLs the browser has shown since the session layer last looked.
+   * Accumulated from EVERY response rather than read off one, because plenty
+   * of them never reach the scope check: the owner's viewer polls straight
+   * through `viewFrame`, and `locate`/`fill` are issued here rather than
+   * through `command`. A popup reported on one of those would otherwise be
+   * consumed and dropped, and the origin it touched never classified.
+   */
+  private pendingTouched: string[] = [];
 
   /** Set by the session layer: fires when a ready browser dies unexpectedly,
    * so the session over it can be closed out rather than left open forever. */
@@ -120,6 +129,13 @@ export class BrowserHost {
   /** Whether the next (or current) browser shows a window. */
   get headed(): boolean {
     return this.headedNow;
+  }
+
+  /** Everything the browser has shown since the last drain, and clear it. */
+  drainTouched(): string[] {
+    const touched = this.pendingTouched;
+    this.pendingTouched = [];
+    return touched;
   }
 
   /** Send one action to the server, lazily starting it. */
@@ -421,6 +437,13 @@ export class BrowserHost {
         if (!p) return;
         this.pending.delete(id);
         clearTimeout(p.timer);
+        // Successful frames carry it inside `result` (the server's envelope);
+        // error frames carry it beside the message, since they have none.
+        for (const src of [m.get("result").get("touched"), m.get("touched")]) {
+          for (const u of src.arr ?? []) {
+            if (typeof u === "string") this.pendingTouched.push(u);
+          }
+        }
         const error = m.get("error").str;
         if (error !== null) {
           p.reject(new Error(error));
@@ -434,9 +457,9 @@ export class BrowserHost {
         const wasReady = ready;
         this.child = null;
         this.startedKey = null;
-        // Never publishes: an exit this handler sees is one nobody waited for,
-        // and shutdown() does the publishing when a quit is acknowledged.
-        this.profile = null;
+        // shutdown() owns the decision when it is the one stopping the
+        // browser; an exit nobody asked for publishes nothing.
+        if (!this.shuttingDown) this.profile = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
           clearTimeout(p.timer);
@@ -484,25 +507,57 @@ export class BrowserHost {
   }
 
   /** Graceful quit, then SIGTERM the group, then SIGKILL. Idempotent. */
+  /**
+   * Ask the browser to quit and wait for it to say so. Written straight to the
+   * child with its own pending entry rather than through `sendAction`, which
+   * would run `ensureStarted()` — and that can decide the live browser is on
+   * the wrong profile and call back into here.
+   */
+  private requestQuit(child: ChildProcess): Promise<boolean> {
+    const id = this.nextId++;
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        resolve(false);
+      }, 3000);
+      timer.unref?.();
+      this.pending.set(id, {
+        resolve: () => resolve(true),
+        reject: () => resolve(false),
+        timer,
+      });
+      try {
+        child.stdin!.write(JSON.stringify({ id, action: "quit" }) + "\n");
+      } catch {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        resolve(false); // stdin already closed; it will not be answering
+      }
+    });
+  }
+
   async shutdown(): Promise<void> {
-    this.shuttingDown = true;
     const child = this.child;
-    if (!child) return;
+    if (!child) {
+      this.shuttingDown = true;
+      return;
+    }
     const exited = new Promise<void>((resolve) => {
       child.once("exit", () => resolve());
     });
-    try {
-      child.stdin!.write(JSON.stringify({ id: this.nextId++, action: "quit" }) + "\n");
-    } catch {
-      /* stdin already closed */
-    }
-    // Captured before the exit handler clears it, published only if the quit
-    // above is what ended the browser. Having to kill it means it never
-    // acknowledged, so what it was doing at the end is unknown — and unknown
-    // is not publishable.
-    const profile = this.profile;
+    // Asked before the latch, so the answer comes back through the ordinary
+    // pending map: publication turns on the browser having ACKNOWLEDGED the
+    // quit, not on it having stopped soon after one was sent. A browser that
+    // happened to die on its own inside the same few seconds is one whose last
+    // moments nobody saw, and that jar is not publishable.
+    const acknowledged = this.requestQuit(child);
+    this.shuttingDown = true;
+    const quitAnswered = await acknowledged;
     if (await withTimeout(exited, 3000)) {
-      if (profile) this.publishProfile(profile);
+      // Read now, not before the awaits: an action still in flight can have
+      // discovered a stray popup and given the profile up in the meantime, and
+      // a snapshot taken earlier would publish the jar it just retired.
+      if (quitAnswered && this.profile) this.publishProfile(this.profile);
     } else {
       this.killGroup("SIGTERM");
       if (!(await withTimeout(exited, 5000))) {

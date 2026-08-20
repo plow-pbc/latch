@@ -490,13 +490,14 @@ export class BrowserSessions {
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
     const pages = pageCount === s.knownPageCount ? [] : await this.pageUrls();
-    // Every top-level URL the browser showed while this command ran, whether
-    // or not it is still open: a site can pop a window, exchange cookies and
-    // close it again without page_count ever changing, and that origin's state
-    // is in the profile all the same.
-    const touched = Array.isArray(result.touched)
-      ? result.touched.filter((u): u is string => typeof u === "string")
-      : [];
+    // Every top-level URL the browser showed since this layer last looked,
+    // whether or not it is still open and whichever response carried it: a
+    // site can pop a window, exchange cookies and close it again without
+    // page_count ever changing, and that origin's state is in the profile all
+    // the same. Taken from the host rather than this response, because the
+    // ones that never reach here — viewer polls, locate, fill — would
+    // otherwise consume the record and drop it.
+    const touched = this.host.drainTouched();
 
     // First, ahead of every audit append and every early return below. The
     // response is already in the jar — a mask failure that returns, or an

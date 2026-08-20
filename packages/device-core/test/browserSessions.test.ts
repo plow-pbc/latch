@@ -480,6 +480,41 @@ describe("access the owner's log could not record is not granted", () => {
     expect(published(ctx.dir)).toEqual([profileKeyForOrigins(["pizza.example"])]);
   });
 
+  it("a browser that stops without answering the quit publishes nothing", async () => {
+    // Publication turns on the browser having ACKNOWLEDGED the quit, not on it
+    // having stopped soon after one was sent — a browser that died of its own
+    // accord inside the same few seconds is one whose last moments nobody saw.
+    const silent = makeCtx({ NO_QUIT_ACK: "1" });
+    const opened = jv(await silent.sessions.open("int-1", AGENT, ["pizza.example"], true));
+    await silent.sessions.command(AGENT, opened.get("session").str!, {
+      action: "goto",
+      url: "https://pizza.example/",
+    });
+    await silent.sessions.closeAll("test");
+
+    expect(published(silent.dir)).toEqual([]);
+  });
+
+  it("classifies a popup the owner's viewer was the only thing to see", async () => {
+    // viewFrame() polls straight through BrowserHost, so the session layer
+    // never sees that response — the origin it reported would be consumed and
+    // dropped if the host were not the thing accumulating touches.
+    const watched = makeCtx({ VIEW_TOUCHES: "https://seen-by-viewer.example/x" });
+    const opened = jv(await watched.sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const handle = opened.get("session").str!;
+    expect(await watched.host.viewFrame()).not.toBeNull();
+
+    const next = jv(
+      await watched.sessions.command(AGENT, handle, {
+        action: "goto",
+        url: "https://pizza.example/",
+      }),
+    );
+    expect(next.get("retired_store").str).toBe("seen-by-viewer.example");
+    await watched.sessions.closeAll("test");
+    expect(published(watched.dir)).toEqual([]);
+  });
+
   it("a browser that dies unexpectedly publishes nothing", async () => {
     // The asymmetry the store rests on: a browser that died may have been
     // mid-request to an origin the scope check never got to see, so "we do not
