@@ -159,52 +159,42 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     session = opened.payload.session as string;
     const text = async () => (await act("text")).payload.text as string;
 
-    // A cover that clears after `clears_at`, with the click allowed `timeout_ms`
-    // to outlast it. The page has four frames and a click's budget covers the
-    // whole action, so the frame holding the element has to be found before the
-    // budget is split — the 1.2 s row is already over the quarter a naive split
-    // would give it, and the 4 s row is over the 3 s the tool allowed at all
-    // before this change: it is the recovery the timeout exists for.
-    for (const [clearsAt, timeout] of [[1200, undefined], [4000, 6000]] as const) {
+    // Four ways a click arrives too early, one row each. The page has four
+    // frames and a click's budget covers the whole action, so what is really
+    // under test is that the budget goes on watching every frame for the thing
+    // to become clickable — not on waiting in each frame in turn, which spends
+    // a quarter of it blind to the other three.
+    const arrivals = [
+      // A cover that clears at 1.2 s — already past the quarter a naive split
+      // would give the frame that matters.
+      { label: "cover clears at 1.2s", selector: "#continue", timeout: undefined,
+        setup: "const c = document.createElement('div');" +
+               "c.style.cssText = 'position:fixed;inset:0';" +
+               "document.body.appendChild(c); setTimeout(() => c.remove(), 1200)" },
+      // …and one that clears at 4 s, past the 3 s the tool allowed at all
+      // before this change. This is the recovery `timeout_ms` exists for.
+      { label: "cover clears at 4s, timeout_ms 6000", selector: "#continue", timeout: 6000,
+        setup: "const c = document.createElement('div');" +
+               "c.style.cssText = 'position:fixed;inset:0';" +
+               "document.body.appendChild(c); setTimeout(() => c.remove(), 4000)" },
+      // The element itself arriving late, rather than being uncovered.
+      { label: "element returns at 1s", selector: "#continue", timeout: undefined,
+        setup: "const b = document.getElementById('continue'); b.remove();" +
+               "setTimeout(() => document.body.appendChild(b), 1000)" },
+      // And a frame that did not exist when the click started: the scan has to
+      // re-enumerate, or the injected iframe is never looked in at all.
+      { label: "frame injected at 1s", selector: "#late", timeout: undefined,
+        setup: "setTimeout(() => {" +
+               "  const f = document.createElement('iframe');" +
+               "  f.src = '/late'; document.body.appendChild(f);" +
+               "}, 1000)" },
+    ];
+    for (const { label, selector, timeout, setup } of arrivals) {
       await act("goto", { url: site.url + "/blocked" });
-      await act("eval", {
-        expression:
-          "document.querySelector('.modal-backdrop').remove();" +
-          "const c = document.createElement('div');" +
-          "c.style.cssText = 'position:fixed;inset:0';" +
-          `document.body.appendChild(c); setTimeout(() => c.remove(), ${clearsAt})`,
-      });
-      await act("click", { selector: "#continue", ...(timeout ? { timeout_ms: timeout } : {}) });
-      expect(await text(), `cover clearing at ${clearsAt}ms`).toContain("clicked isTrusted=true");
+      await act("eval", { expression: "document.querySelector('.modal-backdrop').remove();" + setup });
+      await act("click", { selector, ...(timeout ? { timeout_ms: timeout } : {}) });
+      expect(await text(), label).toContain("clicked isTrusted=true");
     }
-
-    // An element that has not arrived yet is found by scanning every frame, not
-    // by waiting in each one in turn: on this four-frame page a per-frame share
-    // of the default budget runs out before the button comes back at 1 s, with
-    // most of the budget still unspent.
-    await act("goto", { url: site.url + "/blocked" });
-    await act("eval", {
-      expression:
-        "document.querySelector('.modal-backdrop').remove();" +
-        "const b = document.getElementById('continue'); b.remove();" +
-        "setTimeout(() => document.body.appendChild(b), 1000)",
-    });
-    await act("click", { selector: "#continue" });
-    expect(await text()).toContain("clicked isTrusted=true");
-
-    // And a frame that did not exist when the click started: the scan has to
-    // re-enumerate, or the injected iframe is never looked in at all.
-    await act("goto", { url: site.url + "/blocked" });
-    await act("eval", {
-      expression:
-        "document.querySelector('.modal-backdrop').remove();" +
-        "setTimeout(() => {" +
-        "  const f = document.createElement('iframe');" +
-        "  f.src = '/late'; document.body.appendChild(f);" +
-        "}, 1000)",
-    });
-    await act("click", { selector: "#late" });
-    expect(await text()).toContain("clicked isTrusted=true");
 
     await act("goto", { url: site.url + "/blocked" });
 
