@@ -14,7 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
-import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
+import { ViewerFrame } from "./browser/browserHost.js";
+import { BrowserPool } from "./browser/browserPool.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { VaultServer } from "./browser/vaultServer.js";
@@ -117,7 +118,8 @@ export class DeviceAgent {
   readonly vaultServer: VaultServer | null = null;
   /** The owner's own way into the vault: no CLI, no port, no session on disk. */
   readonly vaultClient: VaultClient | null = null;
-  private readonly browserHost: BrowserHost | null = null;
+  /** One browser per session, so agents do not queue for the Mac. */
+  private readonly browsers: BrowserPool | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
@@ -137,7 +139,7 @@ export class DeviceAgent {
       const browserDir = path.join(home, "device/browser");
       const auditFn = (event: string, fields: { [k: string]: JSONValue }) =>
         this.audit.record(event, fields);
-      this.browserHost = new BrowserHost({
+      this.browsers = new BrowserPool({
         command: browserRuntime.serverCommand,
         // Visible by default: the owner should be able to watch what is being
         // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
@@ -219,8 +221,7 @@ export class DeviceAgent {
         fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;
-      this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
-      this.browserHost.onCrash = () => this.browserSessions?.noteCrash();
+      this.browserSessions = new BrowserSessions(this.browsers, credentials, auditFn);
     }
   }
 
@@ -265,7 +266,7 @@ export class DeviceAgent {
    * null when no browser is running (it is never started for a viewer poll).
    */
   async browserViewFrame(): Promise<ViewerFrame | null> {
-    return this.browserHost?.viewFrame() ?? null;
+    return this.browsers?.viewFrame() ?? null;
   }
 
   /**

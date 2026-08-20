@@ -375,7 +375,10 @@ export const TOOLS: ToolSpec[] = [
       "it reads page values directly, and must not be pointed at a field you filled) — so use " +
       "it for sites that " +
       "must be signed in as them, not for general web reading, which your own tools do faster. " +
-      "One session at a time. It is a supervised anti-detection browser, scoped to the listed " +
+      "The session id you get back IS your browser: pass it on every call and you keep the same "
+    + "window, profile and cookies. Other agents have their own — nobody takes yours, and you "
+    + "cannot see theirs. The Mac runs a few at once and says so plainly when it is full. "
+    + "It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
       "permission to list the owner's vault item names (never values). The browser window is " +
@@ -511,7 +514,7 @@ export const TOOLS: ToolSpec[] = [
       type: "object",
       required: ["session", "action"],
       properties: {
-        session: { type: "string" },
+        session: { type: "string", description: "Your browser, from plow_browser_open. Pass the same one to keep the same window." },
         action: {
           type: "string",
           enum: [

@@ -44,6 +44,11 @@ the page; that is the one way round it, and it is not one you have any reason to
 
 ## Acting: always screenshot first
 
+**Your session id is your browser.** Pass the one \`plow_browser_open\` gave you on every
+call and you keep the same window, profile and cookies. Other agents drive their own
+browsers at the same time: yours is never taken from you, theirs is never visible to
+you, and when the Mac is already running as many as it will, the open says so.
+
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
 url, title, links, forms, tables, pages.

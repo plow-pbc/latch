@@ -23,11 +23,17 @@
 import crypto from "node:crypto";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost } from "./browserHost.js";
+import { BrowserPool } from "./browserPool.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
 interface Session {
+  /** This session's own browser. One per session is the whole point. */
+  host: BrowserHost;
+  /** Closes THIS session when it goes quiet; sessions do not share a clock. */
+  idleTimer: NodeJS.Timeout | null;
+
   handle: string;
   agentId: string;
   origins: string[];
@@ -78,11 +84,13 @@ export interface BrowserSessionInfo {
 }
 
 export class BrowserSessions {
-  private session: Session | null = null;
-  private idleTimer: NodeJS.Timeout | null = null;
+  /** Every live session, by handle. The handle IS the browser: an agent that
+   * passes the same one gets the same browser back, and two agents passing
+   * different ones cannot see each other's pages. */
+  private readonly sessions = new Map<string, Session>();
 
   constructor(
-    private readonly host: BrowserHost,
+    private readonly pool: BrowserPool,
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
@@ -97,9 +105,9 @@ export class BrowserSessions {
     return originMatches(host, s.origins);
   }
 
-  /** The live session as the owner's viewer sees it, or null. */
+  /** The session the owner's viewer is watching — the one that acted last. */
   current(): BrowserSessionInfo | null {
-    const s = this.session;
+    const s = this.mostRecent();
     if (!s) return null;
     return {
       origins: [...s.origins],
@@ -117,10 +125,20 @@ export class BrowserSessions {
     credentialMetadata: boolean,
     headed?: boolean,
   ): Promise<JSONValue> {
-    if (this.session && this.session.agentId !== agentId) {
-      return { status: "error", error: "browser is in use by another agent" };
+    // Nothing is taken from anybody: this session gets a browser of its own,
+    // and other agents keep theirs. The only limit is how many browsers this
+    // Mac will run at once, and that is said out loud rather than by evicting
+    // whoever was here first.
+    const handle = crypto.randomUUID();
+    let host: BrowserHost;
+    try {
+      host = this.pool.hostFor(handle);
+    } catch (error: unknown) {
+      return { status: "error", error: error instanceof Error ? error.message : String(error) };
     }
-    if (this.session) await this.close(this.session.handle, "reopened");
+
+    // A browser that dies takes its own session with it, and nobody else's.
+    host.onCrash = () => this.noteCrash(handle);
 
     // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
     // start (~30s) absorbs into the deferred handle; every later `browser`
@@ -128,14 +146,17 @@ export class BrowserSessions {
     // per-exchange ceiling, which it can only do against an already-running
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
     try {
-      await this.host.ensureReady(headed);
+      await host.ensureReady(headed);
     } catch (error: unknown) {
+      await this.pool.release(handle);
       const message = error instanceof Error ? error.message : String(error);
       return { status: "error", error: `browser failed to start: ${message}` };
     }
 
     const session: Session = {
-      handle: crypto.randomUUID(),
+      handle,
+      host,
+      idleTimer: null,
       agentId,
       origins: origins.map(normalizeOrigin),
       credentialMetadata,
@@ -152,7 +173,7 @@ export class BrowserSessions {
         session: session.handle,
         origins: session.origins,
         credential_metadata: credentialMetadata,
-        headed: this.host.headed,
+        headed: host.headed,
       });
     } catch (error: unknown) {
       // The browser is already warm — ensureReady ran above, and headed means a
@@ -161,19 +182,19 @@ export class BrowserSessions {
       // no session and no audit line is precisely the invisible browser this
       // path exists to prevent.
       try {
-        await this.stopBrowser();
+        await this.pool.release(handle);
       } catch {
         /* the browser is going away regardless; the failed open is the real error */
       }
       throw error;
     }
-    this.session = session;
-    this.armIdleTimer();
+    this.sessions.set(session.handle, session);
+    this.armIdleTimer(session);
     return {
       status: "completed",
       session: session.handle,
       origins: session.origins,
-      headed: this.host.headed,
+      headed: host.headed,
     };
   }
 
@@ -221,75 +242,70 @@ export class BrowserSessions {
     };
   }
 
-  /**
-   * Stop the browser and clear the shutdown latch — one operation, never two.
-   * `shutdown()` sets `shuttingDown` and only `resetBreaker()` clears it, and
-   * `shutdown()` audits browser_stopped on its way out. Split across two calls,
-   * an audit failure in between leaves a host that will start, publish a
-   * session, and then fail every command at the `sendAction()` guard: an open
-   * the agent cannot use. Every caller wants the pair, so the pair is the API.
-   * Callers still choose what to do with a shutdown error; none of them get to
-   * skip the reset.
-   */
-  private async stopBrowser(): Promise<void> {
-    try {
-      await this.host.shutdown();
-    } finally {
-      this.host.resetBreaker();
+  /** The session that acted last — what the owner's viewer follows. */
+  private mostRecent(): Session | null {
+    let latest: Session | null = null;
+    for (const s of this.sessions.values()) {
+      if (!latest || s.lastActivity > latest.lastActivity) latest = s;
     }
+    return latest;
   }
 
   async close(handle: string, reason: string): Promise<JSONValue> {
-    const s = this.session;
-    if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
-    this.session = null;
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    await this.stopBrowser();
+    const s = this.sessions.get(handle);
+    if (!s) return { status: "error", error: "unknown session" };
+    this.sessions.delete(handle);
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    // Only this session's browser goes away; everyone else keeps theirs.
+    await this.pool.release(handle);
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
 
   /**
-   * The browser died under a live session. There is no host left to shut
-   * down; close the books so the audit shows the session ended rather than
-   * browsing forever. The circuit breaker is deliberately not reset.
+   * A browser died under a live session. There is no host left to shut down;
+   * close the books so the audit shows that session ended rather than browsing
+   * forever. The circuit breaker is deliberately not reset.
    */
-  noteCrash(): void {
-    const s = this.session;
+  noteCrash(handle: string): void {
+    const s = this.sessions.get(handle);
     if (!s) return;
-    this.session = null;
-    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.sessions.delete(handle);
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    this.pool.forget(handle);
     this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
   }
 
-  /** Close whatever session an agent holds (revocation/disconnect path). */
+  /** Close every session an agent holds (revocation/disconnect path). */
   async closeForAgent(agentId: string, reason: string): Promise<void> {
-    if (this.session?.agentId === agentId) await this.close(this.session.handle, reason);
+    for (const s of [...this.sessions.values()]) {
+      if (s.agentId === agentId) await this.close(s.handle, reason);
+    }
   }
 
   async closeAll(reason: string): Promise<void> {
-    if (this.session) await this.close(this.session.handle, reason);
+    for (const s of [...this.sessions.values()]) await this.close(s.handle, reason);
   }
 
   private validate(agentId: string, handle: string): Session | string {
-    const s = this.session;
-    if (!s || s.handle !== handle) return "unknown session (open one with plow_browser_open)";
+    const s = this.sessions.get(handle);
+    if (!s) return "unknown session (open one with plow_browser_open)";
     if (s.agentId !== agentId) return "session belongs to a different agent";
     return s;
   }
 
-  private armIdleTimer(): void {
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
-      const s = this.session;
-      if (!s) return;
+  /** Each session closes on its own quiet, not on the busiest one's. */
+  private armIdleTimer(s: Session): void {
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    s.idleTimer = setTimeout(() => {
+      if (!this.sessions.has(s.handle)) return;
       if (Date.now() - s.lastActivity >= this.idleMs) {
         void this.close(s.handle, "idle");
       } else {
-        this.armIdleTimer();
+        this.armIdleTimer(s);
       }
     }, this.idleMs + 1000);
-    this.idleTimer.unref?.();
+    s.idleTimer.unref?.();
   }
 
   /** Execute one agent command inside an approved session. */
@@ -378,7 +394,7 @@ export class BrowserSessions {
     s: Session,
     action: { [k: string]: JSONValue },
   ): Promise<JSONValue> {
-    const result = await this.host.sendAction(action);
+    const result = await s.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
 
@@ -444,7 +460,7 @@ export class BrowserSessions {
 
   private async sweepPages(s: Session): Promise<void> {
     try {
-      const pages = await this.host.sendAction({ action: "pages" });
+      const pages = await s.host.sendAction({ action: "pages" });
       const list = Array.isArray(pages.pages) ? pages.pages : [];
       for (const pg of list) {
         const url = jv(pg).get("url").str ?? "";
@@ -530,7 +546,7 @@ export class BrowserSessions {
       };
     }
 
-    const located = await this.host.sendAction({ action: "locate", selector });
+    const located = await s.host.sendAction({ action: "locate", selector });
     const frame = typeof located.frame === "number" ? located.frame : 0;
     const frameUrl = typeof located.frame_url === "string" ? located.frame_url : "";
     // What identifies the document this field is in. The url answers "may a
@@ -583,10 +599,11 @@ export class BrowserSessions {
       return { status: "error", error: `credential release refused: ${message}` };
     }
     // Asking the vault takes long enough for the session to end underneath
-    // this: closed by the owner, by the idle timer, or by another agent opening
-    // one. The browser is shared, so a value released for a session that no
-    // longer exists would be typed into whatever is on screen now.
-    if (this.session !== s) {
+    // this: closed by the owner, by the idle timer, or by a crash. Its browser
+    // goes with it, and the next session to be handed that handle would be a
+    // different browser — so a value released for a session that no longer
+    // exists must not be typed into anything.
+    if (this.sessions.get(s.handle) !== s) {
       this.audit("credential_denied", {
         session: s.handle,
         item: itemId,
@@ -607,7 +624,7 @@ export class BrowserSessions {
     let secret = release.value;
 
     try {
-      const filled = await this.host.sendAction({
+      const filled = await s.host.sendAction({
         action: "fill",
         selector,
         value: secret,

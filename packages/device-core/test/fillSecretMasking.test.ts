@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
-import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-core";
+import { BrowserPool, BrowserSessions, CredentialBroker } from "@domo/device-core";
 import { havePython, runProbe } from "./pythonProbe.js";
 
 const FAKE_SERVER = fileURLToPath(
@@ -36,7 +36,7 @@ const HAVE_PYTHON = havePython();
 
 interface Ctx {
   sessions: BrowserSessions;
-  host: BrowserHost;
+  browsers: BrowserPool;
   events: { event: string; fields: { [k: string]: JSONValue } }[];
   dir: string;
   cmdLog: string;
@@ -103,7 +103,7 @@ function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<strin
     ]),
   );
   const events: Ctx["events"] = [];
-  const host = new BrowserHost({
+  const browsers = new BrowserPool({
     command: [process.execPath, FAKE_SERVER],
     headed: false,
     screenshotsDir: path.join(dir, "shots"),
@@ -116,11 +116,11 @@ function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<strin
     auditPath: brokerLog,
   });
   const sessions = new BrowserSessions(
-    host,
+    browsers,
     credentials,
     (event, fields) => events.push({ event, fields }),
   );
-  return { sessions, host, events, dir, cmdLog, brokerLog };
+  return { sessions, browsers, events, dir, cmdLog, brokerLog };
 }
 
 /** Open a session already approved for both items and both origins. */
@@ -161,7 +161,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await ctx.host.shutdown();
+  await ctx.browsers.releaseAll();
   fs.rmSync(ctx.dir, { recursive: true, force: true });
 });
 
@@ -232,7 +232,7 @@ describe("fill_secret marking", () => {
         "process.exit(1);\n",
     );
     const sessions = new BrowserSessions(
-      ctx.host,
+      ctx.browsers,
       new CredentialBroker({ command: [process.execPath, broken] }),
       (event, fields) => ctx.events.push({ event, fields }),
     );
@@ -303,7 +303,7 @@ describe("fill_secret marking", () => {
   it("refuses to fill when the page will not let the value be masked", async () => {
     // A page whose CSP blocks the mask: the attribute would go on and change
     // nothing, and the secret would be legible in every screenshot after it.
-    await ctx.host.shutdown();
+    await ctx.browsers.releaseAll();
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
     const before = ctx.events.length;
@@ -337,7 +337,7 @@ describe("fill_secret marking", () => {
   it("still fills a field the vault does not conceal on such a page", async () => {
     // The refusal is about masking, so a field that was never going to be
     // masked is unaffected.
-    await ctx.host.shutdown();
+    await ctx.browsers.releaseAll();
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
     const result = await ctx.sessions.command("agent-1", handle, {
@@ -353,7 +353,7 @@ describe("fill_secret marking", () => {
     // The browser re-applies every mark before an observation and says so when
     // one will not take. Handing over the picture anyway is how the value ends
     // up in the transcript.
-    await ctx.host.shutdown();
+    await ctx.browsers.releaseAll();
     ctx = makeCtx({ FAKE_REMASK_FAILS: "1" });
     const handle = await session();
     await ctx.sessions.command("agent-1", handle, {
@@ -383,7 +383,7 @@ describe("fill_secret marking", () => {
   });
 
   it("refuses when the browser says the frame moved", async () => {
-    await ctx.host.shutdown();
+    await ctx.browsers.releaseAll();
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
     const handle = await session();
     const before = ctx.events.length;
@@ -410,7 +410,7 @@ describe("fill_secret marking", () => {
     // Asking the vault takes long enough for the session to end underneath the
     // fill. The browser is shared, so a value released for a session that has
     // gone would be typed into whatever the next one has on screen.
-    await ctx.host.shutdown();
+    await ctx.browsers.releaseAll();
     ctx = makeCtx({}, { FAKE_BROKER_DELAY_MS: "600" });
     const handle = await session();
     const inFlight = ctx.sessions.command("agent-1", handle, {

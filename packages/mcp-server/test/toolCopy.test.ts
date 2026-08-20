@@ -106,7 +106,10 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     const d = await descriptions(makeServer());
     expect(d.plow_browser_open).toMatch(/profile persists/);
     expect(d.plow_browser_open).toMatch(/vault/);
-    expect(d.plow_browser_open).toMatch(/one session at a time/i);
+    // The Mac runs several browsers now, so the copy has to say what the agent
+    // holds — its own session — rather than promising it is the only one.
+    expect(d.plow_browser_open).toMatch(/session id you get back IS your browser/i);
+    expect(d.plow_browser_open).not.toMatch(/one session at a time/i);
     expect(d.plow_browser_open).not.toMatch(/already signed in/i);
   });
 });
