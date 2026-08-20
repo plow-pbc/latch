@@ -384,7 +384,11 @@ describe("browser tools (fake runtime)", () => {
     );
     expect(failed.isError).toBe(true);
     expect(JSON.stringify(failed.payload)).not.toContain("SECRET-IN-ERROR");
-    expect(JSON.stringify(failed.payload)).toContain("offsite.example/callback");
+    // The apostrophe is part of the path, not the end of the URL — and the
+    // approved URL earlier in the same sentence keeps its query.
+    expect(JSON.stringify(failed.payload)).toContain("offsite.example/o'brien/callback");
+    expect(JSON.stringify(failed.payload)).toContain("pizza.example/menu?table=7");
+    expect(JSON.stringify(failed.payload)).toContain("done");
     expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("SECRET-IN-ERROR");
   });
 

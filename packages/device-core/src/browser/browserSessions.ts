@@ -644,13 +644,23 @@ export class BrowserSessions {
    */
   private redactFor(s: Session, v: JSONValue): JSONValue {
     if (typeof v === "string") {
-      // Every URL in the string, whether the string IS one or merely quotes
-      // one — a browser error quotes the URL it was navigating to, token and
-      // all. Testing the whole string first would truncate a message whose
-      // trailing URL happened to parse with the words after it attached.
-      return v.replace(/https?:\/\/[^\s"'<>]+/g, (u) =>
-        this.inScope(s, u) ? u : stripQuery(u),
-      );
+      // Per whitespace-delimited token: a string that IS a URL is one token,
+      // and a browser error quoting the URL it was navigating to has that URL
+      // as one of several. Judged from the scheme to the end of the token, so
+      // a path containing an apostrophe or a trailing bracket is still one
+      // URL — guessing which characters a URL may hold is what a character
+      // class does, and it guesses wrong.
+      return v
+        .split(/(\s+)/)
+        .map((tok) => {
+          const at = tok.search(/https?:\/\//);
+          if (at === -1) return tok;
+          const url = tok.slice(at);
+          if (this.inScope(s, url)) return tok;
+          const cut = url.search(/[?#]/);
+          return cut === -1 ? tok : tok.slice(0, at + cut);
+        })
+        .join("");
     }
     if (Array.isArray(v)) return v.map((x) => this.redactFor(s, x ?? null));
     if (v !== null && typeof v === "object") {

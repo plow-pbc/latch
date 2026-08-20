@@ -127,8 +127,8 @@ function handle(cmd) {
       // A browser failure quoting the URL it was navigating to — the one place
       // a token is likeliest to appear in an error string.
       throw new Error(
-        "Frame.click: Timeout 3000ms exceeded navigating to " +
-          "https://offsite.example/callback?code=SECRET-IN-ERROR",
+        "Frame.click: Timeout 3000ms exceeded on https://pizza.example/menu?table=7 " +
+          "navigating to https://offsite.example/o'brien/callback?code=SECRET-IN-ERROR done",
       );
     }
     // The shape a real click failure has: the browser names what was over it.
