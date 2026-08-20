@@ -153,8 +153,7 @@ TYPEABLE_JS = """(el) => {
         // host at all. Typing at it would select-all and replace the whole
         // region's content, not the span's.
         const value = attr.toLowerCase();
-        const declared = value === "" || value === "true" || value === "plaintext-only";
-        return declared && el.isContentEditable === true;
+        return value === "" || value === "true" || value === "plaintext-only";
     }
     if (tag === "input" && !typed.includes(el.type)) return false;
     return !el.disabled && !el.readOnly;

@@ -985,6 +985,8 @@ describe("which nodes take typing", () => {
     { what: "a textarea", el: textarea(), typed: true },
     { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), typed: true },
     { what: "a div marked contenteditable=true", el: host("DIV", "true"), typed: true },
+    // The attribute is ASCII case-insensitive; capitalised markup is ordinary.
+    { what: "a div marked contenteditable=TRUE", el: host("DIV", "TRUE"), typed: true },
     { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), typed: true },
     { what: "a custom element that carries the attribute", el: host("X-EDITOR"), typed: true },
     { what: "a checkbox", el: input("checkbox"), typed: false },
