@@ -293,9 +293,11 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
     # What each key was handed, seen from outside. A per-key timeout hands out
-    # the same number every call, so the shape -- never rising, and more than
-    # one distinct value -- is what tells one shared deadline from many,
-    # without resting on how large a wall-clock delta happens to be.
+    # the same number every call, so the shape tells them apart: never rising,
+    # and one distinct value per key. The second half is the one that
+    # discriminates -- a constant satisfies "never rising" by equality -- and
+    # `type()` above spends a millisecond so it is the fixture that makes those
+    # values differ rather than the interpreter's own speed.
     timeouts = frame.handle.typed_timeouts
     out["key_timeout_max"] = max(timeouts) if timeouts else None
     # None below two keys: with nothing to compare, "they never rose" is a

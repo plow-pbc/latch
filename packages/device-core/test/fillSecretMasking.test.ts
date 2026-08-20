@@ -634,7 +634,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // millisecond per key so that difference is something it causes rather
     // than something the interpreter's own speed happens to produce.
     expect(run.key_timeouts_never_rise).toBe(true);
-    expect(run.key_timeouts_distinct).toBeGreaterThan(1);
+    expect(run.key_timeouts_distinct).toBe(run.type_calls);
   });
 
   it("types a credential of the length the vault actually hands it", () => {
