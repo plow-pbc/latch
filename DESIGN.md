@@ -606,6 +606,24 @@ if update size becomes a problem.
 5. **Adversarial reviewer:** an agent consuming the same intent + audit stream,
    sitting between policy and prompt as an additional gate.
 
+**Where the reviewer's authorization comes from.** We will never hold the
+owner's messages to the agent: they talk on a channel we do not own (claude.ai
+and the like), and no transcript reaches this Mac. So consent cannot be user
+text. It is what this Mac RECORDED — the owner's purpose statement, and the
+approvals they answered for that agent (`intent_decision` with `source: ask`,
+plus the `rule` matches those approvals created). Those go in the reviewer's
+system message, and they are what a verdict of `allow` can rest on; the agent's
+goal, plan and request stay untrusted and can never justify access. Approvals
+recorded with `source: adversarial` are deliberately excluded: a reviewer citing
+its own past allows as the owner's consent is a ratchet, not a channel.
+
+The reviewer judges COVERAGE — does this operation fall inside what the owner
+already authorized — and denies a secret by its DESTINATION rather than its
+category: a value reaching somewhere neither the approvals nor the task names.
+Every capability still arrives as its own intent and is reviewed on its own
+merits; a prior approval is evidence in that review, never cover for a
+capability it did not name.
+
 The remote milestone is where the **TypeScript re-platform (§13)** lands: the
 hosted broker ships as the first TS component, and the rest of the system
 follows behind the same wire contract.

@@ -622,3 +622,60 @@ describe("what the reviewer is told about the owner's purpose", () => {
     expect(JSON.stringify(h.records)).not.toContain("~/Developer");
   });
 });
+
+/**
+ * The consent channel, at the seam where it is filled.
+ *
+ * We never see what the owner said to the agent — this Mac is not the channel
+ * they talk on — so the reviewer's authorization comes from the approvals this
+ * Mac recorded. The policy reads them out of the same audit stream as the
+ * history, and hands them over as their own argument: history is what the agent
+ * did, and this is what the owner did.
+ */
+describe("what the reviewer is told about the owner's approvals", () => {
+  const entries: JSONValue[] = [
+    {
+      event: "intent_received",
+      intentId: "i1",
+      agent: "agent-1",
+      request: "browse: instacart.com",
+      capabilities: ["Browse: instacart.com"],
+    },
+    { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "ask" },
+    {
+      event: "intent_received",
+      intentId: "i2",
+      agent: "agent-1",
+      request: "read ~/.ssh/id_rsa",
+      capabilities: ["Read: ~/.ssh/id_rsa"],
+    },
+    // The reviewer's own earlier verdict. Never consent.
+    { event: "intent_decision", intentId: "i2", decision: "allow_once", source: "adversarial" },
+  ];
+
+  const runWith = async (audit: JSONValue[]) => {
+    const reviewCalls: ReviewArgs[] = [];
+    await decideIntent(intent(), {
+      settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      auditEntries: () => audit,
+      record: () => {},
+      review: async (args) => {
+        reviewCalls.push(args);
+        return { verdict: "allow" as const, reason: "covered" };
+      },
+      openApproval: async () => "deny" as const,
+    });
+    return reviewCalls[0];
+  };
+
+  it("hands over what the owner approved, and nothing the reviewer approved for itself", async () => {
+    const call = await runWith(entries);
+    expect(call.approvals).toEqual([{ via: "dialog", capabilities: ["Browse: instacart.com"] }]);
+    expect(JSON.stringify(call.approvals)).not.toContain(".ssh");
+  });
+
+  it("passes an empty list when the owner has approved nothing for this agent", async () => {
+    expect((await runWith([])).approvals).toEqual([]);
+  });
+});

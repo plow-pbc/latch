@@ -15,6 +15,7 @@ import {
 } from "@domo/device-core";
 import {
   agentHistory,
+  ownerApprovals,
   REVIEWER_MODEL,
   ReviewArgs,
   ReviewFailureCause,
@@ -109,7 +110,13 @@ export async function decideIntent(
   const humanAvailable = mode !== "adversarial";
 
   const review = async () => {
-    const history = agentHistory(deps.auditEntries(), intent.agentId);
+    const entries = deps.auditEntries();
+    const history = agentHistory(entries, intent.agentId);
+    // The same stream, read for the opposite thing: what the OWNER did. We
+    // never see what they said to the agent — this Mac is not the channel they
+    // talk on — so their recorded approvals are the consent signal, and the one
+    // input to the review that can authorize anything.
+    const approvals = ownerApprovals(entries, intent.agentId);
     deps.record("adversarial_review_started", {
       intentId: intent.intentId,
       agent: intent.agentId,
@@ -126,6 +133,7 @@ export async function decideIntent(
       // Device-side and human-authored: it comes from the settings file, so no
       // agent-reachable path can write what the prompt will label TRUSTED.
       agentPurpose: settings.agentPurpose ?? "",
+      approvals,
       apiBaseUrl: deps.apiBaseUrl,
       humanAvailable,
     });
