@@ -29,8 +29,9 @@
  *
  * Scripted page behaviors:
  *   click "#popup"    opens a second page on https://popup.example/pay
- *   click "#offsite"  navigates the page to https://offsite.example/lander,
- *                     one of whose requests was refused
+ *   click "#offsite"  navigates the page to https://offsite.example/lander, one
+ *                     of whose requests was refused — and another that settles
+ *                     while parked there
  *   click "#blocked"  the page's own requests come back refused: seven 4xx
  *                     responses, the way the real server reports the ones it
  *                     saw during the action (already query-stripped there —
@@ -122,6 +123,7 @@ function handle(cmd) {
     } else if (cmd.selector === "#offsite") {
       current().url = "https://offsite.example/lander";
       state.failed = [{ status: 403, method: "GET", url: "https://offsite.example/api/who" }];
+      state.failedNext = [{ status: 429, method: "GET", url: "https://offsite.example/api/late" }];
     } else if (cmd.selector === "#blocked") {
       state.failed = [
         {

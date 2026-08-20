@@ -295,12 +295,19 @@ describe("requests the site refused", () => {
   it("does not carry an out-of-scope page's traffic home with the way back", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    // Scripted: "#offsite" leaves the approved origins with a refusal of its own.
+    // Scripted: "#offsite" leaves the approved origins with a refusal of its
+    // own, and another that settles while the session is parked out there.
     await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" });
     const back = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));
     expect(back.get("status").str).toBe("completed");
     expect(back.get("failed_requests").value).toBeNull();
-    expect(JSON.stringify(back.value)).not.toContain("offsite.example");
+    // Nor on the action after it: the way back empties the ring, it does not
+    // defer it.
+    const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
+    expect(shot.get("failed_requests").value).toBeNull();
+    expect(JSON.stringify([back.value, shot.value])).not.toContain("offsite.example");
+    // The owner still sees what that page's requests did.
+    expect(JSON.stringify(ctx.events)).toContain("offsite.example/api/late");
   });
 
   it("hands the agent nothing it cannot read — a malformed list is not passed through", async () => {

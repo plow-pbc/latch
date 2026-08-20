@@ -48,18 +48,20 @@ export function stripQuery(url: string): string {
   const cut = i === -1 ? url : url.slice(0, i);
   // https://user:pass@host/x — a password in a url is still a password, and the
   // audit log is durable.
-  return cut.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, "$1");
+  // [^/]* rather than [^/@]*: userinfo runs to the LAST @ before the path, so
+  // a password holding one keeps no tail.
+  return cut.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, "$1");
 }
 
 /**
  * Requests the site itself refused, as the browser reported them. The browser
  * strips and caps each url before it records one; this does it again rather
  * than trusting that, because these land in the owner's durable log and a token
- * written there cannot be taken back. Bounded here as well: what the agent gets
- * has to fit in one relay exchange whatever the browser sends.
+ * written there cannot be taken back. The count is bounded by the host, which
+ * is what holds them.
  */
 function failedRequests(value: JSONValue[]): JSONValue[] {
-  return value.slice(0, MAX_FAILED_REQUESTS).map((entry) => {
+  return value.map((entry) => {
     const e = jv(entry);
     return { ...(e.obj ?? {}), url: stripQuery(e.get("url").str ?? "").slice(0, MAX_URL_LEN) };
   });
@@ -84,9 +86,7 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  */
 const MAX_WAIT_SECONDS = 12;
 
-/** How many refused requests one result may carry, and how long a url on one
- * may be (server.py bounds both on its side too). */
-const MAX_FAILED_REQUESTS = 5;
+/** How long a url on a refused request may be (server.py caps its own too). */
 const MAX_URL_LEN = 200;
 
 /** What the owner's viewer needs to know about the live session. */
@@ -417,7 +417,11 @@ export class BrowserSessions {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
-    const failed = wasInScope ? failedRequests(this.host.takeFailedRequests()) : [];
+    // Taken on EVERY action, whatever the scope: entries left in the host are
+    // entries a later in-scope action would hand over. The owner's log gets
+    // them either way — an off-scope page being refused is exactly what they
+    // are watching for — and only the agent is told nothing.
+    const failed = failedRequests(this.host.takeFailedRequests());
     this.audit("browser_command", {
       session: s.handle,
       action: String(action.action),
@@ -445,7 +449,7 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
-    if (failed.length) out.failed_requests = failed;
+    if (wasInScope && failed.length) out.failed_requests = failed;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
     if (!this.inScope(s, url)) {
