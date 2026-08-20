@@ -73,9 +73,11 @@ export class BrowserHost {
   /** Which browser is current. A dead one's reader stays open long enough to
    * finish reading what it said, and stops the moment a new one starts. */
   private generation = 0;
-  /** The line reader over the current child's stdout, closed deterministically
-   * once the goodbye has provably been read (shutdown) or can never come. */
-  private reader: readline.Interface | null = null;
+  /** Lets go of the current child's stdout — the reader AND the pipe behind it,
+   * since closing the interface alone leaves the descriptor ref'd in the loop.
+   * Called once the goodbye has provably been read (shutdown) or can never
+   * come. */
+  private releaseReader: (() => void) | null = null;
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
@@ -255,8 +257,13 @@ export class BrowserHost {
     });
 
     const rl = readline.createInterface({ input: child.stdout! });
-    this.reader = rl;
     const gen = ++this.generation;
+    const release = () => {
+      rl.close();
+      child.stdout?.destroy();
+      if (this.releaseReader === release) this.releaseReader = null;
+    };
+    this.releaseReader = release;
 
     return new Promise<void>((resolve, reject) => {
       let ready = false;
@@ -265,8 +272,7 @@ export class BrowserHost {
           this.killGroup("SIGKILL");
           this.child = null;
           // A browser that never said hello has no goodbye to wait for.
-          rl.close();
-          this.reader = null;
+          release();
           reject(
             new BrowserCrashedError(
               `browser server did not become ready: ${this.stderrTail.join("").slice(-500)}`,
@@ -281,7 +287,7 @@ export class BrowserHost {
         // refusals belong to a session that is over, and prepending them to
         // the live list would file one browser's traffic under another's.
         if (gen !== this.generation) {
-          rl.close();
+          release();
           return;
         }
         let msg: JSONValue;
@@ -354,16 +360,14 @@ export class BrowserHost {
           // synchronously, that snapshot happens before the line is parsed.
           setImmediate(() => {
             this.onCrash?.();
-            // Whatever it said has been read by now, and shutdown's close never
-            // runs for a browser that died on its own.
-            rl.close();
-            if (this.reader === rl) this.reader = null;
+            // Whatever it said has been read by now, and shutdown's release
+            // never runs for a browser that died on its own.
+            release();
           });
         }
         if (!ready) {
           // Nothing said hello, so nothing is going to say anything else.
-          rl.close();
-          if (this.reader === rl) this.reader = null;
+          release();
           ready = true; // don't double-settle
           clearTimeout(startTimer);
           reject(
@@ -426,10 +430,9 @@ export class BrowserHost {
     }
     this.child = null;
     // Here, and not at exit: the goodbye has been awaited above, so there is
-    // provably nothing left to read, while closing it in the exit handler
-    // could cut off a line still sitting in the pipe.
-    this.reader?.close();
-    this.reader = null;
+    // provably nothing left to read, while letting go in the exit handler could
+    // cut off a line still sitting in the pipe.
+    this.releaseReader?.();
     this.cfg.audit?.("browser_stopped", {});
   }
 

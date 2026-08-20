@@ -59,6 +59,15 @@ describe("BrowserHost", () => {
     expect(r.title).toBe("blank");
   });
 
+  it("fails an open with what the browser said when it died before saying hello", async () => {
+    // A camoufox that cannot launch — missing binary, locked profile — exits
+    // before the ready line. That has to answer as its own failure, not by
+    // parking the caller until the start timeout.
+    const { host } = makeHost({ EXIT_BEFORE_READY: "1" });
+    await expect(host.ensureReady()).rejects.toThrow(/exited/);
+    await expect(host.ensureReady()).rejects.toThrow(/could not launch/);
+  });
+
   it("rejects pending on crash and lazily restarts", async () => {
     const { host, events } = makeHost({ CRASH_AFTER: "1" });
     let crashes = 0;

@@ -8,6 +8,8 @@
  * Knobs (env):
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
+ *   EXIT_BEFORE_READY=1 die instead of saying hello (a camoufox that cannot
+ *                      launch: missing binary, locked profile)
  *   CRASH_AFTER=n      exit(9) after n commands (crash/restart tests)
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
@@ -271,6 +273,10 @@ function main() {
     fs.appendFileSync(process.env.FAKE_ARGV_LOG, process.argv.slice(2).join(" ") + "\n");
   }
   const start = () => {
+    if (process.env.EXIT_BEFORE_READY === "1") {
+      process.stderr.write("camoufox: could not launch\n");
+      process.exit(9);
+    }
     if (process.env.NO_READY !== "1") {
       respond({ status: "ready", pid: process.pid, browser_version: "fake-152.0.4" });
     }
