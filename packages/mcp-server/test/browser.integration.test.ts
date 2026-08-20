@@ -58,7 +58,10 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       env: { ...base.env, FAKE_BROKER_VAULT: vaultPath },
     };
     device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), runtime);
-    server = createDomoMcpServer(device);
+    // Three real Camoufoxes take longer to start than a tunnelled call's 8s
+    // budget, and a deferred open answers with a pending envelope and no
+    // session — a clock this test is not about. Give it room.
+    server = createDomoMcpServer(device, { budgetMs: 120_000 });
   }, 60_000);
 
   afterAll(async () => {

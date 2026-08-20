@@ -189,6 +189,8 @@ export class BrowserSessions {
    * passes the same one gets the same browser back, and two agents passing
    * different ones cannot see each other's pages. */
   private readonly sessions = new Map<string, Session>();
+  /** Set once, when the app is on its way out. Nothing opens after that. */
+  private quitting = false;
 
   constructor(
     private readonly browser: BrowserHostConfig,
@@ -232,6 +234,12 @@ export class BrowserSessions {
     // four browsers start, and two opens by the same agent both take the same
     // profile directory, which Firefox then locks against itself. One record,
     // taken first, owns the capacity and the profile alike.
+    // An approval can land while the app is already quitting — the intent was
+    // waiting for the owner, and closeAll() has taken its snapshot. Starting a
+    // browser now means one nobody will close: it and its profile outlive us.
+    if (this.quitting) {
+      return { status: "error", error: "this Mac is shutting down" };
+    }
     if (this.sessions.size >= DEFAULT_MAX_BROWSERS) {
       return {
         status: "error",
@@ -497,7 +505,18 @@ export class BrowserSessions {
    * and all, on disk. They share nothing, so nothing here has to be ordered.
    */
   async closeAll(reason: string): Promise<void> {
-    await Promise.all([...this.sessions.values()].map((s) => this.close(s.handle, reason)));
+    // Latched before the snapshot, so an open that resumes mid-shutdown is
+    // refused rather than registering behind us.
+    this.quitting = true;
+    // settled, not fail-fast: one close that throws (a full disk on the audit
+    // append) must not resolve this while a sibling browser is still inside
+    // its shutdown timeout — the caller quits the app on this promise. The
+    // failure is still raised, once everyone is really down.
+    const results = await Promise.allSettled(
+      [...this.sessions.values()].map((s) => this.close(s.handle, reason)),
+    );
+    const failed = results.find((r) => r.status === "rejected");
+    if (failed) throw failed.reason;
   }
 
   /**

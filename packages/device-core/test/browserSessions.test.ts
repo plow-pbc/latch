@@ -750,6 +750,38 @@ describe("one profile per session, and never a shared one", () => {
     await ctx.sessions.closeAll("shutdown");
     expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
   });
+
+  it("refuses to open once the app is on its way out", async () => {
+    // An intent can sit waiting for the owner and be approved mid-quit. The
+    // browser it would start is one nobody is left to close.
+    await ctx.sessions.closeAll("shutdown");
+    const late = jv(await ctx.sessions.open("int-late", AGENT, ["a.example"], false));
+    expect(late.get("status").str).toBe("error");
+    expect(late.get("error").str).toContain("shutting down");
+    // Refused before anything is claimed: no profile, so nothing to leave.
+    expect(fs.existsSync(path.join(ctx.dir, "profiles"))).toBe(false);
+  });
+
+  it("still closes every session when one of the closes fails", async () => {
+    // The app quits on this promise. A close that throws — a full disk on the
+    // audit append — must not leave a sibling's profile behind.
+    let failed = false;
+    const sessions = new BrowserSessions(
+      { ...ctx.browsers, audit: () => {} },
+      new CredentialBroker({ command: ["node", FAKE_BROKER], env: {} }),
+      (event) => {
+        if (event === "browser_session_closed" && !failed) {
+          failed = true;
+          throw new Error("audit log is full");
+        }
+      },
+      60_000,
+    );
+    for (let i = 0; i < 2; i++) await sessions.open(`int-${i}`, `agent-${i}`, ["a.example"], false);
+
+    await expect(sessions.closeAll("shutdown")).rejects.toThrow("audit log is full");
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
+  });
 });
 
 describe("upgrading from the one shared profile", () => {
