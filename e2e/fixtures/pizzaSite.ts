@@ -65,7 +65,11 @@ export function createPizzaSite(): Promise<PizzaSite> {
         if (user === "jon@example.com" && pass === "pizza-time-99") {
           const sid = `s${Math.random().toString(36).slice(2)}`;
           sessions.add(sid);
-          redirect("/menu", { "set-cookie": `sid=${sid}; Path=/` });
+          // Max-Age, like a real sign-in: a session cookie dies with the
+          // browser, and the device stops the browser when a session closes,
+          // so a bare one could never demonstrate a profile remembering
+          // anything.
+          redirect("/menu", { "set-cookie": `sid=${sid}; Path=/; Max-Age=3600` });
         } else {
           html("Login failed", `<p id="error">Wrong email or password.</p><a href="/">Try again</a>`);
         }

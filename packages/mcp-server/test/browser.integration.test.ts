@@ -146,4 +146,45 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(opAudit).toContain("RELEASED");
     expect(opAudit).not.toContain("pizza-time-99");
   }, 300_000);
+
+  it("a login survives inside its grant and is invisible to the next one", async () => {
+    // The claim the per-grant profile store rests on, against the real browser
+    // and a real Set-Cookie rather than the argv a fake server would echo back.
+    // Both grants can reach the site; they differ only in what else the owner
+    // approved, which is enough to make them different grants.
+    const browseAs = async (origins: string[], run: () => Promise<void>) => {
+      const opened = await callTool(server, "plow_browser_open", { origins }, AGENT);
+      expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
+      session = opened.payload.session as string;
+      try {
+        await run();
+      } finally {
+        await callTool(server, "plow_browser_close", { session }, AGENT);
+      }
+    };
+    // /menu serves the menu to a session that holds the cookie and bounces
+    // everyone else to the login page, so the page title is the whole answer.
+    const atMenu = async () => {
+      await act("goto", { url: site.url + "/menu" });
+      return ((await act("text")).payload.text as string).includes("Menu");
+    };
+
+    await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
+      await act("goto", { url: site.url + "/" });
+      await act("fill", { selector: "#user", value: "jon@example.com" });
+      await act("fill", { selector: "#pass", value: "pizza-time-99" });
+      await act("click", { selector: "#login" });
+      expect(await atMenu()).toBe(true);
+    });
+
+    // Same grant, new session, no login: the cookie jar came back.
+    await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
+      expect(await atMenu()).toBe(true);
+    });
+
+    // A different grant on the same site starts from nothing.
+    await browseAs(["127.0.0.1", "margherita.example"], async () => {
+      expect(await atMenu()).toBe(false);
+    });
+  }, 300_000);
 });
