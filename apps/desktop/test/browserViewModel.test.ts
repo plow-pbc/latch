@@ -128,7 +128,7 @@ describe("audit grouping for browser sessions", () => {
   // refusals were recorded never showed them. Both while it is still open —
   // the case the pane is watched for — and after it closes.
   it.each([
-    { when: "still open", close: [], status: "Requests refused", closeText: "" },
+    { when: "still open", close: [], status: "Requests refused", closeText: null },
     {
       when: "closed",
       // What the browser had not reported yet is drained onto the closing
@@ -155,45 +155,47 @@ describe("audit grouping for browser sessions", () => {
     expect(cmd.text).toContain("429 POST https://costco.com");
     expect(cmd.text).toContain("(+1 more)");
     expect(cmd.state).toBe("bad");
-    if (closeText) {
+    if (closeText !== null) {
       const closeRow = browser.timeline.find((t) => t.text.includes("session closed"))!;
       expect(closeRow.text).toBe(closeText);
       expect(closeRow.state).toBe("bad");
     }
   });
 
-  it("an ordinary close stays ordinary — zinc, and a neutral row", () => {
-    // The other end of the same verdict: everything above reads a close as bad
-    // for some reason, so nothing was left saying what a close with no reason
-    // to be bad looks like.
-    const acts = auditActivities([
-      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
-      { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:05Z" },
-    ]);
-    expect(acts[0]!.status).toBe("Closed");
-    expect(acts[0]!.tone).toBe("zinc");
-    expect(acts[0]!.timeline.find((t) => t.text.includes("session closed"))!.state).toBe("neutral");
-  });
-
-  // A crash outranks what the session accumulated before it, so the badge is
-  // not the milder "Closed · scope blocks" this session also earned — and the
-  // browser's parting refusals, drained onto the crash line, do not soften it
-  // either. A crash with nothing to say is still a crash, in both places.
+  // How a session's close reads, from both ends of the same verdict. A crash
+  // outranks what the session accumulated before it, so the badge is not the
+  // milder "Closed · scope blocks" this session also earned — and the parting
+  // refusals drained onto the crash line do not soften it either. An ordinary
+  // close is the inverse, and it is the row that keeps every other row honest:
+  // without it, marking every close bad would go unnoticed.
   it.each([
-    { when: "with a parting refusal", failed_requests: [{ status: 599, method: "GET", origin: "https://dominos.com" }] },
-    { when: "with nothing left to say", failed_requests: [] },
-  ])("a session ended by a crash $when reads as Crashed, not Closed", ({ failed_requests }) => {
+    {
+      when: "a crash with a parting refusal", reason: "crashed", scoped: true,
+      failed_requests: [{ status: 599, method: "GET", origin: "https://dominos.com" }],
+      status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+    },
+    {
+      when: "a crash with nothing left to say", reason: "crashed", scoped: true, failed_requests: [],
+      status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+    },
+    {
+      when: "an ordinary close", reason: "agent", scoped: false, failed_requests: [],
+      status: "Closed", tone: "zinc", category: "other", closeState: "neutral",
+    },
+  ])("$when reads as $status", ({ reason, scoped, failed_requests, status, tone, category, closeState }) => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
-      { event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:01Z" },
-      { event: "browser_session_closed", session: "S", reason: "crashed", failed_requests, ts: "2026-08-10T10:00:05Z" },
+      ...(scoped
+        ? [{ event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:01Z" }]
+        : []),
+      { event: "browser_session_closed", session: "S", reason, failed_requests, ts: "2026-08-10T10:00:05Z" },
     ]);
-    expect(acts[0]!.status).toBe("Crashed");
-    expect(acts[0]!.tone).toBe("red");
-    expect(acts[0]!.category).toBe("failed");
-    // And the row that says so reads as bad, not as an ordinary close: the
-    // badge and the timeline are the same claim, seen from two distances.
-    expect(acts[0]!.timeline.find((t) => t.text.includes("session closed"))!.state).toBe("bad");
+    expect(acts[0]!.status).toBe(status);
+    expect(acts[0]!.tone).toBe(tone);
+    // The bucket, not only the badge: they disagreed once already, and the
+    // bucket is what an owner scanning for trouble actually filters on.
+    expect(acts[0]!.category).toBe(category);
+    expect(acts[0]!.timeline.find((t) => t.text.includes("session closed"))!.state).toBe(closeState);
   });
 
   it("a session-scoped metadata read stays with its session, not a row of its own", () => {
