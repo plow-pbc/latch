@@ -99,12 +99,14 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_run_command.indexOf("own Mac")).toBeLessThan(d.plow_run_command.indexOf("sandbox"));
   });
 
-  // The differentiator that was missing entirely: a persistent profile and
-  // vault fills. Stated as what it is — NOT as "already signed in", which
-  // would be a promise this profile does not keep.
+  // The differentiator that was missing entirely: state that outlives a session
+  // and vault fills. Stated as what it is — NOT as "already signed in", which
+  // would be a promise this profile does not keep: the store is per origin set,
+  // capped, and disable-able, so any session may open cold.
   it("plow_browser_open says why it beats a plain web fetch, without overselling", async () => {
     const d = await descriptions(makeServer());
-    expect(d.plow_browser_open).toMatch(/persist between sessions that ask for the same origins/);
+    expect(d.plow_browser_open).toMatch(/kept|persist/i);
+    expect(d.plow_browser_open).toMatch(/origin/i);
     expect(d.plow_browser_open).toMatch(/vault/);
     expect(d.plow_browser_open).toMatch(/one session at a time/i);
     expect(d.plow_browser_open).not.toMatch(/already signed in/i);

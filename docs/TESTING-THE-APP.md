@@ -141,15 +141,23 @@ DOMO_BROWSER_FRESH_PROFILE=1 just app   # every session starts with an empty coo
 Inspect what a profile is holding — `sqlite3` reads it fine while the browser is closed:
 
 ```bash
-sqlite3 "$DOMO_HOME/device/browser/profiles/<key>/cookies.sqlite" \
+HOME_DIR=~/Library/Application\ Support/Plow-Latch-$(scripts/worktree-name.sh --branch)
+sqlite3 "$HOME_DIR/device/browser/profiles/<key>/cookies.sqlite" \
   "select host, name, datetime(creationTime/1000000,'unixepoch') from moz_cookies order by host;"
 ```
+
+`$DOMO_HOME` is set by the `just` recipes, not in your shell, so spell the home out — the packaged
+install's is the unsuffixed `~/Library/Application Support/Plow-Latch`.
 
 The directory name is a hash of the approved origins, so there is no reading it off the site name —
 `ls -lt` and take the one whose mtime matches the session you care about. Deleting a profile
 directory is safe with the app shut down; it costs that grant its logins and nothing else. A store
 older than this change has a single `device/browser/profile` beside `profiles/` with everything
 mixed together; nothing reads it any more, so delete it whenever.
+
+The store keeps the 20 most recently used profiles and deletes the rest, so a site you have not
+visited in a long while can be signed out with nothing else having changed. `browser_profile_evicted`
+in the audit log is that having happened.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:
