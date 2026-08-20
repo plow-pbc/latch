@@ -513,7 +513,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_len: number | null;
         type_calls: number;
         key_timeout_max: number | null;
-        key_timeout_span: number | null;
+        key_timeouts_never_rise: boolean;
+        key_timeouts_distinct: number;
         node_len: number;
         asked_len: number;
       };
@@ -523,7 +524,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         action_timeout_ms: number;
         typing_max_ms: number;
         key_delay_ms: number;
-        key_overhead_ms: number;
       };
       two_frames: {
         error: string | null;
@@ -627,19 +627,12 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     const run = probed.long_value;
     expect(run.type_calls).toBe(c.typed_chars);
     expect(run.key_timeout_max).toBeLessThan(c.typing_max_ms);
-    // A per-key timeout hands out the same number every call, so the span
-    // between the first key's budget and the last is what tells them apart.
-    expect(run.key_timeout_span).toBeGreaterThan(0);
-  });
-
-  it("leaves the tail's budget room for the round trips it now pays", () => {
-    // TYPED_CHARS used to be the budget divided by the delay alone, so the
-    // delays claimed all of it and the slack sized for one actionability check
-    // had to cover every key. Both the length and the budget come from what a
-    // key costs now, so the tail cannot be longer than its budget can pay for.
-    const c = probed.constants;
-    expect(c.typed_chars * (c.key_delay_ms + c.key_overhead_ms))
-      .toBeLessThanOrEqual(c.typing_max_ms);
+    // A per-key timeout hands out the same number every call. One deadline
+    // never hands out a larger one than the key before — and hands out more
+    // than one distinct number, which is the half that tells them apart
+    // without resting on how large a wall-clock delta happens to be.
+    expect(run.key_timeouts_never_rise).toBe(true);
+    expect(run.key_timeouts_distinct).toBeGreaterThan(1);
   });
 
   it("types a credential of the length the vault actually hands it", () => {

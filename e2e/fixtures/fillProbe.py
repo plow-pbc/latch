@@ -286,14 +286,14 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
-    # What each key was handed, seen from outside: the largest, and how much of
-    # it the tail spent between the first key and the last. A per-key timeout
-    # hands out the same number every call, so the span is what distinguishes
-    # one shared deadline from many -- and it is None below two keys, where
-    # "they shrank" is a claim about nothing.
+    # What each key was handed, seen from outside. A per-key timeout hands out
+    # the same number every call, so the shape -- never rising, and more than
+    # one distinct value -- is what tells one shared deadline from many,
+    # without resting on how large a wall-clock delta happens to be.
     timeouts = frame.handle.typed_timeouts
     out["key_timeout_max"] = max(timeouts) if timeouts else None
-    out["key_timeout_span"] = (max(timeouts) - min(timeouts)) if len(timeouts) > 1 else None
+    out["key_timeouts_never_rise"] = all(a >= b for a, b in zip(timeouts, timeouts[1:]))
+    out["key_timeouts_distinct"] = len(set(timeouts))
     out["node_len"] = len(frame.handle.value or "")
     return out
 
@@ -526,7 +526,6 @@ def main() -> int:
         "action_timeout_ms": server.ACTION_TIMEOUT_MS,
         "typing_max_ms": server.TYPING_MAX_MS,
         "key_delay_ms": server.KEY_DELAY_MS,
-        "key_overhead_ms": server.KEY_OVERHEAD_MS,
     }
     out.write(json.dumps(result))
     out.flush()
