@@ -80,6 +80,9 @@ export class BrowserHost {
   private restartTimes: number[] = [];
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
+  /** A crash notice waiting for the dying browser's last line. Held so a
+   * restart can force it out rather than race it. */
+  private pendingCrashNotice: (() => void) | null = null;
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
@@ -238,6 +241,10 @@ export class BrowserHost {
       stdio: ["pipe", "pipe", "pipe"],
       detached: true, // own process group, so shutdown can kill Firefox children
     });
+    // Before anything of this browser exists: a crash notice still waiting on
+    // the last one has to be delivered while its ring and its session are still
+    // the current ones.
+    this.pendingCrashNotice?.();
     this.child = child;
     this.stderrTail = [];
     // A new browser saw none of the old one's traffic.
@@ -325,14 +332,21 @@ export class BrowserHost {
           // dead browser is worse than a missed line. And not at all if a new
           // browser has started meanwhile — its ring is not this one's.
           let notified = false;
+          const grace = setTimeout(() => notify(), CRASH_NOTICE_GRACE_MS);
+          grace.unref?.();
           const notify = () => {
-            if (notified || this.child !== null) return;
+            if (notified) return;
             notified = true;
+            clearTimeout(grace);
+            this.pendingCrashNotice = null;
             this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
             this.onCrash?.();
           };
+          // Whichever comes first, and never dropped: a session left open
+          // against a dead browser is worse than a missed line, so a restart
+          // FORCES the notice out (see start()) rather than cancelling it.
+          this.pendingCrashNotice = notify;
           child.once("close", notify);
-          setTimeout(notify, CRASH_NOTICE_GRACE_MS).unref?.();
         }
         if (!ready) {
           ready = true; // don't double-settle

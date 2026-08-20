@@ -8,7 +8,8 @@
  * Knobs (env):
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
- *   CRASH_AFTER=n      exit(9) after n commands (crash/restart tests)
+ *   CRASH_AFTER=n      say one last thing (a 599 refusal) and exit(9) after n
+ *                      commands (crash/restart tests)
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
@@ -274,8 +275,10 @@ function main() {
       // A last word on the way out: a real browser can answer a request and die
       // before the device has read the line.
       respond({
+        // 599: a status nothing else here emits, so a test can say this line
+        // is the one that arrived on the way out.
         failed_requests: [{
-          status: 503, method: "GET", origin: "https://pizza.example",
+          status: 599, method: "GET", origin: "https://pizza.example",
           initiator: "https://pizza.example",
         }],
       }, () => process.exit(9));
