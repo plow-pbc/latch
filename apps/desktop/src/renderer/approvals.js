@@ -50,6 +50,18 @@ export const APPROVAL_MODES = [
   },
 ];
 
+/**
+ * What Ask mode says when the reviewer cannot run.
+ *
+ * The same first sentence as the hint above — a human is asked either way —
+ * and the truth about the second: there is no suggestion on offer, so the
+ * checkbox below is dead. Kept beside the sentence it replaces so the two
+ * cannot drift. The remedy, when there is one, is appended by the caller.
+ */
+export const ASK_HINT_WITHOUT_REVIEWER =
+  "Any request a rule doesn't already cover opens an approval window. The AI Reviewer " +
+  "has no credential, so it cannot suggest an answer";
+
 /** The purpose field's own label, which carries its explanation with it. */
 export const PURPOSE_LABEL =
   "What are agents for? The reviewer checks each request it sees against this.";

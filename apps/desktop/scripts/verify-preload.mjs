@@ -640,6 +640,50 @@ app.whenReady().then(async () => {
       })(),
     };
   }})()`);
+  // Ask mode on a Mac whose reviewer CANNOT run — the state a stored Anthropic
+  // provider with no key leaves behind. The card must not tell anyone to turn on
+  // the checkbox one row down, because that checkbox is dead; and it must not
+  // name a remedy this app no longer offers.
+  saveSettings(probeHome, {
+    ...loadSettings(probeHome),
+    inferenceProvider: "anthropic",
+    anthropicApiKey: "",
+  });
+  win.webContents.send("status:changed");
+  await waitFor(
+    win,
+    `document.querySelector("#view").innerText.includes("cannot suggest an answer")`,
+    "the Ask card to say why there is no suggestion on offer",
+  );
+  const askWithoutReviewer = await win.webContents.executeJavaScript(`(${() => {
+    const pane = document.querySelector("#view");
+    const box = [...pane.querySelectorAll("input")].find(
+      (i) => i.type === "checkbox" &&
+        (i.closest("label")?.textContent ?? "").includes("Let the reviewer suggest"),
+    );
+    return {
+      // The dead-end sentence is gone…
+      noDeadInstruction: !pane.innerText.includes("turn that on below"),
+      // …replaced by the reason, and the checkbox it described really is dead.
+      explainsWhy: pane.innerText.includes("cannot suggest an answer"),
+      checkboxIsDead: !!box && box.disabled,
+      // The remedy is not named for a provider this app cannot set up, so the
+      // card must not send this Mac to a Settings control that is gone.
+      namesNoRemedyItCannotOffer: !pane.innerText.includes("sign in to Plow in Settings"),
+      // Ask mode still says what Ask mode does.
+      stillSaysWhatAskDoes: pane.innerText.includes(
+        "Any request a rule doesn't already cover opens an approval window",
+      ),
+    };
+  }})()`);
+  saveSettings(probeHome, {
+    ...loadSettings(probeHome),
+    inferenceProvider: "plow",
+  });
+  win.webContents.send("status:changed");
+  await waitFor(win, `document.querySelector("#view").innerText.includes("turn that on below")`,
+    "the Ask card to go back to offering the suggestion");
+
   await scrollToApprovals();
   const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/agents-approvals-ask.png";
   await win.webContents.executeJavaScript(
@@ -852,6 +896,11 @@ app.whenReady().then(async () => {
     approvalsAsk.pointsAtTheCheckboxBelow &&
     approvalsAsk.noPointerToSettings &&
     approvalsAsk.suggestionsLive &&
+    askWithoutReviewer.noDeadInstruction &&
+    askWithoutReviewer.explainsWhy &&
+    askWithoutReviewer.checkboxIsDead &&
+    askWithoutReviewer.namesNoRemedyItCannotOffer &&
+    askWithoutReviewer.stillSaysWhatAskDoes &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&
     settings.noSuggestionsCheckbox &&
@@ -871,7 +920,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

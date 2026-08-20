@@ -4,6 +4,7 @@
 
 import {
   APPROVAL_MODES,
+  ASK_HINT_WITHOUT_REVIEWER,
   PURPOSE_CAVEATS,
   PURPOSE_LABEL,
 } from "./approvals.js";
@@ -747,16 +748,17 @@ async function renderAgents() {
   const renderApprovals = () => {
     const mode = inference.approvalMode;
     const hasKey = inference.available[inference.provider];
+    // How to get a reviewer, named only when it is something this app can
+    // actually do; on a Mac pointed at any other provider the gap is stated on
+    // its own, because telling someone to use a control that is gone is the
+    // dead end this card exists to avoid.
+    const remedy = inference.provider === "plow" ? `: ${PLOW_REVIEWER_SETUP}.` : ".";
     // Only worth saying when the owner has actually asked the reviewer to
     // decide. The second half is the part people get wrong: a denial here is
     // not a freeze, because a rule already approved is a decision they made.
-    //
-    // The remedy is named only when it is one this app can carry out; on a Mac
-    // pointed at any other provider the gap is stated on its own.
     modeNote.textContent =
       mode === "adversarial" && !hasKey
-        ? "The AI Reviewer has no credential" +
-          (inference.provider === "plow" ? `: ${PLOW_REVIEWER_SETUP}. ` : ". ") +
+        ? `The AI Reviewer has no credential${remedy} ` +
           "Until then it denies anything it is asked to decide — requests already " +
           "covered by an always-allow rule keep running."
         : "";
@@ -784,7 +786,11 @@ async function renderAgents() {
     // no longer offers falls back to the first mode rather than a blank card.
     const active = APPROVAL_MODES.find((m) => m.value === mode) ?? APPROVAL_MODES[0];
     purposeBlock.hidden = !active.showsPurpose;
-    modeHintLine.textContent = active.hint;
+    // Ask mode's hint points at the checkbox below it. With no credential that
+    // checkbox is dead, so pointing at it is an instruction that cannot be
+    // followed — say what is actually true instead.
+    modeHintLine.textContent =
+      mode === "ask" && !hasKey ? `${ASK_HINT_WITHOUT_REVIEWER}${remedy}` : active.hint;
     modeHintLine.hidden = active.showsPurpose;
   };
   renderApprovals();
