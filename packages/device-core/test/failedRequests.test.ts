@@ -112,12 +112,10 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.quiet.failed_requests).toBeUndefined();
   });
 
-  it("lets a page's failing frames crowd out the refusal the agent could have used", () => {
-    // One ring holds what the owner may see and what the agent may, so five
-    // frame loads — ad iframes returning 4xx is ordinary — push the one
-    // attributable refusal out. Accepted, and asserted so it stays a decision:
-    // the owner needs the whole picture, and the agent's next action gets
-    // whatever comes next.
+  it("puts both kinds in one ring here too, so a frame load can displace a refusal", () => {
+    // The trade-off this costs is at BrowserHost's ring, where the decision is
+    // recorded (its MAX_FAILED_REQUESTS) and asserted; this only says the
+    // browser does not separate the two kinds either.
     expect((probed.frames_crowd_out.failed_requests ?? []).map((r) => r.initiator))
       .toEqual(["", "", "", "", ""]);
   });
