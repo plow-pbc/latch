@@ -993,6 +993,10 @@ describe("which nodes take typing", () => {
     // type-ahead and reports ok.
     { what: "a select inside a contenteditable region", el: select({ isContentEditable: true }), typed: false },
     { what: "a button inside a contenteditable region", el: element("BUTTON", { disabled: false, isContentEditable: true }), typed: false },
+    // A custom editor is a text host that happens to carry a disabled property,
+    // which several ordinary elements do — so the controls are named by tag
+    // rather than inferred from that property.
+    { what: "a contenteditable custom element with a disabled property", el: element("X-EDITOR", { disabled: false, isContentEditable: true }), typed: true },
     { what: "a plain div", el: element("DIV"), typed: false },
     { what: "a read-only text field", el: input("text", { readOnly: true }), typed: false },
     { what: "a disabled text field", el: input("text", { disabled: true }), typed: false },
