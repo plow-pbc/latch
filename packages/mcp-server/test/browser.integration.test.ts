@@ -189,6 +189,22 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       expect(await text(), label).toContain("clicked isTrusted=true");
     }
 
+    // The other side of that: a frame injected while the click waits is NOT
+    // eligible. The owner approved origins for the page the device could see,
+    // and a page that knows a click is in flight could otherwise race a frame
+    // carrying the same selector into the DOM (issue #95).
+    await act("goto", { url: site.url + "/blocked" });
+    await act("eval", {
+      expression:
+        "setTimeout(() => {" +
+        "  const f = document.createElement('iframe');" +
+        "  f.src = '/late'; document.body.appendChild(f);" +
+        "}, 1000)",
+    });
+    const injected = await act("click", { selector: "#late", timeout_ms: 3000 }, false);
+    expect(injected.isError).toBe(true);
+    expect(JSON.stringify(injected.payload)).toContain("no frame has #late");
+
     await act("goto", { url: site.url + "/blocked" });
 
     // The shape the Costco log has: visible, enabled, stable — and unclickable.

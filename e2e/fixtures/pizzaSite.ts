@@ -146,6 +146,11 @@ export function createPizzaSite(): Promise<PizzaSite> {
            });
          </script>`,
       );
+    } else if (req.method === "GET" && url.pathname === "/late") {
+      // A frame that did not exist when the click was asked for. The owner
+      // approved origins for the page the device could see, so this must NOT
+      // become clickable mid-wait — it is embedded to prove it doesn't.
+      html("Late", `<button id="late" type="button">Late</button>`);
     } else if (req.method === "GET" && url.pathname === "/confirm") {
       html("Confirmed", `<h1 id="confirmed">Order confirmed #${url.searchParams.get("n")}</h1>`);
     } else {
