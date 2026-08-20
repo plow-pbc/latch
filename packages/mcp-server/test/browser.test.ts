@@ -401,6 +401,10 @@ describe("browser tools (fake runtime)", () => {
 
     // The session is gone, not merely erroring — nothing else reaches that jar.
     expect(audited(device, "browser_profile_abandoned")).toEqual([]);
+    expect(events(device)).toContain("browser_profile_abandon_failed");
+    // All of it or none: a marker left behind by a failed flush would retire a
+    // jar while the caller was told the retirement failed.
+    expect(abandoned(profiles, key)).toBe(false);
     expect(audited(device, "browser_session_closed", "reason").at(-1)).toBe(
       "profile could not be retired",
     );
