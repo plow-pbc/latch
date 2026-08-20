@@ -132,7 +132,7 @@ export function decidedByLabel(source: string | null): string | null {
     case "no_credits": return "AI Reviewer (out of credits)";
     case "no_reviewer": return "AI Reviewer (not configured)";
     case "reviewer_undecided": return "AI Reviewer (would not decide)";
-    case "reviewer_unavailable": return "AI Reviewer (could not run)";
+    case "reviewer_unavailable": return "AI Reviewer (no usable verdict)";
     case "ask":
     case "prompt": return "You (asked)";
     // The deadline, not a person — see APPROVAL_SOURCE_EXPIRED.
@@ -491,11 +491,18 @@ function describeStep(e: JSONValue): AuditStep {
       // abstention means different things in each: in Ask mode a human takes
       // it, in adversarial mode nobody does and the operation is denied. So
       // the wording describes only the reviewer's own act, which is the same
-      // either way. ANY cause means it could not run; that is what a cause is
-      // for, and it defers to nobody.
+      // either way. ANY cause means no verdict came back, and defers to nobody.
+      //
+      // Only `no_credits` says the reviewer never ran, because only that one
+      // knows: the account cannot pay for inference, so there was no call. The
+      // rest is a bag of outages, refusals and unparseable answers that nothing
+      // here can tell apart, and saying "could not run" of a reviewer that ran
+      // and refused is a false account of the failure.
       const label =
         cause
-          ? "could not run"
+          ? cause === "no_credits"
+            ? "could not run"
+            : "no usable verdict"
           : verdict === "allow"
             ? "allow"
             : verdict === "deny"

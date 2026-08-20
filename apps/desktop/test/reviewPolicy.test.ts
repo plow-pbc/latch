@@ -224,14 +224,14 @@ describe("decideIntent — adversarial mode", () => {
   }
 
   /**
-   * A reviewer that could not run — timed out, errored, rate-limited, answered
-   * unparseably — arrives here as one shape: `ask` with `cause: "unavailable"`
+   * A review that reached no verdict — timed out, errored, rate-limited, refused,
+   * answered unparseably — arrives here as one shape: `ask` with `cause: "unavailable"`
    * (adversarialAgent.test.ts pins each real failure onto that cause). It used
    * to open the dialog, so it needs its own proof that it no longer does; and
    * Ask mode's dialog has to still be there afterwards.
    */
   describe("no route reaches a modal", () => {
-    it("a reviewer that could not run → deny, sourced reviewer_unavailable", async () => {
+    it("a review with no usable verdict → deny, sourced reviewer_unavailable", async () => {
       // `decision` is what the dialog WOULD have answered. Nothing may turn
       // it into execution, because nothing may open it.
       const h = harness(adversarial(), {
@@ -242,8 +242,10 @@ describe("decideIntent — adversarial mode", () => {
       });
       expect(await h.run()).toEqual({ decision: "deny", source: "reviewer_unavailable" });
       expect(h.openApproval).not.toHaveBeenCalled();
-      // The Activity pane shows this source; a raw token there is a leak.
-      expect(decidedByLabel("reviewer_unavailable")).toBe("AI Reviewer (could not run)");
+      // The Activity pane shows this source, and it says only what is known.
+      // "Could not run" would be a false account of a reviewer that ran and
+      // refused, which lands on this same cause.
+      expect(decidedByLabel("reviewer_unavailable")).toBe("AI Reviewer (no usable verdict)");
       // The reason the reviewer gave is still recorded, so the source is a
       // summary of the timeline rather than a replacement for it.
       expect(h.records[1].fields).toMatchObject({ verdict: "ask", reason: "reviewer timed out" });
@@ -603,6 +605,25 @@ describe("the audit tells one coherent story about who decided", () => {
     expect(reviewLine).not.toContain("could not run");
     // …and the decision that follows names it in human words, not a raw token.
     expect(decidedByLabel(decision.source)).toBe("AI Reviewer (would not decide)");
+  });
+
+  it("a review that reached no verdict does not claim the reviewer never ran", async () => {
+    // `unavailable` is a bag: an outage, a rate limit, a refusal, an answer
+    // that did not parse. Only the first two mean the reviewer never ran, and
+    // nothing here knows which one happened — so the timeline says only that
+    // no verdict came back. "Could not run" belongs to `no_credits`, which
+    // does know.
+    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
+      verdict: "ask",
+      reason: "reviewer declined to assess",
+      cause: "unavailable",
+    });
+    const decision = await h.run();
+    const reviewLine =
+      narrative(h.records, decision, intent().intentId).find((l) => l.startsWith("AI Reviewer:")) ?? "";
+    expect(reviewLine).toContain("no usable verdict");
+    expect(reviewLine).not.toContain("could not run");
+    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (no usable verdict)");
   });
 });
 
