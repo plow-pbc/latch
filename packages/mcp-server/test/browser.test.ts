@@ -391,6 +391,23 @@ describe("browser tools (fake runtime)", () => {
     await callTool(server, "plow_browser_close", { session }, AGENT);
   });
 
+  it("adopts a profile from before the marker rather than stranding its logins", async () => {
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+    const key = profileKeyForOrigins(["pizza.example"]);
+    // What the store looked like before the marker: the name was the grant.
+    fs.mkdirSync(path.join(profiles, key), { recursive: true });
+    fs.writeFileSync(path.join(profiles, key, "cookies.sqlite"), "a login from before");
+
+    await open(server, ["pizza.example"]);
+
+    expect(fs.readdirSync(profiles)).toEqual([key]);
+    expect(grantOf(profiles, key)).toBe(key);
+    expect(fs.readFileSync(path.join(profiles, key, "cookies.sqlite"), "utf8")).toBe(
+      "a login from before",
+    );
+  });
+
   it("a second widening re-marks the jar the session is on, not the one beside it", async () => {
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");

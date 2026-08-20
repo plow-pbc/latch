@@ -153,8 +153,10 @@ Which grant a profile answers to is written inside it, in `domo-grant` — the d
 only the grant it was first opened for, so read the file rather than the name:
 
 ```bash
-grep -r . "$HOME_DIR/device/browser/profiles/"*/domo-grant
+for f in "$HOME_DIR"/device/browser/profiles/*/domo-grant; do echo "$(dirname "$f"): $(cat "$f")"; done
 ```
+
+An empty right-hand side is a profile that answers to nothing — dead once its session has closed.
 
 Deleting a profile directory is safe with the app shut down; it costs that grant its logins and
 nothing else. A store older than this change has a single `device/browser/profile` beside
@@ -167,8 +169,7 @@ send them. The *directory* deliberately does not move: renaming it under a runni
 tried, and every cookie written afterwards was lost (`cookies.sqlite` came back with no `-wal` and
 none of the session's cookies), which the integration tier now guards. If a profile already answers
 to the widened set, that one keeps it and this one is left answering to nothing — an empty
-`domo-grant`, which no grant can match. `browser_profile_regranted` records it. A profile answering
-to nothing is dead once its session closes and can be deleted then.
+`domo-grant`, which no grant can match. `browser_profile_regranted` records it.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:

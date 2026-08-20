@@ -67,6 +67,19 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await site?.close();
   });
 
+  /**
+   * /menu serves the menu to whoever holds the cookie and bounces everyone
+   * else to the login page. Both outcomes are asserted positively: "not the
+   * menu" would also be satisfied by a blank page or a fixture that renamed
+   * its heading, neither of which says anything about a cookie jar.
+   */
+  const menuPageText = async () => {
+    await act("goto", { url: site.url + "/menu" });
+    return (await act("text")).payload.text as string;
+  };
+  const SIGNED_IN = /Menu/;
+  const SIGNED_OUT = /Log in/;
+
   const act = async (action: string, extra: Record<string, unknown> = {}, expectOk = true) => {
     const r = await callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
     if (expectOk) expect(r.isError, `${action}: ${JSON.stringify(r.payload)}`).toBe(false);
@@ -169,17 +182,6 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       // the assertion that actually explains what went wrong.
       expect(closed.isError, JSON.stringify(closed.payload)).toBe(false);
     };
-    // /menu serves the menu to whoever holds the cookie and bounces everyone
-    // else to the login page. Both outcomes are asserted positively: "not the
-    // menu" would also be satisfied by a blank page or a fixture that renamed
-    // its heading, neither of which says anything about a cookie jar.
-    const menuPageText = async () => {
-      await act("goto", { url: site.url + "/menu" });
-      return (await act("text")).payload.text as string;
-    };
-    const SIGNED_IN = /Menu/;
-    const SIGNED_OUT = /Log in/;
-
     await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
       // Cold, before anything is proven about persistence — without this the
       // assertion below would also pass on a profile some other test signed in.
@@ -211,11 +213,12 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
   }, 300_000);
 
   it("keeps writing to its jar after a widening, and the widened grant finds it", async () => {
-    // Widening moves the live profile directory so the jar stops answering to
-    // the key it opened under. Firefox keeps writing the cookie db through its
-    // open fds, but anything it creates by path under the old name does not
-    // exist any more — so the claim is only worth what a real browser does
-    // after the move, which no fake runtime can tell us.
+    // Widening rewrites the grant recorded INSIDE the live profile, so the jar
+    // stops answering to the narrower one it opened under while the directory
+    // stays exactly where Camoufox has it open. This is the test that refuted
+    // doing it as a rename: the browser went on serving pages afterwards, and
+    // every cookie written after the move was lost. No fake runtime can tell
+    // you either half of that.
     // An origin set no other test in this file uses, so the jar cannot start
     // out holding somebody else's sid — the fixture keeps every session it
     // ever issued valid, so a borrowed cookie would satisfy every assertion
@@ -227,11 +230,6 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       expect(r.isError, JSON.stringify(r.payload)).toBe(false);
       session = r.payload.session as string;
     };
-    const menu = async () => {
-      await act("goto", { url: site.url + "/menu" });
-      return (await act("text")).payload.text as string;
-    };
-
     await openOn(narrow);
     await act("goto", { url: site.url + "/" });
 
@@ -243,21 +241,21 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       server, "plow_browser_request", { session, origins: ["late.example"] }, AGENT,
     );
     expect(widened.isError, JSON.stringify(widened.payload)).toBe(false);
-    expect(await menu()).toMatch(/Log in/); // nothing carried in
+    expect(await menuPageText()).toMatch(SIGNED_OUT); // nothing carried in
 
-    // The browser is still usable, and this Set-Cookie lands post-rename.
+    // The browser is still usable, and this Set-Cookie lands after the widen.
     await act("goto", { url: site.url + "/" });
     await act("fill", { selector: "#user", value: "jon@example.com" });
     await act("fill", { selector: "#pass", value: "pizza-time-99" });
     await act("click", { selector: "#login" });
-    expect(await menu()).toMatch(/Menu/);
+    expect(await menuPageText()).toMatch(SIGNED_IN);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
     // The widened grant finds that cookie, and it is the only one there was —
-    // so the write went into the jar the move took with it, not to the name
-    // that stopped existing.
+    // so the writes went on landing in the jar, and the marker is what leads
+    // the widened grant back to it.
     await openOn(wide);
-    expect(await menu()).toMatch(/Menu/);
+    expect(await menuPageText()).toMatch(SIGNED_IN);
     await callTool(server, "plow_browser_close", { session }, AGENT);
   }, 300_000);
 });
