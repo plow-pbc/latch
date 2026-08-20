@@ -42,6 +42,10 @@ interface Session {
   lastActivity: number;
   lastUrl: string;
   knownPageCount: number;
+  /** First origin this session reached outside its grant, once it has. */
+  strayed: string | null;
+  /** Every such origin, so the same one is not recorded twice. */
+  strayedSeen: Set<string>;
 }
 
 /** Actions allowed while the active page is out of scope: only what an agent
@@ -206,6 +210,8 @@ export class BrowserSessions {
       lastActivity: Date.now(),
       lastUrl: "",
       knownPageCount: 1,
+      strayed: null,
+      strayedSeen: new Set(),
     };
     // Same order as extend(), and for the same reason: a session the owner's
     // log has no event for is a browser they cannot see being used at all.
@@ -231,6 +237,8 @@ export class BrowserSessions {
       throw error;
     }
     this.session = session;
+    // Everything the browser reports, as it is read — see noteStray.
+    this.host.onTouched = (url) => this.noteStray(session, url);
     this.armIdleTimer();
     return {
       status: "completed",
@@ -338,7 +346,10 @@ export class BrowserSessions {
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    // Still listening across the stop: the quit answer carries the last
+    // touches, and they decide whether this jar goes back under its grant.
     await this.stopBrowser();
+    this.host.onTouched = undefined;
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
@@ -353,6 +364,7 @@ export class BrowserSessions {
     if (!s) return;
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.host.onTouched = undefined;
     this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
   }
 
@@ -490,14 +502,7 @@ export class BrowserSessions {
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
     const pages = pageCount === s.knownPageCount ? [] : await this.pageUrls();
-    // Every top-level URL the browser showed since this layer last looked,
-    // whether or not it is still open and whichever response carried it: a
-    // site can pop a window, exchange cookies and close it again without
-    // page_count ever changing, and that origin's state is in the profile all
-    // the same. Taken from the host rather than this response, because the
-    // ones that never reach here — viewer polls, locate, fill — would
-    // otherwise consume the record and drop it.
-    const touched = this.host.drainTouched();
+
 
     // First, ahead of every audit append and every early return below. The
     // response is already in the jar — a mask failure that returns, or an
@@ -507,23 +512,11 @@ export class BrowserSessions {
     // `url` as well as the list: pageUrls() is best-effort and answers empty
     // when the browser will not say, and the active page is the one origin
     // that is never in doubt. A duplicate costs a comparison.
-    const strayed = [url, ...touched, ...pages.map((p) => p.url)].find(
-      (u) => u !== "" && !this.inScope(s, u),
-    );
-    let strayedOrigin: string | null = null;
-    if (strayed !== undefined) {
-      strayedOrigin = hostOf(strayed) ?? strayed;
-      // Given up before anything is recorded: the response is already in the
-      // jar, so nothing the device might fail to write gets to decide whether
-      // it stays reusable. This cannot fail — it sets a flag on a directory no
-      // grant can name until the browser stops clean.
-      this.host.abandonProfile();
-      this.audit("browser_scope_violation", {
-        session: s.handle,
-        action: String(action.action),
-        origin: strayedOrigin,
-      });
-    }
+    // The active page and any popup still open, through the same sink the
+    // host feeds: a fake runtime reports a landing without a navigation event,
+    // and `pages` names windows opened before this command.
+    for (const u of [url, ...pages.map((p) => p.url)]) this.noteStray(s, u, action);
+    const strayedOrigin = s.strayed;
 
     const navigated = url !== s.lastUrl;
     s.lastUrl = url;
@@ -603,6 +596,36 @@ export class BrowserSessions {
       delete out.title;
     }
     return out;
+  }
+
+  /**
+   * One sink for every origin this session is seen to reach — the host calls
+   * it as each frame is read, and `serverAction` adds what the response says
+   * about the active page. Out of scope means the jar now holds state the
+   * grant does not name, so it stops being publishable here, whatever else
+   * the command goes on to do or fail to do.
+   */
+  private noteStray(s: Session, url: string, action?: { [k: string]: JSONValue }): void {
+    if (url === "" || this.inScope(s, url)) return;
+    const origin = hostOf(url) ?? url;
+    // Cannot fail: a flag on a directory no grant can name until the browser
+    // stops clean. Ahead of the record for that reason.
+    this.host.abandonProfile();
+    if (s.strayed === null) s.strayed = origin;
+    // The same origin reaches here from more than one place — the browser
+    // reports the navigation, and the response names the page it left us on.
+    if (s.strayedSeen.has(origin)) return;
+    s.strayedSeen.add(origin);
+    try {
+      this.audit("browser_scope_violation", {
+        session: s.handle,
+        action: action ? String(action.action) : "",
+        origin,
+      });
+    } catch {
+      // This runs inside the host's line reader for a touch. Throwing there
+      // takes the process down; the retirement above is the part that matters.
+    }
   }
 
   /** Every page the browser has open, not only the new ones. Best-effort. */

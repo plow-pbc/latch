@@ -10,6 +10,7 @@
  *   NO_READY=1         never emit the ready line (start-timeout tests)
  *   CRASH_AFTER=n      exit(9) after n commands (crash/restart tests)
  *   NO_QUIT_ACK=1      exit on quit without answering it
+ *   QUIT_TOUCHES=url   report `url` as touched on the quit answer itself
  *   VIEW_TOUCHES=url   report `url` as touched on the next `view` poll, which
  *                      the session layer never sees the response to
  *   GARBAGE=1          print a non-JSON line before every response
@@ -214,6 +215,9 @@ function main() {
     if (cmd.action === "quit") {
       // NO_QUIT_ACK: stop without ever answering, the way a browser that died
       // of its own accord inside the shutdown window does.
+      // A last touch riding the quit answer, the way the real server reports
+      // whatever the browser showed after the final command.
+      if (process.env.QUIT_TOUCHES) state.touched.push(process.env.QUIT_TOUCHES);
       if (!process.env.NO_QUIT_ACK) respond({ id: cmd.id, result: envelope({ ok: true }) });
       process.exit(0);
     }

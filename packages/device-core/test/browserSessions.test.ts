@@ -495,6 +495,23 @@ describe("access the owner's log could not record is not granted", () => {
     expect(published(silent.dir)).toEqual([]);
   });
 
+  it("classifies a popup seen after the last command, on the way to publishing", async () => {
+    // The case a drain cannot reach: nothing calls the session layer again
+    // between this poll and the publish, so a scope check that ran on the next
+    // command would never run at all and the jar would go back under its
+    // grant carrying an origin it never approved.
+    const watched = makeCtx({ QUIT_TOUCHES: "https://last-moment.example/x" });
+    const opened = jv(await watched.sessions.open("int-1", AGENT, ["pizza.example"], true));
+    await watched.sessions.command(AGENT, opened.get("session").str!, {
+      action: "goto",
+      url: "https://pizza.example/",
+    });
+    // Reported on the quit answer itself — the last frame there is.
+    await watched.sessions.closeAll("test");
+
+    expect(published(watched.dir)).toEqual([]);
+  });
+
   it("classifies a popup the owner's viewer was the only thing to see", async () => {
     // viewFrame() polls straight through BrowserHost, so the session layer
     // never sees that response — the origin it reported would be consumed and
@@ -546,12 +563,12 @@ describe("access the owner's log could not record is not granted", () => {
       const handle = opened.get("session").str!;
 
       // #offsite navigates the page to https://offsite.example/lander.
-      const strayed = jv(
-        await sessions.command(AGENT, handle, { action: "click", selector: "#offsite" }),
-      );
-      expect(strayed.get("error").str).toMatch(/audit append failed/);
+      await sessions.command(AGENT, handle, { action: "click", selector: "#offsite" });
 
-      // The action could not be recorded; the store was given up regardless.
+      // Whether the failed append surfaced as an error or was swallowed — the
+      // scope record is written from inside the host's line reader, where a
+      // throw would take the process down — the store was given up regardless,
+      // which is the part that is not allowed to depend on the log.
       await sessions.closeAll("test");
       expect(published(ctx.dir)).toEqual([]);
     },

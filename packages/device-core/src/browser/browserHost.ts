@@ -80,6 +80,9 @@ async function fsync(target: string): Promise<void> {
   }
 }
 
+/** How long a stopping browser gets to answer, and then to exit. */
+const QUIT_WINDOW_MS = 3_000;
+
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
@@ -94,14 +97,17 @@ export class BrowserHost {
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
   /**
-   * Top-level URLs the browser has shown since the session layer last looked.
-   * Accumulated from EVERY response rather than read off one, because plenty
-   * of them never reach the scope check: the owner's viewer polls straight
-   * through `viewFrame`, and `locate`/`fill` are issued here rather than
-   * through `command`. A popup reported on one of those would otherwise be
-   * consumed and dropped, and the origin it touched never classified.
+   * Called with every top-level URL the browser reports, as the frame carrying
+   * it is read. Set by the session layer while a session is open.
+   *
+   * At the point of reading rather than at a drain, because there is no drain
+   * every path reaches: the owner's viewer polls straight through `viewFrame`,
+   * `locate`/`fill` are issued below `command`, error frames answer no scope
+   * check, and the quit answer arrives after the last one could possibly run.
+   * Anything that classified later would let those through — and the last of
+   * them lands while the jar is being published.
    */
-  private pendingTouched: string[] = [];
+  onTouched?: (url: string) => void;
 
   /** Set by the session layer: fires when a ready browser dies unexpectedly,
    * so the session over it can be closed out rather than left open forever. */
@@ -129,13 +135,6 @@ export class BrowserHost {
   /** Whether the next (or current) browser shows a window. */
   get headed(): boolean {
     return this.headedNow;
-  }
-
-  /** Everything the browser has shown since the last drain, and clear it. */
-  drainTouched(): string[] {
-    const touched = this.pendingTouched;
-    this.pendingTouched = [];
-    return touched;
   }
 
   /** Send one action to the server, lazily starting it. */
@@ -441,7 +440,7 @@ export class BrowserHost {
         // error frames carry it beside the message, since they have none.
         for (const src of [m.get("result").get("touched"), m.get("touched")]) {
           for (const u of src.arr ?? []) {
-            if (typeof u === "string") this.pendingTouched.push(u);
+            if (typeof u === "string") this.onTouched?.(u);
           }
         }
         const error = m.get("error").str;
@@ -516,10 +515,15 @@ export class BrowserHost {
   private requestQuit(child: ChildProcess): Promise<boolean> {
     const id = this.nextId++;
     return new Promise<boolean>((resolve) => {
+      // An action still in flight is read before the quit is — server.py's
+      // loop is strictly sequential, and a click may hold it for its whole
+      // timeout. Waiting only the bare window there would SIGTERM a healthy
+      // browser and throw away a jar it was about to hand back.
+      const window = this.pending.size > 0 ? this.cfg.actionTimeoutMs ?? 60_000 : QUIT_WINDOW_MS;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         resolve(false);
-      }, 3000);
+      }, window);
       timer.unref?.();
       this.pending.set(id, {
         resolve: () => resolve(true),
@@ -553,7 +557,7 @@ export class BrowserHost {
     const acknowledged = this.requestQuit(child);
     this.shuttingDown = true;
     const quitAnswered = await acknowledged;
-    if (await withTimeout(exited, 3000)) {
+    if (await withTimeout(exited, QUIT_WINDOW_MS)) {
       // Read now, not before the awaits: an action still in flight can have
       // discovered a stray popup and given the profile up in the meantime, and
       // a snapshot taken earlier would publish the jar it just retired.
