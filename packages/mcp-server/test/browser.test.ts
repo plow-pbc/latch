@@ -78,12 +78,12 @@ function makeServer(
 const launches = (argvLog: string): string[] =>
   fs.readFileSync(argvLog, "utf8").trim().split("\n");
 
-/** The `profile` of every audit line of this event, oldest first. */
-const audited = (device: DeviceAgent, event: string): (string | null)[] =>
+/** One field of every audit line of this event, oldest first. */
+const audited = (device: DeviceAgent, event: string, field = "profile"): JSONValue[] =>
   device.audit
     .entries()
     .filter((e) => jv(e as JSONValue).get("event").str === event)
-    .map((e) => jv(e as JSONValue).get("profile").str);
+    .map((e) => jv(e as JSONValue).get(field).value);
 
 /** Whether a profile directory has been given up (see abandonProfile). */
 const abandoned = (profiles: string, dir: string): boolean =>
@@ -330,10 +330,7 @@ describe("browser tools (fake runtime)", () => {
     expect(bank.isError, JSON.stringify(bank.payload)).toBe(false);
     expect(shop.isError, JSON.stringify(shop.payload)).toBe(false);
 
-    const bound = device.audit
-      .entries()
-      .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_extended")
-      .map((e) => jv(e as JSONValue).get("origins").value);
+    const bound = audited(device, "browser_session_extended", "origins");
     expect(bound.at(-1)).toEqual(["bank.example", "pizza.example", "shop.example"].sort());
   });
 
@@ -404,11 +401,9 @@ describe("browser tools (fake runtime)", () => {
 
     // The session is gone, not merely erroring — nothing else reaches that jar.
     expect(audited(device, "browser_profile_abandoned")).toEqual([]);
-    const closed = device.audit
-      .entries()
-      .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_closed")
-      .map((e) => jv(e as JSONValue).get("reason").str);
-    expect(closed.at(-1)).toBe("profile could not be retired");
+    expect(audited(device, "browser_session_closed", "reason").at(-1)).toBe(
+      "profile could not be retired",
+    );
     const after = await act(server, session, "text", {}, false);
     expect(after.isError).toBe(true);
     expect(JSON.stringify(after.payload)).toContain("unknown session");
