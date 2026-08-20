@@ -131,13 +131,15 @@ TYPEABLE_JS = """(el) => {
     if (tag !== "input" && tag !== "textarea") {
         // `isContentEditable` is the COMPUTED, inherited state, not "does this
         // node carry the attribute": every element inside an editable region
-        // answers true, a <select> in a rich-text box among them, and typing at
-        // that one changes its option by type-ahead. Naming the controls is the
-        // exact line -- a `disabled` property is not, since a <link>, a <style>
-        // and a form-associated custom element all have one, and a custom
-        // editor is a node that SHOULD take keystrokes.
-        const controls = ["select", "button", "option", "optgroup", "fieldset"];
-        return el.isContentEditable === true && !controls.includes(tag);
+        // answers true. So the nodes that must never take keystrokes are named
+        // -- the form controls, where typing picks an option by type-ahead, and
+        // the ones that are not rendered at all, which cannot take focus, so
+        // the characters land wherever focus already was. A `disabled` property
+        // is not that line: a form-associated custom element has one, and a
+        // custom editor is exactly the node that SHOULD be typed into.
+        const never = ["select", "button", "option", "optgroup", "fieldset",
+                       "style", "script", "link"];
+        return el.isContentEditable === true && !never.includes(tag);
     }
     if (tag === "input" && !typed.includes(el.type)) return false;
     return !el.disabled && !el.readOnly;

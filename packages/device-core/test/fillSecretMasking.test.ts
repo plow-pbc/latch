@@ -997,6 +997,16 @@ describe("which nodes take typing", () => {
     // which several ordinary elements do — so the controls are named by tag
     // rather than inferred from that property.
     { what: "a contenteditable custom element with a disabled property", el: element("X-EDITOR", { disabled: false, isContentEditable: true }), typed: true },
+    // Every name on that list, because dropping one lets those keystrokes
+    // through: a control picks an option by type-ahead, and a node that is not
+    // rendered cannot take focus, so the characters — a secret's, on this path
+    // — go wherever focus already was.
+    { what: "an option inside a contenteditable region", el: element("OPTION", { isContentEditable: true }), typed: false },
+    { what: "an optgroup inside a contenteditable region", el: element("OPTGROUP", { isContentEditable: true }), typed: false },
+    { what: "a fieldset inside a contenteditable region", el: element("FIELDSET", { isContentEditable: true }), typed: false },
+    { what: "a style element inside a contenteditable region", el: element("STYLE", { isContentEditable: true }), typed: false },
+    { what: "a script element inside a contenteditable region", el: element("SCRIPT", { isContentEditable: true }), typed: false },
+    { what: "a link element inside a contenteditable region", el: element("LINK", { isContentEditable: true }), typed: false },
     { what: "a plain div", el: element("DIV"), typed: false },
     { what: "a read-only text field", el: input("text", { readOnly: true }), typed: false },
     { what: "a disabled text field", el: input("text", { disabled: true }), typed: false },
