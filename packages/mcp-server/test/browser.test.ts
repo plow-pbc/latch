@@ -373,6 +373,24 @@ describe("browser tools (fake runtime)", () => {
     expect(audited(device, "browser_profile_reaped")).toHaveLength(1);
   });
 
+  it("a popup that opens and closes inside one command retires the jar too", async () => {
+    // page_count never moves, so nothing about what is still open would show
+    // it — but the request went out with this browser's cookies and what came
+    // back is in the jar. The browser reports every top-level URL it showed.
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+
+    const session = await open(server, ["pizza.example", "*.pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/menu" });
+
+    const flashed = await act(server, session, "click", { selector: "#flash" });
+    expect(flashed.payload.retired_store).toBe("flash.example");
+    expect(audited(device, "browser_scope_violation", "origin")).toEqual(["flash.example"]);
+
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+    expect(published(profiles)).toEqual([]);
+  });
+
   it("a popup on an unapproved origin retires the jar too", async () => {
     // A popup is fetched with this browser's cookies and stores whatever comes
     // back, exactly like the active page — and the active page stays in scope

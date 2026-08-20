@@ -587,19 +587,26 @@ export const TOOLS: ToolSpec[] = [
       const r = jv(response);
       if (r.get("status").str === "error") throw new ToolError(r.get("error").str ?? "browser error");
 
-      // Screenshot becomes an MCP image block so the agent can SEE the page.
+      const out = { ...(r.obj ?? {}) };
+      delete out.status;
+
+      // Screenshot becomes an MCP image block so the agent can SEE the page —
+      // carrying the same fields every other action returns, less the bytes.
+      // Rebuilding the metadata from a hard-coded pair silently dropped
+      // whatever the session layer had added since, `retired_store` included,
+      // so the agent learned nothing about a popup that cost it its login.
       const imageB64 = r.get("data_b64").str;
       if (action === "screenshot" && imageB64 !== null) {
-        const meta = { url: r.get("url").str ?? "", page_count: r.get("page_count").int ?? 1 };
+        const mime = r.get("mime").str ?? "image/jpeg";
+        delete out.data_b64;
+        delete out.mime;
         return {
           __mcpContent: [
-            { type: "image", data: imageB64, mimeType: r.get("mime").str ?? "image/jpeg" },
-            { type: "text", text: canonicalJSON(meta as JSONValue) },
+            { type: "image", data: imageB64, mimeType: mime },
+            { type: "text", text: canonicalJSON(out as JSONValue) },
           ],
         };
       }
-      const out = { ...(r.obj ?? {}) };
-      delete out.status;
       return out as JSONValue;
     },
   },

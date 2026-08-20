@@ -208,6 +208,29 @@ class Session:
         # navigation can be noticed however it happened and a route change
         # within one document is not mistaken for one.
         self.seen_document = {}
+        # Every top-level URL any page has shown since the last response.
+        # page_count cannot see a popup that opens, exchanges cookies and
+        # closes again inside one command — the client has to be told what was
+        # touched, not only what is still open, or that origin's state sits in
+        # the profile with nothing having noticed it arrive.
+        self.touched = []
+        try:
+            page.context.on("page", self._watch_page)
+        except Exception:
+            pass
+        self._watch_page(page)
+
+    def _watch_page(self, p):
+        try:
+            self.touched.append(p.url)
+            p.on(
+                "framenavigated",
+                lambda frame: self.touched.append(frame.url)
+                if frame is p.main_frame
+                else None,
+            )
+        except Exception:
+            pass  # a page that will not be watched still cannot be observed
 
     def _forget_navigated(self):
         """A page showing a NEW DOCUMENT is not the page anything was filled on.
@@ -292,6 +315,8 @@ class Session:
         """Every response carries where we are, so the client can enforce scope
         and notice popups without extra round-trips."""
         out = dict(result)
+        out["touched"] = self.touched
+        self.touched = []
         try:
             out["url"] = self.page.url
             out["page_count"] = len(self.pages)

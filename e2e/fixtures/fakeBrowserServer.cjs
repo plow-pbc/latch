@@ -29,6 +29,7 @@
  *
  * Scripted page behaviors:
  *   click "#popup"    opens a second page on https://popup.example/pay
+ *   click "#flash"    touches https://flash.example/collect and closes it again
  *   click "#offsite"  navigates the page to https://offsite.example/lander
  */
 "use strict";
@@ -39,6 +40,9 @@ const state = {
   pages: [{ url: "about:blank", title: "blank" }],
   active: 0,
   commands: 0,
+  // Top-level URLs shown since the last response — including pages that have
+  // already closed again, which page_count cannot show.
+  touched: [],
 };
 
 function current() {
@@ -46,7 +50,9 @@ function current() {
 }
 
 function envelope(result) {
-  return { ...result, url: current().url, page_count: state.pages.length };
+  const touched = state.touched;
+  state.touched = [];
+  return { ...result, url: current().url, page_count: state.pages.length, touched };
 }
 
 function respond(obj) {
@@ -97,7 +103,14 @@ function handle(cmd) {
   if (a === "text") return { text: "fake page text of " + current().url };
   if (a === "eval") return { result: "eval:" + cmd.expression };
   if (a === "click") {
+    if (cmd.selector === "#flash") {
+      // A popup that opens, exchanges cookies and closes inside one command:
+      // page_count never moves, so `touched` is the only trace of it.
+      state.touched.push("https://flash.example/collect");
+      return respond({ id: cmd.id, result: envelope({ ok: true }) });
+    }
     if (cmd.selector === "#popup") {
+      state.touched.push("https://popup.example/pay");
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
     } else if (cmd.selector === "#offsite") {
       current().url = "https://offsite.example/lander";

@@ -464,6 +464,13 @@ export class BrowserSessions {
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
     const pages = pageCount === s.knownPageCount ? [] : await this.pageUrls();
+    // Every top-level URL the browser showed while this command ran, whether
+    // or not it is still open: a site can pop a window, exchange cookies and
+    // close it again without page_count ever changing, and that origin's state
+    // is in the profile all the same.
+    const touched = Array.isArray(result.touched)
+      ? result.touched.filter((u): u is string => typeof u === "string")
+      : [];
 
     // First, ahead of every audit append and every early return below. The
     // response is already in the jar — a mask failure that returns, or an
@@ -473,7 +480,7 @@ export class BrowserSessions {
     // `url` as well as the list: pageUrls() is best-effort and answers empty
     // when the browser will not say, and the active page is the one origin
     // that is never in doubt. A duplicate costs a comparison.
-    const strayed = [url, ...pages.map((p) => p.url)].find(
+    const strayed = [url, ...touched, ...pages.map((p) => p.url)].find(
       (u) => u !== "" && !this.inScope(s, u),
     );
     let strayedOrigin: string | null = null;
