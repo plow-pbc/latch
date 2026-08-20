@@ -12,6 +12,8 @@ export interface ResolvedBrowserRuntime {
   serverCommand: string[];
   /** Argv that runs the vault credential broker (before its subcommand). */
   credentialBrokerCommand: string[];
+  /** Argv that merges one cookie store into another (before the two paths). */
+  mergeCookiesCommand: string[];
   /** Extra environment for both. */
   env: Record<string, string>;
   /** The vault this machine runs for itself, when one ships in this build. */
@@ -105,6 +107,7 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   return {
     serverCommand: [py, server],
     credentialBrokerCommand: [py, "-m", "seed_vault_broker"],
+    mergeCookiesCommand: [py, path.join(layout.serverDir, "merge_cookies.py")],
     env: {
       PYTHONPATH: `${sitePackages}:${layout.serverDir}`,
       PYTHONDONTWRITEBYTECODE: "1",
@@ -148,6 +151,7 @@ export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRun
     return {
       serverCommand: argv,
       credentialBrokerCommand: brokerCmd ? (JSON.parse(brokerCmd) as string[]) : argv,
+      mergeCookiesCommand: JSON.parse(process.env.DOMO_MERGE_COOKIES_CMD ?? "[]") as string[],
       env: {},
       vaultServer: null,
       camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? null,

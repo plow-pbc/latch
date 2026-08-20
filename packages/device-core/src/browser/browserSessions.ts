@@ -21,7 +21,8 @@
  * what the agent observes/interacts with and where credentials get typed.
  */
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
@@ -184,33 +185,10 @@ const DEFAULT_MAX_BROWSERS = 8;
  * the id would: it strips characters, which is both lossy (two ids folding into
  * one directory, one agent inheriting another's cookies) and revealing.
  */
+const run = promisify(execFile);
+
 const digest = (id: string): string =>
   crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
-
-/**
- * Add one profile's cookies to another's, keeping whichever row was used last.
- *
- * The columns are read from the table rather than written down here: Firefox
- * adds one every few releases, and a list that goes stale would quietly drop
- * whatever it does not name. `id` is left out on purpose — it is the row
- * number of the store being written, not part of the cookie.
- */
-const MERGE_COOKIES = `
-import sqlite3, sys
-into, extra = sys.argv[1], sys.argv[2]
-db = sqlite3.connect(into, timeout=10)
-db.execute("ATTACH ? AS extra", (extra,))
-cols = [r[1] for r in db.execute("PRAGMA main.table_info(moz_cookies)") if r[1] != "id"]
-key = [k for k in ("name", "host", "path", "originAttributes") if k in cols]
-names = ",".join(cols)
-same = " AND ".join("mine.%s = theirs.%s" % (k, k) for k in key)
-db.execute(
-    "INSERT OR REPLACE INTO main.moz_cookies (%s) SELECT %s FROM extra.moz_cookies AS theirs "
-    "WHERE NOT EXISTS (SELECT 1 FROM main.moz_cookies AS mine WHERE %s "
-    "AND mine.lastAccessed >= theirs.lastAccessed)" % (names, names, same)
-)
-db.commit()
-`;
 
 export class BrowserSessions {
   /** Every live session, by handle. The handle IS the browser: an agent that
@@ -451,38 +429,49 @@ export class BrowserSessions {
    * does not remove the cookie from the user's profile. Upgrade path is the
    * same merge over the other stores.
    */
-  private mergeAndRelease(s: Session): void {
+  private async mergeAndRelease(s: Session): Promise<void> {
     if (!this.browser.profileDir) return;
     const dir = path.join(this.browser.profileDir, s.profile);
     try {
-      this.mergeCookies(dir);
+      await this.mergeCookies(dir);
     } catch (error: unknown) {
-      // The user's profile is worth more than this session's cookies: a merge
-      // that fails leaves it exactly as it was, and says so in their log.
-      this.audit("browser_cookies_kept", {
+      // The user's profile is worth more than one merge, so it is left exactly
+      // as it was — but the clone STAYS. Deleting it here would throw away the
+      // one copy of whatever this session signed into, quietly, which is the
+      // failure this whole change exists to prevent. It is named in the
+      // owner's log, and the next thing to touch that profile can recover it.
+      this.audit("browser_cookie_merge_failed", {
         session: s.auditId,
+        profile: dir,
         error: error instanceof Error ? error.message : String(error),
       });
+      return;
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
   /** The merge itself: sqlite, on the interpreter this runtime already ships. */
-  private mergeCookies(dir: string): void {
+  private async mergeCookies(dir: string): Promise<void> {
     const seed = this.browser.seedProfile;
     const from = path.join(dir, "cookies.sqlite");
-    if (!seed || !fs.existsSync(seed) || !fs.existsSync(from)) return;
+    if (!seed || !fs.existsSync(from)) return;
     const into = path.join(seed, "cookies.sqlite");
     if (!fs.existsSync(into)) {
-      // Nothing to merge into: the user's profile has never held a cookie.
+      // Nothing to merge into — a Mac whose owner has never browsed here. The
+      // profile is made if it is missing: returning instead would drop this
+      // session's sign-ins on exactly the machine that has none to lose them
+      // among, and every session after it would do the same.
+      fs.mkdirSync(seed, { recursive: true, mode: 0o700 });
       for (const suffix of ["", "-wal", "-shm"]) {
         if (fs.existsSync(from + suffix)) fs.copyFileSync(from + suffix, into + suffix);
       }
       return;
     }
-    const python = this.browser.python;
-    if (!python) return;
-    execFileSync(python, ["-c", MERGE_COOKIES, into, from], { stdio: "pipe" });
+    const merge = this.browser.mergeCookiesCommand;
+    if (!merge?.length) return;
+    // Off the event loop: sqlite waits on a busy store, and a browser closing
+    // must not stall every other call this Mac is serving.
+    await run(merge[0], [...merge.slice(1), into, from]);
   }
 
   /**
@@ -535,7 +524,7 @@ export class BrowserSessions {
       try {
         await s.host.shutdown();
       } finally {
-        this.finalize(s, reason);
+        await this.finalize(s, reason);
       }
     })();
     s.closing = teardown;
@@ -550,23 +539,33 @@ export class BrowserSessions {
    */
   noteCrash(handle: string): void {
     const s = this.sessions.get(handle);
-    if (s) this.finalize(s, "crashed");
+    // Nobody is waiting on a crash the way a close is waited on; the profile
+    // still goes back, and a failure there lands in the owner's log.
+    if (s) void this.finalize(s, "crashed");
   }
 
   /**
    * The end of a session, in one place: the claim and the clock go, the
    * profile goes back to the user, and the owner's log says it ended.
    */
-  private finalize(s: Session, reason: string): void {
+  private async finalize(s: Session, reason: string): Promise<void> {
     this.sessions.delete(s.handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
-    this.mergeAndRelease(s);
+    // The session ended when the browser did; the profile work that follows is
+    // its own line in the log, so a slow merge never delays this one.
     const left = failedRequests(s.host.takeFailedRequests());
-    this.audit("browser_session_closed", {
-      session: s.auditId,
-      reason,
-      ...(left.length ? { failed_requests: left } : {}),
-    });
+    try {
+      this.audit("browser_session_closed", {
+        session: s.auditId,
+        reason,
+        ...(left.length ? { failed_requests: left } : {}),
+      });
+    } finally {
+      // Even when the log could not be written: the clone is still a copy of
+      // the user's profile sitting on disk, and it does not get to stay there
+      // because an append failed.
+      await this.mergeAndRelease(s);
+    }
   }
 
   /**
@@ -598,7 +597,14 @@ export class BrowserSessions {
    * once and each passes its own handle to keep its own window.
    */
   private validate(handle: string): Session | string {
-    return this.sessions.get(handle) ?? "unknown session (open one with plow_browser_open)";
+    const s = this.sessions.get(handle);
+    if (!s) return "unknown session (open one with plow_browser_open)";
+    // A session stays in the map while its browser shuts down. An approval
+    // that lands in that window would widen — or drive — a browser already on
+    // its way out, and the widening would be audited for a session that ends
+    // a moment later.
+    if (s.closing) return "this browser is closing";
+    return s;
   }
 
   /** Each session closes on its own quiet, not on the busiest one's. */

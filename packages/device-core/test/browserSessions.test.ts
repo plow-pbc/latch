@@ -711,6 +711,10 @@ describe("the handle is a capability, so the log never carries it", () => {
 
 describe("every browser opens as the user, already signed in", () => {
   const PYTHON = process.env.DOMO_TEST_PYTHON ?? "python3";
+  /** The program the app ships and runs for real. */
+  const MERGE_SCRIPT = fileURLToPath(
+    new URL("../../../vendor/browser-server/merge_cookies.py", import.meta.url),
+  );
 
   /** A real Firefox-shaped cookie store holding the sites named. */
   const cookieStore = (file: string, hosts: string[], usedAt = 1): void => {
@@ -757,7 +761,7 @@ print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host
           ...ctx.browsers,
           profileDir: path.join(home, "profiles"),
           seedProfile: seed,
-          python: PYTHON,
+          mergeCookiesCommand: [PYTHON, MERGE_SCRIPT],
         },
         null,
         () => {},
@@ -804,6 +808,52 @@ print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host
     await sessions.close(second, "agent");
     expect(signedInto(seed)).toEqual(["a.example", "b.example", "his.example"]);
     expect(fs.readdirSync(profiles)).toEqual([]);
+  });
+
+  it("keeps a first sign-in on a Mac whose owner has no profile yet", async () => {
+    // Nothing to merge into is the one case where returning early would lose
+    // the login outright — and it is every machine's first session.
+    const home = fs.mkdtempSync(path.join(ctx.dir, "fresh-"));
+    const seed = path.join(home, "profile");
+    const profiles = path.join(home, "profiles");
+    const sessions = new BrowserSessions(
+      { ...ctx.browsers, profileDir: profiles, seedProfile: seed, mergeCookiesCommand: [PYTHON, MERGE_SCRIPT] },
+      null,
+      () => {},
+      60_000,
+    );
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    cookieStore(path.join(profiles, fs.readdirSync(profiles)[0], "cookies.sqlite"), ["first.example"]);
+
+    await sessions.close(handle, "agent");
+    expect(signedInto(seed)).toEqual(["first.example"]);
+  });
+
+  it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {
+    // A swallowed merge failure that also removed the clone would lose the
+    // sign-in silently — the exact thing this feature exists to prevent.
+    const events: string[] = [];
+    const home = fs.mkdtempSync(path.join(ctx.dir, "broken-"));
+    const seed = path.join(home, "profile");
+    const profiles = path.join(home, "profiles");
+    fs.mkdirSync(seed, { recursive: true });
+    cookieStore(path.join(seed, "cookies.sqlite"), ["his.example"]);
+    const sessions = new BrowserSessions(
+      { ...ctx.browsers, profileDir: profiles, seedProfile: seed, mergeCookiesCommand: [PYTHON, "-c", "raise SystemExit('disk is full')"] },
+      null,
+      (event) => events.push(event),
+      60_000,
+    );
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const dir = path.join(profiles, fs.readdirSync(profiles)[0]);
+    cookieStore(path.join(dir, "cookies.sqlite"), ["rescue.example"], 50);
+
+    await sessions.close(handle, "agent");
+    expect(events).toContain("browser_cookie_merge_failed");
+    // Still on disk, still holding the login, and the user's own profile is
+    // exactly as it was.
+    expect(signedInto(dir)).toContain("rescue.example");
+    expect(signedInto(seed)).toEqual(["his.example"]);
   });
 
   it("has taken every profile with it by the time a quit's closeAll resolves", async () => {

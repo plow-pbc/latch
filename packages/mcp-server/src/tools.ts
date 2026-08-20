@@ -492,6 +492,10 @@ export const TOOLS: ToolSpec[] = [
         { session },
       );
       const r = jv(response);
+      // A widen the device refused is an error to the caller, not a reply with
+      // empty fields: "your browser is closing" must not read as "widened".
+      const failed = r.get("error").str;
+      if (failed !== null) throw new ToolError(failed);
       return { session, origins: r.get("origins").value ?? null, items: r.get("items").value ?? null };
     },
   },
