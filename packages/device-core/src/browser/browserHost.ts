@@ -339,11 +339,10 @@ export class BrowserHost {
       });
 
       child.on("exit", (code, signal) => {
-        // Not closed SYNCHRONOUSLY here — exit and the stdout read are separate
-        // poll events, so the goodbye can still be in the pipe. Each path
-        // closes it once nothing readable is left: the crash path below after
-        // the deferred notice, a browser that never became ready right away,
-        // and a graceful stop in shutdown() after the awaited quit reply.
+        // The reader is not let go SYNCHRONOUSLY here — exit and the stdout
+        // read are separate poll events, so the goodbye can still be in the
+        // pipe. Every path that has nothing readable left calls release(); see
+        // its call sites rather than a list kept in prose here.
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
