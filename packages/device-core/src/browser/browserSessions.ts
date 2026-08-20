@@ -91,16 +91,17 @@ function forAgent(entries: JSONValue[], approved: (origin: string) => boolean): 
     const e = jv(entry);
     const origin = e.get("origin").str ?? "";
     const initiator = e.get("initiator").str ?? "";
-    const host = hostOf(origin);
     // Fail closed on an asker the browser could not name: a blank child frame
     // or a service worker is exactly what an unapproved page would reach for.
-    if (host === null || !approved(origin) || !approved(initiator)) return [];
+    // `approved` already answers false for anything without a host.
+    if (!approved(origin) || !approved(initiator)) return [];
+    const host = hostOf(origin);
     const retryAfter = e.get("retry_after").str;
     const server = e.get("server").str;
     return [{
       status: e.get("status").int ?? 0,
       method: e.get("method").str ?? "",
-      host,
+      host: host ?? "",
       ...(retryAfter === null ? {} : { retry_after: retryAfter }),
       ...(server === null ? {} : { server }),
     }];

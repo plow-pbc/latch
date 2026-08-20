@@ -26,6 +26,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     drained: Envelope;
     quiet: Envelope;
     bounded: Envelope;
+    hostile: Envelope;
   }>(PROBE);
 
   it("listens on the context, so a popup's refusals count too", () => {
@@ -93,9 +94,15 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
   });
 
   it("keeps the most recent few, most recent first", () => {
-    const kept = probed.bounded.failed_requests ?? [];
-    expect(kept.length).toBe(5);
-    expect(kept.map((r) => r.status)).toEqual([403, 403, 403, 403, 403]);
+    // Nine distinguishable refusals: the five newest survive, newest first.
+    expect((probed.bounded.failed_requests ?? []).map((r) => r.status))
+      .toEqual([408, 407, 406, 405, 404]);
+  });
+
+  it("drops a response that will not answer, and keeps the next one", () => {
+    // On the page's event thread the only safe answer to a question that raises
+    // is to leave the ring alone — a decision, so it is asserted.
+    expect((probed.hostile.failed_requests ?? []).map((r) => r.status)).toEqual([401]);
   });
 
 });

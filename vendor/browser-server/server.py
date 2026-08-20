@@ -55,7 +55,7 @@ MAX_ERROR_LEN = 500
 # recent is what says "you are blocked".
 MAX_FAILED_REQUESTS = 5
 
-# Kept off a refused request beyond status/method/url. Never a body -- a body
+# Kept off a refused request beyond status/method/origin/initiator. Never a body -- a body
 # can echo a submitted credential -- and never an arbitrary header: Set-Cookie
 # and friends live there. Retry-After says "wait" rather than "you are blocked",
 # and its ABSENCE on a 429 is diagnostic in itself; Server usually distinguishes

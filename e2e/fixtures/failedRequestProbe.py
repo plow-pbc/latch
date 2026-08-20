@@ -178,6 +178,22 @@ def main():
         def frame(self, _v):
             pass
 
+    # A response that will not answer about its headers is dropped whole: the
+    # listener runs on the page's event thread, where the only safe answer to a
+    # question that raises is to leave the ring alone.
+    class Hostile(Response):
+        @property
+        def headers(self):
+            raise RuntimeError("detached")
+
+        @headers.setter
+        def headers(self, _v):
+            pass
+
+    session = server.Session(Page())
+    out["hostile"] = feed(session, [Hostile(429, "https://pizza.example/boom"),
+                                    Response(401, "https://pizza.example/ok")])
+
     session = server.Session(Page())
     out["unattributable"] = feed(session, [
         NoFrame(403, "https://pizza.example/api/sw"),
@@ -200,7 +216,8 @@ def main():
     # Bounded, most recent first: a chatty page cannot blow the exchange budget.
     session = server.Session(Page())
     out["bounded"] = feed(session, [
-        Response(403, "https://pizza.example/x%d" % i) for i in range(9)])
+        Response(400 + i, "https://pizza.example/x%d" % i, page="https://pizza.example/")
+        for i in range(9)])
 
     real_stdout.write(json.dumps(out) + "\n")
     real_stdout.flush()

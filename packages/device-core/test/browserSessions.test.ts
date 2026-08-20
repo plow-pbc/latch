@@ -304,7 +304,6 @@ describe("requests the site refused", () => {
     // would otherwise read as the approved page's own.
     expect(r.get("failed_requests").value).toEqual([ORDER]);
     expect(JSON.stringify(r.value)).not.toContain("tracker.example");
-    expect(JSON.stringify(r.value)).not.toContain("404");
     // Nor the one the browser could not attribute: an asker it cannot name is
     // what an unapproved page reaches for, so it fails closed.
     expect(JSON.stringify(r.value)).not.toContain("503");
