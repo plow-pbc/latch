@@ -68,8 +68,11 @@ class Handle:
         # False is a date, colour or range widget: assigned rather than typed,
         # because its value is not the characters it is handed.
         self.typeable = typeable
-        # A field that says it takes characters and then sanitises some of them
-        # away -- a number input handed something that is not a number.
+        # A field that says it takes characters and then sanitises away every
+        # one it will not hold -- a number input handed something that is not a
+        # number, which ends up holding nothing at all. It is a property of the
+        # NODE: every question asked of it afterwards sees the empty field, the
+        # way the real one would.
         self.drops_keys = drops_keys
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
@@ -97,10 +100,7 @@ class Handle:
             return self.typeable
         if "startsWith(now)" in js:
             wanted = args[0] if args else None
-            # `drops_keys` is a field that sanitises away what it will not hold:
-            # the keys go in and the node comes back empty, which is a prefix of
-            # anything. A node that took them holds what it was handed.
-            now = "" if self.drops_keys else (self.value or "")
+            now = self.value or ""
             return now != wanted and (wanted or "").startswith(now)
         if "=== previous" in js:
             previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
@@ -156,6 +156,9 @@ class Handle:
             # Not one key arrived. The node holds what the clear left it.
             self.trace.append("handle.type-failed")
             raise RuntimeError("Element is not attached to the DOM")
+        if self.drops_keys:
+            self.trace.append("handle.type")
+            return
         # Keys land ON what the assignment left, never instead of it -- which
         # is the only way a scenario can tell the head was assigned at all.
         if self.partial_fill:
@@ -389,8 +392,8 @@ def main() -> int:
         # would tell the caller a credential landed when it did not.
         "keys_dropped": run(server, {**base, "value": "hunter2"}, drops_keys=True),
         # And the field will not take it by assignment either. This is the loud
-        # end of the path: nothing landed, the caller hears about it, and the
-        # mark that went on for a secret comes back off.
+        # end of the path: nothing landed anywhere, so the caller hears about it
+        # and the mark comes back off a field that is holding nothing.
         "keys_dropped_unfillable": run(server, {**base, "mask": True, "value": "hunter2"},
                                        drops_keys=True, assign_fails=True),
         # Prose, not a credential: too long to type inside the budget. The bulk

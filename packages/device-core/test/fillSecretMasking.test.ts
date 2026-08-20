@@ -592,15 +592,15 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
 
   it("fails loudly when the field will not take the value at all", () => {
     // The end of that path: the keys were dropped and the assignment is
-    // refused too. Nothing landed, so the caller hears about it rather than
-    // being told a credential went in — and because something was concealed
-    // here, the node stays marked and ledgered rather than being handed back
-    // to the forms scan.
+    // refused too. The caller hears about it rather than being told a
+    // credential went in — and the field is holding nothing, so the mark that
+    // went on for the value comes back off rather than withholding an empty
+    // field from the forms scan for the life of the page.
     const run = probed.keys_dropped_unfillable;
-    expect(run.trace.at(-1)).toBe("handle.assign-failed");
+    expect(run.trace).toContain("handle.assign-failed");
     expect(run.error).toBe("RuntimeError");
-    expect(run.marked).toBe(true);
-    expect(run.ledgered).toBe(true);
+    expect(run.marked).toBe(false);
+    expect(run.ledgered).toBe(false);
   });
 
   it("types the tail of a value too long to type whole, and lands the rest", () => {
@@ -832,9 +832,19 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
 /** A `"""…"""` literal, lifted from the server so the test can't drift. */
 function loadScript(name: string): (el: unknown) => unknown {
   const src = fs.readFileSync(SERVER_PY, "utf8");
-  const m = new RegExp(`^${name} = """([\\s\\S]*?)"""$`, "m").exec(src);
+  const m = new RegExp(`^${name} = f?"""([\\s\\S]*?)"""$`, "m").exec(src);
   if (!m) throw new Error(`${name} literal not found in server.py`);
-  return new Function(`return (${m[1]})`)() as (el: unknown) => unknown;
+  // Some are f-strings, interpolating a module-level `_NAME = "…"` fragment so
+  // that a rule stated once is asked by every question that needs it. Resolving
+  // it here is what keeps this asserting the script the browser actually runs.
+  const body = m[1]
+    .replace(/\{(_[A-Z_]+)\}/g, (_whole, fragment: string) => {
+      const f = new RegExp(`^${fragment} = "(.*)"$`, "m").exec(src);
+      if (!f) throw new Error(`${fragment} fragment not found in server.py`);
+      return f[1];
+    })
+    .replace(/\{\{|\}\}/g, (brace) => brace[0]);
+  return new Function(`return (${body})`)() as (el: unknown) => unknown;
 }
 
 interface StubEl {
@@ -933,6 +943,57 @@ function stubPage(
   };
 }
 
+describe("whether the keys landed", () => {
+  // `KEYS_DROPPED_JS` decides whether a typed fill has to fall back to
+  // assigning the value outright. It is the difference between repairing a
+  // field that dropped the keys and trampling one that merely reshaped them,
+  // so it is asserted against the literal `server.py` evaluates.
+  const dropped = loadScript("KEYS_DROPPED_JS") as unknown as (
+    el: { value?: string; textContent?: string },
+    wanted: string,
+  ) => boolean;
+
+  it.each([
+    // The field took none of them — a number input handed something that is
+    // not a number sanitises the lot away.
+    { what: "an empty field", el: { value: "" }, wanted: "hunter2", fallback: true },
+    // It took a prefix and stopped: a maxlength.
+    { what: "a truncated field", el: { value: "hunt" }, wanted: "hunter2", fallback: true },
+    // It took every key. Nothing to repair.
+    { what: "a field holding the value", el: { value: "hunter2" }, wanted: "hunter2", fallback: false },
+    // It took every key and reformatted them on the way in. Assigning over
+    // that would throw away the keystrokes and land the same transform again.
+    {
+      what: "a card number the field spaced out",
+      el: { value: "4111 1111" },
+      wanted: "41111111",
+      fallback: false,
+    },
+    {
+      what: "a value the field upper-cased",
+      el: { value: "HUNTER2" },
+      wanted: "hunter2",
+      fallback: false,
+    },
+    // A contenteditable holds its text somewhere else entirely. Reading it as
+    // an input reads it as empty, which calls every such fill dropped.
+    {
+      what: "a contenteditable holding the value",
+      el: { textContent: "hunter2" },
+      wanted: "hunter2",
+      fallback: false,
+    },
+    {
+      what: "an empty contenteditable",
+      el: { textContent: "" },
+      wanted: "hunter2",
+      fallback: true,
+    },
+  ])("$what needs the assignment: $fallback", ({ el, wanted, fallback }) => {
+    expect(dropped(el, wanted)).toBe(fallback);
+  });
+});
+
 describe("which fields take real keys", () => {
   const typeable = loadScript("TYPEABLE_JS") as (el: {
     tagName: string;
@@ -952,9 +1013,6 @@ describe("which fields take real keys", () => {
     { what: "an email field", el: { tagName: "INPUT", type: "email" }, typed: true },
     { what: "a search field", el: { tagName: "INPUT", type: "search" }, typed: true },
     { what: "a url field", el: { tagName: "INPUT", type: "url" }, typed: true },
-    // An <input> with no type attribute reports "text", so there is no empty
-    // case to allow for — and this is the test that says so.
-    { what: "an input with no type", el: { tagName: "INPUT", type: "text" }, typed: true },
     { what: "a textarea", el: { tagName: "TEXTAREA" }, typed: true },
     { what: "a contenteditable", el: { tagName: "DIV" }, typed: true },
     // Typing "2026-08-19" into one of these lands 6081-02-02, silently.

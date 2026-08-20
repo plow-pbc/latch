@@ -184,8 +184,6 @@ DOC_TOKEN_JS = """() => {
 # crosses the wire. A hash was tried and is not good enough: "BB" and "Aa" share
 # one, and a partial fill that collided would look unchanged and have its mark
 # taken off, which is the one outcome this must never produce.
-VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
-
 # Whether a node's value is the characters it is given. A date or a
 # datetime-local composes its out of something else entirely -- typing
 # "2026-08-19" into one lands 6081-02-02, silently -- and a colour or a range
@@ -199,26 +197,34 @@ VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
 # contenteditable -- is text by construction.
 TYPEABLE_JS = """(el) => el.tagName !== "INPUT" ||
     ["text", "password", "search", "tel", "url", "email", "number"].includes(el.type)"""
-# Whether a fill that failed left anything behind. Unchanged is one way to hold
-# nothing unaccounted for; empty is the other -- a fill assigns before it types,
-# so a failure at the first key leaves the node holding nothing, and a node
-# holding nothing has nothing to conceal.
+
+# How a node holds its text: `value` for an input, `textContent` for a
+# contenteditable, which `TYPEABLE_JS` sends down the typed path too. Asking an
+# input for its textContent -- or a contenteditable for its value -- reads the
+# node as empty, which calls every fill dropped and every failed fill harmless,
+# so every question below asks through this one.
+_HELD = "(el.value !== undefined ? el.value : (el.textContent || ''))"
+
+VALUE_SNAPSHOT_JS = f"""(el) => {_HELD}"""
+
 # Whether the keys failed to land, in the only two shapes an assignment could
 # repair: the field took none of them, or it took a prefix and stopped. A number
 # input sanitises away anything it will not hold; a maxlength truncates. A field
 # that REFORMATS what it was given -- a card number, a phone -- took every key
 # and holds something else on purpose, so it is not a prefix and is left alone.
-# `value` is how an input holds its text and `textContent` is how a
-# contenteditable does; asking the wrong one of a node calls every fill dropped.
-KEYS_DROPPED_JS = """(el, wanted) => {
-    const now = el.value !== undefined ? el.value : (el.textContent || '');
+KEYS_DROPPED_JS = f"""(el, wanted) => {{
+    const now = {_HELD};
     return now !== wanted && wanted.startsWith(now);
-}"""
+}}"""
 
-NOTHING_LANDED_JS = """(el, previous) => {
-    const now = el.value || '';
+# Whether a fill that failed left anything behind. Unchanged is one way to hold
+# nothing unaccounted for; empty is the other -- a fill assigns before it types,
+# so a failure at the first key leaves the node holding nothing, and a node
+# holding nothing has nothing to conceal.
+NOTHING_LANDED_JS = f"""(el, previous) => {{
+    const now = {_HELD};
     return now === '' || now === previous;
-}"""
+}}"""
 
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
