@@ -51,9 +51,11 @@ export const DENIAL_SOURCE_REVIEWER_UNDECIDED = "reviewer_undecided";
 
 /**
  * Denied because the reviewer never reached a verdict at all — it timed out,
- * the provider errored or rate-limited, or the answer did not parse. A
- * transient condition wearing the same `deny` as a decision, so it says which
- * it was.
+ * the provider errored or rate-limited, it declined to assess, or the answer
+ * did not parse. Not a decision, wearing the same `deny` as one, so it says
+ * which it was. Some of these clear on their own and some do not: a rate limit
+ * passes, a model that will not assess this request will not assess it on the
+ * next attempt either.
  */
 export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
 
@@ -87,9 +89,10 @@ const EXPLAINED_DENIALS: Record<string, string> = {
     "reviewer decide — so there is no one to escalate to and it was denied " +
     "rather than left waiting. Narrow the request and try again",
   [DENIAL_SOURCE_REVIEWER_UNAVAILABLE]:
-    "the reviewer could not be reached, so no verdict was possible, and this " +
-    "Mac is set to let the reviewer decide — denied rather than left waiting. " +
-    "This is transient; try again",
+    "the reviewer produced no usable verdict — it did not answer, or answered " +
+    "with something that was not one — and this Mac is set to let the reviewer " +
+    "decide, so it was denied rather than left waiting. Trying again may work; " +
+    "if it does not, the request itself is what the reviewer will not assess",
   [DENIAL_SOURCE_NO_REVIEWER]:
     "inference unavailable: Adversarial mode is selected but its provider has " +
     "no credential on this Mac, so the reviewer could not run and the " +

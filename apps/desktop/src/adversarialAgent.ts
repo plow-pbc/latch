@@ -61,8 +61,10 @@ export type Verdict = "allow" | "deny" | "ask";
  * reviewer cannot run at all — a standing condition the operator has to fix,
  * not a transient hiccup.
  *
- * `unavailable`: it did not answer this time — a timeout, a transport failure,
- * a rate limit, a refusal, or an answer that did not parse. All of these
+ * `unavailable`: no usable verdict came back — a timeout, a transport failure,
+ * a rate limit, a refusal to assess, or an answer that did not parse. Some of
+ * those pass on their own and some are the request itself, so it does not
+ * promise the caller that retrying is enough. All of these
  * already resolved to `ask`, which reads as a reviewer deferring to a human;
  * this is what tells a caller it never reached a verdict at all. A caller with
  * nobody to defer to needs that difference to be a value, not a sentence.
