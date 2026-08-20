@@ -393,6 +393,14 @@ function classifyActivity(
         ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
         : { status: "Scope blocked", tone: "amber", category: "failed" };
     }
+    // The page's own server refused what the agent asked it to do. Amber and
+    // "failed", like a scope block: the session did not do what it looked like
+    // it did, and that is what an owner scanning for trouble filters for.
+    if (events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0)) {
+      return has("browser_session_closed")
+        ? { status: "Closed · requests refused", tone: "amber", category: "failed" }
+        : { status: "Requests refused", tone: "amber", category: "failed" };
+    }
     if (has("browser_session_closed")) {
       const closed = entry("browser_session_closed")!;
       return jv(closed).get("reason").str === "crashed"
@@ -467,6 +475,21 @@ function activityCommand(
 }
 
 /** One-line human description of a single raw event (used in the timeline). */
+/**
+ * What the page's own requests did, for the owner's timeline.
+ *
+ * The audit log carries the whole entry; this is the part a human scanning a
+ * session needs — which host refused what, and how many. Empty when the page's
+ * requests were answered, which is the ordinary case.
+ */
+function refusedSuffix(ev: ReturnType<typeof jv>): string {
+  const refused = ev.get("failed_requests").arr ?? [];
+  if (refused.length === 0) return "";
+  const first = jv(refused[0]);
+  const rest = refused.length > 1 ? ` (+${refused.length - 1} more)` : "";
+  return ` — refused: ${first.get("status").int ?? 0} ${first.get("method").str ?? ""} ${first.get("origin").str ?? ""}${rest}`;
+}
+
 function describeStep(e: JSONValue): AuditStep {
   const ev = jv(e);
   const event = ev.get("event").str ?? "";
@@ -539,10 +562,13 @@ function describeStep(e: JSONValue): AuditStep {
       text = `Session widened — origins: ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ") || "—"}; items: ${(ev.get("items").arr ?? []).filter((i): i is string => typeof i === "string").join(", ") || "—"}`;
       state = "ok";
       break;
-    case "browser_session_closed": text = `Browser session closed (${ev.get("reason").str ?? ""})`; break;
+    case "browser_session_closed":
+      text = `Browser session closed (${ev.get("reason").str ?? ""})${refusedSuffix(ev)}`;
+      if (refusedSuffix(ev)) state = "bad";
+      break;
     case "browser_command":
-      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}`;
-      state = ev.get("error").str ? "bad" : "neutral";
+      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}${refusedSuffix(ev)}`;
+      state = ev.get("error").str || refusedSuffix(ev) ? "bad" : "neutral";
       break;
     case "browser_navigated": text = `Page: ${ev.get("url").str ?? ""}`; break;
     case "browser_scope_violation":

@@ -3,7 +3,7 @@
  * correlation, garbage tolerance, crash → reject + lazy restart, circuit
  * breaker, start timeout, and group shutdown.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -104,7 +104,7 @@ describe("BrowserHost", () => {
     };
     await host.sendAction({ action: "click", selector: "#blocked" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
-    await vi.waitFor(() => expect(crashes).toBe(1));
+    expect(crashes).toBe(1);
     expect(events).toContain("browser_crashed");
     // Its last word — a 599 nothing else here emits — is there, and newest
     // first. The fixture puts a beat between the line and the death (its

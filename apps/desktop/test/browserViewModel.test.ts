@@ -123,6 +123,26 @@ describe("audit grouping for browser sessions", () => {
     expect(filled.text).not.toContain("password: "); // never a value
   });
 
+  it("a session whose page was refused reads as failed, and says by whom", () => {
+    // The reported bug's owner half: a session where every action returned
+    // ok while the site answered 429 was green and closed in the pane, so the
+    // one place the refusals were recorded never showed them.
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "click", url: "https://costco.com/cart", failed_requests: [
+        { status: 429, method: "POST", origin: "https://costco.com" },
+        { status: 403, method: "GET", origin: "https://cdn.costco.com" },
+      ], ts: "2026-08-10T10:00:00Z" },
+      { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:05Z" },
+    ]);
+    const browser = acts.find((a) => a.id === "browser:S")!;
+    expect(browser.category).toBe("failed");
+    expect(browser.status).toBe("Closed · requests refused");
+    const cmd = browser.timeline.find((t) => t.text.startsWith("Browser: click"))!;
+    expect(cmd.text).toContain("429 POST https://costco.com");
+    expect(cmd.text).toContain("(+1 more)");
+    expect(cmd.state).toBe("bad");
+  });
+
   it("a session ended by a crash reads as Crashed, not Closed or Browsing", () => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },

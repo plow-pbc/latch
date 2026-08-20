@@ -263,6 +263,10 @@ export class BrowserHost {
       startTimer.unref?.();
 
       rl.on("line", (line) => {
+        // A browser that has been replaced says nothing anyone wants: its
+        // refusals belong to a session that is over, and appending them here
+        // would file one browser's traffic under another's.
+        if (this.child !== child) return;
         let msg: JSONValue;
         try {
           msg = JSON.parse(line) as JSONValue;
