@@ -170,12 +170,17 @@ export class BrowserHost {
 
   /**
    * Move the live profile to the key its contents now answer to, at the moment
-   * `extend()` widens the grant — not at close. A POSIX rename is safe under a
-   * running Firefox, which keeps writing through its open fds, and doing it
-   * here is what makes the guarantee independent of shutdown: quit, `kill -9`
-   * and power loss all leave the jar already keyed for what it holds, where a
-   * close-time move would leave it under the narrow key it opened with and
-   * hand the widened origin's cookies to the next narrow session.
+   * `extend()` widens the grant — not at close, so the guarantee survives a
+   * quit, a `kill -9` and power loss, none of which reach a close-time move;
+   * that one would leave the jar under the narrow key it opened with and hand
+   * the widened origin's cookies to the next narrow session.
+   *
+   * What a rename under a live Firefox costs: the cookie db and its `-wal` are
+   * open fds and keep being written, which is why the jar arrives intact — but
+   * anything Firefox creates BY PATH afterwards lands on a name that no longer
+   * exists (`sessionstore-backups`, `prefs.js` at quit, new `cache2` entries).
+   * The integration tier drives a real widen and keeps browsing after it; the
+   * fake runtime cannot tell you any of this.
    *
    * A jar already on the destination is the established one for that grant and
    * outlives any single session, so it stays; this one only has to stop
@@ -192,7 +197,13 @@ export class BrowserHost {
     const target = superseded ? `${to}.superseded` : to;
     if (superseded) fs.rmSync(target, { recursive: true, force: true });
     fs.renameSync(from, target);
-    this.cfg.audit?.("browser_profile_rekeyed", { from: fromKey, to: toKey, superseded });
+    // The name actually written: the doc tells an owner to hash the origins to
+    // find a profile, and on a collision that is not where this one went.
+    this.cfg.audit?.("browser_profile_rekeyed", {
+      from: fromKey,
+      to: path.basename(target),
+      superseded,
+    });
   }
 
   /**

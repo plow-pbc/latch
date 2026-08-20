@@ -37,7 +37,7 @@ interface Session {
   handle: string;
   agentId: string;
   origins: string[];
-  /** Profile this session's browser opened — see close(). */
+  /** Profile the browser is on now — `extend()` moves it and re-points this. */
   profileKey: string;
   credentialMetadata: boolean;
   credentialItems: Set<string>;
@@ -164,9 +164,8 @@ export class BrowserSessions {
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
     // The profile is the grant: cookies, storage and cache written here are
     // reachable only by a later session the owner approved for the same
-    // origins. Fixed at open, because `extend()` widens a browser that is
-    // already running and restarting it would take the live page with it —
-    // close() then moves the jar to the key its contents answer to.
+    // origins. A widening keeps this browser but not this key — `extend()`
+    // moves the jar, so it never holds state for an origin its name omits.
     const profileKey = profileKeyForOrigins(origins);
     try {
       await this.host.ensureReady(headed, profileKey);
@@ -240,18 +239,20 @@ export class BrowserSessions {
     const widenedItems = new Set(s.credentialItems);
     for (const i of items) widenedItems.add(i);
     const itemList = [...widenedItems].sort();
+    // Before the record, unlike the bound itself: this grants no access, and a
+    // failed move must not leave a log line asserting a widening that did not
+    // happen. If it throws, the call fails with the session's old bound — an
+    // un-rekeyed jar under the narrow key is the escape itself. Failing the
+    // other way round is benign: the browser writes narrow-grant state into
+    // the union key, which a union session is entitled to anyway.
+    const widenedKey = profileKeyForOrigins(widened);
+    this.host.rekeyProfile(s.profileKey, widenedKey);
     this.audit("browser_session_extended", {
       intentId,
       session: s.handle,
       origins: widened,
       items: itemList,
     });
-    // Before the widened bound goes live, so the jar can never be holding
-    // state for an origin its key does not name. If the move fails the
-    // widening does not happen: an un-rekeyed jar under the narrow key is the
-    // escape itself, so failing the call is the safe end of it.
-    const widenedKey = profileKeyForOrigins(widened);
-    this.host.rekeyProfile(s.profileKey, widenedKey);
     s.profileKey = widenedKey;
     s.origins = widened;
     s.credentialItems = widenedItems;

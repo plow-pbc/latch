@@ -209,4 +209,47 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       expect(await menuPageText()).toMatch(SIGNED_IN);
     });
   }, 300_000);
+
+  it("survives having its profile renamed under it when the grant is widened", async () => {
+    // Widening moves the live profile directory so the jar stops answering to
+    // the key it opened under. Firefox keeps writing the cookie db through its
+    // open fds, but anything it creates by path under the old name does not
+    // exist any more — so the claim is only worth what a real browser does
+    // after the move, which no fake runtime can tell us.
+    const opened = await callTool(
+      server, "plow_browser_open", { origins: ["127.0.0.1"], headed: false }, AGENT,
+    );
+    expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
+    session = opened.payload.session as string;
+
+    await act("goto", { url: site.url + "/" });
+    await act("fill", { selector: "#user", value: "jon@example.com" });
+    await act("fill", { selector: "#pass", value: "pizza-time-99" });
+    await act("click", { selector: "#login" });
+
+    const widened = await callTool(
+      server, "plow_browser_request", { session, origins: ["late.example"] }, AGENT,
+    );
+    expect(widened.isError, JSON.stringify(widened.payload)).toBe(false);
+
+    // The browser is still usable after the move, and still signed in.
+    await act("goto", { url: site.url + "/menu" });
+    expect((await act("text")).payload.text as string).toMatch(/Menu/);
+    await act("click", { selector: "#pepperoni" });
+    await act("goto", { url: site.url + "/" });
+    expect((await act("text")).payload.text as string).toBeTruthy();
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+
+    // And the jar it carried across the move is the one the widened grant
+    // finds — the cookie db survived the rename, not just the process.
+    const reopened = await callTool(
+      server, "plow_browser_open",
+      { origins: ["127.0.0.1", "late.example"], headed: false }, AGENT,
+    );
+    expect(reopened.isError, JSON.stringify(reopened.payload)).toBe(false);
+    session = reopened.payload.session as string;
+    await act("goto", { url: site.url + "/menu" });
+    expect((await act("text")).payload.text as string).toMatch(/Menu/);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+  }, 300_000);
 });
