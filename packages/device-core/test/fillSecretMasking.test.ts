@@ -931,21 +931,22 @@ describe("which nodes take typing", () => {
   // cannot even hold focus — so the keystrokes, on the credential path a
   // secret's characters, land wherever focus already was.
   const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => boolean;
-  // Only what a real node carries, because the predicate's last line —
-  // `!el.disabled && !el.readOnly` — is only pinned on the shapes that really
-  // have those properties. An input and a textarea have both, a select has
-  // `disabled` alone, and a contenteditable div has neither. `type` is an
-  // enumerated reflection of the attribute: always lowercase, and "text" for one
-  // that is missing or unrecognised, which is why `getAttribute` is here to
-  // disagree with it.
+  // Each stub carries what the predicate READS of that shape, and nothing more:
+  // a property no branch reaches reads as coverage while pinning nothing. For an
+  // input and a textarea that is `disabled`/`readOnly` — both really have them,
+  // and the last line is the only thing standing between a read-only field and a
+  // credential typed at it. For an input it is also `type`, an enumerated
+  // reflection: always lowercase, and "text" for an attribute that is missing or
+  // unrecognised, which is why `getAttribute` is here to disagree with it. For
+  // everything else it is `contenteditable` and the document's design mode.
   const input = (type: string, extra: Record<string, unknown> = {}) => ({
     tagName: "INPUT", type, disabled: false, readOnly: false,
     getAttribute: (k: string) => (k === "type" ? type : null), ...extra,
   });
-  // `type` is not the input's alone: a textarea answers "textarea" and a select
-  // "select-one", so a predicate that dropped the tag check and asked `el.type`
-  // by itself would send every textarea back to assignment — and a stub that
-  // answered undefined would not notice.
+  // `type` is not the input's alone — a textarea answers "textarea" — so a
+  // predicate that dropped the tag check and asked `el.type` by itself would
+  // send every textarea back to assignment, and a stub answering undefined
+  // would not notice.
   const textarea = (extra: Record<string, unknown> = {}) => ({
     tagName: "TEXTAREA", type: "textarea", disabled: false, readOnly: false,
     getAttribute: () => null, ...extra,
@@ -1017,7 +1018,6 @@ describe("which nodes take typing", () => {
     // document is no more the editing host than one in a region.
     { what: "the body of a document in designMode", el: inDesignMode("BODY"), typed: true },
     { what: "a select in a document in designMode", el: inDesignMode("SELECT"), typed: false },
-    { what: "an iframe in a document in designMode", el: inDesignMode("IFRAME"), typed: false },
     { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), typed: false },
   ])("$what: typed=$typed", ({ el, typed }) => {
     expect(typeable(el)).toBe(typed);

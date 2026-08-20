@@ -147,8 +147,7 @@ TYPEABLE_JS = """(el) => {
         // iframe editor, with no attribute anywhere.
         const attr = el.getAttribute("contenteditable");
         if (attr === null) {
-            const doc = el.ownerDocument;
-            return tag === "body" && !!doc && doc.designMode === "on";
+            return tag === "body" && el.ownerDocument.designMode === "on";
         }
         const value = attr.toLowerCase();
         return value === "" || value === "true" || value === "plaintext-only";
