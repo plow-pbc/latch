@@ -389,7 +389,12 @@ describe("browser tools (fake runtime)", () => {
     expect(JSON.stringify(failed.payload)).toContain("offsite.example/o'brien/callback");
     expect(JSON.stringify(failed.payload)).toContain("pizza.example/menu?table=7");
     expect(JSON.stringify(failed.payload)).toContain("done");
-    expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("SECRET-IN-ERROR");
+    // The owner's log keeps no query at all, approved or not: the URL field
+    // beside it has always been stripped, and the log outlives the session.
+    const log = fs.readFileSync(device.audit.file, "utf8");
+    expect(log).not.toContain("SECRET-IN-ERROR");
+    expect(log).not.toContain("table=7");
+    expect(log).toContain("pizza.example/menu");
   });
 
   it("a page that navigates out of scope retires the jar, with no widening at all", async () => {

@@ -493,15 +493,17 @@ export class BrowserSessions {
       // The same redaction the answer gets: a browser failure quotes the URL
       // it was navigating to, and that is the one place a token is likeliest
       // to be — this reaches both the agent and the owner's log.
-      const message = this.redactFor(s, raw) as string;
       this.audit("browser_command", {
         session: s.handle,
         action,
         url: stripQuery(s.lastUrl),
         ...knobs,
-        error: message,
+        // No query survives into the log, approved or not — the line beside
+        // it has always been written that way, and an approved site's own URL
+        // carries session tokens too.
+        error: this.maskUrls(raw, () => false) as string,
       });
-      return { status: "error", error: message };
+      return { status: "error", error: this.redactFor(s, raw) as string };
     }
   }
 
@@ -643,6 +645,17 @@ export class BrowserSessions {
    * always been written stripped for the same reason.
    */
   private redactFor(s: Session, v: JSONValue): JSONValue {
+    return this.maskUrls(v, (u) => this.inScope(s, u));
+  }
+
+  /**
+   * The same walk under a different policy. The agent keeps the query on a
+   * page it was approved for — it is driving that page and the query is part
+   * of where it is. The owner's log keeps none of them: `stripQuery` has
+   * always been applied to the URL an audit line carries, because an approved
+   * site's own URL holds session tokens too, and the log outlives the session.
+   */
+  private maskUrls(v: JSONValue, keep: (url: string) => boolean): JSONValue {
     if (typeof v === "string") {
       // Per whitespace-delimited token: a string that IS a URL is one token,
       // and a browser error quoting the URL it was navigating to has that URL
@@ -656,16 +669,16 @@ export class BrowserSessions {
           const at = tok.search(/https?:\/\//);
           if (at === -1) return tok;
           const url = tok.slice(at);
-          if (this.inScope(s, url)) return tok;
+          if (keep(url)) return tok;
           const cut = url.search(/[?#]/);
           return cut === -1 ? tok : tok.slice(0, at + cut);
         })
         .join("");
     }
-    if (Array.isArray(v)) return v.map((x) => this.redactFor(s, x ?? null));
+    if (Array.isArray(v)) return v.map((x) => this.maskUrls(x ?? null, keep));
     if (v !== null && typeof v === "object") {
       return Object.fromEntries(
-        Object.entries(v).map(([k, x]) => [k, this.redactFor(s, x ?? null)]),
+        Object.entries(v).map(([k, x]) => [k, this.maskUrls(x ?? null, keep)]),
       );
     }
     return v;
