@@ -640,9 +640,9 @@ export class BrowserSessions {
    * that stays complete. A redirect the owner never granted carries tokens in
    * exactly that part: `.../callback?code=SECRET`.
    *
-   * Every exit from this layer runs through here — the answer to an action,
-   * the message when one fails, and the owner's log line for it, which has
-   * always been written stripped for the same reason.
+   * This is the agent's policy: it keeps the query on a page it was approved
+   * for, because it is driving that page and the query is part of where it
+   * is. `maskUrls` is the walk; the owner's log passes a stricter predicate.
    */
   private redactFor(s: Session, v: JSONValue): JSONValue {
     return this.maskUrls(v, (u) => this.inScope(s, u));
@@ -820,7 +820,9 @@ export class BrowserSessions {
       });
       return {
         status: "error",
-        error: `the field is in a frame on ${frameHost ?? frameUrl}, outside the approved origins`,
+        error:
+          `the field is in a frame on ${frameHost ?? stripQuery(frameUrl)}, ` +
+          `outside the approved origins`,
       };
     }
 
