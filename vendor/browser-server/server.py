@@ -265,6 +265,11 @@ class Session:
                 "status": response.status,
                 "method": response.request.method,
                 "url": _strip_query(response.url)[:MAX_FAILED_REQUEST_URL],
+                # WHICH document asked. The device needs both ends: a page
+                # outside the approved origins is not one the agent may learn
+                # anything about, including which of its requests were refused
+                # and where they were aimed.
+                "page": _strip_query(response.frame.url)[:MAX_FAILED_REQUEST_URL],
             }
             try:
                 entry["bytes"] = int(headers.get("content-length"))

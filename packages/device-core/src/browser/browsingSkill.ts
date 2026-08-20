@@ -57,8 +57,9 @@ url, title, links, forms, tables, pages.
   with \`goto\` instead; cookies and the session survive.
 - **An action that "worked" but changed nothing: read \`failed_requests\`.** A result carries
   it when the page's own requests came back refused — most recent first, each with
-  \`status\`, \`method\` and \`url\`, plus \`bytes\`, \`retry_after\` and \`server\` when the
-  response carried them. A 401 or 403
+  \`status\`, \`method\`, the \`url\` asked for and the \`page\` that asked, plus \`bytes\`,
+  \`retry_after\` and \`server\` when the response carried them. You are told about the
+  approved origins only, so a page outside them reports nothing. A 401 or 403
   means the sign-in did not take; a 429 means you are being throttled or blocked, and a 429
   with no \`retry_after\` is usually the latter, so waiting will not help. One can settle
   after the action answered and ride the next result — the screenshot you take next.

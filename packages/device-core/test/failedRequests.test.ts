@@ -16,6 +16,7 @@ interface FailedRequest {
   status: number;
   method: string;
   url: string;
+  page: string;
   bytes?: number;
   retry_after?: string;
   server?: string;
@@ -44,6 +45,8 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
         status: 429,
         method: "POST",
         url: "https://signin.example/tenant/SelfAsserted",
+        // Which document asked — the device needs both ends approved.
+        page: "https://pizza.example/checkout",
         bytes: 1180,
         retry_after: "30",
         server: "cloudfront",

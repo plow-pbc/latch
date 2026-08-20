@@ -123,12 +123,26 @@ function handle(cmd) {
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
     } else if (cmd.selector === "#offsite") {
       current().url = "https://offsite.example/lander";
-      state.failed = [{ status: 403, method: "GET", url: "https://offsite.example/api/who" }];
+      state.failed = [{
+        status: 403, method: "GET",
+        url: "https://offsite.example/api/who", page: "https://offsite.example/lander",
+      }];
       // One from the page it left, one from the approved page whose XHR was
-      // still in flight — the sign-in-redirect shape.
+      // still in flight — the sign-in-redirect shape — and one the unapproved
+      // page aimed AT the approved origin, which is that page's business.
       state.failedNext = [
-        { status: 429, method: "GET", url: "https://offsite.example/api/late" },
-        { status: 401, method: "POST", url: "https://pizza.example/api/signin" },
+        {
+          status: 429, method: "GET",
+          url: "https://offsite.example/api/late", page: "https://offsite.example/lander",
+        },
+        {
+          status: 401, method: "POST",
+          url: "https://pizza.example/api/signin", page: "https://pizza.example/",
+        },
+        {
+          status: 403, method: "GET",
+          url: "https://pizza.example/api/probed-by-offsite", page: "https://offsite.example/lander",
+        },
       ];
     } else if (cmd.selector === "#blocked") {
       state.failed = [
@@ -136,6 +150,7 @@ function handle(cmd) {
           status: 429,
           method: "POST",
           url: "https://pizza.example/api/order?tx=StateProperties=SECRET",
+          page: "https://pizza.example/",
           bytes: 1180,
           retry_after: "30",
         },
@@ -143,10 +158,16 @@ function handle(cmd) {
           status: 403,
           method: "GET",
           url: `https://pizza.example/api/x${i}`,
+          page: "https://pizza.example/",
         })),
       ];
       state.failedNext = [
-        { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
+        {
+          status: 401,
+          method: "GET",
+          url: "https://pizza.example/api/whoami",
+          page: "https://pizza.example/",
+        },
       ];
     } else if (cmd.selector === "#malformed") {
       // Not a list at all — a browser process that is not behaving is exactly

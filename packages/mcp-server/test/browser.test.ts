@@ -194,7 +194,10 @@ describe("browser tools (fake runtime)", () => {
     const blocks = shot.result!.content as { type: string; text?: string }[];
     const meta = JSON.parse(blocks[1].text!) as { failed_requests?: { status: number }[] };
     expect(meta.failed_requests).toEqual([
-      { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
+      {
+        status: 401, method: "GET",
+        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+      },
     ]);
   });
 

@@ -61,12 +61,15 @@ export function stripQuery(url: string): string {
  * is what holds them.
  */
 function failedRequests(value: JSONValue[]): JSONValue[] {
-  return value
-    .filter((entry) => jv(entry).obj !== null)
-    .map((entry) => {
-      const e = jv(entry);
-      return { ...e.obj, url: stripQuery(e.get("url").str ?? "").slice(0, MAX_URL_LEN) };
-    });
+  return value.flatMap((entry) => {
+    const e = jv(entry);
+    if (e.obj === null) return [];
+    return [{
+      ...e.obj,
+      url: stripQuery(e.get("url").str ?? "").slice(0, MAX_URL_LEN),
+      page: stripQuery(e.get("page").str ?? "").slice(0, MAX_URL_LEN),
+    }];
+  });
 }
 
 function hostOf(url: string): string | null {
@@ -111,6 +114,12 @@ export class BrowserSessions {
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
   ) {}
+
+  /** True when a url's host is one the session was approved for. */
+  private approved(s: Session, url: string): boolean {
+    const host = hostOf(url);
+    return host !== null && originMatches(host, s.origins);
+  }
 
   /** True when a page URL is inside the session's approved origins.
    * Blank/initial pages have no host and are always in scope. */
@@ -275,9 +284,11 @@ export class BrowserSessions {
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    const left = this.leftoverRefusals();
+    // After the shutdown, not before: `quit` is a round-trip like any other and
+    // the browser can report on it, and a shutdown that throws leaves the
+    // entries where they are rather than taking them nowhere.
     await this.stopBrowser();
-    this.audit("browser_session_closed", { session: handle, reason, ...left });
+    this.audit("browser_session_closed", { session: handle, reason, ...this.leftoverRefusals() });
     return { status: "completed" };
   }
 
@@ -458,12 +469,15 @@ export class BrowserSessions {
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
     // The agent hears only about the origins it was approved for — judged per
-    // entry, not by where this action happened to land: a refusal from the
-    // approved page still matters when a sign-in redirect has parked the
-    // session somewhere else, and that is the case worth seeing.
+    // entry rather than by where this action happened to land, so a refusal on
+    // the approved page still arrives when a sign-in redirect has parked the
+    // session somewhere else. BOTH ends have to be approved: the page that
+    // asked is an observation of that page, and an unapproved one would
+    // otherwise be choosing the text it hands the agent by choosing what to
+    // fetch.
     const visible = failed.filter((entry) => {
-      const host = hostOf(jv(entry).get("url").str ?? "");
-      return host !== null && originMatches(host, s.origins);
+      const e = entry as { url: string; page: string };
+      return this.approved(s, e.page) && this.approved(s, e.url);
     });
     if (visible.length) out.failed_requests = visible;
     // If the action itself landed us out of scope, say so in the result — the

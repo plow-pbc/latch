@@ -353,9 +353,15 @@ anything is the device itself — the owner's ~1/s viewer poll, the popup sweep,
 the frame lookup before a credential fill — and whichever of those was in flight
 would otherwise be the one that consumed a 429 and dropped it. Every response
 passes through one place, so that is where they wait.
-`BrowserSessions` re-strips before the entries reach the agent or the
-audit log, and withholds them from the agent on an out-of-scope page like every
-other observation of that page.
+Each entry names the page that asked as well as what it asked for, and
+`BrowserSessions` re-strips both before either reaches the agent or the audit
+log. **The owner's log gets every entry** — an out-of-scope page being refused
+is exactly what they are watching for, and whatever is still held when a session
+closes or the browser dies goes on the closing line. **The agent gets only the
+entries with both ends inside the approved origins**, judged per entry rather
+than by where the action landed: a refusal on the approved page still matters
+when a sign-in redirect has parked the session elsewhere, and an unapproved page
+must not get to choose the text it hands the agent by choosing what to fetch.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

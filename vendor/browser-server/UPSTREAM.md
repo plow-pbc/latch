@@ -38,7 +38,8 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     our app payload and the shared `~/Library/Caches/camoufox` is never used.
   - SIGTERM, `quit`, and stdin EOF all close the Camoufox context cleanly.
   - A context-level `response` listener keeps the last few 4xx/5xx the pages
-    saw (status, method, a query-stripped url, size, `Retry-After`, `Server`)
+    saw (status, method, a query-stripped url, the page that asked, size,
+    `Retry-After`, `Server`)
     and every response drains them as `failed_requests`. Upstream reports
     nothing about a page's own traffic, so an action whose XHR came back 429
     answered `{ok: true}` and the agent had to guess.

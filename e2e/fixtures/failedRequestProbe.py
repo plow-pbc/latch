@@ -38,6 +38,11 @@ class Request:
         self.method = method
 
 
+class Frame:
+    def __init__(self, url):
+        self.url = url
+
+
 class Response:
     """One response the page received.
 
@@ -46,11 +51,12 @@ class Response:
     quietly answered would let that regress unnoticed.
     """
 
-    def __init__(self, status, url, method="GET", headers=None):
+    def __init__(self, status, url, method="GET", headers=None, page="https://pizza.example/checkout"):
         self.status = status
         self.url = url
         self.request = Request(method)
         self.headers = headers or {}
+        self.frame = Frame(page)
 
     def body(self):
         raise AssertionError("the listener read a response body")

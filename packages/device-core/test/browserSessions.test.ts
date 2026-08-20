@@ -260,6 +260,7 @@ describe("requests the site refused", () => {
       method: "POST",
       // The browser strips it too; the device does not take that on trust.
       url: "https://pizza.example/api/order",
+      page: "https://pizza.example/",
       bytes: 1180,
       retry_after: "30",
     });
@@ -290,7 +291,28 @@ describe("requests the site refused", () => {
     await ctx.sessions.close(s, "agent");
     const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
     expect(closed?.fields.failed_requests).toEqual([
-      { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
+      {
+        status: 401, method: "GET",
+        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+      },
+    ]);
+  });
+
+  it("logs them when the browser dies under the session too", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" });
+    expect(await ctx.host.viewFrame()).not.toBeNull();
+    // What DeviceAgent's host.onCrash wiring calls: there is no browser left to
+    // ask, so what the device already holds is the last of the record.
+    ctx.sessions.noteCrash();
+    const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
+    expect(closed?.fields.reason).toBe("crashed");
+    expect(closed?.fields.failed_requests).toEqual([
+      {
+        status: 401, method: "GET",
+        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+      },
     ]);
   });
 
@@ -303,7 +325,10 @@ describe("requests the site refused", () => {
     expect(await ctx.host.viewFrame()).not.toBeNull();
     const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
     expect(shot.get("failed_requests").value).toEqual([
-      { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
+      {
+        status: 401, method: "GET",
+        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+      },
     ]);
   });
 
@@ -318,8 +343,14 @@ describe("requests the site refused", () => {
     // The approved page's own refusal, settling while the session was parked
     // out there, is the one the agent needs — and the only one it gets.
     expect(back.get("failed_requests").value).toEqual([
-      { status: 401, method: "POST", url: "https://pizza.example/api/signin" },
+      {
+        status: 401, method: "POST",
+        url: "https://pizza.example/api/signin", page: "https://pizza.example/",
+      },
     ]);
+    // What the unapproved page aimed at the approved origin is that page's
+    // business, however approved the target is.
+    expect(JSON.stringify(back.value)).not.toContain("probed-by-offsite");
     // Nor on the action after it: the way back empties the ring, it does not
     // defer it.
     const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
@@ -350,7 +381,10 @@ describe("requests the site refused", () => {
     expect(gone.get("failed_requests").value).toBeNull();
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
     expect(command?.fields.failed_requests).toEqual([
-      { status: 403, method: "GET", url: "https://offsite.example/api/who" },
+      {
+        status: 403, method: "GET",
+        url: "https://offsite.example/api/who", page: "https://offsite.example/lander",
+      },
     ]);
   });
 });
