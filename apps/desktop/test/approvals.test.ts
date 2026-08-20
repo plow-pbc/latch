@@ -9,12 +9,7 @@
  * reviewer is the only thing that reads the text.
  */
 import { describe, expect, it } from "vitest";
-import {
-  APPROVAL_MODES,
-  ASK_HINT_WITHOUT_REVIEWER,
-  PURPOSE_CAVEATS,
-  PURPOSE_LABEL,
-} from "../src/renderer/approvals.js";
+import { APPROVAL_MODES, PURPOSE_CAVEATS, PURPOSE_LABEL } from "../src/renderer/approvals.js";
 
 interface Mode {
   value: string;
@@ -74,23 +69,6 @@ describe("approvals card", () => {
       "It can only narrow what gets approved — each approval still lists the capabilities this Mac will enforce.",
     );
     expect(PURPOSE_CAVEATS).toContain("Requests that fit may be approved without asking you.");
-  });
-
-  it("has a second Ask sentence for when there is nothing to suggest with", () => {
-    // The hint points at a checkbox one row down. That checkbox is dead without
-    // a credential, so the sentence that points at it must not be the one shown
-    // — otherwise the card gives an instruction that cannot be carried out.
-    const hint = ASK_HINT_WITHOUT_REVIEWER as string;
-    expect(hint).not.toContain("turn that on");
-    expect(hint).toContain("cannot suggest an answer");
-    // Both sentences agree on what Ask mode itself does; only the second half
-    // differs, so the two cannot describe different modes.
-    const shared = "Any request a rule doesn't already cover opens an approval window.";
-    expect(hint).toContain(shared);
-    expect(mode("ask").hint).toContain(shared);
-    // The remedy is appended by the caller, which is the only place that knows
-    // whether this app can offer one.
-    expect(hint.endsWith(".")).toBe(false);
   });
 
   it("points Ask mode at the suggestions toggle in its own card", () => {

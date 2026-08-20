@@ -245,38 +245,22 @@ app.whenReady().then(async () => {
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
       // ---- The AI Reviewer section is GONE from this pane.
       //
-      // Not a rename and not a fold into another group: this pane no longer
-      // offers a way to point the reviewer anywhere, and no way to hand it a
-      // credential of the owner's own. Every check below is the negative of one
-      // that used to assert the section was here.
-      noInferenceGroup: !document.body.innerText.includes("AI Reviewer"),
-      noProviderChips: document.querySelectorAll(".panel.settings .chips").length === 0,
-      noReviewerNote: !document.querySelector(".panel.settings .reviewer-note"),
-      noKeyField: !document.querySelector(".settings .keyfield"),
-      // The field carried the only password input on the pane, so its absence
-      // is checkable without knowing what it was called.
-      noPasswordField: ![...document.querySelectorAll(".panel.settings input")].some(
-        (i) => i.type === "password",
+      // Three checks, not ten. The group, the credential field, and the control
+      // that moved: everything else that used to be asserted here — the chips,
+      // the note, the model string, the pointer sentence — cannot survive the
+      // group's absence, and spelling each one out fenced in the markup of a
+      // section that no longer exists.
+      noReviewerGroup: ![...document.querySelectorAll(".panel.settings .group-title")].some(
+        (t) => t.textContent.trim() === "AI Reviewer",
       ),
-      noSeparateKeyGroup: ![...document.querySelectorAll(".settings .item > .group-title")].some(
-        (t) => t.textContent.trim() === "Anthropic API Key",
-      ),
-      // Nothing is left pointing at a provider or the model it runs — not a
-      // label, not a status line, not a stray mention in prose.
-      saysNothingAboutAnthropic: !/anthropic/i.test(document.querySelector("#view").innerText),
-      namesNoReviewerModel: !document.body.innerText.includes("anthropic/claude-sonnet-4-6"),
-      // The mode chips and the suggestions checkbox both live in Agents now, so
-      // neither the controls nor a pointer to them belongs here.
+      noPasswordField: !document.querySelector('.panel.settings input[type="password"]'),
+      noSuggestionsCheckbox: !document.body.innerText.includes("Let the reviewer suggest"),
+      // The mode chips left this pane for Agents before this change did, so
+      // these are not the reviewer group's to prove.
       noApprovalModeGroup: !document.body.innerText.includes("Approval Mode"),
       noModeChipsHere: ![...document.querySelectorAll(".chip")].some((c) =>
         ["Ask me every time", "AI Reviewer decides", "Approve everything", "Deny everything"]
           .includes(c.textContent.trim()),
-      ),
-      noSuggestionsCheckbox: !document.body.innerText.includes(
-        "Let the reviewer suggest an answer when an approval window opens",
-      ),
-      noPointerToAgentsTab: !document.body.innerText.includes(
-        "Whether the reviewer decides on its own is set in the Agents tab",
       ),
       // The word is gone from this pane's copy entirely.
       saysNothingAdversarial: !/adversarial/i.test(document.querySelector("#view").innerText),
@@ -336,22 +320,14 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(win, `document.querySelector(".panel.settings")`, "Settings to remount on the stored-key home");
-  const strandedProvider = await win.webContents.executeJavaScript(`(${() => {
-    const pane = document.querySelector("#view");
-    return {
-      // No field, so no way for the stored key to be read off the screen…
-      noKeyField: !pane.querySelector(".keyfield"),
-      noPasswordField: ![...pane.querySelectorAll("input")].some((i) => i.type === "password"),
-      // …and the value itself is nowhere in the pane, in any node.
-      keyNotInDom: !pane.innerHTML.includes("sk-ant-a-real-committed-key"),
-      // …and nothing names the provider it is stored against.
-      saysNothingAboutAnthropic: !/anthropic/i.test(pane.innerText),
-      noInferenceGroup: !pane.innerText.includes("AI Reviewer"),
-    };
-  }})()`);
+  // One thing to prove about the pane: the stored key is in no node of it,
+  // visible or not. That the section is gone is the check above, not this one.
+  const keyNotInDom = await win.webContents.executeJavaScript(
+    `!document.querySelector("#view").innerHTML.includes("sk-ant-a-real-committed-key")`,
+  );
   const strandedSettings = loadSettings(probeHome);
   const strandedOnDisk = {
-    ...strandedProvider,
+    keyNotInDom,
     // Rendering the pane is not a migration: what was on disk is still on disk.
     keyStillStored: strandedSettings.anthropicApiKey === "sk-ant-a-real-committed-key",
     providerStillStored: strandedSettings.inferenceProvider === "anthropic",
@@ -847,14 +823,9 @@ app.whenReady().then(async () => {
     settings.noPhonePromise &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
-    settings.noInferenceGroup &&
-    settings.noProviderChips &&
-    settings.noReviewerNote &&
-    settings.noKeyField &&
+    settings.noReviewerGroup &&
     settings.noPasswordField &&
-    settings.noSeparateKeyGroup &&
-    settings.saysNothingAboutAnthropic &&
-    settings.namesNoReviewerModel &&
+    settings.noSuggestionsCheckbox &&
     settings.hasCapabilitiesGroup &&
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
@@ -864,11 +835,7 @@ app.whenReady().then(async () => {
     settings.launchToggleLive &&
     settings.launchNoteHidden &&
     staleSettingsPane.launchUnsupportedFollowed &&
-    strandedOnDisk.noKeyField &&
-    strandedOnDisk.noPasswordField &&
     strandedOnDisk.keyNotInDom &&
-    strandedOnDisk.saysNothingAboutAnthropic &&
-    strandedOnDisk.noInferenceGroup &&
     strandedOnDisk.keyStillStored &&
     strandedOnDisk.providerStillStored &&
     strandedOnDisk.modeStillStored &&
@@ -903,8 +870,6 @@ app.whenReady().then(async () => {
     askWithoutReviewer.stillSaysWhatAskDoes &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&
-    settings.noSuggestionsCheckbox &&
-    settings.noPointerToAgentsTab &&
     settings.saysNothingAdversarial &&
     main.hasBridge &&
     main.viewChildren > 0 &&

@@ -4,7 +4,6 @@
 
 import {
   APPROVAL_MODES,
-  ASK_HINT_WITHOUT_REVIEWER,
   PURPOSE_CAVEATS,
   PURPOSE_LABEL,
 } from "./approvals.js";
@@ -790,7 +789,10 @@ async function renderAgents() {
     // checkbox is dead, so pointing at it is an instruction that cannot be
     // followed — say what is actually true instead.
     modeHintLine.textContent =
-      mode === "ask" && !hasKey ? `${ASK_HINT_WITHOUT_REVIEWER}${remedy}` : active.hint;
+      mode === "ask" && !hasKey
+        ? "Any request a rule doesn't already cover opens an approval window. " +
+          `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`
+        : active.hint;
     modeHintLine.hidden = active.showsPurpose;
   };
   renderApprovals();
@@ -816,7 +818,11 @@ async function renderAgents() {
     group(
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip this — manage those in Rules.",
+        "by an always-allow rule skip this — manage those in Rules. Anything the AI Reviewer " +
+        "sees — the request, the paths asked for, the agent's identity, its goal and plan, the " +
+        "capabilities it asked for, and its recent activity on this Mac — is sent to that " +
+        "reviewer's provider to be judged, and billed to that account; nothing from other " +
+        "agents goes with it.",
       [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
     ),
   ]));
