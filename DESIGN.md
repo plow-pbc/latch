@@ -244,7 +244,7 @@ runbook's Phase 4 note). Phase 7 (iOS approval app) is out of scope for now.
 ## 9. On-disk layout
 
 ```
-$DOMO_HOME (default ~/Library/Application Support/Domo)
+$DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
 ├── run/agent.sock, run/device.sock      # 0700 dir
 ├── broker/agents.json                   # agent identities, tokens, grants
 ├── broker/devices.json                  # enrolled devices
@@ -502,7 +502,7 @@ Decisions and their reasons:
 - **Only the packaged install updates.** `main.ts` constructs the
   `UpdateController` behind `app.isPackaged`, so from-source/worktree runs
   never poll the feed. This composes with the worktree state model (§13): only
-  the packaged install uses the unsuffixed `Domo` home.
+  the packaged install uses the unsuffixed `Plow-Latch` home.
 - **Nothing about updates is modal.** Downloads are automatic and silent; a
   staged update surfaces as a passive banner in the main window, a tray item
   ("Restart to Update"), and the Software Updates settings section — never a

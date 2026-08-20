@@ -34,6 +34,7 @@ import { approvalViewModel, auditActivities, CredentialTitles } from "./viewMode
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
+import { migrateLegacyHome } from "./migrateHome.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
@@ -64,6 +65,13 @@ import {
 // menu, About/Hide/Quit items, and dock title read "Plow Latch" instead of
 // "Electron", the paths so Chromium never opens the default locations.
 const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
+// A pre-rename "Domo…" home is moved to the new name here, before Chromium
+// opens anything under it (migrateHome.ts explains why a rename is the whole
+// migration). A failed move ABORTS startup — deliberately uncaught: see
+// migrateHome.ts for why continuing would strand the old home for good.
+if (migrateLegacyHome(instance.home)) {
+  console.log(`[app] moved legacy home into ${instance.home}`);
+}
 // THE NAME SET HERE IS THE ONE THE KEYCHAIN SEES. Chromium captures the string
 // it derives `<name> Safe Storage` from at startup, BEFORE `app.whenReady`, and
 // a later `setName` does not move it (measured: an item is created under the
@@ -572,12 +580,12 @@ ipcMain.handle("vault:items", async () => {
   // vault that has not started — that sent people to debug a running server.
   // Read BEFORE starting: a locked account is the very case where the vault's
   // own bootstrap cannot finish, and the explanation has to survive that.
-  const locked = readCredentialsState(server.url, server.dataDir);
+  const locked = readCredentialsState(server.dataDir);
   if (locked.status === "locked") return { locked: true, reason: locked.reason };
   // Started, not merely launched: the account is written by the vault's first
   // run, so reading its state before that finishes reports an empty vault.
   await server.start();
-  if (readCredentialsState(server.url, server.dataDir).status !== "ok") return null;
+  if (readCredentialsState(server.dataDir).status !== "ok") return null;
   // Every type, not only logins: a card and a note are things the owner keeps
   // here too, and the tab is where they are kept.
   return vault.list();
@@ -652,6 +660,38 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
   setLaunchAtLogin(app.isPackaged, loginItems, on),
 );
 
+/**
+ * The one-time first-run default: a user who just set this Mac up wants it
+ * reachable, so launch at login turns ON the moment setup hands over to the
+ * app — and never again after that (`Settings.launchAtLoginDefaulted`), so
+ * turning it off in Settings sticks.
+ *
+ * "Pending" is read entirely off disk: a credential with the marker still
+ * false can only mean a completed setup whose default has not landed —
+ * `finishWithSession` writes both fields, a home signed in from before the
+ * marker existed reads as already defaulted (`loadSettings`), and sign-out
+ * keeps the marker. So someone reopening the setup window from Settings never
+ * trips this, no in-memory "signed in this session" flag is needed, and the
+ * hook is idempotent — which is why it runs at BOTH the hand-over (the setup
+ * window's closed handler) and startup: a crash between setup and the
+ * hand-over leaves the default pending on disk, and the next launch opens the
+ * main window directly, never closing a setup window.
+ *
+ * The attempt is the shot: if the OS declines the write we do not come back on
+ * every launch — the Settings toggle is the recourse. A from-source run is the
+ * one case that does NOT burn it (`supported` false writes nothing), so no dev
+ * checkout enrolls the stock Electron binary and a packaged install's real
+ * first run still gets its default.
+ */
+function applyFirstRunLaunchAtLogin(): void {
+  const settings = loadSettings(home);
+  if (settings.launchAtLoginDefaulted || !settings.relayCredential.trim()) return;
+  if (setLaunchAtLogin(app.isPackaged, loginItems, true).supported) {
+    settings.launchAtLoginDefaulted = true;
+    saveSettings(home, settings);
+  }
+}
+
 // MARK: IPC for software updates (banner + Software Updates settings section).
 // One whole-state shape per read, renderer-side composition-free. In a
 // from-source run there is no controller: supported=false and the section
@@ -724,6 +764,10 @@ function openOnboardingWindow(): void {
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
+    // Every hand-over from a completed setup to the main window closes this
+    // window — Continue, the close box, the tray — so this is the one place
+    // the first-run launch-at-login default lands.
+    applyFirstRunLaunchAtLogin();
     // Closing the gate quits; closing the confirmation behind it hands over to
     // the app, the same as Continue. See WindowGate.setupClosed.
     gate.setupClosed();
@@ -855,7 +899,7 @@ app.whenReady().then(async () => {
   // "the vault screen looks wrong" into a one-line answer. `locked` means the
   // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
   if (device.vaultServer) {
-    const vaultState = readCredentialsState(device.vaultServer.url, device.vaultServer.dataDir);
+    const vaultState = readCredentialsState(device.vaultServer.dataDir);
     console.log(
       `[vault] account: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
@@ -944,6 +988,11 @@ app.whenReady().then(async () => {
       (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
     );
   }
+  // A crash between setup saving the credential and the hand-over would leave
+  // the first-run default pending on disk with no setup window left to close —
+  // and this launch goes straight to the main window, so the hand-over hook
+  // never runs. Settle it here; every already-settled home returns early.
+  applyFirstRunLaunchAtLogin();
   // The gate decides what opens. A Mac with no credential cannot do anything
   // until it has one, so it gets the setup window and nothing else — not the
   // main window with a setup window floating beside it.

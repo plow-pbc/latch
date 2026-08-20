@@ -20,10 +20,11 @@ export interface WindowBounds {
 /**
  * How operation intents are decided:
  *   - approve:     auto "allow once", no dialog
- *   - adversarial: a Claude-backed adversarial review decides. It FAILS CLOSED:
- *                  no API key, an API error, a timeout, a refusal or an answer
- *                  that is not a verdict all fall back to `ask`, so a broken
- *                  reviewer hands the decision to the human and never approves.
+ *   - adversarial: a Claude-backed adversarial review decides, and nothing else
+ *                  does — there is no human in this mode. It FAILS CLOSED: no
+ *                  credential, an API error, a timeout, a refusal or an answer
+ *                  that is not a verdict all deny the operation outright, each
+ *                  with a source saying which it was.
  *   - ask:         always show the approval dialog (default)
  *   - deny:        auto-deny, no dialog
  */
@@ -100,6 +101,14 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
+  /** The first-run launch-at-login default has been applied (main.ts's
+   * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
+   * loginItem.ts explains why none exists — only the record that the one-time
+   * default ran, so it can never run twice and a user who turns the toggle off
+   * stays off. Deliberately survives sign-out: a re-setup is not a first run.
+   * A signed-in home from before this field existed is grandfathered on load —
+   * see `loadSettings` — for the same reason. */
+  launchAtLoginDefaulted: boolean;
 }
 
 function settingsPath(home: string): string {
@@ -119,9 +128,22 @@ export function loadSettings(home: string): Settings {
     agentPurpose: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
+    launchAtLoginDefaulted: false,
   };
   try {
-    return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
+    const parsed = JSON.parse(fs.readFileSync(settingsPath(home), "utf8"));
+    const settings: Settings = { ...defaults, ...parsed };
+    // A signed-in home from before `launchAtLoginDefaulted` existed: its
+    // owner's launch-at-login choice predates the default, so reading the
+    // absent field as false would let a later re-setup flip the bit on them.
+    // Grandfather it as already defaulted. This can never swallow a genuinely
+    // new home's default: setup saves the whole Settings object, so any file
+    // holding a credential written since this field existed carries the key
+    // explicitly.
+    if (!("launchAtLoginDefaulted" in parsed) && settings.relayCredential.trim()) {
+      settings.launchAtLoginDefaulted = true;
+    }
+    return settings;
   } catch {
     return defaults;
   }

@@ -129,3 +129,36 @@ describe("settings storage", () => {
     expect(onDisk).not.toMatch(/brokerConnection|domo1\.|pin/i);
   });
 });
+
+describe("the launch-at-login first-run marker", () => {
+  const write = (home: string, json: string) => {
+    const file = path.join(home, "app/settings.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, json);
+  };
+
+  it("grandfathers a signed-in home from before the field existed", () => {
+    const home = tempHome();
+    write(home, JSON.stringify({ relayCredential: "plow_sk_secret" }));
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
+  });
+
+  it("leaves a signed-out legacy home un-defaulted — its first run is still ahead", () => {
+    const home = tempHome();
+    write(home, JSON.stringify({ selectedTab: "audit" }));
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
+  });
+
+  it("never overrides an explicit false — a fresh setup writes the key and owns it", () => {
+    const home = tempHome();
+    write(
+      home,
+      JSON.stringify({ relayCredential: "plow_sk_secret", launchAtLoginDefaulted: false }),
+    );
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
+  });
+
+  it("starts false in a brand-new home", () => {
+    expect(loadSettings(tempHome()).launchAtLoginDefaulted).toBe(false);
+  });
+});

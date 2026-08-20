@@ -87,40 +87,40 @@ production** (`https://api.plow.co`), including a run from source, so targeting 
 deliberate act:
 
 ```bash
-just app                                          # production, ~/Library/Application Support/Domo-<branch>
-DOMO_API_BASE_URL=http://localhost:4242 just app  # that relay, …/Domo-<branch>-local
-DOMO_HOME=/tmp/domo-x just app                    # an explicit home always wins
+just app                                          # production, ~/Library/Application Support/Plow-Latch-<branch>
+DOMO_API_BASE_URL=http://localhost:4242 just app  # that relay, …/Plow-Latch-<branch>-local
+DOMO_HOME=/tmp/plow-latch-x just app                    # an explicit home always wins
 ```
 
 There is no local default and no flag — you export the URL you want.
 
 `<branch>` is this checkout's normalized branch name (`scripts/worktree-name.sh --branch`), so every
 checkout — main included — has its own home, and none of them is the packaged install's unsuffixed
-`~/Library/Application Support/Domo`.
+`~/Library/Application Support/Plow-Latch`.
 
-**Setting the override moves the home too**, to `…/Domo-<branch>-local`, unless you set `DOMO_HOME`
+**Setting the override moves the home too**, to `…/Plow-Latch-<branch>-local`, unless you set `DOMO_HOME`
 yourself. A credential is only valid against the environment that minted it, so a local one landing
 in the production-facing home would overwrite the credential there and cost you a re-onboarding.
-Plain `just app` against production still uses `…/Domo-<branch>`.
+Plain `just app` against production still uses `…/Plow-Latch-<branch>`.
 
 Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
 production-facing state:
 
 ```bash
-DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
+DOMO_HOME=/tmp/plow-latch-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
 ```
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default
-`~/Library/Application Support/Domo-<branch>` under `just`). With no `relayCredential` in
+`~/Library/Application Support/Plow-Latch-<branch>` under `just`). With no `relayCredential` in
 `app/settings.json` the app is behind the login gate: the Set Up window is the only window there
 is, and there is no main window until the wizard's last button hands over:
 
 ```bash
 DOMO_HOME=$(mktemp -d) just app                                    # a clean first run, your real state untouched
-rm ~/Library/Application\ Support/Domo-<branch>/app/settings.json  # or reset the real one
+rm ~/Library/Application\ Support/Plow-Latch-<branch>/app/settings.json  # or reset the real one
 ```
 
-`just` recipes default `DOMO_HOME` to this checkout's `Domo-<branch>` home — your *real* dev one.
+`just` recipes default `DOMO_HOME` to this checkout's `Plow-Latch-<branch>` home — your *real* dev one.
 Always pass a throwaway to anything that writes state.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the

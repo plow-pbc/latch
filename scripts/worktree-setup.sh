@@ -12,10 +12,10 @@
 # normalized branch name (scripts/worktree-name.sh) — for EVERY checkout, the
 # main one included; only the packaged install uses the unsuffixed defaults:
 #
-#   app home          ~/Library/Application Support/Domo-<branch>
-#   local-relay home  ~/Library/Application Support/Domo-<branch>-local
+#   app home          ~/Library/Application Support/Plow-Latch-<branch>
+#   local-relay home  ~/Library/Application Support/Plow-Latch-<branch>-local
 #   Electron userData inside the home (<home>/electron) — one folder per instance
-#   screenshots       /tmp/domo-<branch>                    (main: /tmp)
+#   screenshots       /tmp/plow-latch-<branch>                    (main: /tmp)
 #
 # What is deliberately NOT copied: settings.json and the relay credential in
 # it. The relay does not support two devices on one credential, so the first
@@ -55,6 +55,6 @@ just build
 echo ""
 echo "Worktree '$name' is ready."
 echo "  run the suite:   just test"
-echo "  launch the app:  just app     (state in \"~/Library/Application Support/Domo-$name\";"
+echo "  launch the app:  just app     (state in \"~/Library/Application Support/Plow-Latch-$name\";"
 echo "                                 first launch opens sign-in — this"
 echo "                                 worktree needs its own relay credential)"
