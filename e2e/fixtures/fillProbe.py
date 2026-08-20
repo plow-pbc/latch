@@ -90,6 +90,10 @@ class Handle:
         # Only the LENGTH of that text is ever reported out of this file.
         self.typed_delay = None
         self.typed = None
+        # How many separate calls that text arrived in. One per character is
+        # the property the segmented-code fix turns on: a key sent through the
+        # handle lands in the node the mark is on, wherever focus has wandered.
+        self.type_calls = 0
 
     def evaluate(self, js, *args):
         # Recorded as a fact about the script, not its text: which one it is.
@@ -153,13 +157,17 @@ class Handle:
         after a fill that did not land is the whole point of one of these
         scenarios."""
         self.typed_delay = delay
-        self.typed = text
+        self.typed = (self.typed or "") + text
+        self.type_calls += 1
+        # One entry per contiguous run of keys, not per key: the trace records
+        # the SHAPE of the fill, and `type_calls` carries the count.
+        if self.trace[-1:] != ["handle.type"]:
+            self.trace.append("handle.type")
         if self.type_fails:
             # Not one key arrived. The node holds what the clear left it.
-            self.trace.append("handle.type-failed")
+            self.trace[-1] = "handle.type-failed"
             raise RuntimeError("Element is not attached to the DOM")
         if self.drops_keys:
-            self.trace.append("handle.type")
             return
         # Keys land ON what the assignment left, never instead of it -- which
         # is the only way a scenario can tell the head was assigned at all.
@@ -167,10 +175,9 @@ class Handle:
             # Some of it went in and then the field went away: the node is
             # holding something nobody can account for.
             self.value = (self.value or "") + text
-            self.trace.append("handle.type-failed")
+            self.trace[-1] = "handle.type-failed"
             raise RuntimeError("Element is not attached to the DOM")
         self.value = (self.value or "") + text
-        self.trace.append("handle.type")
 
 
 class Frame:
@@ -272,6 +279,8 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     # how many the node ended up holding. Lengths, never values.
     out["asked_len"] = len(cmd.get("value", "") or "")
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
+    # One call per character is what keeps a key out of an unmarked sibling.
+    out["type_calls"] = frame.handle.type_calls
     out["node_len"] = len(frame.handle.value or "")
     return out
 

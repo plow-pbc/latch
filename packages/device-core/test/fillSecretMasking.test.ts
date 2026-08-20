@@ -511,9 +511,9 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         ledgered: boolean;
         typed_delay: number | null;
         typed_len: number | null;
+        type_calls: number;
         node_len: number;
         asked_len: number;
-        drops_keys?: boolean;
       };
     } & {
       constants: { typed_chars: number };
@@ -544,6 +544,18 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // all. Interrogation-style bot defenses read exactly that (issue #86).
     expect(probed.plain.typed_delay).toBeGreaterThan(0);
     expect(probed.masked.typed_delay).toBeGreaterThan(0);
+  });
+
+  it("sends every key through the node the mark is on", () => {
+    // One call per character, so the node is refocused before each. A
+    // segmented one-time-code control moves focus to the next box on every
+    // `input` event, and one `type(tail)` call sends the rest of a live code
+    // into sibling fields the mark was never put on — readable from `forms`
+    // and from a screenshot. Verified in a real browser: typing "483920" in
+    // one call put one digit in each of six boxes.
+    expect(probed.plain.type_calls).toBe(probed.plain.typed_len);
+    expect(probed.masked.type_calls).toBe(probed.masked.typed_len);
+    expect(probed.long_value.type_calls).toBe(probed.constants.typed_chars);
   });
 
   it("assigns into a widget whose value is not the characters it is given", () => {

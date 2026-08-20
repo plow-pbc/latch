@@ -256,6 +256,14 @@ def _type_value(el, value):
     field at all, and they do: the tail is always typed, and a credential is
     shorter than the tail. That leading assignment doubles as the clear.
 
+    The tail goes in one key at a time THROUGH THE HANDLE, which refocuses the
+    marked node before each. A segmented one-time-code control moves focus to
+    the next box on every `input` event, and one `el.type(tail)` call sends its
+    remaining keys wherever focus went -- five digits of a live code into five
+    sibling fields the mark was never put on, readable from `forms` and from a
+    screenshot. Refocusing per key keeps every character in the node the device
+    approved, and a node that goes away raises rather than typing on.
+
     A node that has gone away raises out of the first question asked of it, and
     every path from here on leaves the caller's failure handling to unwind it.
     """
@@ -263,9 +271,8 @@ def _type_value(el, value):
         el.fill(value, timeout=ACTION_TIMEOUT_MS)
         return
     el.fill(value[:-TYPED_CHARS], timeout=ACTION_TIMEOUT_MS)
-    tail = value[-TYPED_CHARS:]
-    if tail:
-        el.type(tail, delay=KEY_DELAY_MS, timeout=ACTION_TIMEOUT_MS + TYPING_MAX_MS)
+    for ch in value[-TYPED_CHARS:]:
+        el.type(ch, delay=KEY_DELAY_MS, timeout=ACTION_TIMEOUT_MS + TYPING_MAX_MS)
     if el.evaluate(KEYS_DROPPED_JS, value):
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
@@ -504,81 +511,84 @@ class Session:
             for i, fr in enumerate(self.page.frames):
                 if "frame" in cmd and i != int(cmd["frame"]):
                     continue
-                try:
-                    if action == "click":
+                if action == "click":
+                    try:
                         fr.click(sel, timeout=ACTION_TIMEOUT_MS)
-                    else:
-                        # ONE resolved node for the whole fill. Resolving the
-                        # selector a second time is the re-resolution failure
-                        # the mark exists to avoid: a re-render between the two
-                        # would leave the attribute on a detached node and put
-                        # the value into a fresh, unmarked one. Marking through
-                        # the handle and filling through the SAME handle makes
-                        # that impossible -- a node that goes away raises here
-                        # and the value is never typed.
-                        el = fr.wait_for_selector(sel, timeout=ACTION_TIMEOUT_MS)
-                        if el is None:
-                            raise RuntimeError("selector not found: %s" % sel)
-                        # The device checked an origin before it went away to
-                        # fetch the value. If the document behind this index is
-                        # no longer the one it checked, nothing here is what was
-                        # approved -- so nothing is marked, and nothing is
-                        # typed.
-                        # The device checked an origin before it went away to
-                        # fetch the value. If the node it resolved is in a
-                        # different DOCUMENT than the one it checked, nothing
-                        # here is what was approved -- so nothing is marked and
-                        # nothing is typed. The token, not the URL: an SPA
-                        # rewriting its address bar mid-lookup has not replaced
-                        # anything, and refusing that is a fill the owner has to
-                        # do by hand for no reason.
-                        expected = cmd.get("frame_token")
-                        if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
-                            return {"ok": False, "mask": "moved", "frame": i}
-                        if cmd.get("mask"):
-                            # Marked first, and only typed once the mark is
-                            # known to have taken. An unmasked answer means the
-                            # page defeated it, and the value is not typed at
-                            # all -- the caller turns that into its own refusal.
-                            # Marking and filling are one step or neither: a
-                            # mark that goes on and a fill that then times out
-                            # would leave an ordinary field tagged and withheld
-                            # from `forms` for the life of the page.
-                            was_marked = el.evaluate(WAS_MARKED_JS)
-                            before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
-                            state = el.evaluate(MASK_JS)
-                            if state == "unmasked":
-                                before.dispose()
-                                return {"ok": False, "mask": state, "frame": i}
-                            try:
-                                _type_value(el, cmd["value"])
-                            except Exception:
-                                # Nothing landed: put the node back as it was
-                                # found. Something did: it is holding a value
-                                # nobody can account for, so the mark stays and
-                                # the ledger learns about it.
-                                if el.evaluate(NOTHING_LANDED_JS, before):
-                                    if not was_marked:
-                                        el.evaluate(UNMASK_JS)
-                                else:
-                                    self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                                raise
-                            finally:
-                                before.dispose()
-                            self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                            return {"ok": True, "mask": state, "frame": i}
-                        # Not a secret. The mark comes off AFTER the value is
-                        # in, never before: a fill that times out would
-                        # otherwise leave the node holding the previous
-                        # secret with nothing left to hide it.
-                        _type_value(el, cmd["value"])
-                        el.evaluate(UNMASK_JS)
-                        self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                    if action == "click":
-                        self.page.wait_for_timeout(SETTLE_MS)
+                    except Exception as exc:
+                        last = exc
+                        continue
+                    self.page.wait_for_timeout(SETTLE_MS)
                     return {"ok": True, "frame": i}
+
+                # ONE resolved node for the whole fill. Resolving the selector
+                # a second time is the re-resolution failure the mark exists to
+                # avoid: a re-render between the two would leave the attribute
+                # on a detached node and put the value into a fresh, unmarked
+                # one. Marking through the handle and filling through the SAME
+                # handle makes that impossible -- a node that goes away raises
+                # here and the value is never typed.
+                #
+                # Only the SEARCH may move on to the next frame. Once a node
+                # resolves, whatever happens to it is this fill's answer: a
+                # failure that had already changed it, swallowed here and
+                # retried in the frame below, leaves two fields holding
+                # something and reports the success of the second one.
+                try:
+                    el = fr.wait_for_selector(sel, timeout=ACTION_TIMEOUT_MS)
                 except Exception as exc:
                     last = exc
+                    continue
+                if el is None:
+                    last = RuntimeError("selector not found: %s" % sel)
+                    continue
+                # The device checked an origin before it went away to fetch the
+                # value. If the node it resolved is in a different DOCUMENT than
+                # the one it checked, nothing here is what was approved -- so
+                # nothing is marked and nothing is typed. The token, not the
+                # URL: an SPA rewriting its address bar mid-lookup has not
+                # replaced anything, and refusing that is a fill the owner has
+                # to do by hand for no reason.
+                expected = cmd.get("frame_token")
+                if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
+                    return {"ok": False, "mask": "moved", "frame": i}
+                if cmd.get("mask"):
+                    # Marked first, and only typed once the mark is known to
+                    # have taken. An unmasked answer means the page defeated it,
+                    # and the value is not typed at all -- the caller turns that
+                    # into its own refusal. Marking and filling are one step or
+                    # neither: a mark that goes on and a fill that then times
+                    # out would leave an ordinary field tagged and withheld from
+                    # `forms` for the life of the page.
+                    was_marked = el.evaluate(WAS_MARKED_JS)
+                    before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
+                    state = el.evaluate(MASK_JS)
+                    if state == "unmasked":
+                        before.dispose()
+                        return {"ok": False, "mask": state, "frame": i}
+                    try:
+                        _type_value(el, cmd["value"])
+                    except Exception:
+                        # Nothing landed: put the node back as it was found.
+                        # Something did: it is holding a value nobody can
+                        # account for, so the mark stays and the ledger learns
+                        # about it.
+                        if el.evaluate(NOTHING_LANDED_JS, before):
+                            if not was_marked:
+                                el.evaluate(UNMASK_JS)
+                        else:
+                            self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                        raise
+                    finally:
+                        before.dispose()
+                    self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                    return {"ok": True, "mask": state, "frame": i}
+                # Not a secret. The mark comes off AFTER the value is in, never
+                # before: a fill that times out would otherwise leave the node
+                # holding the previous secret with nothing left to hide it.
+                _type_value(el, cmd["value"])
+                el.evaluate(UNMASK_JS)
+                self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                return {"ok": True, "frame": i}
             raise last or RuntimeError("selector not found: %s" % sel)
 
         if action == "locate":
