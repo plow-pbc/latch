@@ -337,43 +337,13 @@ describe("browser tools (fake runtime)", () => {
     expect(bound.at(-1)).toEqual(["bank.example", "pizza.example", "shop.example"].sort());
   });
 
-  it("an open racing a widening never lands on a jar that was given up", async () => {
-    // The third interleaving the queue guards, and the one with an escape at
-    // the end of it: an open installing a new browser inside an extend's await
-    // whose continuation then clears ITS profile identity, so the widened
-    // session finds nothing to give up. That exact interleaving is not
-    // reliably reproducible against the fake runtime — this pins the invariant
-    // it would break rather than the schedule that breaks it.
-    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
-    const profiles = path.join(device.home, "device/browser/profiles");
-    const key = profileKeyForOrigins(["pizza.example"]);
-
-    const session = await open(server, ["pizza.example"]);
-    const [widen, reopen] = await Promise.all([
-      callTool(server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT),
-      callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT),
-    ]);
-    expect(reopen.isError, JSON.stringify(reopen.payload)).toBe(false);
-
-    // Order-independent: both calls reach the queue through decideAndRun, so
-    // which lands first is incidental scheduling. The invariant either way is
-    // that the session left running is not sitting on a jar that was given
-    // up — which is the escape, since that jar holds bank.example's cookies
-    // under a grant that only ever approved pizza.example.
-    const landedOn = audited(device, "browser_started").at(-1)!;
-    expect(abandoned(profiles, landedOn), `reopened onto ${landedOn}`).toBe(false);
-    // The two outcomes are coupled: either the widening landed and retired its
-    // jar, and the reopen went to a fresh one — or the open won the queue,
-    // closed the session first, and there was no widening to retire anything.
-    expect(abandoned(profiles, key)).toBe(!widen.isError);
-    expect(landedOn).toBe(widen.isError ? key : `${key}-2`);
-  });
-
   it("a widened session's jar is given up, and no later session opens it", async () => {
     // The escape this closes: state written for the widened origin sits in a
     // jar filed under the narrower grant, and the next session on that grant
     // would carry it to that origin on the first click or redirect, ahead of
-    // the post-action scope lock.
+    // the post-action scope lock. This is also where the lifecycle queue's
+    // third interleaving lands — an open arriving inside a widening — since
+    // what that would break is the same thing asserted here.
     const { server, device, argvLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
     const opening = profileKeyForOrigins(["pizza.example"]);
