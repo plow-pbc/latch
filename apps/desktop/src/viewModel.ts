@@ -384,6 +384,7 @@ function classifyActivity(
         ? { status: "Closed · mask failed", tone: "amber", category: "failed" }
         : { status: "Mask failed", tone: "amber", category: "failed" };
     }
+    const refusedAnywhere = events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0);
     if (has("credential_denied") || has("browser_scope_violation")) {
       // "failed", not "other": the cage refused the agent something, which is
       // the first thing an owner scanning for trouble filters for. The amber
@@ -393,21 +394,23 @@ function classifyActivity(
         ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
         : { status: "Scope blocked", tone: "amber", category: "failed" };
     }
-    // The page's own server refused what the agent asked it to do. Amber and
-    // "failed", like a scope block: the session did not do what it looked like
-    // it did, and that is what an owner scanning for trouble filters for.
-    if (events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0)) {
-      return has("browser_session_closed")
-        ? { status: "Closed · requests refused", tone: "amber", category: "failed" }
-        : { status: "Requests refused", tone: "amber", category: "failed" };
-    }
     if (has("browser_session_closed")) {
       const closed = entry("browser_session_closed")!;
-      return jv(closed).get("reason").str === "crashed"
-        ? { status: "Crashed", tone: "red", category: "failed" }
-        : { status: "Closed", tone: "zinc", category: "other" };
+      if (jv(closed).get("reason").str === "crashed") {
+        return { status: "Crashed", tone: "red", category: "failed" };
+      }
+      if (refusedAnywhere) {
+        return { status: "Closed · requests refused", tone: "amber", category: "failed" };
+      }
+      return { status: "Closed", tone: "zinc", category: "other" };
     }
     if (has("browser_crashed")) return { status: "Crashed", tone: "red", category: "failed" };
+    if (refusedAnywhere) {
+      // The page's own server refused what the agent asked it to do — ranked
+      // under a crash and a scope block, both of which are stronger claims
+      // about the session, but well above "Browsing".
+      return { status: "Requests refused", tone: "amber", category: "failed" };
+    }
     return { status: "Browsing", tone: "green", category: "other" };
   }
   // A vault metadata read carries no intent and no session, so it stands
@@ -474,7 +477,6 @@ function activityCommand(
   return value("intent_received", "request");
 }
 
-/** One-line human description of a single raw event (used in the timeline). */
 /**
  * What the page's own requests did, for the owner's timeline.
  *
@@ -490,6 +492,7 @@ function refusedSuffix(ev: ReturnType<typeof jv>): string {
   return ` — refused: ${first.get("status").int ?? 0} ${first.get("method").str ?? ""} ${first.get("origin").str ?? ""}${rest}`;
 }
 
+/** One-line human description of a single raw event (used in the timeline). */
 function describeStep(e: JSONValue): AuditStep {
   const ev = jv(e);
   const event = ev.get("event").str ?? "";
@@ -562,14 +565,18 @@ function describeStep(e: JSONValue): AuditStep {
       text = `Session widened — origins: ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ") || "—"}; items: ${(ev.get("items").arr ?? []).filter((i): i is string => typeof i === "string").join(", ") || "—"}`;
       state = "ok";
       break;
-    case "browser_session_closed":
-      text = `Browser session closed (${ev.get("reason").str ?? ""})${refusedSuffix(ev)}`;
-      if (refusedSuffix(ev)) state = "bad";
+    case "browser_session_closed": {
+      const refused = refusedSuffix(ev);
+      text = `Browser session closed (${ev.get("reason").str ?? ""})${refused}`;
+      if (refused) state = "bad";
       break;
-    case "browser_command":
-      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}${refusedSuffix(ev)}`;
-      state = ev.get("error").str || refusedSuffix(ev) ? "bad" : "neutral";
+    }
+    case "browser_command": {
+      const refused = refusedSuffix(ev);
+      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}${refused}`;
+      state = ev.get("error").str || refused ? "bad" : "neutral";
       break;
+    }
     case "browser_navigated": text = `Page: ${ev.get("url").str ?? ""}`; break;
     case "browser_scope_violation":
       text = `Out of scope: ${ev.get("origin").str ?? ""} (${ev.get("action").str ?? ""}) — content locked`;

@@ -146,7 +146,12 @@ describe("audit grouping for browser sessions", () => {
   it("a session ended by a crash reads as Crashed, not Closed or Browsing", () => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
-      { event: "browser_session_closed", session: "S", reason: "crashed", ts: "2026-08-10T10:00:05Z" },
+      // The crash line carries the browser's parting refusals, which is the
+      // whole point of draining them there — so a crash that refused is still
+      // a crash, and must not read as the milder "requests refused".
+      { event: "browser_session_closed", session: "S", reason: "crashed", failed_requests: [
+        { status: 599, method: "GET", origin: "https://dominos.com" },
+      ], ts: "2026-08-10T10:00:05Z" },
     ]);
     expect(acts[0]!.status).toBe("Crashed");
     expect(acts[0]!.tone).toBe("red");
