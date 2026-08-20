@@ -231,7 +231,9 @@ def ranked(server):
     trace: list[str] = []
     holder = Frame(trace, nodes={"#pass": Handle(trace)}, hides=True)
     gone = Frame(trace, nodes={}, detached=True)
-    session = server.Session(Page(gone, extra_frames=[holder]))
+    # Siblings first, so the order under test is holder-then-gone; the main
+    # frame is last and has nothing, which is the page shape this is about.
+    session = server.Session(Page(Frame(trace, nodes={}), extra_frames=[holder, gone]))
     try:
         session.handle({"action": "fill", "selector": "#pass", "value": "x"}, "/tmp")
     except Exception as exc:  # noqa: BLE001 — the scenario under test

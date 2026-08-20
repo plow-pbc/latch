@@ -125,9 +125,11 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // the second of those is worth burying.
     const hidden = await act("fill", { selector: "#card-hidden", value: "x" }, false);
     expect(hidden.isError).toBe(true);
-    // "resolved to hidden" is the payment frame's own answer — a frame that
-    // simply hasn't got the field reports a timeout with nothing resolved.
-    expect(JSON.stringify(hidden.payload)).toContain("resolved to hidden");
+    // The stable half, then the discriminating half: a frame that simply hasn't
+    // got the field also times out, but reports nothing resolved. "hidden" is
+    // Playwright's call-log wording and tracks the pin in runtime.lock.json.
+    expect(JSON.stringify(hidden.payload)).toContain("Timeout");
+    expect(JSON.stringify(hidden.payload)).toContain("hidden");
 
     await act("fill_secret", { selector: "#card-number", item: "C1", field: "number" });
     await act("fill_secret", { selector: "#card-cvv", item: "C1", field: "cvv" });

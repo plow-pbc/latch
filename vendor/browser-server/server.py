@@ -380,8 +380,13 @@ class Session:
             left = int((deadline - time.monotonic()) * 1000 / (len(frames) - tried))
             if left <= 0:
                 # The selector IS somewhere -- the scan said so -- but the
-                # budget went on waiting for it. Whatever real failure a frame
-                # already gave is the better answer than saying that again.
+                # budget went on waiting for it. Saying "not found" here would
+                # be false and would send the agent looking elsewhere when what
+                # it needs is more budget; a real failure from a frame that did
+                # get tried is better still.
+                last = last or RuntimeError(
+                    "found %s with no time left to click it" % sel
+                )
                 break
             try:
                 fr.click(sel, timeout=left)
