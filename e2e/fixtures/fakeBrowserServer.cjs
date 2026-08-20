@@ -52,6 +52,12 @@
 const fs = require("node:fs");
 const readline = require("node:readline");
 
+/** Selectors whose page is refusing a request while the credential is placed,
+ * and those whose fill also fails — named once so the two handlers cannot
+ * drift into scripting different things. */
+const REFUSING_LOCATE = new Set(["#refused-pass", "#refused-nofill"]);
+const FAILING_FILL = new Set(["#nofill", "#refused-nofill"]);
+
 const state = {
   pages: [{ url: "about:blank", title: "blank" }],
   active: 0,
@@ -219,7 +225,7 @@ function handle(cmd) {
     }
     // Playwright puts the value it tried to type into its own failure message.
     // Reproduce that shape so the leak this guards against is testable.
-    if (String(cmd.selector) === "#nofill" || String(cmd.selector) === "#refused-nofill") {
+    if (FAILING_FILL.has(String(cmd.selector))) {
       throw new Error(
         `locator.fill: Timeout 5000ms exceeded.\nCall log:\n` +
           `  - waiting for locator("${cmd.selector}")\n` +
@@ -238,7 +244,7 @@ function handle(cmd) {
       ...(cmd.mask ? { mask: "stylesheet" } : {}),
     };
   }
-  if (a === "locate" && (cmd.selector === "#refused-pass" || cmd.selector === "#refused-nofill")) {
+  if (a === "locate" && REFUSING_LOCATE.has(String(cmd.selector))) {
     // The page was refusing while the credential was being placed — the
     // refusals ride the locate/fill round-trips the device makes for itself.
     state.failed = [{

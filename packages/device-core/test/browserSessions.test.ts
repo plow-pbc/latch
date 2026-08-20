@@ -337,7 +337,7 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toEqual([entry]);
   });
 
-  it("reports on a credential fill too, which asks the browser for itself twice", async () => {
+  it("reports on a credential fill, whether it completes or errors", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
     await ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);
@@ -365,6 +365,15 @@ describe("requests the site refused", () => {
     expect(refused.get("status").str).toBe("error");
     expect(refused.get("error").str).toContain("could not type");
     expect(refused.get("failed_requests").value).toEqual([entry]);
+
+    // And says nothing when there is nothing to say: a fill on a page that was
+    // not refusing anything writes its credential_filled line and no more.
+    const lines = ctx.events.filter((e) => e.event === "browser_command").length;
+    const quiet = jv(await ctx.sessions.command(AGENT, s, {
+      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
+    }));
+    expect(quiet.get("status").str).toBe("completed");
+    expect(ctx.events.filter((e) => e.event === "browser_command").length).toBe(lines);
   });
 
   it("survives the owner's viewer poll, which asks the browser on its own account", async () => {
