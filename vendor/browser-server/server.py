@@ -60,17 +60,6 @@ DEFAULT_ACTION_TIMEOUT_MS = 3000
 SCAN_INTERVAL_MS = 50
 
 
-class NotAttempted(RuntimeError):
-    """A candidate frame that yielded nothing to act on.
-
-    Either the frame simply does not have the selector -- the ordinary case
-    when an action searches a page's frames for a field that lives in one of
-    them -- or a click's budget was spent before its turn came. Neither is a
-    reason worth reading, and neither may bury one from a frame that DID yield
-    the element and then failed: not visible, not editable, detached, moved.
-    """
-
-
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -346,30 +335,6 @@ class Session:
             return [frames[i]]
         return self.page.frames
 
-    def _first_frame_that_works(self, frames, sel, attempt):
-        """Try `attempt` against each candidate frame; the first to answer wins.
-
-        This is the whole of what `click` and `fill` have in common: candidates
-        are tried in order, an answer ends it -- including a refusal a fill
-        returns rather than raises -- and when none answers the caller hears a
-        real failure rather than a generic one: the last frame to fail with the
-        element in hand, never a `NotAttempted` from a frame that had nothing
-        to act on. Position cannot decide that on its own -- the frame holding
-        the field can sit anywhere among the ad and analytics frames either
-        side of it -- which is what the sentinel is for. `attempt` is handed the frame's
-        index on the page, the frame, and how many candidates are left counting
-        it: a click divides what is left of its budget by that, a fill has no
-        budget to divide and ignores it.
-        """
-        last = None
-        for tried, (i, fr) in enumerate(frames):
-            try:
-                return attempt(i, fr, len(frames) - tried)
-            except Exception as exc:  # noqa: BLE001 -- re-raised below
-                if not isinstance(exc, NotAttempted) or last is None:
-                    last = exc
-        raise last or RuntimeError("selector not found: %s" % sel)
-
     def _click(self, cmd):
         """One click, inside a budget that covers the whole action.
 
@@ -410,19 +375,21 @@ class Session:
                     )
                 self.page.wait_for_timeout(SCAN_INTERVAL_MS)
 
-        def attempt(i, fr, remaining):
-            left = int((deadline - time.monotonic()) * 1000 / remaining)
+        last = None
+        for tried, (i, fr) in enumerate(frames):
+            left = int((deadline - time.monotonic()) * 1000 / (len(frames) - tried))
             if left <= 0:
-                # Distinct from the not-found above: the selector IS there, and
-                # the budget went on waiting for it.
-                raise NotAttempted(
-                    "found %s with no time left to click it" % sel
-                )
-            fr.click(sel, timeout=left)
-            self.page.wait_for_timeout(1000)
-            return {"ok": True, "frame": i}
-
-        return self._first_frame_that_works(frames, sel, attempt)
+                # The selector IS somewhere -- the scan said so -- but the
+                # budget went on waiting for it. Whatever real failure a frame
+                # already gave is the better answer than saying that again.
+                break
+            try:
+                fr.click(sel, timeout=left)
+                self.page.wait_for_timeout(1000)
+                return {"ok": True, "frame": i}
+            except Exception as exc:  # noqa: BLE001 -- re-raised below
+                last = exc
+        raise last or RuntimeError("selector not found: %s" % sel)
 
     def _fill(self, cmd):
         """One fill, searching the frames on the per-frame default.
@@ -433,76 +400,80 @@ class Session:
         """
         sel = cmd["selector"]
 
-        def attempt(i, fr, _remaining):
-            # ONE resolved node for the whole fill. Resolving the selector a
-            # second time is the re-resolution failure the mark exists to
-            # avoid: a re-render between the two would leave the attribute on a
-            # detached node and put the value into a fresh, unmarked one.
-            # Marking through the handle and filling through the SAME handle
-            # makes that impossible -- a node that goes away raises here and
-            # the value is never typed.
+        last = None
+        for i, fr in self.indexed_frames(cmd):
             try:
                 el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
             except Exception as exc:  # noqa: BLE001 -- sorted out by the ask below
-                # Which kind of nothing: a frame that hasn't got the field is
-                # the ordinary case and says nothing worth keeping, but one
-                # holding it and refusing to hand it over -- hidden, never
-                # settling -- is the answer the caller is waiting for, and
-                # Playwright reports both as the same timeout.
-                if self.holds(fr, sel):
-                    raise
-                raise NotAttempted("%s is not in frame %d" % (sel, i)) from exc
+                # Why this frame gave nothing. Simply not having the field is
+                # the ordinary case on the way to the frame that does, and says
+                # nothing worth carrying. A frame that went away, or one that
+                # holds the field and will not show it, are both answers the
+                # caller is waiting for -- and Playwright reports all three as
+                # the same timeout.
+                if fr.is_detached() or self.holds(fr, sel):
+                    last = exc
+                continue
             if el is None:
-                raise NotAttempted("%s is not in frame %d" % (sel, i))
-            # The device checked an origin before it went away to fetch the
-            # value. If the node it resolved is in a different DOCUMENT than
-            # the one it checked, nothing here is what was approved -- so
-            # nothing is marked and nothing is typed. The token, not the URL:
-            # an SPA rewriting its address bar mid-lookup has not replaced
-            # anything, and refusing that is a fill the owner has to do by hand
-            # for no reason.
-            expected = cmd.get("frame_token")
-            if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
-                return {"ok": False, "mask": "moved", "frame": i}
-            if cmd.get("mask"):
-                # Marked first, and only typed once the mark is known to have
-                # taken. An unmasked answer means the page defeated it, and the
-                # value is not typed at all -- the caller turns that into its
-                # own refusal. Marking and filling are one step or neither: a
-                # mark that goes on and a fill that then times out would leave
-                # an ordinary field tagged and withheld from `forms` for the
-                # life of the page.
-                was_marked = el.evaluate(WAS_MARKED_JS)
-                before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
-                state = el.evaluate(MASK_JS)
-                if state == "unmasked":
-                    before.dispose()
-                    return {"ok": False, "mask": state, "frame": i}
-                try:
-                    el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
-                except Exception:
-                    # Nothing landed: put the node back as it was found.
-                    # Something did: it is holding a value nobody can account
-                    # for, so the mark stays and the ledger learns about it.
-                    if el.evaluate(VALUE_UNCHANGED_JS, before):
-                        if not was_marked:
-                            el.evaluate(UNMASK_JS)
-                    else:
-                        self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                    raise
-                finally:
-                    before.dispose()
-                self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                return {"ok": True, "mask": state, "frame": i}
-            # Not a secret. The mark comes off AFTER the value is in, never
-            # before: a fill that times out would otherwise leave the node
-            # holding the previous secret with nothing left to hide it.
-            el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
-            el.evaluate(UNMASK_JS)
-            self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
-            return {"ok": True, "frame": i}
-
-        return self._first_frame_that_works(self.indexed_frames(cmd), sel, attempt)
+                continue
+            try:
+                # ONE resolved node for the whole fill. Resolving the selector a
+                # second time is the re-resolution failure the mark exists to
+                # avoid: a re-render between the two would leave the attribute on a
+                # detached node and put the value into a fresh, unmarked one.
+                # Marking through the handle and filling through the SAME handle
+                # makes that impossible -- a node that goes away raises here and
+                # the value is never typed.
+                # The device checked an origin before it went away to fetch the
+                # value. If the node it resolved is in a different DOCUMENT than
+                # the one it checked, nothing here is what was approved -- so
+                # nothing is marked and nothing is typed. The token, not the URL:
+                # an SPA rewriting its address bar mid-lookup has not replaced
+                # anything, and refusing that is a fill the owner has to do by hand
+                # for no reason.
+                expected = cmd.get("frame_token")
+                if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
+                    return {"ok": False, "mask": "moved", "frame": i}
+                if cmd.get("mask"):
+                    # Marked first, and only typed once the mark is known to have
+                    # taken. An unmasked answer means the page defeated it, and the
+                    # value is not typed at all -- the caller turns that into its
+                    # own refusal. Marking and filling are one step or neither: a
+                    # mark that goes on and a fill that then times out would leave
+                    # an ordinary field tagged and withheld from `forms` for the
+                    # life of the page.
+                    was_marked = el.evaluate(WAS_MARKED_JS)
+                    before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
+                    state = el.evaluate(MASK_JS)
+                    if state == "unmasked":
+                        before.dispose()
+                        return {"ok": False, "mask": state, "frame": i}
+                    try:
+                        el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
+                    except Exception:
+                        # Nothing landed: put the node back as it was found.
+                        # Something did: it is holding a value nobody can account
+                        # for, so the mark stays and the ledger learns about it.
+                        if el.evaluate(VALUE_UNCHANGED_JS, before):
+                            if not was_marked:
+                                el.evaluate(UNMASK_JS)
+                        else:
+                            self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                        raise
+                    finally:
+                        before.dispose()
+                    self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                    return {"ok": True, "mask": state, "frame": i}
+                # Not a secret. The mark comes off AFTER the value is in, never
+                # before: a fill that times out would otherwise leave the node
+                # holding the previous secret with nothing left to hide it.
+                el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
+                el.evaluate(UNMASK_JS)
+                self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                return {"ok": True, "frame": i}
+            except Exception as exc:  # noqa: BLE001 -- re-raised below
+                last = exc
+        raise last or RuntimeError("selector not found: %s" % sel)
 
     def handle(self, cmd, screenshots_dir):
         action = cmd.get("action", "")
