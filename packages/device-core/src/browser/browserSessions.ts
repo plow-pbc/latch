@@ -172,8 +172,8 @@ export interface BrowserSessionInfo {
 }
 
 /** How many browsers this Mac will run at once. A Camoufox is a window and a
- * few hundred MB, so the number is small and the limit is said out loud. */
-const DEFAULT_MAX_BROWSERS = 3;
+ * few hundred MB, so there is a limit and it is said out loud when it is hit. */
+const DEFAULT_MAX_BROWSERS = 8;
 
 /**
  * A short one-way name for a session.
@@ -186,6 +186,31 @@ const DEFAULT_MAX_BROWSERS = 3;
  */
 const digest = (id: string): string =>
   crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
+
+/**
+ * Add one profile's cookies to another's, keeping whichever row was used last.
+ *
+ * The columns are read from the table rather than written down here: Firefox
+ * adds one every few releases, and a list that goes stale would quietly drop
+ * whatever it does not name. `id` is left out on purpose — it is the row
+ * number of the store being written, not part of the cookie.
+ */
+const MERGE_COOKIES = `
+import sqlite3, sys
+into, extra = sys.argv[1], sys.argv[2]
+db = sqlite3.connect(into, timeout=10)
+db.execute("ATTACH ? AS extra", (extra,))
+cols = [r[1] for r in db.execute("PRAGMA main.table_info(moz_cookies)") if r[1] != "id"]
+key = [k for k in ("name", "host", "path", "originAttributes") if k in cols]
+names = ",".join(cols)
+same = " AND ".join("mine.%s = theirs.%s" % (k, k) for k in key)
+db.execute(
+    "INSERT OR REPLACE INTO main.moz_cookies (%s) SELECT %s FROM extra.moz_cookies AS theirs "
+    "WHERE NOT EXISTS (SELECT 1 FROM main.moz_cookies AS mine WHERE %s "
+    "AND mine.lastAccessed >= theirs.lastAccessed)" % (names, names, same)
+)
+db.commit()
+`;
 
 export class BrowserSessions {
   /** Every live session, by handle. The handle IS the browser: an agent that
@@ -255,7 +280,8 @@ export class BrowserSessions {
     // Every session browses in a directory of its own, because Firefox locks a
     // profile against a second copy of itself — but it is a CLONE of the
     // user's own profile, so every browser opens signed in wherever they are.
-    // The original is never written to; the clone goes when the session does.
+    // On close what it signed into is merged back into the original, and the
+    // clone goes. This Mac is one person's; every browser on it is theirs.
     const profile = `session-${digest(handle)}`;
     const host = this.newHost(profile);
     // A browser that dies takes its own session with it, and nobody else's.
@@ -392,9 +418,8 @@ export class BrowserSessions {
    * rather than quietly copying 300MB per browser. The lock files never come
    * along — they belong to whichever Firefox held the profile, not to the copy.
    *
-   * The user's own profile is only ever READ. What a session signs into lives
-   * in its clone and goes with it: two browsers open at once cannot undo each
-   * other's logins, and nothing a session does can sign the user out.
+   * The user's own profile is never opened by a browser — only cloned from,
+   * and merged into on close (see mergeAndRelease).
    */
   private seedProfile(dir: string): void {
     if (fs.existsSync(dir)) return;
@@ -410,10 +435,54 @@ export class BrowserSessions {
     }
   }
 
-  /** The clone was this session's alone, so it goes when the session does. */
-  private releaseProfile(s: Session): void {
+  /**
+   * What this session signed into, added to the user's own profile — and then
+   * the clone goes.
+   *
+   * Merged, not handed back: replacing the profile means the last browser to
+   * close decides what the user is signed into, which loses the other one's
+   * login and can even undo a logout. Cookies are copied row by row, and only
+   * where this session's row is the more recently used one, so two browsers
+   * signed into two different sites both keep their sign-in and neither
+   * overwrites the other.
+   *
+   * ponytail: cookies only. A site that keeps its session in localStorage or
+   * IndexedDB still signs out with the clone, and a logout inside a session
+   * does not remove the cookie from the user's profile. Upgrade path is the
+   * same merge over the other stores.
+   */
+  private mergeAndRelease(s: Session): void {
     if (!this.browser.profileDir) return;
-    fs.rmSync(path.join(this.browser.profileDir, s.profile), { recursive: true, force: true });
+    const dir = path.join(this.browser.profileDir, s.profile);
+    try {
+      this.mergeCookies(dir);
+    } catch (error: unknown) {
+      // The user's profile is worth more than this session's cookies: a merge
+      // that fails leaves it exactly as it was, and says so in their log.
+      this.audit("browser_cookies_kept", {
+        session: s.auditId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  /** The merge itself: sqlite, on the interpreter this runtime already ships. */
+  private mergeCookies(dir: string): void {
+    const seed = this.browser.seedProfile;
+    const from = path.join(dir, "cookies.sqlite");
+    if (!seed || !fs.existsSync(seed) || !fs.existsSync(from)) return;
+    const into = path.join(seed, "cookies.sqlite");
+    if (!fs.existsSync(into)) {
+      // Nothing to merge into: the user's profile has never held a cookie.
+      for (const suffix of ["", "-wal", "-shm"]) {
+        if (fs.existsSync(from + suffix)) fs.copyFileSync(from + suffix, into + suffix);
+      }
+      return;
+    }
+    const python = this.browser.python;
+    if (!python) return;
+    execFileSync(python, ["-c", MERGE_COOKIES, into, from], { stdio: "pipe" });
   }
 
   /**
@@ -491,7 +560,7 @@ export class BrowserSessions {
   private finalize(s: Session, reason: string): void {
     this.sessions.delete(s.handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
-    this.releaseProfile(s);
+    this.mergeAndRelease(s);
     const left = failedRequests(s.host.takeFailedRequests());
     this.audit("browser_session_closed", {
       session: s.auditId,

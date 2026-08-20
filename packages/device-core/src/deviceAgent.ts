@@ -153,6 +153,8 @@ export class DeviceAgent {
         // at once need a directory each — and hand it back when they close.
         profileDir: path.join(browserDir, "profiles"),
         seedProfile: path.join(browserDir, "profile"),
+        // The bundled interpreter, which is where the cookie merge runs.
+        python: browserRuntime.serverCommand[0],
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the

@@ -4,6 +4,7 @@
  * appears in results or the audit stream.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -189,14 +190,14 @@ describe("session lifecycle", () => {
     // so it is stated rather than enforced by throwing somebody else out. It
     // is tested at its real value: no knob, no seam.
     const handles: string[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 8; i++) {
       const r = jv(await ctx.sessions.open(`int-${i}`, `capped-${i}`, ["pizza.example"], false));
       expect(r.get("status").str).toBe("completed");
       handles.push(r.get("session").str!);
     }
-    const tooMany = jv(await ctx.sessions.open("int-4", "capped-4", ["a.example"], false));
+    const tooMany = jv(await ctx.sessions.open("int-9", "capped-9", ["a.example"], false));
     expect(tooMany.get("status").str).toBe("error");
-    expect(tooMany.get("error").str).toContain("already running 3 browsers");
+    expect(tooMany.get("error").str).toContain("already running 8 browsers");
     // And the three that were here first are untouched.
     for (const [i, h] of handles.entries()) {
       expect(jv(await ctx.sessions.command(h, { action: "url" })).get("status").str)
@@ -709,16 +710,55 @@ describe("the handle is a capability, so the log never carries it", () => {
 });
 
 describe("every browser opens as the user, already signed in", () => {
+  const PYTHON = process.env.DOMO_TEST_PYTHON ?? "python3";
+
+  /** A real Firefox-shaped cookie store holding the sites named. */
+  const cookieStore = (file: string, hosts: string[], usedAt = 1): void => {
+    const rows = hosts
+      .map((h, i) => `('sid','yes','${h}','/',0,${usedAt + i},1,1,1,0,0,0,1,'')`)
+      .join(",");
+    execFileSync(PYTHON, [
+      "-c",
+      `import sqlite3,sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("CREATE TABLE IF NOT EXISTS moz_cookies (id INTEGER PRIMARY KEY, name TEXT, value TEXT,"
+  " host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER, creationTime INTEGER, isSecure INTEGER,"
+  " isHttpOnly INTEGER, inBrowserElement INTEGER, sameSite INTEGER, rawSameSite INTEGER, schemeMap INTEGER,"
+  " originAttributes TEXT, CONSTRAINT moz_uniqueid UNIQUE (name, host, path, originAttributes))")
+db.execute("INSERT OR REPLACE INTO moz_cookies (name,value,host,path,expiry,lastAccessed,creationTime,"
+  "isSecure,isHttpOnly,inBrowserElement,sameSite,rawSameSite,schemeMap,originAttributes) VALUES ${rows}")
+db.commit()`,
+      file,
+    ]);
+  };
+
+  /** Which sites a profile is signed into. */
+  const signedInto = (dir: string): string[] =>
+    execFileSync(PYTHON, [
+      "-c",
+      `import sqlite3,sys
+print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host FROM moz_cookies ORDER BY host")))`,
+      path.join(dir, "cookies.sqlite"),
+    ])
+      .toString()
+      .split("\n")
+      .filter(Boolean);
+
   /** Sessions cloned from a profile that is already signed in somewhere. */
   const signedIn = (): { sessions: BrowserSessions; seed: string; profiles: string } => {
     const home = fs.mkdtempSync(path.join(ctx.dir, "signed-in-"));
     const seed = path.join(home, "profile");
     fs.mkdirSync(seed, { recursive: true });
-    fs.writeFileSync(path.join(seed, "cookies.sqlite"), "his logins");
+    cookieStore(path.join(seed, "cookies.sqlite"), ["his.example"]);
     fs.writeFileSync(path.join(seed, ".parentlock"), "held by the browser that made it");
     return {
       sessions: new BrowserSessions(
-        { ...ctx.browsers, profileDir: path.join(home, "profiles"), seedProfile: seed },
+        {
+          ...ctx.browsers,
+          profileDir: path.join(home, "profiles"),
+          seedProfile: seed,
+          python: PYTHON,
+        },
         null,
         () => {},
         60_000,
@@ -739,7 +779,7 @@ describe("every browser opens as the user, already signed in", () => {
     const dirs = fs.readdirSync(profiles);
     expect(dirs).toHaveLength(2);
     for (const dir of dirs) {
-      expect(fs.readFileSync(path.join(profiles, dir, "cookies.sqlite"), "utf8")).toBe("his logins");
+      expect(signedInto(path.join(profiles, dir))).toEqual(["his.example"]);
       // Firefox locks a profile to one process; the copy must not carry the
       // lock of whichever browser held the original.
       expect(fs.existsSync(path.join(profiles, dir, ".parentlock"))).toBe(false);
@@ -747,16 +787,22 @@ describe("every browser opens as the user, already signed in", () => {
     await sessions.closeAll("test");
   });
 
-  it("keeps the user's own profile out of it: the clone goes, the original does not change", async () => {
-    // The clone is the session's alone. Nothing an agent does inside one can
-    // sign the user out of their own browser or undo another session's login.
+  it("keeps what BOTH browsers signed into, and the user's own logins with them", async () => {
+    // Handing whole profiles back made the last browser to close decide what
+    // the user was signed into; the other one's sign-in was simply gone. Two
+    // browsers, two different sites, and the user keeps all three logins.
     const { sessions, seed, profiles } = signedIn();
-    const handle = jv(await sessions.open("int-1", AGENT, ["pizza.example"], false)).get("session").str!;
-    const dir = path.join(profiles, fs.readdirSync(profiles)[0]);
-    fs.writeFileSync(path.join(dir, "cookies.sqlite"), "signed out of everything");
+    const first = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const dirs = fs.readdirSync(profiles);
+    const second = jv(await sessions.open("int-2", AGENT, ["b.example"], false)).get("session").str!;
+    const secondDir = fs.readdirSync(profiles).find((d) => !dirs.includes(d))!;
+    // Each signs into its own site, inside its own browser.
+    cookieStore(path.join(profiles, dirs[0], "cookies.sqlite"), ["a.example"], 50);
+    cookieStore(path.join(profiles, secondDir, "cookies.sqlite"), ["b.example"], 60);
 
-    await sessions.close(handle, "agent");
-    expect(fs.readFileSync(path.join(seed, "cookies.sqlite"), "utf8")).toBe("his logins");
+    await sessions.close(first, "agent");
+    await sessions.close(second, "agent");
+    expect(signedInto(seed)).toEqual(["a.example", "b.example", "his.example"]);
     expect(fs.readdirSync(profiles)).toEqual([]);
   });
 

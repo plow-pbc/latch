@@ -36,9 +36,11 @@ export interface BrowserHostConfig {
   screenshotsDir: string;
   profileDir?: string;
   /** The user's own browser profile. Every session opens on a clone of it, so
-   * every browser is signed in wherever they are, and hands it back on close.
-   * Unset (tests, no home) means sessions start on an empty profile. */
+   * every browser is signed in wherever they are, and merges what it signed
+   * into back on close. Unset means sessions start on an empty profile. */
   seedProfile?: string;
+  /** Interpreter used to merge cookie stores — the one this runtime ships. */
+  python?: string;
   /** Camoufox install dir (config.json + browsers/). When set, the server is
    * spawned with an app-scoped $HOME whose Library/Caches/camoufox symlinks
    * to it — camoufox finds a ready install, the user's shared cache is never
