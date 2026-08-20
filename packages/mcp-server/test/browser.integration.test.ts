@@ -146,4 +146,66 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(opAudit).toContain("RELEASED");
     expect(opAudit).not.toContain("pizza-time-99");
   }, 300_000);
+
+  // Issue #88. Two claims are checked here because both are load-bearing and
+  // neither survives a fake: a click Playwright dispatches is trusted and one
+  // synthesized in `eval` is not, and `force` does NOT push a click past an
+  // overlay — it skips the check, so a swallowed click has to be caught by
+  // watching for delivery or it comes back as a cheerful lie.
+  it("gives a stuck click a way through that keeps the event trusted", async () => {
+    const opened = await callTool(
+      server, "plow_browser_open",
+      { origins: ["127.0.0.1"], headed: false, goal: "get past a modal backdrop" },
+      AGENT,
+    );
+    expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
+    session = opened.payload.session as string;
+    const text = async () => (await act("text")).payload.text as string;
+
+    await act("goto", { url: site.url + "/blocked" });
+
+    // The shape the Costco log has: visible, enabled, stable — and unclickable.
+    const blocked = await act("click", { selector: "#continue", timeout_ms: 1000 }, false);
+    expect(blocked.isError).toBe(true);
+    expect(JSON.stringify(blocked.payload)).toContain("intercepts pointer events");
+
+    // Forcing it does not get through the backdrop — the browser still routes
+    // the event to whatever is on top — and saying so is the whole point: a
+    // silent "ok" here is what would send the agent on believing it clicked.
+    const forced = await act("click", { selector: "#continue", force: true }, false);
+    expect(forced.isError).toBe(true);
+    expect(JSON.stringify(forced.payload)).toContain("div.modal-backdrop.show got it instead");
+    expect(await text()).toContain("no click yet");
+
+    // The honest way through: deal with what is in the way, with a real click.
+    await act("click", { selector: "#dismiss" });
+    await act("click", { selector: "#continue" });
+    expect(await text()).toContain("clicked isTrusted=true");
+
+    // What `force` is actually for: an element that never holds still. Without
+    // it the click never lands; with it the page gets a real one.
+    const spin = "document.getElementById('result').textContent = 'no click yet';" +
+      "document.getElementById('continue').animate(" +
+      "[{transform:'translateX(0)'},{transform:'translateX(120px)'}]," +
+      "{duration:600, iterations:Infinity})";
+    await act("eval", { expression: spin });
+    const unstable = await act("click", { selector: "#continue", timeout_ms: 1000 }, false);
+    expect(unstable.isError).toBe(true);
+    expect(await text()).toContain("no click yet");
+    await act("click", { selector: "#continue", force: true, timeout_ms: 1000 });
+    expect(await text()).toContain("clicked isTrusted=true");
+
+    // A forced click that navigates takes the document — and the watcher's
+    // context — with it. That is a landed click, not a failure.
+    await act("click", { selector: "#leave", force: true });
+    expect(await text()).toContain("Order confirmed");
+    await act("goto", { url: site.url + "/blocked" });
+    await act("click", { selector: "#dismiss" });
+
+    // And the fallback all of this exists to replace: the page can tell.
+    await act("eval", { expression: "document.querySelector('#continue').click()" });
+    expect(await text()).toContain("clicked isTrusted=false");
+
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+  }, 300_000);
 });

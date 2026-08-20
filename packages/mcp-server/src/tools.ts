@@ -495,7 +495,11 @@ export const TOOLS: ToolSpec[] = [
       "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
       "'screenshot' returns an image of the page — take one after " +
-      "every navigation to see where you are. Ask plow_vault what is in the vault; " +
+      "every navigation to see where you are. When a 'click' fails, give it a longer " +
+      "'timeout_ms', or 'force: true' if the element will not hold still — never synthesize " +
+      "the click with 'eval', which sites detect. A click something else is covering is " +
+      "refused either way, naming what got it: dismiss that, then click. " +
+      "Ask plow_vault what is in the vault; " +
       "'fill_secret' types any approved vault field into a form field on this Mac without " +
       "returning the value to you — use it for every vault-backed field, including ones that " +
       "are not secret. Fields the vault itself conceals (passwords, card numbers and codes, " +
@@ -529,6 +533,8 @@ export const TOOLS: ToolSpec[] = [
         direction: { type: "string", description: "scroll: down|up|bottom|top" },
         seconds: { type: "number", description: "wait: seconds" },
         frame: { type: "integer", description: "click/fill: target a specific frame index" },
+        force: { type: "boolean", description: "click: skip the wait for the element to be clickable (for one that will not hold still); a click something else receives is still refused" },
+        timeout_ms: { type: "integer", description: "click: how long to wait for the element (default 3000, capped at 12000)" },
         max_chars: { type: "integer", description: "text: truncate to this many chars" },
       },
       additionalProperties: false,
@@ -544,7 +550,7 @@ export const TOOLS: ToolSpec[] = [
       const action = a.get("action").str;
       if (action === null) throw new ToolError("missing 'action'");
       const params: { [k: string]: JSONValue } = { action };
-      for (const key of ["url", "selector", "value", "expression", "index", "item", "field", "direction", "seconds", "frame"]) {
+      for (const key of ["url", "selector", "value", "expression", "index", "item", "field", "direction", "seconds", "frame", "force", "timeout_ms"]) {
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;
       }

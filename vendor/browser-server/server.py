@@ -47,6 +47,14 @@ if sys.platform == "darwin":
 
 MAX_ERROR_LEN = 500
 
+# How long one element action waits by default. Sized like the `goto` budget
+# above it: a single action has to answer inside the device's 15 s host cap and
+# the relay's ~20 s per-exchange ceiling, and a click that has not landed in
+# three seconds is usually telling the agent something -- so it fails fast and
+# the agent looks at the page. `click` takes a caller-supplied `timeout_ms`
+# instead when the agent knows the page is slow; the device clamps it.
+DEFAULT_ACTION_TIMEOUT_MS = 3000
+
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -159,6 +167,36 @@ VALUE_UNCHANGED_JS = """(el, previous) => (el.value || '') === previous"""
 
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
+
+# A forced click skips the check that guarantees delivery, so delivery has to be
+# observed instead: Playwright reports success the moment it has dispatched the
+# event, and an overlay, `pointer-events: none` or a disabled control swallows it
+# silently. The watcher lives on a handle rather than on `window` -- nothing the
+# page can see -- and the answer is "" when the element (or something inside it)
+# received the click, otherwise a description of what did.
+CLICK_OFF_JS = """(s) => document.removeEventListener("click", s.on, true)"""
+
+CLICK_WATCH_JS = """(sel) => {
+  const name = (el) => el.tagName.toLowerCase()
+    + (el.id ? "#" + el.id : "")
+    + (typeof el.className === "string" && el.className.trim()
+        ? "." + el.className.trim().split(/\\s+/).join(".") : "");
+  const s = {got: false, other: null};
+  s.on = (e) => {
+    const el = document.querySelector(sel);
+    if (el !== null && (el === e.target || el.contains(e.target))) s.got = true;
+    else if (s.other === null) s.other = name(e.target);
+  };
+  document.addEventListener("click", s.on, true);
+  return s;
+}"""
+
+CLICK_LANDED_JS = """(s, sel) => {
+  if (s.got) return "";
+  if (s.other !== null) return s.other + " got it instead";
+  if (document.querySelector(sel) === null) return "the element went away";
+  return "nothing received it -- the element is disabled, or has pointer-events: none";
+}"""
 
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
@@ -300,6 +338,17 @@ class Session:
             out["page_count"] = 0
         return out
 
+    def ask_watcher(self, watch, js, *args):
+        """Ask the click watcher something, tolerating a document that has gone.
+
+        A forced click on a link or a submit navigates, and the handle's context
+        dies with the old document -- which is itself proof the click landed.
+        """
+        try:
+            return watch.evaluate(js, *args)
+        except Exception:
+            return ""
+
     def frames_for(self, cmd):
         """Explicit frame index if given, else all frames (login forms hide in iframes)."""
         if "frame" in cmd:
@@ -393,12 +442,55 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
-            for i, fr in enumerate(self.page.frames):
-                if "frame" in cmd and i != int(cmd["frame"]):
-                    continue
+            # Both search every frame for the selector, so a per-frame timeout
+            # is really N x itself -- past the caps the number was chosen
+            # against. A click's timeout is therefore the budget for the WHOLE
+            # action, shared out over the frames left to try: a frame that fails
+            # early hands the rest of the budget to the next one, and a frame
+            # that holds the element clicks straight away and never spends it.
+            # (`fill` keeps its per-frame default: a credential field is found
+            # by searching frames, and shortening the later ones would drop
+            # fills that work today.)
+            frames = self.frames_for(cmd)
+            first = int(cmd["frame"]) if "frame" in cmd else 0
+            deadline = time.monotonic() + (
+                int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS) / 1000.0
+            )
+            for tried, fr in enumerate(frames):
+                i = first + tried
                 try:
                     if action == "click":
-                        fr.click(sel, timeout=3000)
+                        left = int(
+                            (deadline - time.monotonic()) * 1000 / (len(frames) - tried)
+                        )
+                        if left <= 0:
+                            break
+                        if not cmd.get("force"):
+                            fr.click(sel, timeout=left)
+                        else:
+                            # `force` skips the actionability check -- what an
+                            # element that never holds still needs, and the
+                            # reason an agent never has to reach for `eval` to
+                            # get a click through: the event still comes from
+                            # the browser, so the page sees a real one. What it
+                            # does NOT do is push a click past whatever is in
+                            # the way, so delivery is watched and a swallowed
+                            # click is an error rather than a cheerful lie.
+                            watch = fr.evaluate_handle(CLICK_WATCH_JS, sel)
+                            try:
+                                fr.click(sel, timeout=left, force=True)
+                                blocked = self.ask_watcher(watch, CLICK_LANDED_JS, sel)
+                            finally:
+                                # Always: a listener left on a document the next
+                                # click still reaches is page-visible litter.
+                                self.ask_watcher(watch, CLICK_OFF_JS)
+                                watch.dispose()
+                            if blocked:
+                                raise RuntimeError(
+                                    "forced click on %s was not received: %s. Deal with what "
+                                    "is in the way -- click it, or the control that dismisses "
+                                    "it -- rather than clicking through it." % (sel, blocked)
+                                )
                     else:
                         # ONE resolved node for the whole fill. Resolving the
                         # selector a second time is the re-resolution failure
@@ -408,7 +500,7 @@ class Session:
                         # the handle and filling through the SAME handle makes
                         # that impossible -- a node that goes away raises here
                         # and the value is never typed.
-                        el = fr.wait_for_selector(sel, timeout=3000)
+                        el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
                         if el is None:
                             raise RuntimeError("selector not found: %s" % sel)
                         # The device checked an origin before it went away to
@@ -443,7 +535,7 @@ class Session:
                                 before.dispose()
                                 return {"ok": False, "mask": state, "frame": i}
                             try:
-                                el.fill(cmd["value"], timeout=3000)
+                                el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
                             except Exception:
                                 # Nothing landed: put the node back as it was
                                 # found. Something did: it is holding a value
@@ -463,7 +555,7 @@ class Session:
                         # in, never before: a fill that times out would
                         # otherwise leave the node holding the previous
                         # secret with nothing left to hide it.
-                        el.fill(cmd["value"], timeout=3000)
+                        el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
                         el.evaluate(UNMASK_JS)
                         self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
                     if action == "click":

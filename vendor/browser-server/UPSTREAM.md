@@ -24,6 +24,16 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     single action answers inside Domo's 15 s host cap and the relay's ~20 s
     per-exchange ceiling; a genuinely slower page fails cleanly and the agent
     retries rather than parking a torn 504.
+  - Element actions default to a 3 s timeout (`DEFAULT_ACTION_TIMEOUT_MS`) for
+    the same budget. `click` takes a caller-supplied `timeout_ms` and `force`,
+    and its timeout bounds the WHOLE action rather than each frame the loop
+    tries — the device clamps the value to 12 s so N frames still answer inside
+    the caps. `force` skips Playwright's actionability check but cannot push a
+    click past whatever is covering the element, and Playwright reports success
+    as soon as it has dispatched: delivery is watched, and a click something
+    else received is an error naming it. Both knobs exist so a stuck click has
+    an answer other than `eval`, whose synthesized clicks carry
+    `isTrusted: false` and are what gets a session flagged.
   - Started directly by the Domo device supervisor — no CLI, no `os.fork`, no
     fixed 4 s sleep, no `.state.json`, no Unix socket.
   - JSON lines over **stdio** with request ids; original stdout is dup'ed as

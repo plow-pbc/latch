@@ -22,6 +22,7 @@ interface Ctx {
   events: { event: string; fields: { [k: string]: JSONValue } }[];
   dir: string;
   fillLog: string;
+  cmdLog: string;
 }
 
 let ctx: Ctx;
@@ -29,6 +30,7 @@ let ctx: Ctx;
 function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bs-"));
   const fillLog = path.join(dir, "fills.log");
+  const cmdLog = path.join(dir, "commands.log");
   const vaultPath = path.join(dir, "vault.json");
   fs.writeFileSync(
     vaultPath,
@@ -67,7 +69,7 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
     events.push({ event, fields });
   const host = new BrowserHost({
     command: ["node", FAKE_SERVER],
-    env: { FAKE_FILL_LOG: fillLog, ...serverEnv },
+    env: { FAKE_FILL_LOG: fillLog, FAKE_CMD_LOG: cmdLog, ...serverEnv },
     screenshotsDir: path.join(dir, "shots"),
     audit,
   });
@@ -76,7 +78,7 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
     env: { FAKE_BROKER_VAULT: vaultPath },
   });
   const sessions = new BrowserSessions(host, credentials, audit, 60_000);
-  return { sessions, host, events, dir, fillLog };
+  return { sessions, host, events, dir, fillLog, cmdLog };
 }
 
 beforeEach(() => {
@@ -180,6 +182,31 @@ describe("session lifecycle", () => {
     expect(r.get("seconds").num).toBe(12); // MAX_WAIT_SECONDS
     const ok = jv(await ctx.sessions.command(AGENT, s, { action: "wait", seconds: 3 }));
     expect(ok.get("seconds").num).toBe(3); // a reasonable wait passes through
+  });
+
+  it("hands the browser the click escape hatches, timeout bounded like a wait", async () => {
+    const s = await openSession(["pizza.example"]);
+    const clicks: [Record<string, JSONValue>, JSONValue | undefined][] = [
+      [{ force: true }, undefined],
+      [{ timeout_ms: 8000 }, 8000],
+      [{ timeout_ms: 45_000 }, 12_000], // capped: one exchange can't run past the ceiling
+      // Playwright reads 0 as "no timeout" — the floor is what keeps a click
+      // from parking until the host cap kills the browser under it.
+      [{ timeout_ms: 0 }, 500],
+      [{}, undefined], // asked for nothing, told the browser nothing
+    ];
+    for (const [extra] of clicks) {
+      const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#go", ...extra }));
+      expect(r.get("status").str).toBe("completed");
+    }
+    const sent = fs
+      .readFileSync(ctx.cmdLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { action: string; force?: boolean; timeout_ms?: number })
+      .filter((c) => c.action === "click");
+    expect(sent.map((c) => c.timeout_ms)).toEqual(clicks.map(([, want]) => want));
+    expect(sent.map((c) => c.force)).toEqual([true, undefined, undefined, undefined, undefined]);
   });
 });
 

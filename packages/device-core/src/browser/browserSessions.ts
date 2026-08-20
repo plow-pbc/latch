@@ -67,6 +67,15 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  */
 const MAX_WAIT_SECONDS = 12;
 
+/**
+ * Bounds on a `click`'s caller-supplied `timeout_ms`, for the same reason: the
+ * ceiling keeps one click inside the exchange, and the floor exists because
+ * Playwright reads a zero timeout as *no* timeout — an agent asking for 0 would
+ * park the click until the host cap killed the browser out from under it.
+ */
+const MIN_CLICK_TIMEOUT_MS = 500;
+const MAX_CLICK_TIMEOUT_MS = MAX_WAIT_SECONDS * 1000;
+
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
   origins: string[];
@@ -348,7 +357,7 @@ export class BrowserSessions {
         default: {
           // Pass-through actions; the server rejects unknown ones.
           const forwarded: { [k: string]: JSONValue } = { action };
-          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
+          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame", "force"]) {
             const v = p.get(key).value;
             if (v !== null && v !== undefined) forwarded[key] = v;
           }
@@ -357,6 +366,15 @@ export class BrowserSessions {
           if (action === "wait") {
             const secs = p.get("seconds").num ?? 1;
             forwarded.seconds = Math.min(Math.max(secs, 0), MAX_WAIT_SECONDS);
+          }
+          // Same reasoning for a click's timeout: the agent may ask a slow page
+          // for more than the default, up to what the exchange can carry.
+          const timeoutMs = p.get("timeout_ms").num;
+          if (action === "click" && timeoutMs !== null) {
+            forwarded.timeout_ms = Math.min(
+              Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
+              MAX_CLICK_TIMEOUT_MS,
+            );
           }
           return await this.serverAction(s, forwarded);
         }

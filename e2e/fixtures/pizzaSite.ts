@@ -115,6 +115,33 @@ export function createPizzaSite(): Promise<PizzaSite> {
         });
         redirect(`/confirm?n=${nextOrder++}`);
       });
+    } else if (req.method === "GET" && url.pathname === "/blocked") {
+      // The shape the Costco IdP had (issue #88): a real, visible, enabled
+      // button with a backdrop over it swallowing pointer events. Playwright's
+      // actionability check refuses it; `force` is the honest way through, and
+      // the handler reports whether the event the page got was a real one.
+      html(
+        "Blocked",
+        `<h1>Verify</h1>
+         <button id="continue" type="button">Update</button>
+         <div class="modal-backdrop show"
+              style="position:fixed;inset:0;background:rgba(0,0,0,.5)"></div>
+         <button id="dismiss" type="button"
+                 style="position:fixed;top:0;right:0">Close</button>
+         <a id="leave" href="/confirm?n=9" style="position:fixed;bottom:0;left:0">Leave</a>
+         <p id="result">no click yet</p>
+         <script>
+           document.getElementById("continue").addEventListener("click", (e) => {
+             document.getElementById("result").textContent =
+               "clicked isTrusted=" + e.isTrusted;
+           });
+           // Dismissable, like the modal it stands in for: the way through is
+           // the control that closes it, which a real click reaches.
+           document.getElementById("dismiss").addEventListener("click", () => {
+             document.querySelector(".modal-backdrop").remove();
+           });
+         </script>`,
+      );
     } else if (req.method === "GET" && url.pathname === "/confirm") {
       html("Confirmed", `<h1 id="confirmed">Order confirmed #${url.searchParams.get("n")}</h1>`);
     } else {
