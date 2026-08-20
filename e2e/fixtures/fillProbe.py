@@ -173,6 +173,10 @@ class Page:
         class _Context:
             pages = [self]
 
+            # Session subscribes its response listener here at construction.
+            def on(self, _event, _handler):
+                pass
+
         self.context = _Context()
 
     def evaluate(self, expression, *args, **kwargs):

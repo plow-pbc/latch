@@ -18,6 +18,7 @@ Adapted from plow-pbc/camoufox-cli scripts/camoufox_cli.py (see UPSTREAM.md).
 
 import argparse
 import base64
+import collections
 import json
 import os
 import signal
@@ -46,6 +47,32 @@ if sys.platform == "darwin":
         pass
 
 MAX_ERROR_LEN = 500
+
+# How many refused requests one action can carry back. The relay buffers a whole
+# exchange, so an unbounded list on a chatty page is a torn call; a handful of
+# the most recent ones is what an agent needs to know it is being blocked.
+MAX_FAILED_REQUESTS = 5
+
+# Kept off a refused request beyond status/method/url. Never a body -- a body can
+# echo a submitted credential -- and never an arbitrary header: Set-Cookie and
+# friends live there. Retry-After is what says "wait" rather than "you are
+# blocked", and its ABSENCE on a 429 is diagnostic in itself; Server is usually
+# what distinguishes an origin rate-limiting us from a bot vendor refusing us,
+# which is the call worth getting right.
+FAILED_REQUEST_HEADERS = ("retry-after", "server")
+
+
+def _strip_query(url):
+    """Query and fragment carry tokens -- B2C hangs tx=StateProperties= there.
+
+    Stripped where the URL is recorded, not where it is reported, so nothing
+    downstream is holding one.
+    """
+    i = url.find("?")
+    j = url.find("#")
+    cut = min(x for x in (i, j, len(url)) if x != -1)
+    return url[:cut]
+
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
@@ -208,6 +235,43 @@ class Session:
         # navigation can be noticed however it happened and a route change
         # within one document is not mistaken for one.
         self.seen_document = {}
+        # Requests the site itself refused, oldest first, waiting for the next
+        # envelope to carry them out. Subscribed on the CONTEXT rather than the
+        # page: a popup is where a checkout or a sign-in usually lands, and a
+        # per-page listener would be blind to exactly the ones worth seeing.
+        # Attached here rather than by the caller so a Session cannot exist
+        # without it -- an action that silently reports nothing is the bug.
+        self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
+        page.context.on("response", self.note_response)
+
+    def note_response(self, response):
+        """Remember a request the site refused.
+
+        Only 4xx/5xx: a sign-in flow is mostly redirects, and keeping those
+        would push the one refusal that matters out of a short ring. Nothing
+        here may raise -- this runs on Playwright's event thread, where an
+        exception is nobody's to catch -- and nothing here reads a body.
+        """
+        try:
+            if response.status < 400:
+                return
+            headers = response.headers
+            entry = {
+                "status": response.status,
+                "method": response.request.method,
+                "url": _strip_query(response.url),
+            }
+            try:
+                entry["bytes"] = int(headers.get("content-length"))
+            except (TypeError, ValueError):
+                pass  # absent or not a number; the size is the least of it
+            for name in FAILED_REQUEST_HEADERS:
+                value = headers.get(name)
+                if value:
+                    entry[name.replace("-", "_")] = str(value)[:100]
+            self.failed.append(entry)
+        except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
+            pass
 
     def _forget_navigated(self):
         """A page showing a NEW DOCUMENT is not the page anything was filled on.
@@ -298,6 +362,13 @@ class Session:
         except Exception:
             out["url"] = ""
             out["page_count"] = 0
+        # Most recent first, and drained: a refusal is reported on the action it
+        # arrived during and never again. One that lands after the action
+        # answered (a click's XHR settling late) rides the next one, which is
+        # where the agent is still standing.
+        if self.failed:
+            out["failed_requests"] = list(reversed(self.failed))
+            self.failed.clear()
         return out
 
     def frames_for(self, cmd):
