@@ -319,6 +319,11 @@ class Session:
         except Exception:  # noqa: BLE001 -- a frame that went away holds nothing
             return False
 
+    def indexed_frames(self, cmd):
+        """`frames_for` with each frame's index on the page alongside it."""
+        base = int(cmd["frame"]) if "frame" in cmd else 0
+        return [(base + n, fr) for n, fr in enumerate(self.frames_for(cmd))]
+
     def frames_for(self, cmd):
         """Explicit frame index if given, else all frames (login forms hide in iframes)."""
         if "frame" in cmd:
@@ -426,19 +431,24 @@ class Session:
             # (`fill` keeps its per-frame default: a credential field is found
             # by searching frames, and shortening the later ones would drop
             # fills that work today.)
-            base = int(cmd["frame"]) if "frame" in cmd else 0
-            frames = [(base + n, fr) for n, fr in enumerate(self.frames_for(cmd))]
-            deadline = time.monotonic() + (
-                int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS) / 1000.0
-            )
+            budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
+            deadline = time.monotonic() + budget_ms / 1000.0
+            frames = self.indexed_frames(cmd)
             if action == "click":
                 while True:
+                    # Re-enumerated every pass, not snapshotted: a consent or
+                    # payment iframe injected while we wait is a NEW frame
+                    # object, and the selector this loop is waiting for often
+                    # arrives inside exactly that.
+                    frames = self.indexed_frames(cmd)
                     holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
                     if holding:
                         frames = holding
                         break
                     if time.monotonic() >= deadline:
-                        raise RuntimeError("selector not found: %s" % sel)
+                        raise RuntimeError(
+                            "no frame has %s after %dms" % (sel, budget_ms)
+                        )
                     self.page.wait_for_timeout(SCAN_INTERVAL_MS)
             for tried, (i, fr) in enumerate(frames):
                 try:
@@ -447,6 +457,11 @@ class Session:
                             (deadline - time.monotonic()) * 1000 / (len(frames) - tried)
                         )
                         if left <= 0:
+                            # Distinct from the not-found above: the selector IS
+                            # there, the budget went on waiting for it.
+                            last = last or RuntimeError(
+                                "found %s with no time left to click it" % sel
+                            )
                             break
                         fr.click(sel, timeout=left)
                     else:
