@@ -277,8 +277,7 @@ export class BrowserSessions {
 
     /** Give the claim back, whatever went wrong after taking it. */
     const rollBack = async () => {
-      this.sessions.delete(handle);
-      this.releaseProfile(session);
+      this.finalize(session);
       try {
         await this.stop(host);
       } catch {
@@ -454,27 +453,18 @@ export class BrowserSessions {
     if (agentId !== undefined && s.agentId !== agentId) {
       return { status: "error", error: "session belongs to a different Plow credential" };
     }
-    if (s.idleTimer) clearTimeout(s.idleTimer);
     // The claim is held until the browser is really down. Releasing it first
     // lets the same credential reopen while Camoufox still has the profile,
     // and Firefox locks a profile against a second copy of itself.
     //
     // Only this session's browser goes away; everyone else keeps theirs, and
     // this one's profile goes with it — nothing is left for the next agent.
+    // Finalized whichever way the shutdown went: a stop that throws is exactly
+    // when the last thing the page said is worth having.
     try {
       await this.stop(s.host);
     } finally {
-      this.sessions.delete(handle);
-      this.releaseProfile(s);
-      // Written whichever way the shutdown went: a stop that throws is exactly
-      // when the last thing the page said is worth having, and taking the
-      // entries afterwards would have dropped them on that path.
-      const left = failedRequests(s.host.takeFailedRequests());
-      this.audit("browser_session_closed", {
-        session: s.auditId,
-        reason,
-        ...(left.length ? { failed_requests: left } : {}),
-      });
+      this.finalize(s, reason);
     }
     return { status: "completed" };
   }
@@ -486,14 +476,23 @@ export class BrowserSessions {
    */
   noteCrash(handle: string): void {
     const s = this.sessions.get(handle);
-    if (!s) return;
-    this.sessions.delete(handle);
+    if (s) this.finalize(s, "crashed");
+  }
+
+  /**
+   * The end of a session, in one place, so every way one can end — a failed
+   * open, a close, a crash — leaves the same nothing behind. No reason means
+   * a rollback: that session was never published, so nothing is logged.
+   */
+  private finalize(s: Session, reason?: string): void {
+    this.sessions.delete(s.handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
     this.releaseProfile(s);
+    if (!reason) return;
     const left = failedRequests(s.host.takeFailedRequests());
     this.audit("browser_session_closed", {
       session: s.auditId,
-      reason: "crashed",
+      reason,
       ...(left.length ? { failed_requests: left } : {}),
     });
   }
