@@ -343,16 +343,19 @@ and the owner's log recorded a plain click — the gap cost a 27-minute blind
 retry loop against a sign-in that was being rate-limited, and the only way to
 see the status was to hand-instrument `XMLHttpRequest` through `eval`, which
 is itself an automation signal. So the server keeps the last five 4xx/5xx per
-action (context-level, popups included) and every result carries them as
+action (context-level, popups included) and every reply carries them as
 `failed_requests` — status, method, a **query-stripped** url (B2C hangs
 `tx=StateProperties=` there), size, `Retry-After` and `Server`. Never a body:
 a body can echo a submitted credential. Bounded because the relay buffers a
-whole exchange. The browser reports and forgets; **`BrowserHost` holds them**
-until an agent action carries them out. That is deliberate: most of what asks
-the browser anything is the device itself — the owner's ~1/s viewer poll, the
-popup sweep, the frame lookup before a credential fill — and whichever of
-those was in flight would otherwise be the one that consumed a 429 and dropped
-it. Every response passes through one place, so that is where they wait.
+whole exchange. The browser reports and forgets — on every reply it sends, the
+answer to a failed action and to `quit` included, since a refusal that only
+rode success replies is the one nobody would ever see. **`BrowserHost` holds
+them** until an agent action carries them out. That is deliberate: most of
+what asks the browser anything is the device itself — the owner's ~1/s viewer
+poll, the popup sweep, the frame lookup before a credential fill — and
+whichever of those was in flight would otherwise be the one that consumed a
+429 and dropped it. Every response passes through one place, so that is where
+they wait.
 
 **Who asked.** Each entry names the document that asked (`frame_url`) as well
 as what it asked for. A navigation names itself, but only when it answers the
@@ -363,13 +366,15 @@ it would name the page being left, and a refused `goto` would be credited to
 the page the agent was leaving. Everything else is named by whoever drove it:
 a subframe by the frame that embedded it, and a background popup or a page
 scripting its own `location` by the document that frame is still showing —
-never by the url it chose. `back` lands somewhere not known in advance, so it
-claims nothing, and `use_page` clears the pointer along with the page it
-belonged to. A frame that cannot be resolved at all (a service worker's
-request, a popup before its frame exists) names nothing. The rule behind all
-of it: a page must never get to write the agent's evidence by choosing a url.
-`BrowserSessions` re-strips the query from both `frame_url` and the requested
-url before either reaches the agent or the audit log.
+never by the url it chose. The url the agent asked for is authoritative only
+while that `goto` is in flight — the response arrives before it returns — so
+nothing survives it for a page to navigate into and claim, however it gets
+there: `back`, `use_page`, or a scripted `location`. A frame that cannot be
+resolved at all (a service worker's request, a popup before its frame exists)
+names nothing. The rule behind all of it: a page must never get to write the
+agent's evidence by choosing a url. `BrowserSessions` re-strips the query from
+both `frame_url` and the requested url before either reaches the agent or the
+audit log.
 
 **The owner's log gets every entry** — an out-of-scope page being refused is
 exactly what they are watching for, and whatever is still held when a session

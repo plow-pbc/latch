@@ -70,6 +70,8 @@ url, title, links, forms, tables, pages.
   means the sign-in did not take; a 429 means you are being throttled or blocked, and a 429
   with no \`retry_after\` is usually the latter, so waiting will not help. One can settle
   after the action answered and ride the next result — the screenshot you take next.
+  An action that ERRORED reports what its own requests did on your next result, so take a
+  screenshot before you retry — the refusal is usually the reason it failed.
   Do not instrument the page with \`eval\` to find this out; this is that answer.
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.

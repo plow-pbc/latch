@@ -323,14 +323,17 @@ describe("requests the site refused", () => {
     // that only rode success replies would be the one nobody ever sees.
     const failed = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#refuses" }));
     expect(failed.get("status").str).toBe("error");
-    // It reaches the agent on the next action, and the owner's log either way.
+    // It reaches the agent, and the owner's log, on the action after the one
+    // that failed — the failing action's own reply is an error and carries no
+    // result to hang it on.
     const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
-    expect(shot.get("failed_requests").value).toEqual([
-      {
-        status: 403, method: "POST",
-        url: "https://pizza.example/api/submit", frame_url: "https://pizza.example/",
-      },
-    ]);
+    const entry = {
+      status: 403, method: "POST",
+      url: "https://pizza.example/api/submit", frame_url: "https://pizza.example/",
+    };
+    expect(shot.get("failed_requests").value).toEqual([entry]);
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toEqual([entry]);
   });
 
   it("survives the owner's viewer poll, which asks the browser on its own account", async () => {
