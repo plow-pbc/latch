@@ -272,7 +272,7 @@ export class BrowserSessions {
     // session's old bound, which is the safe end — a jar still answering to
     // the narrow grant while holding the widened origin's cookies is the
     // escape itself.
-    if (widened.length > s.origins.length) await this.host.abandonProfile();
+    if (widened.length > s.origins.length) this.host.abandonProfile();
     this.audit("browser_session_extended", {
       intentId,
       session: s.handle,
@@ -479,20 +479,16 @@ export class BrowserSessions {
     let strayedOrigin: string | null = null;
     if (strayed !== undefined) {
       strayedOrigin = hostOf(strayed) ?? strayed;
-      // Retire, then record, then return. Retiring first because a log the
-      // device cannot write must never decide whether a contaminated jar stays
-      // reusable; recording before the return because the two paths that
-      // refuse the action — a retirement that failed, a mask that would not go
-      // back on — retire the jar just the same, and a viewer filtering on this
-      // event would otherwise see an abandoned profile with nothing naming
-      // what reached where.
-      const refused = await this.retireProfile(s, strayedOrigin);
+      // Given up before anything is recorded: the response is already in the
+      // jar, so nothing the device might fail to write gets to decide whether
+      // it stays reusable. This cannot fail — it sets a flag on a directory no
+      // grant can name until the browser stops clean.
+      this.host.abandonProfile();
       this.audit("browser_scope_violation", {
         session: s.handle,
         action: String(action.action),
         origin: strayedOrigin,
       });
-      if (refused) return refused;
     }
 
     const navigated = url !== s.lastUrl;
@@ -579,43 +575,6 @@ export class BrowserSessions {
       }));
     } catch {
       return []; // best-effort; the per-action check still guards content
-    }
-  }
-
-  /**
-   * Give up the jar, because it now holds state for an origin this grant does
-   * not name. Returns a refusal when it could not be given up: unlike a
-   * widening — where a failed retirement is the safe end, since nothing was
-   * granted — the request has already gone out here, so a jar that cannot be
-   * retired must not survive to be handed to a later action.
-   */
-  private async retireProfile(s: Session, origin: string): Promise<JSONValue | null> {
-    try {
-      await this.host.abandonProfile();
-      return null;
-    } catch (error: unknown) {
-      // Best-effort, and deliberately not in front of the close: what fails
-      // here is a write inside the profile directory, and the audit log lives
-      // on the same volume — so the case that reaches this branch is exactly
-      // the case where recording it throws too. Letting that skip the close
-      // would leave the session live on a jar holding the unapproved origin's
-      // cookies, which is the fail-open this exists to shut.
-      try {
-        this.audit("browser_profile_abandon_failed", {
-          session: s.handle,
-          origin,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      } catch {
-        /* the close below is the act; the record is the nice-to-have */
-      }
-      await this.close(s.handle, "profile could not be retired");
-      return {
-        status: "error",
-        error:
-          `landed on ${origin}, outside the approved origins, and this browser's ` +
-          `stored state could not be retired — the session has been closed`,
-      };
     }
   }
 

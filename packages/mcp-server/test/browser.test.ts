@@ -85,9 +85,15 @@ const audited = (device: DeviceAgent, event: string, field = "profile"): JSONVal
     .filter((e) => jv(e as JSONValue).get("event").str === event)
     .map((e) => jv(e as JSONValue).get(field).value);
 
-/** Whether a profile directory has been given up (see abandonProfile). */
-const abandoned = (profiles: string, dir: string): boolean =>
-  fs.existsSync(path.join(profiles, dir, "domo-abandoned"));
+/** The profiles published under their grant — what a later session can claim.
+ * A directory in use, or given up, is not among them. */
+const published = (profiles: string): string[] => {
+  try {
+    return fs.readdirSync(profiles).filter((d) => !d.includes(".live-")).sort();
+  } catch {
+    return [];
+  }
+};
 
 const events = (device: DeviceAgent): string[] =>
   device.audit.entries().map((e) => jv(e as JSONValue).get("event").str ?? "");
@@ -291,7 +297,8 @@ describe("browser tools (fake runtime)", () => {
   });
 
   it("each approved origin set browses in its own profile, and comes back to it", async () => {
-    const { server, argvLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
 
     const runOnce = async (origins: string[]) => {
       const session = await open(server, origins);
@@ -302,17 +309,13 @@ describe("browser tools (fake runtime)", () => {
     // The same grant, spelled differently: the profile is the set, not the string.
     await runOnce(["*.PIZZA.example", "pizza.example"]);
 
-    const profileOf = (argv: string) => {
-      const parts = argv.split(/\s+/);
-      const i = parts.indexOf("--profile-dir");
-      return i === -1 ? null : parts[i + 1];
-    };
-    const [pizza, bank, pizzaAgain] = launches(argvLog).map(profileOf);
-    expect(pizza).toBeTruthy();
-    // The bank session cannot read what the pizza session left behind...
-    expect(bank).not.toBe(pizza);
-    // ...and pizza is recognized when it comes back.
-    expect(pizzaAgain).toBe(pizza);
+    // Each grant published its own store, and the third session — the same
+    // grant as the first, spelled differently — came back to that one rather
+    // than making a third.
+    expect(published(profiles)).toEqual(
+      [profileKeyForOrigins(["pizza.example", "*.pizza.example"]),
+       profileKeyForOrigins(["bank.example"])].sort(),
+    );
   });
 
   it("two widenings racing each other both land in the bound", async () => {
@@ -358,22 +361,16 @@ describe("browser tools (fake runtime)", () => {
 
     const session = await open(server, ["pizza.example", "*.pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/menu" });
-    expect(abandoned(profiles, key)).toBe(false);
-    fs.writeFileSync(path.join(profiles, key, "cookies.sqlite"), "state from this session");
 
     // #offsite navigates the page to https://offsite.example/lander.
     const strayed = await act(server, session, "click", { selector: "#offsite" });
     expect(strayed.payload.out_of_scope).toBe("offsite.example");
-    expect(abandoned(profiles, key)).toBe(true);
-    expect(audited(device, "browser_profile_abandoned")).toEqual([key]);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    // The grant it was filed under does not get it back — the jar is gone,
-    // not merely marked, so there is nothing left to hand anyone.
+    // Never published, so the grant it was filed under has nothing to claim.
+    expect(published(profiles)).toEqual([]);
     await open(server, ["pizza.example", "*.pizza.example"]);
-    expect(fs.readdirSync(profiles)).toEqual([key]);
-    expect(fs.existsSync(path.join(profiles, key, "cookies.sqlite"))).toBe(false);
-    expect(audited(device, "browser_profile_reaped")).toEqual([key]);
+    expect(audited(device, "browser_profile_reaped")).toHaveLength(1);
   });
 
   it("a popup on an unapproved origin retires the jar too", async () => {
@@ -382,16 +379,12 @@ describe("browser tools (fake runtime)", () => {
     // throughout, so nothing in the per-action check would notice.
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
-    const key = profileKeyForOrigins(["pizza.example", "*.pizza.example"]);
 
     const session = await open(server, ["pizza.example", "*.pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/menu" });
-    expect(abandoned(profiles, key)).toBe(false);
 
     // #popup opens a second page on https://popup.example/pay.
     const popped = await act(server, session, "click", { selector: "#popup" });
-    expect(abandoned(profiles, key)).toBe(true);
-    expect(audited(device, "browser_profile_abandoned")).toEqual([key]);
 
     // And the agent is told, since the active page never left scope — without
     // this it carries on unaware the saved cookies are gone.
@@ -407,43 +400,10 @@ describe("browser tools (fake runtime)", () => {
     const still = await act(server, session, "text");
     expect(still.isError).toBe(false);
     expect(String(still.payload.text)).toContain("pizza.example/menu");
-  });
 
-  it("a jar that cannot be retired takes the session down with it", async () => {
-    // Opposite failure semantics to a widening, where a failed retirement is
-    // the safe end because nothing was granted: here the request has already
-    // gone out, so a jar that cannot be marked must not survive to be handed
-    // to a later action.
-    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
-    const profiles = path.join(device.home, "device/browser/profiles");
-    const key = profileKeyForOrigins(["pizza.example", "*.pizza.example"]);
-
-    const session = await open(server, ["pizza.example", "*.pizza.example"]);
-    await act(server, session, "goto", { url: "https://pizza.example/menu" });
-    const dir = path.join(profiles, key);
-    fs.chmodSync(dir, 0o500); // the marker write fails EACCES; the audit log does not
-    try {
-      const strayed = await act(server, session, "click", { selector: "#offsite" });
-      expect(strayed.isError).toBe(true);
-      expect(JSON.stringify(strayed.payload)).toContain("could not be retired");
-      expect(strayed.payload.text).toBeUndefined();
-      expect(strayed.payload.data_b64).toBeUndefined();
-    } finally {
-      fs.chmodSync(dir, 0o700);
-    }
-
-    // The session is gone, not merely erroring — nothing else reaches that jar.
-    expect(audited(device, "browser_profile_abandoned")).toEqual([]);
-    expect(events(device)).toContain("browser_profile_abandon_failed");
-    // The violation is recorded on this path too — retirement failing is not
-    // a reason for the owner's log to lose what reached where.
-    expect(audited(device, "browser_scope_violation", "origin")).toEqual(["offsite.example"]);
-    expect(audited(device, "browser_session_closed", "reason").at(-1)).toBe(
-      "profile could not be retired",
-    );
-    const after = await act(server, session, "text");
-    expect(after.isError).toBe(true);
-    expect(JSON.stringify(after.payload)).toContain("unknown session");
+    // And the store is not published when the session ends.
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+    expect(published(profiles)).toEqual([]);
   });
 
   it("a widened session's jar is given up, and no later session opens it", async () => {
@@ -460,17 +420,12 @@ describe("browser tools (fake runtime)", () => {
     const opening = profileKeyForOrigins(["pizza.example"]);
 
     const session = await open(server, ["pizza.example"]);
-    expect(abandoned(profiles, opening)).toBe(false);
 
     const widen = await callTool(
       server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT,
     );
     expect(widen.isError, JSON.stringify(widen.payload)).toBe(false);
 
-    // At the widening, not at close: quit, kill -9 and power loss all skip a
-    // close, and each would leave the jar open to the narrower grant.
-    expect(abandoned(profiles, opening)).toBe(true);
-    expect(audited(device, "browser_profile_abandoned").at(-1)).toBe(opening);
 
     // The live browser came along: an action after the widening must not
     // restart it, which would cost the session its page. A second widening
@@ -485,32 +440,19 @@ describe("browser tools (fake runtime)", () => {
     // wrong reason if this widening never happened.
     expect(jv(widenAgain.payload as JSONValue).get("origins").arr).toContain("shop.example");
     expect(launches(argvLog)).toHaveLength(1);
-    expect(audited(device, "browser_profile_abandoned")).toEqual([opening]);
+    expect(audited(device, "browser_profile_abandoned")).toHaveLength(1);
     await callTool(server, "plow_browser_close", { session }, AGENT);
-    // Checked here, where one entry is the whole answer: after the later
-    // sessions below, a jar wrongly filed under pizza+bank would be
-    // indistinguishable from the one they legitimately open.
-    expect(fs.readdirSync(profiles)).toEqual([opening]);
-
-    // Every later session gets a fresh jar, the narrow grant it was filed
-    // under included — that is the one that could actually send those cookies.
+    // The widened session published nothing, so the narrow grant it was filed
+    // under — the one that could actually send those cookies — starts empty,
+    // and so does every later session.
+    expect(published(profiles)).toEqual([]);
     for (const origins of [["pizza.example"], ["pizza.example", "bank.example"]]) {
       const later = await open(server, origins);
       await callTool(server, "plow_browser_close", { session: later }, AGENT);
     }
-    expect(fs.readdirSync(profiles).sort()).toEqual(
+    expect(published(profiles)).toEqual(
       [opening, profileKeyForOrigins(["pizza.example", "bank.example"])].sort(),
     );
-    expect(abandoned(profiles, opening)).toBe(false);
-    expect(audited(device, "browser_profile_reaped")).toEqual([opening]);
-
-    // Which one each browser opened is in the log — the owner cannot work it
-    // out from the origins alone, since a reaped name gets reused.
-    expect(audited(device, "browser_started")).toEqual([
-      opening,
-      opening,
-      profileKeyForOrigins(["pizza.example", "bank.example"]),
-    ]);
   });
 
   it("a second agent racing the cold start is refused, not handed the browser", async () => {
@@ -574,9 +516,7 @@ describe("browser tools (fake runtime)", () => {
     // owner would be signed out of a site for the crime of asking for its
     // password, and the second run above would be browsing a fresh profile.
     const profiles = path.join(device.home, "device/browser/profiles");
-    const key = profileKeyForOrigins(["pizza.example"]);
-    expect(abandoned(profiles, key)).toBe(false);
     expect(audited(device, "browser_profile_abandoned")).toEqual([]);
-    expect(fs.readdirSync(profiles)).toEqual([key]);
+    expect(published(profiles)).toEqual([profileKeyForOrigins(["pizza.example"])]);
   });
 });

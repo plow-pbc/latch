@@ -149,30 +149,34 @@ sqlite3 "$HOME_DIR/device/browser/profiles/<key>/cookies.sqlite" \
 `$DOMO_HOME` is set by the `just` recipes, not in your shell, so spell the home out — the packaged
 install's is the unsuffixed `~/Library/Application Support/Plow-Latch`.
 
-`browser_started` in the audit log names the directory that browser opened — read it there rather
-than hashing the origins yourself. The name is normally the grant's hash reused, since a profile
-that was given up is deleted before the next browser starts; a `<key>-2` only appears when that
-deletion failed. Deleting a profile directory is safe with the app shut
-down; it costs that grant its logins and nothing else. A store older than this change has a single
+`browser_started` in the audit log names the directory that browser opened. While a session runs
+that is `<key>.live-<id>` — a name no grant can spell — so read it from the log rather than
+hashing the origins yourself. Deleting a profile directory is safe with the app shut down; it
+costs that grant its logins and nothing else. A store older than this change has a single
 `device/browser/profile` beside `profiles/` with everything mixed together; nothing reads it any
 more, so delete it whenever.
 
-**A session that reaches an unapproved origin signs itself out for next time.** Two ways in: a
-`plow_browser_request` that widens the grant, and a click or redirect that lands the page outside
-it — the scope check runs on where the action *landed*, so the browser has already made that
-request and stored whatever came back. Either way the jar now holds cookies for an origin the grant
-it was filed under does not name, so that profile is given up on the spot (a `domo-abandoned` file
-inside it, `browser_profile_abandoned` in the log), and it is never given back. The session goes on
-using it — Camoufox has it open — but the next browser to start deletes it
-(`browser_profile_reaped`), so that grant begins again from empty. **That is what an unexplained
-sign-out looks like now**, and a stray hop is enough to cause one: a click that redirects offsite
-costs the grant its logins even though nothing was approved and nothing leaked.
+**A profile is claimable by its grant only while nothing is using it.** On start it is renamed out
+of the way to `<key>.live-<id>`; on a clean stop it is renamed back. So a jar can never be handed to
+a later session on the strength of what it was before this one touched it, and the two things that
+would make it unsafe need no cleanup at all — they simply skip the rename back:
 
-Two things this deliberately does not do, both learned the hard way: it does not move the directory
-— renaming it under a running Camoufox was tried, and every cookie written afterwards was lost
-(`cookies.sqlite` came back with no `-wal` and none of the session's cookies) — and it does not
-wait for session close, because a quit tears the process down mid-shutdown and `kill -9` never gets
-there at all. The integration tier guards both.
+- **the session reached an unapproved origin** — a `plow_browser_request` that widens the grant,
+  or a click or popup landing outside it. The check runs on where the action *landed*, so the
+  browser has already made that request and stored whatever came back. `browser_profile_abandoned`
+  in the log.
+- **the app quit with the session still live, or it crashed.** Nothing published it, so
+  nothing claims it.
+
+Either way the next browser to start deletes the leftover (`browser_profile_reaped`) and that grant
+begins from empty. **That is what an unexplained sign-out looks like**, and a stray hop is enough to
+cause one: a click that redirects offsite costs the grant its logins even though nothing was
+approved and nothing leaked. The ordinary paths — close, idle timeout, reopen, disconnect — all
+await the browser's stop, so they publish.
+
+What this deliberately does not do is move the directory while Camoufox has it open: that was tried
+and every cookie written afterwards was lost (`cookies.sqlite` came back with no `-wal` and none of
+the session's cookies). Both renames happen with no browser running. The integration tier guards it.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:

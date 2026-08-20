@@ -26,6 +26,18 @@ interface Ctx {
 
 let ctx: Ctx;
 
+/** Profiles published under their grant — what a later session can claim. */
+const published = (dir: string): string[] => {
+  try {
+    return fs
+      .readdirSync(path.join(dir, "profiles"))
+      .filter((d) => !d.includes(".live-"))
+      .sort();
+  } catch {
+    return [];
+  }
+};
+
 function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bs-"));
   const fillLog = path.join(dir, "fills.log");
@@ -413,20 +425,18 @@ describe("access the owner's log could not record is not granted", () => {
     expect(live.origins).toEqual(["pizza.example"]);
     expect(live.origins).not.toContain("paypal.example");
 
-    // The jar is gone either way, and deliberately: abandonment happens at the
-    // moment the profile can start holding the wider origin's state, and it is
-    // never given back. Costing this grant its logins is the price of not
-    // having to decide whether a jar that was about to be widened is safe to
-    // reuse — a question with a subtle answer.
-    const key = profileKeyForOrigins(["pizza.example"]);
-    expect(fs.existsSync(path.join(ctx.dir, "profiles", key, "domo-abandoned"))).toBe(true);
+    // The store is given up either way, and deliberately: it happens the
+    // moment the profile can start holding the wider origin's state. Costing
+    // this grant its logins is the price of not having to decide whether a
+    // jar that was about to be widened is safe to reuse.
     await sessions.closeAll("test");
+    expect(published(ctx.dir)).toEqual([]);
 
+    // And the next session on the grant starts from empty rather than from it.
     const again = jv(await sessions.open("int-3", AGENT, ["pizza.example"], true));
     expect(again.get("session").str).toBeTruthy();
-    expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([key]);
-    expect(fs.existsSync(path.join(ctx.dir, "profiles", key, "domo-abandoned"))).toBe(false);
     await sessions.closeAll("test");
+    expect(published(ctx.dir)).toEqual([profileKeyForOrigins(["pizza.example"])]);
   });
 
   it.each(["browser_navigated", "browser_scope_violation"])(
@@ -441,9 +451,6 @@ describe("access the owner's log could not record is not granted", () => {
       const origins = ["pizza.example", "*.pizza.example"];
       const opened = jv(await sessions.open("int-1", AGENT, origins, true));
       const handle = opened.get("session").str!;
-      const marker = path.join(
-        ctx.dir, "profiles", profileKeyForOrigins(origins), "domo-abandoned",
-      );
 
       // #offsite navigates the page to https://offsite.example/lander.
       const strayed = jv(
@@ -451,9 +458,9 @@ describe("access the owner's log could not record is not granted", () => {
       );
       expect(strayed.get("error").str).toMatch(/audit append failed/);
 
-      // The action could not be recorded; the jar was retired regardless.
-      expect(fs.existsSync(marker)).toBe(true);
+      // The action could not be recorded; the store was given up regardless.
       await sessions.closeAll("test");
+      expect(published(ctx.dir)).toEqual([]);
     },
   );
 

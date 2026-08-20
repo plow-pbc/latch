@@ -9,6 +9,7 @@
  * process group — Camoufox leaves Firefox grandchildren behind otherwise.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -63,9 +64,6 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
-/** File inside a profile marking it given up — see abandonProfile(). */
-const ABANDONED_MARKER = "domo-abandoned";
-
 /**
  * Push one path out of the page cache. Directories take a handle too, for the
  * entry. Not a power-cut guarantee on macOS: `fsync(2)` there does not flush
@@ -104,8 +102,9 @@ export class BrowserHost {
   private headedNow: boolean;
   /** Profile the next browser opens, one per approved origin set. */
   private profileKeyNow: string | null = null;
-  /** Profile directory the running browser opened. */
-  private startedDir: string | null = null;
+  /** The profile this browser is on: live while it runs, published on a clean
+   * stop. Null when the host has no persistent store. */
+  private profile: { saved: string; live: string; reusable: boolean } | null = null;
   /** Grant the running browser opened for — null once it has been given up. */
   private startedKey: string | null = null;
 
@@ -191,99 +190,88 @@ export class BrowserHost {
   }
 
   /**
-   * Give up the live profile, the moment it can be holding state for an origin
-   * its grant does not name — a widening, or an action that landed out of
-   * scope. From here nothing reopens it: the session goes on using it, since
-   * Camoufox has it open and keeps writing, but once that browser stops the
-   * jar is done. One way, and never undone: whether a contaminated jar is safe
-   * to hand back is a question with a subtle answer, so it is not asked.
+   * Give up this session's profile: it can hold state for an origin the grant
+   * does not name — a widening, or an action that landed out of scope — so it
+   * must never be published back under that grant's name.
    *
-   * Why give it up rather than re-file it under the widened grant: a widening
-   * leaves the jar holding cookies for an origin its grant omits, and the next
-   * session on the narrower grant would open it and send them on the first
-   * click or redirect, ahead of the scope lock. Re-filing under the union also
-   * closes that, and did for a while — but it only pays off when a later
-   * session opens on the *exact* widened set, which is not the flow that
-   * produces widenings (open narrow, find you need one more origin), and the
-   * branches it takes are where both escapes this store has had came from.
+   * A flag, not a file. The directory is already somewhere no grant can spell
+   * (see profileDirForStart), so there is nothing to write, nothing to flush,
+   * and no way for this to fail: the profile becomes reusable only by being
+   * renamed back on a clean stop, and this is what stops that happening.
    *
-   * At the widening rather than at close, because close only runs if the
-   * process lives long enough to reach it: `before-quit` does
-   * `void device?.shutdown()` without `preventDefault()`, and `kill -9` and
-   * power loss have no close at all.
-   *
-   * And a marker rather than a rename, which was tried and refuted: a real
-   * Camoufox goes on serving pages after its directory moves, but the cookies
-   * written afterwards never reach disk.
+   * What that replaced, and why: a durable `domo-abandoned` marker inside the
+   * live directory. It had to be flushed before the widening it gated, could
+   * fail on the volume it was protecting, needed opposite failure semantics on
+   * the two paths that call it, and left the contaminated jar reusable when
+   * its own cleanup ran. Making the directory unclaimable while it is live
+   * retires all of that.
    */
-  async abandonProfile(): Promise<void> {
-    const dir = this.startedDir;
-    const child = this.child;
-    if (!dir) return;
-    // Out of the page cache before this returns, because the cookies it
-    // retires do not wait there: the browser's writes go through SQLite,
-    // which fsyncs, while a plain writeFileSync sits for seconds. Lose power
-    // in that window and the widened origin's cookies survive while the
-    // marker retiring their jar does not — the escape, reassembled by a power
-    // cut. See fsync() for what this does and does not promise.
-    // Awaited rather than blocking: every browser action answers inside the
-    // relay's ~20s ceiling, and a synchronous flush on a stalling volume stops
-    // the timer that enforces it from ever firing.
-    const file = path.join(dir, ABANDONED_MARKER);
-    try {
-      await fsp.writeFile(file, "");
-      await fsync(file);
-      await fsync(dir); // the marker's own directory entry
-    } catch (error: unknown) {
-      // All of it or none: a marker left behind by a failed flush retires the
-      // grant on disk while the caller sees the widening fail, so the owner
-      // loses those logins with nothing in the log to say why — which is the
-      // unexplained sign-out the event below exists to explain.
-      await fsp.rm(file, { force: true });
-      throw error;
-    }
-    this.cfg.audit?.("browser_profile_abandoned", { profile: path.basename(dir) });
-    // Only if this is still the browser whose jar was retired. An action can
-    // be in flight while a deferrable open installs a new one, and clearing
-    // unconditionally would null the NEW session's identity — its own
-    // retirement would then early-exit, leaving its jar filed under a grant it
-    // no longer matches. The marker above is written and correct either way.
-    //
-    // The process, not just the path: reaping frees a name, so a replacement
-    // browser can be running on the very same pathname by the time this
-    // continuation lands, and a path-only check would pass on it.
-    if (this.startedDir !== dir || this.child !== child) return;
-    this.startedDir = null; // nothing to give up twice
-    // Both sides of the reuse guard follow, or the very next action reads a
-    // mismatch and restarts the browser out from under the session.
-    this.startedKey = null;
-    this.profileKeyNow = null;
-  }
-
-  private profileDirForStart(): string | null {
-    const root = this.cfg.profilesDir;
-    const key = this.profileKeyNow;
-    if (!root || !key) return null;
-    // The name IS the grant: a session opens the directory its origins hash
-    // to, and the reap has just cleared the ones that were given up, so that
-    // name is normally free. The suffix below is the fallback for a profile
-    // the reap could not delete — stepped over, never adopted, since the jar
-    // behind it holds state for origins this grant does not name.
-    this.reapAbandoned(root);
-    let dir = path.join(root, key);
-    for (let n = 2; this.abandoned(dir); n++) dir = path.join(root, `${key}-${n}`);
-    fs.mkdirSync(dir, { recursive: true });
-    return dir;
+  abandonProfile(): void {
+    if (!this.profile || !this.profile.reusable) return;
+    this.profile.reusable = false;
+    // The owner's record that this session's store will not be kept — it is
+    // what an unexplained sign-out next session traces back to. Idempotent:
+    // straying twice is still one retirement.
+    this.cfg.audit?.("browser_profile_abandoned", {
+      profile: path.basename(this.profile.live),
+    });
   }
 
   /**
-   * Drop the profiles that have been given up. They are dead by construction —
-   * nothing reopens one — and now that any stray hop out of scope retires a
-   * jar, not just an approved widening, they arrive often enough to be worth
-   * collecting. Safe here and only here: this runs on the way to a spawn, so
-   * no browser is up and none of them can be one a session is still writing.
+   * Where the next browser keeps its cookies. A profile lives under the hash
+   * of the grant that owns it — but only while nothing is using it. For the
+   * life of a session it sits at `<key>.live-<id>`, a name no grant can spell,
+   * so a jar can never be claimed by a later session on the strength of what
+   * it was before this one touched it. `settleProfile()` publishes it back
+   * when the browser stops clean and the session stayed inside its grant.
+   *
+   * The consequence, stated plainly: quitting the app with a session live, or
+   * a crash, leaves the profile unpublished and that grant signs in again. The
+   * ordinary paths — close, idle timeout, reopen, disconnect — all await the
+   * browser's stop, so they publish.
    */
-  private reapAbandoned(root: string): void {
+  private async profileDirForStart(): Promise<string | null> {
+    const root = this.cfg.profilesDir;
+    const key = this.profileKeyNow;
+    if (!root || !key) return null;
+    fs.mkdirSync(root, { recursive: true });
+    this.sweepUnpublished(root);
+    const saved = path.join(root, key);
+    const live = `${saved}.live-${crypto.randomUUID()}`;
+    if (fs.existsSync(saved)) fs.renameSync(saved, live);
+    else fs.mkdirSync(live, { recursive: true });
+    // Durable before the browser opens it: were the rename lost to a crash
+    // while the jar kept its old name, the next session on this grant would
+    // claim a directory this one had been writing into.
+    await fsync(root);
+    this.profile = { saved, live, reusable: true };
+    return live;
+  }
+
+  /**
+   * Publish the profile back under its grant, or leave it where no grant can
+   * find it. Called once the browser is down, so the rename is safe — moving
+   * a directory under a running Camoufox was tried and refuted: it goes on
+   * serving pages, but the cookies written afterwards never reach disk.
+   *
+   * Discarding needs no work at all: an unpublished directory is already
+   * unclaimable, and the sweep on the next start collects it. That is also
+   * what a crash leaves behind, which is why the two need no separate paths.
+   */
+  private settleProfile(): void {
+    const p = this.profile;
+    this.profile = null;
+    if (!p || !p.reusable) return;
+    try {
+      fs.renameSync(p.live, p.saved);
+    } catch {
+      /* stays unclaimable, and the next start sweeps it */
+    }
+  }
+
+  /** Directories left live by a crash, or given up. Nothing can claim one, and
+   * no browser is running on the way to a spawn, so they go. */
+  private sweepUnpublished(root: string): void {
     let names: string[];
     try {
       names = fs.readdirSync(root);
@@ -291,12 +279,11 @@ export class BrowserHost {
       return; // not created yet
     }
     for (const name of names) {
-      const dir = path.join(root, name);
-      if (!this.abandoned(dir)) continue;
+      if (!name.includes(".live-")) continue;
       // Best-effort: an undeletable profile is wasted disk, but throwing here
       // would abort the start, and three of those trip the circuit breaker.
       try {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(path.join(root, name), { recursive: true, force: true });
         this.cfg.audit?.("browser_profile_reaped", { profile: name });
       } catch {
         /* try again on the next start */
@@ -304,9 +291,6 @@ export class BrowserHost {
     }
   }
 
-  private abandoned(dir: string): boolean {
-    return fs.existsSync(path.join(dir, ABANDONED_MARKER));
-  }
 
   private async ensureStarted(): Promise<void> {
     // A running browser cannot be moved to another profile, so handing this
@@ -340,7 +324,7 @@ export class BrowserHost {
     return this.starting;
   }
 
-  private start(): Promise<void> {
+  private async start(): Promise<void> {
     fs.mkdirSync(this.cfg.screenshotsDir, { recursive: true });
     const extraEnv: Record<string, string> = { ...this.cfg.env };
     if (this.cfg.camoufoxInstallDir) {
@@ -358,8 +342,7 @@ export class BrowserHost {
       fs.symlinkSync(this.cfg.camoufoxInstallDir, link);
       extraEnv.HOME = home;
     }
-    const profileDir = this.profileDirForStart();
-    this.startedDir = profileDir;
+    const profileDir = await this.profileDirForStart();
     this.startedKey = this.profileKeyNow;
     const argv = [
       ...this.cfg.command,
@@ -442,8 +425,10 @@ export class BrowserHost {
         rl.close();
         const wasReady = ready;
         this.child = null;
-        this.startedDir = null;
         this.startedKey = null;
+        // The browser is down, so its files are ours again: back under the
+        // grant if it stayed inside it, left unclaimable if it did not.
+        this.settleProfile();
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
           clearTimeout(p.timer);
@@ -465,8 +450,8 @@ export class BrowserHost {
 
       child.on("error", (err) => {
         this.child = null;
-        this.startedDir = null;
         this.startedKey = null;
+        this.settleProfile();
         if (!ready) {
           ready = true;
           clearTimeout(startTimer);
