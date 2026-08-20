@@ -426,21 +426,23 @@ class Session:
             # a scan of every frame at once rather than a wait carved up between
             # them (which spends each frame's share blind to the others -- an
             # element arriving in the first frame a moment after its share ran
-            # out was missed with most of the budget unspent). The scan
-            # re-enumerates each pass, because a consent or payment iframe
-            # injected while we wait is a NEW frame object and the selector
-            # often arrives inside exactly that one; whatever holds it gets what
-            # remains, and nothing holding it by the deadline is an honest "not
-            # found" rather than a timeout. The frames are the ones the page had
-            # when the command arrived, and stay that way: re-reading them would
-            # let a frame injected DURING the wait be clicked, and the device
-            # approved origins for the page it could see, not for whatever
-            # arrives while it waits (issue #95). A frame the caller NAMED skips
-            # the scan entirely and is simply waited in, which is what the click
-            # does anyway. `fill` is outside all of it: no budget reaches it, and it
-            # searches the frames on its own per-frame default, because a
-            # credential field is found by searching them and shortening the
-            # later ones would drop fills that work today.
+            # out was missed with most of the budget unspent). Whatever holds it
+            # gets what remains, and nothing holding it by the deadline is an
+            # honest "not found" rather than a timeout.
+            # The frames scanned are the ones the page had when the command
+            # arrived, and stay that way: re-reading them would let a frame
+            # injected DURING the wait be clicked, and the device approved
+            # origins for the page it could see, not for whatever arrives while
+            # it waits (issue #95, which is also where that capability comes
+            # back once frames carry an approved origin). The test holding this
+            # down lives in the Camoufox tier -- `just test-browser`, not
+            # `just test` -- so undoing it goes green in CI.
+            # A frame the caller NAMED skips the scan entirely and is simply
+            # waited in, which is what the click does anyway. `fill` is outside
+            # all of it: no budget reaches it, and it searches the frames on its
+            # own per-frame default, because a credential field is found by
+            # searching them and shortening the later ones would drop fills that
+            # work today.
             if action == "click":
                 budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
                 deadline = time.monotonic() + budget_ms / 1000.0

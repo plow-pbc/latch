@@ -159,7 +159,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     session = opened.payload.session as string;
     const text = async () => (await act("text")).payload.text as string;
 
-    // Four ways a click arrives too early, one row each. The page has four
+    // Three ways a click arrives too early, one row each. The page has four
     // frames and a click's budget covers the whole action, so what is really
     // under test is that the budget goes on watching every frame for the thing
     // to become clickable — not on waiting in each frame in turn, which spends
