@@ -45,14 +45,17 @@ the page; that is the one way round it, and it is not one you have any reason to
 
 ## Acting: always screenshot first
 
-**Your session id is your browser, and the profile behind it is yours.** Pass the one \`plow_browser_open\` gave you on every
-call and you keep the same window, profile and cookies. Other agents drive their own
-browsers at the same time: yours is never taken from you, theirs is never visible to
-you, and when the Mac is already running as many as it will, the open says so. Closing
-is yours alone — another agent holding your id cannot close your browser. Your cookies
-and logins outlive the session: the profile belongs to you, not to one open. On a Mac
-that has just upgraded to per-agent browsers everyone starts signed out once: the profile
-every agent used to share is not used any more, by anyone.
+**Your session id is your browser, and it is a secret.** Pass the one
+\`plow_browser_open\` gave you on every call and you keep the same window. Every open
+gives you a browser of your own, even when other agents on this Mac connect with the
+same Plow credential — so yours is never taken and you never inherit theirs. The id is
+the capability: anyone holding it can drive that browser, and holding somebody else's is
+the only way to reach theirs, so do not paste it anywhere. When the Mac is already
+running as many browsers as it will, the open says so. Cookies and logins last between
+your sessions when you are the only one browsing under your credential; a second browser
+open at the same time under that same credential gets a clean profile of its own, which
+goes when it closes. On a Mac that has just upgraded, everyone starts signed out once:
+the profile every agent used to share is not used any more, by anyone.
 
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,

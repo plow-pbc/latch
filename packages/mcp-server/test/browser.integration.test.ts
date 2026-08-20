@@ -78,6 +78,48 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
    * way an agent reaches them. It fails if they collide: each session must
    * read back its OWN page, and closing one must leave the others browsing.
    */
+  /**
+   * The live failure this fixes: two agents reaching this Mac through ONE Plow
+   * credential. Keying the session on the credential made them one agent — the
+   * second was refused, told to reuse the first's session, and drove it.
+   */
+  it("gives two callers on one credential two browsers", async () => {
+    const pages = [0, 1].map((i) => `http://127.0.0.1:${site.port}/?caller=${i}`);
+    let handles: string[] = [];
+    try {
+      const opened = await Promise.all(
+        pages.map(() =>
+          callTool(server, "plow_browser_open", { origins: ["127.0.0.1"], goal: "same credential" }, AGENT),
+        ),
+      );
+      handles = opened.map((r) => {
+        expect(r.isError, JSON.stringify(r.payload)).toBe(false);
+        return (r.payload as { session: string }).session;
+      });
+      expect(handles[0]).not.toBe(handles[1]);
+
+      await Promise.all(
+        handles.map((session, i) =>
+          callTool(server, "plow_browser", { session, action: "goto", url: pages[i] }, AGENT),
+        ),
+      );
+      for (const [i, session] of handles.entries()) {
+        const r = await callTool(server, "plow_browser", { session, action: "url" }, AGENT);
+        expect((r.payload as { url: string }).url).toBe(pages[i]);
+      }
+
+      // Closing one leaves the other on its own page.
+      await callTool(server, "plow_browser_close", { session: handles[0] }, AGENT);
+      handles = [handles[1]];
+      const survivor = await callTool(server, "plow_browser", { session: handles[0], action: "url" }, AGENT);
+      expect((survivor.payload as { url: string }).url).toBe(pages[1]);
+    } finally {
+      for (const session of handles) {
+        await callTool(server, "plow_browser_close", { session }, AGENT).catch(() => {});
+      }
+    }
+  }, 300_000);
+
   it("gives three agents three browsers that cannot see each other's pages", async () => {
     const agents = [1, 2, 3].map((n) => ({ agent_id: `parallel-${n}`, agent_name: `Agent ${n}`, scopes: ["relay:call"] }));
     // The same page with a different query each: any of the three seeing
@@ -114,7 +156,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
 
       // A handle is not a licence to close somebody else's browser.
       const stolen = await callTool(server, "plow_browser_close", { session: handles[1] }, agents[0]);
-      expect(JSON.stringify(stolen.payload)).toContain("different agent");
+      expect(JSON.stringify(stolen.payload)).toContain("different Plow credential");
 
       // Closing one's own leaves the others browsing.
       await callTool(server, "plow_browser_close", { session: handles[0] }, agents[0]);

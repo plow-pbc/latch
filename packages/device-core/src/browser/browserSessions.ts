@@ -32,6 +32,8 @@ type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 interface Session {
   /** This session's own browser. One per session is the whole point. */
   host: BrowserHost;
+  /** The profile directory this session holds while it lives. */
+  profile: string;
   /** Closes THIS session when it goes quiet; sessions do not share a clock. */
   idleTimer: NodeJS.Timeout | null;
 
@@ -121,6 +123,15 @@ export class BrowserSessions {
    * passes the same one gets the same browser back, and two agents passing
    * different ones cannot see each other's pages. */
   private readonly sessions = new Map<string, Session>();
+  /**
+   * Profile directories spoken for right now.
+   *
+   * Taken the moment a session is claimed, not when its browser is built: two
+   * opens arriving together would otherwise both look at an empty session map,
+   * both take the credential's profile, and the second Camoufox would fail on
+   * the lock Firefox puts on a profile already in use.
+   */
+  private readonly profilesInUse = new Set<string>();
 
   constructor(
     private readonly browser: BrowserHostConfig,
@@ -172,26 +183,21 @@ export class BrowserSessions {
           "close one with plow_browser_close before opening another",
       };
     }
-    for (const live of this.sessions.values()) {
-      if (live.agentId !== agentId) continue;
-      // A profile has one writer. The session you already hold IS your browser
-      // — that is the point of passing its id — so a second one would be the
-      // same profile opened twice.
-      return {
-        status: "error",
-        error:
-          `you already have a browser open (session ${live.handle}) — pass that session id, ` +
-          "or close it with plow_browser_close first",
-      };
-    }
-
     const handle = crypto.randomUUID();
-    const host = this.newHost(agentId);
+    // The credential's own profile is what makes signing in last; only one
+    // live session can hold it, so a second one browses in a profile of its
+    // own. Decided here, with the claim, so two simultaneous opens cannot both
+    // take it.
+    const own = profileName(agentId);
+    const profile = this.profilesInUse.has(own) ? `session-${profileName(handle)}` : own;
+    this.profilesInUse.add(profile);
+    const host = this.newHost(profile);
     // A browser that dies takes its own session with it, and nobody else's.
     host.onCrash = () => this.noteCrash(handle);
     const session: Session = {
       handle,
       host,
+      profile,
       idleTimer: null,
       agentId,
       origins: origins.map(normalizeOrigin),
@@ -206,6 +212,7 @@ export class BrowserSessions {
     /** Give the claim back, whatever went wrong after taking it. */
     const rollBack = async () => {
       this.sessions.delete(handle);
+      this.releaseProfile(session);
       try {
         await this.stop(host);
       } catch {
@@ -305,14 +312,13 @@ export class BrowserSessions {
    * so neither can see the other's cookies. Everything else (screenshots, the
    * app-scoped $HOME) is per agent for the same reason.
    */
-  private newHost(agentId: string): BrowserHost {
-    const dir = profileName(agentId);
-    if (this.browser.profileDir) this.ensureProfile(path.join(this.browser.profileDir, dir));
+  private newHost(profile: string): BrowserHost {
+    if (this.browser.profileDir) this.ensureProfile(path.join(this.browser.profileDir, profile));
     return new BrowserHost({
       ...this.browser,
-      screenshotsDir: path.join(this.browser.screenshotsDir, dir),
-      ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, dir) } : {}),
-      ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, dir) } : {}),
+      screenshotsDir: path.join(this.browser.screenshotsDir, profile),
+      ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, profile) } : {}),
+      ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, profile) } : {}),
     });
   }
 
@@ -330,6 +336,18 @@ export class BrowserSessions {
   private ensureProfile(dir: string): void {
     if (fs.existsSync(dir)) return;
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+
+  /**
+   * Give up the profile a session held.
+   *
+   * A profile that belonged to this session alone goes with it; the
+   * credential's own profile stays, because that is where its logins live.
+   */
+  private releaseProfile(s: Session): void {
+    this.profilesInUse.delete(s.profile);
+    if (!this.browser.profileDir || !s.profile.startsWith("session-")) return;
+    fs.rmSync(path.join(this.browser.profileDir, s.profile), { recursive: true, force: true });
   }
 
   /**
@@ -375,7 +393,7 @@ export class BrowserSessions {
     const s = this.sessions.get(handle);
     if (!s) return { status: "error", error: "unknown session" };
     if (agentId !== undefined && s.agentId !== agentId) {
-      return { status: "error", error: "session belongs to a different agent" };
+      return { status: "error", error: "session belongs to a different Plow credential" };
     }
     if (s.idleTimer) clearTimeout(s.idleTimer);
     // The claim is held until the browser is really down. Releasing it first
@@ -389,6 +407,7 @@ export class BrowserSessions {
       await this.stop(s.host);
     } finally {
       this.sessions.delete(handle);
+      this.releaseProfile(s);
     }
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
@@ -404,6 +423,7 @@ export class BrowserSessions {
     if (!s) return;
     this.sessions.delete(handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
+    this.releaseProfile(s);
     this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
   }
 
@@ -411,10 +431,23 @@ export class BrowserSessions {
     for (const s of [...this.sessions.values()]) await this.close(s.handle, reason);
   }
 
+  /**
+   * The session this caller may drive, or why it may not.
+   *
+   * The HANDLE is the capability. Several agents can reach this Mac through
+   * one Plow credential — that is how the owner's agents are set up — so the
+   * credential id cannot be what separates them: keying on it made two agents
+   * one, and handed the second the first one's browser. An unguessable handle,
+   * returned once to whoever opened it, is what makes a session exclusive.
+   *
+   * The credential is still checked, as an outer fence: a handle that somehow
+   * escapes to another credential is refused there. Same credential, different
+   * agent: the handle is the whole answer, so keep yours to yourself.
+   */
   private validate(agentId: string, handle: string): Session | string {
     const s = this.sessions.get(handle);
     if (!s) return "unknown session (open one with plow_browser_open)";
-    if (s.agentId !== agentId) return "session belongs to a different agent";
+    if (s.agentId !== agentId) return "session belongs to a different Plow credential";
     return s;
   }
 

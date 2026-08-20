@@ -194,14 +194,49 @@ describe("session lifecycle", () => {
     }
   });
 
-  it("hands an agent back to the browser it already has instead of opening a second", async () => {
-    // One profile has one writer: a second browser for the same agent would be
-    // the same profile opened twice, which Firefox locks against itself.
+  it("gives a second caller on the same credential its own browser, not the first one's", async () => {
+    // Several agents reach this Mac through ONE Plow credential — that is how
+    // the owner's agents are set up. Keying a session on the credential made
+    // two agents one: the second was refused and told to reuse the first's
+    // session, and then drove it. Every open is its own browser now.
     const first = await openSession(["pizza.example"]);
-    const again = jv(await ctx.sessions.open("int-2", AGENT, ["pizza.example"], false));
-    expect(again.get("status").str).toBe("error");
-    expect(again.get("error").str).toContain(first);
-    expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("status").str)
+    const r = jv(await ctx.sessions.open("int-2", AGENT, ["b.example"], false));
+    expect(r.get("status").str).toBe("completed");
+    const second = r.get("session").str!;
+    expect(second).not.toBe(first);
+
+    // Each drives its own page; neither moves the other's.
+    await ctx.sessions.command(AGENT, first, { action: "goto", url: "https://pizza.example/one" });
+    await ctx.sessions.command(AGENT, second, { action: "goto", url: "https://b.example/two" });
+    expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("url").str)
+      .toBe("https://pizza.example/one");
+    expect(jv(await ctx.sessions.command(AGENT, second, { action: "url" })).get("url").str)
+      .toBe("https://b.example/two");
+
+    // Two live sessions on one credential never share a profile directory:
+    // Firefox locks a profile against a second copy of itself.
+    const profiles = fs.readdirSync(path.join(ctx.dir, "profiles"));
+    expect(profiles.length).toBe(2);
+    expect(profiles.filter((p) => p.startsWith("session-")).length).toBe(1);
+
+    // Closing one leaves the other browsing, and takes only its own profile.
+    await ctx.sessions.close(second, "test");
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles")).length).toBe(1);
+    expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("url").str)
+      .toBe("https://pizza.example/one");
+  });
+
+  it("refuses a handle to a caller on another credential", async () => {
+    // Within one credential the handle is the whole capability; across
+    // credentials the id is an outer fence, so a handle that escapes is still
+    // refused where it does not belong.
+    const mine = await openSession(["pizza.example"]);
+    expect(jv(await ctx.sessions.command("someone-else", mine, { action: "url" })).get("error").str)
+      .toContain("different Plow credential");
+    expect(jv(await ctx.sessions.close(mine, "theft", "someone-else")).get("error").str)
+      .toContain("different Plow credential");
+    // Still mine, still working.
+    expect(jv(await ctx.sessions.command(AGENT, mine, { action: "url" })).get("status").str)
       .toBe("completed");
   });
 
