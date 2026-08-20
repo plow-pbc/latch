@@ -564,9 +564,10 @@ function describeStep(e: JSONValue): AuditStep {
       state = "ok";
       break;
     case "browser_session_closed": {
+      const reason = ev.get("reason").str ?? "";
       const refused = refusedSuffix(ev);
-      text = `Browser session closed (${ev.get("reason").str ?? ""})${refused}`;
-      if (refused) state = "bad";
+      text = `Browser session closed (${reason})${refused}`;
+      if (refused || reason === "crashed") state = "bad";
       break;
     }
     case "browser_command": {

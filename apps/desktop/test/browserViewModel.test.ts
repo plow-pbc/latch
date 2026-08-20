@@ -123,55 +123,53 @@ describe("audit grouping for browser sessions", () => {
     expect(filled.text).not.toContain("password: "); // never a value
   });
 
-  it("a session whose page was refused reads as failed, and says by whom", () => {
-    // The reported bug's owner half: a session where every action returned
-    // ok while the site answered 429 was green and closed in the pane, so the
-    // one place the refusals were recorded never showed them.
-    const acts = auditActivities([
+  // The reported bug's owner half: a session where every action returned ok
+  // while the site answered 429 was green in the pane, so the one place the
+  // refusals were recorded never showed them. Both while it is still open —
+  // the case the pane is watched for — and after it closes.
+  it.each([
+    { when: "still open", close: [], status: "Requests refused" },
+    {
+      when: "closed",
+      close: [{ event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:05Z" }],
+      status: "Closed · requests refused",
+    },
+  ])("a session whose page was refused reads as failed while $when, and says by whom", ({ close, status }) => {
+    const browser = auditActivities([
       { event: "browser_command", session: "S", action: "click", url: "https://costco.com/cart", failed_requests: [
         { status: 429, method: "POST", origin: "https://costco.com" },
         { status: 403, method: "GET", origin: "https://cdn.costco.com" },
       ], ts: "2026-08-10T10:00:00Z" },
-      { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:05Z" },
-    ]);
-    const browser = acts.find((a) => a.id === "browser:S")!;
+      ...close,
+    ]).find((a) => a.id === "browser:S")!;
+    expect(browser.status).toBe(status);
+    expect(browser.tone).toBe("amber");
     expect(browser.category).toBe("failed");
-    expect(browser.status).toBe("Closed · requests refused");
     const cmd = browser.timeline.find((t) => t.text.startsWith("Browser: click"))!;
     expect(cmd.text).toContain("429 POST https://costco.com");
     expect(cmd.text).toContain("(+1 more)");
     expect(cmd.state).toBe("bad");
   });
 
-  it("a live session being refused says so before it closes", () => {
-    // The badge an owner sees while it is still happening — the case the pane
-    // is open for. A refused session is amber the moment the refusal lands.
-    const acts = auditActivities([
-      { event: "browser_command", session: "S", action: "click", failed_requests: [
-        { status: 429, method: "POST", origin: "https://costco.com" },
-      ], ts: "2026-08-10T10:00:00Z" },
-    ]);
-    expect(acts[0]!.status).toBe("Requests refused");
-    expect(acts[0]!.tone).toBe("amber");
-    expect(acts[0]!.category).toBe("failed");
-  });
-
-  it("a session ended by a crash reads as Crashed, not Closed or Browsing", () => {
+  // A crash outranks what the session accumulated before it, so the badge is
+  // not the milder "Closed · scope blocks" this session also earned — and the
+  // browser's parting refusals, drained onto the crash line, do not soften it
+  // either. A crash with nothing to say is still a crash, in both places.
+  it.each([
+    { when: "with a parting refusal", failed_requests: [{ status: 599, method: "GET", origin: "https://dominos.com" }] },
+    { when: "with nothing left to say", failed_requests: [] },
+  ])("a session ended by a crash $when reads as Crashed, not Closed", ({ failed_requests }) => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
-      // A crash outranks what the session accumulated before it, so the badge
-      // is not the milder "Closed · scope blocks" this session also earned.
       { event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:01Z" },
-      // The crash line carries the browser's parting refusals, which is the
-      // whole point of draining them there — so a crash that refused is still
-      // a crash, and must not read as the milder "requests refused".
-      { event: "browser_session_closed", session: "S", reason: "crashed", failed_requests: [
-        { status: 599, method: "GET", origin: "https://dominos.com" },
-      ], ts: "2026-08-10T10:00:05Z" },
+      { event: "browser_session_closed", session: "S", reason: "crashed", failed_requests, ts: "2026-08-10T10:00:05Z" },
     ]);
     expect(acts[0]!.status).toBe("Crashed");
     expect(acts[0]!.tone).toBe("red");
     expect(acts[0]!.category).toBe("failed");
+    // And the row that says so reads as bad, not as an ordinary close: the
+    // badge and the timeline are the same claim, seen from two distances.
+    expect(acts[0]!.timeline.find((t) => t.text.includes("session closed"))!.state).toBe("bad");
   });
 
   it("a session-scoped metadata read stays with its session, not a row of its own", () => {
