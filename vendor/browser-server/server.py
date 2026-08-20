@@ -55,6 +55,10 @@ MAX_ERROR_LEN = 500
 # instead when the agent knows the page is slow; the device clamps it.
 DEFAULT_ACTION_TIMEOUT_MS = 3000
 
+# How often a click re-scans the frames for its selector while waiting for it to
+# appear. The scan itself is instant; this is just how long it sleeps between.
+SCAN_INTERVAL_MS = 50
+
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -408,28 +412,34 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
-            # Both search every frame for the selector, so a per-frame timeout
-            # is really N x itself -- past the caps the number was chosen
-            # against. A click's timeout is therefore the budget for the WHOLE
-            # action, shared out over the frames left to try. To keep that from
-            # starving the frame that matters on an ad-laden page, the frames
-            # that already hold the selector are tried first and alone: the scan
-            # is the same instant `query_selector` sweep `locate` does, and the
-            # usual answer is one frame, which then gets the entire budget.
-            # Only when nothing holds it yet is the budget split over every
-            # frame, waiting for it to appear.
+            # A click searches every frame, so a per-frame timeout is really
+            # N x itself -- past the caps the number was chosen against. Its
+            # timeout is therefore the budget for the WHOLE action, and the way
+            # to spend it is to find the frame first: `query_selector` is
+            # instant, so waiting for the selector to APPEAR is a scan of every
+            # frame at once, not a wait carved up between them (which spends
+            # each frame's share blind to the others -- an element arriving in
+            # the first frame a moment after its share ran out was missed with
+            # most of the budget still unspent). Whatever holds it then gets
+            # what remains, and nothing holding it by the deadline is an honest
+            # "not found" rather than a timeout.
             # (`fill` keeps its per-frame default: a credential field is found
             # by searching frames, and shortening the later ones would drop
             # fills that work today.)
             base = int(cmd["frame"]) if "frame" in cmd else 0
             frames = [(base + n, fr) for n, fr in enumerate(self.frames_for(cmd))]
-            if action == "click":
-                holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
-                if holding:
-                    frames = holding
             deadline = time.monotonic() + (
                 int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS) / 1000.0
             )
+            if action == "click":
+                while True:
+                    holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
+                    if holding:
+                        frames = holding
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("selector not found: %s" % sel)
+                    self.page.wait_for_timeout(SCAN_INTERVAL_MS)
             for tried, (i, fr) in enumerate(frames):
                 try:
                     if action == "click":

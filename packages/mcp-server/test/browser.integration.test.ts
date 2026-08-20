@@ -178,6 +178,20 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       expect(await text(), `cover clearing at ${clearsAt}ms`).toContain("clicked isTrusted=true");
     }
 
+    // An element that has not arrived yet is found by scanning every frame, not
+    // by waiting in each one in turn: on this four-frame page a per-frame share
+    // of the default budget runs out before the button comes back at 1 s, with
+    // most of the budget still unspent.
+    await act("goto", { url: site.url + "/blocked" });
+    await act("eval", {
+      expression:
+        "document.querySelector('.modal-backdrop').remove();" +
+        "const b = document.getElementById('continue'); b.remove();" +
+        "setTimeout(() => document.body.appendChild(b), 1000)",
+    });
+    await act("click", { selector: "#continue" });
+    expect(await text()).toContain("clicked isTrusted=true");
+
     await act("goto", { url: site.url + "/blocked" });
 
     // The shape the Costco log has: visible, enabled, stable — and unclickable.
