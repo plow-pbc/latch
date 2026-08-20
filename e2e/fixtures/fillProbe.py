@@ -235,8 +235,9 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     # The delay between keystrokes, which is what makes them keystrokes rather
     # than an assignment. A number, never anything derived from a value.
     out["typed_delay"] = frame.handle.typed_delay
-    # How many characters went in as keys, and how many the node ended up
-    # holding. Lengths, never values.
+    # How long a value was asked for, how many characters went in as keys, and
+    # how many the node ended up holding. Lengths, never values.
+    out["asked_len"] = len(cmd.get("value", "") or "")
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
     out["node_len"] = len(frame.handle.value or "")
     return out
@@ -417,7 +418,8 @@ def main() -> int:
     result["constants"] = {
         "typed_chars": server.TYPED_CHARS,
         "action_timeout_ms": server.ACTION_TIMEOUT_MS,
-        "handle_timeout_ms": server.HANDLE_TIMEOUT_MS,
+        "attempt_max_ms": server.ATTEMPT_MAX_MS,
+        "relay_budget_ms": server.RELAY_BUDGET_MS,
         "typing_max_ms": server.TYPING_MAX_MS,
         "key_delay_ms": server.KEY_DELAY_MS,
         "settle_ms": server.SETTLE_MS,

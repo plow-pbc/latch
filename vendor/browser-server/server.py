@@ -53,11 +53,6 @@ MAX_ERROR_LEN = 500
 # whose caller did not name one, so it is the term that has to stay small.
 ACTION_TIMEOUT_MS = 3000
 
-# What an operation on an ALREADY RESOLVED node gets. Far less, because there is
-# nothing left to wait for: the node is in hand, and anything it still blocks on
-# is a page that will not settle rather than one that has not loaded.
-HANDLE_TIMEOUT_MS = 1000
-
 # What every action that moves the page gives it to settle afterwards, so the
 # answer describes where the page ended up rather than where it was mid-flight.
 SETTLE_MS = 1000
@@ -73,6 +68,15 @@ SETTLE_MS = 1000
 KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
 TYPED_CHARS = TYPING_MAX_MS // KEY_DELAY_MS
+
+# The relay's pending future times out at 20 s, so a whole action has to answer
+# inside it -- however many frames it had to look through to find the element.
+RELAY_BUDGET_MS = 20000
+
+# What one attempt at an element action costs at worst: find the node, put a
+# value in it (whose own budget carries another action timeout for the keys),
+# and let the page settle.
+ATTEMPT_MAX_MS = ACTION_TIMEOUT_MS * 3 + TYPING_MAX_MS + SETTLE_MS
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
@@ -220,10 +224,10 @@ def _type_value(el, value):
     The assignment doubles as the clear, so a node that has gone away raises
     there, before a single key is sent.
     """
-    el.fill(value[:-TYPED_CHARS], timeout=HANDLE_TIMEOUT_MS)
+    el.fill(value[:-TYPED_CHARS], timeout=ACTION_TIMEOUT_MS)
     tail = value[-TYPED_CHARS:]
     if tail:
-        el.type(tail, delay=KEY_DELAY_MS, timeout=HANDLE_TIMEOUT_MS + TYPING_MAX_MS)
+        el.type(tail, delay=KEY_DELAY_MS, timeout=ACTION_TIMEOUT_MS + TYPING_MAX_MS)
 
 
 def _parse_args():
@@ -445,9 +449,17 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
+            # Every frame that does not hold the selector costs a whole
+            # ACTION_TIMEOUT_MS to rule out, and an ad-heavy page has plenty of
+            # them. Starting an attempt that cannot finish inside what is left
+            # spends the caller's answer on a timeout it will never see, so the
+            # loop stops looking once there is no budget left to look with.
+            deadline = time.monotonic() + RELAY_BUDGET_MS / 1000
             for i, fr in enumerate(self.page.frames):
                 if "frame" in cmd and i != int(cmd["frame"]):
                     continue
+                if time.monotonic() + ATTEMPT_MAX_MS / 1000 > deadline:
+                    break
                 try:
                     if action == "click":
                         fr.click(sel, timeout=ACTION_TIMEOUT_MS)

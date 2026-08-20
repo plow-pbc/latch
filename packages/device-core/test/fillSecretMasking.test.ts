@@ -512,12 +512,14 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_delay: number | null;
         typed_len: number | null;
         node_len: number;
+        asked_len: number;
       };
     } & {
       constants: {
         typed_chars: number;
         action_timeout_ms: number;
-        handle_timeout_ms: number;
+        attempt_max_ms: number;
+        relay_budget_ms: number;
         typing_max_ms: number;
         key_delay_ms: number;
         settle_ms: number;
@@ -544,17 +546,14 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 
   it("keeps a single action inside the relay's per-exchange ceiling", () => {
-    // The relay's pending future times out at 20 s and a whole action has to
-    // answer inside it. A fill is the slowest — wait_for_selector, then the
-    // assignment, then the keystrokes, whose own budget already carries a
-    // handle timeout inside it — and the caller usually names no frame, so
-    // every frame ahead of the one holding the selector costs another
-    // wait_for_selector before any of that starts.
-    const MISSES = 2;
+    // One attempt has to fit, with room to have ruled a frame or two out
+    // first — the caller usually names no frame, so the server looks through
+    // them, and it stops looking once an attempt could no longer finish.
     const c = probed.constants;
-    const fill = c.action_timeout_ms + c.handle_timeout_ms
-      + (c.handle_timeout_ms + c.typing_max_ms);
-    expect(fill + MISSES * c.action_timeout_ms + c.settle_ms).toBeLessThan(20_000);
+    expect(c.attempt_max_ms).toBeLessThan(c.relay_budget_ms);
+    expect(c.attempt_max_ms).toBe(
+      c.action_timeout_ms * 3 + c.typing_max_ms + c.settle_ms,
+    );
     // And the keystrokes cannot outrun the budget they are allowed to spend,
     // however long the value is.
     expect(c.typed_chars * c.key_delay_ms).toBeLessThanOrEqual(c.typing_max_ms);
@@ -573,13 +572,13 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // per-exchange ceiling, so the bulk is assigned and the field still ends on
     // real keys. What matters is that the whole value still lands: the head is
     // not dropped, it just does not arrive as keystrokes.
-    const LONG = 2000;
     expect(probed.long_value.typed_len).toBe(probed.constants.typed_chars);
-    expect(probed.long_value.node_len).toBe(LONG);
+    expect(probed.long_value.node_len).toBe(probed.long_value.asked_len);
+    expect(probed.long_value.asked_len).toBeGreaterThan(probed.constants.typed_chars);
     expect(probed.long_value.typed_delay).toBe(probed.plain.typed_delay);
     // A credential is shorter than the tail, so all of it is typed.
-    expect(probed.plain.typed_len).toBe("hunter2".length);
-    expect(probed.plain.node_len).toBe("hunter2".length);
+    expect(probed.plain.typed_len).toBe(probed.plain.asked_len);
+    expect(probed.plain.node_len).toBe(probed.plain.asked_len);
     expect(probed.long_value.result).toEqual({ ok: true, frame: 0 });
   });
 
