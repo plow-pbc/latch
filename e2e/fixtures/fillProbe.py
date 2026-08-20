@@ -538,7 +538,6 @@ def main() -> int:
         "typed_chars": server.TYPED_CHARS,
         "action_timeout_ms": server.ACTION_TIMEOUT_MS,
         "typing_max_ms": server.TYPING_MAX_MS,
-        "host_cap_ms": server.HOST_CAP_MS,
     }
     out.write(json.dumps(result))
     out.flush()

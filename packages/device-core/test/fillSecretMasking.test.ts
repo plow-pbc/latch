@@ -522,7 +522,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_chars: number;
         action_timeout_ms: number;
         typing_max_ms: number;
-        host_cap_ms: number;
       };
       two_frames: {
         error: string | null;
@@ -621,15 +620,16 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 
   it("keeps the timed budgets under the cap the device arms", () => {
-    // The device drops its pending entry at HOST_CAP_MS and tells this process
-    // nothing, so a fill that ran past it would go on typing a credential into
-    // a page whose answer nobody is waiting for. The TIMED steps a fill can
-    // spend: resolve the node, assign the head, type the tail, and — when the
-    // keys were dropped — assign the whole value. Two spends are outside this
-    // and neither is bounded: a caller that names no frame pays for the search
-    // (#96), and the `evaluate` calls take no timeout at all.
+    // The device drops its pending entry and tells this process nothing, so a
+    // fill that ran past that would go on typing a credential into a page whose
+    // answer nobody is waiting for. Read the cap from the one place it is
+    // declared — a copy in server.py would only be a second thing to drift.
+    // The TIMED steps a fill can spend: resolve the node, assign the head, type
+    // the tail, and — when the keys were dropped — assign the whole value. Two
+    // spends are outside this and neither is bounded: a caller that names no
+    // frame pays for the search (#96), and `evaluate` takes no timeout at all.
     const c = probed.constants;
-    expect(c.action_timeout_ms * 3 + c.typing_max_ms).toBeLessThan(c.host_cap_ms);
+    expect(c.action_timeout_ms * 3 + c.typing_max_ms).toBeLessThan(hostCapMs());
     // And the tail draws on ONE budget, not one per key: handing each key the
     // tail's own would let them stack to TYPED_CHARS times it. A shared
     // deadline is already counting down by the first key, so no key is ever
@@ -906,6 +906,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.plain_failed.error).toBe("RuntimeError");
   });
 });
+
+/** The action cap the device arms, read from the one place it is declared. */
+function hostCapMs(): number {
+  const agent = fs.readFileSync(
+    fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
+    "utf8",
+  );
+  const m = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
+  if (!m) throw new Error("actionTimeoutMs not found in deviceAgent.ts");
+  return Number(m[1].replace(/_/g, ""));
+}
 
 /** A `"""…"""` literal, lifted from the server so the test can't drift. */
 function loadScript(name: string): (el: unknown) => unknown {
@@ -1255,24 +1266,5 @@ describe("the mark the page ends up carrying", () => {
     const [plain] = scan({ querySelectorAll: () => [el] });
     expect(plain.secret).toBe(false);
     expect(plain.value).toBe("jon@example.com");
-  });
-});
-
-describe("the cap the fill's budgets are measured against", () => {
-  // HOST_CAP_MS is server.py's copy of a number the device owns, so read the
-  // device's and make the copy answer for itself — a cap that drifted from the
-  // timer it names would leave the budget sum under nothing in particular.
-  // Two source texts and no Python, so it holds on a host without one.
-  it("is the timer the device actually arms", () => {
-    const server = fs.readFileSync(SERVER_PY, "utf8");
-    const agent = fs.readFileSync(
-      fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
-      "utf8",
-    );
-    const declared = /^HOST_CAP_MS = (\d+)$/m.exec(server);
-    const armed = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
-    expect(declared).not.toBeNull();
-    expect(armed).not.toBeNull();
-    expect(Number(declared![1])).toBe(Number(armed![1].replace(/_/g, "")));
   });
 });
