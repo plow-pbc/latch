@@ -153,38 +153,50 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // Both grants can reach the site; they differ only in what else the owner
     // approved, which is enough to make them different grants.
     const browseAs = async (origins: string[], run: () => Promise<void>) => {
-      const opened = await callTool(server, "plow_browser_open", { origins }, AGENT);
+      const opened = await callTool(
+        server, "plow_browser_open", { origins, headed: false }, AGENT,
+      );
       expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
       session = opened.payload.session as string;
       try {
         await run();
       } finally {
-        await callTool(server, "plow_browser_close", { session }, AGENT);
+        // A close that quietly failed would leave the browser up and surface
+        // as a baffling failure in the next block instead of this one.
+        const closed = await callTool(server, "plow_browser_close", { session }, AGENT);
+        expect(closed.isError, JSON.stringify(closed.payload)).toBe(false);
       }
     };
-    // /menu serves the menu to a session that holds the cookie and bounces
-    // everyone else to the login page, so the page title is the whole answer.
+    // /menu serves the menu to whoever holds the cookie and bounces everyone
+    // else to the login page. Both outcomes are asserted positively: "not the
+    // menu" would also be satisfied by a blank page or a fixture that renamed
+    // its heading, neither of which says anything about a cookie jar.
     const atMenu = async () => {
       await act("goto", { url: site.url + "/menu" });
-      return ((await act("text")).payload.text as string).includes("Menu");
+      return (await act("text")).payload.text as string;
     };
+    const SIGNED_IN = /Menu/;
+    const SIGNED_OUT = /Log in/;
 
     await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
+      // Cold, before anything is proven about persistence — without this the
+      // assertion below would also pass on a profile some other test signed in.
+      expect(await atMenu()).toMatch(SIGNED_OUT);
       await act("goto", { url: site.url + "/" });
       await act("fill", { selector: "#user", value: "jon@example.com" });
       await act("fill", { selector: "#pass", value: "pizza-time-99" });
       await act("click", { selector: "#login" });
-      expect(await atMenu()).toBe(true);
+      expect(await atMenu()).toMatch(SIGNED_IN);
     });
 
     // Same grant, new session, no login: the cookie jar came back.
     await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
-      expect(await atMenu()).toBe(true);
+      expect(await atMenu()).toMatch(SIGNED_IN);
     });
 
     // A different grant on the same site starts from nothing.
     await browseAs(["127.0.0.1", "margherita.example"], async () => {
-      expect(await atMenu()).toBe(false);
+      expect(await atMenu()).toMatch(SIGNED_OUT);
     });
   }, 300_000);
 });
