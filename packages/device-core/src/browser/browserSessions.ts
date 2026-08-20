@@ -490,8 +490,14 @@ export class BrowserSessions {
     });
   }
 
+  /**
+   * Every session goes down at once. Serially, quitting could spend one
+   * browser's whole shutdown budget before the next session was even asked to
+   * stop — and a quit that outruns this leaves a disposable profile, cookies
+   * and all, on disk. They share nothing, so nothing here has to be ordered.
+   */
   async closeAll(reason: string): Promise<void> {
-    for (const s of [...this.sessions.values()]) await this.close(s.handle, reason);
+    await Promise.all([...this.sessions.values()].map((s) => this.close(s.handle, reason)));
   }
 
   /**

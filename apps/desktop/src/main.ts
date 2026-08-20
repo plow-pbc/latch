@@ -997,10 +997,17 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
-  void relay?.stop();
+let quitting = false;
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  // Hold the quit open: shutting the browsers down is what deletes their
+  // profiles, and a fire-and-forget shutdown lets Electron exit first, leaving
+  // a dead session's cookies on disk. Every step of it is timeout-bounded, so
+  // this waits seconds, not forever, and the second quit goes straight through.
+  quitting = true;
+  event.preventDefault();
   // Kill any live Camoufox session/process group so Firefox children don't outlive us.
-  void device?.shutdown();
+  void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => app.quit());
 });
 
 app.on("window-all-closed", () => {

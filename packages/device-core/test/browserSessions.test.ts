@@ -740,6 +740,16 @@ describe("one profile per session, and never a shared one", () => {
     expect(dirs[0]).not.toBe(dir);
     expect(fs.existsSync(path.join(ctx.dir, "profiles", dirs[0], "cookies.sqlite"))).toBe(false);
   });
+
+  it("has taken every profile with it by the time a quit's closeAll resolves", async () => {
+    // What quitting relies on: it holds the app open until this promise
+    // settles, so anything still on disk afterwards outlives the app.
+    for (let i = 0; i < 3; i++) await ctx.sessions.open(`int-${i}`, `agent-${i}`, ["a.example"], false);
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles")).length).toBe(3);
+
+    await ctx.sessions.closeAll("shutdown");
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
+  });
 });
 
 describe("upgrading from the one shared profile", () => {
