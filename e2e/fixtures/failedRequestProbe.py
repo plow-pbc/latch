@@ -117,7 +117,7 @@ class Page:
         pass
 
 
-def chain(root_url, hops=0, host="https://redirect.example"):
+def chain(root_url, hops=0, host=None):
     """What a response was redirected FROM: the url the agent asked for at the
     root, and `hops` further requests on top of it. The response carries its own
     request as well, so the walk sees hops + 2 requests in all."""
@@ -228,13 +228,14 @@ def main():
         chain("https://pizza.example/signin", 19, "https://signin.pizza.example"))
 
     # One redirect past that ceiling -- 22 requests against the walk's 21 --
-    # gives up rather than walking forever, and gives up on the safe side. The
-    # pair brackets the bound exactly.
+    # gives up rather than walking forever, and gives up on the safe side. Both
+    # lengths are hard-coded, so moving the constant either way fails one of
+    # them.
     session = server.Session(Page())
     session.goto_url = "https://pizza.example/start"
     out["over_the_hop_limit"] = refused_navigation(
         session, "https://pizza.example/end",
-        chain("https://pizza.example/start", server.MAX_REDIRECT_HOPS, "https://pizza.example"))
+        chain("https://pizza.example/start", 20, "https://pizza.example"))
 
     # use_page moves the active page, and the check follows it: a goto in the
     # popup the agent switched to is the agent's, one in the page it left is
