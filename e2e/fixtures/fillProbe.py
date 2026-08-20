@@ -235,10 +235,10 @@ def ranked(server, with_holder=True, holder_first=True):
     """Which frame's failure comes back.
 
     A frame that went away must not overwrite the answer from one that held the
-    field and refused to show it -- in either order, a frames list being DOM
-    order, where an advert frame sits above the payment one as often as below
-    -- and must still be heard when it is the only thing that happened. The
-    main frame comes after the siblings and has nothing.
+    field and refused to show it, and must still be heard when it is the only
+    thing that happened. Order does not decide it: a frames list is DOM order,
+    and an advert frame sits above the payment one as often as below. The main
+    frame comes after the siblings and has nothing.
     """
     trace: list[str] = []
     holder = Frame(trace, nodes={"#pass": Handle(trace)}, hides=True) if with_holder else None

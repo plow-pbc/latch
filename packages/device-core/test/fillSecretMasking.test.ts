@@ -534,7 +534,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
-  it("reports the frame that had the field, not one that went away after it", () => {
+  it("reports the frame that had the field, wherever the one that went away sits", () => {
     // Both answer `wait_for_selector` with a failure, and only one of them was
     // ever going to be able to fill anything. Every frame is tried either way.
     expect(probed.ranked).toEqual({ error: "Hidden", tried: 3 });
