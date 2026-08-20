@@ -436,7 +436,12 @@ export const TOOLS: ToolSpec[] = [
       // entry that bounds nothing would otherwise show as a blank on the card
       // and make the saved rule un-rematchable.
       const origins = requestedOrigins(a.get("origins").arr);
-      if (origins.length === 0) throw new ToolError("missing 'origins'");
+      // The schema has 'origins' required, so the handler only sees this when
+      // the agent sent an empty list — naming it "missing" would send it back
+      // with the same argument.
+      if (origins.length === 0) {
+        throw new ToolError("'origins' is empty — list the host patterns this task needs");
+      }
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });

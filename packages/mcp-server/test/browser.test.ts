@@ -221,17 +221,20 @@ describe("browser tools (fake runtime)", () => {
     );
     expect(blank.isError).toBe(true);
     expect(JSON.stringify(blank.payload)).toContain("no 'origins' pattern can match a host");
-    // The same for a widen, one tool over.
-    const blankWiden = await callTool(
-      server, "plow_browser_request", { session: "whatever", origins: ["*."] }, AGENT,
-    );
-    expect(blankWiden.isError).toBe(true);
-    expect(JSON.stringify(blankWiden.payload)).toContain("no 'origins' pattern can match a host");
+    // The same for a widen, one tool over — including the arm that used to
+    // succeed quietly, dropping the origins and widening credentials only.
+    for (const extra of [{}, { credential_items: ["L1"] }]) {
+      const widen = await callTool(
+        server, "plow_browser_request", { session: "whatever", origins: ["*."], ...extra }, AGENT,
+      );
+      expect(widen.isError, JSON.stringify(widen.payload)).toBe(true);
+      expect(JSON.stringify(widen.payload)).toContain("no 'origins' pattern can match a host");
+    }
     // An empty list is still its own message (the schema catches an omitted
     // field before the handler sees it).
     const absent = await callTool(server, "plow_browser_open", { origins: [] }, AGENT);
     expect(absent.isError).toBe(true);
-    expect(JSON.stringify(absent.payload)).toContain("missing 'origins'");
+    expect(JSON.stringify(absent.payload)).toContain("'origins' is empty");
 
     // A real origin carrying one alongside it opens, with the junk dropped —
     // the card, the session bound and the profile all name the same set.
