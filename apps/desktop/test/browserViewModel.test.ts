@@ -170,22 +170,25 @@ describe("audit grouping for browser sessions", () => {
   // without it, marking every close bad would go unnoticed.
   it.each([
     {
-      when: "a crash with a parting refusal", reason: "crashed", scoped: true,
+      when: "a crash with a parting refusal", reason: "crashed", scopeViolation: true,
       failed_requests: [{ status: 599, method: "GET", origin: "https://dominos.com" }],
       status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+      closeText: "Browser session closed (crashed) — refused: 599 GET https://dominos.com",
     },
     {
-      when: "a crash with nothing left to say", reason: "crashed", scoped: true, failed_requests: [],
+      when: "a crash with nothing left to say", reason: "crashed", scopeViolation: true, failed_requests: [],
       status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+      closeText: "Browser session closed (crashed)",
     },
     {
-      when: "an ordinary close", reason: "agent", scoped: false, failed_requests: [],
+      when: "an ordinary close", reason: "agent", scopeViolation: false, failed_requests: [],
       status: "Closed", tone: "zinc", category: "other", closeState: "neutral",
+      closeText: "Browser session closed (agent)",
     },
-  ])("$when reads as $status", ({ reason, scoped, failed_requests, status, tone, category, closeState }) => {
+  ])("$when reads as $status", ({ reason, scopeViolation, failed_requests, status, tone, category, closeState, closeText }) => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
-      ...(scoped
+      ...(scopeViolation
         ? [{ event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:01Z" }]
         : []),
       { event: "browser_session_closed", session: "S", reason, failed_requests, ts: "2026-08-10T10:00:05Z" },
@@ -195,7 +198,23 @@ describe("audit grouping for browser sessions", () => {
     // The bucket, not only the badge: they disagreed once already, and the
     // bucket is what an owner scanning for trouble actually filters on.
     expect(acts[0]!.category).toBe(category);
-    expect(acts[0]!.timeline.find((t) => t.text.includes("session closed"))!.state).toBe(closeState);
+    const closeRow = acts[0]!.timeline.find((t) => t.text.includes("session closed"))!;
+    expect(closeRow.state).toBe(closeState);
+    // Which makes each row's name a claim the test reads: the parting refusal
+    // is on the line, or there was nothing to put there.
+    expect(closeRow.text).toBe(closeText);
+  });
+
+  it("a browser that crashed without closing its session still reads as Crashed", () => {
+    // The other half of the same verdict: the host audits browser_crashed, and
+    // a session whose close never arrived is exactly when an owner is looking.
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      { event: "browser_crashed", session: "S", code: 9, ts: "2026-08-10T10:00:05Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Crashed");
+    expect(acts[0]!.tone).toBe("red");
+    expect(acts[0]!.category).toBe("failed");
   });
 
   it("a session-scoped metadata read stays with its session, not a row of its own", () => {
