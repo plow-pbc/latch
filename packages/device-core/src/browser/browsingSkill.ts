@@ -51,11 +51,10 @@ gives you a browser of your own, even when other agents on this Mac connect with
 same Plow credential — so yours is never taken and you never inherit theirs. The id is
 the capability: anyone holding it can drive that browser, and holding somebody else's is
 the only way to reach theirs, so do not paste it anywhere. When the Mac is already
-running as many browsers as it will, the open says so. Cookies and logins last between
-your sessions when you are the only one browsing under your credential; a second browser
-open at the same time under that same credential gets a clean profile of its own, which
-goes when it closes. On a Mac that has just upgraded, everyone starts signed out once:
-the profile every agent used to share is not used any more, by anyone.
+running as many browsers as it will, the open says so. Every session starts from a clean
+profile and takes it away when it closes: nothing you sign into survives your session,
+and nothing you leave behind reaches the next agent. Sign in inside the session you are
+working in, with \`fill_secret\`.
 
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,

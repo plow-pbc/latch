@@ -34,6 +34,16 @@ interface Session {
   host: BrowserHost;
   /** The profile directory this session holds while it lives. */
   profile: string;
+  /**
+   * What the audit calls this session.
+   *
+   * The handle is a capability now — whoever holds it can drive the browser —
+   * so it must not be written to a file the owner reads, selected into an
+   * agent's history, or sent to the reviewer model off this Mac. This is a
+   * one-way digest of it: stable, so lines about one session can be read
+   * together, and useless to anybody who reads it.
+   */
+  auditId: string;
   /** Closes THIS session when it goes quiet; sessions do not share a clock. */
   idleTimer: NodeJS.Timeout | null;
 
@@ -103,35 +113,22 @@ export interface BrowserSessionInfo {
 export const DEFAULT_MAX_BROWSERS = 3;
 
 /**
- * The directory name for an agent's profile.
+ * A short one-way name for a session.
  *
- * Sanitising the id was not enough: stripping characters is lossy, so "a/b"
- * and "ab" both became "ab" — two different agents sharing one profile, which
- * is one agent inheriting the other's cookies and signed-in sessions. The
- * name ends in a hash of the WHOLE id, so two ids can only collide if SHA-256
- * does. The readable half is there for whoever reads the directory listing and
- * carries no meaning.
+ * Used for the profile directory and for every audit line. It is a digest and
+ * nothing else: the handle is a capability — whoever holds it can drive that
+ * browser — so a name derived from it must not carry any of it back. Sanitising
+ * the id would: it strips characters, which is both lossy (two ids folding into
+ * one directory, one agent inheriting another's cookies) and revealing.
  */
-const profileName = (id: string): string => {
-  const readable = id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
-  const digest = crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
-  return readable ? `${readable}-${digest}` : digest;
-};
+const digest = (id: string): string =>
+  crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
 
 export class BrowserSessions {
   /** Every live session, by handle. The handle IS the browser: an agent that
    * passes the same one gets the same browser back, and two agents passing
    * different ones cannot see each other's pages. */
   private readonly sessions = new Map<string, Session>();
-  /**
-   * Profile directories spoken for right now.
-   *
-   * Taken the moment a session is claimed, not when its browser is built: two
-   * opens arriving together would otherwise both look at an empty session map,
-   * both take the credential's profile, and the second Camoufox would fail on
-   * the lock Firefox puts on a profile already in use.
-   */
-  private readonly profilesInUse = new Set<string>();
 
   constructor(
     private readonly browser: BrowserHostConfig,
@@ -184,13 +181,13 @@ export class BrowserSessions {
       };
     }
     const handle = crypto.randomUUID();
-    // The credential's own profile is what makes signing in last; only one
-    // live session can hold it, so a second one browses in a profile of its
-    // own. Decided here, with the claim, so two simultaneous opens cannot both
-    // take it.
-    const own = profileName(agentId);
-    const profile = this.profilesInUse.has(own) ? `session-${profileName(handle)}` : own;
-    this.profilesInUse.add(profile);
+    // Every session browses in a profile of its own, and that profile goes
+    // when the session does. Keeping a durable one per credential was worse
+    // than it looked: several agents reach this Mac through ONE credential, so
+    // the next agent to open would mount the cookies and signed-in sessions
+    // the last one left behind. Nothing persists until the relay can tell one
+    // agent from another.
+    const profile = `session-${digest(handle)}`;
     const host = this.newHost(profile);
     // A browser that dies takes its own session with it, and nobody else's.
     host.onCrash = () => this.noteCrash(handle);
@@ -198,6 +195,7 @@ export class BrowserSessions {
       handle,
       host,
       profile,
+      auditId: digest(handle),
       idleTimer: null,
       agentId,
       origins: origins.map(normalizeOrigin),
@@ -238,7 +236,7 @@ export class BrowserSessions {
     try {
       this.audit("browser_session_opened", {
         intentId,
-        session: session.handle,
+        session: session.auditId,
         origins: session.origins,
         credential_metadata: credentialMetadata,
         headed: host.headed,
@@ -253,7 +251,7 @@ export class BrowserSessions {
     this.armIdleTimer(session);
     return {
       status: "completed",
-      session: session.handle,
+      session: session.handle, // the capability goes back to its owner, and only there
       origins: session.origins,
       headed: host.headed,
     };
@@ -287,7 +285,7 @@ export class BrowserSessions {
     const itemList = [...widenedItems].sort();
     this.audit("browser_session_extended", {
       intentId,
-      session: s.handle,
+      session: s.auditId,
       origins: widened,
       items: itemList,
     });
@@ -297,7 +295,7 @@ export class BrowserSessions {
     s.lastActivity = Date.now();
     return {
       status: "completed",
-      session: s.handle,
+      session: s.auditId,
       origins: s.origins,
       items: itemList,
     };
@@ -338,15 +336,9 @@ export class BrowserSessions {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
-  /**
-   * Give up the profile a session held.
-   *
-   * A profile that belonged to this session alone goes with it; the
-   * credential's own profile stays, because that is where its logins live.
-   */
+  /** The profile belonged to this session alone, so it goes with it. */
   private releaseProfile(s: Session): void {
-    this.profilesInUse.delete(s.profile);
-    if (!this.browser.profileDir || !s.profile.startsWith("session-")) return;
+    if (!this.browser.profileDir) return;
     fs.rmSync(path.join(this.browser.profileDir, s.profile), { recursive: true, force: true });
   }
 
@@ -409,7 +401,7 @@ export class BrowserSessions {
       this.sessions.delete(handle);
       this.releaseProfile(s);
     }
-    this.audit("browser_session_closed", { session: handle, reason });
+    this.audit("browser_session_closed", { session: s.auditId, reason });
     return { status: "completed" };
   }
 
@@ -424,7 +416,7 @@ export class BrowserSessions {
     this.sessions.delete(handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
     this.releaseProfile(s);
-    this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
+    this.audit("browser_session_closed", { session: s.auditId, reason: "crashed" });
   }
 
   async closeAll(reason: string): Promise<void> {
@@ -491,7 +483,7 @@ export class BrowserSessions {
       if (!this.inScope(s, s.lastUrl) && !LOCKOUT_ALLOWED.has(action)) {
         const origin = hostOf(s.lastUrl) ?? s.lastUrl;
         this.audit("browser_scope_violation", {
-          session: s.handle,
+          session: s.auditId,
           action,
           origin,
         });
@@ -517,7 +509,7 @@ export class BrowserSessions {
           const host = hostOf(target);
           if (host === null || !originMatches(host, s.origins)) {
             this.audit("browser_scope_violation", {
-              session: s.handle,
+              session: s.auditId,
               action: "goto",
               origin: host ?? stripQuery(target),
             });
@@ -549,7 +541,7 @@ export class BrowserSessions {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.audit("browser_command", {
-        session: s.handle,
+        session: s.auditId,
         action,
         url: stripQuery(s.lastUrl),
         ...knobs,
@@ -572,14 +564,14 @@ export class BrowserSessions {
     const navigated = url !== s.lastUrl;
     s.lastUrl = url;
     if (navigated) {
-      this.audit("browser_navigated", { session: s.handle, url: stripQuery(url) });
+      this.audit("browser_navigated", { session: s.auditId, url: stripQuery(url) });
     }
     if (pageCount !== s.knownPageCount) {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
     this.audit("browser_command", {
-      session: s.handle,
+      session: s.auditId,
       action: String(action.action),
       url: stripQuery(url),
       // What the agent had to ask for, so the next look at a session that went
@@ -593,7 +585,7 @@ export class BrowserSessions {
     // an observation that cannot be made safely is not made.
     if (result.ok === false && result.mask === "unmasked") {
       this.audit("credential_mask_failed", {
-        session: s.handle,
+        session: s.auditId,
         action: String(action.action),
         url: stripQuery(url),
       });
@@ -612,7 +604,7 @@ export class BrowserSessions {
     if (!this.inScope(s, url)) {
       const origin = hostOf(url) ?? url;
       this.audit("browser_scope_violation", {
-        session: s.handle,
+        session: s.auditId,
         action: String(action.action),
         origin,
       });
@@ -639,7 +631,7 @@ export class BrowserSessions {
       for (const pg of list) {
         const url = jv(pg).get("url").str ?? "";
         this.audit("browser_navigated", {
-          session: s.handle,
+          session: s.auditId,
           url: stripQuery(url),
           page_index: jv(pg).get("i").int ?? -1,
         });
@@ -660,7 +652,7 @@ export class BrowserSessions {
       };
     }
     const items = await this.credentials.whatsHere(s.lastUrl || "https://invalid.invalid/");
-    this.audit("credential_metadata", { session: s.handle, op: "list" });
+    this.audit("credential_metadata", { session: s.auditId, op: "list" });
     return {
       status: "completed",
       items: items.map((i) => ({
@@ -681,7 +673,7 @@ export class BrowserSessions {
       return { status: "error", error: "no credential access approved for this item" };
     }
     const item = await this.credentials.describeItem(itemId);
-    this.audit("credential_metadata", { session: s.handle, op: "describe", item: itemId });
+    this.audit("credential_metadata", { session: s.auditId, op: "describe", item: itemId });
     return { status: "completed", ...item };
   }
 
@@ -708,7 +700,7 @@ export class BrowserSessions {
     }
     if (!s.credentialItems.has(itemId)) {
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: hostOf(s.lastUrl) ?? "",
@@ -730,7 +722,7 @@ export class BrowserSessions {
     const frameHost = hostOf(frameUrl);
     if (frameHost === null || !originMatches(frameHost, s.origins)) {
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost ?? stripQuery(frameUrl),
@@ -753,7 +745,7 @@ export class BrowserSessions {
       const type = error instanceof CredentialError ? error.type : "BrokerFailed";
       const message = error instanceof Error ? error.message : String(error);
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost,
@@ -779,7 +771,7 @@ export class BrowserSessions {
     // exists must not be typed into anything.
     if (this.sessions.get(s.handle) !== s) {
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost,
@@ -821,7 +813,7 @@ export class BrowserSessions {
       // prevent. Refused rather than filled.
       if (filled.mask === "moved") {
         this.audit("credential_denied", {
-          session: s.handle,
+          session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
@@ -838,7 +830,7 @@ export class BrowserSessions {
       }
       if (filled.ok !== true) {
         this.audit("credential_denied", {
-          session: s.handle,
+          session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
@@ -864,7 +856,7 @@ export class BrowserSessions {
       // enough secret loses its tail and an exact-match scrub leaves the prefix
       // behind in audit.ndjson. Nothing derived from the failure text is kept.
       this.audit("credential_fill_failed", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost,
@@ -881,7 +873,7 @@ export class BrowserSessions {
       secret = "";
     }
     this.audit("credential_filled", {
-      session: s.handle,
+      session: s.auditId,
       item: itemId,
       field,
       origin: frameHost,

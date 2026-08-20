@@ -125,7 +125,11 @@ describe("session lifecycle", () => {
     // It names the session, because only one of them lost its browser.
     ctx.sessions.noteCrash(s);
     const closed = ctx.events.find((e) => e.event === "browser_session_closed");
-    expect(closed?.fields.session).toBe(s);
+    // The audit names the session by a one-way digest: the handle is a
+    // capability, and the log is read by the owner, by an agent's history and
+    // by the reviewer model off this Mac.
+    expect(closed?.fields.session).not.toBe(s);
+    expect(String(closed?.fields.session)).toMatch(/^[a-f0-9]{16}$/);
     expect(closed?.fields.reason).toBe("crashed");
     expect(ctx.sessions.current()).toBeNull();
     // The handle died with the browser.
@@ -217,7 +221,10 @@ describe("session lifecycle", () => {
     // Firefox locks a profile against a second copy of itself.
     const profiles = fs.readdirSync(path.join(ctx.dir, "profiles"));
     expect(profiles.length).toBe(2);
-    expect(profiles.filter((p) => p.startsWith("session-")).length).toBe(1);
+    // Both are the session's own and both go when it closes: nothing durable
+    // is kept for a credential several agents share, or the next one to open
+    // would mount the last one's cookies.
+    expect(profiles.every((p) => p.startsWith("session-"))).toBe(true);
 
     // Closing one leaves the other browsing, and takes only its own profile.
     await ctx.sessions.close(second, "test");
@@ -592,29 +599,59 @@ describe("access the owner's log could not record is not granted", () => {
   });
 });
 
-describe("one profile per agent, and never a shared one", () => {
-  it("keeps two ids apart when sanitising would fold them together", async () => {
-    // "a/b" and "ab" sanitise to the same string. Naming a profile directory
-    // that way handed the second agent the first one's cookies and signed-in
-    // sessions — the leak this test exists to prevent.
-    const pairs = [
-      ["a/b", "ab"],
-      ["agent 1", "agent1"],
-      ["../escape", "escape"],
-    ];
-    const seen = new Set<string>();
-    for (const ids of pairs) {
-      for (const id of ids) {
-        const r = jv(await ctx.sessions.open(`int-${id}`, id, ["pizza.example"], false));
-        expect(r.get("status").str).toBe("completed");
-        await ctx.sessions.close(r.get("session").str!, "test");
-      }
+describe("the handle is a capability, so the log never carries it", () => {
+  it("keeps the raw handle out of every audit event", async () => {
+    // The audit file is read by the owner, selected into an agent's history,
+    // and serialised into the reviewer prompt that leaves this Mac. A handle
+    // there is a browser anybody who reads it can drive.
+    const s = await openSession(["pizza.example"]);
+    ctx.sessions.extend("int-2", AGENT, s, ["b.example"], ["L1"], true);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/menu" });
+    await ctx.sessions.command(AGENT, s, { action: "eval", expression: "1" });
+    await ctx.sessions.close(s, "test");
+
+    expect(JSON.stringify(ctx.events)).not.toContain(s);
+    // …and every line still names the session, so they can be read together.
+    const named = ctx.events.filter((e) => typeof e.fields.session === "string");
+    expect(named.length).toBeGreaterThan(3);
+    for (const e of named) expect(String(e.fields.session)).toMatch(/^[a-f0-9]{16}$/);
+  });
+});
+
+describe("one profile per session, and never a shared one", () => {
+  it("keeps two sessions apart even when their agent ids fold together", async () => {
+    // Two ids that sanitise to one string ("a/b" and "ab") must not meet, and
+    // neither must two sessions of the same id: every profile is named from
+    // the session handle through a hash, so nothing can collide.
+    const opened: string[] = [];
+    for (const id of ["a/b", "ab", "a/b"]) {
+      const r = jv(await ctx.sessions.open(`int-${opened.length}`, id, ["pizza.example"], false));
+      expect(r.get("status").str).toBe("completed");
+      opened.push(r.get("session").str!);
     }
-    for (const dir of fs.readdirSync(path.join(ctx.dir, "profiles"))) seen.add(dir);
-    // Six distinct agent ids, six distinct profiles — and none of them escaped
-    // the profiles directory.
-    expect(seen.size).toBe(6);
-    for (const dir of seen) expect(dir).toMatch(/^[a-zA-Z0-9_-]+$/);
+    const dirs = fs.readdirSync(path.join(ctx.dir, "profiles"));
+    expect(dirs.length).toBe(3);
+    for (const dir of dirs) expect(dir).toMatch(/^session-[a-zA-Z0-9_-]+$/);
+
+    // And each one goes with its session, so nobody inherits a thing.
+    for (const handle of opened) await ctx.sessions.close(handle, "test");
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles")).length).toBe(0);
+  });
+
+  it("leaves nothing behind for the next agent on the same credential", async () => {
+    // The leak this replaced: one agent closes, the next one opens under the
+    // same credential and finds the first one's cookies waiting.
+    const first = await openSession(["pizza.example"]);
+    const dir = fs.readdirSync(path.join(ctx.dir, "profiles"))[0];
+    fs.writeFileSync(path.join(ctx.dir, "profiles", dir, "cookies.sqlite"), "signed in");
+    await ctx.sessions.close(first, "test");
+
+    const second = jv(await ctx.sessions.open("int-2", AGENT, ["pizza.example"], false));
+    expect(second.get("status").str).toBe("completed");
+    const dirs = fs.readdirSync(path.join(ctx.dir, "profiles"));
+    expect(dirs.length).toBe(1);
+    expect(dirs[0]).not.toBe(dir);
+    expect(fs.existsSync(path.join(ctx.dir, "profiles", dirs[0], "cookies.sqlite"))).toBe(false);
   });
 });
 

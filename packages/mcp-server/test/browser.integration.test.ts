@@ -79,95 +79,60 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
    * read back its OWN page, and closing one must leave the others browsing.
    */
   /**
-   * The live failure this fixes: two agents reaching this Mac through ONE Plow
-   * credential. Keying the session on the credential made them one agent — the
-   * second was refused, told to reuse the first's session, and drove it.
+   * Three browsers at once, two of them on ONE credential — the live failure
+   * this fixes. Several of the owner's agents reach this Mac through a single
+   * Plow credential, so keying a session on it made them one agent: the second
+   * open was refused, told to reuse the first's session, and drove it.
+   *
+   * Fails if they collide: each session must read back its own page, a handle
+   * must be refused to another credential, and closing one must leave the
+   * others browsing.
    */
-  it("gives two callers on one credential two browsers", async () => {
-    const pages = [0, 1].map((i) => `http://127.0.0.1:${site.port}/?caller=${i}`);
-    let handles: string[] = [];
+  it("gives three callers three browsers, two of them on one credential", async () => {
+    const other: RelayAuth = { agent_id: "other-credential", agent_name: "Other", scopes: ["relay:call"] };
+    const callers = [AGENT, AGENT, other];
+    const pages = callers.map((_, i) => `http://127.0.0.1:${site.port}/?caller=${i}`);
+    let open: { session: string; caller: RelayAuth }[] = [];
     try {
       const opened = await Promise.all(
-        pages.map(() =>
-          callTool(server, "plow_browser_open", { origins: ["127.0.0.1"], goal: "same credential" }, AGENT),
+        callers.map((caller) =>
+          callTool(server, "plow_browser_open", { origins: ["127.0.0.1"], goal: "parallel browsing" }, caller),
         ),
       );
-      handles = opened.map((r) => {
+      open = opened.map((r, i) => {
         expect(r.isError, JSON.stringify(r.payload)).toBe(false);
-        return (r.payload as { session: string }).session;
+        return { session: (r.payload as { session: string }).session, caller: callers[i] };
       });
-      expect(handles[0]).not.toBe(handles[1]);
-
-      await Promise.all(
-        handles.map((session, i) =>
-          callTool(server, "plow_browser", { session, action: "goto", url: pages[i] }, AGENT),
-        ),
-      );
-      for (const [i, session] of handles.entries()) {
-        const r = await callTool(server, "plow_browser", { session, action: "url" }, AGENT);
-        expect((r.payload as { url: string }).url).toBe(pages[i]);
-      }
-
-      // Closing one leaves the other on its own page.
-      await callTool(server, "plow_browser_close", { session: handles[0] }, AGENT);
-      handles = [handles[1]];
-      const survivor = await callTool(server, "plow_browser", { session: handles[0], action: "url" }, AGENT);
-      expect((survivor.payload as { url: string }).url).toBe(pages[1]);
-    } finally {
-      for (const session of handles) {
-        await callTool(server, "plow_browser_close", { session }, AGENT).catch(() => {});
-      }
-    }
-  }, 300_000);
-
-  it("gives three agents three browsers that cannot see each other's pages", async () => {
-    const agents = [1, 2, 3].map((n) => ({ agent_id: `parallel-${n}`, agent_name: `Agent ${n}`, scopes: ["relay:call"] }));
-    // The same page with a different query each: any of the three seeing
-    // another's query means they shared a browser.
-    const pages = agents.map((_, i) => `http://127.0.0.1:${site.port}/?agent=${i}`);
-    let handles: string[] = [];
-    try {
-      const opened = await Promise.all(
-        agents.map((a) =>
-          callTool(server, "plow_browser_open", { origins: ["127.0.0.1"], goal: "parallel browsing" }, a),
-        ),
-      );
-      handles = opened.map((r) => {
-        expect(r.isError, JSON.stringify(r.payload)).toBe(false);
-        return (r.payload as { session: string }).session;
-      });
-      expect(new Set(handles).size).toBe(3);
+      expect(new Set(open.map((o) => o.session)).size).toBe(3);
 
       // Driven at the same time, each to its own page.
       await Promise.all(
-        handles.map((session, i) =>
-          callTool(server, "plow_browser", { session, action: "goto", url: pages[i] }, agents[i]),
+        open.map(({ session, caller }, i) =>
+          callTool(server, "plow_browser", { session, action: "goto", url: pages[i] }, caller),
         ),
       );
-
-      // Each still sees its own page — not whatever was navigated last.
-      const seen = await Promise.all(
-        handles.map((session, i) => callTool(server, "plow_browser", { session, action: "url" }, agents[i])),
-      );
-      seen.forEach((r, i) => {
-        expect(r.isError).toBe(false);
+      for (const [i, { session, caller }] of open.entries()) {
+        const r = await callTool(server, "plow_browser", { session, action: "url" }, caller);
+        expect(r.isError, `caller ${i}: ${JSON.stringify(r.payload)}`).toBe(false);
         expect((r.payload as { url: string }).url).toBe(pages[i]);
-      });
+      }
 
-      // A handle is not a licence to close somebody else's browser.
-      const stolen = await callTool(server, "plow_browser_close", { session: handles[1] }, agents[0]);
+      // A handle is refused to a caller on another credential.
+      const stolen = await callTool(server, "plow_browser_close", { session: open[0].session }, other);
       expect(JSON.stringify(stolen.payload)).toContain("different Plow credential");
 
       // Closing one's own leaves the others browsing.
-      await callTool(server, "plow_browser_close", { session: handles[0] }, agents[0]);
-      const survivor = await callTool(server, "plow_browser", { session: handles[1], action: "url" }, agents[1]);
-      expect(survivor.isError).toBe(false);
-      expect((survivor.payload as { url: string }).url).toBe(pages[1]);
+      await callTool(server, "plow_browser_close", { session: open[0].session }, open[0].caller);
+      open = open.slice(1);
+      for (const [i, { session, caller }] of open.entries()) {
+        const r = await callTool(server, "plow_browser", { session, action: "url" }, caller);
+        expect((r.payload as { url: string }).url).toBe(pages[i + 1]);
+      }
     } finally {
       // However this ends, the Mac gets its browsers back — the next test
       // needs room to open one.
-      for (const [i, session] of handles.entries()) {
-        await callTool(server, "plow_browser_close", { session }, agents[i]).catch(() => {});
+      for (const { session, caller } of open) {
+        await callTool(server, "plow_browser_close", { session }, caller).catch(() => {});
       }
     }
   }, 300_000);
