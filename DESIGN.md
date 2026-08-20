@@ -373,9 +373,9 @@ approved host and pass that off as the approved page's own trouble. Who asked
 is read when the request is MADE, not when it is answered: a page that asks
 for something it knows will fail and then moves itself to an approved origin
 would otherwise have the refusal read as that origin's. A request the browser
-cannot attribute — any frame's own document load, a service worker's request,
-one it never saw asked — names nobody and is withheld from the agent while the
-owner still sees it.
+cannot attribute — a sub-frame's own document load, a service worker's
+request, one it never saw asked — names nobody and is withheld from the agent
+while the owner still sees it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

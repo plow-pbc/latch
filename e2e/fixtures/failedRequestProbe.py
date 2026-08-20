@@ -231,22 +231,17 @@ def main():
                                   Response(302, "https://pizza.example/b"),
                                   Response(304, "https://pizza.example/c")])
 
-    # One ring for both kinds: a page with several failing frames — ad and
-    # tracking iframes returning 4xx is ordinary — can push the one attributable
-    # refusal out of it. Asserted so the trade-off is a decision.
+    # Both kinds share this ring too — the trade-off that costs is at
+    # BrowserHost's, which is where the note lives and where the device test
+    # asserts it. Here it is only that the two are not separated.
     session = server.Session(Page())
     out["frames_crowd_out"] = feed(session, [
         Response(403, "https://pizza.example/api/x", page="https://pizza.example/"),
     ] + [
-        # Loaded frames on the EMBEDDER's own origin: a sub-frame navigation
-        # names nobody whatever the frame is showing, and this shape says so
-        # against every reading this rule has had — a blank-url one, an
-        # embedder one, and an agreement one would each name pizza.example
-        # here and trip the assertion. (A third-party ad frame would be the
-        # more faithful scenario, but a cross-origin child agrees with nobody,
-        # so it would pass the agreement reading for the wrong reason.)
+        # A sub-frame navigation names nobody — pinned in `navigations`; these
+        # are here only to fill the ring.
         Response(410 + i, "https://ads.example/f%d" % i, navigation=True,
-                 page="https://pizza.example/frame", embedder="https://pizza.example/")
+                 page="https://ads.example/loaded", embedder="https://pizza.example/")
         for i in range(5)
     ])
 

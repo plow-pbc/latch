@@ -34,8 +34,9 @@
  *   click "#refuses"  refused AND fails, so the refusal has to ride an error
  *   click "#blocked-later"  the refusal settles after the click answered, so it
  *                     rides whatever reply comes next — a viewer poll, say
- *   click "#frames-fail"  five frame loads the browser cannot attribute, on the
- *                     next reply: enough to fill the host's ring
+ *   click "#frames-fail"  on the NEXT reply: one attributable refusal and five
+ *                     frame loads the browser cannot attribute — six for a ring
+ *                     that holds five, so the oldest is pushed out
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
  *   click "#swallowed" fails the way a click something is covering does
@@ -129,9 +130,17 @@ function handle(cmd) {
       );
     }
     if (cmd.selector === "#frames-fail") {
-      failedNext = Array.from({ length: 5 }, (_, i) => ({
-        status: 410 + i, method: "GET", origin: "https://ads.example", initiator: "",
-      }));
+      // Most recent first, so the attributable one is last — the entry the ring
+      // drops, and the one the agent could have used.
+      failedNext = [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          status: 414 - i, method: "GET", origin: "https://ads.example", initiator: "",
+        })),
+        {
+          status: 401, method: "GET", origin: "https://pizza.example",
+          initiator: "https://pizza.example",
+        },
+      ];
     }
     if (cmd.selector === "#blocked-later") {
       failedNext = [{
