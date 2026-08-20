@@ -512,11 +512,18 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_delay: number | null;
         typed_len: number | null;
         type_calls: number;
+        key_timeout_max: number | null;
+        key_timeouts_shrink: boolean;
         node_len: number;
         asked_len: number;
       };
     } & {
-      constants: { typed_chars: number };
+      constants: {
+        typed_chars: number;
+        action_timeout_ms: number;
+        typing_max_ms: number;
+        key_delay_ms: number;
+      };
       two_frames: {
         error: string | null;
         result: unknown;
@@ -607,6 +614,29 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // cases, is the table over KEYS_DROPPED_JS further down.
     expect(probed.plain.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
     expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
+  });
+
+  it("spends one budget across the whole tail, not one per key", () => {
+    // Every key goes on its own call, so handing each the tail's full budget
+    // would let them stack to TYPED_CHARS times what the single call they
+    // replaced could ever spend — the unbounded-action shape #96 is about,
+    // reintroduced by the fix for it. They share a deadline instead, so the
+    // budget each key is handed shrinks as the tail is spent.
+    const c = probed.constants;
+    const run = probed.long_value;
+    expect(run.type_calls).toBe(c.typed_chars);
+    expect(run.key_timeout_max).toBeLessThan(c.action_timeout_ms + c.typing_max_ms);
+    expect(run.key_timeouts_shrink).toBe(true);
+  });
+
+  it("leaves the tail's budget room for the round trips it now pays", () => {
+    // TYPED_CHARS used to be the budget divided by the delay alone, so the
+    // delays claimed all of it and the slack sized for one actionability check
+    // had to cover every key. It is sized against the per-key cost now.
+    const c = probed.constants;
+    const delays = c.typed_chars * c.key_delay_ms;
+    const slack = c.action_timeout_ms + c.typing_max_ms - delays;
+    expect(slack / c.typed_chars).toBeGreaterThan(c.key_delay_ms);
   });
 
   it("does not try the next frame once a node has been changed", () => {

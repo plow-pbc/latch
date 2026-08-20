@@ -73,8 +73,14 @@ SETTLE_MS = 1000
 # it. A caller that names no frame pays for the frame search on top of that
 # (the loop below, #96).
 KEY_DELAY_MS = 45
+# What a key costs BEYOND its delay: the round trip that dispatches it and the
+# actionability check in front of it. Each key is sent on its own so that the
+# node the mark is on is refocused before every one, so the tail pays this
+# TYPED_CHARS times rather than once -- which is why the budget has to know
+# about it. A few milliseconds on a local page; sized well above that.
+KEY_OVERHEAD_MS = 30
 TYPING_MAX_MS = 4000
-TYPED_CHARS = TYPING_MAX_MS // KEY_DELAY_MS
+TYPED_CHARS = TYPING_MAX_MS // (KEY_DELAY_MS + KEY_OVERHEAD_MS)
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
@@ -277,8 +283,9 @@ def _type_value(el, value):
         return
     el.fill(value[:-TYPED_CHARS], timeout=ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
-    # the tail's own budget would let TYPED_CHARS of them stack up to 88 times
-    # what a single call could ever spend.
+    # the tail's own budget would let TYPED_CHARS of them stack up to that many
+    # times what a single call could ever spend. TYPED_CHARS is sized so the
+    # delays leave room in it for that many round trips.
     deadline = time.monotonic() + (ACTION_TIMEOUT_MS + TYPING_MAX_MS) / 1000
     for ch in value[-TYPED_CHARS:]:
         left = (deadline - time.monotonic()) * 1000

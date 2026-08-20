@@ -90,6 +90,9 @@ class Handle:
         # Only the LENGTH of that text is ever reported out of this file.
         self.typed_delay = None
         self.typed = None
+        # What budget each key was handed. They share one deadline, so these
+        # shrink; a per-key timeout would hand out the same number every time.
+        self.typed_timeouts = []
         # How many separate calls that text arrived in. One per character is
         # the property the segmented-code fix turns on: a key sent through the
         # handle lands in the node the mark is on, wherever focus has wandered.
@@ -157,6 +160,7 @@ class Handle:
         after a fill that did not land is the whole point of one of these
         scenarios."""
         self.typed_delay = delay
+        self.typed_timeouts.append(timeout)
         # One entry per contiguous run of keys, not per key: the trace records
         # the SHAPE of the fill, and `type_calls` carries the count.
         if self.trace[-1:] != ["handle.type"]:
@@ -282,6 +286,13 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
+    # The largest budget any one key was handed, and whether they shrank across
+    # the tail -- which is what one shared deadline looks like from here.
+    timeouts = frame.handle.typed_timeouts
+    out["key_timeout_max"] = max(timeouts) if timeouts else None
+    # STRICTLY smaller each time: a per-key timeout hands out the same number
+    # every call, and "non-increasing" would call that shrinking.
+    out["key_timeouts_shrink"] = all(a > b for a, b in zip(timeouts, timeouts[1:]))
     out["node_len"] = len(frame.handle.value or "")
     return out
 
@@ -438,9 +449,10 @@ def main() -> int:
         # Prose, not a credential: too long to type inside the budget. The bulk
         # is assigned and the field still ends on real keys.
         "long_value": run(server, {**base, "value": "x" * 2000}),
-        # A long SECRET whose head was assigned and whose keys then failed: the
-        # node holds real credential content, so the mark stays and it is
-        # ledgered. The short-value shape assigned nothing and cannot show this.
+        # A long SECRET whose head was assigned and whose tail then broke off
+        # partway: the node holds real credential content, so the mark stays and
+        # it is ledgered. The short-value shape assigned nothing and cannot show
+        # this.
         "orphan_mark_long": run(server, {**base, "mask": True, "value": "s" * 2000},
                                 partial_fill=True, value="1 Elm St"),
         # The clear landed and then not one key did, so the node holds nothing.
@@ -503,7 +515,12 @@ def main() -> int:
     }
     # How much of a value the server types, so a test asserting the split reads
     # the number from the server rather than restating it.
-    result["constants"] = {"typed_chars": server.TYPED_CHARS}
+    result["constants"] = {
+        "typed_chars": server.TYPED_CHARS,
+        "action_timeout_ms": server.ACTION_TIMEOUT_MS,
+        "typing_max_ms": server.TYPING_MAX_MS,
+        "key_delay_ms": server.KEY_DELAY_MS,
+    }
     out.write(json.dumps(result))
     out.flush()
     return 0
