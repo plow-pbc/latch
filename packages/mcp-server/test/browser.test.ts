@@ -338,9 +338,12 @@ describe("browser tools (fake runtime)", () => {
     expect(audited(device, "browser_profile_abandoned").at(-1)).toBe(opening);
 
     // The live browser came along: an action after the widening must not
-    // restart it, which would cost the session its page.
+    // restart it, which would cost the session its page. A second widening
+    // has nothing left to give up, so it is not a second jar or a second line.
     await act(server, session, "text");
+    await callTool(server, "plow_browser_request", { session, origins: ["shop.example"] }, AGENT);
     expect(launches(argvLog)).toHaveLength(1);
+    expect(audited(device, "browser_profile_abandoned")).toEqual([opening]);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
     // Every later session steps over it — the narrow grant it was filed under
@@ -355,22 +358,6 @@ describe("browser tools (fake runtime)", () => {
       profileKeyForOrigins(["pizza.example", "bank.example"]),
     ]);
     expect(abandoned(profiles, `${opening}-2`)).toBe(false);
-  });
-
-  it("a second widening gives up the jar the session moved on to", async () => {
-    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
-    const profiles = path.join(device.home, "device/browser/profiles");
-    const opening = profileKeyForOrigins(["pizza.example"]);
-
-    const session = await open(server, ["pizza.example"]);
-    await callTool(server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT);
-    await callTool(server, "plow_browser_request", { session, origins: ["shop.example"] }, AGENT);
-    await callTool(server, "plow_browser_close", { session }, AGENT);
-
-    // The browser never left the jar it opened, so there is one to give up and
-    // giving it up twice is not a second directory or a second audit line.
-    expect(fs.readdirSync(profiles)).toEqual([opening]);
-    expect(audited(device, "browser_profile_abandoned")).toEqual([opening]);
   });
 
   it("a second agent racing the cold start is refused, not handed the browser", async () => {
