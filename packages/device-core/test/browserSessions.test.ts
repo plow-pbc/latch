@@ -432,28 +432,28 @@ describe("access the owner's log could not record is not granted", () => {
   it.each(["browser_navigated", "browser_scope_violation"])(
     "retires a strayed jar even when %s cannot be recorded",
     async (failOn) => {
-    // The retirement runs ahead of every audit append for exactly this reason:
-    // the response is already in the jar, so a log the device cannot write
-    // must not be what decides whether the jar stays reusable.
-    // `browser_scope_violation` is the append an earlier ordering put in front
-    // of the retirement.
-    const sessions = failingAudit(failOn, false);
-    const origins = ["pizza.example", "*.pizza.example"];
-    const opened = jv(await sessions.open("int-1", AGENT, origins, true));
-    const handle = opened.get("session").str!;
-    const marker = path.join(
-      ctx.dir, "profiles", profileKeyForOrigins(origins), "domo-abandoned",
-    );
+      // The retirement runs ahead of every audit append for exactly this reason:
+      // the response is already in the jar, so a log the device cannot write
+      // must not be what decides whether the jar stays reusable.
+      // `browser_scope_violation` is the append an earlier ordering put in front
+      // of the retirement.
+      const sessions = failingAudit(failOn, false);
+      const origins = ["pizza.example", "*.pizza.example"];
+      const opened = jv(await sessions.open("int-1", AGENT, origins, true));
+      const handle = opened.get("session").str!;
+      const marker = path.join(
+        ctx.dir, "profiles", profileKeyForOrigins(origins), "domo-abandoned",
+      );
 
-    // #offsite navigates the page to https://offsite.example/lander.
-    const strayed = jv(
-      await sessions.command(AGENT, handle, { action: "click", selector: "#offsite" }),
-    );
-    expect(strayed.get("error").str).toMatch(/audit append failed/);
+      // #offsite navigates the page to https://offsite.example/lander.
+      const strayed = jv(
+        await sessions.command(AGENT, handle, { action: "click", selector: "#offsite" }),
+      );
+      expect(strayed.get("error").str).toMatch(/audit append failed/);
 
-    // The action could not be recorded; the jar was retired regardless.
-    expect(fs.existsSync(marker)).toBe(true);
-    await sessions.closeAll("test");
+      // The action could not be recorded; the jar was retired regardless.
+      expect(fs.existsSync(marker)).toBe(true);
+      await sessions.closeAll("test");
     },
   );
 
