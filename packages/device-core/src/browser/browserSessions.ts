@@ -310,6 +310,13 @@ export class BrowserSessions {
   }
 
   close(handle: string, reason: string): Promise<JSONValue> {
+    // Answered ahead of the queue when there is nothing to close. Closing is
+    // non-deferrable and owes an answer inside the relay's ~20s ceiling, while
+    // an open in front of it may be paying a ~30s cold start — so a close that
+    // was going to say "unknown session" must not wait behind one.
+    if (this.session?.handle !== handle) {
+      return Promise.resolve({ status: "error", error: "unknown session" });
+    }
     return this.queued(() => this.closeSession(handle, reason));
   }
 
