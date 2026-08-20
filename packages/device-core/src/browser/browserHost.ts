@@ -350,7 +350,13 @@ export class BrowserHost {
           // alongside a stdout read that may still hold the browser's last
           // words, and the session closes its books inside this callback —
           // synchronously, that snapshot happens before the line is parsed.
-          setImmediate(() => this.onCrash?.());
+          setImmediate(() => {
+            this.onCrash?.();
+            // Whatever it said has been read by now, and shutdown's close never
+            // runs for a browser that died on its own.
+            rl.close();
+            if (this.reader === rl) this.reader = null;
+          });
         }
         if (!ready) {
           ready = true; // don't double-settle

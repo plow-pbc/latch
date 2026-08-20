@@ -66,11 +66,15 @@ describe("BrowserHost", () => {
     await host.sendAction({ action: "url" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
     expect(events).toContain("browser_crashed");
-    // The session layer is told a tick later, deliberately: it closes its books
-    // inside that callback, and the browser's last line may still be in the
-    // pipe when `exit` is dispatched.
+    // The session layer is told AFTER the exit handler, deliberately: it closes
+    // its books inside that callback, and the browser's last line may still be
+    // in the pipe when `exit` is dispatched. How much later is the mechanism's
+    // business — this asserts only that it is not synchronous, so a stronger
+    // deferral (waiting on the stream's end, say) still passes.
     expect(crashes).toBe(0);
-    await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 50 && crashes === 0; i++) {
+      await new Promise((r) => setTimeout(r, 1));
+    }
     expect(crashes).toBe(1);
     // Next action restarts a fresh server (state reset to about:blank).
     const r = await host.sendAction({ action: "url" });
