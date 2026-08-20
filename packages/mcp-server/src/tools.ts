@@ -417,8 +417,15 @@ export const TOOLS: ToolSpec[] = [
       // may save, the session's bound and its profile all name one set — an
       // entry that bounds nothing would otherwise show as a blank on the card
       // and make the saved rule un-rematchable.
-      const origins = usableOrigins(strings(a.get("origins").arr));
-      if (origins.length === 0) throw new ToolError("missing 'origins'");
+      const raw = strings(a.get("origins").arr);
+      const origins = usableOrigins(raw);
+      if (origins.length === 0) {
+        throw new ToolError(
+          raw.length === 0
+            ? "missing 'origins'"
+            : "no 'origins' pattern can match a host — use 'example.com' or '*.example.com'",
+        );
+      }
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });

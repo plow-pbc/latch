@@ -25,8 +25,8 @@ import {
   JSONValue,
   jv,
   originMatches,
-  normalizeOrigin,
   profileKeyForOrigins,
+  usableOrigins,
 } from "@domo/protocol";
 import { BrowserHost } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
@@ -177,7 +177,7 @@ export class BrowserSessions {
     const session: Session = {
       handle: crypto.randomUUID(),
       agentId,
-      origins: origins.map(normalizeOrigin),
+      origins: usableOrigins(origins),
       credentialMetadata,
       credentialItems: new Set(),
       lastActivity: Date.now(),
@@ -234,12 +234,7 @@ export class BrowserSessions {
     // the agent holding origins and credential items that the owner's log has
     // no event for — and the log is the only place they can see it. Recording
     // first fails the call instead, and the session keeps its old bound.
-    const widened = [...s.origins];
-    for (const o of origins) {
-      const n = normalizeOrigin(o);
-      if (!widened.includes(n)) widened.push(n);
-    }
-    widened.sort();
+    const widened = usableOrigins([...s.origins, ...origins]);
     const widenedItems = new Set(s.credentialItems);
     for (const i of items) widenedItems.add(i);
     const itemList = [...widenedItems].sort();

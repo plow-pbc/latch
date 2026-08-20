@@ -233,6 +233,28 @@ describe("browser tools (fake runtime)", () => {
       .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_opened")
       .map((e) => jv(e as JSONValue).get("origins").value);
     expect(bound.at(-1)).toEqual(["pizza.example"]);
+
+    // What the owner was shown carries no blank either.
+    const asked = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "intent_received")
+      .map((e) => JSON.stringify(jv(e as JSONValue).get("capabilities").value));
+    expect(asked.at(-1)).toContain("Browse: pizza.example");
+    expect(asked.at(-1)).not.toContain("pizza.example, ");
+
+    // And the rule that open saved re-matches the clean list — the failure
+    // this is really about: a rule keyed on a bound with a blank in it could
+    // never be matched again by a session asking for the same thing.
+    await callTool(server, "plow_browser_close", { session: opened.payload.session }, AGENT);
+    const again = await callTool(
+      server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT,
+    );
+    expect(again.isError, JSON.stringify(again.payload)).toBe(false);
+    const sources = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "intent_decision")
+      .map((e) => jv(e as JSONValue).get("source").str);
+    expect(sources.at(-1)).toBe("rule");
   });
 
   it("each approved origin set browses in its own profile, and comes back to it", async () => {
