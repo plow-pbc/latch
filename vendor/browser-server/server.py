@@ -141,7 +141,7 @@ KEY_CHARS = ("\n", "\r", "\t")
 TYPEABLE_JS = """(el) => {
     const typed = ["text", "email", "password", "search", "tel", "url", "number"];
     const tag = el.tagName.toLowerCase();
-    if (tag === "input" && !typed.includes((el.type || "text").toLowerCase())) return false;
+    if (tag === "input" && !typed.includes(el.type)) return false;
     if (tag !== "input" && tag !== "textarea" && !el.isContentEditable) return false;
     return !el.disabled && !el.readOnly;
 }"""

@@ -931,33 +931,40 @@ describe("which nodes take typing", () => {
   // cannot even hold focus — so the keystrokes, on the credential path a
   // secret's characters, land wherever focus already was.
   const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => boolean;
-  const node = (tagName: string, extra: Record<string, unknown> = {}) => ({
-    tagName,
-    type: undefined,
-    disabled: false,
-    readOnly: false,
-    isContentEditable: false,
-    ...extra,
+  // Only what a real node carries. `HTMLInputElement.type` is an enumerated
+  // reflection — always lowercase, and "text" for a missing or unrecognised
+  // attribute — while an element that is not an input has no `type`, no
+  // `disabled` and no `readOnly` at all.
+  const input = (type: string, extra: Record<string, unknown> = {}) => ({
+    tagName: "INPUT", type, disabled: false, readOnly: false, isContentEditable: false, ...extra,
+  });
+  const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
+    tagName, isContentEditable: false, ...extra,
   });
 
   it.each([
-    { what: "a text input", el: node("INPUT", { type: "text" }), typed: true },
-    { what: "an input with no type at all", el: node("INPUT"), typed: true },
-    { what: "a password field", el: node("INPUT", { type: "password" }), typed: true },
-    { what: "an email field", el: node("INPUT", { type: "EMAIL" }), typed: true },
-    { what: "a one-time-code field, which is a text input", el: node("INPUT", { type: "tel" }), typed: true },
-    { what: "a textarea", el: node("TEXTAREA"), typed: true },
-    { what: "a contenteditable div", el: node("DIV", { isContentEditable: true }), typed: true },
-    { what: "a checkbox", el: node("INPUT", { type: "checkbox" }), typed: false },
-    { what: "a radio button", el: node("INPUT", { type: "radio" }), typed: false },
-    { what: "a file picker", el: node("INPUT", { type: "file" }), typed: false },
-    { what: "a submit button", el: node("INPUT", { type: "submit" }), typed: false },
-    { what: "a hidden input, which cannot take focus", el: node("INPUT", { type: "hidden" }), typed: false },
-    { what: "a date input Firefox lays out as segments", el: node("INPUT", { type: "date" }), typed: false },
-    { what: "a select", el: node("SELECT"), typed: false },
-    { what: "a plain div", el: node("DIV"), typed: false },
-    { what: "a read-only text field", el: node("INPUT", { type: "text", readOnly: true }), typed: false },
-    { what: "a disabled text field", el: node("INPUT", { type: "text", disabled: true }), typed: false },
+    // Every type on the list, because dropping one silently sends that field
+    // back to assignment — the tell issue #86 is about — with nothing red.
+    { what: "a text field", el: input("text"), typed: true },
+    { what: "an email field", el: input("email"), typed: true },
+    { what: "a password field", el: input("password"), typed: true },
+    { what: "a search box", el: input("search"), typed: true },
+    { what: "a phone field, which is where a one-time code lands", el: input("tel"), typed: true },
+    { what: "a url field", el: input("url"), typed: true },
+    { what: "a number field, which is the card expiry beside a credential", el: input("number"), typed: true },
+    { what: "a textarea", el: element("TEXTAREA"), typed: true },
+    { what: "a contenteditable div, which has no disabled or readOnly at all", el: element("DIV", { isContentEditable: true }), typed: true },
+    { what: "a checkbox", el: input("checkbox"), typed: false },
+    { what: "a radio button", el: input("radio"), typed: false },
+    { what: "a file picker", el: input("file"), typed: false },
+    { what: "a submit button", el: input("submit"), typed: false },
+    { what: "a hidden input, which cannot take focus", el: input("hidden"), typed: false },
+    { what: "a date input Firefox lays out as segments", el: input("date"), typed: false },
+    { what: "a range slider", el: input("range"), typed: false },
+    { what: "a select", el: element("SELECT"), typed: false },
+    { what: "a plain div", el: element("DIV"), typed: false },
+    { what: "a read-only text field", el: input("text", { readOnly: true }), typed: false },
+    { what: "a disabled text field", el: input("text", { disabled: true }), typed: false },
   ])("$what: typed=$typed", ({ el, typed }) => {
     expect(typeable(el)).toBe(typed);
   });
