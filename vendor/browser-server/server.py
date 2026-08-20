@@ -426,9 +426,9 @@ class Session:
             # a scan of every frame at once rather than a wait carved up between
             # them (which spends each frame's share blind to the others -- an
             # element arriving in the first frame a moment after its share ran
-            # out was missed with most of the budget unspent). Whatever holds it
-            # gets what remains, and nothing holding it by the deadline is an
-            # honest "not found" rather than a timeout.
+            # out was missed with most of the budget unspent). Whatever frame
+            # holds the selector gets what remains, and no frame holding it by
+            # the deadline is an honest "not found" rather than a timeout.
             # The frames scanned are the ones the page had when the command
             # arrived, and stay that way: re-reading them would let a frame
             # injected DURING the wait be clicked, and the device approved
