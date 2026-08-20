@@ -20,10 +20,11 @@ export interface WindowBounds {
 /**
  * How operation intents are decided:
  *   - approve:     auto "allow once", no dialog
- *   - adversarial: a Claude-backed adversarial review decides. It FAILS CLOSED:
- *                  no API key, an API error, a timeout, a refusal or an answer
- *                  that is not a verdict all fall back to `ask`, so a broken
- *                  reviewer hands the decision to the human and never approves.
+ *   - adversarial: a Claude-backed adversarial review decides, and nothing else
+ *                  does — there is no human in this mode. It FAILS CLOSED: no
+ *                  credential, an API error, a timeout, a refusal or an answer
+ *                  that is not a verdict all deny the operation outright, each
+ *                  with a source saying which it was.
  *   - ask:         always show the approval dialog (default)
  *   - deny:        auto-deny, no dialog
  */

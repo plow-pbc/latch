@@ -4,7 +4,8 @@
  * branching moved out of `main.ts` none of it was reachable by a test.
  *
  * What must hold, whatever the settings say:
- *   - a review that cannot run never becomes an approval — it becomes a dialog;
+ *   - a review that cannot run never becomes an approval — in adversarial mode
+ *     it denies, in Ask mode the dialog was always the decider;
  *   - the audit log names the model that actually ran;
  *   - the relay credential reaches the reviewer and nothing else.
  *
@@ -223,37 +224,30 @@ describe("decideIntent — adversarial mode", () => {
   }
 
   /**
-   * The routes into a dialog were never one route. A model can answer `ask`; a
-   * call can time out; a provider can error or rate-limit; an answer can fail
-   * to parse. Each arrives as the same `ask` verdict and each used to open the
-   * same window, so each needs its own proof that it no longer does.
+   * A reviewer that could not run — timed out, errored, rate-limited, answered
+   * unparseably — arrives here as one shape: `ask` with `cause: "unavailable"`
+   * (adversarialAgent.test.ts pins each real failure onto that cause). It used
+   * to open the dialog, so it needs its own proof that it no longer does; and
+   * Ask mode's dialog has to still be there afterwards.
    */
   describe("no route reaches a modal", () => {
-    const routes = [
-      { name: "the model answers ask", reason: "genuinely ambiguous", cause: undefined, source: "reviewer_undecided" },
-      { name: "the call times out", reason: "reviewer timed out", cause: "unavailable" as const, source: "reviewer_unavailable" },
-      { name: "the provider errors", reason: "reviewer error", cause: "unavailable" as const, source: "reviewer_unavailable" },
-      { name: "the provider rate-limits", reason: "Plow returned HTTP 429", cause: "unavailable" as const, source: "reviewer_unavailable" },
-      { name: "the verdict does not parse", reason: "reviewer returned no usable verdict", cause: "unavailable" as const, source: "reviewer_unavailable" },
-    ];
-
-    for (const r of routes) {
-      it(`${r.name} → deny, sourced ${r.source}`, async () => {
-        // `decision` is what the dialog WOULD have answered. Nothing may turn
-        // it into execution, because nothing may open it.
-        const h = harness(adversarial(), {
-          verdict: "ask",
-          reason: r.reason,
-          cause: r.cause,
-          decision: "allow_once",
-        });
-        expect(await h.run()).toEqual({ decision: "deny", source: r.source });
-        expect(h.openApproval).not.toHaveBeenCalled();
-        // The reason the reviewer gave is still recorded, so the source is a
-        // summary of the timeline rather than a replacement for it.
-        expect(h.records[1].fields).toMatchObject({ verdict: "ask", reason: r.reason });
+    it("a reviewer that could not run → deny, sourced reviewer_unavailable", async () => {
+      // `decision` is what the dialog WOULD have answered. Nothing may turn
+      // it into execution, because nothing may open it.
+      const h = harness(adversarial(), {
+        verdict: "ask",
+        reason: "reviewer timed out",
+        cause: "unavailable",
+        decision: "allow_once",
       });
-    }
+      expect(await h.run()).toEqual({ decision: "deny", source: "reviewer_unavailable" });
+      expect(h.openApproval).not.toHaveBeenCalled();
+      // The Activity pane shows this source; a raw token there is a leak.
+      expect(decidedByLabel("reviewer_unavailable")).toBe("AI Reviewer (could not run)");
+      // The reason the reviewer gave is still recorded, so the source is a
+      // summary of the timeline rather than a replacement for it.
+      expect(h.records[1].fields).toMatchObject({ verdict: "ask", reason: "reviewer timed out" });
+    });
 
     it("leaves Ask mode's dialog exactly where it was", async () => {
       const h = harness(settings({ relayCredential: PLOW_CREDENTIAL }), {
@@ -592,15 +586,23 @@ describe("the audit tells one coherent story about who decided", () => {
     expect(decidedByLabel(decision.source)).not.toContain("no_credits");
   });
 
-  it("a genuine abstention still reads as deferring, because it is one", async () => {
+  it("a genuine abstention reads as 'would not decide', because nobody is deferred to", async () => {
+    // The reviewer really did look and really did abstain — but in this mode
+    // that hands the decision to no one: the operation is denied with no
+    // dialog. "Defer to you" would name a person who was never asked.
     const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
       verdict: "ask",
       reason: "genuinely ambiguous",
     });
     const decision = await h.run();
     const lines = narrative(h.records, decision, intent().intentId);
-    expect(lines.some((l) => l.includes("defer to you"))).toBe(true);
-    expect(lines.some((l) => l.includes("could not run"))).toBe(false);
+    const reviewLine = lines.find((l) => l.startsWith("AI Reviewer:")) ?? "";
+    expect(reviewLine).toContain("would not decide");
+    expect(reviewLine).not.toContain("defer to you");
+    // Not "could not run" either — that is the other failure, and this one ran.
+    expect(reviewLine).not.toContain("could not run");
+    // …and the decision that follows names it in human words, not a raw token.
+    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (would not decide)");
   });
 });
 

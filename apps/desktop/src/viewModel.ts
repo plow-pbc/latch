@@ -131,6 +131,8 @@ export function decidedByLabel(source: string | null): string | null {
     // for; the other was never configured.
     case "no_credits": return "AI Reviewer (out of credits)";
     case "no_reviewer": return "AI Reviewer (not configured)";
+    case "reviewer_undecided": return "AI Reviewer (would not decide)";
+    case "reviewer_unavailable": return "AI Reviewer (could not run)";
     case "ask":
     case "prompt": return "You (asked)";
     // The deadline, not a person — see APPROVAL_SOURCE_EXPIRED.
@@ -485,10 +487,12 @@ function describeStep(e: JSONValue): AuditStep {
       const verdict = ev.get("verdict").str ?? "";
       const reason = ev.get("reason").str ?? "";
       const cause = ev.get("cause").str;
-      // "defer to you" is only true when the agent ran and chose not to decide.
-      // A review that could not run at all defers to nobody — saying it did
-      // would misdescribe who decided the operation that follows. ANY cause
-      // means it could not run; that is what a cause is for.
+      // The event does not know which mode it was reviewed under, and an
+      // abstention means different things in each: in Ask mode a human takes
+      // it, in adversarial mode nobody does and the operation is denied. So
+      // the wording describes only the reviewer's own act, which is the same
+      // either way. ANY cause means it could not run; that is what a cause is
+      // for, and it defers to nobody.
       const label =
         cause
           ? "could not run"
@@ -496,7 +500,7 @@ function describeStep(e: JSONValue): AuditStep {
             ? "allow"
             : verdict === "deny"
               ? "deny"
-              : "defer to you";
+              : "would not decide";
       text = `AI Reviewer: ${label}${reason ? ` — ${reason}` : ""}`;
       state = verdict === "deny" || cause ? "bad" : verdict === "allow" ? "ok" : "neutral";
       break;

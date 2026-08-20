@@ -509,10 +509,18 @@ export interface ReviewArgs {
   agentPurpose?: string;
 }
 
+/** The one shape a non-verdict takes: `ask`, plus why it isn't one. */
+function failedReview(
+  reason: string,
+  cause: ReviewFailureCause = "unavailable",
+): { verdict: Verdict; reason: string; cause: ReviewFailureCause } {
+  return { verdict: "ask", reason, cause };
+}
+
 /**
  * Review one intent. Any failure — no credential, timeout, API error, refusal,
- * or an unparseable answer — resolves to "ask" so the human is never bypassed
- * by a broken reviewer.
+ * or an unparseable answer — is reported as "ask" carrying a `cause`; what that
+ * means for the operation is the caller's mode to decide.
  */
 export async function adversarialReview(
   args: ReviewArgs,
@@ -522,7 +530,7 @@ export async function adversarialReview(
   // `reviewerAvailable` — so this is the answer to a question that should not
   // have been put: no verdict, and the reason it could not be reached.
   if (!("call" in provider)) {
-    return { verdict: "ask", reason: provider.reason, cause: "unavailable" };
+    return failedReview(provider.reason);
   }
 
   // One budget, one timer: the same timeout that gives up on the review aborts
@@ -540,30 +548,22 @@ export async function adversarialReview(
       () => budget.abort(),
     );
     if (!result.ok) {
-      return {
-        verdict: "ask",
-        reason: result.reason,
-        // `no_credits` is the sharper answer where it applies, so it wins.
-        cause: result.cause ?? "unavailable",
-      };
+      // `no_credits` is the sharper answer where it applies, so it wins.
+      return failedReview(result.reason, result.cause ?? "unavailable");
     }
 
     // A fixed reason on purpose — see parseVerdict. Nothing derived from the
     // model's output reaches this string.
     const parsed = parseVerdict(result.text);
     if (!parsed) {
-      return { verdict: "ask", reason: "reviewer returned no usable verdict", cause: "unavailable" };
+      return failedReview("reviewer returned no usable verdict");
     }
     // The credential check, on the decoded string and after the only decode
     // there is. `decision` is an enum the parser already pinned, so `reason` is
     // the entire surface by which the answer can carry anything out of here —
     // and this is the value itself, not a serialisation of it. See echoesSecret.
     if (echoesSecret(parsed.reason, provider.secret, provider.headLength)) {
-      return {
-        verdict: "ask",
-        reason: "reviewer answer discarded: it repeated a credential",
-        cause: "unavailable",
-      };
+      return failedReview("reviewer answer discarded: it repeated a credential");
     }
     return parsed;
   } catch (error: unknown) {
@@ -578,11 +578,7 @@ export async function adversarialReview(
     //
     // The timeout is named because we constructed it ourselves and it tells the
     // human something true. It is still a literal, not the error's own text.
-    return {
-      verdict: "ask",
-      reason: error instanceof ReviewTimeout ? "reviewer timed out" : "reviewer error",
-      cause: "unavailable",
-    };
+    return failedReview(error instanceof ReviewTimeout ? "reviewer timed out" : "reviewer error");
   }
 }
 

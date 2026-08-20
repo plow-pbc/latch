@@ -131,7 +131,8 @@ export interface DecideDeps {
  * audit log.
  *
  * The adversarial-agent features need a credential for the selected provider;
- * without one, adversarial mode falls back to Ask and suggestions are skipped.
+ * without one, adversarial mode denies (`DENIAL_SOURCE_NO_REVIEWER`) and Ask
+ * mode's suggestions are skipped.
  */
 export async function decideIntent(
   intent: Intent,
