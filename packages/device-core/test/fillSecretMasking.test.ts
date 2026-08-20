@@ -947,12 +947,19 @@ describe("which nodes take typing", () => {
   // cannot even hold focus — so the keystrokes, on the credential path a
   // secret's characters, land wherever focus already was.
   const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => boolean;
-  // Only what a real node carries. `HTMLInputElement.type` is an enumerated
-  // reflection — always lowercase, and "text" for a missing or unrecognised
-  // attribute — while an element that is not an input has no `type`, no
-  // `disabled` and no `readOnly` at all.
+  // Only what a real node carries, because the predicate's last line —
+  // `!el.disabled && !el.readOnly` — is only pinned on the shapes that really
+  // have those properties. An input and a textarea have both, a select has
+  // `disabled` alone, and a contenteditable div has neither. `type` is an
+  // enumerated reflection of the attribute: always lowercase, and "text" for one
+  // that is missing or unrecognised, which is why `getAttribute` is here to
+  // disagree with it.
   const input = (type: string, extra: Record<string, unknown> = {}) => ({
-    tagName: "INPUT", type, disabled: false, readOnly: false, isContentEditable: false, ...extra,
+    tagName: "INPUT", type, disabled: false, readOnly: false, isContentEditable: false,
+    getAttribute: (k: string) => (k === "type" ? type : null), ...extra,
+  });
+  const textarea = (extra: Record<string, unknown> = {}) => ({
+    tagName: "TEXTAREA", disabled: false, readOnly: false, isContentEditable: false, ...extra,
   });
   const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
     tagName, isContentEditable: false, ...extra,
@@ -968,7 +975,12 @@ describe("which nodes take typing", () => {
     { what: "a phone field, which is where a one-time code lands", el: input("tel"), typed: true },
     { what: "a url field", el: input("url"), typed: true },
     { what: "a number field, which is the card expiry beside a credential", el: input("number"), typed: true },
-    { what: "a textarea", el: element("TEXTAREA"), typed: true },
+    // The commonest input in the wild carries no type attribute at all: the
+    // property answers "text" where `getAttribute` answers null, so a predicate
+    // rewritten to read the attribute — as every other literal in this file does
+    // — would send every one of them back to assignment.
+    { what: "an input with no type attribute", el: { ...input("text"), getAttribute: () => null }, typed: true },
+    { what: "a textarea", el: textarea(), typed: true },
     { what: "a contenteditable div, which has no disabled or readOnly at all", el: element("DIV", { isContentEditable: true }), typed: true },
     { what: "a checkbox", el: input("checkbox"), typed: false },
     { what: "a radio button", el: input("radio"), typed: false },
@@ -977,7 +989,9 @@ describe("which nodes take typing", () => {
     { what: "a hidden input, which cannot take focus", el: input("hidden"), typed: false },
     { what: "a date input Firefox lays out as segments", el: input("date"), typed: false },
     { what: "a range slider", el: input("range"), typed: false },
-    { what: "a select", el: element("SELECT"), typed: false },
+    { what: "a read-only textarea", el: textarea({ readOnly: true }), typed: false },
+    { what: "a disabled textarea", el: textarea({ disabled: true }), typed: false },
+    { what: "a select, which has disabled but no readOnly", el: element("SELECT", { disabled: false }), typed: false },
     { what: "a plain div", el: element("DIV"), typed: false },
     { what: "a read-only text field", el: input("text", { readOnly: true }), typed: false },
     { what: "a disabled text field", el: input("text", { disabled: true }), typed: false },
