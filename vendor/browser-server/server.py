@@ -65,9 +65,11 @@ SETTLE_MS = 1000
 # them is assigned: a credential is shorter than that and is typed whole, while
 # a 5 000-character message body still lands and still ends on real keys. What
 # the cap buys is that TYPING cannot grow with the length of the value. It is
-# not a bound on what the whole action costs: the untimed `el.evaluate` calls
-# in the masked path fall back to Playwright's own 30 s default, and a caller
-# that names no frame pays for the search as well (the loop below, #96).
+# not a bound on what the whole action costs. Every fill also runs `evaluate` --
+# three of them plainly, five or more when the value is masked -- and those take
+# no timeout and no default covers them, so a page that will not run script
+# hangs the action outright. A caller that names no frame pays for the frame
+# search on top of that (the loop below, #96).
 KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
 TYPED_CHARS = TYPING_MAX_MS // KEY_DELAY_MS
@@ -459,11 +461,11 @@ class Session:
             # a whole ACTION_TIMEOUT_MS each, and typing makes the attempt that
             # finally matches cost more than assigning did. Neither is bounded
             # against the relay's ~20 s ceiling. The device gives up at 15 s
-            # (deviceAgent.ts) and NOTHING CANCELS THIS LOOP -- it drops the
-            # pending entry and rejects, so the search here goes on ruling
-            # frames out, and on a fill goes on typing the value into a marked
-            # field, indefinitely after the exchange it was answering has been
-            # abandoned. Issue #96.
+            # (deviceAgent.ts): its timer drops the pending entry and rejects,
+            # and sends nothing to this process. So the search here goes on
+            # ruling frames out, and on a fill goes on typing the value into a
+            # marked field, indefinitely after the exchange it was answering
+            # has been abandoned. Issue #96.
             for i, fr in enumerate(self.page.frames):
                 if "frame" in cmd and i != int(cmd["frame"]):
                     continue
