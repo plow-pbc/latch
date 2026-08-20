@@ -123,18 +123,11 @@ export class BrowserSessions {
   private readonly sessions = new Map<string, Session>();
 
   constructor(
-    private readonly browser: BrowserHostConfig & {
-      /** The one profile everything shared before browsers were per agent.
-       * Nobody inherits it: it is moved aside on the first run, because its
-       * cookies belong to whichever agents used it before. */
-      legacyProfileDir?: string;
-    },
+    private readonly browser: BrowserHostConfig,
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
-  ) {
-    this.quarantineSharedProfile();
-  }
+  ) {}
 
   /** True when a page URL is inside the session's approved origins.
    * Blank/initial pages have no host and are always in scope. */
@@ -327,39 +320,16 @@ export class BrowserSessions {
    * This agent's profile directory, made if it is not there yet.
    *
    * Always clean when it is new. The single profile every agent shared before
-   * this change is NOT adopted by anybody: it holds whatever cookies and
-   * signed-in sessions the agents that came before left in it, so handing it
-   * to the next agent that happens to open would be one agent inheriting
-   * another's logins — the leak this whole change exists to close. It is moved
-   * aside instead (see `quarantineSharedProfile`), which costs the owner one
-   * round of signing in and costs nobody their isolation.
+   * this change is simply never read: it holds whatever cookies and signed-in
+   * sessions the agents that came before left in it, so handing it to any one
+   * agent would be that agent inheriting another's logins. It is left exactly
+   * where it is — untouched, not moved and not deleted — and nothing here
+   * opens it. The cost is one round of signing in; the alternative was a
+   * migration that could destroy a live profile to tidy up.
    */
   private ensureProfile(dir: string): void {
     if (fs.existsSync(dir)) return;
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-
-  /**
-   * Put the pre-parallel shared profile out of reach, once.
-   *
-   * Not deleted: it is the owner's data, and a signed-in session they may want
-   * back is not ours to throw away. Renamed, so no agent can be given it and
-   * the owner can still find it.
-   */
-  private quarantineSharedProfile(): void {
-    const legacy = this.browser.legacyProfileDir;
-    if (!legacy || !fs.existsSync(legacy)) return;
-    const parked = `${legacy}.shared-before-per-agent`;
-    try {
-      if (fs.existsSync(parked)) {
-        fs.rmSync(legacy, { recursive: true, force: true }); // already parked once
-      } else {
-        fs.renameSync(legacy, parked);
-      }
-      this.audit("browser_shared_profile_retired", { moved_to: parked });
-    } catch {
-      /* it stays where it is — unreachable either way, since nothing reads it */
-    }
   }
 
   /**

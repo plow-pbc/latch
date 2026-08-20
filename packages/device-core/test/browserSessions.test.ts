@@ -18,7 +18,7 @@ const FAKE_BROKER = fileURLToPath(new URL("../../../e2e/fixtures/fakeVaultBroker
 
 interface Ctx {
   sessions: BrowserSessions;
-  browsers: BrowserHostConfig & { legacyProfileDir?: string };
+  browsers: BrowserHostConfig;
   events: { event: string; fields: { [k: string]: JSONValue } }[];
   dir: string;
   fillLog: string;
@@ -584,37 +584,39 @@ describe("one profile per agent, and never a shared one", () => {
 });
 
 describe("upgrading from the one shared profile", () => {
-  it("gives that profile to nobody, and parks it where the owner can find it", async () => {
-    // Before this change every agent drove one browser with one profile, so
-    // its cookies belong to whichever agents used it. Handing it to the first
-    // agent that opens after the upgrade would be one agent inheriting
-    // another's logins — the leak this change exists to close.
-    const legacy = path.join(ctx.dir, "legacy-profile");
-    fs.mkdirSync(legacy, { recursive: true });
-    fs.writeFileSync(path.join(legacy, "cookies.sqlite"), "somebody else's logins");
-    const events: { event: string; fields: { [k: string]: JSONValue } }[] = [];
+  it("leaves the old profiles alone and still gives every agent a clean one", async () => {
+    // Two directories can be on disk at once: the profile every agent shared
+    // before this change, and a copy parked beside it by an earlier version of
+    // this code. Neither is read, and — the point of this test — neither is
+    // touched: an upgrade that tidies up is an upgrade that can delete the
+    // cookies somebody restored five minutes ago.
+    const browserDir = path.join(ctx.dir, "upgrade");
+    const legacy = path.join(browserDir, "profile");
+    const parked = path.join(browserDir, "profile.shared-before-per-agent");
+    for (const [dir, mark] of [[legacy, "live logins"], [parked, "older copy"]]) {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "cookies.sqlite"), mark);
+    }
+
     const upgraded = new BrowserSessions(
-      { ...ctx.browsers, profileDir: path.join(ctx.dir, "upgraded"), legacyProfileDir: legacy },
+      { ...ctx.browsers, profileDir: path.join(browserDir, "profiles") },
       null,
-      (event, fields) => events.push({ event, fields }),
+      () => {},
       60_000,
     );
-
-    // Moved aside at once — before any agent could be given it.
-    expect(fs.existsSync(legacy)).toBe(false);
-    const parked = `${legacy}.shared-before-per-agent`;
-    expect(fs.readFileSync(path.join(parked, "cookies.sqlite"), "utf8")).toBe("somebody else's logins");
-    expect(events.map((e) => e.event)).toContain("browser_shared_profile_retired");
-
-    // Two agents open: both start clean, neither inherits anything.
     for (const agent of ["first-agent", "second-agent"]) {
       const r = jv(await upgraded.open(`int-${agent}`, agent, ["pizza.example"], false));
       expect(r.get("status").str).toBe("completed");
     }
-    const dirs = fs.readdirSync(path.join(ctx.dir, "upgraded"));
+
+    // Both old directories, exactly as they were.
+    expect(fs.readFileSync(path.join(legacy, "cookies.sqlite"), "utf8")).toBe("live logins");
+    expect(fs.readFileSync(path.join(parked, "cookies.sqlite"), "utf8")).toBe("older copy");
+    // And two agents with a profile each, neither holding anybody's cookies.
+    const dirs = fs.readdirSync(path.join(browserDir, "profiles"));
     expect(dirs.length).toBe(2);
     for (const dir of dirs) {
-      expect(fs.existsSync(path.join(ctx.dir, "upgraded", dir, "cookies.sqlite"))).toBe(false);
+      expect(fs.existsSync(path.join(browserDir, "profiles", dir, "cookies.sqlite"))).toBe(false);
     }
     await upgraded.closeAll("test");
   });

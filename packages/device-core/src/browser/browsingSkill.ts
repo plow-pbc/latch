@@ -51,8 +51,8 @@ browsers at the same time: yours is never taken from you, theirs is never visibl
 you, and when the Mac is already running as many as it will, the open says so. Closing
 is yours alone — another agent holding your id cannot close your browser. Your cookies
 and logins outlive the session: the profile belongs to you, not to one open. On a Mac
-that has just upgraded to per-agent browsers everyone starts signed out once — the old
-shared profile is retired rather than handed to whoever opens first.
+that has just upgraded to per-agent browsers everyone starts signed out once: the profile
+every agent used to share is not used any more, by anyone.
 
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,

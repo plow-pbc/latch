@@ -118,7 +118,7 @@ export class DeviceAgent {
   /** The owner's own way into the vault: no CLI, no port, no session on disk. */
   readonly vaultClient: VaultClient | null = null;
   /** How the sessions build a browser each: one config, many hosts. */
-  private readonly browserConfig: (BrowserHostConfig & { legacyProfileDir?: string }) | null = null;
+  private readonly browserConfig: BrowserHostConfig | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
@@ -148,12 +148,11 @@ export class DeviceAgent {
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        // One profile per agent now, under a directory of their own. The
-        // single profile that came before is moved aside rather than given to
-        // anybody: its cookies belong to whichever agents used it, so handing
-        // it to the next one to open would leak logins between them.
+        // One profile per agent, each under a directory of its own. The single
+        // `profile` directory that came before is never opened again: its
+        // cookies belong to whichever agents used it, so giving it to any one
+        // of them would leak logins between them. It is left where it is.
         profileDir: path.join(browserDir, "profiles"),
-        legacyProfileDir: path.join(browserDir, "profile"),
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the
