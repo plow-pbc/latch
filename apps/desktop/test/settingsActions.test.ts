@@ -24,7 +24,6 @@ import {
 } from "../src/settingsActions.js";
 
 const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
-const ANTHROPIC_KEY = "sk-ant-do-not-leak-me";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -58,42 +57,6 @@ function expectSignedOutWithAdversarial(home: string) {
     approvalMode: "adversarial",
   });
 }
-
-describe("the retired bring-your-own-key fields are scrubbed on read", () => {
-  // A Mac that once pasted an Anthropic key kept it in settings.json: unknown
-  // keys ride the load/save spread straight back to disk, so the secret would
-  // outlive the feature by exactly as long as the file does.
-  it("takes them off disk on load, and leaves every surviving setting alone", () => {
-    const home = homeWith({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL });
-    const file = path.join(home, "app/settings.json");
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        ...JSON.parse(fs.readFileSync(file, "utf8")),
-        anthropicApiKey: ANTHROPIC_KEY,
-        inferenceProvider: "anthropic",
-      }),
-    );
-
-    const loaded = loadSettings(home) as Record<string, unknown>;
-
-    // Nothing that is loaded carries them…
-    expect(loaded).not.toHaveProperty("anthropicApiKey");
-    expect(loaded).not.toHaveProperty("inferenceProvider");
-    expect(JSON.stringify(loaded)).not.toContain(ANTHROPIC_KEY);
-    // …that read alone took them off disk. Not "the next write of some other
-    // setting": a secret nobody reads is still a secret in a file.
-    const onDisk = fs.readFileSync(file, "utf8");
-    expect(onDisk).not.toContain(ANTHROPIC_KEY);
-    expect(onDisk).not.toContain("anthropicApiKey");
-    expect(onDisk).not.toContain("inferenceProvider");
-    // …and the scrub took nothing else with it.
-    expect(loaded).toMatchObject({
-      approvalMode: "adversarial",
-      relayCredential: PLOW_CREDENTIAL,
-    });
-  });
-});
 
 describe("Plow sign-out forgets the credential and leaves the mode alone", () => {
   it("forgets the credential and keeps the stored mode", () => {

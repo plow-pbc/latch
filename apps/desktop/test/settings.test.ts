@@ -22,6 +22,13 @@ function tempHome(): string {
 
 const mode = (file: string) => fs.statSync(file).mode & 0o777;
 
+/** A settings.json written by hand, to stand in for a home from an older build. */
+function write(home: string, json: string): void {
+  const file = path.join(home, "app/settings.json");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, json);
+}
+
 describe("settings storage", () => {
   it("writes the file owner-only", () => {
     const home = tempHome();
@@ -131,12 +138,6 @@ describe("settings storage", () => {
 });
 
 describe("the launch-at-login first-run marker", () => {
-  const write = (home: string, json: string) => {
-    const file = path.join(home, "app/settings.json");
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, json);
-  };
-
   it("grandfathers a signed-in home from before the field existed", () => {
     const home = tempHome();
     write(home, JSON.stringify({ relayCredential: "plow_sk_secret" }));
@@ -162,26 +163,58 @@ describe("the launch-at-login first-run marker", () => {
     expect(loadSettings(tempHome()).launchAtLoginDefaulted).toBe(false);
   });
 
-  /**
-   * The two things a load can do to the file meet here. Scrubbing a retired key
-   * writes the whole settings object back, so a legacy home that is both
-   * signed in and holding a retired key is the case where the grandfathered
-   * bit has to already be set when that write happens — otherwise the load
-   * hands back `true` and persists `false`, and the NEXT load reads the
-   * explicit false and leaves the owner's login item to be flipped by a
-   * re-setup.
-   */
-  it("persists the grandfathered bit when the same load scrubs a retired key", () => {
+});
+
+/**
+ * A Mac that once pasted an Anthropic key kept it in settings.json: unknown
+ * keys ride the load/save spread straight back to disk, so the secret would
+ * outlive the feature by exactly as long as the file does.
+ *
+ * One home covers the whole contract, because the two halves are one event: the
+ * write that removes the secret is the write that persists everything else the
+ * load decided. Split across two homes, nothing holds the order between them.
+ */
+describe("the retired bring-your-own-key fields are scrubbed on read", () => {
+  const RETIRED_KEY = "sk-ant-do-not-leak-me";
+
+  it("takes them off disk on load, keeps what survives, and persists the grandfathered bit", () => {
     const home = tempHome();
     write(
       home,
-      JSON.stringify({ relayCredential: "plow_sk_secret", anthropicApiKey: "sk-retired" }),
+      JSON.stringify({
+        relayCredential: "plow_sk_secret",
+        approvalMode: "adversarial",
+        anthropicApiKey: RETIRED_KEY,
+        inferenceProvider: "anthropic",
+      }),
     );
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
-    const onDisk = JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8"));
-    expect(onDisk.launchAtLoginDefaulted).toBe(true);
-    expect(onDisk).not.toHaveProperty("anthropicApiKey");
-    // And the second load, which finds nothing to scrub, agrees with the first.
+
+    const loaded = loadSettings(home) as unknown as Record<string, unknown>;
+
+    // Nothing that is loaded carries them…
+    expect(loaded).not.toHaveProperty("anthropicApiKey");
+    expect(loaded).not.toHaveProperty("inferenceProvider");
+    expect(JSON.stringify(loaded)).not.toContain(RETIRED_KEY);
+    // …the scrub took nothing else with it…
+    expect(loaded).toMatchObject({
+      approvalMode: "adversarial",
+      relayCredential: "plow_sk_secret",
+    });
+    // …and that read alone took them off disk. Not "the next write of some
+    // other setting": a secret nobody reads is still a secret in a file.
+    const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
+    expect(raw).not.toContain(RETIRED_KEY);
+    expect(raw).not.toContain("anthropicApiKey");
+    expect(raw).not.toContain("inferenceProvider");
+
+    // The ordering the same write pins: this legacy home is signed in, so the
+    // launch-at-login bit is grandfathered on this load — and it has to already
+    // be set when the scrub writes, or the load hands back `true` and persists
+    // `false`, and the NEXT load reads the explicit false and leaves the
+    // owner's login item to be flipped by a re-setup.
+    expect(loaded.launchAtLoginDefaulted).toBe(true);
+    expect(JSON.parse(raw).launchAtLoginDefaulted).toBe(true);
+    // The second load, which finds nothing to scrub, agrees with the first.
     expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
   });
 });
