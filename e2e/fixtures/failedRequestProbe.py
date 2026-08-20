@@ -93,6 +93,7 @@ class Page:
         self.main_frame = Frame(self.url)
         self.went_to = None
         self.during_goto = None
+        self.during_settle = None
         self.context = Context()
         self.context.pages.append(self)
 
@@ -100,7 +101,12 @@ class Page:
         return "doc-1"
 
     def wait_for_timeout(self, _ms):
-        pass
+        """The settle after a navigation. `during_settle` is a response the page
+        gets while it runs — the window in which a page can navigate itself
+        somewhere and try to have that called the agent's own."""
+        if self.during_settle is not None:
+            hook, self.during_settle = self.during_settle, None
+            hook()
 
     def goto(self, url, **_kw):
         """One scenario drives the REAL command handler through here, so the
@@ -194,6 +200,17 @@ def main():
     session.handle({"action": "goto", "url": "https://pizza.example/checkout?tx=SECRET"}, "/tmp")
     out["navigation"] = session.reply_with_failures({})
     out["navigation_asked_for"] = session.page.went_to
+
+    # The settle runs AFTER the goto's url stops being believed: a page that
+    # navigates itself to that very url during that second is still the page
+    # doing it, not the agent.
+    session = server.Session(Page())
+    session.page.during_settle = lambda: feed(session, [
+        Response(429, "https://pizza.example/checkout", navigation=True,
+                 frame=session.page.main_frame)])
+    session.page.main_frame.url = "https://offsite.example/lander"
+    session.handle({"action": "goto", "url": "https://pizza.example/checkout"}, "/tmp")
+    out["during_the_settle"] = session.reply_with_failures({})
 
     # Through a redirect: the site answered the requested url with a 302 and
     # then refused. The agent still asked for it.

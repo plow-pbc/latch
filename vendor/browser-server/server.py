@@ -484,10 +484,10 @@ class Session:
             # afterwards for a page to navigate into and claim.
             self.goto_url = _strip_query(cmd["url"])
             try:
-                # 12s keeps the whole action under the device's 15s host cap and
-                # the relay's ~20s exchange ceiling; a genuinely slower page
-                # fails cleanly (the agent retries) rather than parking a torn
-                # 504.
+                # 12s here plus the 1s settle below keeps the whole action
+                # under the device's 15s host cap and the relay's ~20s exchange
+                # ceiling; a genuinely slower page fails cleanly (the agent
+                # retries) rather than parking a torn 504.
                 self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
             finally:
                 self.goto_url = ""

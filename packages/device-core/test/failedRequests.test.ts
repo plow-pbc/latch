@@ -41,6 +41,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     long_chain: Envelope;
     after_the_goto_returned: Envelope;
     navigation_asked_for: string;
+    during_the_settle: Envelope;
     unattributable: Envelope;
     unattributable_navigation: Envelope;
     quiet: Envelope;
@@ -115,6 +116,15 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.over_the_hop_limit.failed_requests?.[0]).toMatchObject({
       url: "https://pizza.example/end",
       frame_url: "https://pizza.example/cart",
+    });
+  });
+
+  it("stops believing the goto's url before the page gets its settle second", () => {
+    // The settle is a whole second in which a page could navigate itself to the
+    // url the agent asked for and have its own traffic called the agent's.
+    expect(probed.during_the_settle.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/checkout",
+      frame_url: "https://offsite.example/lander",
     });
   });
 
