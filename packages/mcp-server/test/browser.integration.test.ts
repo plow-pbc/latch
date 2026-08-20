@@ -192,6 +192,20 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await act("click", { selector: "#continue" });
     expect(await text()).toContain("clicked isTrusted=true");
 
+    // And a frame that did not exist when the click started: the scan has to
+    // re-enumerate, or the injected iframe is never looked in at all.
+    await act("goto", { url: site.url + "/blocked" });
+    await act("eval", {
+      expression:
+        "document.querySelector('.modal-backdrop').remove();" +
+        "setTimeout(() => {" +
+        "  const f = document.createElement('iframe');" +
+        "  f.src = '/late'; document.body.appendChild(f);" +
+        "}, 1000)",
+    });
+    await act("click", { selector: "#late" });
+    expect(await text()).toContain("clicked isTrusted=true");
+
     await act("goto", { url: site.url + "/blocked" });
 
     // The shape the Costco log has: visible, enabled, stable — and unclickable.

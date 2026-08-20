@@ -146,6 +146,20 @@ export function createPizzaSite(): Promise<PizzaSite> {
            });
          </script>`,
       );
+    } else if (req.method === "GET" && url.pathname === "/late") {
+      // What a lazily-injected consent or payment frame looks like: a frame
+      // that did not exist when the click was asked for. Same origin, so it
+      // reports the click it received on the page that embedded it.
+      html(
+        "Late",
+        `<button id="late" type="button">Late</button>
+         <script>
+           document.getElementById("late").addEventListener("click", (e) => {
+             parent.document.getElementById("result").textContent =
+               "clicked isTrusted=" + e.isTrusted;
+           });
+         </script>`,
+      );
     } else if (req.method === "GET" && url.pathname === "/confirm") {
       html("Confirmed", `<h1 id="confirmed">Order confirmed #${url.searchParams.get("n")}</h1>`);
     } else {
