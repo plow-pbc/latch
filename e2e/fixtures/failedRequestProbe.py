@@ -197,10 +197,13 @@ def main():
     session = server.Session(Page())
     out["unattributable"] = feed(session, [
         NoFrame(403, "https://pizza.example/api/sw"),
-        # A frame with no origin of its own — about:blank, srcdoc, blob: — is
-        # the cheaper version of the same thing: the frame answers, but with a
-        # url that names nobody. It must land in the same place.
+        # A frame with no origin of its own is the cheaper version of the same
+        # thing: the frame answers, but with a url that names nobody. blob: is
+        # the row worth having — it textually embeds an origin, so a looser
+        # reading of the url would start naming a document nobody is
+        # accountable for.
         Response(429, "https://pizza.example/api/x", page="about:blank"),
+        Response(410, "https://pizza.example/api/y", page="blob:https://pizza.example/8f2c"),
     ])
 
     # Handed over once: the next reply is not told again.
