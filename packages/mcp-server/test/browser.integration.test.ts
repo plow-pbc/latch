@@ -210,7 +210,10 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(JSON.stringify(injected.payload)).toContain("no frame has #late");
     // …and the same click once the frame is part of the page the command sees.
     // Without this the refusal above would read identically if the injection
-    // had never happened at all — a renamed route, a typo, a 404.
+    // had never happened at all — a renamed route, a typo, a 404. Note what it
+    // pins: the freeze is per COMMAND, so a frame that arrived mid-wait is
+    // ordinary on the next one. If #95 ever makes eligibility origin-scoped,
+    // this line is expected to change rather than being a contract to defend.
     await act("click", { selector: "#late" });
 
     await act("goto", { url: site.url + "/blocked" });
