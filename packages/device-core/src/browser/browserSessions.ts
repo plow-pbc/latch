@@ -644,9 +644,10 @@ export class BrowserSessions {
    */
   private redactFor(s: Session, v: JSONValue): JSONValue {
     if (typeof v === "string") {
-      if (hostOf(v) !== null) return this.inScope(s, v) ? v : stripQuery(v);
-      // A sentence is not a URL, but a browser error quotes the one it was
-      // navigating to, token and all.
+      // Every URL in the string, whether the string IS one or merely quotes
+      // one — a browser error quotes the URL it was navigating to, token and
+      // all. Testing the whole string first would truncate a message whose
+      // trailing URL happened to parse with the words after it attached.
       return v.replace(/https?:\/\/[^\s"'<>]+/g, (u) =>
         this.inScope(s, u) ? u : stripQuery(u),
       );

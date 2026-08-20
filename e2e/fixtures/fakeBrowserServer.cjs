@@ -123,7 +123,6 @@ function handle(cmd) {
       state.touched.push("https://flash.example/collect");
       return { ok: true };
     }
-    // The shape a real click failure has: the browser names what was over it.
     if (cmd.selector === "#token-error") {
       // A browser failure quoting the URL it was navigating to — the one place
       // a token is likeliest to appear in an error string.
@@ -132,6 +131,7 @@ function handle(cmd) {
           "https://offsite.example/callback?code=SECRET-IN-ERROR",
       );
     }
+    // The shape a real click failure has: the browser names what was over it.
     if (cmd.selector === "#swallowed") {
       throw new Error(
         `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
