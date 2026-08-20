@@ -222,13 +222,16 @@ export class BrowserHost {
    * of the grant that owns it — but only while nothing is using it. For the
    * life of a session it sits at `<key>.live-<id>`, a name no grant can spell,
    * so a jar can never be claimed by a later session on the strength of what
-   * it was before this one touched it. `settleProfile()` publishes it back
-   * when the browser stops clean and the session stayed inside its grant.
+   * it was before this one touched it. `publishProfile()` puts it back, and
+   * only for a browser that acknowledged an explicit quit inside the window
+   * `shutdown()` waits before it starts signalling.
    *
-   * The consequence, stated plainly: quitting the app with a session live, or
-   * a crash, leaves the profile unpublished and that grant signs in again. The
-   * ordinary paths — close, idle timeout, reopen, disconnect — all await the
-   * browser's stop, so they publish.
+   * The consequence, stated plainly: quitting the app with a session live, a
+   * crash, or a teardown slower than that window leaves the profile
+   * unpublished and that grant signs in again. The ordinary paths — close,
+   * idle timeout, reopen, disconnect — all await the browser's stop, and a
+   * real Camoufox teardown fits the window; the integration tier's
+   * login-survives-its-grant case is what says so.
    */
   private async profileDirForStart(): Promise<string | null> {
     const root = this.cfg.profilesDir;
@@ -296,7 +299,6 @@ export class BrowserHost {
       }
     }
   }
-
 
   private async ensureStarted(): Promise<void> {
     // A running browser cannot be moved to another profile, so handing this

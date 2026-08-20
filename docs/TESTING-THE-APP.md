@@ -172,7 +172,9 @@ Either way the next browser to start deletes the leftover (`browser_profile_reap
 begins from empty. **That is what an unexplained sign-out looks like**, and a stray hop is enough to
 cause one: a click that redirects offsite costs the grant its logins even though nothing was
 approved and nothing leaked. The ordinary paths — close, idle timeout, reopen, disconnect — all
-await the browser's stop, so they publish.
+await the browser's stop and publish, provided it quits inside the few seconds the shutdown waits
+before it starts signalling; one that has to be killed counts as unknown, and unknown is not
+published.
 
 What this deliberately does not do is move the directory while Camoufox has it open: that was tried
 and every cookie written afterwards was lost (`cookies.sqlite` came back with no `-wal` and none of
