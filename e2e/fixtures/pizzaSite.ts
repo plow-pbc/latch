@@ -93,7 +93,10 @@ export function createPizzaSite(): Promise<PizzaSite> {
       html(
         "Checkout",
         `<h1>Checkout — ${pizza}</h1>
-         <iframe id="payframe" src="/payframe?pizza=${encodeURIComponent(pizza)}" width="400" height="300"></iframe>`,
+         <iframe id="payframe" src="/payframe?pizza=${encodeURIComponent(pizza)}" width="400" height="300"></iframe>
+         <!-- After the payment frame on purpose: the frame holding a field is
+              not the last one on a real checkout page. -->
+         <iframe id="tracker" src="/late" width="10" height="10"></iframe>`,
       );
     } else if (req.method === "GET" && url.pathname === "/payframe") {
       const pizza = url.searchParams.get("pizza") ?? "";

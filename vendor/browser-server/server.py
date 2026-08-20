@@ -61,11 +61,13 @@ SCAN_INTERVAL_MS = 50
 
 
 class NotAttempted(RuntimeError):
-    """A candidate frame that never really got tried.
+    """A candidate frame that yielded nothing to act on.
 
-    Only a click raises this, and only when its budget is already spent. It
-    exists so that failure cannot bury one from a frame that WAS tried and
-    failed for a reason worth reading -- not visible, detached, navigated away.
+    Either the frame simply does not have the selector -- the ordinary case
+    when an action searches a page's frames for a field that lives in one of
+    them -- or a click's budget was spent before its turn came. Neither is a
+    reason worth reading, and neither may bury one from a frame that DID yield
+    the element and then failed: not visible, not editable, detached, moved.
     """
 
 
@@ -350,12 +352,11 @@ class Session:
         This is the whole of what `click` and `fill` have in common: candidates
         are tried in order, an answer ends it -- including a refusal a fill
         returns rather than raises -- and when none answers the caller hears a
-        real failure rather than a generic one: the last frame to fail for a
-        reason of its own, never a `NotAttempted` from one that did not get
-        that far. Position alone will not do -- a click's candidates have all
-        been narrowed to frames that hold the selector, while a fill walks
-        every frame on the page and the early ones fail with nothing more
-        interesting than "no such selector here". `attempt` is handed the frame's
+        real failure rather than a generic one: the last frame to fail with the
+        element in hand, never a `NotAttempted` from a frame that had nothing
+        to act on. Position cannot decide that on its own -- the frame holding
+        the field can sit anywhere among the ad and analytics frames either
+        side of it -- which is what the sentinel is for. `attempt` is handed the frame's
         index on the page, the frame, and how many candidates are left counting
         it: a click divides what is left of its budget by that, a fill has no
         budget to divide and ignores it.
@@ -440,9 +441,12 @@ class Session:
             # Marking through the handle and filling through the SAME handle
             # makes that impossible -- a node that goes away raises here and
             # the value is never typed.
-            el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+            try:
+                el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+            except Exception as exc:  # noqa: BLE001 -- this frame simply hasn't got it
+                raise NotAttempted("%s is not in frame %d" % (sel, i)) from exc
             if el is None:
-                raise RuntimeError("selector not found: %s" % sel)
+                raise NotAttempted("%s is not in frame %d" % (sel, i))
             # The device checked an origin before it went away to fetch the
             # value. If the node it resolved is in a different DOCUMENT than
             # the one it checked, nothing here is what was approved -- so
