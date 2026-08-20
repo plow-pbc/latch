@@ -507,9 +507,13 @@ class Session:
                             # it. A click handed whatever milliseconds a wait
                             # happened to leave fails on the clock rather than
                             # on anything about the page, and the watcher never
-                            # gets to say what happened -- and the usual case
-                            # spends none of the first half anyway, because
-                            # `holds` already found the node here.
+                            # gets to say what happened. The price is paid by
+                            # the fallback below, where nothing held the
+                            # selector and the wait is really waiting: it gets
+                            # half a slice to see the element appear. That is
+                            # the intended trade -- when a frame does hold the
+                            # selector, which is the path this exists for, the
+                            # wait returns at once and the click has the slice.
                             slice_end = time.monotonic() + left / 1000.0
                             el = fr.wait_for_selector(
                                 sel, timeout=max(left // 2, 1), state="attached"
