@@ -150,8 +150,9 @@ sqlite3 "$HOME_DIR/device/browser/profiles/<key>/cookies.sqlite" \
 install's is the unsuffixed `~/Library/Application Support/Plow-Latch`.
 
 `browser_started` in the audit log names the directory that browser opened — read it there rather
-than hashing the origins yourself, since a grant whose first profile was given up opens `<key>-2`
-next time. Deleting a profile directory is safe with the app shut
+than hashing the origins yourself. The name is normally the grant's hash reused, since a profile
+that was given up is deleted before the next browser starts; a `<key>-2` only appears when that
+deletion failed. Deleting a profile directory is safe with the app shut
 down; it costs that grant its logins and nothing else. A store older than this change has a single
 `device/browser/profile` beside `profiles/` with everything mixed together; nothing reads it any
 more, so delete it whenever.

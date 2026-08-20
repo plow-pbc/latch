@@ -218,6 +218,7 @@ export class BrowserHost {
    */
   async abandonProfile(): Promise<void> {
     const dir = this.startedDir;
+    const child = this.child;
     if (!dir) return;
     // Out of the page cache before this returns, because the cookies it
     // retires do not wait there: the browser's writes go through SQLite,
@@ -247,7 +248,11 @@ export class BrowserHost {
     // unconditionally would null the NEW session's identity — its own
     // retirement would then early-exit, leaving its jar filed under a grant it
     // no longer matches. The marker above is written and correct either way.
-    if (this.startedDir !== dir) return;
+    //
+    // The process, not just the path: reaping frees a name, so a replacement
+    // browser can be running on the very same pathname by the time this
+    // continuation lands, and a path-only check would pass on it.
+    if (this.startedDir !== dir || this.child !== child) return;
     this.startedDir = null; // nothing to give up twice
     // Both sides of the reuse guard follow, or the very next action reads a
     // mismatch and restarts the browser out from under the session.

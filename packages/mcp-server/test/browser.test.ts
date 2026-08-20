@@ -376,6 +376,24 @@ describe("browser tools (fake runtime)", () => {
     expect(audited(device, "browser_profile_reaped")).toEqual([key]);
   });
 
+  it("a popup on an unapproved origin retires the jar too", async () => {
+    // A popup is fetched with this browser's cookies and stores whatever comes
+    // back, exactly like the active page — and the active page stays in scope
+    // throughout, so nothing in the per-action check would notice.
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+    const key = profileKeyForOrigins(["pizza.example", "*.pizza.example"]);
+
+    const session = await open(server, ["pizza.example", "*.pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/menu" });
+    expect(abandoned(profiles, key)).toBe(false);
+
+    // #popup opens a second page on https://popup.example/pay.
+    await act(server, session, "click", { selector: "#popup" });
+    expect(abandoned(profiles, key)).toBe(true);
+    expect(audited(device, "browser_profile_abandoned")).toEqual([key]);
+  });
+
   it("a jar that cannot be retired takes the session down with it", async () => {
     // Opposite failure semantics to a widening, where a failed retirement is
     // the safe end because nothing was granted: here the request has already

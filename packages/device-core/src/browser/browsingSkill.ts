@@ -40,6 +40,11 @@ the page; that is the one way round it, and it is not one you have any reason to
   \`goto\` back in scope. To follow the flow (e.g. a payment popup went to paypal.com),
   call \`plow_browser_request {session, origins: ["paypal.com", "*.paypal.com"]}\` and continue
   after approval.
+- Landing outside the approved origins — or widening mid-task — costs this browser its saved
+  cookies for good: the store it was using is retired the moment it can hold an origin the
+  approval does not name. The session carries on, but next time the owner signs in again. So
+  ask for every origin the task needs in the first \`plow_browser_open\`; recovering afterwards
+  works, it just is not free.
 - Sessions idle out after 15 minutes. \`plow_browser_close\` when done.
 
 ## Acting: always screenshot first

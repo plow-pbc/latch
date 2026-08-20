@@ -463,6 +463,20 @@ export class BrowserSessions {
     const result = await this.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
+    const opened = pageCount === s.knownPageCount ? [] : await this.pageUrls();
+
+    // First, ahead of every audit append and every early return below. The
+    // response is already in the jar — a mask failure that returns, or an
+    // audit that throws, must not be able to leave it filed under a grant it
+    // no longer matches. A popup counts: it was fetched with this browser's
+    // cookies and stored whatever came back, exactly like the active page.
+    const strayed = [url, ...opened.map((p) => p.url)].find(
+      (u) => u !== "" && !this.inScope(s, u),
+    );
+    if (strayed !== undefined) {
+      const refused = await this.retireProfile(s, hostOf(strayed) ?? strayed);
+      if (refused) return refused;
+    }
 
     const navigated = url !== s.lastUrl;
     s.lastUrl = url;
@@ -471,7 +485,13 @@ export class BrowserSessions {
     }
     if (pageCount !== s.knownPageCount) {
       s.knownPageCount = pageCount;
-      await this.sweepPages(s);
+      for (const pg of opened) {
+        this.audit("browser_navigated", {
+          session: s.handle,
+          url: stripQuery(pg.url),
+          page_index: pg.i,
+        });
+      }
     }
     this.audit("browser_command", {
       session: s.handle,
@@ -508,47 +528,12 @@ export class BrowserSessions {
         action: String(action.action),
         origin,
       });
-      // The contamination boundary, and the earliest one there is: the scope
-      // check runs on where the action LANDED, so Camoufox has already made
-      // that request with whatever cookies it held and stored whatever came
-      // back. The jar holds this origin's state now, under a grant that does
-      // not name it, so it stops being reusable here — no widening required,
-      // and nothing gives it back.
-      try {
-        await this.host.abandonProfile();
-      } catch (error: unknown) {
-        // Opposite semantics to the widening path, where a failed retirement
-        // is the safe end because no access was granted. Here the request has
-        // already gone out, so a jar that cannot be retired must not survive
-        // to be handed on — the session ends rather than the action.
-        // Best-effort, and deliberately not in front of the close: what fails
-        // here is a write inside the profile directory, and the audit log
-        // lives on the same volume — so the case that reaches this branch is
-        // exactly the case where recording it throws too. Letting that skip
-        // the close would leave the session live on a jar holding the
-        // unapproved origin's cookies, which is the fail-open this exists to
-        // shut.
-        try {
-          this.audit("browser_profile_abandon_failed", {
-            session: s.handle,
-            origin,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        } catch {
-          /* the close below is the act; the record is the nice-to-have */
-        }
-        await this.close(s.handle, "profile could not be retired");
-        return {
-          status: "error",
-          error:
-            `landed on ${origin}, outside the approved origins, and this browser's ` +
-            `stored state could not be retired — the session has been closed`,
-        };
-      }
       out.out_of_scope = origin;
       out.note =
         `landed on ${origin}, outside the approved origins — page content is ` +
-        `locked; use plow_browser_request to ask for this origin`;
+        `locked; use plow_browser_request to ask for this origin. This browser's saved ` +
+        `cookies have been given up — the session carries on, but the owner signs in again ` +
+        `next time`;
       // Never hand out content from an unapproved origin.
       delete out.data_b64;
       delete out.text;
@@ -561,20 +546,53 @@ export class BrowserSessions {
     return out;
   }
 
-  private async sweepPages(s: Session): Promise<void> {
+  private async pageUrls(): Promise<{ url: string; i: number }[]> {
     try {
       const pages = await this.host.sendAction({ action: "pages" });
       const list = Array.isArray(pages.pages) ? pages.pages : [];
-      for (const pg of list) {
-        const url = jv(pg).get("url").str ?? "";
-        this.audit("browser_navigated", {
-          session: s.handle,
-          url: stripQuery(url),
-          page_index: jv(pg).get("i").int ?? -1,
-        });
-      }
+      return list.map((pg) => ({
+        url: jv(pg).get("url").str ?? "",
+        i: jv(pg).get("i").int ?? -1,
+      }));
     } catch {
-      /* sweep is best-effort; the per-action check still guards content */
+      return []; // best-effort; the per-action check still guards content
+    }
+  }
+
+  /**
+   * Give up the jar, because it now holds state for an origin this grant does
+   * not name. Returns a refusal when it could not be given up: unlike a
+   * widening — where a failed retirement is the safe end, since nothing was
+   * granted — the request has already gone out here, so a jar that cannot be
+   * retired must not survive to be handed to a later action.
+   */
+  private async retireProfile(s: Session, origin: string): Promise<JSONValue | null> {
+    try {
+      await this.host.abandonProfile();
+      return null;
+    } catch (error: unknown) {
+      // Best-effort, and deliberately not in front of the close: what fails
+      // here is a write inside the profile directory, and the audit log lives
+      // on the same volume — so the case that reaches this branch is exactly
+      // the case where recording it throws too. Letting that skip the close
+      // would leave the session live on a jar holding the unapproved origin's
+      // cookies, which is the fail-open this exists to shut.
+      try {
+        this.audit("browser_profile_abandon_failed", {
+          session: s.handle,
+          origin,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        /* the close below is the act; the record is the nice-to-have */
+      }
+      await this.close(s.handle, "profile could not be retired");
+      return {
+        status: "error",
+        error:
+          `landed on ${origin}, outside the approved origins, and this browser's ` +
+          `stored state could not be retired — the session has been closed`,
+      };
     }
   }
 
