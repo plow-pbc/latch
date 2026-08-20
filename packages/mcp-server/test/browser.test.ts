@@ -260,7 +260,8 @@ describe("browser tools (fake runtime)", () => {
     expect(asked.at(-1)).toContain('"Browse: pizza.example"');
     // The guarantee, rather than whoever happens to enforce it: nothing in
     // this test ever put a blank bound in front of the owner. Fails if
-    // minItems:1 or the usableOrigins filter is dropped, in any wording.
+    // minItems:1 is dropped, in any wording; the filter itself is pinned by
+    // the refusals above and by the bound asserted just up here.
     expect(asked.filter((a) => a.includes('"Browse: "'))).toEqual([]);
 
     // And the rule that open saved re-matches the clean list — the failure
