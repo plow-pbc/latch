@@ -402,28 +402,32 @@ class Session:
 
         last = None
         for i, fr in self.indexed_frames(cmd):
+            # ONE resolved node for the whole fill. Resolving the selector a
+            # second time is the re-resolution failure the mark exists to avoid:
+            # a re-render between the two would leave the attribute on a
+            # detached node and put the value into a fresh, unmarked one.
+            # Marking through the handle and filling through the SAME handle
+            # makes that impossible -- a node that goes away raises here and the
+            # value is never typed.
             try:
                 el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-            except Exception as exc:  # noqa: BLE001 -- sorted out by the ask below
-                # Why this frame gave nothing. Simply not having the field is
-                # the ordinary case on the way to the frame that does, and says
-                # nothing worth carrying. A frame that went away, or one that
-                # holds the field and will not show it, are both answers the
-                # caller is waiting for -- and Playwright reports all three as
-                # the same timeout.
-                if fr.is_detached() or self.holds(fr, sel):
+            except Exception as exc:  # noqa: BLE001 -- sorted out by the asks below
+                # Why this frame gave nothing, and Playwright says all three the
+                # same way. Simply not having the field is the ordinary case on
+                # the way to the frame that does, and says nothing worth
+                # carrying. A frame holding the field and refusing to show it is
+                # the answer the caller is waiting for, so it always wins. A
+                # frame that went away is worth hearing only if nothing better
+                # is ever offered -- it must not overwrite the frame that had
+                # the field just because it sorts after it.
+                if self.holds(fr, sel):
+                    last = exc
+                elif fr.is_detached() and last is None:
                     last = exc
                 continue
             if el is None:
                 continue
             try:
-                # ONE resolved node for the whole fill. Resolving the selector a
-                # second time is the re-resolution failure the mark exists to
-                # avoid: a re-render between the two would leave the attribute on a
-                # detached node and put the value into a fresh, unmarked one.
-                # Marking through the handle and filling through the SAME handle
-                # makes that impossible -- a node that goes away raises here and
-                # the value is never typed.
                 # The device checked an origin before it went away to fetch the
                 # value. If the node it resolved is in a different DOCUMENT than
                 # the one it checked, nothing here is what was approved -- so
