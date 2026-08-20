@@ -274,41 +274,26 @@ export function encryptCipher(
   cipher.card = null;
   cipher.identity = null;
   if (type === 1) {
-    // The form shows every URL, so an edit sends every URL, and an emptied
-    // row travels as a blank rather than vanishing. Two things identify the
-    // entry a row was drawn from, in that order:
-    //
-    //   position — which row this is. The only thing that tells two identical
-    //     addresses apart, so it is asked first.
-    //   address  — which site this is. Used when positions no longer line up:
-    //     a reorder, or a save whose response was lost being retried against
-    //     the item it already wrote and compacted.
-    //
-    // An entry answers once. Whatever is left over was removed or replaced.
+    // The form shows every URL, so an edit sends every URL, and an emptied row
+    // travels as a blank holding its place. A row is therefore the entry that
+    // sits at its own position — which is only sound because a save built on a
+    // version of the item the vault has since replaced never gets here:
+    // staleEdit refuses it first. See VaultClient.save.
     const previous = existing?.login?.uris ?? [];
     delete out.uris;
     let uris = previous;
     if (input.urls !== undefined) {
-      const unclaimed: (typeof previous)[number][] = [...previous];
-      const holds = (e: (typeof previous)[number] | undefined, u: string) =>
-        !!e && dec(e.uri, key) === u;
       uris = input.urls
         .map((u, i) => {
           if (!u) return null;                                // the owner emptied this row
-          // The fallback may not take an entry that is still its own row's
-          // position match: that row has not been reached yet, and the entry
-          // is the one thing it can be given without rewriting it.
-          const at = holds(unclaimed[i], u)
-            ? i
-            : unclaimed.findIndex((e, j) => holds(e, u) && !holds(e, input.urls![j]));
-          const held = at === -1 ? null : unclaimed[at];
-          if (at !== -1) delete unclaimed[at];                // claimed; position is kept
+          const held = previous[i];
+          const same = !!held && dec(held.uri, key) === u;
           // Unchanged, and visible to every other client: the stored entry as it is.
-          if (held?.uriChecksum) return held;
-          // New, or stored without a checksum — a URL nothing else can see, where
-          // rewriting it is the repair. Either way its match rule, if it had one,
-          // is the owner's and survives.
-          return { uri: enc(u, key), uriChecksum: checksum(u, key), match: held?.match ?? null };
+          if (same && held.uriChecksum) return held;
+          // Changed or added, or stored without a checksum — a URL nothing else
+          // can see, where rewriting it is the repair. The repair keeps the
+          // match rule; a row the owner actually edited does not.
+          return { uri: enc(u, key), uriChecksum: checksum(u, key), match: same ? held.match ?? null : null };
         })
         .filter((u): u is NonNullable<typeof u> => u !== null);
     }

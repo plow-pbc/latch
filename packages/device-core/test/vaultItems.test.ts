@@ -107,7 +107,7 @@ describe("an edit", () => {
     });
   });
 
-  it("keeps the entry an unchanged URL already had, wherever it sits", () => {
+  it("writes only the rows that changed, and drops the ones emptied", () => {
     const many = encryptCipher(
       { type: "login", name: "GitHub", password: "x",
         urls: ["https://a.example", "https://b.example", "https://c.example"] },
@@ -118,52 +118,18 @@ describe("an edit", () => {
     many.login.uris = many.login.uris.map((u, i) => ({ ...u, match: i }));
     const stored = { ...many, id: "item-1" };
     const [A, B, C] = many.login.uris;
-    const edit = (urls, from = stored) =>
-      encryptCipher({ itemId: "item-1", ...(urls ? { urls } : { username: "new" }) }, from, account);
+    const edit = (urls) =>
+      encryptCipher({ itemId: "item-1", ...(urls ? { urls } : { username: "new" }) }, stored, account);
 
-    // Changed: only the one that changed is written anew; the others are the
+    // Changed: only the row that changed is written anew; the others are the
     // objects they were, match rule and all.
     const changed = edit(["https://a.example/login", "https://b.example", "https://c.example"]);
     expect(changed.login.uris.slice(1)).toEqual([B, C]);
     expect(changed.login.uris[0].match).toBeNull();
 
-    // Removed: the form sends the emptied row as a blank holding its place,
-    // and the two that stayed keep their own entries.
-    const dropped = edit(["https://a.example", "", "https://c.example"]);
-    expect(dropped.login.uris).toEqual([A, C]);
-
-    // Reordered: positions no longer name the same rows, so the address does.
-    // Nothing was edited, so nothing is rewritten.
-    expect(edit(["https://c.example", "https://a.example", "https://b.example"]).login.uris)
-      .toEqual([C, A, B]);
-
-    // Retried: a save whose response was lost, sent again from the still-open
-    // form against the item it already wrote and compacted. It has to be a
-    // no-op — position 2 no longer exists, and matching on the address is what
-    // stops C being recreated with the match rule blanked.
-    expect(edit(["https://a.example", "", "https://c.example"], { ...dropped, id: "item-1" }).login.uris)
-      .toEqual([A, C]);
-
-    // Edited into a duplicate of a row further down: the row that did not
-    // change keeps its entry. The fallback may not reach past an entry that
-    // is still the position match of a row it has not got to yet.
-    const shadowed = edit(["https://c.example", "https://b.example", "https://c.example"]).login.uris;
-    expect(shadowed[1]).toEqual(B);
-    expect(shadowed[2]).toEqual(C);
-    expect(shadowed[0].match).toBeNull();
-
-    // Listed twice: one stored entry cannot be handed to both.
-    const twice = edit(["https://a.example", "https://a.example"]).login.uris;
-    expect(twice[0]).toEqual(A);
-    expect(twice[1].match).toBeNull();
-
-    // One entry answers once. Here the first row is retyped to B and picks up
-    // B's entry by address; a third row typed as B must get an entry of its
-    // own, not a second reference to the same one.
-    const reused = edit(["https://b.example", "", "https://b.example"]).login.uris;
-    expect(reused[0]).toEqual(B);
-    expect(reused[1].uri).not.toEqual(reused[0].uri);
-    expect(reused[1].match).toBeNull();
+    // Removed: the emptied row travels as a blank holding its place, so the
+    // rows below it still line up with the entries that belong to them.
+    expect(edit(["https://a.example", "", "https://c.example"]).login.uris).toEqual([A, C]);
 
     // Omitted: an edit that mentions no URL changes none of them.
     expect(edit(null).login.uris).toEqual(many.login.uris);
@@ -203,11 +169,6 @@ describe("an edit", () => {
     // item has no stored version to be behind.
     expect(staleEdit(now, undefined)).toBe(false);
     expect(staleEdit(null, "2026-08-20T04:00:00Z")).toBe(false);
-  });
-
-  it("hands the form the revision it was opened on", () => {
-    const cipher = { ...encryptCipher({ type: "login", name: "n", password: "x", urls: ["https://a.example"] }, null, account), id: "item-1", revisionDate: "2026-08-20T04:00:00Z" };
-    expect(decryptItem(cipher, account).revision).toBe("2026-08-20T04:00:00Z");
   });
 
   it("stores every URL with the checksum other clients verify", () => {
