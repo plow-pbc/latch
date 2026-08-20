@@ -521,6 +521,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       };
       ranked: { error: string | null; tried: number };
       ranked_only_gone: { error: string | null; tried: number };
+      ranked_gone_first: { error: string | null; tried: number };
     }>(FILL_PROBE);
   })();
 
@@ -537,6 +538,9 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // Both answer `wait_for_selector` with a failure, and only one of them was
     // ever going to be able to fill anything. Every frame is tried either way.
     expect(probed.ranked).toEqual({ error: "Hidden", tried: 3 });
+    // A frames list is DOM order, so the frame that went away sits above the
+    // payment one as often as below it. The answer is the same either way.
+    expect(probed.ranked_gone_first).toEqual({ error: "Hidden", tried: 3 });
   });
 
   it("still hears the frame that went away when nothing else spoke", () => {

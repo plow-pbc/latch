@@ -231,17 +231,20 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     return out
 
 
-def ranked(server, with_holder=True):
+def ranked(server, with_holder=True, holder_first=True):
     """Which frame's failure comes back.
 
     A frame that went away must not overwrite the answer from one that held the
-    field and refused to show it -- and must still be heard when it is the only
-    thing that happened. Siblings come first, so the order under test is
-    holder-then-gone; the main frame is last and has nothing.
+    field and refused to show it -- in either order, a frames list being DOM
+    order, where an advert frame sits above the payment one as often as below
+    -- and must still be heard when it is the only thing that happened. The
+    main frame comes after the siblings and has nothing.
     """
     trace: list[str] = []
-    siblings = [Frame(trace, nodes={"#pass": Handle(trace)}, hides=True)] if with_holder else []
-    siblings.append(Frame(trace, nodes={}, detached=True))
+    holder = Frame(trace, nodes={"#pass": Handle(trace)}, hides=True) if with_holder else None
+    gone = Frame(trace, nodes={}, detached=True)
+    siblings = [fr for fr in ([holder, gone] if holder_first else [gone, holder])
+                if fr is not None]
     session = server.Session(Page(Frame(trace, nodes={}), extra_frames=siblings))
     out = {"error": None, "tried": 0}
     try:
@@ -365,6 +368,7 @@ def main() -> int:
         "plain_failed": run(server, base, detach_before_fill=True, marked=True),
         "ranked": ranked(server),
         "ranked_only_gone": ranked(server, with_holder=False),
+        "ranked_gone_first": ranked(server, holder_first=False),
     }
     fill_pass = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0, "mask": True}
     fill_addr_at_pass = {"action": "fill", "selector": "#pass", "value": "1 Elm St", "frame": 0}
