@@ -28,8 +28,9 @@
  *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
- *   click "#popup"    opens a second page on https://popup.example/pay
- *   click "#offsite"  navigates the page to https://offsite.example/lander
+ *   click "#popup"     opens a second page on https://popup.example/pay
+ *   click "#offsite"   navigates the page to https://offsite.example/lander
+ *   click "#swallowed" fails the way a forced click nothing received does
  */
 "use strict";
 const fs = require("node:fs");
@@ -97,6 +98,13 @@ function handle(cmd) {
   if (a === "text") return { text: "fake page text of " + current().url };
   if (a === "eval") return { result: "eval:" + cmd.expression };
   if (a === "click") {
+    // What the real server answers when a forced click is swallowed: the click
+    // was dispatched and nothing the agent aimed at received it.
+    if (cmd.selector === "#swallowed") {
+      throw new Error(
+        `forced click on ${cmd.selector} was not received: div.modal-backdrop.show got it instead`,
+      );
+    }
     if (cmd.selector === "#popup") {
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
     } else if (cmd.selector === "#offsite") {

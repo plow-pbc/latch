@@ -22,7 +22,7 @@ import {
   jv,
   makeIntent,
 } from "@domo/protocol";
-import { DeviceAgent, MAX_FILE_BYTES } from "@domo/device-core";
+import { DeviceAgent, MAX_CLICK_TIMEOUT_MS, MAX_FILE_BYTES } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 
@@ -534,7 +534,7 @@ export const TOOLS: ToolSpec[] = [
         seconds: { type: "number", description: "wait: seconds" },
         frame: { type: "integer", description: "click/fill: target a specific frame index" },
         force: { type: "boolean", description: "click: skip the wait for the element to be clickable (for one that will not hold still); a click something else receives is still refused" },
-        timeout_ms: { type: "integer", description: "click: how long to wait for the element (default 3000, capped at 11000)" },
+        timeout_ms: { type: "integer", description: `click: how long to wait for the element (default 3000, capped at ${MAX_CLICK_TIMEOUT_MS})` },
         max_chars: { type: "integer", description: "text: truncate to this many chars" },
       },
       additionalProperties: false,

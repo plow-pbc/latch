@@ -5,6 +5,7 @@
  * vendor/browser-server/UPSTREAM.md).
  */
 import { Skill } from "../skills.js";
+import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
 
 export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
@@ -63,7 +64,7 @@ url, title, links, forms, tables, pages.
 - **A click that fails is not a reason to reach for \`eval\`.** A click \`eval\` synthesizes
   arrives with \`isTrusted: false\`, which is exactly what a site's bot defenses look for —
   and the click you route around is usually the one that gets the session flagged. \`click\`
-  has two knobs instead: \`timeout_ms\` (up to 12000) for a page that is still settling, and
+  has two knobs instead: \`timeout_ms\` (up to ${MAX_CLICK_TIMEOUT_MS}) for a page that is still settling, and
   \`force: true\` for an element that will not hold still. Both keep the click inside the
   browser, so the page sees a real one.
 - **\`force\` does not push a click past something that is covering the element** — nothing

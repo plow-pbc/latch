@@ -221,6 +221,17 @@ describe("session lifecycle", () => {
     const audited = ctx.events.filter((e) => e.event === "browser_command");
     expect(audited.filter((e) => e.fields.force === true)).toHaveLength(1);
     expect(audited.filter((e) => e.fields.timeout_ms === 11_000)).toHaveLength(1);
+
+    // And above all on the ones that failed: a click the agent had to force,
+    // that still did not land, is the whole reason the fields are there.
+    const swallowed = jv(await ctx.sessions.command(AGENT, s, {
+      action: "click", selector: "#swallowed", force: true, timeout_ms: 6000,
+    }));
+    expect(swallowed.get("status").str).toBe("error");
+    const failure = ctx.events.filter((e) => e.event === "browser_command").at(-1)!.fields;
+    expect(failure.force).toBe(true);
+    expect(failure.timeout_ms).toBe(6000);
+    expect(String(failure.error)).toContain("not received");
   });
 });
 

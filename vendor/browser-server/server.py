@@ -55,6 +55,10 @@ MAX_ERROR_LEN = 500
 # instead when the agent knows the page is slow; the device clamps it.
 DEFAULT_ACTION_TIMEOUT_MS = 3000
 
+# The least a forced click is worth attempting with, once the element is in
+# hand. Borrowed from the rest of the action's budget, never added to it.
+CLICK_FLOOR_MS = 250
+
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -512,8 +516,13 @@ class Session:
                                 # This frame's slice, not the rest of the whole
                                 # budget: a node that resolves and then will not
                                 # take the click must not spend what the next
-                                # frame's attempt needs.
-                                rest = int((slice_end - time.monotonic()) * 1000)
+                                # frame's attempt needs. The click may borrow a
+                                # little past the slice -- never past the whole
+                                # deadline -- so an element that resolves at the
+                                # end of one is not failed on a 1 ms timeout it
+                                # was never going to make.
+                                end = min(slice_end + CLICK_FLOOR_MS / 1000.0, deadline)
+                                rest = int((end - time.monotonic()) * 1000)
                                 el.click(timeout=max(rest, 1), force=True)
                                 blocked = self.ask_watcher(watch, CLICK_LANDED_JS)
                             finally:

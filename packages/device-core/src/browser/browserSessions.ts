@@ -76,7 +76,8 @@ const MAX_WAIT_SECONDS = 12;
  * would park the click until exactly that happened.
  */
 const MIN_CLICK_TIMEOUT_MS = 500;
-const MAX_CLICK_TIMEOUT_MS = (MAX_WAIT_SECONDS - 1) * 1000;
+/** Exported because the agent-facing copy quotes it; one number, one source. */
+export const MAX_CLICK_TIMEOUT_MS = (MAX_WAIT_SECONDS - 1) * 1000;
 
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
@@ -386,7 +387,7 @@ export class BrowserSessions {
             const secs = p.get("seconds").num ?? 1;
             forwarded.seconds = Math.min(Math.max(secs, 0), MAX_WAIT_SECONDS);
           }
-          return await this.serverAction(s, forwarded);
+          return await this.serverAction(s, forwarded, knobs);
         }
       }
     } catch (error: unknown) {
@@ -406,6 +407,7 @@ export class BrowserSessions {
   private async serverAction(
     s: Session,
     action: { [k: string]: JSONValue },
+    knobs: { [k: string]: JSONValue } = {},
   ): Promise<JSONValue> {
     const result = await this.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
@@ -426,8 +428,7 @@ export class BrowserSessions {
       url: stripQuery(url),
       // What the agent had to reach for, so the next look at a session that
       // went wrong can count it the way this one counted `eval`.
-      ...(action.force === true ? { force: true } : {}),
-      ...(action.timeout_ms !== undefined ? { timeout_ms: action.timeout_ms } : {}),
+      ...knobs,
     });
 
     // The browser puts the mark back on every concealed field before it lets
