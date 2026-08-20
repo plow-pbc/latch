@@ -131,7 +131,7 @@ class Frame:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False, document_token="doc-1"):
+                 partial_fill=False, document_token="doc-1", frame_token=None):
         self.trace = trace
         # Not a constructor parameter, while the element's document_url is:
         # the two disagreeing is what a frame navigating between two reads
@@ -139,7 +139,9 @@ class Frame:
         # Parameterise this and that scenario stops discriminating. (Tokens do
         # vary per frame — see the sibling in ledger() — but not this URL.)
         self.url = "https://pizza.example/login"
-        self.document_token = document_token
+        # The frame's own token, which a frame-level read answers. Distinct from
+        # the element's when a scenario needs to tell the two reads apart.
+        self.document_token = frame_token or document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
                              partial_fill, document_token)
         self.nodes = nodes
@@ -208,10 +210,11 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1"):
+        document_token="doc-1", frame_token=None):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
-                  value=value, partial_fill=partial_fill, document_token=document_token)
+                  value=value, partial_fill=partial_fill, document_token=document_token,
+                  frame_token=frame_token)
     session = server.Session(Page(frame))
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
            "ledgered": False}
@@ -321,6 +324,7 @@ def main() -> int:
             server,
             {"action": "locate", "selector": "#pass"},
             document_url="https://payframe.example/card",
+            frame_token="frame-level",
         ),
         # The mark takes and the fill then times out, over a field that already
         # held something ordinary.

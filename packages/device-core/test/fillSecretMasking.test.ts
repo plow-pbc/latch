@@ -689,10 +689,13 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // credential, so it has to be the element's.
     const out = probed.locate_reads_the_element;
     expect(out.error).toBeNull();
-    // The URL is the half that can discriminate: the frame and its element
-    // hold the same token in this fixture, so asserting that would pass under
-    // a separate read too. The URL is what the origin check reads anyway.
-    expect(out.result).toMatchObject({ frame_url: "https://payframe.example/card" });
+    // Both halves, and both discriminating: the frame answers a different
+    // token and a different address than its element does, so an answer built
+    // from frame-level reads carries neither of these.
+    expect(out.result).toMatchObject({
+      frame_url: "https://payframe.example/card",
+      frame_token: "doc-1",
+    });
   });
 
   it("keeps the marks across a route change inside one document", () => {
