@@ -99,21 +99,18 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_run_command.indexOf("own Mac")).toBeLessThan(d.plow_run_command.indexOf("sandbox"));
   });
 
-  // The differentiator that was missing entirely: a persistent profile and
-  // vault fills. Stated as what it is — NOT as "already signed in", which
-  // would be a promise this profile does not keep.
-  it("plow_browser_open says why it beats a plain web fetch, without overselling", async () => {
+  // The differentiator: it browses AS the user — their profile, their logins —
+  // and can fill from their vault. Both are things a plain web fetch cannot do.
+  it("plow_browser_open says why it beats a plain web fetch", async () => {
     const d = await descriptions(makeServer());
-    // Nothing persists any more: several agents share one credential, so a
-    // profile kept between sessions is one agent inheriting another's cookies.
-    expect(d.plow_browser_open).toMatch(/fresh profile that goes when you close it/);
-    expect(d.plow_browser_open).not.toMatch(/persists/);
+    // The Mac is one person's, and a session opens on a copy of their profile,
+    // so "already signed in" is now the honest promise rather than an oversell.
+    expect(d.plow_browser_open).toMatch(/already signed in/i);
     expect(d.plow_browser_open).toMatch(/vault/);
-    // The Mac runs several browsers now, so the copy has to say what the agent
-    // holds — its own session — rather than promising it is the only one.
-    expect(d.plow_browser_open).toMatch(/session id you get back IS your browser/i);
+    // Several browsers run at once, so the copy says which one the agent holds
+    // rather than promising it is the only one.
+    expect(d.plow_browser_open).toMatch(/session id you get back says WHICH browser/i);
     expect(d.plow_browser_open).not.toMatch(/one session at a time/i);
-    expect(d.plow_browser_open).not.toMatch(/already signed in/i);
   });
 });
 

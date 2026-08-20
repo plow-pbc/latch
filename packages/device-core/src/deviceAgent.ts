@@ -148,10 +148,11 @@ export class DeviceAgent {
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        // One disposable profile per session, under here. The single `profile`
-        // directory every agent shared before is never opened again — its
-        // cookies belong to whoever used it — and is left exactly where it is.
+        // Sessions run in here, each on a clone of the user's own profile
+        // below — Firefox locks a profile to one process, so several browsers
+        // at once need a directory each — and hand it back when they close.
         profileDir: path.join(browserDir, "profiles"),
+        seedProfile: path.join(browserDir, "profile"),
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the
@@ -513,7 +514,7 @@ export class DeviceAgent {
       return { status: "error", error: "no browser runtime installed on this device" };
     }
     if (jv(params).get("action").str === "close") {
-      return this.browserSessions.close(session, "agent", agentId);
+      return this.browserSessions.close(session, "agent");
     }
     return this.browserSessions.command(agentId, session, params);
   }

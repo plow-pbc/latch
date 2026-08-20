@@ -82,16 +82,15 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
    * read back its OWN page, and closing one must leave the others browsing.
    */
   /**
-   * Three browsers at once, two of them on ONE credential — the live failure
-   * this fixes. Several of the owner's agents reach this Mac through a single
-   * Plow credential, so keying a session on it made them one agent: the second
-   * open was refused, told to reuse the first's session, and drove it.
+   * Three browsers at once — the live failure this fixes. Several of the
+   * owner's agents reach this Mac through a single Plow credential, so keying
+   * a session on it made them one agent: the second open was refused, told to
+   * reuse the first's session, and drove it.
    *
-   * Fails if they collide: each session must read back its own page, a handle
-   * must be refused to another credential, and closing one must leave the
-   * others browsing.
+   * Fails if they collide: each session must read back its own page, and
+   * closing one must leave the others browsing.
    */
-  it("gives three callers three browsers, two of them on one credential", async () => {
+  it("gives three callers three browsers of their own", async () => {
     const other: RelayAuth = { agent_id: "other-credential", agent_name: "Other", scopes: ["relay:call"] };
     const callers = [AGENT, AGENT, other];
     const pages = callers.map((_, i) => `http://127.0.0.1:${site.port}/?caller=${i}`);
@@ -120,11 +119,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
         expect((r.payload as { url: string }).url).toBe(pages[i]);
       }
 
-      // A handle is refused to a caller on another credential.
-      const stolen = await callTool(server, "plow_browser_close", { session: open[0].session }, other);
-      expect(JSON.stringify(stolen.payload)).toContain("different Plow credential");
-
-      // Closing one's own leaves the others browsing.
+      // Closing one leaves the others browsing.
       await callTool(server, "plow_browser_close", { session: open[0].session }, open[0].caller);
       open = open.slice(1);
       for (const [i, { session, caller }] of open.entries()) {

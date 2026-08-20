@@ -303,11 +303,12 @@ repo can prove they broke nothing.
 The device can host a real anti-detection Firefox (Camoufox, driven by
 Playwright through a vendored Python server — `vendor/browser-server/`,
 provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
-user**: local IP, and local credentials that are typed into the page here rather
-than handed to the agent — which is driving that page, and can read it. Cookies
-are NOT the local user's: every session starts on a clean profile and that
-profile goes when the session does, so nothing is signed in until the session
-signs in, and nothing it signed into is left for the next one. The pieces:
+user**: local IP, local cookies, and local credentials that are typed into the
+page here rather than handed to the agent — which is driving that page, and can
+read it. Several browsers can run at once and they are all the user's: Firefox
+locks a profile to one process, so each session runs on a **clone** of the
+user's profile (APFS clonefile — no wait, no extra disk) and hands it back when
+it closes, so every browser opens signed in where they left off. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an

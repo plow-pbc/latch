@@ -178,10 +178,8 @@ describe("session lifecycle", () => {
     expect(ctx.sessions.current()).toBeNull();
   });
 
-  it("rejects a command from the wrong agent or session", async () => {
-    const s = await openSession(["pizza.example"]);
-    const wrongAgent = jv(await ctx.sessions.command("intruder", s, { action: "url" }));
-    expect(wrongAgent.get("status").str).toBe("error");
+  it("rejects a command for a session that is not open", async () => {
+    await openSession(["pizza.example"]);
     const wrongHandle = jv(await ctx.sessions.command(AGENT, "nope", { action: "url" }));
     expect(wrongHandle.get("status").str).toBe("error");
   });
@@ -239,20 +237,6 @@ describe("session lifecycle", () => {
     expect(fs.readdirSync(path.join(ctx.dir, "profiles")).length).toBe(1);
     expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("url").str)
       .toBe("https://pizza.example/one");
-  });
-
-  it("refuses a handle to a caller on another credential", async () => {
-    // Within one credential the handle is the whole capability; across
-    // credentials the id is an outer fence, so a handle that escapes is still
-    // refused where it does not belong.
-    const mine = await openSession(["pizza.example"]);
-    expect(jv(await ctx.sessions.command("someone-else", mine, { action: "url" })).get("error").str)
-      .toContain("different Plow credential");
-    expect(jv(await ctx.sessions.close(mine, "theft", "someone-else")).get("error").str)
-      .toContain("different Plow credential");
-    // Still mine, still working.
-    expect(jv(await ctx.sessions.command(AGENT, mine, { action: "url" })).get("status").str)
-      .toBe("completed");
   });
 
   it("open warms the browser up front (so no later action pays the cold start)", async () => {
@@ -724,21 +708,59 @@ describe("the handle is a capability, so the log never carries it", () => {
   });
 });
 
-describe("one profile per session, and never a shared one", () => {
-  it("leaves nothing behind for the next agent on the same credential", async () => {
-    // The leak this replaced: one agent closes, the next one opens under the
-    // same credential and finds the first one's cookies waiting.
-    const first = await openSession(["pizza.example"]);
-    const dir = fs.readdirSync(path.join(ctx.dir, "profiles"))[0];
-    fs.writeFileSync(path.join(ctx.dir, "profiles", dir, "cookies.sqlite"), "signed in");
-    await ctx.sessions.close(first, "test");
+describe("every browser opens as the user, already signed in", () => {
+  /** Sessions cloned from a profile that is already signed in somewhere. */
+  const signedIn = (): { sessions: BrowserSessions; seed: string; profiles: string } => {
+    const home = fs.mkdtempSync(path.join(ctx.dir, "signed-in-"));
+    const seed = path.join(home, "profile");
+    fs.mkdirSync(seed, { recursive: true });
+    fs.writeFileSync(path.join(seed, "cookies.sqlite"), "his logins");
+    fs.writeFileSync(path.join(seed, ".parentlock"), "held by the browser that made it");
+    return {
+      sessions: new BrowserSessions(
+        { ...ctx.browsers, profileDir: path.join(home, "profiles"), seedProfile: seed },
+        null,
+        () => {},
+        60_000,
+      ),
+      seed,
+      profiles: path.join(home, "profiles"),
+    };
+  };
 
-    const second = jv(await ctx.sessions.open("int-2", AGENT, ["pizza.example"], false));
-    expect(second.get("status").str).toBe("completed");
-    const dirs = fs.readdirSync(path.join(ctx.dir, "profiles"));
-    expect(dirs.length).toBe(1);
-    expect(dirs[0]).not.toBe(dir);
-    expect(fs.existsSync(path.join(ctx.dir, "profiles", dirs[0], "cookies.sqlite"))).toBe(false);
+  it("opens with the user's cookies, and two at once both have them", async () => {
+    // The whole point of the pivot: this Mac is one person's, and a browser
+    // that opens signed out is a browser they have to sign in again.
+    const { sessions, profiles } = signedIn();
+    for (const i of [1, 2]) {
+      expect(jv(await sessions.open(`int-${i}`, `agent-${i}`, ["pizza.example"], false)).get("status").str)
+        .toBe("completed");
+    }
+    const dirs = fs.readdirSync(profiles);
+    expect(dirs).toHaveLength(2);
+    for (const dir of dirs) {
+      expect(fs.readFileSync(path.join(profiles, dir, "cookies.sqlite"), "utf8")).toBe("his logins");
+      // Firefox locks a profile to one process; the copy must not carry the
+      // lock of whichever browser held the original.
+      expect(fs.existsSync(path.join(profiles, dir, ".parentlock"))).toBe(false);
+    }
+    await sessions.closeAll("test");
+  });
+
+  it("hands back what the session signed into, and does not clobber it with a stale copy", async () => {
+    const { sessions, seed, profiles } = signedIn();
+    const first = jv(await sessions.open("int-1", AGENT, ["pizza.example"], false)).get("session").str!;
+    const firstDir = path.join(profiles, fs.readdirSync(profiles)[0]);
+    const idle = jv(await sessions.open("int-2", AGENT, ["pizza.example"], false)).get("session").str!;
+    // One browser signs into something new; the other one just sat there.
+    fs.writeFileSync(path.join(firstDir, "cookies.sqlite"), "his logins + the new one");
+
+    await sessions.close(first, "agent");
+    expect(fs.readFileSync(path.join(seed, "cookies.sqlite"), "utf8")).toBe("his logins + the new one");
+    await sessions.close(idle, "agent");
+    // The idle browser's copy was older, so it did not overwrite the new login.
+    expect(fs.readFileSync(path.join(seed, "cookies.sqlite"), "utf8")).toBe("his logins + the new one");
+    expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
   it("has taken every profile with it by the time a quit's closeAll resolves", async () => {
@@ -812,44 +834,6 @@ describe("one profile per session, and never a shared one", () => {
   });
 });
 
-describe("upgrading from the one shared profile", () => {
-  it("leaves the old profiles alone and still gives every agent a clean one", async () => {
-    // Two directories can be on disk at once: the profile every agent shared
-    // before this change, and a copy parked beside it by an earlier version of
-    // this code. Neither is read, and — the point of this test — neither is
-    // touched: an upgrade that tidies up is an upgrade that can delete the
-    // cookies somebody restored five minutes ago.
-    const browserDir = path.join(ctx.dir, "upgrade");
-    const legacy = path.join(browserDir, "profile");
-    const parked = path.join(browserDir, "profile.shared-before-per-agent");
-    for (const [dir, mark] of [[legacy, "live logins"], [parked, "older copy"]]) {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "cookies.sqlite"), mark);
-    }
-
-    const upgraded = new BrowserSessions(
-      { ...ctx.browsers, profileDir: path.join(browserDir, "profiles") },
-      null,
-      () => {},
-      60_000,
-    );
-    for (const agent of ["first-agent", "second-agent"]) {
-      const r = jv(await upgraded.open(`int-${agent}`, agent, ["pizza.example"], false));
-      expect(r.get("status").str).toBe("completed");
-    }
-
-    // Both old directories, exactly as they were.
-    expect(fs.readFileSync(path.join(legacy, "cookies.sqlite"), "utf8")).toBe("live logins");
-    expect(fs.readFileSync(path.join(parked, "cookies.sqlite"), "utf8")).toBe("older copy");
-    // And two agents with a profile each, neither holding anybody's cookies.
-    const dirs = fs.readdirSync(path.join(browserDir, "profiles"));
-    expect(dirs.length).toBe(2);
-    for (const dir of dirs) {
-      expect(fs.existsSync(path.join(browserDir, "profiles", dir, "cookies.sqlite"))).toBe(false);
-    }
-    await upgraded.closeAll("test");
-  });
-});
 
 describe("three agents, three browsers, at once", () => {
   /**

@@ -35,6 +35,10 @@ export interface BrowserHostConfig {
   env?: Record<string, string>;
   screenshotsDir: string;
   profileDir?: string;
+  /** The user's own browser profile. Every session opens on a clone of it, so
+   * every browser is signed in wherever they are, and hands it back on close.
+   * Unset (tests, no home) means sessions start on an empty profile. */
+  seedProfile?: string;
   /** Camoufox install dir (config.json + browsers/). When set, the server is
    * spawned with an app-scoped $HOME whose Library/Caches/camoufox symlinks
    * to it — camoufox finds a ready install, the user's shared cache is never

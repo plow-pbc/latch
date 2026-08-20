@@ -370,18 +370,15 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "plow_browser_open",
     description:
-      "Open a browser on the user's own Mac. Each session gets a fresh profile that goes when "
-    + "you close it — nothing is carried into the next one, and nothing of yours is left for "
-    + "the next agent — and it can " +
-      "fill passwords from their vault without returning them to you ('eval' is the exception: " +
+      "Open a browser on the user's own Mac, as the user: it starts on a copy of their own "
+    + "profile, so it is already signed in wherever they are, and what you sign into during "
+    + "the session stays signed in for them afterwards. It can also "
+    + "fill passwords from their vault without returning them to you ('eval' is the exception: " +
       "it reads page values directly, and must not be pointed at a field you filled) — so use " +
       "it for sites that " +
       "must be signed in as them, not for general web reading, which your own tools do faster. " +
-      "The session id you get back IS your browser, and it is a secret: pass it on every call "
-    + "and you keep the same window; anyone on this Plow credential holding it can drive that "
-    + "browser, and holding theirs is the only way to reach one of theirs. Every open gives you a browser of your "
-    + "own — even when other agents on this Mac connect with the same Plow credential — so "
-    + "nobody takes yours and you never inherit theirs. The Mac runs a few at once and says so "
+      "The session id you get back says WHICH browser: pass it on every call and you keep the "
+    + "same window. The Mac runs a few at once — every one of them the user's — and says so "
     + "plainly when it is full. "
     + "It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +

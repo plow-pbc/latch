@@ -21,6 +21,7 @@
  * what the agent observes/interacts with and where credentials get typed.
  */
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
@@ -186,6 +187,23 @@ export const DEFAULT_MAX_BROWSERS = 3;
 const digest = (id: string): string =>
   crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
 
+/**
+ * When a profile's cookies were last written, or 0 for a profile with none.
+ * Firefox writes the store and its journal, so the newest of the three is the
+ * honest answer — the .sqlite alone can sit still for a whole session.
+ */
+const cookieStamp = (dir: string): number => {
+  let newest = 0;
+  for (const name of ["cookies.sqlite", "cookies.sqlite-wal", "cookies.sqlite-shm"]) {
+    try {
+      newest = Math.max(newest, fs.statSync(path.join(dir, name)).mtimeMs);
+    } catch {
+      /* not there: nothing to weigh */
+    }
+  }
+  return newest;
+};
+
 export class BrowserSessions {
   /** Every live session, by handle. The handle IS the browser: an agent that
    * passes the same one gets the same browser back, and two agents passing
@@ -251,12 +269,10 @@ export class BrowserSessions {
       };
     }
     const handle = crypto.randomUUID();
-    // Every session browses in a profile of its own, and that profile goes
-    // when the session does. Keeping a durable one per credential was worse
-    // than it looked: several agents reach this Mac through ONE credential, so
-    // the next agent to open would mount the cookies and signed-in sessions
-    // the last one left behind. Nothing persists until the relay can tell one
-    // agent from another.
+    // Every session browses in a directory of its own, because Firefox locks a
+    // profile against a second copy of itself — but it is a CLONE of the
+    // user's own profile, so every browser opens signed in wherever they are.
+    // On close it goes back (see handBack). This Mac is one person's.
     const profile = `session-${digest(handle)}`;
     const host = this.newHost(profile);
     // A browser that dies takes its own session with it, and nobody else's.
@@ -335,7 +351,7 @@ export class BrowserSessions {
     items: string[],
     credentialMetadata: boolean,
   ): JSONValue {
-    const s = this.validate(agentId, handle);
+    const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
     // Work out the new bound without publishing it, because the record has to
     // survive before the access does. Widening the live session first and
@@ -369,9 +385,9 @@ export class BrowserSessions {
     };
   }
 
-  /** A browser on a disposable profile owned by this one session. */
+  /** A browser on this session's own clone of the user's profile. */
   private newHost(profile: string): BrowserHost {
-    if (this.browser.profileDir) this.ensureProfile(path.join(this.browser.profileDir, profile));
+    if (this.browser.profileDir) this.seedProfile(path.join(this.browser.profileDir, profile));
     return new BrowserHost({
       ...this.browser,
       screenshotsDir: path.join(this.browser.screenshotsDir, profile),
@@ -381,25 +397,65 @@ export class BrowserSessions {
   }
 
   /**
-   * This agent's profile directory, made if it is not there yet.
+   * This session's profile: a copy of the user's own, so the browser opens
+   * where they left off — signed in, with their history and their settings.
    *
-   * Always clean when it is new. The single profile every agent shared before
-   * this change is simply never read: it holds whatever cookies and signed-in
-   * sessions the agents that came before left in it, so handing it to any one
-   * agent would be that agent inheriting another's logins. It is left exactly
-   * where it is — untouched, not moved and not deleted — and nothing here
-   * opens it. The cost is one round of signing in; the alternative was a
-   * migration that could destroy a live profile to tidy up.
+   * `cp -c` is an APFS clone: a 300MB profile costs no time and no disk until
+   * something writes to it. Anything else (a non-APFS volume, another OS)
+   * falls back to a real copy. The lock files never come along — they belong
+   * to whichever Firefox held the profile, not to the copy.
    */
-  private ensureProfile(dir: string): void {
+  private seedProfile(dir: string): void {
     if (fs.existsSync(dir)) return;
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const seed = this.browser.seedProfile;
+    if (!seed || !fs.existsSync(seed)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      return;
+    }
+    fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
+    try {
+      execFileSync("/bin/cp", ["-Rc", seed, dir]);
+    } catch {
+      // Timestamps come along: how fresh a copy is decides whether it is
+      // allowed to hand itself back as the user's profile.
+      fs.cpSync(seed, dir, { recursive: true, preserveTimestamps: true });
+    }
+    for (const lock of [".parentlock", "parent.lock", "lock"]) {
+      fs.rmSync(path.join(dir, lock), { force: true });
+    }
   }
 
-  /** The profile belonged to this session alone, so it goes with it. */
-  private releaseProfile(s: Session): void {
+  /**
+   * Give the profile back to the user, so what they signed into inside a
+   * session is still signed in the next time any browser opens.
+   *
+   * Only when this session's cookie store is newer than the one already
+   * there: a browser that sat idle must not put a stale copy over what another
+   * one just wrote, and an open that failed never browsed at all.
+   *
+   * ponytail: last writer wins. Two browsers signed into two different sites
+   * at once and only the last to close keeps its cookies. Upgrade path is
+   * merging the cookie stores rather than replacing the profile.
+   */
+  private handBack(s: Session): void {
     if (!this.browser.profileDir) return;
-    fs.rmSync(path.join(this.browser.profileDir, s.profile), { recursive: true, force: true });
+    const dir = path.join(this.browser.profileDir, s.profile);
+    const seed = this.browser.seedProfile;
+    if (!seed || !fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    }
+    if (cookieStamp(dir) <= cookieStamp(seed)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    }
+    // Renamed into place rather than written over: a failure here leaves the
+    // user with one whole profile, never with neither.
+    const parked = `${seed}.replaced`;
+    fs.rmSync(parked, { recursive: true, force: true });
+    if (fs.existsSync(seed)) fs.renameSync(seed, parked);
+    fs.renameSync(dir, seed);
+    fs.rmSync(parked, { recursive: true, force: true });
   }
 
   /**
@@ -436,17 +492,10 @@ export class BrowserSessions {
     return latest;
   }
 
-  /**
-   * Close a session. `agentId` is checked when given: a handle is a capability,
-   * and an agent holding somebody else's handle must not be able to shut their
-   * browser. The owner's own paths (idle, shutdown) pass no agent.
-   */
-  async close(handle: string, reason: string, agentId?: string): Promise<JSONValue> {
+  /** Close a session: the handle says which browser goes. */
+  async close(handle: string, reason: string): Promise<JSONValue> {
     const s = this.sessions.get(handle);
     if (!s) return { status: "error", error: "unknown session" };
-    if (agentId !== undefined && s.agentId !== agentId) {
-      return { status: "error", error: "session belongs to a different Plow credential" };
-    }
     // The session stays registered across the shutdown below — the claim is
     // held until the browser is really down — so it is still reachable while
     // it is on its way out: the idle clock can come due, or a second close can
@@ -499,7 +548,7 @@ export class BrowserSessions {
   private finalize(s: Session, reason?: string): void {
     this.sessions.delete(s.handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
-    this.releaseProfile(s);
+    this.handBack(s);
     if (!reason) return;
     const left = failedRequests(s.host.takeFailedRequests());
     this.audit("browser_session_closed", {
@@ -531,23 +580,14 @@ export class BrowserSessions {
   }
 
   /**
-   * The session this caller may drive, or why it may not.
+   * The session a handle names, or why there is none.
    *
-   * The HANDLE is the capability. Several agents can reach this Mac through
-   * one Plow credential — that is how the owner's agents are set up — so the
-   * credential id cannot be what separates them: keying on it made two agents
-   * one, and handed the second the first one's browser. An unguessable handle,
-   * returned once to whoever opened it, is what makes a session exclusive.
-   *
-   * The credential is still checked, as an outer fence: a handle that somehow
-   * escapes to another credential is refused there. Same credential, different
-   * agent: the handle is the whole answer, so keep yours to yourself.
+   * The handle says WHICH browser, not whose: this Mac is one person's, and
+   * every browser on it is theirs. Several agents run several browsers at
+   * once and each passes its own handle to keep its own window.
    */
-  private validate(agentId: string, handle: string): Session | string {
-    const s = this.sessions.get(handle);
-    if (!s) return "unknown session (open one with plow_browser_open)";
-    if (s.agentId !== agentId) return "session belongs to a different Plow credential";
-    return s;
+  private validate(handle: string): Session | string {
+    return this.sessions.get(handle) ?? "unknown session (open one with plow_browser_open)";
   }
 
   /** Each session closes on its own quiet, not on the busiest one's. */
@@ -566,7 +606,7 @@ export class BrowserSessions {
 
   /** Execute one agent command inside an approved session. */
   async command(agentId: string, handle: string, params: JSONValue): Promise<JSONValue> {
-    const s = this.validate(agentId, handle);
+    const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
     s.lastActivity = Date.now();
 
