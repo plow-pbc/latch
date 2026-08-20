@@ -96,7 +96,7 @@ export function createPizzaSite(): Promise<PizzaSite> {
          <iframe id="payframe" src="/payframe?pizza=${encodeURIComponent(pizza)}" width="400" height="300"></iframe>
          <!-- After the payment frame on purpose: the frame holding a field is
               not the last one on a real checkout page. -->
-         <iframe id="tracker" src="/late" width="10" height="10"></iframe>`,
+         <iframe id="tracker" src="/tracker" width="10" height="10"></iframe>`,
       );
     } else if (req.method === "GET" && url.pathname === "/payframe") {
       const pizza = url.searchParams.get("pizza") ?? "";
@@ -154,6 +154,10 @@ export function createPizzaSite(): Promise<PizzaSite> {
            });
          </script>`,
       );
+    } else if (req.method === "GET" && url.pathname === "/tracker") {
+      // Inert, and only ever embedded: somewhere for a frame to be that has
+      // nothing an action could resolve.
+      html("Tracker", `<p>tracking</p>`);
     } else if (req.method === "GET" && url.pathname === "/late") {
       // A frame that did not exist when the click was asked for. The owner
       // approved origins for the page the device could see, so this must NOT
