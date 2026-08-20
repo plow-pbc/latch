@@ -27,6 +27,19 @@ def load_server():
     return module
 
 
+class Request:
+    """One request, and the document that made it — whose url the server reads
+    when the REQUEST is made, never when the response comes back."""
+
+    def __init__(self, method, page, navigation=False):
+        self.method = method
+        self.frame = type("Frame", (), {"url": page})()
+        self._navigation = navigation
+
+    def is_navigation_request(self):
+        return self._navigation
+
+
 class Response:
     """One response the page received.
 
@@ -35,16 +48,13 @@ class Response:
     quietly answered would let that regress unnoticed.
     """
 
-    def __init__(self, status, url, method="GET", headers=None, page="", navigation=False,
-                 frame=None):
+    def __init__(self, status, url, method="GET", headers=None, page="", navigation=False):
         self.status = status
         self.url = url
-        self.request = type("Request", (), {"method": method,
-                                            "is_navigation_request": lambda _s=None: navigation})()
+        # One request object per response, since the server remembers who asked
+        # by its identity.
+        self.request = Request(method, page, navigation)
         self.headers = headers or {}
-        # `frame` is the object identity the server compares against the active
-        # page's main frame; `page` is the url that frame is showing.
-        self.frame = frame if frame is not None else type("Frame", (), {"url": page})()
 
     def body(self):
         raise AssertionError("the listener read a response body")
@@ -64,34 +74,10 @@ class Context:
 
 
 class Page:
-    """The active page, recording whether the device's navigation flag was up
-    while each navigation ran — that flag is what a security gate reads."""
-
     def __init__(self):
         self.url = "https://pizza.example/checkout"
-        self.main_frame = object()
         self.context = Context()
         self.context.pages.append(self)
-        # Wired by whoever hands this page to a Session.
-        self.session = None
-        self.flag_during = {}
-        # Responses the page receives while the NEXT navigation is in flight,
-        # which is when real ones arrive: headers first, before the call
-        # returns. Fired once and cleared.
-        self.during_next_navigation = None
-
-    def _navigate(self, action):
-        self.flag_during[action] = self.session.in_device_nav
-        if self.during_next_navigation is not None:
-            hook, self.during_next_navigation = self.during_next_navigation, None
-            hook()
-
-    def goto(self, _url, **_kw):
-        self._navigate("goto")
-
-    def go_back(self, **_kw):
-        self._navigate("back")
-
     def wait_for_timeout(self, _ms):
         pass
 
@@ -103,7 +89,9 @@ class Page:
 
 
 def feed(session, responses):
+    """Each response as it really happens: the request first, the answer after."""
     for r in responses:
+        session.note_request(r.request)
         session.note_response(r)
     return session.reply_with_failures({})
 
@@ -126,57 +114,40 @@ def main():
         "POST", {"retry-after": "30", "server": "cloudfront"},
         page="https://pizza.example/checkout")])
 
-    # Who asked, at origin granularity. Only a navigation the DEVICE issued
-    # answers for itself — a page pointing ITSELF at an approved host is named
-    # by the document it is still showing, or it could pass its own trouble off
-    # as that host's.
+    # A navigation is not this feature's business: an agent that goes somewhere
+    # and is refused SEES that, on the very next screenshot. Only what a page
+    # asked for on its own account is invisible, so only that is kept.
     session = server.Session(Page())
-    main = type("Frame", (), {"url": "https://offsite.example/lander"})()
-    session.page.main_frame = main
-    out["page_navigating_itself"] = feed(session, [
+    out["navigations"] = feed(session, [
+        Response(429, "https://pizza.example/checkout", navigation=True,
+                 page="https://offsite.example/lander"),
         Response(403, "https://pizza.example/api/x", page="https://offsite.example/lander"),
-        Response(429, "https://pizza.example/checkout", navigation=True, frame=main),
     ])
-    # Driven through the real handler: the flag is up while the navigation runs
-    # and down after, for `goto` and for `back` alike.
-    driven = server.Session(Page())
-    driven.page.session = driven
-    driven.page.main_frame = main
-    # Three refusals arrive DURING the goto, as real ones do — nothing about the
-    # flag is set by hand. Only the one that is a MAIN-FRAME NAVIGATION may
-    # answer for itself; a subresource fetched in that same window, or a child
-    # frame's navigation, is named by the document that asked, or a page would
-    # pass its own trouble off as the destination's.
-    # A url of its own, so the assertion says WHICH frame the initiator is read
-    # from rather than only that it is not the destination.
-    elsewhere = type("Frame", (), {"url": "https://widget.example/frame"})()
-    driven.page.during_next_navigation = lambda: [
-        driven.note_response(Response(429, "https://pizza.example/checkout",
-                                      navigation=True, frame=main)),
-        driven.note_response(Response(403, "https://pizza.example/api/x",
-                                      navigation=False, frame=main)),
-        driven.note_response(Response(404, "https://pizza.example/iframe",
-                                      navigation=True, frame=elsewhere)),
-    ]
-    flag_after = {}
-    driven.handle({"action": "goto", "url": "https://pizza.example/checkout"}, "/tmp")
-    flag_after["goto"] = driven.in_device_nav
-    out["during_a_device_goto"] = driven.reply_with_failures({})
-    driven.handle({"action": "back"}, "/tmp")
-    flag_after["back"] = driven.in_device_nav
-    out["flag_during"] = driven.page.flag_during
-    out["flag_after"] = flag_after
+
+    # Who asked is read when the request is MADE. A page that asks for something
+    # it knows will fail, then moves itself to an approved origin before the
+    # answer arrives, would otherwise have the refusal read as that origin's.
+    session = server.Session(Page())
+    moving = Response(429, "https://pizza.example/api/x", page="https://offsite.example/lander")
+    session.note_request(moving.request)
+    moving.request.frame.url = "https://pizza.example/checkout"
+    session.note_response(moving)
+    out["frame_moved_first"] = session.reply_with_failures({})
+
+    # A request nobody remembers asking for names nobody.
+    session = server.Session(Page())
+    forgotten = Response(403, "https://pizza.example/api/y", page="https://pizza.example/")
+    session.note_response(forgotten)
+    out["unremembered"] = session.reply_with_failures({})
 
     # A frame that will not answer names nobody, and the device withholds those
     # from the agent rather than guessing.
     class NoFrame(Response):
-        @property
-        def frame(self):
-            raise RuntimeError("no frame for this request")
-
-        @frame.setter
-        def frame(self, _v):
-            pass
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            raising = type("Frame", (), {"url": property(
+                lambda _s: (_ for _ in ()).throw(RuntimeError("no frame")))})()
+            self.request.frame = raising
 
     # A response that will not answer about its headers is dropped whole: the
     # listener runs on the page's event thread, where the only safe answer to a

@@ -19,7 +19,6 @@ Adapted from plow-pbc/camoufox-cli scripts/camoufox_cli.py (see UPSTREAM.md).
 import argparse
 import base64
 import collections
-import contextlib
 import json
 import os
 import re
@@ -54,6 +53,11 @@ MAX_ERROR_LEN = 500
 # exchange, so a chatty page must not be able to park one; a handful of the most
 # recent is what says "you are blocked".
 MAX_FAILED_REQUESTS = 5
+
+# How many in-flight requests are remembered by who asked for them. A page can
+# ask for a great many things; only the ones that come back refused are ever
+# looked up, and one that has been forgotten simply names nobody.
+MAX_REMEMBERED_REQUESTS = 200
 
 # Kept off a refused request beyond status/method/origin/initiator. Never a
 # body -- a body can echo a submitted credential -- and never an arbitrary
@@ -255,10 +259,9 @@ class Session:
         # per-page listener would be blind to exactly the ones worth seeing.
         # Attached here so a Session cannot exist without it.
         self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
-        # True only while a navigation this device issued -- `goto` or `back` --
-        # is in flight, which is the one window in which a navigation is the
-        # DEVICE's rather than a page's.
-        self.in_device_nav = False
+        # request id -> the origin of the document that asked, oldest first.
+        self.asked_by = collections.OrderedDict()
+        page.context.on("request", self.note_request)
         page.context.on("response", self.note_response)
 
     def _forget_navigated(self):
@@ -340,16 +343,40 @@ class Session:
     def pages(self):
         return self.page.context.pages
 
+    def note_request(self, request):
+        """Remember which document asked, at the moment it asked.
+
+        A frame's url is whatever it is showing NOW, so reading it when the
+        response arrives lets a page issue a request it knows will fail, move
+        itself to an approved origin, and have the refusal read as that origin's
+        own trouble. The answer is a snapshot taken before any of that can
+        happen. Bounded like everything else here: a page that asks for
+        thousands of things is not going to be remembered for all of them, and
+        an unremembered request simply names nobody.
+        """
+        try:
+            self.asked_by[id(request)] = _origin(request.frame.url)
+            while len(self.asked_by) > MAX_REMEMBERED_REQUESTS:
+                self.asked_by.popitem(last=False)
+        except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
+            pass
+
     def note_response(self, response):
         """Remember a request the site refused.
 
         Only 4xx/5xx: a sign-in flow is mostly redirects, and keeping those
-        would push the one refusal that matters out of a short ring. Nothing
-        here may raise -- this runs on Playwright's event thread, where an
-        exception is nobody's to catch -- and nothing here reads a body.
+        would push the one refusal that matters out of a short ring.
+
+        Only what a page asked for, too, never a navigation: an agent that
+        navigates somewhere and is refused SEES that -- the page is right there
+        in its next screenshot. The refusal nobody can see is the one a page
+        makes on its own account, which is the whole reason for this.
+
+        Nothing here may raise -- this runs on Playwright's event thread, where
+        an exception is nobody's to catch -- and nothing here reads a body.
         """
         try:
-            if response.status < 400:
+            if response.status < 400 or response.request.is_navigation_request():
                 return
             entry = {
                 "status": response.status,
@@ -361,7 +388,7 @@ class Session:
                 # fail on an approved host and pass that off as the approved
                 # page's own trouble. An origin is all this is, so there is
                 # nothing here a page can write text into either.
-                "initiator": self._initiator(response),
+                "initiator": self.asked_by.pop(id(response.request), ""),
             }
             for name in FAILED_REQUEST_HEADERS:
                 value = response.headers.get(name)
@@ -370,39 +397,6 @@ class Session:
             self.failed.append(entry)
         except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
             pass
-
-    @contextlib.contextmanager
-    def _device_nav(self):
-        """Marks a navigation as this device's for as long as it is in flight."""
-        self.in_device_nav = True
-        try:
-            yield
-        finally:
-            self.in_device_nav = False
-
-    def _initiator(self, response):
-        """The origin of the document whose request this was, "" if unknowable.
-
-        A navigation the DEVICE asked for (`goto`, `back`) answers for itself:
-        its frame has not committed the new url yet, so asking the frame would name the page being
-        left and a refused `goto` would look like somebody else's. Every other
-        navigation is the page's own doing and is named by the document it is
-        still showing -- otherwise a locked-out page could point itself at an
-        approved host and have the refusal read as that host's own trouble.
-        Anything the frame will not answer (a service worker, a blank child
-        frame) names nothing, and the device withholds those from the agent.
-        """
-        try:
-            frame = response.frame
-            if (
-                response.request.is_navigation_request()
-                and self.in_device_nav
-                and frame is self.page.main_frame
-            ):
-                return _origin(response.url)
-            return _origin(frame.url)
-        except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
-            return ""
 
     def reply_with_failures(self, reply):
         """Add what the page's requests did to a reply, and forget it.
@@ -472,8 +466,7 @@ class Session:
             # 12s + 1s settle keeps the whole action under the device's 15s host
             # cap and the relay's ~20s exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
-            with self._device_nav():
-                self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
+            self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title()}
 
@@ -498,11 +491,7 @@ class Session:
             # Neither history.back() nor page.go_back() actually moves a tab
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
-            # Device-issued like `goto`: a refused `go_back` would otherwise be
-            # attributed to the document being left rather than the one asked
-            # for. (Only ever in scope — `back` is not a lockout-allowed action.)
-            with self._device_nav():
-                self.page.go_back(timeout=12000, wait_until="domcontentloaded")
+            self.page.go_back(timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title(), "moved": self.page.url != was}
 

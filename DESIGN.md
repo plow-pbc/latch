@@ -351,6 +351,12 @@ because most of what asks the browser anything is the device itself (the ~1/s
 viewer poll, the popup sweep, a credential fill's `locate`) and whichever was
 in flight would otherwise consume a 429 and drop it.
 
+**What a page asked for, not where the agent went.** A refused navigation is
+the visible case — the agent goes somewhere, is refused, and the page is right
+there in its next screenshot. The one nobody can see is the request a page makes
+on its own account, so that is the only kind kept, and the attribution question
+shrinks with it.
+
 **Origins, and both ends of them.** A url is the page's to choose, and every
 part of one but the origin can carry a secret — a query, userinfo, and a path
 as much as either, since `/reset/<token>` is a url sites really send. So an
@@ -359,10 +365,12 @@ method, and nothing else; the owner's log gets all of it, and the agent is told
 `{status, method, host}` (plus `Retry-After`/`Server` when sent) only when
 **both** origins are inside the session's. Destination alone would let a page
 the session is locked out of fetch a url it knows will fail on an approved host
-and pass that off as the approved page's own trouble. A request the browser
-cannot attribute — a navigation from a blank page, a service worker — names no
-asker and is the device's own; there is no text in an origin to smuggle either
-way, which is why this needs no attribution machinery beyond the two fields.
+and pass that off as the approved page's own trouble. Who asked is read when the request is MADE, not when it is answered: a page
+that asks for something it knows will fail and then moves itself to an approved
+origin would otherwise have the refusal read as that origin's. A request the
+browser cannot attribute — a blank or blob: frame, a service worker, one it
+never saw asked — names nobody and is withheld from the agent while the owner
+still sees it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

@@ -30,7 +30,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
   }>(PROBE);
 
   it("listens on the context, so a popup's refusals count too", () => {
-    expect(probed.listens).toEqual(["response"]);
+    expect(probed.listens).toEqual(["request", "response"]);
   });
 
   it("keeps the origin that refused and nothing a site could put a token in", () => {
@@ -47,33 +47,24 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     ]);
   });
 
-  it("names a page that navigated ITSELF, not the host it aimed at", () => {
-    // Otherwise a locked-out page points itself at an approved host and the
-    // refusal reads as that host's own trouble.
-    expect((probed.page_navigating_itself.failed_requests ?? []).map((r) => r.initiator))
-      .toEqual(["https://offsite.example", "https://offsite.example"]);
+  it("keeps only what a page asked for, never a navigation", () => {
+    // An agent that goes somewhere and is refused SEES that on its next
+    // screenshot. The refusal nobody can see is the one a page makes on its own
+    // account, which is the whole reason for this.
+    expect((probed.navigations.failed_requests ?? []).map((r) => r.status)).toEqual([403]);
   });
 
-  it("raises the device-navigation flag for goto and back, and lowers it after", () => {
-    // The flag is what the attribution gate reads, so both branches that set it
-    // are driven through the real handler rather than assigned by hand.
-    expect(probed.flag_during).toEqual({ goto: true, back: true });
-    expect(probed.flag_after).toEqual({ goto: false, back: false });
+  it("reads who asked when the request was MADE, not when it was answered", () => {
+    // Otherwise a page asks for something it knows will fail, moves itself to
+    // an approved origin, and the refusal reads as that origin's own trouble.
+    expect(probed.frame_moved_first.failed_requests?.[0]).toMatchObject({
+      origin: "https://pizza.example",
+      initiator: "https://offsite.example",
+    });
   });
 
-  it("lets only the goto's own navigation answer for itself, in its own window", () => {
-    // Three refusals arrive while a device goto is in flight, most recent
-    // first. Only the main frame's navigation is the device's asking. The
-    // subresource is named by the page being left, which is what the main frame
-    // still says at that moment, and the child frame's navigation by that frame
-    // itself. Its distinct origin is what pins that the initiator is read from
-    // the RESPONSE's frame rather than from the page's main frame.
-    expect((probed.during_a_device_goto.failed_requests ?? [])
-      .map((r) => [r.status, r.initiator])).toEqual([
-      [404, "https://widget.example"],
-      [403, "https://offsite.example"],
-      [429, "https://pizza.example"],
-    ]);
+  it("names nobody for a request it never saw asked", () => {
+    expect(probed.unremembered.failed_requests?.[0]).toMatchObject({ initiator: "" });
   });
 
   it("names nobody when the frame will not answer, or answers with nothing", () => {
