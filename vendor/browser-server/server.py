@@ -53,17 +53,6 @@ MAX_ERROR_LEN = 500
 # whose caller did not name one, so it is the term that has to stay small.
 ACTION_TIMEOUT_MS = 3000
 
-# The TIMED budgets below add up to less than the device gives a browser action
-# before it gives up on it (`actionTimeoutMs` in deviceAgent.ts, asserted
-# against that declaration rather than a copy of it). Nothing here is told when
-# the device does give up -- it drops its pending entry and sends this process
-# nothing -- so a fill that ran past it would go on typing a credential into a
-# page whose answer nobody is waiting for. That sum covers a fill that names its
-# frame on a page that runs script; two spends are outside it and neither is
-# bounded: a caller that names no frame pays ACTION_TIMEOUT_MS per frame it
-# rules out (the loop, #96), and every fill makes `evaluate` calls that take no
-# timeout at all, so a page that will not run script hangs regardless.
-
 # What every action that moves the page gives it to settle afterwards, so the
 # answer describes where the page ended up rather than where it was mid-flight.
 SETTLE_MS = 1000
@@ -74,11 +63,26 @@ SETTLE_MS = 1000
 # defense has. Keystrokes cost a delay each and an agent may fill a field with
 # prose, so only the last TYPED_CHARS are typed and the bulk ahead of them is
 # assigned. TYPED_CHARS is chosen as a statement about credentials rather than
-# derived from latency -- an ordinary password, card number, one-time code or
-# API token is shorter than this and is typed whole -- and the budget is derived
-# from IT, so raising it has to answer to the device's cap. Nothing enforces
-# that a released value fits: a longer one lands with its head assigned and its
-# last TYPED_CHARS typed, which still ends the field on real keys.
+# derived from latency: an ordinary password, a card number or a one-time code
+# is shorter than this and is typed whole. Nothing enforces that a released
+# value fits -- a long API key or a JWT does not -- and one that does not lands
+# with its head assigned and its last TYPED_CHARS typed, which still ends the
+# field on real keys.
+#
+# A fill's TIMED cost is ACTION_TIMEOUT_MS three times (resolve, assign, and the
+# assignment a dropped-keys fallback makes) plus TYPING_MAX_MS, and that has to
+# stay under what the device gives a browser action before it gives up on it --
+# `actionTimeoutMs` in deviceAgent.ts, which fillSecretMasking.test.ts reads
+# there and asserts this sum against, in "keeps the timed budgets under the cap
+# the device arms". TYPING_MAX_MS is derived from TYPED_CHARS, so raising the
+# credential length has to answer to that cap. Nothing here is told when the
+# device does give up -- it drops its pending entry and sends this process
+# nothing -- so a fill that ran past it would go on typing a credential into a
+# page whose answer nobody is waiting for. The sum covers a fill that names its
+# frame on a page that runs script; two spends are outside it and neither is
+# bounded: a caller that names no frame pays ACTION_TIMEOUT_MS per frame it
+# rules out (the loop, #96), and every fill makes `evaluate` calls that take no
+# timeout at all, so a page that will not run script hangs regardless.
 KEY_DELAY_MS = 45
 # What a key may cost beyond its delay: the round trip that dispatches it and
 # the actionability check in front of it. A few milliseconds on a local page.

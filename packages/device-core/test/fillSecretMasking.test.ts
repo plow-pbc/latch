@@ -1036,6 +1036,16 @@ function stubPage(
   };
 }
 
+describe("the cap the fill's budgets are measured against", () => {
+  // The sum that has to fit under it needs the server's constants, so that
+  // assertion is Python-gated. This is not: it only reads `deviceAgent.ts`, so
+  // a rename of `actionTimeoutMs` fails on every host rather than only on one
+  // with an interpreter, where the gated sum would be the first to notice.
+  it("is a timer the device still arms", () => {
+    expect(hostCapMs()).toBeGreaterThan(0);
+  });
+});
+
 describe("whether the keys landed", () => {
   // `KEYS_DROPPED_JS` decides whether a typed fill has to fall back to
   // assigning the value outright. It is the difference between repairing a
