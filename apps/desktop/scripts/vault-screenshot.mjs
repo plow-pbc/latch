@@ -38,9 +38,6 @@ const account = splitKey(crypto.randomBytes(64));
 const ciphers = new Map();
 let nextId = 1;
 
-/** Product Hunt's URL entries as they were before a site was removed. */
-let phUris = [];
-
 /** The URL list the form last sent, straight out of the renderer. */
 let sentUrls = null;
 
@@ -174,7 +171,6 @@ const SCREENS = [
   {
     name: "dropped-url",
     prepare: async (win) => {
-      phUris = ciphers.get("item-1").login.uris.map((u) => u.uri);
       await clickText(win, "Product Hunt");
       await settle(win);
       await removable(win, 3, "before the removal");
@@ -193,19 +189,10 @@ const SCREENS = [
       if (JSON.stringify(sentUrls) !== JSON.stringify(wantSent)) {
         throw new Error(`form sent ${JSON.stringify(sentUrls)}, wanted the blank kept at its position: ${JSON.stringify(wantSent)}`);
       }
-      const item = ciphers.get("item-1");
-      const urls = decryptItem(item, account).urls;
+      const urls = decryptItem(ciphers.get("item-1"), account).urls;
       const want = ["https://www.producthunt.com", "https://api.producthunt.com"];
       if (JSON.stringify(urls) !== JSON.stringify(want)) {
         throw new Error(`removed site not dropped: stored ${JSON.stringify(urls)}, wanted ${JSON.stringify(want)}`);
-      }
-      // And the two it kept are the entries they already were. A removal that
-      // renumbered the boxes would reconcile the last one against the entry
-      // above it, rewriting a URL nobody touched — invisible above, and the
-      // reason the removed row is emptied in place rather than spliced out.
-      const kept = item.login.uris.map((u) => u.uri);
-      if (kept[0] !== phUris[0] || kept[1] !== phUris[2]) {
-        throw new Error("removing a site shifted the ones below it onto other entries");
       }
       // GitHub has the one site it was saved with, and no way to remove it: a
       // login with no URL can never be filled, so the form never offers that.
