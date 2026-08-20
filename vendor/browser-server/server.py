@@ -434,16 +434,14 @@ class Session:
             budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
             deadline = time.monotonic() + budget_ms / 1000.0
             frames = self.indexed_frames(cmd)
-            if action == "click":
-                # Re-enumerated between passes rather than snapshotted: a
-                # consent or payment iframe injected while we wait is a NEW
-                # frame object, and the selector this loop is waiting for often
-                # arrives inside exactly that one. Not so for a frame the
-                # caller named: that index is validated once and then held --
-                # re-resolving it would abort the wait the moment the page
-                # drops any iframe, and could only ever retarget a different
-                # frame as the indices shift under it.
-                rescan = "frame" not in cmd
+            # Which frame holds it is only a question when the caller did not
+            # say. Then the budget goes on scanning every frame until one does
+            # -- re-enumerating each pass, because a consent or payment iframe
+            # injected while we wait is a NEW frame object and the selector
+            # often arrives inside exactly that one -- and whichever holds it
+            # gets what remains. A frame the caller named is resolved once and
+            # simply waited in, which is what the click below does anyway.
+            if action == "click" and "frame" not in cmd:
                 while True:
                     holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
                     if holding:
@@ -454,8 +452,7 @@ class Session:
                             "no frame has %s after %dms" % (sel, budget_ms)
                         )
                     self.page.wait_for_timeout(SCAN_INTERVAL_MS)
-                    if rescan:
-                        frames = self.indexed_frames(cmd)
+                    frames = self.indexed_frames(cmd)
             for tried, (i, fr) in enumerate(frames):
                 try:
                     if action == "click":

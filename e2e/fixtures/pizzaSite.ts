@@ -148,8 +148,10 @@ export function createPizzaSite(): Promise<PizzaSite> {
       );
     } else if (req.method === "GET" && url.pathname === "/late") {
       // What a lazily-injected consent or payment frame looks like: a frame
-      // that did not exist when the click was asked for. Same origin, so it
-      // reports the click it received on the page that embedded it.
+      // that did not exist when the click was asked for. Embed-only, and from
+      // a same-origin page holding a #result node: it reports on its embedder
+      // because `text` reads the top frame, so anything it said about itself
+      // would be unreadable.
       html(
         "Late",
         `<button id="late" type="button">Late</button>
