@@ -214,12 +214,24 @@ describe("browser tools (fake runtime)", () => {
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
 
     // A list of nothing but unmatchable patterns is refused before the owner
-    // is asked to approve a blank bound.
+    // is asked to approve a blank bound — and told what is actually wrong,
+    // since an agent told its origins were missing resends the same array.
     const blank = await callTool(
       server, "plow_browser_open", { origins: ["   ", "*."] }, AGENT,
     );
     expect(blank.isError).toBe(true);
-    expect(JSON.stringify(blank.payload)).toContain("origins");
+    expect(JSON.stringify(blank.payload)).toContain("no 'origins' pattern can match a host");
+    // The same for a widen, one tool over.
+    const blankWiden = await callTool(
+      server, "plow_browser_request", { session: "whatever", origins: ["*."] }, AGENT,
+    );
+    expect(blankWiden.isError).toBe(true);
+    expect(JSON.stringify(blankWiden.payload)).toContain("no 'origins' pattern can match a host");
+    // An empty list is still its own message (the schema catches an omitted
+    // field before the handler sees it).
+    const absent = await callTool(server, "plow_browser_open", { origins: [] }, AGENT);
+    expect(absent.isError).toBe(true);
+    expect(JSON.stringify(absent.payload)).toContain("missing 'origins'");
 
     // A real origin carrying one alongside it opens, with the junk dropped —
     // the card, the session bound and the profile all name the same set.
@@ -239,8 +251,9 @@ describe("browser tools (fake runtime)", () => {
       .entries()
       .filter((e) => jv(e as JSONValue).get("event").str === "intent_received")
       .map((e) => JSON.stringify(jv(e as JSONValue).get("capabilities").value));
-    expect(asked.at(-1)).toContain("Browse: pizza.example");
-    expect(asked.at(-1)).not.toContain("pizza.example, ");
+    // Pinned at both ends: a leaked blank sorts first and would render
+    // "Browse: , pizza.example", which a prefix match happily accepts.
+    expect(asked.at(-1)).toContain('"Browse: pizza.example"');
 
     // And the rule that open saved re-matches the clean list — the failure
     // this is really about: a rule keyed on a bound with a blank in it could

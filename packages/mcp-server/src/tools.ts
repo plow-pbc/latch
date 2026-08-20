@@ -68,6 +68,24 @@ const strings = (value: JSONValue[] | null): string[] =>
   (value ?? []).filter((v): v is string => typeof v === "string");
 
 /**
+ * The origins an agent asked to browse, less the patterns that bound nothing.
+ * Absent is `[]` — each caller says what that means for it. A list that WAS
+ * sent but has nothing usable in it is refused loudly rather than silently
+ * narrowed: the repair is a different pattern, and an agent told its origins
+ * were missing will send the same array again.
+ */
+function requestedOrigins(value: JSONValue[] | null): string[] {
+  if (value === null || value.length === 0) return [];
+  const origins = usableOrigins(strings(value));
+  if (origins.length === 0) {
+    throw new ToolError(
+      "no 'origins' pattern can match a host — use 'example.com' or '*.example.com'",
+    );
+  }
+  return origins;
+}
+
+/**
  * Resolve a path the agent supplied to the real path the kernel will see,
  * BEFORE it becomes a capability.
  *
@@ -417,15 +435,8 @@ export const TOOLS: ToolSpec[] = [
       // may save, the session's bound and its profile all name one set — an
       // entry that bounds nothing would otherwise show as a blank on the card
       // and make the saved rule un-rematchable.
-      const raw = strings(a.get("origins").arr);
-      const origins = usableOrigins(raw);
-      if (origins.length === 0) {
-        throw new ToolError(
-          raw.length === 0
-            ? "missing 'origins'"
-            : "no 'origins' pattern can match a host — use 'example.com' or '*.example.com'",
-        );
-      }
+      const origins = requestedOrigins(a.get("origins").arr);
+      if (origins.length === 0) throw new ToolError("missing 'origins'");
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });
@@ -478,7 +489,7 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const session = a.get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
-      const origins = usableOrigins(strings(a.get("origins").arr));
+      const origins = requestedOrigins(a.get("origins").arr);
       const items = strings(a.get("credential_items").arr);
       const capabilities: Capability[] = [];
       if (origins.length > 0) capabilities.push({ kind: "browser", origins });
