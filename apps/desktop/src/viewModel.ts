@@ -605,7 +605,10 @@ function describeStep(e: JSONValue): AuditStep {
         + `could not be kept hidden on screen, so ${ev.get("action").str ?? "the view"} was refused`;
       state = "bad";
       break;
-    case "browser_crashed": text = "Browser crashed"; state = "bad"; break;
+    case "browser_crashed":
+      text = `Browser crashed (code ${ev.get("code").int ?? -1})`;
+      state = "bad";
+      break;
     default: text = event;
   }
   return { time: clock(ev.get("ts").str ?? ""), text, state };

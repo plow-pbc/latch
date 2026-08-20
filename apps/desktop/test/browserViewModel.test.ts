@@ -205,19 +205,24 @@ describe("audit grouping for browser sessions", () => {
     expect(closeRow.text).toBe(closeText);
   });
 
-  it("a browser that died with no session open is a crash of its own", () => {
-    // The host audits browser_crashed with only a code — no session, no intent
-    // — so it cannot join any activity, and there is no session close to carry
-    // the verdict. It is a row nobody owns, which is the point: an owner still
-    // sees that the browser died.
+  it("a browser death stands beside the session it took down, not inside it", () => {
+    // What production writes when a browser dies under a live session: the
+    // session closes as crashed, and BrowserHost separately audits the death
+    // with only a code — no session, no intent — so it can join nothing. Both
+    // rows are the owner's, and the crash is not absorbed into the session's.
     const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
       { event: "browser_crashed", code: 9, ts: "2026-08-10T10:00:05Z" },
+      { event: "browser_session_closed", session: "S", reason: "crashed", failed_requests: [], ts: "2026-08-10T10:00:05Z" },
     ]);
-    expect(acts[0]!.status).toBe("Crashed");
-    expect(acts[0]!.tone).toBe("red");
-    expect(acts[0]!.category).toBe("failed");
-    expect(acts[0]!.timeline[0]!.text).toBe("Browser crashed");
-    expect(acts[0]!.timeline[0]!.state).toBe("bad");
+    expect(acts.map((a) => a.id).sort()).toEqual(["browser:S", "browser_crashed:1"]);
+    const crash = acts.find((a) => a.id === "browser_crashed:1")!;
+    expect(crash.status).toBe("Crashed");
+    expect(crash.tone).toBe("red");
+    expect(crash.category).toBe("failed");
+    // The code is the only thing the host has to say about how it died.
+    expect(crash.timeline[0]!.text).toBe("Browser crashed (code 9)");
+    expect(crash.timeline[0]!.state).toBe("bad");
   });
 
   it("a session-scoped metadata read stays with its session, not a row of its own", () => {
