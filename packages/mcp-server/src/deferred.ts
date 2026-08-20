@@ -24,12 +24,13 @@ import { JSONValue } from "@domo/protocol";
 /**
  * How long a tool may block before it must hand back a handle.
  *
- * The relay's pending future times out at 20 seconds and the MCP client
- * abandons at ~30s. This has to leave room for the tunnel round-trip on top of
- * itself, not merely be smaller than the relay's timeout — hence well under
- * half of it.
+ * The relay's pending future times out at 25 seconds and the MCP client
+ * abandons at ~30s. What is left after this budget is what delivery gets:
+ * registering the handle, framing the response, and the relay matching it to
+ * the exchange still waiting — so the ten seconds behind it are the margin,
+ * not slack.
  */
-export const CALL_BUDGET_MS = 8_000;
+export const CALL_BUDGET_MS = 15_000;
 
 /** Both halves of §4.3's fifteen minutes: pending lifetime, and result retention. */
 export const HANDLE_TTL_MS = 15 * 60_000;
