@@ -98,13 +98,27 @@ SCAN_INTERVAL_MS = 50
 # set, a mouse move is interpolated along a path; without it -- upstream's
 # default, and what shipped here -- every click teleports the cursor, and the
 # movement entropy an interrogation-style defense samples is simply absent
-# (issue #86). A float sets that cap; `True` takes camoufox's own "up to 1.5s".
+# (issue #86).
 #
-# The travel is spent INSIDE a click's timeout rather than added to it, so the
-# cap is a floor on what any attempt needs: the device's MIN_CLICK_TIMEOUT_MS is
-# set above it, and `_click` hands every frame it tries at least this much. Half
-# a second still draws a whole path; what it does not do is eat a budget.
-HUMANIZE_MAX_SECONDS = 0.5
+# It has to be a float. Measured on the bundled build, 30 clicks per setting:
+# off, 31ms median; 0.25, 316ms (408 worst); 0.5, 638ms (672 worst); `True` --
+# camoufox's own "up to 1.5s", and what issue #86 proposed -- never returned at
+# all, timing out past 8s on the first click.
+#
+# The travel is spent INSIDE a click's timeout rather than added to it, so a
+# quarter second is what leaves the 3s default action budget still looking like
+# a budget: a whole path drawn, and better than 2.5s left for the click itself
+# and whatever the page does about it.
+HUMANIZE_MAX_SECONDS = 0.25
+
+# The smallest share of a click's budget worth handing a frame: the pointer's
+# journey (HUMANIZE_MAX_SECONDS at its longest) plus room to click once it
+# arrives. Below this an attempt cannot land however ready the page is, so the
+# shares are floored here and borrowed from the frames underneath -- and when
+# there is not even one share left, the loop says so in the words the agent can
+# act on ("no time left to click it") rather than handing back a Playwright
+# timeout that reads as "the page refused".
+MIN_CLICK_SHARE_MS = int(HUMANIZE_MAX_SECONDS * 1000) + 500
 
 # Keystroke cadence, and the ceiling on what one value may spend on it. A field
 # that goes from empty to complete with no keydown/keyup at all is the cheapest
@@ -624,11 +638,11 @@ class Session:
         for tried, (i, fr) in enumerate(frames):
             # Humanized pointer travel is spent INSIDE an attempt, so an equal
             # division can hand a frame less than the journey and expire with the
-            # cursor still moving. Each attempt therefore gets at least the
-            # travel cap, borrowed from the shares below it: earlier frames spend
-            # generously, later ones inherit what is left, and no frame is ever
-            # skipped -- the budget as a whole is what runs out, which is the
-            # thing the answer below can say honestly.
+            # cursor still moving. Each attempt therefore gets at least
+            # MIN_CLICK_SHARE_MS, borrowed from the shares below it: earlier
+            # frames spend what an attempt actually costs, later ones inherit
+            # what is left, and the budget as a whole is what runs out -- which
+            # is the thing the answer below can say honestly.
             remaining = int((deadline - time.monotonic()) * 1000)
             if remaining <= 0:
                 # The selector IS somewhere -- the scan said so -- but the
@@ -641,7 +655,7 @@ class Session:
                 )
                 break
             left = min(remaining, max(remaining // (len(frames) - tried),
-                                      int(HUMANIZE_MAX_SECONDS * 1000)))
+                                      MIN_CLICK_SHARE_MS))
             try:
                 fr.click(sel, timeout=left)
                 self.page.wait_for_timeout(1000)

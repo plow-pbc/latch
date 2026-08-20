@@ -24,15 +24,19 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     single action answers inside Domo's 15 s host cap and the relay's ~20 s
     per-exchange ceiling; a genuinely slower page fails cleanly and the agent
     retries rather than parking a torn 504.
-  - `humanize` is passed at launch, capped at half a second
+  - `humanize` is passed at launch, capped at a quarter second
     (`HUMANIZE_MAX_SECONDS`). Upstream leaves it off, so every click teleported
     the pointer and there was no cursor path for a defense to sample at all
-    (issue #86). The cap is the budget: the travel is spent INSIDE a click's
-    timeout and that timeout is divided among the frames holding the selector,
-    so camoufox's own "up to 1.5 s" would eat budgets whole. The device's
-    `MIN_CLICK_TIMEOUT_MS` floor is set above this for the same reason — which
-    guarantees room to move in the single-frame case the scan usually narrows
-    to, not in a budget divided among several holders.
+    (issue #86). The cap has to be a float and has to be small: measured on the
+    bundled build, a click costs 31 ms with humanize off, 316 ms at 0.25 and
+    638 ms at 0.5, while `True` — camoufox's own "up to 1.5 s" — never returned,
+    timing out past 8 s. The travel is spent INSIDE a click's timeout and that
+    timeout is divided among the frames holding the selector. The device's
+    `MIN_CLICK_TIMEOUT_MS` floor is set above this for the same reason, and
+    `_click` floors every frame's share at `MIN_CLICK_SHARE_MS` (the journey
+    plus room to click) rather than dividing the budget equally — so a page
+    with several holders spends its budget on attempts that can land, and says
+    "no time left to click it" when it runs out instead of timing out mid-flight.
   - A fill TYPES its value — select-all, then a real key event per character
     (`_type_into`) — where upstream assigns `.value` through `fill()`. A field
     that goes from empty to complete having received no keydown is the cheapest

@@ -531,8 +531,9 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         };
       };
       ranked: { error: string | null; tried: number };
-      click_shared: { tried: number; smallest: number };
-      click_alone: { tried: number; smallest: number };
+      click_shared: { shares: number[]; tried: number; out_of_budget: boolean };
+      click_alone: { shares: number[]; tried: number; out_of_budget: boolean };
+      click_crowded: { shares: number[]; tried: number; out_of_budget: boolean };
       ranked_only_gone: { error: string | null; tried: number };
       ranked_gone_first: { error: string | null; tried: number };
     }>(FILL_PROBE);
@@ -553,18 +554,30 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
-  it("tries every frame that holds the selector, with room to reach each one", () => {
-    // The pointer travels inside the attempt, so an equal division can hand a
-    // frame less than the journey: on the smallest budget the device passes,
-    // three holders would get 500ms each — exactly the travel cap — and the
-    // click would expire mid-flight. Every holder is still tried; what changes
-    // is that none of them is handed a share it cannot move in.
-    expect(probed.click_shared.tried).toBe(3);
-    expect(probed.click_shared.smallest).toBeGreaterThanOrEqual(500);
-    // One holder is handed the whole budget, not a share of it — less whatever
-    // the scan itself spent getting there.
-    expect(probed.click_alone.tried).toBe(1);
-    expect(probed.click_alone.smallest).toBeGreaterThan(1400);
+  // The click budget, spent across the frames that hold the selector. The
+  // pointer travels INSIDE an attempt, so an equal division hands each of three
+  // holders 500ms on the smallest budget the device passes — exactly the travel
+  // cap, nothing left to click with — and the attempt expires mid-flight. The
+  // shares are floored at the journey plus room to click instead, borrowed from
+  // the frames below, so a budget buys attempts that can land rather than a
+  // longer row of attempts that cannot. The probe drives a clock it controls,
+  // and every failed attempt spends what it cost.
+  it("spends a click's budget on attempts that can land", () => {
+    // One holder is handed the whole budget rather than a share of it.
+    expect(probed.click_alone.shares).toEqual([1500]);
+    // Three: the first two get a workable share, the third the remainder.
+    expect(probed.click_shared.shares).toEqual([750, 750, 700]);
+  });
+
+  it("stops when the budget runs out, and lets a real failure speak first", () => {
+    // Six holders on a budget for four. The frames that get an attempt get a
+    // real one; the rest are not tried at all, because a share too small to
+    // reach the target is not an attempt. And what the agent hears is the
+    // refusal of a frame that WAS tried — the budget message is what it gets
+    // when nothing was.
+    expect(probed.click_crowded.tried).toBe(4);
+    expect(probed.click_crowded.shares).toEqual([750, 750, 700, 299]);
+    expect(probed.click_crowded.out_of_budget).toBe(false);
   });
 
   it("reports the frame that had the field, wherever the one that went away sits", () => {

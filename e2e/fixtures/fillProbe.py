@@ -169,7 +169,8 @@ class Frame:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", hides=False, detached=False,
-                 typeable=True, fill_refuses=False, click_fails=False):
+                 typeable=True, fill_refuses=False, click_fails=False, clock=None,
+                 click_cost_ms=0):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -178,6 +179,8 @@ class Frame:
         # A frame that has the selector and will not take the click: what makes
         # the loop go on to the next holder instead of stopping at the first.
         self.click_fails = click_fails
+        self.clock = clock
+        self.click_cost_ms = click_cost_ms
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
@@ -219,6 +222,10 @@ class Frame:
         # land however ready the page is.
         self.trace.append("frame.click:%d" % (timeout or 0))
         if self.click_fails:
+            # An attempt that fails still SPENDS -- the pointer travelled and the
+            # click waited. A stub that costs nothing would leave the budget full
+            # for every frame, and the arithmetic under test would never run.
+            self.clock.spend(min(self.click_cost_ms, timeout or 0))
             raise RuntimeError("%s never became clickable" % selector)
 
 
@@ -302,23 +309,51 @@ def ranked(server, with_holder=True, holder_first=True):
     return out
 
 
-def clicked(server, holders, budget_ms):
+class Clock:
+    """The monotonic clock the click loop reads, under the test's control.
+
+    Real sleeps would make this arithmetic a race; the loop only ever asks what
+    time it is, so the scenario answers -- and every failed attempt advances it
+    by what that attempt cost.
+    """
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def spend(self, ms):
+        self.now += ms / 1000.0
+
+
+def clicked(server, holders, budget_ms, click_cost_ms=400):
     """How a click's budget is spent across the frames that hold the selector.
 
-    Every holder refuses, so the loop tries all of them and the trace carries
-    what each was given. Nothing else can answer this: the arithmetic is over a
-    monotonic deadline and a frame list, and the browser is not involved.
+    Every holder refuses and every attempt costs, so the trace carries what each
+    frame was given and how far the budget went. Nothing else can answer this:
+    the arithmetic is over a monotonic clock and a frame list, and the browser is
+    not involved.
     """
     trace: list[str] = []
-    frames = [Frame(trace, nodes={"#go": Handle(trace)}, click_fails=True)
-              for _ in range(holders)]
-    session = server.Session(Page(Frame(trace, nodes={}), extra_frames=frames))
+    clock = Clock()
+    real_time = server.time
+    server.time = clock
     try:
-        session.handle({"action": "click", "selector": "#go", "timeout_ms": budget_ms}, "/tmp")
-    except Exception:  # noqa: BLE001 -- every holder refuses, by construction
-        pass
+        frames = [Frame(trace, nodes={"#go": Handle(trace)}, click_fails=True, clock=clock,
+                        click_cost_ms=click_cost_ms)
+                  for _ in range(holders)]
+        session = server.Session(Page(Frame(trace, nodes={}), extra_frames=frames))
+        error = None
+        try:
+            session.handle({"action": "click", "selector": "#go", "timeout_ms": budget_ms}, "/tmp")
+        except Exception as exc:  # noqa: BLE001 -- every holder refuses, by construction
+            error = str(exc)
+    finally:
+        server.time = real_time
     given = [int(t.split(":")[1]) for t in trace if t.startswith("frame.click:")]
-    return {"tried": len(given), "smallest": min(given) if given else 0}
+    return {"shares": given, "tried": len(given), "smallest": min(given) if given else 0,
+            "out_of_budget": error is not None and "no time left" in error}
 
 
 def ledger(server, script):
@@ -458,6 +493,10 @@ def main() -> int:
         # is handed less than the pointer needs to reach it.
         "click_shared": clicked(server, holders=3, budget_ms=1500),
         "click_alone": clicked(server, holders=1, budget_ms=1500),
+        # More holders than the budget can pay for: the ones that get an attempt
+        # get a real one, and the agent is told it ran out of budget rather than
+        # being handed a frame's timeout to interpret.
+        "click_crowded": clicked(server, holders=6, budget_ms=1500),
         "ranked": ranked(server),
         "ranked_only_gone": ranked(server, with_holder=False),
         "ranked_gone_first": ranked(server, holder_first=False),
