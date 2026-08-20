@@ -34,6 +34,9 @@
  *   click "#offsite"  navigates the page to https://offsite.example/lander, one
  *                     of whose requests was refused — and another that settles
  *                     while parked there
+ *   fill "#refused-pass" / "#refused-nofill"  the page refuses a request while
+ *                     the credential is being placed; the second also fails the
+ *                     fill, so the refusal has to ride an error-shaped result
  *   click "#refuses"  throws, and the refusals it saw ride the error reply
  *   click "#blocked"  the page's own requests come back refused: seven 4xx
  *                     responses, the way the real server reports the ones it
@@ -216,7 +219,7 @@ function handle(cmd) {
     }
     // Playwright puts the value it tried to type into its own failure message.
     // Reproduce that shape so the leak this guards against is testable.
-    if (String(cmd.selector) === "#nofill") {
+    if (String(cmd.selector) === "#nofill" || String(cmd.selector) === "#refused-nofill") {
       throw new Error(
         `locator.fill: Timeout 5000ms exceeded.\nCall log:\n` +
           `  - waiting for locator("${cmd.selector}")\n` +
@@ -235,7 +238,7 @@ function handle(cmd) {
       ...(cmd.mask ? { mask: "stylesheet" } : {}),
     };
   }
-  if (a === "locate" && cmd.selector === "#refused-pass") {
+  if (a === "locate" && (cmd.selector === "#refused-pass" || cmd.selector === "#refused-nofill")) {
     // The page was refusing while the credential was being placed — the
     // refusals ride the locate/fill round-trips the device makes for itself.
     state.failed = [{

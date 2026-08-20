@@ -293,8 +293,9 @@ export class BrowserSessions {
     action: string,
     url: string,
     extra: { [k: string]: JSONValue } = {},
-    // fill_secret writes its own credential_* line for every outcome it has, so
-    // it asks for a browser_command line only when there is a refusal on it.
+    // fill_secret writes its own credential_* line for every outcome that
+    // reaches the browser, so it asks for a browser_command line only when
+    // there is a refusal to put on one.
     alwaysAudit = true,
   ): JSONValue[] {
     const failed = failedRequests(this.host.takeFailedRequests());
@@ -418,7 +419,7 @@ export class BrowserSessions {
             p.get("field").str ?? "",
           );
           const visible = this.reportRefusals(s, action, s.lastUrl, {}, false);
-          return visible.length ? { ...(jv(filled).obj ?? {}), failed_requests: visible } : filled;
+          return visible.length ? { ...filled, failed_requests: visible } : filled;
         }
         case "goto": {
           const target = p.get("url").str ?? "";
@@ -606,7 +607,7 @@ export class BrowserSessions {
     selector: string,
     itemId: string,
     field: string,
-  ): Promise<JSONValue> {
+  ): Promise<{ [k: string]: JSONValue }> {
     if (!this.credentials) return { status: "error", error: "credential broker not available" };
     if (selector === "" || itemId === "" || field === "") {
       return { status: "error", error: "fill_secret requires selector, item, field" };

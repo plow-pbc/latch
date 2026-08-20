@@ -355,6 +355,16 @@ describe("requests the site refused", () => {
     expect(filled.get("failed_requests").value).toEqual([entry]);
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
     expect(command?.fields.failed_requests).toEqual([entry]);
+
+    // And on the shape that matters more: fill_secret answers most of its
+    // failures by RETURNING an error, not by throwing, so the merge has to
+    // cover that path or the agent gets a bare "could not type it" and retries.
+    const refused = jv(await ctx.sessions.command(AGENT, s, {
+      action: "fill_secret", selector: "#refused-nofill", item: "L1", field: "password",
+    }));
+    expect(refused.get("status").str).toBe("error");
+    expect(refused.get("error").str).toContain("could not type");
+    expect(refused.get("failed_requests").value).toEqual([entry]);
   });
 
   it("survives the owner's viewer poll, which asks the browser on its own account", async () => {
