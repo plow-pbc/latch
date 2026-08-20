@@ -176,10 +176,19 @@ export class VaultClient {
     }
 
     const cipher = encryptCipher(input, existing, key);
+    // The check above is the fast path, and the sentence the owner reads. This
+    // is the guarantee: two saves can both fetch the same revision and both
+    // pass a check made here, so an edit also tells the vault which version it
+    // was built on. The vault compares that against the row it is about to
+    // overwrite, inside the write, and refuses whichever one loses the race.
+    const body =
+      input.itemId && input.revision !== undefined
+        ? { ...cipher, lastKnownRevisionDate: input.revision }
+        : cipher;
     const saved = JSON.parse(
       input.itemId
-        ? await this.call("PUT", `/api/ciphers/${encodeURIComponent(input.itemId)}`, JSON.stringify(cipher))
-        : await this.call("POST", "/api/ciphers", JSON.stringify(cipher)),
+        ? await this.call("PUT", `/api/ciphers/${encodeURIComponent(input.itemId)}`, JSON.stringify(body))
+        : await this.call("POST", "/api/ciphers", JSON.stringify(body)),
     ) as Cipher;
     this.audit(String(saved.id ?? ""), "(item)", input.itemId ? "UPDATED" : "CREATED");
     return { id: String(saved.id ?? ""), title: String(input.name ?? "") };
