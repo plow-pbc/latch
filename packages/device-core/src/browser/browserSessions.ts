@@ -337,12 +337,13 @@ export class BrowserSessions {
   /** Widen an existing session (called only after an approved intent). */
   extend(
     intentId: string,
+    agentId: string,
     handle: string,
     origins: string[],
     items: string[],
     credentialMetadata: boolean,
   ): JSONValue {
-    const s = this.validate(handle);
+    const s = this.validate(handle, agentId);
     if (typeof s === "string") return { status: "error", error: s };
     // Work out the new bound without publishing it, because the record has to
     // survive before the access does. Widening the live session first and
@@ -468,7 +469,10 @@ export class BrowserSessions {
       return;
     }
     const merge = this.browser.mergeCookiesCommand;
-    if (!merge?.length) return;
+    // Not a quiet no-op: returning here would report a merge that never
+    // happened, and the clone holding the session's sign-ins would be deleted
+    // on the strength of it. Failing keeps the clone and tells the owner.
+    if (!merge?.length) throw new Error("this browser runtime ships no cookie merger");
     // Off the event loop: sqlite waits on a busy store, and a browser closing
     // must not stall every other call this Mac is serving.
     await run(merge[0], [...merge.slice(1), into, from]);
@@ -489,15 +493,25 @@ export class BrowserSessions {
   private mostRecent(): Session | null {
     let latest: Session | null = null;
     for (const s of this.sessions.values()) {
+      // A session on its way out is listed until its profile work finishes,
+      // but it is not what the owner's viewer is watching any more.
+      if (s.closing) continue;
       if (!latest || s.lastActivity > latest.lastActivity) latest = s;
     }
     return latest;
   }
 
-  /** Close a session: the handle says which browser goes. */
-  async close(handle: string, reason: string): Promise<JSONValue> {
+  /**
+   * Close a session: the handle says which browser goes, and an agent that
+   * gives one says so, so nobody shuts a browser on another credential. The
+   * owner's own paths — idle, quit — pass none.
+   */
+  async close(handle: string, reason: string, agentId?: string): Promise<JSONValue> {
     const s = this.sessions.get(handle);
     if (!s) return { status: "error", error: "unknown session" };
+    if (agentId !== undefined && s.agentId !== agentId) {
+      return { status: "error", error: "that browser belongs to another Plow credential" };
+    }
     // The session stays registered across the shutdown below — the claim is
     // held until the browser is really down — so it is still reachable while
     // it is on its way out: the idle clock can come due, or a second close can
@@ -539,9 +553,14 @@ export class BrowserSessions {
    */
   noteCrash(handle: string): void {
     const s = this.sessions.get(handle);
-    // Nobody is waiting on a crash the way a close is waited on; the profile
-    // still goes back, and a failure there lands in the owner's log.
-    if (s) void this.finalize(s, "crashed");
+    if (!s || s.closing) return;
+    // Published the same way a close publishes its teardown: the session stays
+    // in the map until the merge has settled, so a quit that arrives while a
+    // crashed browser's cookies are still being written waits for them.
+    s.closing = this.finalize(s, "crashed");
+    void s.closing.catch(() => {
+      /* the failure is already in the owner's log; nobody awaited this one */
+    });
   }
 
   /**
@@ -549,7 +568,6 @@ export class BrowserSessions {
    * profile goes back to the user, and the owner's log says it ended.
    */
   private async finalize(s: Session, reason: string): Promise<void> {
-    this.sessions.delete(s.handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
     // The session ended when the browser did; the profile work that follows is
     // its own line in the log, so a slow merge never delays this one.
@@ -564,7 +582,13 @@ export class BrowserSessions {
       // Even when the log could not be written: the clone is still a copy of
       // the user's profile sitting on disk, and it does not get to stay there
       // because an append failed.
-      await this.mergeAndRelease(s);
+      try {
+        await this.mergeAndRelease(s);
+      } finally {
+        // Listed until the very end, so a quit that snapshots the map while
+        // this is running waits for it rather than leaving mid-merge.
+        this.sessions.delete(s.handle);
+      }
     }
   }
 
@@ -596,9 +620,17 @@ export class BrowserSessions {
    * every browser on it is theirs. Several agents run several browsers at
    * once and each passes its own handle to keep its own window.
    */
-  private validate(handle: string): Session | string {
+  private validate(handle: string, agentId?: string): Session | string {
     const s = this.sessions.get(handle);
     if (!s) return "unknown session (open one with plow_browser_open)";
+    // The handle says WHICH browser; the credential still says whose. Both
+    // are needed: several of the owner's agents share one credential, so the
+    // credential cannot pick a session out — but a handle that reaches a
+    // different credential is not this Mac's user any more. The owner's own
+    // paths (idle, quit) pass none and are not fenced.
+    if (agentId !== undefined && s.agentId !== agentId) {
+      return "that browser belongs to another Plow credential";
+    }
     // A session stays in the map while its browser shuts down. An approval
     // that lands in that window would widen — or drive — a browser already on
     // its way out, and the widening would be audited for a session that ends
@@ -622,8 +654,8 @@ export class BrowserSessions {
   }
 
   /** Execute one agent command inside an approved session. */
-  async command(handle: string, params: JSONValue): Promise<JSONValue> {
-    const s = this.validate(handle);
+  async command(handle: string, params: JSONValue, agentId?: string): Promise<JSONValue> {
+    const s = this.validate(handle, agentId);
     if (typeof s === "string") return { status: "error", error: s };
     s.lastActivity = Date.now();
 

@@ -179,6 +179,21 @@ describe("session lifecycle", () => {
     expect(ctx.sessions.current()).toBeNull();
   });
 
+  it("refuses a handle used through another Plow credential", async () => {
+    // The handle says which browser; the credential still says whose. Several
+    // of the owner's agents share one credential and each keeps its own
+    // browser — that is the case above — but a handle that reaches a
+    // different credential is not this Mac's user any more.
+    const mine = await openSession(["pizza.example"]);
+    expect(jv(await ctx.sessions.command(mine, { action: "url" }, "someone-else")).get("error").str)
+      .toContain("another Plow credential");
+    expect(jv(await ctx.sessions.close(mine, "theft", "someone-else")).get("error").str)
+      .toContain("another Plow credential");
+    // Still open, still mine, still working.
+    expect(jv(await ctx.sessions.command(mine, { action: "url" }, AGENT)).get("status").str)
+      .toBe("completed");
+  });
+
   it("rejects a command for a session that is not open", async () => {
     await openSession(["pizza.example"]);
     const wrongHandle = jv(await ctx.sessions.command("nope", { action: "url" }));
@@ -352,7 +367,7 @@ describe("origin scope", () => {
     const locked = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(locked.get("status").str).toBe("error");
 
-    const ext = jv(ctx.sessions.extend("int-2", s, ["popup.example"], [], false));
+    const ext = jv(ctx.sessions.extend("int-2", AGENT, s, ["popup.example"], [], false));
     expect(ext.get("status").str).toBe("completed");
     const text = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(text.get("status").str).toBe("completed");
@@ -480,7 +495,7 @@ describe("credentials", () => {
     // reaches the agent, the secret is in model context, transcripts and any
     // provider that sees them.
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-3", s, [], ["L1"], false);
+    ctx.sessions.extend("int-3", AGENT, s, [], ["L1"], false);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(s, {
@@ -500,7 +515,7 @@ describe("credentials", () => {
 
   it("fill_secret types the value on-device and never returns it", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, [], ["L1"], false);
+    ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(s, {
@@ -523,7 +538,7 @@ describe("credentials", () => {
 
   it("fill_secret is refused when the item belongs to another site (op origin check)", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, [], ["X1"], false);
+    ctx.sessions.extend("int-2", AGENT, s, [], ["X1"], false);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(s, {
@@ -542,7 +557,7 @@ describe("credentials", () => {
 
   it("fill_secret refuses frames outside the session scope, allows approved card frames", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, [], ["C1"], false);
+    ctx.sessions.extend("int-2", AGENT, s, [], ["C1"], false);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/checkout" });
     // Scripted: "#card*" selectors live in a frame on payframe.example.
     const denied = jv(
@@ -556,7 +571,7 @@ describe("credentials", () => {
     expect(denied.get("status").str).toBe("error");
     expect(denied.get("error").str).toContain("payframe.example");
 
-    ctx.sessions.extend("int-3", s, ["payframe.example"], [], false);
+    ctx.sessions.extend("int-3", AGENT, s, ["payframe.example"], [], false);
     const ok = jv(
       await ctx.sessions.command(s, {
         action: "fill_secret",
@@ -608,7 +623,7 @@ describe("access the owner's log could not record is not granted", () => {
     const handle = opened.get("session").str!;
 
     expect(() =>
-      sessions.extend("int-2", handle, ["paypal.example"], ["L1"], true),
+      sessions.extend("int-2", AGENT, handle, ["paypal.example"], ["L1"], true),
     ).toThrow(/audit append failed/);
 
     // The agent must not be left holding origins and credential items that the
@@ -696,7 +711,7 @@ describe("the handle is a capability, so the log never carries it", () => {
     // and serialised into the reviewer prompt that leaves this Mac. A handle
     // there is a browser anybody who reads it can drive.
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, ["b.example"], ["L1"], true);
+    ctx.sessions.extend("int-2", AGENT, s, ["b.example"], ["L1"], true);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/menu" });
     await ctx.sessions.command(s, { action: "eval", expression: "1" });
     await ctx.sessions.close(s, "test");
@@ -748,29 +763,43 @@ print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host
       .split("\n")
       .filter(Boolean);
 
-  /** Sessions cloned from a profile that is already signed in somewhere. */
-  const signedIn = (): { sessions: BrowserSessions; seed: string; profiles: string } => {
+  /**
+   * Sessions cloned from a profile that is already signed in somewhere.
+   *
+   * `signedInto` says which sites the user's profile starts with — none of
+   * them means a Mac whose owner has never browsed here — and `merger` stands
+   * in for a runtime whose merge program is missing or broken.
+   */
+  const signedIn = (
+    opts: { has?: string[]; merger?: string[]; audit?: AuditFn } = {},
+  ): { sessions: BrowserSessions; seed: string; profiles: string } => {
     const home = fs.mkdtempSync(path.join(ctx.dir, "signed-in-"));
     const seed = path.join(home, "profile");
-    fs.mkdirSync(seed, { recursive: true });
-    cookieStore(path.join(seed, "cookies.sqlite"), ["his.example"]);
-    fs.writeFileSync(path.join(seed, ".parentlock"), "held by the browser that made it");
+    const has = opts.has ?? ["his.example"];
+    if (has.length) {
+      fs.mkdirSync(seed, { recursive: true });
+      cookieStore(path.join(seed, "cookies.sqlite"), has);
+      fs.writeFileSync(path.join(seed, ".parentlock"), "held by the browser that made it");
+    }
     return {
       sessions: new BrowserSessions(
         {
           ...ctx.browsers,
           profileDir: path.join(home, "profiles"),
           seedProfile: seed,
-          mergeCookiesCommand: [PYTHON, MERGE_SCRIPT],
+          mergeCookiesCommand: opts.merger ?? [PYTHON, MERGE_SCRIPT],
         },
         null,
-        () => {},
+        opts.audit ?? (() => {}),
         60_000,
       ),
       seed,
       profiles: path.join(home, "profiles"),
     };
   };
+
+  /** The one profile directory a session made, whichever it is. */
+  const only = (profiles: string): string => path.join(profiles, fs.readdirSync(profiles)[0]);
 
   it("opens with the user's cookies, and two at once both have them", async () => {
     // The whole point of the pivot: this Mac is one person's, and a browser
@@ -813,17 +842,9 @@ print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host
   it("keeps a first sign-in on a Mac whose owner has no profile yet", async () => {
     // Nothing to merge into is the one case where returning early would lose
     // the login outright — and it is every machine's first session.
-    const home = fs.mkdtempSync(path.join(ctx.dir, "fresh-"));
-    const seed = path.join(home, "profile");
-    const profiles = path.join(home, "profiles");
-    const sessions = new BrowserSessions(
-      { ...ctx.browsers, profileDir: profiles, seedProfile: seed, mergeCookiesCommand: [PYTHON, MERGE_SCRIPT] },
-      null,
-      () => {},
-      60_000,
-    );
+    const { sessions, seed, profiles } = signedIn({ has: [] });
     const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
-    cookieStore(path.join(profiles, fs.readdirSync(profiles)[0], "cookies.sqlite"), ["first.example"]);
+    cookieStore(path.join(only(profiles), "cookies.sqlite"), ["first.example"]);
 
     await sessions.close(handle, "agent");
     expect(signedInto(seed)).toEqual(["first.example"]);
@@ -833,19 +854,12 @@ print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host
     // A swallowed merge failure that also removed the clone would lose the
     // sign-in silently — the exact thing this feature exists to prevent.
     const events: string[] = [];
-    const home = fs.mkdtempSync(path.join(ctx.dir, "broken-"));
-    const seed = path.join(home, "profile");
-    const profiles = path.join(home, "profiles");
-    fs.mkdirSync(seed, { recursive: true });
-    cookieStore(path.join(seed, "cookies.sqlite"), ["his.example"]);
-    const sessions = new BrowserSessions(
-      { ...ctx.browsers, profileDir: profiles, seedProfile: seed, mergeCookiesCommand: [PYTHON, "-c", "raise SystemExit('disk is full')"] },
-      null,
-      (event) => events.push(event),
-      60_000,
-    );
+    const { sessions, seed, profiles } = signedIn({
+      merger: [PYTHON, "-c", "raise SystemExit('disk is full')"],
+      audit: (event) => events.push(event),
+    });
     const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
-    const dir = path.join(profiles, fs.readdirSync(profiles)[0]);
+    const dir = only(profiles);
     cookieStore(path.join(dir, "cookies.sqlite"), ["rescue.example"], 50);
 
     await sessions.close(handle, "agent");
@@ -854,6 +868,19 @@ print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host
     // exactly as it was.
     expect(signedInto(dir)).toContain("rescue.example");
     expect(signedInto(seed)).toEqual(["his.example"]);
+  });
+
+  it("waits for a crashed session's cookies before it calls the Mac clear", async () => {
+    // A crash is nobody's call, so nothing awaits it — but the quit still
+    // must not leave while that session's sign-ins are being written.
+    const { sessions, seed, profiles } = signedIn();
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    cookieStore(path.join(only(profiles), "cookies.sqlite"), ["crashed.example"], 50);
+
+    sessions.noteCrash(handle);
+    await sessions.closeAll("shutdown");
+    expect(signedInto(seed)).toEqual(["crashed.example", "his.example"]);
+    expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
   it("has taken every profile with it by the time a quit's closeAll resolves", async () => {
