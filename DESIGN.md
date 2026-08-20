@@ -462,12 +462,14 @@ migration, no re-encryption and no prompt. It is not derived from `app.name`,
 `appId` or `productName`, and the fact that it no longer matches the product's
 name is the point.
 
-Fact (2) dictates where this happens: the identity goes on at module top level,
-before ready, because that is the only moment the Keychain is listening, and the
-product name is put back inside `whenReady`. A helper wrapping both steps cannot
+Fact (2) dictates where this happens: `app.setName(instance.vaultIdentity)` runs
+at module top level in the Electron entry, before ready, because that is the
+only moment the Keychain is listening. The product name is restored as the first
+statement inside `whenReady` — early enough for every menu, window and tray item,
+all of which are built after it. A helper that wrapped a "latch" call cannot
 work: by the time any code inside `whenReady` runs, the name is already
-captured. Which entries this binds, and the exact placement, are written out
-beside the constant they protect, in `vaultKeychain.ts`.
+captured. (This was got wrong once, in exactly that way, and produced a fix that
+changed nothing.)
 
 Two rejected alternatives, recorded so they are not re-proposed:
 
