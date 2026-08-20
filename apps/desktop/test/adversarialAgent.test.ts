@@ -282,17 +282,6 @@ describe("adversarialReview — nothing to call", () => {
     expect(result.verdict).toBe("ask");
     expect(fetchMock).not.toHaveBeenCalled();
   });
-
-  it("plow with no API base URL fails closed to ask, with no network call", async () => {
-    const result = await adversarialReview({
-      intent: intent(),
-      history: [],
-      plowCredential: "plow_sk_secret",
-      apiBaseUrl: "",
-    });
-    expect(result.verdict).toBe("ask");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
 });
 
 describe("the Plow provider", () => {
@@ -307,14 +296,6 @@ describe("the Plow provider", () => {
 
   const requestBody = () => JSON.parse(fetchMock.mock.calls[0][1].body as string);
   const requestInit = () => fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
-
-  // One successful response, proving this transport's output reaches the shared
-  // parser. The verdict matrix itself — near-misses, prose, missing fields — is
-  // `parseVerdict`'s, and is exercised once in the suites above.
-  it("a clean verdict flows through to the shared parser", async () => {
-    fetchMock.mockResolvedValue(plowResponse(verdictJson("deny", "a reason")));
-    expect(await plowReview()).toEqual({ verdict: "deny", reason: "a reason" });
-  });
 
   describe("the request", () => {
     it("POSTs to the chat-completions endpoint on the configured origin", async () => {

@@ -63,8 +63,8 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
   // A Mac that once pasted an Anthropic key kept it in settings.json: unknown
   // keys ride the load/save spread straight back to disk, so the secret would
   // outlive the feature by exactly as long as the file does.
-  it("drops them from what is loaded, and from the next write", () => {
-    const home = homeWith({});
+  it("takes them off disk on load, and leaves every surviving setting alone", () => {
+    const home = homeWith({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL });
     const file = path.join(home, "app/settings.json");
     fs.writeFileSync(
       file,
@@ -75,33 +75,23 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
       }),
     );
 
-    // Nothing that is loaded carries them…
     const loaded = loadSettings(home) as Record<string, unknown>;
-    expect(loaded.anthropicApiKey).toBeUndefined();
-    expect(loaded.inferenceProvider).toBeUndefined();
-    expect(JSON.stringify(loaded)).not.toContain(ANTHROPIC_KEY);
 
-    // …and that read alone took them off disk. Not "the next write of some
-    // other setting": a secret nobody reads is still a secret in a file.
+    // Nothing that is loaded carries them…
+    expect(loaded).not.toHaveProperty("anthropicApiKey");
+    expect(loaded).not.toHaveProperty("inferenceProvider");
+    expect(JSON.stringify(loaded)).not.toContain(ANTHROPIC_KEY);
+    // …that read alone took them off disk. Not "the next write of some other
+    // setting": a secret nobody reads is still a secret in a file.
     const onDisk = fs.readFileSync(file, "utf8");
     expect(onDisk).not.toContain(ANTHROPIC_KEY);
     expect(onDisk).not.toContain("anthropicApiKey");
     expect(onDisk).not.toContain("inferenceProvider");
-  });
-
-  it("leaves every setting the app still has alone", () => {
-    const home = homeWith({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL });
-    const file = path.join(home, "app/settings.json");
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        ...JSON.parse(fs.readFileSync(file, "utf8")),
-        anthropicApiKey: ANTHROPIC_KEY,
-      }),
-    );
-    const loaded = loadSettings(home);
-    expect(loaded.approvalMode).toBe("adversarial");
-    expect(loaded.relayCredential).toBe(PLOW_CREDENTIAL);
+    // …and the scrub took nothing else with it.
+    expect(loaded).toMatchObject({
+      approvalMode: "adversarial",
+      relayCredential: PLOW_CREDENTIAL,
+    });
   });
 });
 

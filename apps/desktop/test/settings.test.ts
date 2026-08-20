@@ -1,7 +1,7 @@
 /**
- * settings.json holds secrets — the relay credential and an Anthropic API key —
- * so its permissions are a security property, not housekeeping. It used to be
- * written with no mode at all.
+ * settings.json holds a secret — the relay credential — so its permissions are
+ * a security property, not housekeeping. It used to be written with no mode at
+ * all.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -160,5 +160,28 @@ describe("the launch-at-login first-run marker", () => {
 
   it("starts false in a brand-new home", () => {
     expect(loadSettings(tempHome()).launchAtLoginDefaulted).toBe(false);
+  });
+
+  /**
+   * The two things a load can do to the file meet here. Scrubbing a retired key
+   * writes the whole settings object back, so a legacy home that is both
+   * signed in and holding a retired key is the case where the grandfathered
+   * bit has to already be set when that write happens — otherwise the load
+   * hands back `true` and persists `false`, and the NEXT load reads the
+   * explicit false and leaves the owner's login item to be flipped by a
+   * re-setup.
+   */
+  it("persists the grandfathered bit when the same load scrubs a retired key", () => {
+    const home = tempHome();
+    write(
+      home,
+      JSON.stringify({ relayCredential: "plow_sk_secret", anthropicApiKey: "sk-retired" }),
+    );
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8"));
+    expect(onDisk.launchAtLoginDefaulted).toBe(true);
+    expect(onDisk).not.toHaveProperty("anthropicApiKey");
+    // And the second load, which finds nothing to scrub, agrees with the first.
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
   });
 });

@@ -16,7 +16,6 @@ import {
 } from "@domo/device-core";
 import {
   agentHistory,
-  REVIEWER_INFO,
   REVIEWER_MODEL,
   ReviewArgs,
   ReviewFailureCause,
@@ -42,14 +41,11 @@ export interface ReviewHint {
 
 /**
  * What the renderer is allowed to know about inference: whether the reviewer
- * can run, and what it runs. **No credentials** — not the relay credential, not
- * a prefix of one.
+ * can run. **No credentials** — not the relay credential, not a prefix of one.
  */
 export interface InferenceStatus {
   /** Whether this Mac holds the credential the reviewer needs. */
   available: boolean;
-  /** Model + limits, for display. */
-  info: string;
   /**
    * The stored approval mode, in the SAME snapshot as availability. Reading the
    * two separately gave the renderer two async views of one settings file, and
@@ -62,7 +58,6 @@ export interface InferenceStatus {
 export function inferenceStatus(settings: Settings): InferenceStatus {
   return {
     available: reviewerAvailable(settings),
-    info: REVIEWER_INFO,
     approvalMode: settings.approvalMode ?? "ask",
   };
 }

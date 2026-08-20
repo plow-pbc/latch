@@ -42,7 +42,7 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
-import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
+import { adversarialReview } from "./adversarialAgent.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
@@ -560,7 +560,6 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
  * and display strings — the relay credential never crosses this bridge.
  */
 ipcMain.handle("settings:getInference", async () => readInference(home));
-ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 // The vault's contents, for the owner's own eyes and hands. This is the whole
 // point of the tab: the vault's web page is the only other way in, and reaching
 // it means a browser warning about a certificate the app issued to itself.

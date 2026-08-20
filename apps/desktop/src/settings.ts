@@ -3,7 +3,8 @@
  *
  * This file holds a secret — the Plow relay credential — so it is written
  * **owner-only**. It used to be written with no mode at all, which on a shared
- * or backed-up Mac is a plaintext credential anyone could read. There is still no Keychain or `safeStorage` here; 0600 is the floor,
+ * or backed-up Mac is a plaintext credential anyone could read. There is still
+ * no Keychain or `safeStorage` here; 0600 is the floor,
  * not the destination.
  */
 import fs from "node:fs";
@@ -116,7 +117,18 @@ export function loadSettings(home: string): Settings {
   } catch {
     return defaults;
   }
-  const { settings, retired } = withoutRetiredKeys(parsed);
+  const settings =
+    parsed && typeof parsed === "object" ? { ...(parsed as Record<string, unknown>) } : {};
+  // Bring-your-own-key is gone, and its two fields go with it. Unknown keys
+  // otherwise ride this spread in and `saveSettings` writes them back, so a Mac
+  // that once pasted an Anthropic key would keep it forever — unread by
+  // anything, readable by anyone who opens the file. A secret nobody reads is
+  // still a secret. Delete these three lines once the fleet has turned over:
+  // they are a one-off, not a migration framework.
+  const retired = "anthropicApiKey" in settings || "inferenceProvider" in settings;
+  delete settings.anthropicApiKey;
+  delete settings.inferenceProvider;
+
   const loaded = { ...defaults, ...settings };
   // A signed-in home from before `launchAtLoginDefaulted` existed: its owner's
   // launch-at-login choice predates the default, so reading the absent field as
@@ -125,57 +137,20 @@ export function loadSettings(home: string): Settings {
   // setup saves the whole Settings object, so any file holding a credential
   // written since this field existed carries the key explicitly. Asked of the
   // scrubbed record rather than the raw parse — the scrub only ever removes the
-  // retired key names, so the two answer this identically.
+  // retired key names, so the two answer this identically. It also has to run
+  // BEFORE the scrub's write below, or a home cleaned on this load is written
+  // back without the bit it was just granted.
   if (!("launchAtLoginDefaulted" in settings) && loaded.relayCredential.trim()) {
     loaded.launchAtLoginDefaulted = true;
   }
-  // Take them OFF DISK, here, rather than waiting for the next write of some
-  // unrelated setting. A retired credential that is merely unread is still a
-  // credential sitting in a file; the whole point of the scrub is that it stops
-  // being one. Best effort — a home that cannot be written is not a reason to
-  // fail the load — and it happens at most once, because the second read finds
-  // nothing to remove.
-  if (retired) {
-    try {
-      saveSettings(home, loaded);
-    } catch {
-      // Nothing actionable, and nothing worth logging: the only interesting
-      // value in scope is the credential being removed.
-    }
-  }
+  // Take them OFF DISK here, rather than waiting for the next write of some
+  // unrelated setting — and let a failure THROW. Swallowing it would report a
+  // successful load while the credential is still in the file, which is the one
+  // outcome this exists to prevent; every other write in this module propagates
+  // too. It happens at most once, because the second read finds nothing to
+  // remove.
+  if (retired) saveSettings(home, loaded);
   return loaded;
-}
-
-/**
- * Drop the bring-your-own-key fields this app no longer has.
- *
- * Unknown keys otherwise survive a load/save round-trip — the spread above
- * carries them in and `saveSettings` writes the whole object back — so a Mac
- * that once held a pasted Anthropic key would keep it on disk forever, unread
- * by anything and readable by anyone who opens the file. A retired credential
- * is not inert data; it is a live secret with nothing left to use it.
- *
- * The scrub happens on READ and writes the file back immediately, so a home is
- * cleaned by being opened rather than by a migration step somebody has to
- * remember to run. Removing a name from this list once the fleet has turned
- * over is the intended end state — it is not a permanent fixture.
- */
-const RETIRED_KEYS = ["anthropicApiKey", "inferenceProvider"];
-
-function withoutRetiredKeys(parsed: unknown): {
-  settings: Record<string, unknown>;
-  retired: boolean;
-} {
-  if (!parsed || typeof parsed !== "object") return { settings: {}, retired: false };
-  const settings = { ...(parsed as Record<string, unknown>) };
-  let retired = false;
-  for (const key of RETIRED_KEYS) {
-    if (key in settings) {
-      delete settings[key];
-      retired = true;
-    }
-  }
-  return { settings, retired };
 }
 
 export function saveSettings(home: string, settings: Settings): void {

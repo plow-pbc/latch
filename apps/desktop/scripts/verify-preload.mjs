@@ -105,7 +105,6 @@ ipcMain.handle("updates:get", async () => ({
 // behind, and it must not be reported as an empty vault.
 ipcMain.handle("vault:items", async () => ({ locked: true, reason: "undecryptable" }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
-ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 // No browsing session: the audit screen's live thumbnail stays hidden.
 ipcMain.handle("viewer:state", async () => ({
   active: false,
@@ -607,15 +606,9 @@ app.whenReady().then(async () => {
       })(),
     };
   }})()`);
-  // Ask mode on a Mac whose reviewer CANNOT run — the state a stored Anthropic
-  // provider with no key leaves behind. The card must not tell anyone to turn on
-  // the checkbox one row down, because that checkbox is dead; and it must not
-  // name a remedy this app no longer offers.
-  saveSettings(probeHome, {
-    ...loadSettings(probeHome),
-    inferenceProvider: "anthropic",
-    anthropicApiKey: "",
-  });
+  // Ask mode on a Mac whose reviewer CANNOT run. The card must not tell anyone
+  // to turn on the checkbox one row down, because that checkbox is dead.
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   win.webContents.send("status:changed");
   await waitFor(
     win,
@@ -634,9 +627,8 @@ app.whenReady().then(async () => {
       // …replaced by the reason, and the checkbox it described really is dead.
       explainsWhy: pane.innerText.includes("cannot suggest an answer"),
       checkboxIsDead: !!box && box.disabled,
-      // The remedy is not named for a provider this app cannot set up, so the
-      // card must not send this Mac to a Settings control that is gone.
-      namesNoRemedyItCannotOffer: !pane.innerText.includes("sign in to Plow in Settings"),
+      // …and it names the one remedy there is, which is a control that exists.
+      namesTheRemedy: pane.innerText.includes("sign in to Plow in Settings"),
       // Ask mode still says what Ask mode does.
       stillSaysWhatAskDoes: pane.innerText.includes(
         "Any request a rule doesn't already cover opens an approval window",
@@ -645,7 +637,7 @@ app.whenReady().then(async () => {
   }})()`);
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
-    inferenceProvider: "plow",
+    relayCredential: "plow_sk_probe_credential",
   });
   win.webContents.send("status:changed");
   await waitFor(win, `document.querySelector("#view").innerText.includes("turn that on below")`,
@@ -858,7 +850,7 @@ app.whenReady().then(async () => {
     askWithoutReviewer.noDeadInstruction &&
     askWithoutReviewer.explainsWhy &&
     askWithoutReviewer.checkboxIsDead &&
-    askWithoutReviewer.namesNoRemedyItCannotOffer &&
+    askWithoutReviewer.namesTheRemedy &&
     askWithoutReviewer.stillSaysWhatAskDoes &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&

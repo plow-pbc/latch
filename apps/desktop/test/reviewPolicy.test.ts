@@ -25,7 +25,7 @@ import {
   inferenceStatus,
   reviewerAvailable,
 } from "../src/reviewPolicy.js";
-import { REVIEWER_INFO, REVIEWER_MODEL } from "../src/adversarialAgent.js";
+import { REVIEWER_MODEL } from "../src/adversarialAgent.js";
 
 const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
 
@@ -106,7 +106,6 @@ describe("the model reported is the model that runs", () => {
     // A bare id is rejected by Plow's allowlist, and this is the value the
     // audit log records.
     expect(REVIEWER_MODEL).toBe("anthropic/claude-sonnet-4-6");
-    expect(REVIEWER_INFO).toContain("anthropic/claude-sonnet-4-6");
   });
 
   it("the audit record names the model that ran", async () => {
@@ -415,10 +414,9 @@ describe("the approval dialog's advice note carries no credential either", () =>
 describe("the renderer's view of inference carries no credentials", () => {
   const full = settings({ relayCredential: PLOW_CREDENTIAL });
 
-  it("is a boolean, a model string and the stored mode", () => {
+  it("is a boolean and the stored mode, and nothing else", () => {
     expect(inferenceStatus(full)).toEqual({
       available: true,
-      info: REVIEWER_INFO,
       approvalMode: full.approvalMode,
     });
   });
@@ -429,9 +427,6 @@ describe("the renderer's view of inference carries no credentials", () => {
     expect(serialized).not.toContain(PLOW_CREDENTIAL.slice(0, 8));
   });
 
-  it("reports the model that runs", () => {
-    expect(inferenceStatus(full).info).toContain("anthropic/claude-sonnet-4-6");
-  });
 });
 
 // What used to sit here: `modeAfterAvailabilityChange`, which retired

@@ -12,7 +12,7 @@
  * the newer `effort` control, and the verdict comes back as structured JSON.
  */
 import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
-import { normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
+import { ApiBaseUrl, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 
 /**
  * Plow's route to Anthropic goes through litellm, which only takes the *native*
@@ -25,7 +25,6 @@ export const REVIEWER_MODEL = "anthropic/claude-sonnet-4-6";
 export const REVIEWER_THINKING_BUDGET = 2048;
 export const REVIEWER_MAX_TOKENS = 4096;
 export const REVIEWER_TIMEOUT_MS = 30_000;
-export const REVIEWER_INFO = `${REVIEWER_MODEL} · thinking budget ${REVIEWER_THINKING_BUDGET} tokens · 30s limit`;
 
 export type Verdict = "allow" | "deny" | "ask";
 
@@ -308,16 +307,6 @@ type ProviderResult =
 type ProviderCall = (system: string, prompt: string, signal: AbortSignal) => Promise<ProviderResult>;
 
 /**
- * A reviewer ready to call: how to reach it, and the secret it sends — which is
- * what the decoded verdict has to be checked against once the answer comes back.
- */
-interface Reviewer {
-  call: ProviderCall;
-  /** The credential this call puts on the wire. */
-  secret: string;
-}
-
-/**
  * Map a Plow HTTP failure onto a reason a human can act on.
  *
  * The status code and fixed text, and nothing else. An earlier version lifted
@@ -345,9 +334,9 @@ function plowHttpReason(status: number): string {
  * The credential rides in the `Authorization` header and nowhere else — not in
  * the URL, not in a thrown message, not in anything this returns.
  */
-function plowCall(credential: string, apiBaseUrl: string): ProviderCall {
+function plowCall(credential: string, apiBaseUrl: ApiBaseUrl): ProviderCall {
   return async (system, prompt, signal) => {
-    const api = new PlowApi(normalizeApiBaseUrl(apiBaseUrl));
+    const api = new PlowApi(apiBaseUrl);
     let status: number;
     let body: unknown;
     try {
@@ -401,18 +390,6 @@ function plowCall(credential: string, apiBaseUrl: string): ProviderCall {
   };
 }
 
-/**
- * Ready the reviewer, or explain why it cannot run. A missing credential is a
- * configuration answer, not a network one — nothing is dialled.
- */
-function selectReviewer(args: ReviewArgs): Reviewer | { reason: string } {
-  const credential = (args.plowCredential ?? "").trim();
-  if (!credential) return { reason: "not signed in to Plow" };
-  const base = normalizeApiBaseUrl(args.apiBaseUrl ?? "");
-  if (!base) return { reason: "no Plow API URL configured" };
-  return { call: plowCall(credential, base), secret: credential };
-}
-
 export interface ReviewArgs {
   intent: Intent;
   history: JSONValue[];
@@ -420,9 +397,9 @@ export interface ReviewArgs {
    * The `relay:device` credential. A SECRET: it goes in the `Authorization`
    * header and nowhere else.
    */
-  plowCredential?: string;
-  /** Plow API origin, e.g. `https://api.plow.co`. */
-  apiBaseUrl?: string;
+  plowCredential: string;
+  /** Plow API origin, e.g. `https://api.plow.co`. Baked into the build. */
+  apiBaseUrl: string;
   /**
    * What the owner of this Mac says agents are for (`settings.agentPurpose`).
    *
@@ -449,13 +426,16 @@ function failedReview(
 export async function adversarialReview(
   args: ReviewArgs,
 ): Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }> {
-  const reviewer = selectReviewer(args);
+  const credential = args.plowCredential.trim();
   // Nobody to reach. Callers establish that themselves before asking — see
   // `reviewerAvailable` — so this is the answer to a question that should not
-  // have been put: no verdict, and the reason it could not be reached.
-  if (!("call" in reviewer)) {
-    return failedReview(reviewer.reason);
-  }
+  // have been put. It stays because of what it prevents rather than what it
+  // catches: without it an empty credential is a live request carrying `Bearer `
+  // to a real endpoint, and this is the gate that must fail closed WITHOUT
+  // dialling. The API origin needs no such guard — it is build-resolved and
+  // cannot be empty.
+  if (!credential) return failedReview("not signed in to Plow");
+  const call = plowCall(credential, normalizeApiBaseUrl(args.apiBaseUrl));
 
   // One budget, one timer: the same timeout that gives up on the review aborts
   // the request it gave up on, so nothing is left running (or billing) behind a
@@ -463,7 +443,7 @@ export async function adversarialReview(
   const budget = new AbortController();
   try {
     const result = await withTimeout(
-      reviewer.call(
+      call(
         systemPrompt(args.agentPurpose ?? ""),
         buildPrompt(args.intent, args.history),
         budget.signal,
@@ -486,7 +466,7 @@ export async function adversarialReview(
     // there is. `decision` is an enum the parser already pinned, so `reason` is
     // the entire surface by which the answer can carry anything out of here —
     // and this is the value itself, not a serialisation of it. See echoesSecret.
-    if (echoesSecret(parsed.reason, reviewer.secret, SECRET_HEAD)) {
+    if (echoesSecret(parsed.reason, credential, SECRET_HEAD)) {
       return failedReview("reviewer answer discarded: it repeated a credential");
     }
     return parsed;
