@@ -145,4 +145,29 @@ describe("forms field scan", () => {
     expect(url).toBe("https://pay.example/frame?tok=abc");
     expect(fields.map((f) => f.name)).toEqual(["cvv"]);
   });
+  it("answers a selector's document with its URL and token from one evaluation", () => {
+    // The credential gate checks the URL before releasing a value into that
+    // frame, and the token says "still this document" when the value comes
+    // back. Read separately, a navigation between them puts one document's
+    // element behind another document's origin.
+    const src = fs.readFileSync(SERVER_PY, "utf8");
+    const m = /^DOC_WHERE_JS = """([\s\S]*?)""" % DOC_TOKEN_JS$/m.exec(src);
+    if (!m) throw new Error("DOC_WHERE_JS literal not found in server.py");
+    const token = /^DOC_TOKEN_JS = """([\s\S]*?)"""$/m.exec(src);
+    if (!token) throw new Error("DOC_TOKEN_JS literal not found in server.py");
+
+    const composed = m[1].replace("%s", token[1]);
+    const win: Record<string, unknown> = {};
+    const run = new Function("window", "location", `return (${composed})();`) as (
+      w: unknown,
+      l: unknown,
+    ) => { url: string; token: string };
+
+    const first = run(win, { href: "https://payframe.example/card?tok=abc" });
+    expect(first.url).toBe("https://payframe.example/card?tok=abc");
+    expect(first.token).toBeTruthy();
+    // Same document, same token — that is what makes it an identity.
+    expect(run(win, { href: "https://payframe.example/card?tok=abc" }).token).toBe(first.token);
+    expect(run({}, { href: "https://payframe.example/card?tok=abc" }).token).not.toBe(first.token);
+  });
 });
