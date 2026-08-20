@@ -513,7 +513,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_len: number | null;
         type_calls: number;
         key_timeout_max: number | null;
-        key_timeouts_shrink: boolean;
+        key_timeout_span: number | null;
         node_len: number;
         asked_len: number;
       };
@@ -523,6 +523,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         action_timeout_ms: number;
         typing_max_ms: number;
         key_delay_ms: number;
+        key_overhead_ms: number;
       };
       two_frames: {
         error: string | null;
@@ -625,18 +626,29 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     const c = probed.constants;
     const run = probed.long_value;
     expect(run.type_calls).toBe(c.typed_chars);
-    expect(run.key_timeout_max).toBeLessThan(c.action_timeout_ms + c.typing_max_ms);
-    expect(run.key_timeouts_shrink).toBe(true);
+    expect(run.key_timeout_max).toBeLessThan(c.typing_max_ms);
+    // A per-key timeout hands out the same number every call, so the span
+    // between the first key's budget and the last is what tells them apart.
+    expect(run.key_timeout_span).toBeGreaterThan(0);
   });
 
   it("leaves the tail's budget room for the round trips it now pays", () => {
     // TYPED_CHARS used to be the budget divided by the delay alone, so the
     // delays claimed all of it and the slack sized for one actionability check
-    // had to cover every key. It is sized against the per-key cost now.
+    // had to cover every key. Both the length and the budget come from what a
+    // key costs now, so the tail cannot be longer than its budget can pay for.
     const c = probed.constants;
-    const delays = c.typed_chars * c.key_delay_ms;
-    const slack = c.action_timeout_ms + c.typing_max_ms - delays;
-    expect(slack / c.typed_chars).toBeGreaterThan(c.key_delay_ms);
+    expect(c.typed_chars * (c.key_delay_ms + c.key_overhead_ms))
+      .toBeLessThanOrEqual(c.typing_max_ms);
+  });
+
+  it("types a credential of the length the vault actually hands it", () => {
+    // TYPED_CHARS decides whether a value ends up typed or assigned, and a
+    // seven-character password passes at any value of it down to seven. An API
+    // key, a token, a JWT of ordinary length is what has to be typed whole.
+    expect(probed.credential.asked_len).toBe(64);
+    expect(probed.credential.typed_len).toBe(probed.credential.asked_len);
+    expect(probed.credential.type_calls).toBe(probed.credential.asked_len);
   });
 
   it("does not try the next frame once a node has been changed", () => {

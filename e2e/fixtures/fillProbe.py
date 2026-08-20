@@ -160,7 +160,6 @@ class Handle:
         after a fill that did not land is the whole point of one of these
         scenarios."""
         self.typed_delay = delay
-        self.typed_timeouts.append(timeout)
         # One entry per contiguous run of keys, not per key: the trace records
         # the SHAPE of the fill, and `type_calls` carries the count.
         if self.trace[-1:] != ["handle.type"]:
@@ -172,6 +171,7 @@ class Handle:
             raise RuntimeError("Element is not attached to the DOM")
         self.typed = (self.typed or "") + text
         self.type_calls += 1
+        self.typed_timeouts.append(timeout)
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
@@ -286,13 +286,14 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
-    # The largest budget any one key was handed, and whether they shrank across
-    # the tail -- which is what one shared deadline looks like from here.
+    # What each key was handed, seen from outside: the largest, and how much of
+    # it the tail spent between the first key and the last. A per-key timeout
+    # hands out the same number every call, so the span is what distinguishes
+    # one shared deadline from many -- and it is None below two keys, where
+    # "they shrank" is a claim about nothing.
     timeouts = frame.handle.typed_timeouts
     out["key_timeout_max"] = max(timeouts) if timeouts else None
-    # STRICTLY smaller each time: a per-key timeout hands out the same number
-    # every call, and "non-increasing" would call that shrinking.
-    out["key_timeouts_shrink"] = all(a > b for a, b in zip(timeouts, timeouts[1:]))
+    out["key_timeout_span"] = (max(timeouts) - min(timeouts)) if len(timeouts) > 1 else None
     out["node_len"] = len(frame.handle.value or "")
     return out
 
@@ -446,6 +447,11 @@ def main() -> int:
         # and the mark comes back off a field that is holding nothing.
         "keys_dropped_unfillable": run(server, {**base, "mask": True, "value": "hunter2"},
                                        drops_keys=True, assign_fails=True),
+        # A credential of the length the vault actually hands this path -- an
+        # API key, a token, a JWT. TYPED_CHARS decides whether one of these ends
+        # up typed or assigned, so it is pinned by a value of that size rather
+        # than by a seven-character password.
+        "credential": run(server, {**base, "value": "k" * 64}),
         # Prose, not a credential: too long to type inside the budget. The bulk
         # is assigned and the field still ends on real keys.
         "long_value": run(server, {**base, "value": "x" * 2000}),
@@ -520,6 +526,7 @@ def main() -> int:
         "action_timeout_ms": server.ACTION_TIMEOUT_MS,
         "typing_max_ms": server.TYPING_MAX_MS,
         "key_delay_ms": server.KEY_DELAY_MS,
+        "key_overhead_ms": server.KEY_OVERHEAD_MS,
     }
     out.write(json.dumps(result))
     out.flush()

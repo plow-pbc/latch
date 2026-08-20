@@ -62,8 +62,9 @@ SETTLE_MS = 1000
 # no keydown/keypress/keyup at all -- the cheapest signal an interrogating
 # defense has. Keystrokes cost a delay each, and an agent may fill a field with
 # prose, so only the last TYPED_CHARS of a value are typed and the bulk ahead of
-# them is assigned: a credential is shorter than that and is typed whole, while
-# a 5 000-character message body still lands and still ends on real keys. What
+# them is assigned: a credential -- a password, an API key, a JWT of ordinary
+# length -- is shorter than that and is typed whole, while a 5 000-character
+# message body still lands and still ends on real keys. What
 # the cap buys is that TYPING cannot grow with the length of the value. It is
 # not a bound on what the whole action costs. Every fill also runs several
 # `evaluate` calls, and a masked one about twice as many; none of them take a
@@ -79,7 +80,9 @@ KEY_DELAY_MS = 45
 # TYPED_CHARS times rather than once -- which is why the budget has to know
 # about it. A few milliseconds on a local page; sized well above that.
 KEY_OVERHEAD_MS = 30
-TYPING_MAX_MS = 4000
+# What the whole tail may spend, delays and round trips together -- and so, at
+# what a key costs, how many characters of it there are room for.
+TYPING_MAX_MS = 7000
 TYPED_CHARS = TYPING_MAX_MS // (KEY_DELAY_MS + KEY_OVERHEAD_MS)
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
@@ -286,7 +289,7 @@ def _type_value(el, value):
     # the tail's own budget would let TYPED_CHARS of them stack up to that many
     # times what a single call could ever spend. TYPED_CHARS is sized so the
     # delays leave room in it for that many round trips.
-    deadline = time.monotonic() + (ACTION_TIMEOUT_MS + TYPING_MAX_MS) / 1000
+    deadline = time.monotonic() + TYPING_MAX_MS / 1000
     for ch in value[-TYPED_CHARS:]:
         left = (deadline - time.monotonic()) * 1000
         if left <= 0:
