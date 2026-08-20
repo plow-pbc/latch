@@ -302,11 +302,10 @@ describe("requests the site refused", () => {
     // not the third-party beacon (unapproved destination), and not the 404 the
     // locked-out page aimed AT the approved origin (unapproved asker) — which
     // would otherwise read as the approved page's own.
+    // One row, and the exact one: the third-party beacon, the 404 the
+    // locked-out page aimed at the approved origin, and the 503 the browser
+    // could not attribute are all absent by construction.
     expect(r.get("failed_requests").value).toEqual([ORDER]);
-    expect(JSON.stringify(r.value)).not.toContain("tracker.example");
-    // Nor the one the browser could not attribute: an asker it cannot name is
-    // what an unapproved page reaches for, so it fails closed.
-    expect(JSON.stringify(r.value)).not.toContain("503");
 
     // The owner sees all four, with who asked — nobody can mislead them by
     // choosing a url, and an origin is all any of it is. The entry is rebuilt

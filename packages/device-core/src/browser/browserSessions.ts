@@ -86,22 +86,21 @@ function failedRequests(value: JSONValue[]): JSONValue[] {
  * itself is never handed over; the agent gets the host that refused, which is
  * the diagnosis.
  */
-function forAgent(entries: JSONValue[], approved: (origin: string) => boolean): JSONValue[] {
+function forAgent(entries: JSONValue[], approved: (host: string) => boolean): JSONValue[] {
   return entries.flatMap((entry) => {
     const e = jv(entry);
-    const origin = e.get("origin").str ?? "";
-    const initiator = e.get("initiator").str ?? "";
+    const host = hostOf(e.get("origin").str ?? "");
+    const asker = hostOf(e.get("initiator").str ?? "");
     // Fail closed on an asker the browser could not name: a blank child frame
     // or a service worker is exactly what an unapproved page would reach for.
-    // `approved` already answers false for anything without a host.
-    if (!approved(origin) || !approved(initiator)) return [];
-    const host = hostOf(origin);
+    if (host === null || asker === null) return [];
+    if (!approved(host) || !approved(asker)) return [];
     const retryAfter = e.get("retry_after").str;
     const server = e.get("server").str;
     return [{
       status: e.get("status").int ?? 0,
       method: e.get("method").str ?? "",
-      host: host ?? "",
+      host,
       ...(retryAfter === null ? {} : { retry_after: retryAfter }),
       ...(server === null ? {} : { server }),
     }];
@@ -488,10 +487,7 @@ export class BrowserSessions {
       ...extra,
       ...(failed.length ? { failed_requests: failed } : {}),
     });
-    return forAgent(failed, (origin) => {
-      const host = hostOf(origin);
-      return host !== null && originMatches(host, s.origins);
-    });
+    return forAgent(failed, (host) => originMatches(host, s.origins));
   }
 
   /** Send to the server, then observe where we landed and sweep popups. */
