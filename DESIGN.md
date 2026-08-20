@@ -609,20 +609,47 @@ if update size becomes a problem.
 **Where the reviewer's authorization comes from.** We will never hold the
 owner's messages to the agent: they talk on a channel we do not own (claude.ai
 and the like), and no transcript reaches this Mac. So consent cannot be user
-text. It is what this Mac RECORDED — the owner's purpose statement, and the
-approvals they answered for that agent (`intent_decision` with `source: ask`,
-plus the `rule` matches those approvals created). Those go in the reviewer's
-system message, and they are what a verdict of `allow` can rest on; the agent's
-goal, plan and request stay untrusted and can never justify access. Approvals
-recorded with `source: adversarial` are deliberately excluded: a reviewer citing
-its own past allows as the owner's consent is a ratchet, not a channel.
+text. It is what this Mac RECORDED, in two layers.
 
-The reviewer judges COVERAGE — does this operation fall inside what the owner
-already authorized — and denies a secret by its DESTINATION rather than its
-category: a value reaching somewhere neither the approvals nor the task names.
+*Primary: the purpose statement.* Owner-authored, device-recorded, unforgeable
+by the agent — the only statement of intent this system has. It bounds AND
+authorizes: a narrow statement means a tight agent, a broad one means a broad
+agent. It used to be deny-only ("fitting the description is not a reason to
+relax anything below"), which left the reviewer no way to say yes to the owner's
+own errand.
+
+*Secondary: recorded approvals.* `intent_decision` with `source: ask`, plus the
+`rule` matches those created. They corroborate an errand; they cannot stand in
+for a statement, and an empty list means nothing — in adversarial mode no dialog
+is ever shown, so no new approval is ever created (on the head chef's device, 4
+of 91 recorded decisions came from a human). `source: adversarial` is excluded
+deliberately: a reviewer citing its own past allows as consent is a ratchet, not
+a channel. `approve` (blanket mode) is excluded for saying nothing about any
+particular operation.
+
+**The floor is a naming requirement, not a forbidden list.** Irreversible and
+egress-shaped acts — deletion at scale, force push, publishing, spending money,
+changing credentials or recovery paths, a secret reaching a destination nobody
+named — must be NAMED to be authorized, and must be PROPORTIONATE to what named
+them. "You manage my backups, pruning old ones is expected" authorizes pruning;
+"you order my DoorDash" authorizes a $30 order and not a $3,000 one. No purpose
+statement is silence rather than refusal: ordinary reversible work is assumed
+fine and the floor is what protects, but silence does not open the owner's
+accounts and personal data.
+
+**The reviewer is not the only layer, and the prompt says so.** Capabilities are
+derived on this Mac from tool arguments, the sandbox profile is generated from
+the approved set, browser origins are enforced per session, and everything is
+audited — so injected text can ask for anything and widen nothing. Told it faced
+an adversary, the model behaved like one and refused; its job is the accidental
+and the wildly out of line, not stopping an agent that should never have been
+connected. The untrusted-goal-text rule stays exactly where it belongs: a rule
+about evidence, not a posture.
+
 Every capability still arrives as its own intent and is reviewed on its own
 merits; a prior approval is evidence in that review, never cover for a
-capability it did not name.
+capability it did not name. Calibration is verified by live-inference controls
+recorded on the PR, not by asserting on prompt text.
 
 The remote milestone is where the **TypeScript re-platform (§13)** lands: the
 hosted broker ships as the first TS component, and the rest of the system

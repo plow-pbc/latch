@@ -61,6 +61,7 @@ function harness(
     reason?: string;
     cause?: ReviewFailureCause;
     decision?: "allow_once" | "always_allow" | "deny";
+    auditEntries?: JSONValue[];
   } = {},
 ) {
   const records: { event: string; fields: Record<string, JSONValue> }[] = [];
@@ -82,7 +83,7 @@ function harness(
     decideIntent(intent(), {
       settings: s,
       apiBaseUrl: "https://api.plow.co",
-      auditEntries: () => [],
+      auditEntries: () => opts.auditEntries ?? [],
       record: (event, fields) => records.push({ event, fields }),
       review,
       openApproval,
@@ -653,25 +654,18 @@ describe("what the reviewer is told about the owner's approvals", () => {
     { event: "intent_decision", intentId: "i2", decision: "allow_once", source: "adversarial" },
   ];
 
-  const runWith = async (audit: JSONValue[]) => {
-    const reviewCalls: ReviewArgs[] = [];
-    await decideIntent(intent(), {
-      settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
-      apiBaseUrl: "https://api.plow.co",
-      auditEntries: () => audit,
-      record: () => {},
-      review: async (args) => {
-        reviewCalls.push(args);
-        return { verdict: "allow" as const, reason: "covered" };
-      },
-      openApproval: async () => "deny" as const,
+  const runWith = async (auditEntries: JSONValue[]) => {
+    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
+      verdict: "allow",
+      auditEntries,
     });
-    return reviewCalls[0];
+    await h.run();
+    return h.reviewCalls[0];
   };
 
   it("hands over what the owner approved, and nothing the reviewer approved for itself", async () => {
     const call = await runWith(entries);
-    expect(call.approvals).toEqual([{ via: "dialog", capabilities: ["Browse: instacart.com"] }]);
+    expect(call.approvals).toEqual([{ capabilities: ["Browse: instacart.com"] }]);
     expect(JSON.stringify(call.approvals)).not.toContain(".ssh");
   });
 
