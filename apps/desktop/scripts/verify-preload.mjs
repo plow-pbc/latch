@@ -598,6 +598,11 @@ app.whenReady().then(async () => {
       // The label goes with it: nothing about the purpose is on screen in a
       // mode whose reviewer never reads it…
       purposeTextGone: !pane.innerText.includes("What are agents for?"),
+      // …but a purpose written under the reviewer chip is still sent with every
+      // suggestion this mode asks for, so the disclosure has to name it in the
+      // mode that hides the field. This is the state where an enumeration that
+      // stopped at the agent-derived items would read as complete and be wrong.
+      stillDisclosesPurposeIsSent: pane.innerText.includes("what you say agents are for"),
       // …and the card still says what this mode does.
       showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
       // The hint used to send people to Settings for the suggestions toggle.
@@ -863,6 +868,7 @@ app.whenReady().then(async () => {
     approvalsAsk.pointsAtTheCheckboxBelow &&
     approvalsAsk.noPointerToSettings &&
     approvalsAsk.suggestionsLive &&
+    approvalsAsk.stillDisclosesPurposeIsSent &&
     askWithoutReviewer.noDeadInstruction &&
     askWithoutReviewer.explainsWhy &&
     askWithoutReviewer.checkboxIsDead &&

@@ -820,9 +820,9 @@ async function renderAgents() {
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
         "by an always-allow rule skip this — manage those in Rules. Anything the AI Reviewer " +
         "sees — the request, the paths asked for, the agent's identity, its goal and plan, the " +
-        "capabilities it asked for, and its recent activity on this Mac — is sent to that " +
-        "reviewer's provider to be judged, and billed to that account; nothing from other " +
-        "agents goes with it.",
+        "capabilities it asked for, its recent activity on this Mac, and what you say agents " +
+        "are for — is sent to that reviewer's provider to be judged, and billed to that " +
+        "account; nothing from other agents goes with it.",
       [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
     ),
   ]));
