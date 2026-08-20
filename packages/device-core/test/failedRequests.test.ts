@@ -21,7 +21,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     page_navigating_itself: Envelope;
     device_goto: Envelope;
     flag_during: { goto: boolean; back: boolean };
-    flag_after: boolean;
+    flag_after: { goto: boolean; back: boolean };
     unattributable: Envelope;
     drained: Envelope;
     quiet: Envelope;
@@ -57,12 +57,13 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     // The flag is what the attribution gate reads, so both branches that set it
     // are driven through the real handler rather than assigned by hand.
     expect(probed.flag_during).toEqual({ goto: true, back: true });
-    expect(probed.flag_after).toBe(false);
+    expect(probed.flag_after).toEqual({ goto: false, back: false });
   });
 
   it("lets a goto the device issued answer for itself", () => {
-    // Its frame still names the page being left while the headers arrive, so a
-    // refused goto would otherwise look like somebody else's.
+    // Driven for real: the refusal arrives while the goto is in flight, which
+    // is when one does. Its frame still names the page being left at that
+    // moment, so a refused goto would otherwise look like somebody else's.
     expect(probed.device_goto.failed_requests?.[0]).toMatchObject({
       origin: "https://pizza.example",
       initiator: "https://pizza.example",

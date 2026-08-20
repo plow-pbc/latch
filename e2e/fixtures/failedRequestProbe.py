@@ -74,9 +74,16 @@ class Page:
         self.context.pages.append(self)
         self.session = session
         self.flag_during = {}
+        self.flag_after = {}
+        # A response the page receives while a navigation is in flight, which is
+        # when a real one arrives: headers first, before the call returns.
+        self.during_navigation = None
 
     def _navigate(self, action):
         self.flag_during[action] = self.session.in_device_nav
+        if self.during_navigation is not None:
+            hook, self.during_navigation = self.during_navigation, None
+            hook()
 
     def goto(self, _url, **_kw):
         self._navigate("goto")
@@ -134,14 +141,17 @@ def main():
     driven = server.Session(Page())
     driven.page.session = driven
     driven.page.main_frame = main
+    # The refusal arrives DURING the goto, as a real one does, so nothing about
+    # the flag is set by hand.
+    driven.page.during_navigation = lambda: driven.note_response(
+        Response(429, "https://pizza.example/checkout", navigation=True, frame=main))
     driven.handle({"action": "goto", "url": "https://pizza.example/checkout"}, "/tmp")
+    driven.page.flag_after["goto"] = driven.in_device_nav
+    out["device_goto"] = driven.reply_with_failures({})
     driven.handle({"action": "back"}, "/tmp")
+    driven.page.flag_after["back"] = driven.in_device_nav
     out["flag_during"] = driven.page.flag_during
-    out["flag_after"] = driven.in_device_nav
-    driven.in_device_nav = True
-    out["device_goto"] = feed(driven, [
-        Response(429, "https://pizza.example/checkout", navigation=True, frame=main)])
-    driven.in_device_nav = False
+    out["flag_after"] = driven.page.flag_after
 
     # A frame that will not answer names nobody, and the device withholds those
     # from the agent rather than guessing.
