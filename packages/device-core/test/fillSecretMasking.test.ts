@@ -537,7 +537,9 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // Both answer `wait_for_selector` with a failure, and only one of them was
     // ever going to be able to fill anything. Every frame is tried either way.
     expect(probed.ranked).toEqual({ error: "Hidden", tried: 3 });
-    // …and the frame that went away is still heard when nothing else spoke.
+  });
+
+  it("still hears the frame that went away when nothing else spoke", () => {
     expect(probed.ranked_only_gone).toEqual({ error: "Detached", tried: 2 });
   });
 
