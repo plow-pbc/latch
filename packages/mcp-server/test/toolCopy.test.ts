@@ -104,7 +104,7 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
   // would be a promise this profile does not keep.
   it("plow_browser_open says why it beats a plain web fetch, without overselling", async () => {
     const d = await descriptions(makeServer());
-    expect(d.plow_browser_open).toMatch(/profile persists/);
+    expect(d.plow_browser_open).toMatch(/persist between sessions that ask for the same origins/);
     expect(d.plow_browser_open).toMatch(/vault/);
     expect(d.plow_browser_open).toMatch(/one session at a time/i);
     expect(d.plow_browser_open).not.toMatch(/already signed in/i);

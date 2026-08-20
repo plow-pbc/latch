@@ -370,7 +370,9 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "plow_browser_open",
     description:
-      "Open a browser on the user's own Mac. Its profile persists between sessions and it can " +
+      "Open a browser on the user's own Mac. Cookies and logins persist between sessions that " +
+      "ask for the same origins — ask for the same list each time and it stays signed in — " +
+      "and it can " +
       "fill passwords from their vault without returning them to you ('eval' is the exception: " +
       "it reads page values directly, and must not be pointed at a field you filled) — so use " +
       "it for sites that " +

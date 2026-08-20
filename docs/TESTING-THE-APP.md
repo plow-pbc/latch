@@ -123,6 +123,34 @@ rm ~/Library/Application\ Support/Plow-Latch-<branch>/app/settings.json  # or re
 `just` recipes default `DOMO_HOME` to this checkout's `Plow-Latch-<branch>` home — your *real* dev one.
 Always pass a throwaway to anything that writes state.
 
+**A new session is not a new browser.** Sessions come and go, but the cookies do not: a session
+browses in a persistent Camoufox profile under `$DOMO_HOME/device/browser/profiles/`, one per
+approved origin set. That is deliberate — it is what keeps a site's logins and its recognition of
+this device across sessions — and it is a trap when you are chasing a site that has *rejected* us.
+A bot block is written into that profile as a cookie (Kasada's `KP_UIDz`, Akamai's `_abck`), so
+"open a fresh session and try once" replays the block and looks like proof the block is permanent.
+See #86, where exactly that reading was on the table.
+
+Run with no persistent profile at all when you are reproducing a block, or anything else where the
+browser must arrive with no history:
+
+```bash
+DOMO_BROWSER_FRESH_PROFILE=1 just app   # every session starts with an empty cookie jar
+```
+
+Inspect what a profile is holding — `sqlite3` reads it fine while the browser is closed:
+
+```bash
+sqlite3 "$DOMO_HOME/device/browser/profiles/<key>/cookies.sqlite" \
+  "select host, name, datetime(creationTime/1000000,'unixepoch') from moz_cookies order by host;"
+```
+
+The directory name is a hash of the approved origins, so there is no reading it off the site name —
+`ls -lt` and take the one whose mtime matches the session you care about. Deleting a profile
+directory is safe with the app shut down; it costs that grant its logins and nothing else. A store
+older than this change has a single `device/browser/profile` beside `profiles/` with everything
+mixed together; nothing reads it any more, so delete it whenever.
+
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:
 
