@@ -52,10 +52,11 @@
 const fs = require("node:fs");
 const readline = require("node:readline");
 
-/** Selectors whose page is refusing a request while the credential is placed,
- * and those whose fill also fails — named once so the two handlers cannot
- * drift into scripting different things. */
+/** Selectors whose page refuses a request while the credential is being placed. */
 const REFUSING_LOCATE = new Set(["#refused-pass", "#refused-nofill"]);
+/** Selectors whose fill itself throws — a page that refuses nothing can still
+ * have one (#nofill), and #refused-nofill is the row that does both. Named here
+ * so the locate and fill handlers cannot drift into scripting different things. */
 const FAILING_FILL = new Set(["#nofill", "#refused-nofill"]);
 
 const state = {
