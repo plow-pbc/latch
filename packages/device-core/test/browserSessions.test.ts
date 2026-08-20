@@ -424,7 +424,8 @@ describe("access the owner's log could not record is not granted", () => {
 
     const again = jv(await sessions.open("int-3", AGENT, ["pizza.example"], true));
     expect(again.get("session").str).toBeTruthy();
-    expect(fs.readdirSync(path.join(ctx.dir, "profiles")).sort()).toEqual([key, `${key}-2`]);
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([key]);
+    expect(fs.existsSync(path.join(ctx.dir, "profiles", key, "domo-abandoned"))).toBe(false);
     await sessions.closeAll("test");
   });
 

@@ -514,7 +514,26 @@ export class BrowserSessions {
       // back. The jar holds this origin's state now, under a grant that does
       // not name it, so it stops being reusable here — no widening required,
       // and nothing gives it back.
-      await this.host.abandonProfile();
+      try {
+        await this.host.abandonProfile();
+      } catch (error: unknown) {
+        // Opposite semantics to the widening path, where a failed retirement
+        // is the safe end because no access was granted. Here the request has
+        // already gone out, so a jar that cannot be retired must not survive
+        // to be handed on — the session ends rather than the action.
+        this.audit("browser_profile_abandon_failed", {
+          session: s.handle,
+          origin,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await this.close(s.handle, "profile could not be retired");
+        return {
+          status: "error",
+          error:
+            `landed on ${origin}, outside the approved origins, and this browser's ` +
+            `stored state could not be retired — the session has been closed`,
+        };
+      }
       out.out_of_scope = origin;
       out.note =
         `landed on ${origin}, outside the approved origins — page content is ` +

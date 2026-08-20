@@ -362,6 +362,7 @@ describe("browser tools (fake runtime)", () => {
     const session = await open(server, ["pizza.example", "*.pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/menu" });
     expect(abandoned(profiles, key)).toBe(false);
+    fs.writeFileSync(path.join(profiles, key, "cookies.sqlite"), "state from this session");
 
     // #offsite navigates the page to https://offsite.example/lander.
     const strayed = await act(server, session, "click", { selector: "#offsite" });
@@ -370,9 +371,12 @@ describe("browser tools (fake runtime)", () => {
     expect(audited(device, "browser_profile_abandoned")).toEqual([key]);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    // The grant it was filed under does not get it back.
+    // The grant it was filed under does not get it back — the jar is gone,
+    // not merely marked, so there is nothing left to hand anyone.
     await open(server, ["pizza.example", "*.pizza.example"]);
-    expect(fs.readdirSync(profiles).sort()).toEqual([key, `${key}-2`]);
+    expect(fs.readdirSync(profiles)).toEqual([key]);
+    expect(fs.existsSync(path.join(profiles, key, "cookies.sqlite"))).toBe(false);
+    expect(audited(device, "browser_profile_reaped")).toEqual([key]);
   });
 
   it("a widened session's jar is given up, and no later session opens it", async () => {
@@ -421,23 +425,23 @@ describe("browser tools (fake runtime)", () => {
     // indistinguishable from the one they legitimately open.
     expect(fs.readdirSync(profiles)).toEqual([opening]);
 
-    // Every later session steps over it — the narrow grant it was filed under
-    // included, which is the one that could actually send those cookies.
+    // Every later session gets a fresh jar, the narrow grant it was filed
+    // under included — that is the one that could actually send those cookies.
     for (const origins of [["pizza.example"], ["pizza.example", "bank.example"]]) {
       const later = await open(server, origins);
       await callTool(server, "plow_browser_close", { session: later }, AGENT);
     }
     expect(fs.readdirSync(profiles).sort()).toEqual(
-      [opening, `${opening}-2`, profileKeyForOrigins(["pizza.example", "bank.example"])].sort(),
+      [opening, profileKeyForOrigins(["pizza.example", "bank.example"])].sort(),
     );
-    expect(abandoned(profiles, `${opening}-2`)).toBe(false);
+    expect(abandoned(profiles, opening)).toBe(false);
+    expect(audited(device, "browser_profile_reaped")).toEqual([opening]);
 
-    // Which one each browser opened is in the log, because the owner cannot
-    // work it out from the origins once a suffix is involved — the doc sends
-    // them here for exactly this case.
+    // Which one each browser opened is in the log — the owner cannot work it
+    // out from the origins alone, since a reaped name gets reused.
     expect(audited(device, "browser_started")).toEqual([
       opening,
-      `${opening}-2`,
+      opening,
       profileKeyForOrigins(["pizza.example", "bank.example"]),
     ]);
   });

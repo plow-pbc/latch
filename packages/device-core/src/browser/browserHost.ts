@@ -241,12 +241,18 @@ export class BrowserHost {
       await fsp.rm(file, { force: true });
       throw error;
     }
+    this.cfg.audit?.("browser_profile_abandoned", { profile: path.basename(dir) });
+    // Only if this is still the browser whose jar was retired. An action can
+    // be in flight while a deferrable open installs a new one, and clearing
+    // unconditionally would null the NEW session's identity — its own
+    // retirement would then early-exit, leaving its jar filed under a grant it
+    // no longer matches. The marker above is written and correct either way.
+    if (this.startedDir !== dir) return;
     this.startedDir = null; // nothing to give up twice
     // Both sides of the reuse guard follow, or the very next action reads a
     // mismatch and restarts the browser out from under the session.
     this.startedKey = null;
     this.profileKeyNow = null;
-    this.cfg.audit?.("browser_profile_abandoned", { profile: path.basename(dir) });
   }
 
   private profileDirForStart(): string | null {
@@ -256,10 +262,39 @@ export class BrowserHost {
     // The name IS the grant: a session opens the directory its origins hash
     // to. A widening gives one up without moving it, so step over those — the
     // jar behind that name holds state for origins this grant does not name.
+    this.reapAbandoned(root);
     let dir = path.join(root, key);
     for (let n = 2; this.abandoned(dir); n++) dir = path.join(root, `${key}-${n}`);
     fs.mkdirSync(dir, { recursive: true });
     return dir;
+  }
+
+  /**
+   * Drop the profiles that have been given up. They are dead by construction —
+   * nothing reopens one — and now that any stray hop out of scope retires a
+   * jar, not just an approved widening, they arrive often enough to be worth
+   * collecting. Safe here and only here: this runs on the way to a spawn, so
+   * no browser is up and none of them can be one a session is still writing.
+   */
+  private reapAbandoned(root: string): void {
+    let names: string[];
+    try {
+      names = fs.readdirSync(root);
+    } catch {
+      return; // not created yet
+    }
+    for (const name of names) {
+      const dir = path.join(root, name);
+      if (!this.abandoned(dir)) continue;
+      // Best-effort: an undeletable profile is wasted disk, but throwing here
+      // would abort the start, and three of those trip the circuit breaker.
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        this.cfg.audit?.("browser_profile_reaped", { profile: name });
+      } catch {
+        /* try again on the next start */
+      }
+    }
   }
 
   private abandoned(dir: string): boolean {

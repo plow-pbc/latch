@@ -161,9 +161,11 @@ more, so delete it whenever.
 it — the scope check runs on where the action *landed*, so the browser has already made that
 request and stored whatever came back. Either way the jar now holds cookies for an origin the grant
 it was filed under does not name, so that profile is given up on the spot (a `domo-abandoned` file
-inside it, `browser_profile_abandoned` in the log), and it is never given back. The session goes on using it; nothing opens it again, and the next session on those
-origins gets an empty one at `<key>-2`. That is what an unexplained sign-out looks like now, and
-deleting an abandoned directory once its session has closed is always safe.
+inside it, `browser_profile_abandoned` in the log), and it is never given back. The session goes on
+using it — Camoufox has it open — but the next browser to start deletes it
+(`browser_profile_reaped`), so that grant begins again from empty. **That is what an unexplained
+sign-out looks like now**, and a stray hop is enough to cause one: a click that redirects offsite
+costs the grant its logins even though nothing was approved and nothing leaked.
 
 Two things this deliberately does not do, both learned the hard way: it does not move the directory
 — renaming it under a running Camoufox was tried, and every cookie written afterwards was lost
