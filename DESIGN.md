@@ -464,10 +464,10 @@ name is the point.
 
 Fact (2) dictates where this happens: the identity goes on at module top level,
 before ready, because that is the only moment the Keychain is listening, and the
-product name is put back inside `whenReady`. The rule binds every Electron entry
-that can reach `safeStorage`, and it was got wrong once in a way that produced a
-fix that changed nothing — so it is written out once, beside the constant it
-protects, in `vaultKeychain.ts`. This paragraph is not a second copy of it.
+product name is put back afterwards — it cannot be a helper call, because by the
+time one could run the name is already captured. Which entries that binds, at
+which moment, and how the product name is restored are written out beside the
+constant they protect, in `vaultKeychain.ts`.
 
 Two rejected alternatives, recorded so they are not re-proposed:
 
