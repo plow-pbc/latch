@@ -128,13 +128,19 @@ describe("audit grouping for browser sessions", () => {
   // refusals were recorded never showed them. Both while it is still open —
   // the case the pane is watched for — and after it closes.
   it.each([
-    { when: "still open", close: [], status: "Requests refused" },
+    { when: "still open", close: [], status: "Requests refused", closeText: null },
     {
       when: "closed",
-      close: [{ event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:05Z" }],
+      // What the browser had not reported yet is drained onto the closing
+      // line, which is what the device half of this branch exists to
+      // guarantee; this is the only place a human ever sees it.
+      close: [{ event: "browser_session_closed", session: "S", reason: "agent", failed_requests: [
+        { status: 503, method: "GET", origin: "https://costco.com" },
+      ], ts: "2026-08-10T10:00:05Z" }],
       status: "Closed · requests refused",
+      closeText: "Browser session closed (agent) — refused: 503 GET https://costco.com",
     },
-  ])("a session whose page was refused reads as failed while $when, and says by whom", ({ close, status }) => {
+  ])("a session whose page was refused reads as failed while $when, and says by whom", ({ close, status, closeText }) => {
     const browser = auditActivities([
       { event: "browser_command", session: "S", action: "click", url: "https://costco.com/cart", failed_requests: [
         { status: 429, method: "POST", origin: "https://costco.com" },
@@ -149,6 +155,9 @@ describe("audit grouping for browser sessions", () => {
     expect(cmd.text).toContain("429 POST https://costco.com");
     expect(cmd.text).toContain("(+1 more)");
     expect(cmd.state).toBe("bad");
+    const closeRow = browser.timeline.find((t) => t.text.includes("session closed"));
+    expect(closeRow?.text ?? null).toBe(closeText);
+    expect(closeRow?.state).toBe(closeText === null ? undefined : "bad");
   });
 
   // A crash outranks what the session accumulated before it, so the badge is
