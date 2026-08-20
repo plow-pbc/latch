@@ -557,10 +557,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 
   it("types the tail of a value too long to type whole, and lands the rest", () => {
-    // Prose in a textarea cannot be typed key by key inside the relay's ~20 s
-    // per-exchange ceiling, so the bulk is assigned and the field still ends on
-    // real keys. What matters is that the whole value still lands: the head is
-    // not dropped, it just does not arrive as keystrokes.
+    // Typing cannot be allowed to grow with the length of the value, so the
+    // bulk is assigned and only the tail is typed. What matters is that the
+    // whole value still lands: the head is not dropped, it just does not
+    // arrive as keystrokes.
     expect(probed.long_value.typed_len).toBe(probed.constants.typed_chars);
     expect(probed.long_value.node_len).toBe(probed.long_value.asked_len);
     expect(probed.long_value.asked_len).toBeGreaterThan(probed.constants.typed_chars);

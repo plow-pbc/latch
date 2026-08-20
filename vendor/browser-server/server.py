@@ -63,8 +63,9 @@ SETTLE_MS = 1000
 # defense has. Keystrokes cost a delay each, and an agent may fill a field with
 # prose, so only the last TYPED_CHARS of a value are typed and the bulk ahead of
 # them is assigned: a credential is shorter than that and is typed whole, while
-# a 5 000-character message body still lands, still ends on real keys, and
-# still fits inside the relay's per-exchange ceiling.
+# a 5 000-character message body still lands and still ends on real keys. What
+# the cap buys is that TYPING cannot grow with the length of the value. It says
+# nothing about what the whole action costs -- that is unbounded, see #96.
 KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
 TYPED_CHARS = TYPING_MAX_MS // KEY_DELAY_MS
@@ -455,7 +456,11 @@ class Session:
             # A caller that names no frame has every one of them ruled out at
             # a whole ACTION_TIMEOUT_MS each, and typing makes the attempt that
             # finally matches cost more than assigning did. Neither is bounded
-            # against the relay's ~20 s ceiling -- see issue #96.
+            # against the relay's ~20 s ceiling, and the only backstop is the
+            # device's own 60 s action timeout -- so a search that overruns does
+            # not merely lose its answer, it goes on working for up to another
+            # 40 s after the exchange nobody will read it in has been abandoned.
+            # Issue #96.
             for i, fr in enumerate(self.page.frames):
                 if "frame" in cmd and i != int(cmd["frame"]):
                     continue
