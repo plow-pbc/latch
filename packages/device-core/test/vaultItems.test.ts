@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   checkedUrls,
+  staleEdit,
   decryptField,
   decryptItem,
   decryptSummary,
@@ -186,6 +187,27 @@ describe("an edit", () => {
     // Neither removed: both keep their own, and neither entry is used twice.
     expect(encryptCipher({ itemId: "item-1", urls: [url, url] }, stored, account).login.uris)
       .toEqual(both.login.uris);
+  });
+
+  it("refuses a save composed on a version of the item that is gone", () => {
+    const opened = { ...encryptCipher({ type: "login", name: "n", password: "x", urls: ["https://a.example"] }, null, account), id: "item-1", revisionDate: "2026-08-20T04:00:00Z" };
+    // Someone else wrote the item while the form sat open.
+    const now = { ...opened, revisionDate: "2026-08-20T04:05:00Z" };
+
+    // It is not given the fields at all: what moved is the item, so every
+    // field the form is showing is suspect, not only the URL list.
+    expect(staleEdit(now, "2026-08-20T04:00:00Z")).toBe(true);
+    // Still the version the form was opened on: nothing to refuse.
+    expect(staleEdit(now, "2026-08-20T04:05:00Z")).toBe(false);
+    // A caller that makes no claim about what it saw is left alone, and a new
+    // item has no stored version to be behind.
+    expect(staleEdit(now, undefined)).toBe(false);
+    expect(staleEdit(null, "2026-08-20T04:00:00Z")).toBe(false);
+  });
+
+  it("hands the form the revision it was opened on", () => {
+    const cipher = { ...encryptCipher({ type: "login", name: "n", password: "x", urls: ["https://a.example"] }, null, account), id: "item-1", revisionDate: "2026-08-20T04:00:00Z" };
+    expect(decryptItem(cipher, account).revision).toBe("2026-08-20T04:00:00Z");
   });
 
   it("stores every URL with the checksum other clients verify", () => {

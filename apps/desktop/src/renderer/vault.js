@@ -81,7 +81,12 @@ const VAULT_TYPES = {
 };
 
 function errText(err) {
-  return err && err.message ? String(err.message).replace(/^Error: /, "") : String(err);
+  // A throw from the main process arrives wrapped: "Error invoking remote
+  // method 'vault:saveItem': Error: the sentence we wrote". The owner should
+  // read the sentence, not the plumbing that carried it.
+  return (err && err.message ? String(err.message) : String(err))
+    .replace(/^Error invoking remote method '[^']*':\s*/, "")
+    .replace(/^Error:\s*/, "");
 }
 
 /** Her toast: one line, bottom of the pane, gone on its own. */
@@ -328,7 +333,7 @@ function vitem(summary, reload) {
       save.addEventListener("click", async () => {
         save.disabled = true;
         try {
-          await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id });
+          await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id, revision: item.revision });
           vtoast("Saved");
           await reload();
           return;

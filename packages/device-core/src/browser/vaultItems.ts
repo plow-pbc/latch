@@ -88,6 +88,9 @@ export interface VaultItemSummary {
 
 export interface VaultItem {
   id: string;
+  /** What the vault says this item's last write was. Handed back on save so a
+   * form that has gone stale is refused instead of overwriting the newer one. */
+  revision: string;
   name: string;
   type: VaultItemType;
   notes: string;
@@ -101,6 +104,9 @@ export interface VaultItem {
 /** What the app sends to write an item. Omitted keys keep what is stored. */
 export interface VaultItemInput {
   itemId?: string;
+  /** The revision the form was opened on. Supplied, and no longer the vault's
+   * current one, means someone else wrote this item first. */
+  revision?: string;
   type?: VaultItemType;
   name?: string;
   notes?: string;
@@ -207,6 +213,7 @@ export function decryptItem(cipher: Cipher, account: VaultKey): VaultItem {
   }
   return {
     id: String(cipher.id ?? ""),
+    revision: String(cipher.revisionDate ?? ""),
     name: dec(cipher.name, key),
     type: TYPE_NAME[type],
     notes: dec(cipher.notes, key),
@@ -314,6 +321,19 @@ export function encryptCipher(
     cipher.identity = out;
   }
   return cipher;
+}
+
+/**
+ * Whether a save was composed against an item the vault has since rewritten.
+ *
+ * The form sends the revision it was opened on. If that is no longer the
+ * vault's, everything the owner is looking at may be out of date — not only
+ * the URLs — so the save has nothing safe to write. A form that sends no
+ * revision at all is not making a claim about what it saw and is left alone;
+ * so is a brand new item, which has no stored version to be behind.
+ */
+export function staleEdit(existing: Cipher | null, revision: string | undefined): boolean {
+  return !!existing && revision !== undefined && revision !== String(existing.revisionDate ?? "");
 }
 
 /**

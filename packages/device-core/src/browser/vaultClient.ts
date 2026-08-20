@@ -17,6 +17,7 @@ import { httpCa, send, signIn, VaultHttp } from "./vaultCrypto.js";
 import {
   Cipher,
   checkedUrls,
+  staleEdit,
   decryptField,
   decryptItem,
   decryptSummary,
@@ -152,6 +153,13 @@ export class VaultClient {
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
     if (existing && !TYPE_NAME[type]) {
       throw new Error(`this app cannot change item type ${type}; use the vault's own page for it`);
+    }
+    // A form sends the revision it was opened on. If the vault has written the
+    // item since, this save was composed against fields the owner can no
+    // longer see — every one of them, not only the URLs — so it is refused
+    // rather than allowed to overwrite whatever arrived in between.
+    if (staleEdit(existing, input.revision)) {
+      throw new Error("this item changed somewhere else while you had it open; reopen it and make the change again");
     }
     // Every URL the form showed is checked, because every one of them is a URL
     // the owner just looked at; a login with none can never be filled.

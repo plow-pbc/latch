@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
 import {
   checkedUrls,
+  staleEdit,
   decryptField,
   decryptItem,
   decryptSummary,
@@ -41,9 +42,12 @@ let nextId = 1;
 /** The URL list the form last sent, straight out of the renderer. */
 let sentUrls = null;
 
+/** The revision the form last sent with it. */
+let sentRevision = null;
+
 function seed(input) {
   const id = `item-${nextId++}`;
-  ciphers.set(id, { ...encryptCipher(input, null, account), id });
+  ciphers.set(id, { ...encryptCipher(input, null, account), id, revisionDate: "2026-08-20T04:00:00Z" });
 }
 
 // Two items that were already there, of two different types, so the list shows
@@ -79,7 +83,11 @@ async function setUp() {
   );
   ipcMain.handle("vault:saveItem", async (_e, input) => {
     sentUrls = input.urls ?? null;
+    sentRevision = input.revision ?? null;
     const existing = input.itemId ? ciphers.get(input.itemId) : null;
+    if (staleEdit(existing ?? null, input.revision)) {
+      throw new Error("this item changed somewhere else while you had it open; reopen it and make the change again");
+    }
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
     const given =
       type === 1 && !existing ? { ...input, urls: checkedUrls(input.urls ?? []) } : input;
@@ -199,6 +207,30 @@ const SCREENS = [
       await clickText(win, "GitHub");
       await settle(win);
       await removable(win, 0, "on a login with a single site");
+    },
+  },
+  {
+    name: "stale-form",
+    prepare: async (win) => {
+      await clickText(win, "Amex");
+      await settle(win);
+      // While the form sits open, the item is written somewhere else.
+      ciphers.set("item-2", { ...ciphers.get("item-2"), revisionDate: "2026-08-20T05:30:00Z" });
+      await type(win, "Cardholder name", "Someone Else");
+      await clickText(win, "Save");
+      await settle(win);
+    },
+    // The owner is told, and the save did not land. This edit never went near
+    // a URL: what went stale is the item, not its website list.
+    expect: ["changed somewhere else while you had it open"],
+    after: async () => {
+      if (sentRevision !== "2026-08-20T04:00:00Z") {
+        throw new Error(`form sent revision ${JSON.stringify(sentRevision)}, wanted the one it was opened on`);
+      }
+      const name = decryptField(ciphers.get("item-2"), account, "cardholderName");
+      if (name !== "Daniel Delattre") {
+        throw new Error(`a stale save overwrote the item: cardholder is now ${JSON.stringify(name)}`);
+      }
     },
   },
 ];
