@@ -429,11 +429,15 @@ describe("access the owner's log could not record is not granted", () => {
     await sessions.closeAll("test");
   });
 
-  it("retires a strayed jar even when recording the action throws", async () => {
+  it.each(["browser_navigated", "browser_scope_violation"])(
+    "retires a strayed jar even when %s cannot be recorded",
+    async (failOn) => {
     // The retirement runs ahead of every audit append for exactly this reason:
     // the response is already in the jar, so a log the device cannot write
-    // must not be what decides whether the jar stays reusable.
-    const sessions = failingAudit("browser_navigated", false);
+    // must not be what decides whether the jar stays reusable. The second row
+    // is the append that sits closest to it, and the one an earlier ordering
+    // put in front.
+    const sessions = failingAudit(failOn, false);
     const origins = ["pizza.example", "*.pizza.example"];
     const opened = jv(await sessions.open("int-1", AGENT, origins, true));
     const handle = opened.get("session").str!;
@@ -450,7 +454,8 @@ describe("access the owner's log could not record is not granted", () => {
     // The action could not be recorded; the jar was retired regardless.
     expect(fs.existsSync(marker)).toBe(true);
     await sessions.closeAll("test");
-  });
+    },
+  );
 
   it("does not open a session it could not record, and stays usable after", async () => {
     const sessions = failingAudit("browser_session_opened");
