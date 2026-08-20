@@ -117,7 +117,7 @@ class Page:
         pass
 
 
-def chain(root_url, hops, host):
+def chain(root_url, hops=0, host="https://redirect.example"):
     """What a response was redirected FROM: the url the agent asked for at the
     root, and `hops` further requests on top of it. The response carries its own
     request as well, so the walk sees hops + 2 requests in all."""
@@ -127,7 +127,7 @@ def chain(root_url, hops, host):
     return request
 
 
-def refused_navigation(server, session, url, redirected_from=None):
+def refused_navigation(session, url, redirected_from=None):
     """One refused navigation of the active page, with the frame left showing
     another document so only self-attribution can name it after `url`."""
     session.page.main_frame.url = "https://pizza.example/cart"
@@ -193,8 +193,8 @@ def main():
     session = server.Session(Page())
     session.goto_url = "https://pizza.example/signin"
     out["redirected_navigation"] = refused_navigation(
-        server, session, "https://signin.pizza.example/b2c",
-        chain("https://pizza.example/signin", 0, "https://signin.pizza.example"))
+        session, "https://signin.pizza.example/b2c",
+        chain("https://pizza.example/signin"))
 
     # The page navigating ITSELF is not the agent asking. An unapproved page
     # scripting location = "<approved host>/<text of its choosing>" would
@@ -224,17 +224,17 @@ def main():
     session = server.Session(Page())
     session.goto_url = "https://pizza.example/signin"
     out["long_chain"] = refused_navigation(
-        server, session, "https://signin.pizza.example/b2c/end",
+        session, "https://signin.pizza.example/b2c/end",
         chain("https://pizza.example/signin", 19, "https://signin.pizza.example"))
 
-    # A chain longer than that ceiling gives up rather than walking forever,
-    # and gives up on the safe side.
+    # One redirect past that ceiling -- 22 requests against the walk's 21 --
+    # gives up rather than walking forever, and gives up on the safe side. The
+    # pair brackets the bound exactly.
     session = server.Session(Page())
     session.goto_url = "https://pizza.example/start"
     out["over_the_hop_limit"] = refused_navigation(
-        server, session, "https://pizza.example/end",
-        chain("https://pizza.example/start", server.MAX_REDIRECT_HOPS + 1,
-              "https://pizza.example"))
+        session, "https://pizza.example/end",
+        chain("https://pizza.example/start", server.MAX_REDIRECT_HOPS, "https://pizza.example"))
 
     # use_page moves the active page, and the check follows it: a goto in the
     # popup the agent switched to is the agent's, one in the page it left is
