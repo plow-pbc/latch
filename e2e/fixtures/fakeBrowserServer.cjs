@@ -37,7 +37,8 @@
  *                     saw during the action (already query-stripped there —
  *                     one here keeps its query, to prove the device strips too),
  *                     plus one that settles late and rides the next result
- *   click "#malformed"  a failed_requests the device cannot read: not a list
+ *   click "#malformed"   a failed_requests the device cannot read: not a list
+ *   click "#malformed-entries"  a list whose entries are not objects
  */
 "use strict";
 const fs = require("node:fs");
@@ -123,7 +124,12 @@ function handle(cmd) {
     } else if (cmd.selector === "#offsite") {
       current().url = "https://offsite.example/lander";
       state.failed = [{ status: 403, method: "GET", url: "https://offsite.example/api/who" }];
-      state.failedNext = [{ status: 429, method: "GET", url: "https://offsite.example/api/late" }];
+      // One from the page it left, one from the approved page whose XHR was
+      // still in flight — the sign-in-redirect shape.
+      state.failedNext = [
+        { status: 429, method: "GET", url: "https://offsite.example/api/late" },
+        { status: 401, method: "POST", url: "https://pizza.example/api/signin" },
+      ];
     } else if (cmd.selector === "#blocked") {
       state.failed = [
         {
@@ -146,6 +152,8 @@ function handle(cmd) {
       // Not a list at all — a browser process that is not behaving is exactly
       // what the device's own re-strip is for.
       state.failed = "https://pizza.example/api/order?tx=StateProperties=SECRET";
+    } else if (cmd.selector === "#malformed-entries") {
+      state.failed = ["https://pizza.example/api/order?tx=StateProperties=SECRET"];
     }
     return { ok: true, frame: 0 };
   }

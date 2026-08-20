@@ -279,6 +279,21 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toBeUndefined();
   });
 
+  it("puts what is still in flight in the log when the session ends", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // The late refusal reaches the device on the owner's viewer poll, after
+    // the agent's last action — nothing follows to carry it out, and the last
+    // thing the page said is what the owner needs.
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" });
+    expect(await ctx.host.viewFrame()).not.toBeNull();
+    await ctx.sessions.close(s, "agent");
+    const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
+    expect(closed?.fields.failed_requests).toEqual([
+      { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
+    ]);
+  });
+
   it("survives the owner's viewer poll, which asks the browser on its own account", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
@@ -300,7 +315,11 @@ describe("requests the site refused", () => {
     await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" });
     const back = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));
     expect(back.get("status").str).toBe("completed");
-    expect(back.get("failed_requests").value).toBeNull();
+    // The approved page's own refusal, settling while the session was parked
+    // out there, is the one the agent needs — and the only one it gets.
+    expect(back.get("failed_requests").value).toEqual([
+      { status: 401, method: "POST", url: "https://pizza.example/api/signin" },
+    ]);
     // Nor on the action after it: the way back empties the ring, it does not
     // defer it.
     const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
@@ -313,10 +332,13 @@ describe("requests the site refused", () => {
   it("hands the agent nothing it cannot read — a malformed list is not passed through", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#malformed" }));
-    expect(r.get("status").str).toBe("completed");
-    expect(r.get("failed_requests").value).toBeNull();
-    expect(JSON.stringify(r.value)).not.toContain("SECRET");
+    for (const selector of ["#malformed", "#malformed-entries"]) {
+      const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector }));
+      expect(r.get("status").str).toBe("completed");
+      expect(r.get("failed_requests").value).toBeNull();
+      expect(JSON.stringify(r.value)).not.toContain("SECRET");
+    }
+    expect(JSON.stringify(ctx.events)).not.toContain("SECRET");
   });
 
   it("withholds them from the agent off-scope, and keeps them for the owner", async () => {

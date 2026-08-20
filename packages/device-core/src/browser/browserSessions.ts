@@ -61,10 +61,12 @@ export function stripQuery(url: string): string {
  * is what holds them.
  */
 function failedRequests(value: JSONValue[]): JSONValue[] {
-  return value.map((entry) => {
-    const e = jv(entry);
-    return { ...(e.obj ?? {}), url: stripQuery(e.get("url").str ?? "").slice(0, MAX_URL_LEN) };
-  });
+  return value
+    .filter((entry) => jv(entry).obj !== null)
+    .map((entry) => {
+      const e = jv(entry);
+      return { ...e.obj, url: stripQuery(e.get("url").str ?? "").slice(0, MAX_URL_LEN) };
+    });
 }
 
 function hostOf(url: string): string | null {
@@ -261,13 +263,21 @@ export class BrowserSessions {
     }
   }
 
+  /** Refusals the host is still holding — nothing follows to carry them out,
+   * and the last few before an agent gives up are the ones worth having. */
+  private leftoverRefusals(): { [k: string]: JSONValue } {
+    const left = failedRequests(this.host.takeFailedRequests());
+    return left.length ? { failed_requests: left } : {};
+  }
+
   async close(handle: string, reason: string): Promise<JSONValue> {
     const s = this.session;
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    const left = this.leftoverRefusals();
     await this.stopBrowser();
-    this.audit("browser_session_closed", { session: handle, reason });
+    this.audit("browser_session_closed", { session: handle, reason, ...left });
     return { status: "completed" };
   }
 
@@ -281,7 +291,11 @@ export class BrowserSessions {
     if (!s) return;
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
+    this.audit("browser_session_closed", {
+      session: s.handle,
+      reason: "crashed",
+      ...this.leftoverRefusals(),
+    });
   }
 
   /** Close whatever session an agent holds (revocation/disconnect path). */
@@ -400,10 +414,6 @@ export class BrowserSessions {
     s: Session,
     action: { [k: string]: JSONValue },
   ): Promise<JSONValue> {
-    // Where we were before this action decides whether its refusals are the
-    // agent's to see: on a page outside the approved origins nothing is, and
-    // the way back must not carry that page's traffic home with it.
-    const wasInScope = this.inScope(s, s.lastUrl);
     const result = await this.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
@@ -417,10 +427,8 @@ export class BrowserSessions {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
-    // Taken on EVERY action, whatever the scope: entries left in the host are
-    // entries a later in-scope action would hand over. The owner's log gets
-    // them either way — an off-scope page being refused is exactly what they
-    // are watching for — and only the agent is told nothing.
+    // Taken on EVERY action, and all of it audited: an off-scope page being
+    // refused is exactly what the owner is watching for.
     const failed = failedRequests(this.host.takeFailedRequests());
     this.audit("browser_command", {
       session: s.handle,
@@ -449,7 +457,15 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
-    if (wasInScope && failed.length) out.failed_requests = failed;
+    // The agent hears only about the origins it was approved for — judged per
+    // entry, not by where this action happened to land: a refusal from the
+    // approved page still matters when a sign-in redirect has parked the
+    // session somewhere else, and that is the case worth seeing.
+    const visible = failed.filter((entry) => {
+      const host = hostOf(jv(entry).get("url").str ?? "");
+      return host !== null && originMatches(host, s.origins);
+    });
+    if (visible.length) out.failed_requests = visible;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
     if (!this.inScope(s, url)) {
@@ -471,8 +487,6 @@ export class BrowserSessions {
       delete out.forms;
       delete out.tables;
       delete out.title;
-      // What an unapproved origin's requests did is that page's business too.
-      delete out.failed_requests;
     }
     return out;
   }
