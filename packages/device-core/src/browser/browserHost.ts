@@ -278,6 +278,15 @@ export class BrowserHost {
           }
           return;
         }
+        // Before anything else this line might be: an action that FAILED, and
+        // the answer to `quit` — which is sent without a pending entry — carry
+        // refusals too, and those are the ones worth having. Taken here rather
+        // than passed on, so what reaches the agent is built by the session
+        // layer out of what it takes, never inherited from a result.
+        const failed = m.get("failed_requests").value;
+        if (Array.isArray(failed)) {
+          this.failedRequests = [...failed, ...this.failedRequests].slice(0, MAX_FAILED_REQUESTS);
+        }
         const id = m.get("id").int;
         if (id === null) return;
         const p = this.pending.get(id);
@@ -288,15 +297,7 @@ export class BrowserHost {
         if (error !== null) {
           p.reject(new Error(error));
         } else {
-          const result = (m.get("result").obj as { [k: string]: JSONValue }) ?? {};
-          const failed = result.failed_requests;
-          // Held here, not passed on: what reaches the agent is built by the
-          // session layer out of what it takes, never inherited from a result.
-          delete result.failed_requests;
-          if (Array.isArray(failed)) {
-            this.failedRequests = [...failed, ...this.failedRequests].slice(0, MAX_FAILED_REQUESTS);
-          }
-          p.resolve(result);
+          p.resolve((m.get("result").obj as { [k: string]: JSONValue }) ?? {});
         }
       });
 

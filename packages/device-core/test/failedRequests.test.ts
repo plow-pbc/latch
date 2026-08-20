@@ -37,10 +37,9 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     self_navigation: Envelope;
     after_use_page: Envelope;
     page_left_behind: Envelope;
-    stale_pointer: Envelope;
     over_the_hop_limit: Envelope;
     long_chain: Envelope;
-    after_back: Envelope;
+    after_the_goto_returned: Envelope;
     navigation_asked_for: string;
     unattributable: Envelope;
     unattributable_navigation: Envelope;
@@ -103,8 +102,10 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     });
   });
 
-  it("lets no navigation ride on the pointer a goto left, once back has run", () => {
-    expect(probed.after_back.failed_requests?.[0]).toMatchObject({
+  it("leaves nothing behind for a page to navigate into once the goto returned", () => {
+    // The pointer lives only while the navigation is in flight, so there is no
+    // stale target for back, use_page, or a scripted location to claim.
+    expect(probed.after_the_goto_returned.failed_requests?.[0]).toMatchObject({
       url: "https://pizza.example/pay",
       frame_url: "https://pizza.example/cart",
     });
@@ -114,13 +115,6 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.over_the_hop_limit.failed_requests?.[0]).toMatchObject({
       url: "https://pizza.example/end",
       frame_url: "https://pizza.example/cart",
-    });
-  });
-
-  it("does not let the page switched to inherit what the last one was sent to", () => {
-    expect(probed.stale_pointer.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/pay",
-      frame_url: "https://offsite.example/lander",
     });
   });
 

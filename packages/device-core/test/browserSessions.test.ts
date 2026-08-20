@@ -283,11 +283,10 @@ describe("requests the site refused", () => {
   it("puts what is still in flight in the log when the session ends", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    // The late refusal reaches the device on the owner's viewer poll, after
-    // the agent's last action — nothing follows to carry it out, and the last
-    // thing the page said is what the owner needs.
+    // The late refusal has no action left to ride out on — the browser answers
+    // `quit` with it, which is a reply nobody is waiting for. The last thing the
+    // page said is exactly what the owner needs.
     await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" });
-    expect(await ctx.host.viewFrame()).not.toBeNull();
     await ctx.sessions.close(s, "agent");
     const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
     expect(closed?.fields.failed_requests).toEqual([
@@ -312,6 +311,24 @@ describe("requests the site refused", () => {
       {
         status: 401, method: "GET",
         url: "https://pizza.example/api/whoami", frame_url: "https://pizza.example/",
+      },
+    ]);
+  });
+
+  it("keeps what an action saw even when that action failed", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // Scripted: "#refuses" is the motivating shape — the click fails BECAUSE
+    // the site refused its request, so the answer is an error, and a refusal
+    // that only rode success replies would be the one nobody ever sees.
+    const failed = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#refuses" }));
+    expect(failed.get("status").str).toBe("error");
+    // It reaches the agent on the next action, and the owner's log either way.
+    const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
+    expect(shot.get("failed_requests").value).toEqual([
+      {
+        status: 403, method: "POST",
+        url: "https://pizza.example/api/submit", frame_url: "https://pizza.example/",
       },
     ]);
   });

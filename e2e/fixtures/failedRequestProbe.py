@@ -92,6 +92,7 @@ class Page:
         self.url = "https://pizza.example/checkout"
         self.main_frame = Frame(self.url)
         self.went_to = None
+        self.during_goto = None
         self.context = Context()
         self.context.pages.append(self)
 
@@ -104,8 +105,12 @@ class Page:
     def goto(self, url, **_kw):
         """One scenario drives the REAL command handler through here, so the
         line that records what the agent asked for is exercised rather than
-        assigned by hand."""
+        assigned by hand. `during_goto` is the response the page gets while the
+        navigation is in flight -- which is when a real one arrives, headers
+        first, before `goto` returns."""
         self.went_to = url
+        if self.during_goto is not None:
+            self.during_goto()
 
     def title(self):
         return "checkout"
@@ -133,7 +138,7 @@ def refused_navigation(session, url, redirected_from=None):
     session.page.main_frame.url = "https://pizza.example/cart"
     feed(session, [Response(429, url, navigation=True, frame=session.page.main_frame,
                             redirected_from=redirected_from)])
-    return session.envelope({"ok": True})
+    return session.reply_with_failures({})
 
 
 def feed(session, responses):
@@ -155,22 +160,22 @@ def main():
     # A refused XHR is kept, with the query gone and the diagnostic headers on.
     feed(session, [Response(429, "https://signin.example/tenant/SelfAsserted?tx=StateProperties=SECRET&p=B2C_1",
                             "POST", {"content-length": "1180", "retry-after": "30", "server": "cloudfront"})])
-    out["refused"] = session.envelope({"ok": True})
+    out["refused"] = session.reply_with_failures({})
 
     # Drained exactly once: the next action does not re-report it.
-    out["drained"] = session.envelope({"ok": True})
+    out["drained"] = session.reply_with_failures({})
 
     # A page that works keeps nothing, redirects included — a login flow is
     # mostly 3xx and they would push the one refusal out of the ring.
     session = server.Session(Page())
     feed(session, [Response(200, "https://pizza.example/a"), Response(204, "https://pizza.example/b"),
                    Response(302, "https://pizza.example/c"), Response(304, "https://pizza.example/d")])
-    out["quiet"] = session.envelope({"ok": True})
+    out["quiet"] = session.reply_with_failures({})
 
     # Bounded, most recent first: a chatty page cannot blow the exchange budget.
     session = server.Session(Page())
     feed(session, [Response(403, "https://pizza.example/x%d" % i) for i in range(9)])
-    out["bounded"] = session.envelope({"ok": True})
+    out["bounded"] = session.reply_with_failures({})
 
     # The goto the agent asked for IS its own document: when the headers arrive
     # the frame still names the page being left, and attributing a refused goto
@@ -178,14 +183,16 @@ def main():
     # The frame's url stays stale here on purpose — only self-attribution can
     # produce the answer this asserts.
     # Driven through the real command handler, query and all: the goto records
-    # what was asked for, stripped, and the refusal that answers it is the
+    # what was asked for, stripped, and the refusal that answers it -- arriving
+    # while the navigation is still in flight, as a real one does -- is the
     # agent's own.
     session = server.Session(Page())
-    session.handle({"action": "goto", "url": "https://pizza.example/checkout?tx=SECRET"}, "/tmp")
     session.page.main_frame.url = "https://pizza.example/cart"
-    feed(session, [Response(429, "https://pizza.example/checkout", navigation=True,
-                            frame=session.page.main_frame)])
-    out["navigation"] = session.envelope({"ok": True})
+    session.page.during_goto = lambda: feed(session, [
+        Response(429, "https://pizza.example/checkout", navigation=True,
+                 frame=session.page.main_frame)])
+    session.handle({"action": "goto", "url": "https://pizza.example/checkout?tx=SECRET"}, "/tmp")
+    out["navigation"] = session.reply_with_failures({})
     out["navigation_asked_for"] = session.page.went_to
 
     # Through a redirect: the site answered the requested url with a 302 and
@@ -204,18 +211,18 @@ def main():
     session.page.main_frame.url = "https://offsite.example/lander"
     feed(session, [Response(404, "https://pizza.example/anything-it-likes", navigation=True,
                             frame=session.page.main_frame)])
-    out["self_navigation"] = session.envelope({"ok": True})
+    out["self_navigation"] = session.reply_with_failures({})
 
-    # `back` lands somewhere it cannot know in advance, so it claims nothing:
-    # the pointer the last goto left must not authorise the navigation it
-    # happens to match.
+    # Nothing the agent asked for outlives the asking: once `goto` has returned,
+    # the very url it was sent to can no longer be claimed by a navigation the
+    # page arranges for itself, however it gets there -- back, use_page, or
+    # location = "...".
     session = server.Session(Page())
     session.handle({"action": "goto", "url": "https://pizza.example/pay"}, "/tmp")
-    session.handle({"action": "back"}, "/tmp")
     session.page.main_frame.url = "https://pizza.example/cart"
     feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
                             frame=session.page.main_frame)])
-    out["after_back"] = session.envelope({"ok": True})
+    out["after_the_goto_returned"] = session.reply_with_failures({})
 
     # The browser's own ceiling: a chain it followed all the way -- 20 redirects,
     # so 21 requests including the one the agent asked for -- is one this can
@@ -248,22 +255,10 @@ def main():
     session.goto_url = "https://pizza.example/pay"
     feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
                             frame=popup.main_frame)])
-    out["after_use_page"] = session.envelope({"ok": True})
+    out["after_use_page"] = session.reply_with_failures({})
     feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
                             frame=left.main_frame)])
-    out["page_left_behind"] = session.envelope({"ok": True})
-
-    # Switching pages clears what the previous page was sent to, so the page
-    # switched to cannot name itself by navigating there.
-    session = server.Session(Page())
-    popup = Page()
-    popup.main_frame.url = "https://offsite.example/lander"
-    session.page.context.pages.append(popup)
-    session.goto_url = "https://pizza.example/pay"
-    session.handle({"action": "use_page", "index": 1}, "/tmp")
-    feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
-                            frame=popup.main_frame)])
-    out["stale_pointer"] = session.envelope({"ok": True})
+    out["page_left_behind"] = session.reply_with_failures({})
 
     # A navigation in a frame the agent is NOT driving -- a popup opened in the
     # background and then pointed somewhere -- is named by the document it is
@@ -271,7 +266,7 @@ def main():
     session = server.Session(Page())
     feed(session, [Response(404, "https://pizza.example/anything-it-likes", navigation=True,
                             page="https://offsite.example/lander")])
-    out["background_navigation"] = session.envelope({"ok": True})
+    out["background_navigation"] = session.reply_with_failures({})
 
     # A SUBframe navigation belongs to whoever embedded it. Crediting it to
     # itself would let an unapproved page point an iframe at an approved host
@@ -279,7 +274,7 @@ def main():
     session = server.Session(Page())
     feed(session, [Response(403, "https://pizza.example/anything-it-likes", navigation=True,
                             embedder="https://offsite.example/lander")])
-    out["subframe_navigation"] = session.envelope({"ok": True})
+    out["subframe_navigation"] = session.reply_with_failures({})
 
     # A frame that will not answer -- a service worker's request, or a popup's
     # opening navigation before its frame exists. The entry is still kept, with
@@ -295,14 +290,14 @@ def main():
 
     session = server.Session(Page())
     feed(session, [NoFrame(403, "https://pizza.example/api/sw")])
-    out["unattributable"] = session.envelope({"ok": True})
+    out["unattributable"] = session.reply_with_failures({})
 
     # A popup's opening navigation is the same answer and deliberately so:
     # window.open from a page outside the approved origins is the iframe smuggle
     # by another door, so an unresolvable frame names nothing even here.
     session = server.Session(Page())
     feed(session, [NoFrame(403, "https://pizza.example/popup", navigation=True)])
-    out["unattributable_navigation"] = session.envelope({"ok": True})
+    out["unattributable_navigation"] = session.reply_with_failures({})
 
     # A response that will not answer its own questions takes nothing down.
     class Hostile(Response):
@@ -316,7 +311,7 @@ def main():
 
     session = server.Session(Page())
     feed(session, [Hostile(429, "https://pizza.example/boom"), Response(401, "https://pizza.example/ok")])
-    out["hostile"] = session.envelope({"ok": True})
+    out["hostile"] = session.reply_with_failures({})
 
     real_stdout.write(json.dumps(out) + "\n")
     real_stdout.flush()

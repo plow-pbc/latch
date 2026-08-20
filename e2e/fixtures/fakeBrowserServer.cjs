@@ -32,6 +32,7 @@
  *   click "#offsite"  navigates the page to https://offsite.example/lander, one
  *                     of whose requests was refused — and another that settles
  *                     while parked there
+ *   click "#refuses"  throws, and the refusals it saw ride the error reply
  *   click "#blocked"  the page's own requests come back refused: seven 4xx
  *                     responses, the way the real server reports the ones it
  *                     saw during the action (already query-stripped there —
@@ -62,15 +63,16 @@ function current() {
 }
 
 function envelope(result) {
+  return { ...result, url: current().url, page_count: state.pages.length };
+}
+
+/** Every reply carries what the page's requests did, exactly as server.py's
+ * reply_with_failures does — a result, an error, or the answer to quit. */
+function withFailures(reply) {
   const failed = state.failed;
   state.failed = state.failedNext;
   state.failedNext = [];
-  return {
-    ...result,
-    url: current().url,
-    page_count: state.pages.length,
-    ...(failed.length === 0 ? {} : { failed_requests: failed }),
-  };
+  return failed.length === 0 ? reply : { ...reply, failed_requests: failed };
 }
 
 function respond(obj) {
@@ -171,6 +173,14 @@ function handle(cmd) {
           frame_url: "https://pizza.example/",
         },
       ];
+    } else if (cmd.selector === "#refuses") {
+      // The action that failed BECAUSE its request was refused: the reply is an
+      // error, and the refusal has to ride it.
+      state.failed = [{
+        status: 403, method: "POST",
+        url: "https://pizza.example/api/submit", frame_url: "https://pizza.example/",
+      }];
+      throw new Error("locator.click: Timeout 3000ms exceeded.");
     } else if (cmd.selector === "#refused-goto") {
       // A navigation is its own document, so url and frame_url are the same.
       state.failed = [{
@@ -272,7 +282,7 @@ function main() {
       return;
     }
     if (cmd.action === "quit") {
-      respond({ id: cmd.id, result: { ok: true } });
+      respond(withFailures({ id: cmd.id, result: { ok: true } }));
       process.exit(0);
     }
     if (process.env.FAKE_CMD_LOG) {
@@ -288,11 +298,13 @@ function main() {
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
     if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
+    let reply;
     try {
-      respond({ id: cmd.id, result: envelope(handle(cmd)) });
+      reply = { id: cmd.id, result: envelope(handle(cmd)) };
     } catch (e) {
-      respond({ id: cmd.id, error: String(e.message || e).slice(0, 500) });
+      reply = { id: cmd.id, error: String(e.message || e).slice(0, 500) };
     }
+    respond(withFailures(reply));
   });
   rl.on("close", () => process.exit(0));
 }

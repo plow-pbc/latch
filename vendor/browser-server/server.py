@@ -253,9 +253,9 @@ class Session:
         # Attached here rather than by the caller so a Session cannot exist
         # without it -- an action that silently reports nothing is the bug.
         self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
-        # The url the agent last asked this page to go to, query stripped. Only
-        # a navigation that answers THAT may be treated as the agent's own; see
-        # _asking_document.
+        # The url this page is being sent to, query stripped, for as long as the
+        # `goto` is in flight -- empty at every other moment. Only a navigation
+        # answering it may be treated as the agent's own; see _asking_document.
         self.goto_url = ""
         page.context.on("response", self.note_response)
 
@@ -433,16 +433,24 @@ class Session:
         except Exception:
             out["url"] = ""
             out["page_count"] = 0
-        # Most recent first, and reported once: every response carries what
-        # arrived since the last one and the ring is emptied. Which of those
-        # responses an AGENT is waiting on is not knowable here -- the device
-        # asks for plenty on its own account -- so the browser reports and
-        # forgets, and BrowserHost holds them until an agent action carries
-        # them out.
-        if self.failed:
-            out["failed_requests"] = list(reversed(self.failed))
-            self.failed.clear()
         return out
+
+    def reply_with_failures(self, reply):
+        """Add what the page's requests did to a reply, and forget it.
+
+        Every reply goes through here -- a result, an error, the answer to
+        `quit` -- because a refusal that arrives during the action that FAILED
+        is the one most worth having, and a seam that only the success path
+        passes through is a seam that loses it. Most recent first, reported
+        once. Which reply an AGENT is waiting on is not knowable here (the
+        device asks for plenty on its own account), so the browser reports and
+        forgets, and BrowserHost holds them until an agent action carries them
+        out.
+        """
+        if self.failed:
+            reply["failed_requests"] = list(reversed(self.failed))
+            self.failed.clear()
+        return reply
 
     def frames_for(self, cmd):
         """Explicit frame index if given, else all frames (login forms hide in iframes)."""
@@ -470,13 +478,20 @@ class Session:
 
         if action == "goto":
             # What the agent asked for, so the refusal of THIS navigation can be
-            # told apart from one the page arranged for itself.
+            # told apart from one the page arranged for itself -- and only while
+            # it is in flight. The response event fires before `goto` returns,
+            # so clearing on the way out costs nothing and leaves nothing
+            # afterwards for a page to navigate into and claim.
             self.goto_url = _strip_query(cmd["url"])
-            # 12s + 1s settle keeps the whole action under the device's 15s host
-            # cap and the relay's ~20s exchange ceiling; a genuinely slower page
-            # fails cleanly (the agent retries) rather than parking a torn 504.
-            self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
-            self.page.wait_for_timeout(1000)
+            try:
+                # 12s + 1s settle keeps the whole action under the device's 15s
+                # host cap and the relay's ~20s exchange ceiling; a genuinely
+                # slower page fails cleanly (the agent retries) rather than
+                # parking a torn 504.
+                self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
+                self.page.wait_for_timeout(1000)
+            finally:
+                self.goto_url = ""
             return {"title": self.page.title()}
 
         if action == "pages":
@@ -493,10 +508,6 @@ class Session:
             if not (0 <= i < len(pages)):
                 raise RuntimeError("no page %d (have %d)" % (i, len(pages)))
             self.page = pages[i]
-            # The pointer belonged to the page being left. Carried over, it
-            # would let the page switched to name itself by navigating to the
-            # url the previous one was sent to.
-            self.goto_url = ""
             self.page.bring_to_front()
             return {"ok": True, "title": self.page.title()}
 
@@ -504,11 +515,6 @@ class Session:
             # Neither history.back() nor page.go_back() actually moves a tab
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
-            # Where `back` lands is not known until it lands, so no navigation
-            # can be claimed as the agent's during it. A refusal here is named
-            # by the document being left -- always, rather than by whether the
-            # last goto happened to point at the same place.
-            self.goto_url = ""
             self.page.go_back(timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title(), "moved": self.page.url != was}
@@ -738,14 +744,15 @@ def main():
 
             rid = cmd.get("id")
             if cmd.get("action") == "quit":
-                _respond({"id": rid, "result": {"ok": True}})
+                _respond(session.reply_with_failures({"id": rid, "result": {"ok": True}}))
                 break
 
             try:
                 result = session.handle(cmd, args.screenshots_dir)
-                _respond({"id": rid, "result": session.envelope(result)})
+                reply = {"id": rid, "result": session.envelope(result)}
             except Exception as exc:  # noqa: BLE001 — every failure must answer
-                _respond({"id": rid, "error": str(exc)[:MAX_ERROR_LEN]})
+                reply = {"id": rid, "error": str(exc)[:MAX_ERROR_LEN]}
+            _respond(session.reply_with_failures(reply))
         # EOF on stdin: supervisor died — fall through and let the context close.
 
 

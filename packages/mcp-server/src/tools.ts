@@ -558,26 +558,24 @@ export const TOOLS: ToolSpec[] = [
       if (r.get("status").str === "error") throw new ToolError(r.get("error").str ?? "browser error");
 
       // Screenshot becomes an MCP image block so the agent can SEE the page.
+      // Built from the SAME cleaned result as every other action — only the
+      // binary transport fields are lifted out — so a diagnostic added to a
+      // result reaches a screenshot without a second copy of this code.
+      const out = { ...(r.obj ?? {}) };
+      delete out.status;
       const imageB64 = r.get("data_b64").str;
       if (action === "screenshot" && imageB64 !== null) {
-        // This branch replaces the result wholesale, so anything the agent
-        // needs has to be named here — a refusal dropped on the screenshot is
-        // dropped on the action an agent takes after every navigation.
-        const failed = r.get("failed_requests").arr;
-        const meta = {
-          url: r.get("url").str ?? "",
-          page_count: r.get("page_count").int ?? 1,
-          ...(failed === null ? {} : { failed_requests: failed }),
-        };
+        const mimeType = r.get("mime").str ?? "image/jpeg";
+        delete out.data_b64;
+        delete out.mime;
+        delete out.path;
         return {
           __mcpContent: [
-            { type: "image", data: imageB64, mimeType: r.get("mime").str ?? "image/jpeg" },
-            { type: "text", text: canonicalJSON(meta as JSONValue) },
+            { type: "image", data: imageB64, mimeType },
+            { type: "text", text: canonicalJSON(out as JSONValue) },
           ],
         };
       }
-      const out = { ...(r.obj ?? {}) };
-      delete out.status;
       return out as JSONValue;
     },
   },
