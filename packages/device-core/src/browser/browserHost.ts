@@ -376,6 +376,7 @@ export class BrowserHost {
       });
 
       child.on("error", (err) => {
+        release();
         this.child = null;
         if (!ready) {
           ready = true;

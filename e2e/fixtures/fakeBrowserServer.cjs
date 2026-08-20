@@ -274,8 +274,10 @@ function main() {
   }
   const start = () => {
     if (process.env.EXIT_BEFORE_READY === "1") {
-      process.stderr.write("camoufox: could not launch\n");
-      process.exit(9);
+      // Exit from the write callback: a pipe write is async on macOS and
+      // exiting on top of one truncates it.
+      process.stderr.write("camoufox: could not launch\n", () => process.exit(9));
+      return;
     }
     if (process.env.NO_READY !== "1") {
       respond({ status: "ready", pid: process.pid, browser_version: "fake-152.0.4" });

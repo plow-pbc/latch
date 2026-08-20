@@ -64,8 +64,10 @@ describe("BrowserHost", () => {
     // before the ready line. That has to answer as its own failure, not by
     // parking the caller until the start timeout.
     const { host } = makeHost({ EXIT_BEFORE_READY: "1" });
-    await expect(host.ensureReady()).rejects.toThrow(/exited/);
-    await expect(host.ensureReady()).rejects.toThrow(/could not launch/);
+    // The exit itself is what this pins. Whether the browser's own stderr made
+    // it into the message depends on which poll event lands first — asserting
+    // that would be asserting a race, and the caller's answer does not need it.
+    await expect(host.ensureReady()).rejects.toThrow(/exited \(code=9/);
   });
 
   it("rejects pending on crash and lazily restarts", async () => {
