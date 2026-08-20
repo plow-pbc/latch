@@ -21,7 +21,7 @@ import { VaultServer } from "./browser/vaultServer.js";
 import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
-import { Executor } from "./executor.js";
+import { execRefusal as sandboxExecRefusal, Executor } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
@@ -277,6 +277,31 @@ export class DeviceAgent {
    * human" from "approved and now running" — the two are different answers to
    * an agent polling a deferred handle.
    */
+  /**
+   * Why this Mac will not run this argv, or `null` when it will.
+   *
+   * Answered before an intent exists, so nothing is minted, decided or shown to
+   * the owner for a command the sandbox was always going to refuse at `execvp`.
+   * That leaves the owner with nothing to read about an agent that keeps asking
+   * for one, so the refusal is recorded here — the device owns its own audit
+   * trail, and a refusal is as much a thing an agent did as a run is.
+   */
+  async execRefusal(
+    argv: string[],
+    who: { agentId: string; agentName?: string; cwd?: string },
+  ): Promise<string | null> {
+    const reason = await sandboxExecRefusal(argv, { cwd: who.cwd });
+    if (reason !== null) {
+      this.audit.record("exec_refused", {
+        agent: who.agentId,
+        agent_name: who.agentName ?? who.agentId,
+        argv,
+        reason,
+      });
+    }
+    return reason;
+  }
+
   async handleIntent(
     intent: Intent,
     payload: JSONValue = null,

@@ -42,35 +42,20 @@ function homeWith(name: string, mode: number): { home: string; path: string } {
 }
 
 describe("a command the sandbox cannot execute is refused before approval", () => {
-  it("refuses a setuid binary, naming the bit and the sandbox", async () => {
-    const dir = tempDir();
-    const suid = file(dir, "suid-tool", 0o4755);
-    // The bit is what the test is about; if the filesystem dropped it there is
-    // nothing here to assert.
-    expect(fs.statSync(suid).mode & 0o4000).toBe(0o4000);
+  // /bin/ps itself is covered where it means something: the live sandbox
+  // reproduction and the MCP acceptance test. Here the bit is the subject.
+  it.each([
+    ["setuid", 0o4755, 0o4000],
+    ["setgid", 0o2755, 0o2000],
+  ])("refuses a %s binary, naming the bit and the sandbox", async (label, mode, bit) => {
+    const tool = file(tempDir(), `${label}-tool`, mode);
+    // If the filesystem dropped the bit there is nothing here to assert.
+    expect(fs.statSync(tool).mode & bit).toBe(bit);
 
-    const refusal = await execRefusal([suid]);
-    expect(refusal).toMatch(/setuid/);
+    const refusal = await execRefusal([tool]);
+    expect(refusal).toMatch(new RegExp(label));
     expect(refusal).toMatch(/sandbox/);
-    expect(refusal).toContain(suid);
-  });
-
-  it("refuses a setgid binary too", async () => {
-    const dir = tempDir();
-    const sgid = file(dir, "sgid-tool", 0o2755);
-    expect(fs.statSync(sgid).mode & 0o2000).toBe(0o2000);
-
-    expect(await execRefusal([sgid])).toMatch(/setgid/);
-  });
-
-  it("refuses /bin/ps — the command the owner approved and the kernel killed", async () => {
-    // The incident's exact argv. macOS ships ps setuid root; assert that first
-    // so a change in the OS reads as a changed premise, not a broken test.
-    expect(fs.statSync("/bin/ps").mode & 0o4000).toBe(0o4000);
-
-    const refusal = await execRefusal(["/bin/ps", "-ax", "-o", "pid,lstart,command"]);
-    expect(refusal).toMatch(/setuid/);
-    expect(refusal).toMatch(/Nothing was approved/);
+    expect(refusal).toContain(tool);
   });
 
   it("refuses a name that is on no PATH directory", async () => {
@@ -84,6 +69,16 @@ describe("a command the sandbox cannot execute is refused before approval", () =
   it("refuses a file that is not executable", async () => {
     const notExec = file(tempDir(), "data.txt", 0o644);
     expect(await execRefusal([notExec])).toMatch(/not an executable file/);
+  });
+
+  it("refuses a file whose execute bit belongs to somebody else", async () => {
+    // Executable by group and other, not by us — the bits say yes and the
+    // kernel says EACCES, so reading the bits would approve a command that
+    // cannot run. We own it, so the owner bits are the ones that apply.
+    const theirs = file(tempDir(), "theirs", 0o011);
+    expect(fs.statSync(theirs).mode & 0o111).not.toBe(0);
+
+    expect(await execRefusal([theirs])).toMatch(/not an executable file/);
   });
 
   it("refuses an empty argv", async () => {

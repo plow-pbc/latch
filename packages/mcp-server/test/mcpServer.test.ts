@@ -561,8 +561,13 @@ describe("review findings", () => {
       expect(payload.error).toMatch(/this Mac will not run this command/);
       expect(payload.error).toMatch(/setuid/);
       expect(payload.error).not.toMatch(/execvp/);
-      // Nothing was asked of the owner and nothing ran.
-      expect(events(device)).toEqual([]);
+      // Nothing was asked of the owner and nothing ran — but the owner can see
+      // that an agent asked, which is the only record of it there will be.
+      expect(events(device)).toEqual(["exec_refused"]);
+      const [entry] = device.audit.entries().map((e) => jv(e).obj ?? {});
+      expect(entry.agent).toBe("agent-1");
+      expect(entry.argv).toEqual(["/bin/ps", "-ax", "-o", "pid,lstart,command"]);
+      expect(entry.reason).toMatch(/setuid/);
     });
 
     it("an ordinary command still reaches the owner", async () => {
@@ -575,6 +580,7 @@ describe("review findings", () => {
       );
       expect(isError).toBe(false);
       expect(events(device)).toContain("intent_decision");
+      expect(events(device)).not.toContain("exec_refused");
     });
   });
 

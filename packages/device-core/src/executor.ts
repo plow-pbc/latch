@@ -124,7 +124,6 @@ export function sandboxPath(home: string): string[] {
 
 const S_ISUID = 0o4000;
 const S_ISGID = 0o2000;
-const ANY_EXEC = 0o111;
 
 /**
  * Why the sandbox cannot run this argv, or `null` when it can.
@@ -209,7 +208,16 @@ async function inspect(candidate: string): Promise<Located> {
     return { kind: "missing" };
   }
   if (!st.isFile()) return { kind: "missing" };
-  if (!(st.mode & ANY_EXEC)) return { kind: "not-executable", path: candidate };
+  // Asked of the kernel, not read off the mode bits: a file carrying an execute
+  // bit for somebody else is not one this process can run, and approving it
+  // would leave exactly the mismatch this check exists to remove — an approval
+  // followed by EACCES. The sandboxed child runs as this same uid, so the
+  // answer here is the answer there.
+  try {
+    await fsp.access(candidate, fs.constants.X_OK);
+  } catch {
+    return { kind: "not-executable", path: candidate };
+  }
   return { kind: "found", path: candidate, stat: st };
 }
 
