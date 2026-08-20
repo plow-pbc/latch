@@ -132,7 +132,8 @@ function handle(cmd) {
     if (cmd.selector === "#blocked" || cmd.selector === "#refuses") {
       // Prepended, not assigned: the real server appends into one ring and
       // drains it reversed, so a late refusal still pending here keeps its
-      // place — after the newer pair, being older.
+      // place — after the newer pair, being older. Bounding is not modelled;
+      // BrowserHost caps what it holds regardless.
       failed = [
         {
           status: 429, method: "POST",

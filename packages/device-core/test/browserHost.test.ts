@@ -78,6 +78,13 @@ describe("BrowserHost", () => {
     expect(held.map((r) => r.status)).toEqual([429, 403, 401, 429, 403]);
     // Taken means taken: the next asker gets nothing.
     expect(host.takeFailedRequests()).toEqual([]);
+
+    // And a late refusal still pending when the next one is scripted keeps its
+    // place behind it rather than being lost — one ring, oldest last.
+    await host.sendAction({ action: "click", selector: "#blocked-later" });
+    await host.sendAction({ action: "click", selector: "#blocked" });
+    expect((host.takeFailedRequests() as { status: number }[]).map((r) => r.status))
+      .toEqual([429, 403, 401]);
   });
 
   it("rejects pending on crash and lazily restarts", async () => {
