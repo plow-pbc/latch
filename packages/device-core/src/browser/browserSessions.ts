@@ -319,13 +319,19 @@ export class BrowserSessions {
     // follows to carry it out, and the owner's log is promised every entry the
     // device received. (What the browser had not sent yet dies with it — a
     // browser being shut down cannot report what it never got to say.)
-    const left = failedRequests(this.host.takeFailedRequests());
-    await this.stopBrowser();
-    this.audit("browser_session_closed", {
-      session: handle,
-      reason,
-      ...(left.length ? { failed_requests: left } : {}),
-    });
+    try {
+      await this.stopBrowser();
+    } finally {
+      // Written whichever way the shutdown went: a stopBrowser that throws is
+      // exactly when the last thing the page said is worth having, and taking
+      // the entries before it would have dropped them on that path.
+      const left = failedRequests(this.host.takeFailedRequests());
+      this.audit("browser_session_closed", {
+        session: handle,
+        reason,
+        ...(left.length ? { failed_requests: left } : {}),
+      });
+    }
     return { status: "completed" };
   }
 

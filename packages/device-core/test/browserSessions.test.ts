@@ -119,11 +119,22 @@ describe("session lifecycle", () => {
 
   it("a crash closes the session's books instead of leaving it open forever", async () => {
     const s = await openSession(["pizza.example"]);
+    // A refusal the device is holding when the browser dies belongs on the
+    // closing line as much as on an orderly close.
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked-later" });
+    expect(await ctx.host.viewFrame()).not.toBeNull();
     // What DeviceAgent's host.onCrash wiring calls when the browser dies.
     ctx.sessions.noteCrash();
     const closed = ctx.events.find((e) => e.event === "browser_session_closed");
     expect(closed?.fields.session).toBe(s);
     expect(closed?.fields.reason).toBe("crashed");
+    expect(closed?.fields.failed_requests).toEqual([
+      {
+        status: 401, method: "GET", origin: "https://pizza.example",
+        initiator: "https://pizza.example",
+      },
+    ]);
     expect(ctx.sessions.current()).toBeNull();
     // The handle died with the browser.
     const r = jv(await ctx.sessions.command(AGENT, s, { action: "url" }));

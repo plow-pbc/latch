@@ -143,11 +143,20 @@ def main():
                  page="https://offsite.example/lander"),
         Response(403, "https://payframe.example/pay", navigation=True, page="about:blank",
                  embedder="https://pizza.example/checkout"),
-        # A child frame that has ALREADY loaded and navigates itself is named by
-        # its own document, not its parent's — otherwise an out-of-scope frame
-        # borrows an approved parent's name by moving.
+        # A child frame that has ALREADY loaded: nobody can say whether it moved
+        # itself or its embedder moved it, so unless the two agree it names
+        # nobody. Both directions of the borrow close on that — an out-of-scope
+        # child under an approved parent, and an approved child under an
+        # out-of-scope one.
         Response(410, "https://pizza.example/api/z", navigation=True,
                  page="https://offsite.example/embed",
+                 embedder="https://pizza.example/checkout"),
+        Response(409, "https://pizza.example/api/w", navigation=True,
+                 page="https://pizza.example/embedded",
+                 embedder="https://offsite.example/lander"),
+        # Agreeing is the ordinary case: a same-origin frame reloading itself.
+        Response(408, "https://pizza.example/api/v", navigation=True,
+                 page="https://pizza.example/embedded",
                  embedder="https://pizza.example/checkout"),
         Response(404, "https://pizza.example/api/x", page="https://offsite.example/lander"),
     ])

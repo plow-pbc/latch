@@ -55,11 +55,14 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     // the frame itself is still blank when it asks.
     expect((probed.navigations.failed_requests ?? []).map((r) => [r.status, r.initiator]))
       .toEqual([
-        [404, "https://offsite.example"],
-        // A child that has already loaded and moves ITSELF is named by its own
-        // document, or an out-of-scope frame borrows its parent's name.
-        [410, "https://offsite.example"],
-        [403, "https://pizza.example"],
+        [404, "https://offsite.example"], // an ordinary subresource
+        [408, "https://pizza.example"], // a same-origin frame reloading itself
+        // A loaded child could have moved itself or been moved by its embedder,
+        // and nothing here can say which — so unless the two agree it names
+        // nobody, in both directions of the borrow.
+        [409, ""], // approved child, out-of-scope embedder
+        [410, ""], // out-of-scope child, approved embedder
+        [403, "https://pizza.example"], // a blank frame: its embedder asked
       ]);
   });
 

@@ -366,12 +366,16 @@ class Session:
                     # it would cost the whole entry.
                     origin = None
                 else:
-                    # A frame with a document of its own asked for itself; only
-                    # one that is still blank was asked for by whoever embedded
-                    # it. Crediting every child navigation to the parent would
-                    # let an out-of-scope frame that has already loaded borrow
-                    # its approved parent's name by navigating itself.
-                    origin = _origin(frame.url) or _origin(frame.parent_frame.url)
+                    # A child frame's document load: nobody can say from here
+                    # whether the frame moved itself or its embedder moved it.
+                    # A blank frame has not moved itself yet, so its embedder
+                    # asked. Otherwise the two have to agree -- when they do,
+                    # either answer is the same origin; when they do not, one of
+                    # them would be borrowing the other's name, so it names
+                    # nobody and the owner keeps it alone.
+                    own = _origin(frame.url)
+                    embedder = _origin(frame.parent_frame.url)
+                    origin = embedder if own in ("", embedder) else ""
             except Exception:  # noqa: BLE001 — an unattributable request is still a request
                 origin = ""
             # Keyed on the request itself, and holding it: an id alone can be
@@ -393,9 +397,9 @@ class Session:
         refused SEES that -- the page is right there in its next screenshot. A
         frame's document load is not that; a payment or sign-in iframe coming
         back 403 is exactly the "it said ok and nothing worked" case this is
-        for, so it is kept and named by whoever embedded it. Which of the two a
-        request was is decided when it is MADE, and remembered as the initiator
-        being None.
+        for, so it is kept. Which of the two a request was is decided when it is
+        MADE -- see note_request, which also decides who asked -- and remembered
+        as the initiator being None.
 
         Nothing here may raise -- this runs on Playwright's event thread, where
         an exception is nobody's to catch -- and nothing here reads a body.
