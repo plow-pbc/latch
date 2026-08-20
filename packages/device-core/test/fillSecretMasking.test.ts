@@ -556,6 +556,18 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.not_typeable.result).toEqual({ ok: true, frame: 0 });
   });
 
+  it("still marks a widget the vault masks, and still ledgers it", () => {
+    // The question is asked after the mark has gone on, so the branch that
+    // assigns rather than types starts from a node that is already concealed.
+    const masked = probed.not_typeable_masked;
+    expect(masked.trace).not.toContain("handle.type");
+    expect(masked.trace).toContain("handle.evaluate:mark");
+    expect(masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+    expect(masked.marked).toBe(true);
+    expect(masked.ledgered).toBe(true);
+    expect(masked.node_len).toBe(masked.asked_len);
+  });
+
   it("types the tail of a value too long to type whole, and lands the rest", () => {
     // Typing cannot be allowed to grow with the length of the value, so the
     // bulk is assigned and only the tail is typed. What matters is that the

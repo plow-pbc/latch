@@ -357,6 +357,11 @@ def main() -> int:
         # A date widget: its value is composed from something other than the
         # characters, so keystrokes land the wrong day or nothing at all.
         "not_typeable": run(server, {**base, "value": "2026-08-19"}, typeable=False),
+        # The same widget holding something the vault masks. The question is
+        # asked AFTER the mark goes on, which is a call site that did not exist
+        # before the widget branch did.
+        "not_typeable_masked": run(server, {**base, "mask": True, "value": "2026-08-19"},
+                                   typeable=False),
         # Prose, not a credential: too long to type inside the budget. The bulk
         # is assigned and the field still ends on real keys.
         "long_value": run(server, {**base, "value": "x" * 2000}),

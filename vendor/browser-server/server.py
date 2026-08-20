@@ -183,14 +183,17 @@ DOC_TOKEN_JS = """() => {
 # taken off, which is the one outcome this must never produce.
 VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
 
-# Whether a node's value is the characters it is given. A date, number, colour
-# or range widget composes its value out of something else entirely -- typing
-# "2026-08-19" into a date field lands the wrong day or nothing at all, where
-# assigning it works -- and none of those are what an interrogating defense
-# samples anyway. Anything not an <input> (a textarea, a contenteditable) takes
-# characters as characters.
+# Whether a node's value is the characters it is given. A segmented date or
+# time widget composes its value out of something else entirely -- typing
+# "2026-08-19" into one lands 6081-02-02, silently -- and a colour or a range
+# is not textual at all and refuses keys outright. Neither is a field an
+# interrogating defense samples, so both are assigned the way they always were.
+# Everything else takes characters as characters, `number` included: a
+# one-time code or a CVV is routinely declared that way, and those are exactly
+# the fields the keystrokes are for. Anything not an <input> -- a textarea, a
+# contenteditable -- is text by construction.
 TYPEABLE_JS = """(el) => el.tagName !== "INPUT" ||
-    ["text", "password", "search", "tel", "url", "email", ""].includes(el.type)"""
+    ["text", "password", "search", "tel", "url", "email", "number"].includes(el.type)"""
 # Whether a fill that failed left anything behind. Unchanged is one way to hold
 # nothing unaccounted for; empty is the other -- a fill assigns before it types,
 # so a failure at the first key leaves the node holding nothing, and a node
@@ -220,14 +223,19 @@ def _respond(payload):
 def _type_value(el, value):
     """Put `value` into a resolved node so that the field ends on real keys.
 
-    Everything before the last TYPED_CHARS is assigned in one go -- that is the
-    `el.fill()` the rest of this exists to avoid, used deliberately, because a
-    field an agent filled with prose cannot be typed key by key inside the
-    budget. What a defense samples is that keys arrived at the field at all, and
-    they do: the tail is always typed, and a credential is shorter than the tail.
+    A node is first asked whether its value is even the characters it is given.
+    One that answers no is a widget, and is assigned whole, exactly as this
+    always did.
 
-    The assignment doubles as the clear, so a node that has gone away raises
-    there, before a single key is sent.
+    For the rest, everything before the last TYPED_CHARS is assigned in one go
+    -- that is the `el.fill()` the rest of this exists to avoid, used
+    deliberately, because a field an agent filled with prose cannot be typed key
+    by key inside the budget. What a defense samples is that keys arrived at the
+    field at all, and they do: the tail is always typed, and a credential is
+    shorter than the tail. That leading assignment doubles as the clear.
+
+    A node that has gone away raises out of the first question asked of it, and
+    every path from here on leaves the caller's failure handling to unwind it.
     """
     if not el.evaluate(TYPEABLE_JS):
         el.fill(value, timeout=ACTION_TIMEOUT_MS)
