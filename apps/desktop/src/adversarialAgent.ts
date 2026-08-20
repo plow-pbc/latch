@@ -169,7 +169,7 @@ Return a JSON object {"decision": ${ask.enum}, "reason": "<one concise sentence>
  * timeout, provider failure, unparseable answer — which never comes from the
  * model and carries a `cause`. See `failedReview`.
  */
-export function verdictSchema(humanAvailable: boolean) {
+function verdictSchema(humanAvailable: boolean) {
   return {
     type: "object",
     properties: {

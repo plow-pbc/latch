@@ -153,34 +153,6 @@ describe("the reviewer is told whether anyone is behind it", () => {
   });
 });
 
-/**
- * The two denials wear the same `deny` and must stay tellable apart in the log:
- * a reviewer that ran and would not commit is not a reviewer that never
- * answered. With `ask` out of the schema, only the second is reachable.
- */
-describe("a reviewer that could not answer is not a reviewer that hesitated", () => {
-  it("the internal non-verdict denies as reviewer_unavailable", async () => {
-    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
-      verdict: "ask",
-      reason: "reviewer timed out",
-      cause: "unavailable",
-    });
-    expect(await h.run()).toEqual({ decision: "deny", source: "reviewer_unavailable" });
-    expect((await h.run()).source).not.toBe("reviewer_undecided");
-  });
-
-  it("the audit record carries the cause, so the timeline shows which it was", async () => {
-    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
-      verdict: "ask",
-      reason: "reviewer timed out",
-      cause: "unavailable",
-    });
-    await h.run();
-    const result = h.records.find((r) => r.event === "adversarial_review_result");
-    expect(result?.fields).toMatchObject({ verdict: "ask", cause: "unavailable" });
-  });
-});
-
 describe("decideIntent — modes that never reach the reviewer", () => {
   it("approve auto-allows without reviewing or prompting", async () => {
     const h = harness(settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }));
@@ -201,13 +173,13 @@ describe("decideIntent — adversarial mode", () => {
   const adversarial = (over: Partial<Settings> = {}) =>
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
 
-  // One review, three verdicts, three outcomes — and no dialog in any of them.
-  // The owner chose "the reviewer decides"; a modal in this mode contradicts
-  // that, so an `ask` is a denial here rather than a handover.
+  // One review, two verdicts, two outcomes — and no dialog in either. The owner
+  // chose "the reviewer decides", so a modal in this mode contradicts the
+  // setting; there is no third verdict to hand over, because `ask` is not in
+  // the schema the reviewer answers into when nobody is behind it.
   const decisionCases = [
     { verdict: "allow" as const, decision: "allow_once", source: "adversarial" },
     { verdict: "deny" as const, decision: "deny", source: "adversarial" },
-    { verdict: "ask" as const, decision: "deny", source: "reviewer_undecided" },
   ];
 
   for (const c of decisionCases) {
@@ -247,7 +219,13 @@ describe("decideIntent — adversarial mode", () => {
       expect(decidedByLabel("reviewer_unavailable")).toBe("AI Reviewer (no usable verdict)");
       // The reason the reviewer gave is still recorded, so the source is a
       // summary of the timeline rather than a replacement for it.
-      expect(h.records[1].fields).toMatchObject({ verdict: "ask", reason: "reviewer timed out" });
+      // The cause rides the record too: the verdict alone says "ask", which
+      // reads as a reviewer deferring rather than one that never answered.
+      expect(h.records[1].fields).toMatchObject({
+        verdict: "ask",
+        reason: "reviewer timed out",
+        cause: "unavailable",
+      });
     });
 
     it("leaves Ask mode's dialog exactly where it was", async () => {
@@ -549,23 +527,22 @@ describe("the audit tells one coherent story about who decided", () => {
     expect(decidedByLabel(decision.source)).not.toContain("no_credits");
   });
 
-  it("a genuine abstention reads as 'would not decide', because nobody is deferred to", async () => {
-    // The reviewer really did look and really did abstain — but in this mode
-    // that hands the decision to no one: the operation is denied with no
-    // dialog. "Defer to you" would name a person who was never asked.
-    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
-      verdict: "ask",
-      reason: "genuinely ambiguous",
-    });
+  it("a genuine abstention reads as 'would not decide'", async () => {
+    // Ask mode, because that is where a genuine abstention still exists: the
+    // hint may decline, and the human it defers to is actually there. In
+    // adversarial mode `ask` is not in the schema at all, so there is nothing
+    // left to render for it.
+    const h = harness(
+      settings({ relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      { verdict: "ask", reason: "genuinely ambiguous", decision: "allow_once" },
+    );
     const decision = await h.run();
+    await h.dialogs[0];
     const lines = narrative(h.records, decision, intent().intentId);
     const reviewLine = lines.find((l) => l.startsWith("AI Reviewer:")) ?? "";
     expect(reviewLine).toContain("would not decide");
-    expect(reviewLine).not.toContain("defer to you");
-    // Not "could not run" either — that is the other failure, and this one ran.
+    // Not "could not run" — that is the other failure, and this one ran.
     expect(reviewLine).not.toContain("could not run");
-    // …and the decision that follows names it in human words, not a raw token.
-    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (would not decide)");
   });
 
   it("a review that reached no verdict does not claim the reviewer never ran", async () => {

@@ -12,7 +12,6 @@ import {
   DENIAL_SOURCE_NO_CREDITS,
   DENIAL_SOURCE_NO_REVIEWER,
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
-  DENIAL_SOURCE_REVIEWER_UNDECIDED,
 } from "@domo/device-core";
 import {
   agentHistory,
@@ -166,25 +165,17 @@ export async function decideIntent(
     // fifteen minutes, and holds every request behind it while it does, because
     // approvals are serialized. So the fallback is a verdict.
     //
-    // Deny, because it is the fail-closed answer and because none of the ways
-    // of arriving here are an argument for access: the reviewer looked and
-    // would not commit, or it never answered. Which of those it was is the
-    // source, so a log tells a reviewer that hesitated from one that was down.
+    // Deny, because it is the fail-closed answer and because nothing that
+    // arrives here is an argument for access: the reviewer never reached a
+    // verdict.
     //
-    // `reviewer_undecided` is the hesitating half, and in this mode it is now
-    // unreachable by construction: `ask` is not in the schema the model answers
-    // into, and an `ask` that arrives anyway is refused at the parse and comes
-    // back as `unavailable`. It stays as the fail-closed default rather than
-    // being folded into the other, because what it labels — a reviewer that ran
-    // and declined to decide — is still a distinct thing to find in a log if a
-    // provider ever lets one through.
-    return {
-      decision: "deny",
-      source:
-        cause === "unavailable"
-          ? DENIAL_SOURCE_REVIEWER_UNAVAILABLE
-          : DENIAL_SOURCE_REVIEWER_UNDECIDED,
-    };
+    // One source, not two. There used to be a second — a reviewer that ran and
+    // declined to decide — but `ask` is no longer in the schema the model
+    // answers into, and an `ask` that arrives anyway is refused at the parse
+    // and comes back carrying `unavailable`. Nothing can reach this line
+    // without that cause, so a branch on it would be picking between a live
+    // source and a dead one.
+    return { decision: "deny", source: DENIAL_SOURCE_REVIEWER_UNAVAILABLE };
   }
 
   // Ask mode: show the dialog, optionally with the reviewer's hint when both
