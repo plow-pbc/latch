@@ -154,6 +154,39 @@ describe("auditActivities (grouping)", () => {
     expect(blocked[0]!.category).toBe("failed");
   });
 
+  it("a command refused before approval names the command, the agent and why", () => {
+    // No intent exists for one of these — the device refuses before minting
+    // one — so every field the owner reads has to come off this single event.
+    const acts = auditActivities([
+      {
+        event: "exec_refused",
+        agent: "agentA",
+        agent_name: "Family Coordinator",
+        argv: ["/bin/ps", "-ax"],
+        reason: "/bin/ps is a setuid program, and commands on this Mac run in a sandbox that cannot execute one.",
+        ts: "2026-08-09T12:00:00Z",
+      },
+    ]);
+    expect(acts).toHaveLength(1);
+    const a = acts[0]!;
+    expect(a.title).toBe("run: /bin/ps -ax");
+    expect(a.command).toBe("/bin/ps -ax");
+    expect(a.agentId).toBe("agentA");
+    expect(a.agentDisplay).toBe("Family Coordinator");
+    // Refused at the gate by the device — never ran, so not a failed run.
+    expect(a.status).toBe("Refused");
+    expect(a.tone).toBe("red");
+    expect(a.category).toBe("denied");
+    // The reason is what tells the owner why, so it has to reach the timeline.
+    expect(a.timeline).toHaveLength(1);
+    expect(a.timeline[0]!.text).toContain("/bin/ps -ax");
+    expect(a.timeline[0]!.text).toContain("setuid");
+    expect(a.timeline[0]!.state).toBe("bad");
+    // And it is findable by the command the agent asked for.
+    expect(activityMatches(a, "/bin/ps")).toBe(true);
+    expect(activityMatches(a, "Family Coordinator")).toBe(true);
+  });
+
   it("search matches across title, command, agent, and goal", () => {
     const a = auditActivities(commandRun)[0]!;
     expect(activityMatches(a, "df")).toBe(true);

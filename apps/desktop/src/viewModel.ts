@@ -236,7 +236,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     return e ? (jv(e).get(key).str ?? null) : null;
   };
 
-  const title = activityTitle(events, has, value);
+  const title = activityTitle(events, has, value, entry);
   const { status, tone, category } = classifyActivity(events, has, entry);
   return {
     id,
@@ -249,13 +249,17 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     command: activityCommand(entry, value),
     agentId:
       value("intent_received", "agent") ??
+      value("exec_refused", "agent") ??
       value("access_request", "agent") ??
       value("access_decision", "agent") ??
       value("agent_spawned", "agent"),
     // Newer entries carry the relay-asserted name; `access_request.display` is
     // the pre-relay shape, kept because the audit log is append-only and old
     // entries are still on disk.
-    agentDisplay: value("intent_received", "agent_name") ?? value("access_request", "display"),
+    agentDisplay:
+      value("intent_received", "agent_name") ??
+      value("exec_refused", "agent_name") ??
+      value("access_request", "display"),
     goal:
       value("intent_received", "goal") ??
       value("access_request", "goals") ??
@@ -284,6 +288,7 @@ function activityTitle(
   events: JSONValue[],
   has: (e: string) => boolean,
   value: (e: string, k: string) => string | null,
+  entry: (e: string) => JSONValue | null,
 ): string {
   const request = value("intent_received", "request");
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
@@ -306,6 +311,9 @@ function activityTitle(
     return `Access — ${value("access_request", "display") ?? "agent"}`;
   }
   if (has("agent_spawned")) return "Agent spawned";
+  // A refused command has no intent to take a request from, so the title is
+  // built the way the request would have read.
+  if (has("exec_refused")) return `run: ${execArgv(entry("exec_refused"))}`;
   if (has("exec_end")) return "Command finished";
   return jv(events[0]).get("event").str ?? "Activity";
 }
@@ -420,6 +428,11 @@ function classifyActivity(
     return { status: "Completed", tone: "green", category: "approved" };
   }
   if (entry("denied_operation")) return { status: "Blocked", tone: "red", category: "failed" };
+  // Refused by this Mac before anything was minted or asked — "denied", which
+  // is the bucket for a refusal at the gate by a person, a device or a
+  // deadline. It never ran, so it is not a failure of a run.
+  const refused = entry("exec_refused");
+  if (refused) return { status: "Refused", tone: "red", category: "denied" };
   // A handle-only exec_end from an old log: a deferred run's end recorded
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");
@@ -468,11 +481,16 @@ function activityCommand(
   entry: (e: string) => JSONValue | null,
   value: (e: string, k: string) => string | null,
 ): string | null {
-  const argv = jv(entry("exec_start") ?? null).get("argv").arr;
-  if (argv && argv.length > 0) {
-    return argv.filter((a): a is string => typeof a === "string").join(" ");
-  }
+  const argv = execArgv(entry("exec_start") ?? entry("exec_refused"));
+  if (argv !== "") return argv;
   return value("intent_received", "request");
+}
+
+/** The argv an exec event carries, as one command line. */
+function execArgv(e: JSONValue | null): string {
+  return (jv(e ?? null).get("argv").arr ?? [])
+    .filter((a): a is string => typeof a === "string")
+    .join(" ");
 }
 
 /**
@@ -550,6 +568,10 @@ function describeStep(e: JSONValue): AuditStep {
       state = ev.get("exit_code").int === 0 ? "ok" : "bad";
       break;
     case "exec_error": text = `Run error: ${ev.get("error").str ?? ""}`; state = "bad"; break;
+    case "exec_refused":
+      text = `Refused before approval: ${argv()} — ${ev.get("reason").str ?? ""}`;
+      state = "bad";
+      break;
     case "file_read": text = `File read: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "file_write": text = `File written: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "denied_operation": text = `Blocked: ${ev.get("path").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
