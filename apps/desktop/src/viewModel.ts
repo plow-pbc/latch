@@ -370,8 +370,15 @@ function classifyActivity(
     return { status: base, tone: "green", category: "approved" };
   }
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
+    const closed = entry("browser_session_closed");
+    // A crash outranks everything the session accumulated before it. Ranked
+    // any lower, a session that hit a scope block — or was refused by the site
+    // — and then died would wear the milder of two true badges.
+    if (jv(closed ?? null).get("reason").str === "crashed" || has("browser_crashed")) {
+      return { status: "Crashed", tone: "red", category: "failed" };
+    }
     if (has("credential_fill_failed")) {
-      return has("browser_session_closed")
+      return closed
         ? { status: "Closed · fill failed", tone: "amber", category: "failed" }
         : { status: "Fill failed", tone: "amber", category: "failed" };
     }
@@ -380,7 +387,7 @@ function classifyActivity(
     // failed fill: it means a credential of theirs is sitting legible on a page
     // their agent is working in.
     if (has("credential_mask_failed")) {
-      return has("browser_session_closed")
+      return closed
         ? { status: "Closed · mask failed", tone: "amber", category: "failed" }
         : { status: "Mask failed", tone: "amber", category: "failed" };
     }
@@ -389,17 +396,19 @@ function classifyActivity(
       // the first thing an owner scanning for trouble filters for. The amber
       // badge already said so; the bucket disagreed, and the bucket is what
       // the filter reads.
-      return has("browser_session_closed")
+      return closed
         ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
         : { status: "Scope blocked", tone: "amber", category: "failed" };
     }
-    if (has("browser_session_closed")) {
-      const closed = entry("browser_session_closed")!;
-      return jv(closed).get("reason").str === "crashed"
-        ? { status: "Crashed", tone: "red", category: "failed" }
-        : { status: "Closed", tone: "zinc", category: "other" };
+    // The page's own server refused what the agent asked it to do — ranked
+    // under a crash and a scope block, both stronger claims about the session,
+    // but well above "Browsing".
+    if (events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0)) {
+      return closed
+        ? { status: "Closed · requests refused", tone: "amber", category: "failed" }
+        : { status: "Requests refused", tone: "amber", category: "failed" };
     }
-    if (has("browser_crashed")) return { status: "Crashed", tone: "red", category: "failed" };
+    if (closed) return { status: "Closed", tone: "zinc", category: "other" };
     return { status: "Browsing", tone: "green", category: "other" };
   }
   // A vault metadata read carries no intent and no session, so it stands
@@ -464,6 +473,21 @@ function activityCommand(
     return argv.filter((a): a is string => typeof a === "string").join(" ");
   }
   return value("intent_received", "request");
+}
+
+/**
+ * What the page's own requests did, for the owner's timeline.
+ *
+ * The audit log carries the whole entry; this is the part a human scanning a
+ * session needs — which host refused what, and how many. Empty when the page's
+ * requests were answered, which is the ordinary case.
+ */
+function refusedSuffix(ev: ReturnType<typeof jv>): string {
+  const refused = ev.get("failed_requests").arr ?? [];
+  if (refused.length === 0) return "";
+  const first = jv(refused[0]);
+  const rest = refused.length > 1 ? ` (+${refused.length - 1} more)` : "";
+  return ` — refused: ${first.get("status").int ?? 0} ${first.get("method").str ?? ""} ${first.get("origin").str ?? ""}${rest}`;
 }
 
 /** One-line human description of a single raw event (used in the timeline). */
@@ -539,11 +563,19 @@ function describeStep(e: JSONValue): AuditStep {
       text = `Session widened — origins: ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ") || "—"}; items: ${(ev.get("items").arr ?? []).filter((i): i is string => typeof i === "string").join(", ") || "—"}`;
       state = "ok";
       break;
-    case "browser_session_closed": text = `Browser session closed (${ev.get("reason").str ?? ""})`; break;
-    case "browser_command":
-      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}`;
-      state = ev.get("error").str ? "bad" : "neutral";
+    case "browser_session_closed": {
+      const reason = ev.get("reason").str ?? "";
+      const refused = refusedSuffix(ev);
+      text = `Browser session closed (${reason})${refused}`;
+      if (refused || reason === "crashed") state = "bad";
       break;
+    }
+    case "browser_command": {
+      const refused = refusedSuffix(ev);
+      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}${refused}`;
+      state = ev.get("error").str || refused ? "bad" : "neutral";
+      break;
+    }
     case "browser_navigated": text = `Page: ${ev.get("url").str ?? ""}`; break;
     case "browser_scope_violation":
       text = `Out of scope: ${ev.get("origin").str ?? ""} (${ev.get("action").str ?? ""}) — content locked`;
@@ -573,7 +605,10 @@ function describeStep(e: JSONValue): AuditStep {
         + `could not be kept hidden on screen, so ${ev.get("action").str ?? "the view"} was refused`;
       state = "bad";
       break;
-    case "browser_crashed": text = "Browser crashed"; state = "bad"; break;
+    case "browser_crashed":
+      text = `Browser crashed (code ${ev.get("code").int ?? -1})`;
+      state = "bad";
+      break;
     default: text = event;
   }
   return { time: clock(ev.get("ts").str ?? ""), text, state };

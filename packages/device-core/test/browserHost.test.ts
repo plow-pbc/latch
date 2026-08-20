@@ -59,18 +59,66 @@ describe("BrowserHost", () => {
     expect(r.title).toBe("blank");
   });
 
+  it("holds refused requests across replies, newest first and bounded", async () => {
+    // The reason the buffer lives here: most of what asks the browser anything
+    // is the device's own doing — the ~1/s viewer poll, the popup sweep, a
+    // credential fill's locate — and whichever was in flight would otherwise be
+    // the one that consumed a 429 and dropped it.
+    const { host } = makeHost();
+    const takeStatuses = () => (host.takeFailedRequests() as { status: number }[]).map((r) => r.status);
+    await host.sendAction({ action: "click", selector: "#blocked" });
+    // Scripted: this one's refusal settles late, so it arrives on the viewer
+    // poll — a reply nobody reads refusals off. Held, not dropped, is the whole
+    // reason the buffer lives in this class.
+    await host.sendAction({ action: "click", selector: "#blocked-later" });
+    expect(await host.viewFrame()).not.toBeNull();
+    await host.sendAction({ action: "click", selector: "#blocked" });
+    // The poll-borne 401 sits where it arrived rather than at either end.
+    expect(takeStatuses()).toEqual([429, 403, 404, 503, 401]);
+    // Taken means taken: the next asker gets nothing.
+    expect(host.takeFailedRequests()).toEqual([]);
+
+    // Bounded, and it is the OLDEST that falls off: ten refusals, five kept.
+    await host.sendAction({ action: "click", selector: "#blocked-later" });
+    for (let i = 0; i < 3; i++) {
+      await host.sendAction({ action: "click", selector: "#blocked" });
+    }
+    expect(takeStatuses()).toEqual([429, 403, 404, 503, 429]);
+
+    // And a late refusal still pending when the next one is scripted keeps its
+    // place behind it rather than being lost — one ring, oldest last.
+    await host.sendAction({ action: "click", selector: "#blocked-later" });
+    await host.sendAction({ action: "click", selector: "#blocked" });
+    expect(takeStatuses()).toEqual([429, 403, 404, 503, 401]);
+  });
+
   it("rejects pending on crash and lazily restarts", async () => {
     const { host, events } = makeHost({ CRASH_AFTER: "1" });
+    // What the dying browser said last, as the session sees it: the notice is
+    // where the books are closed, so the line has to be there by then.
+    let heldAtCrash: unknown[] = [];
     let crashes = 0;
-    host.onCrash = () => crashes++;
-    await host.sendAction({ action: "url" });
+    host.onCrash = () => {
+      crashes++;
+      heldAtCrash = host.takeFailedRequests();
+    };
+    await host.sendAction({ action: "click", selector: "#blocked" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
-    expect(events).toContain("browser_crashed");
-    // The session layer is told, so it can close its books.
     expect(crashes).toBe(1);
-    // Next action restarts a fresh server (state reset to about:blank).
+    expect(events).toContain("browser_crashed");
+    // Its last word — a 599 nothing else here emits — is there, and newest
+    // first. The fixture puts a beat between the line and the death (its
+    // CRASH_LINE_BEAT_MS) so this is about the contract and not about which
+    // pending event libuv drains first — a flake here means the beat was too
+    // short for a stalled box, not that the device regressed. In production
+    // that order is the kernel's, and every mechanism tried for taking it out
+    // of the kernel's hands cost more than the line it saved.
+    expect((heldAtCrash as { status: number }[])[0]).toMatchObject({ status: 599 });
+    // Next action restarts a fresh server (state reset to about:blank), and a
+    // new browser saw none of the dead one's traffic.
     const r = await host.sendAction({ action: "url" });
     expect(r.url).toBe("about:blank");
+    expect(host.takeFailedRequests()).toEqual([]);
   });
 
   it("trips the circuit breaker after repeated crashes", async () => {

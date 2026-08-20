@@ -61,10 +61,70 @@ interface Session {
  * needs to find its way back. Nothing that observes or touches page content. */
 const LOCKOUT_ALLOWED = new Set(["url", "pages", "use_page", "goto"]);
 
-/** Strip query/fragment for audit lines — they carry tokens. */
+/** Strip query/fragment and any userinfo for audit lines — both carry secrets. */
 export function stripQuery(url: string): string {
   const i = url.search(/[?#]/);
-  return i === -1 ? url : url.slice(0, i);
+  const cut = i === -1 ? url : url.slice(0, i);
+  return cut.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, "$1");
+}
+
+/**
+ * Requests the site itself refused during an action, rebuilt from the fields
+ * this side knows: origins, a status, a method, two headers. Rebuilt rather
+ * than forwarded because `audit.ndjson` is durable and `server.py` is vendored
+ * (see its UPSTREAM.md) — a sync that reintroduced a url would otherwise write
+ * paths into the owner's log with nothing here to stop it.
+ */
+function failedRequests(value: JSONValue[]): JSONValue[] {
+  return value.flatMap((entry) => {
+    const e = jv(entry);
+    if (e.obj === null) return [];
+    const kept: { [k: string]: JSONValue } = {
+      status: e.get("status").int ?? 0,
+      method: e.get("method").str ?? "",
+      origin: e.get("origin").str ?? "",
+      initiator: e.get("initiator").str ?? "",
+    };
+    for (const header of ["retry_after", "server"]) {
+      const value = e.get(header).str;
+      if (value !== null) kept[header] = value;
+    }
+    return [kept];
+  });
+}
+
+/**
+ * What the AGENT is told about a refusal, and whether it is told at all.
+ *
+ * Both ends must be inside the approved origins: the host that refused, and the
+ * document that asked. Destination alone would let a page the session is locked
+ * out of fetch a url it knows will fail on an approved host and pass that off
+ * as the approved page's own trouble — and an asker the browser could not name
+ * goes the same way, withheld from the agent and kept for the owner. That is
+ * not only the exotic case (a service worker, a request nobody saw asked): it
+ * is a sub-frame's own document load, since nothing can say whether the frame
+ * moved itself or its embedder moved it. The initiator itself is never handed
+ * over; the agent gets the host that refused, which is the diagnosis.
+ */
+function forAgent(entries: JSONValue[], approved: (host: string) => boolean): JSONValue[] {
+  return entries.flatMap((entry) => {
+    const e = jv(entry);
+    const host = hostOf(e.get("origin").str ?? "");
+    const asker = hostOf(e.get("initiator").str ?? "");
+    // Fail closed on an asker the browser could not name — see above for what
+    // that covers, which is more than the exotic cases.
+    if (host === null || asker === null) return [];
+    if (!approved(host) || !approved(asker)) return [];
+    const retryAfter = e.get("retry_after").str;
+    const server = e.get("server").str;
+    return [{
+      status: e.get("status").int ?? 0,
+      method: e.get("method").str ?? "",
+      host,
+      ...(retryAfter === null ? {} : { retry_after: retryAfter }),
+      ...(server === null ? {} : { server }),
+    }];
+  });
 }
 
 function hostOf(url: string): string | null {
@@ -389,19 +449,26 @@ export class BrowserSessions {
     }
     if (s.idleTimer) clearTimeout(s.idleTimer);
     // The claim is held until the browser is really down. Releasing it first
-    // lets the same agent reopen while Camoufox still has the profile, and
-    // Firefox locks a profile against a second copy of itself.
+    // lets the same credential reopen while Camoufox still has the profile,
+    // and Firefox locks a profile against a second copy of itself.
     //
-    // Only this session's browser goes away; everyone else keeps theirs. The
-    // profile stays: it belongs to the agent, not to this session, which is
-    // what "your profile persists between sessions" means.
+    // Only this session's browser goes away; everyone else keeps theirs, and
+    // this one's profile goes with it — nothing is left for the next agent.
     try {
       await this.stop(s.host);
     } finally {
       this.sessions.delete(handle);
       this.releaseProfile(s);
+      // Written whichever way the shutdown went: a stop that throws is exactly
+      // when the last thing the page said is worth having, and taking the
+      // entries afterwards would have dropped them on that path.
+      const left = failedRequests(s.host.takeFailedRequests());
+      this.audit("browser_session_closed", {
+        session: s.auditId,
+        reason,
+        ...(left.length ? { failed_requests: left } : {}),
+      });
     }
-    this.audit("browser_session_closed", { session: s.auditId, reason });
     return { status: "completed" };
   }
 
@@ -416,7 +483,12 @@ export class BrowserSessions {
     this.sessions.delete(handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
     this.releaseProfile(s);
-    this.audit("browser_session_closed", { session: s.auditId, reason: "crashed" });
+    const left = failedRequests(s.host.takeFailedRequests());
+    this.audit("browser_session_closed", {
+      session: s.auditId,
+      reason: "crashed",
+      ...(left.length ? { failed_requests: left } : {}),
+    });
   }
 
   async closeAll(reason: string): Promise<void> {
@@ -497,13 +569,18 @@ export class BrowserSessions {
       }
 
       switch (action) {
-        case "fill_secret":
-          return await this.fillSecret(
+        case "fill_secret": {
+          // It builds its result by hand rather than through serverAction, and
+          // its own locate/fill round-trips are where the refusals arrive.
+          const filled = await this.fillSecret(
             s,
             p.get("selector").str ?? "",
             p.get("item").str ?? "",
             p.get("field").str ?? "",
           );
+          const refused = this.reportRefusals(s, action, s.lastUrl, knobs, false);
+          return refused.length ? { ...filled, failed_requests: refused } : filled;
+        }
         case "goto": {
           const target = p.get("url").str ?? "";
           const host = hostOf(target);
@@ -540,15 +617,43 @@ export class BrowserSessions {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.audit("browser_command", {
-        session: s.auditId,
-        action,
-        url: stripQuery(s.lastUrl),
-        ...knobs,
+      const refused = this.reportRefusals(s, action, s.lastUrl, { ...knobs, error: message });
+      return {
+        status: "error",
         error: message,
-      });
-      return { status: "error", error: message };
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
     }
+  }
+
+  /**
+   * Take what the browser reported, put ALL of it in the owner's log against
+   * this action, and answer with what the agent may be told.
+   *
+   * One place, called by an action that worked and by one that threw: an action
+   * fails BECAUSE its request was refused at least as often as for any other
+   * reason, and a report only the success path makes is missing exactly then.
+   */
+  private reportRefusals(
+    s: Session,
+    action: string,
+    url: string,
+    extra: { [k: string]: JSONValue },
+    // fill_secret writes its own credential_* line for every outcome that
+    // reaches the browser, so it asks for a browser_command line only when
+    // there is a refusal to put on one.
+    alwaysAudit = true,
+  ): JSONValue[] {
+    const failed = failedRequests(s.host.takeFailedRequests());
+    if (!alwaysAudit && failed.length === 0) return [];
+    this.audit("browser_command", {
+      session: s.auditId,
+      action,
+      url: stripQuery(url),
+      ...extra,
+      ...(failed.length ? { failed_requests: failed } : {}),
+    });
+    return forAgent(failed, (host) => originMatches(host, s.origins));
   }
 
   /** Send to the server, then observe where we landed and sweep popups. */
@@ -570,14 +675,9 @@ export class BrowserSessions {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
-    this.audit("browser_command", {
-      session: s.auditId,
-      action: String(action.action),
-      url: stripQuery(url),
-      // What the agent had to ask for, so the next look at a session that went
-      // wrong can count it the way this one counted `eval`.
-      ...knobs,
-    });
+    // `knobs` is what the agent had to ask for, so the next look at a session
+    // that went wrong can count it the way this one counted `eval`.
+    const refused = this.reportRefusals(s, String(action.action), url, knobs);
 
     // The browser puts the mark back on every concealed field before it lets
     // anything be observed, and says so when one of them would not take. It
@@ -595,10 +695,13 @@ export class BrowserSessions {
           `${String(action.action)} was refused: a field on this page holds a value the vault ` +
           `conceals and the page will not let it be hidden on screen. Navigate away from it, ` +
           `or fill that field by hand.`,
+        // Already out of the host, so nothing else will carry them.
+        ...(refused.length ? { failed_requests: refused } : {}),
       };
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
+    if (refused.length) out.failed_requests = refused;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
     if (!this.inScope(s, url)) {
@@ -693,7 +796,7 @@ export class BrowserSessions {
     selector: string,
     itemId: string,
     field: string,
-  ): Promise<JSONValue> {
+  ): Promise<{ [k: string]: JSONValue }> {
     if (!this.credentials) return { status: "error", error: "credential broker not available" };
     if (selector === "" || itemId === "" || field === "") {
       return { status: "error", error: "fill_secret requires selector, item, field" };
