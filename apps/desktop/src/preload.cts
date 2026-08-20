@@ -27,8 +27,6 @@ contextBridge.exposeInMainWorld("domo", {
   vaultReveal: (itemId: string, field: string) => ipcRenderer.invoke("vault:reveal", itemId, field),
   vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
   vaultDeleteItem: (itemId: string) => ipcRenderer.invoke("vault:deleteItem", itemId),
-  apiKeyGet: () => ipcRenderer.invoke("settings:getApiKey"),
-  apiKeySet: (key: string) => ipcRenderer.invoke("settings:setApiKey", key),
   // What the owner says agents are for. The renderer's only route to the text
   // in either direction — it is device-owner data, so nothing else may write it.
   // The setter answers with what was stored, not what was sent.
@@ -36,7 +34,6 @@ contextBridge.exposeInMainWorld("domo", {
   agentPurposeSet: (purpose: string) => ipcRenderer.invoke("settings:setAgentPurpose", purpose),
   // Availability booleans and the active model — never a credential.
   inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
-  inferenceSet: (provider: string) => ipcRenderer.invoke("settings:setInference", provider),
   statusGet: () => ipcRenderer.invoke("status:get"),
   // macOS permission ceilings (today just Full Disk Access). Read-only: the
   // grant itself happens in System Settings, via openExternal("fullDiskSettings").

@@ -42,17 +42,15 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
-import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
+import { adversarialReview } from "./adversarialAgent.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
   readAgentPurpose,
   readInference,
   setAgentPurpose,
-  setAnthropicApiKey,
   revokeAndSignOut,
   setApprovalMode,
-  setInferenceProvider,
   signOutOfPlow,
 } from "./settingsActions.js";
 
@@ -549,8 +547,6 @@ ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   settings.showAgentSuggestions = !!on;
   saveSettings(home, settings);
 });
-ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
-ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
 // What the owner says agents are for. This pair is the only way the text is
 // written or read on the renderer's behalf; nothing an agent can reach touches
 // it, which is what makes it trusted context for the reviewer.
@@ -559,15 +555,11 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
   setAgentPurpose(home, purpose),
 );
 /**
- * Everything the renderer is allowed to know about inference: the selection,
- * which providers are usable, and the active model. Deliberately booleans and
- * not credentials — the relay credential never crosses this bridge.
+ * Everything the renderer is allowed to know about inference: whether the
+ * reviewer can run, what it runs, and the stored mode. Deliberately booleans
+ * and display strings — the relay credential never crosses this bridge.
  */
 ipcMain.handle("settings:getInference", async () => readInference(home));
-ipcMain.handle("settings:setInference", async (_e, provider: string) =>
-  setInferenceProvider(home, provider),
-);
-ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
 // The vault's contents, for the owner's own eyes and hands. This is the whole
 // point of the tab: the vault's web page is the only other way in, and reaching
 // it means a browser warning about a certificate the app issued to itself.

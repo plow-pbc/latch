@@ -55,5 +55,5 @@ Agent identity used to be an agent-held Ed25519 key pinned at access-grant time;
 it will instead be asserted by the relay, which authenticates the agent before
 forwarding. Note two things that are true of the code today: the device private
 key is a plaintext seed in a `0600` file (there is no Keychain or `safeStorage`
-integration anywhere), and `settings.json` — which holds an Anthropic API key —
-is written with no explicit mode.
+integration anywhere), and `settings.json` — which holds the Plow relay
+credential — is written `0600`.

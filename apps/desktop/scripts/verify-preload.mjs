@@ -14,9 +14,7 @@ import {
   readAgentPurpose,
   readInference,
   setAgentPurpose,
-  setAnthropicApiKey,
   setApprovalMode,
-  setInferenceProvider,
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
@@ -24,14 +22,13 @@ import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 
-// A throwaway home for the round-trip checks: signed in to Plow, no Anthropic
-// key, so exactly one provider is selectable.
+// A throwaway home for the round-trip checks: signed in to Plow, so the
+// reviewer can run.
 const probeHome = fs.mkdtempSync(path.join(os.tmpdir(), "domo-probe-"));
 saveSettings(probeHome, {
   ...loadSettings(probeHome),
   relayCredential: "plow_sk_probe_credential",
   accountUid: "u_probe",
-  inferenceProvider: "plow",
   approvalMode: "adversarial",
 });
 
@@ -73,16 +70,11 @@ ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported,
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
-ipcMain.handle("settings:getApiKey", async () => loadSettings(probeHome).anthropicApiKey ?? "");
-ipcMain.handle("settings:setApiKey", async (_e, key) => setAnthropicApiKey(probeHome, key));
 ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // The purpose statement, through the real setter — the one path that may write
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
-ipcMain.handle("settings:setInference", async (_e, provider) =>
-  setInferenceProvider(probeHome, provider),
-);
 // Connect a client: the same shape `ConnectClient.state()` returns, with no
 // credential minted — the screen this probe renders is the OAuth one.
 ipcMain.handle("connect:get", async () => ({
@@ -113,7 +105,6 @@ ipcMain.handle("updates:get", async () => ({
 // behind, and it must not be reported as an empty vault.
 ipcMain.handle("vault:items", async () => ({ locked: true, reason: "undecryptable" }));
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
-ipcMain.handle("settings:getReviewerInfo", async () => "probe-model");
 // No browsing session: the audit screen's live thumbnail stays hidden.
 ipcMain.handle("viewer:state", async () => ({
   active: false,
@@ -306,17 +297,20 @@ app.whenReady().then(async () => {
   const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
   await captureAfterPaint(win, settingsShot);
 
-  // The Mac that was already pointed at its own Anthropic key when the section
-  // went away. Its stored settings are untouched — the reviewer still runs on
-  // that provider, and `settingsActions`/`reviewPolicy` still honour it — but
-  // this pane must not show a trace of it, half a control least of all.
-  saveSettings(probeHome, {
-    ...loadSettings(probeHome),
-    relayCredential: "plow_sk_probe_credential",
-    anthropicApiKey: "sk-ant-a-real-committed-key",
-    inferenceProvider: "anthropic",
-    approvalMode: "adversarial",
-  });
+  // The Mac that once pasted its own Anthropic key. Its settings.json still
+  // holds the retired fields until something reads them; loading is what takes
+  // them off disk, and the pane must show no trace of them either way.
+  const strandedFile = path.join(probeHome, "app/settings.json");
+  fs.writeFileSync(
+    strandedFile,
+    JSON.stringify({
+      ...JSON.parse(fs.readFileSync(strandedFile, "utf8")),
+      relayCredential: "plow_sk_probe_credential",
+      approvalMode: "adversarial",
+      anthropicApiKey: "sk-ant-a-real-committed-key",
+      inferenceProvider: "anthropic",
+    }),
+  );
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(win, `document.querySelector(".panel.settings")`, "Settings to remount on the stored-key home");
@@ -325,13 +319,12 @@ app.whenReady().then(async () => {
   const keyNotInDom = await win.webContents.executeJavaScript(
     `!document.querySelector("#view").innerHTML.includes("sk-ant-a-real-committed-key")`,
   );
-  const strandedSettings = loadSettings(probeHome);
+  // …and rendering it was a read, so the retired fields are off disk for good.
   const strandedOnDisk = {
     keyNotInDom,
-    // Rendering the pane is not a migration: what was on disk is still on disk.
-    keyStillStored: strandedSettings.anthropicApiKey === "sk-ant-a-real-committed-key",
-    providerStillStored: strandedSettings.inferenceProvider === "anthropic",
-    modeStillStored: strandedSettings.approvalMode === "adversarial",
+    scrubbedFromDisk: !fs.readFileSync(strandedFile, "utf8").includes("sk-ant-a-real-committed-key"),
+    reviewerStillUsable: loadSettings(probeHome).relayCredential === "plow_sk_probe_credential",
+    modeStillStored: loadSettings(probeHome).approvalMode === "adversarial",
   };
 
   // An open Settings pane must re-read when main says the account changed —
@@ -341,12 +334,7 @@ app.whenReady().then(async () => {
   // The observable used to be the reviewer note, which this pane no longer has.
   // The account group is the honest one left: it is what a status change is
   // about, and it says in words whether this Mac is signed in.
-  saveSettings(probeHome, {
-    ...loadSettings(probeHome),
-    relayCredential: "",
-    anthropicApiKey: "",
-    inferenceProvider: "plow",
-  });
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(
@@ -395,8 +383,6 @@ app.whenReady().then(async () => {
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
     relayCredential: "plow_sk_probe_credential",
-    anthropicApiKey: "",
-    inferenceProvider: "plow",
     approvalMode: "ask",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -507,7 +493,6 @@ app.whenReady().then(async () => {
     ...loadSettings(probeHome),
     relayCredential: "plow_sk_probe_credential",
     approvalMode: "adversarial",
-    inferenceProvider: "plow",
     agentPurpose: "Groceries and calendar only.",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -621,15 +606,9 @@ app.whenReady().then(async () => {
       })(),
     };
   }})()`);
-  // Ask mode on a Mac whose reviewer CANNOT run — the state a stored Anthropic
-  // provider with no key leaves behind. The card must not tell anyone to turn on
-  // the checkbox one row down, because that checkbox is dead; and it must not
-  // name a remedy this app no longer offers.
-  saveSettings(probeHome, {
-    ...loadSettings(probeHome),
-    inferenceProvider: "anthropic",
-    anthropicApiKey: "",
-  });
+  // Ask mode on a Mac whose reviewer CANNOT run. The card must not tell anyone
+  // to turn on the checkbox one row down, because that checkbox is dead.
+  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   win.webContents.send("status:changed");
   await waitFor(
     win,
@@ -648,9 +627,8 @@ app.whenReady().then(async () => {
       // …replaced by the reason, and the checkbox it described really is dead.
       explainsWhy: pane.innerText.includes("cannot suggest an answer"),
       checkboxIsDead: !!box && box.disabled,
-      // The remedy is not named for a provider this app cannot set up, so the
-      // card must not send this Mac to a Settings control that is gone.
-      namesNoRemedyItCannotOffer: !pane.innerText.includes("sign in to Plow in Settings"),
+      // …and it names the one remedy there is, which is a control that exists.
+      namesTheRemedy: pane.innerText.includes("sign in to Plow in Settings"),
       // Ask mode still says what Ask mode does.
       stillSaysWhatAskDoes: pane.innerText.includes(
         "Any request a rule doesn't already cover opens an approval window",
@@ -659,7 +637,7 @@ app.whenReady().then(async () => {
   }})()`);
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
-    inferenceProvider: "plow",
+    relayCredential: "plow_sk_probe_credential",
   });
   win.webContents.send("status:changed");
   await waitFor(win, `document.querySelector("#view").innerText.includes("turn that on below")`,
@@ -841,8 +819,8 @@ app.whenReady().then(async () => {
     settings.launchNoteHidden &&
     staleSettingsPane.launchUnsupportedFollowed &&
     strandedOnDisk.keyNotInDom &&
-    strandedOnDisk.keyStillStored &&
-    strandedOnDisk.providerStillStored &&
+    strandedOnDisk.scrubbedFromDisk &&
+    strandedOnDisk.reviewerStillUsable &&
     strandedOnDisk.modeStillStored &&
     staleSettingsPane.warnedWhileSignedOut &&
     staleSettingsPane.warningGoneAfterStatusChanged &&
@@ -872,7 +850,7 @@ app.whenReady().then(async () => {
     askWithoutReviewer.noDeadInstruction &&
     askWithoutReviewer.explainsWhy &&
     askWithoutReviewer.checkboxIsDead &&
-    askWithoutReviewer.namesNoRemedyItCannotOffer &&
+    askWithoutReviewer.namesTheRemedy &&
     askWithoutReviewer.stillSaysWhatAskDoes &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&
