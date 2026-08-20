@@ -89,6 +89,8 @@ export class BrowserHost {
   private headedNow: boolean;
   /** Profile the next browser opens, one per approved origin set. */
   private profileKeyNow: string | null = null;
+  /** Profile the browser that is actually running opened. */
+  private startedKey: string | null = null;
 
   constructor(private readonly cfg: BrowserHostConfig) {
     this.headedNow = cfg.headed === true;
@@ -218,22 +220,40 @@ export class BrowserHost {
       .filter((e): e is { full: string; used: number } => e !== null)
       .sort((a, b) => b.used - a.used);
     for (const stale of byAge.slice(keep)) {
-      fs.rmSync(stale.full, { recursive: true, force: true });
-      this.cfg.audit?.("browser_profile_evicted", { profile: path.basename(stale.full) });
+      // Best-effort: an undeletable profile is wasted disk, but throwing here
+      // would abort the start — and three of those trip the circuit breaker,
+      // turning a housekeeping problem into no browser at all.
+      try {
+        fs.rmSync(stale.full, { recursive: true, force: true });
+        this.cfg.audit?.("browser_profile_evicted", { profile: path.basename(stale.full) });
+      } catch {
+        /* try again on the next start */
+      }
     }
   }
 
-  private ensureStarted(): Promise<void> {
-    if (this.child) return Promise.resolve();
+  private async ensureStarted(): Promise<void> {
+    // A running browser cannot be moved to another profile, so handing this
+    // caller the one already open would put their grant's cookies in another
+    // grant's jar — the thing the per-grant store exists to prevent. The
+    // profile asked for wins: put the wrong one away and start the right one.
+    // A session still holding the old browser learns the way it would from any
+    // browser that goes away.
+    if (this.child && this.profileKeyNow !== this.startedKey) {
+      try {
+        await this.shutdown();
+      } finally {
+        this.resetBreaker();
+      }
+    }
+    if (this.child) return;
     if (this.starting) return this.starting;
 
     const now = Date.now();
     this.restartTimes = this.restartTimes.filter((t) => now - t < RESTART_WINDOW_MS);
     if (this.restartTimes.length >= MAX_RESTARTS_IN_WINDOW) {
-      return Promise.reject(
-        new BrowserCrashedError(
-          `browser crashed ${this.restartTimes.length} times in the last minute; giving up`,
-        ),
+      throw new BrowserCrashedError(
+        `browser crashed ${this.restartTimes.length} times in the last minute; giving up`,
       );
     }
     this.restartTimes.push(now);
@@ -263,6 +283,7 @@ export class BrowserHost {
       extraEnv.HOME = home;
     }
     const profileDir = this.profileDirForStart();
+    this.startedKey = this.profileKeyNow;
     const argv = [
       ...this.cfg.command,
       "--screenshots-dir",
@@ -340,6 +361,7 @@ export class BrowserHost {
         rl.close();
         const wasReady = ready;
         this.child = null;
+        this.startedKey = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
           clearTimeout(p.timer);
@@ -361,6 +383,7 @@ export class BrowserHost {
 
       child.on("error", (err) => {
         this.child = null;
+        this.startedKey = null;
         if (!ready) {
           ready = true;
           clearTimeout(startTimer);

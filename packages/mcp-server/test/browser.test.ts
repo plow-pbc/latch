@@ -235,6 +235,25 @@ describe("browser tools (fake runtime)", () => {
     expect(pizzaAgain).toBe(pizza);
   });
 
+  it("a second agent racing the cold start is refused, not handed the browser", async () => {
+    // plow_browser_open is deferrable and a cold browser takes ~30s, so a
+    // second open genuinely arrives while the first is still starting. Run
+    // concurrently rather than queued, both callers find no session yet and
+    // both pass the in-use guard — and the second agent walks into a browser
+    // it was never granted.
+    const { server } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const other: RelayAuth = { ...AGENT, agent_id: "agent-2", agent_name: "Bank Agent" };
+
+    const [pizza, bank] = await Promise.all([
+      callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT),
+      callTool(server, "plow_browser_open", { origins: ["bank.example"] }, other),
+    ]);
+
+    const outcomes = [pizza, bank].map((r) => JSON.stringify(r.payload));
+    expect(outcomes.filter((o) => o.includes("in use by another agent"))).toHaveLength(1);
+    expect(outcomes.filter((o) => !o.includes("in use by another agent"))).toHaveLength(1);
+  });
+
   it("DOMO_BROWSER_FRESH_PROFILE gives every session a profile with no history", async () => {
     vi.stubEnv("DOMO_BROWSER_FRESH_PROFILE", "1");
     cleanups.push(() => vi.unstubAllEnvs());

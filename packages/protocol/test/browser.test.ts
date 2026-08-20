@@ -77,6 +77,14 @@ describe("profileKeyForOrigins", () => {
     expect(profileKeyForOrigins(["reddit.com"])).not.toBe(costco);
   });
 
+  it("cannot be made to collide by a pattern that spells the separator", () => {
+    // Origins arrive as an unvalidated tool argument, and the key is the only
+    // thing keeping one grant's cookies away from another's.
+    expect(profileKeyForOrigins(["a.example\nb.example"])).not.toBe(
+      profileKeyForOrigins(["a.example", "b.example"]),
+    );
+  });
+
   it("is a bare filesystem-safe name, so it can be a directory", () => {
     expect(profileKeyForOrigins(["*.dominos.com"])).toMatch(/^[0-9a-f]{16}$/);
   });

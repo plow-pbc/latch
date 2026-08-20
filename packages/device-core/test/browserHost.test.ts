@@ -65,6 +65,26 @@ describe("BrowserHost profile store", () => {
     expect(fs.existsSync(lastWeek)).toBe(false);
     expect(events).toContain("browser_profile_evicted");
   });
+
+  it("keeps the profile a grant just opened, however old its files are", async () => {
+    const profiles = fs.mkdtempSync(path.join(os.tmpdir(), "domo-profiles-"));
+    const age = (name: string, agoMs: number) => {
+      const full = path.join(profiles, name);
+      fs.mkdirSync(full);
+      const when = new Date(Date.now() - agoMs);
+      fs.utimesSync(full, when, when);
+    };
+    age("ancient", 365 * 24 * 3600_000);
+    age("newer-but-unused", 3600_000);
+
+    const { host } = makeHost({}, { profilesDir: profiles, maxProfiles: 1 });
+    await host.ensureReady(false, "ancient");
+
+    // Recency is last use, not last write: a grant that signs in once and
+    // reads for a year must not be evicted out from under itself.
+    expect(fs.existsSync(path.join(profiles, "ancient"))).toBe(true);
+    expect(fs.existsSync(path.join(profiles, "newer-but-unused"))).toBe(false);
+  });
 });
 
 describe("BrowserHost", () => {

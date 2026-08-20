@@ -50,6 +50,13 @@ export function originMatches(host: string, patterns: string[]): boolean {
  * safe direction, since the narrower grant is the one that goes without.
  */
 export function profileKeyForOrigins(origins: string[]): string {
-  const key = [...new Set(origins.map((o) => normalizeOrigin(o)))].sort().join("\n");
+  // Length-prefixed, so the encoding is injective: a pattern that happens to
+  // contain the separator cannot spell a different set that hashes the same.
+  // These come straight from a tool argument, so "no host looks like that"
+  // is not something this function gets to assume.
+  const key = [...new Set(origins.map((o) => normalizeOrigin(o)))]
+    .sort()
+    .map((o) => `${o.length}:${o}`)
+    .join("");
   return createHash("sha256").update(key).digest("hex").slice(0, 16);
 }

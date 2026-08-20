@@ -86,6 +86,8 @@ export interface BrowserSessionInfo {
 export class BrowserSessions {
   private session: Session | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
+  /** Tail of the open queue — see open(). */
+  private opening: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly host: BrowserHost,
@@ -115,8 +117,33 @@ export class BrowserSessions {
     };
   }
 
-  /** Open a new session (called only after an approved intent). */
-  async open(
+  /**
+   * Open a new session (called only after an approved intent).
+   *
+   * Serialized, because everything below reads `this.session` and the first
+   * open does not publish it until its browser is up — a ~30s cold start on a
+   * deferrable tool, so a second open really does arrive inside that window.
+   * Run concurrently, both callers see no session, both sail past the in-use
+   * guard, and the second browses in the first grant's profile: the very
+   * cross-grant sharing the per-grant store exists to prevent. Queued, the
+   * second caller finds the first's session and takes the refusal or the
+   * close-and-reopen it should have.
+   */
+  open(
+    intentId: string,
+    agentId: string,
+    origins: string[],
+    credentialMetadata: boolean,
+    headed?: boolean,
+  ): Promise<JSONValue> {
+    const opened = this.opening
+      .catch(() => undefined)
+      .then(() => this.openApproved(intentId, agentId, origins, credentialMetadata, headed));
+    this.opening = opened;
+    return opened;
+  }
+
+  private async openApproved(
     intentId: string,
     agentId: string,
     origins: string[],
