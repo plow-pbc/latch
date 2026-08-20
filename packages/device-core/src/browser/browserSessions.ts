@@ -484,16 +484,17 @@ export class BrowserSessions {
       // path records its own browser_profile_abandon_failed naming the same
       // origin, so nothing goes unexplained either way.
       const refused = await this.retireProfile(s, strayedOrigin);
-      if (refused) return refused;
-      // Above every early return below: the mask-failure path retires the jar
+      // Between the act and the return: every stray path records the
+      // violation, including the two that refuse the action — a retirement
+      // that failed, a mask that would not go back on. Both retire the jar
       // just the same, and a viewer filtering on this event would otherwise
-      // see an abandoned profile with nothing explaining it. One append for
-      // the driven page and a popup alike.
+      // see an abandoned profile with nothing naming what reached where.
       this.audit("browser_scope_violation", {
         session: s.handle,
         action: String(action.action),
         origin: strayedOrigin,
       });
+      if (refused) return refused;
     }
 
     const navigated = url !== s.lastUrl;

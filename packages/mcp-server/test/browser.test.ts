@@ -435,6 +435,9 @@ describe("browser tools (fake runtime)", () => {
     // The session is gone, not merely erroring — nothing else reaches that jar.
     expect(audited(device, "browser_profile_abandoned")).toEqual([]);
     expect(events(device)).toContain("browser_profile_abandon_failed");
+    // The violation is recorded on this path too — retirement failing is not
+    // a reason for the owner's log to lose what reached where.
+    expect(audited(device, "browser_scope_violation", "origin")).toEqual(["offsite.example"]);
     expect(audited(device, "browser_session_closed", "reason").at(-1)).toBe(
       "profile could not be retired",
     );
