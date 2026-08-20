@@ -168,36 +168,6 @@ VALUE_UNCHANGED_JS = """(el, previous) => (el.value || '') === previous"""
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 
-# A forced click skips the check that guarantees delivery, so delivery has to be
-# observed instead: Playwright reports success the moment it has dispatched the
-# event, and an overlay, `pointer-events: none` or a disabled control swallows it
-# silently. The watcher holds the SAME node the click is aimed at -- not a
-# selector re-queried against the DOM, which would be wrong for every selector
-# engine that is not plain CSS -- and lives on a handle rather than on `window`,
-# so there is nothing for the page to see. The answer is "" when the node (or
-# something inside it) received the click, otherwise what did.
-CLICK_OFF_JS = """(s) => document.removeEventListener("click", s.on, true)"""
-
-CLICK_WATCH_JS = """(el) => {
-  const name = (n) => n.tagName.toLowerCase()
-    + (n.id ? "#" + n.id : "")
-    + (typeof n.className === "string" && n.className.trim()
-        ? "." + n.className.trim().split(/\\s+/).join(".") : "");
-  const s = {got: false, other: null};
-  s.on = (e) => {
-    if (el === e.target || el.contains(e.target)) s.got = true;
-    else if (s.other === null) s.other = name(e.target);
-  };
-  document.addEventListener("click", s.on, true);
-  return s;
-}"""
-
-CLICK_LANDED_JS = """(s) => {
-  if (s.got) return "";
-  if (s.other !== null) return s.other + " got it instead";
-  return "nothing received it -- the element is disabled, or has pointer-events: none";
-}"""
-
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
     if (el.style) {
@@ -345,26 +315,6 @@ class Session:
         except Exception:  # noqa: BLE001 -- a frame that went away holds nothing
             return False
 
-    def ask_watcher(self, watch, js):
-        """Ask the click watcher something, tolerating a document that has gone.
-
-        A forced click on a link or a submit navigates, and the handle's context
-        dies with the old document -- which is itself proof the click landed, so
-        "nothing to report" is the honest answer rather than a failure.
-        """
-        try:
-            return watch.evaluate(js)
-        except Exception:  # noqa: BLE001 -- the document the watcher lived in
-            return ""
-
-    def drop_watcher(self, watch):
-        """Take the listener back off and let the handle go, whatever happened."""
-        self.ask_watcher(watch, CLICK_OFF_JS)
-        try:
-            watch.dispose()
-        except Exception:  # noqa: BLE001 -- disposing must never fail a click
-            pass
-
     def frames_for(self, cmd):
         """Explicit frame index if given, else all frames (login forms hide in iframes)."""
         if "frame" in cmd:
@@ -488,56 +438,7 @@ class Session:
                         )
                         if left <= 0:
                             break
-                        if not cmd.get("force"):
-                            fr.click(sel, timeout=left)
-                        else:
-                            # `force` skips the actionability check -- what an
-                            # element that never holds still needs, and the
-                            # reason an agent never has to reach for `eval` to
-                            # get a click through: the event still comes from
-                            # the browser, so the page sees a real one. What it
-                            # does NOT do is push a click past whatever is in
-                            # the way, so delivery is watched and a swallowed
-                            # click is an error rather than a cheerful lie.
-                            # ONE resolved node for the watcher and the click,
-                            # so what is watched is what is clicked -- and
-                            # `attached` rather than the default `visible`,
-                            # because skipping that wait is the point of force.
-                            # Half the slice to find the node, half to click
-                            # it. A click handed whatever milliseconds a wait
-                            # happened to leave fails on the clock rather than
-                            # on anything about the page, and the watcher never
-                            # gets to say what happened. The price is paid by
-                            # the fallback above -- nothing held the selector,
-                            # so every frame is tried and the wait is really
-                            # waiting: it gets half a slice to see the element
-                            # appear. That is the intended trade -- when a frame
-                            # does hold the selector, which is the path this
-                            # exists for, the wait returns at once and the click
-                            # has the whole slice.
-                            slice_end = time.monotonic() + left / 1000.0
-                            el = fr.wait_for_selector(
-                                sel, timeout=max(left // 2, 1), state="attached"
-                            )
-                            if el is None:
-                                raise RuntimeError("selector not found: %s" % sel)
-                            watch = fr.evaluate_handle(CLICK_WATCH_JS, el)
-                            try:
-                                # What is left of this frame's slice, never the
-                                # rest of the whole budget: a node that resolves
-                                # and then will not take the click must not
-                                # spend what the next frame's attempt needs.
-                                rest = int((slice_end - time.monotonic()) * 1000)
-                                el.click(timeout=max(rest, 1), force=True)
-                                blocked = self.ask_watcher(watch, CLICK_LANDED_JS)
-                            finally:
-                                self.drop_watcher(watch)
-                            if blocked:
-                                raise RuntimeError(
-                                    "forced click on %s was not received: %s. Deal with what "
-                                    "is in the way -- click it, or the control that dismisses "
-                                    "it -- rather than clicking through it." % (sel, blocked)
-                                )
+                        fr.click(sel, timeout=left)
                     else:
                         # ONE resolved node for the whole fill. Resolving the
                         # selector a second time is the re-resolution failure

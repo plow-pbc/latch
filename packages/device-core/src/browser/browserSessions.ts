@@ -312,22 +312,17 @@ export class BrowserSessions {
 
     const p = jv(params);
     const action = p.get("action").str ?? "";
-    // The click escape hatches, and only for a click: the agent may ask a slow
-    // page for more than the default, up to what the exchange can carry, and
-    // may say "click it anyway". Both are typed rather than passed through —
-    // `force: "false"` is truthy to the Python side. They are read here, before
-    // the command runs, because the clicks worth counting later are the ones
-    // that fail, and those are audited from the catch below.
-    const knobs: { force?: true; timeout_ms?: number } = {};
-    if (action === "click") {
-      const timeoutMs = p.get("timeout_ms").num;
-      if (timeoutMs !== null) {
-        knobs.timeout_ms = Math.min(
-          Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
-          MAX_CLICK_TIMEOUT_MS,
-        );
-      }
-      if (p.get("force").bool === true) knobs.force = true;
+    // A click may be given longer than the default for a page that is still
+    // settling, up to what the exchange can carry. Read here, before the
+    // command runs, because the clicks worth counting later are the ones that
+    // failed, and those are audited from the catch below.
+    const knobs: { timeout_ms?: number } = {};
+    const timeoutMs = action === "click" ? p.get("timeout_ms").num : null;
+    if (timeoutMs !== null) {
+      knobs.timeout_ms = Math.min(
+        Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
+        MAX_CLICK_TIMEOUT_MS,
+      );
     }
 
     try {
@@ -426,8 +421,8 @@ export class BrowserSessions {
       session: s.handle,
       action: String(action.action),
       url: stripQuery(url),
-      // What the agent had to reach for, so the next look at a session that
-      // went wrong can count it the way this one counted `eval`.
+      // What the agent had to ask for, so the next look at a session that went
+      // wrong can count it the way this one counted `eval`.
       ...knobs,
     });
 

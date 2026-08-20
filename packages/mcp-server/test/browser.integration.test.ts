@@ -147,12 +147,9 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(opAudit).not.toContain("pizza-time-99");
   }, 300_000);
 
-  // Issue #88. Two claims are checked here because both are load-bearing and
-  // neither survives a fake: a click Playwright dispatches is trusted and one
-  // synthesized in `eval` is not, and `force` does NOT push a click past an
-  // overlay — it skips the check, so a swallowed click has to be caught by
-  // watching for delivery or it comes back as a cheerful lie.
-  it("gives a stuck click a way through that keeps the event trusted", async () => {
+  // Issue #88. The claim that cannot be faked and is the whole point: a click
+  // Playwright dispatches is trusted, and one synthesized in `eval` is not.
+  it("clicks a page a stuck agent would have reached for eval on", async () => {
     const opened = await callTool(
       server, "plow_browser_open",
       { origins: ["127.0.0.1"], headed: false, goal: "get past a modal backdrop" },
@@ -162,60 +159,39 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     session = opened.payload.session as string;
     const text = async () => (await act("text")).payload.text as string;
 
-    await act("goto", { url: site.url + "/blocked" });
+    // A cover that clears after `clears_at`, with the click allowed `timeout_ms`
+    // to outlast it. The page has four frames and a click's budget covers the
+    // whole action, so the frame holding the element has to be found before the
+    // budget is split — the 1.2 s row is already over the quarter a naive split
+    // would give it, and the 4 s row is over the 3 s the tool allowed at all
+    // before this change: it is the recovery the timeout exists for.
+    for (const [clearsAt, timeout] of [[1200, undefined], [4000, 6000]] as const) {
+      await act("goto", { url: site.url + "/blocked" });
+      await act("eval", {
+        expression:
+          "document.querySelector('.modal-backdrop').remove();" +
+          "const c = document.createElement('div');" +
+          "c.style.cssText = 'position:fixed;inset:0';" +
+          `document.body.appendChild(c); setTimeout(() => c.remove(), ${clearsAt})`,
+      });
+      await act("click", { selector: "#continue", ...(timeout ? { timeout_ms: timeout } : {}) });
+      expect(await text(), `cover clearing at ${clearsAt}ms`).toContain("clicked isTrusted=true");
+    }
 
-    // The page has four frames and a click's budget covers the whole action, so
-    // the frame holding the element has to be found before the budget is split
-    // — otherwise a default click gets a quarter of it and starts failing where
-    // it used to work. A cover that clears after 1.2 s is over that quarter.
-    await act("eval", {
-      expression:
-        "document.querySelector('.modal-backdrop').remove();" +
-        "const c = document.createElement('div');" +
-        "c.style.cssText = 'position:fixed;inset:0';" +
-        "document.body.appendChild(c); setTimeout(() => c.remove(), 1200)",
-    });
-    await act("click", { selector: "#continue" });
-    expect(await text()).toContain("clicked isTrusted=true");
     await act("goto", { url: site.url + "/blocked" });
 
     // The shape the Costco log has: visible, enabled, stable — and unclickable.
+    // No click gets through a backdrop; the failure names it, which is what the
+    // agent needs to know instead of reaching for `eval`.
     const blocked = await act("click", { selector: "#continue", timeout_ms: 1000 }, false);
     expect(blocked.isError).toBe(true);
     expect(JSON.stringify(blocked.payload)).toContain("intercepts pointer events");
-
-    // Forcing it does not get through the backdrop — the browser still routes
-    // the event to whatever is on top — and saying so is the whole point: a
-    // silent "ok" here is what would send the agent on believing it clicked.
-    const forced = await act("click", { selector: "#continue", force: true }, false);
-    expect(forced.isError).toBe(true);
-    expect(JSON.stringify(forced.payload)).toContain("div.modal-backdrop.show got it instead");
     expect(await text()).toContain("no click yet");
 
-    // The honest way through: deal with what is in the way, with a real click.
+    // The way through: deal with what is in the way, with a real click.
     await act("click", { selector: "#dismiss" });
     await act("click", { selector: "#continue" });
     expect(await text()).toContain("clicked isTrusted=true");
-
-    // What `force` is actually for: an element that never holds still. Without
-    // it the click never lands; with it the page gets a real one.
-    const spin = "document.getElementById('result').textContent = 'no click yet';" +
-      "document.getElementById('continue').animate(" +
-      "[{transform:'translateX(0)'},{transform:'translateX(120px)'}]," +
-      "{duration:600, iterations:Infinity})";
-    await act("eval", { expression: spin });
-    const unstable = await act("click", { selector: "#continue", timeout_ms: 1000 }, false);
-    expect(unstable.isError).toBe(true);
-    expect(await text()).toContain("no click yet");
-    await act("click", { selector: "#continue", force: true, timeout_ms: 1000 });
-    expect(await text()).toContain("clicked isTrusted=true");
-
-    // A forced click that navigates takes the document — and the watcher's
-    // context — with it. That is a landed click, not a failure.
-    await act("click", { selector: "#leave", force: true });
-    expect(await text()).toContain("Order confirmed");
-    await act("goto", { url: site.url + "/blocked" });
-    await act("click", { selector: "#dismiss" });
 
     // And the fallback all of this exists to replace: the page can tell.
     await act("eval", { expression: "document.querySelector('#continue').click()" });

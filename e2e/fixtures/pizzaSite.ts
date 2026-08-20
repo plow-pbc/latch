@@ -117,9 +117,9 @@ export function createPizzaSite(): Promise<PizzaSite> {
       });
     } else if (req.method === "GET" && url.pathname === "/blocked") {
       // The shape the Costco IdP had (issue #88): a real, visible, enabled
-      // button with a backdrop over it swallowing pointer events. Playwright's
-      // actionability check refuses it; `force` is the honest way through, and
-      // the handler reports whether the event the page got was a real one.
+      // button with a backdrop over it swallowing pointer events, and a control
+      // that dismisses it. The handler reports whether the event the page got
+      // was a real one.
       html(
         "Blocked",
         `<h1>Verify</h1>
@@ -128,7 +128,6 @@ export function createPizzaSite(): Promise<PizzaSite> {
               style="position:fixed;inset:0;background:rgba(0,0,0,.5)"></div>
          <button id="dismiss" type="button"
                  style="position:fixed;top:0;right:0">Close</button>
-         <a id="leave" href="/confirm?n=9" style="position:fixed;bottom:0;left:0">Leave</a>
          <!-- The ad-laden shape a click budget has to survive: the element is
               in one frame and the page has several. -->
          <iframe src="/payframe" width="10" height="10"></iframe>

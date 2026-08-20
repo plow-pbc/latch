@@ -184,54 +184,43 @@ describe("session lifecycle", () => {
     expect(ok.get("seconds").num).toBe(3); // a reasonable wait passes through
   });
 
-  it("hands the browser the click escape hatches, timeout bounded like a wait", async () => {
+  it("lets a click ask for more time, bounded like a wait", async () => {
     const s = await openSession(["pizza.example"]);
-    const clicks: [Record<string, JSONValue>, JSONValue | undefined, true | undefined][] = [
-      [{ force: true }, undefined, true],
-      [{ timeout_ms: 8000 }, 8000, undefined],
-      [{ timeout_ms: 45_000 }, 11_000, undefined], // capped inside the exchange
+    const clicks: [Record<string, JSONValue>, JSONValue | undefined][] = [
+      [{ timeout_ms: 8000 }, 8000],
+      [{ timeout_ms: 45_000 }, 11_000], // capped inside the exchange
       // Playwright reads 0 as "no timeout" — the floor is what keeps a click
       // from parking until the host cap kills the browser under it.
-      [{ timeout_ms: 0 }, 500, undefined],
-      // Truthy to Python, so it must not survive the boundary as one.
-      [{ force: "false" }, undefined, undefined],
-      [{}, undefined, undefined], // asked for nothing, told the browser nothing
+      [{ timeout_ms: 0 }, 500],
+      [{}, undefined], // asked for nothing, told the browser nothing
     ];
     for (const [extra] of clicks) {
       const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#go", ...extra }));
       expect(r.get("status").str).toBe("completed");
     }
-    // Neither knob belongs to any other action.
-    await ctx.sessions.command(AGENT, s, { action: "scroll", timeout_ms: 9000, force: true });
+    // The knob belongs to no other action.
+    await ctx.sessions.command(AGENT, s, { action: "scroll", timeout_ms: 9000 });
 
     const sent = fs
       .readFileSync(ctx.cmdLog, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l) as { action: string; force?: boolean; timeout_ms?: number });
-    const clicked = sent.filter((c) => c.action === "click");
-    expect(clicked.map((c) => c.timeout_ms)).toEqual(clicks.map(([, want]) => want));
-    expect(clicked.map((c) => c.force)).toEqual(clicks.map(([, , want]) => want));
-    const scrolled = sent.find((c) => c.action === "scroll")!;
-    expect(scrolled.timeout_ms).toBeUndefined();
-    expect(scrolled.force).toBeUndefined();
+      .map((l) => JSON.parse(l) as { action: string; timeout_ms?: number });
+    expect(sent.filter((c) => c.action === "click").map((c) => c.timeout_ms))
+      .toEqual(clicks.map(([, want]) => want));
+    expect(sent.find((c) => c.action === "scroll")!.timeout_ms).toBeUndefined();
 
-    // And the audit log says which clicks needed a knob, so the next look at a
-    // session that went wrong can count them.
-    const audited = ctx.events.filter((e) => e.event === "browser_command");
-    expect(audited.filter((e) => e.fields.force === true)).toHaveLength(1);
-    expect(audited.filter((e) => e.fields.timeout_ms === 11_000)).toHaveLength(1);
-
-    // And above all on the ones that failed: a click the agent had to force,
-    // that still did not land, is the whole reason the fields are there.
-    const swallowed = jv(await ctx.sessions.command(AGENT, s, {
-      action: "click", selector: "#swallowed", force: true, timeout_ms: 6000,
+    // And the audit log says which clicks needed it — including, above all, the
+    // ones that failed, which are what a look at a bad session goes looking for.
+    const clamped = jv(await ctx.sessions.command(AGENT, s, {
+      action: "click", selector: "#swallowed", timeout_ms: 6000,
     }));
-    expect(swallowed.get("status").str).toBe("error");
-    const failure = ctx.events.filter((e) => e.event === "browser_command").at(-1)!.fields;
-    expect(failure.force).toBe(true);
+    expect(clamped.get("status").str).toBe("error");
+    const audited = ctx.events.filter((e) => e.event === "browser_command");
+    expect(audited.filter((e) => e.fields.timeout_ms === 11_000)).toHaveLength(1);
+    const failure = audited.at(-1)!.fields;
     expect(failure.timeout_ms).toBe(6000);
-    expect(String(failure.error)).toContain("not received");
+    expect(String(failure.error)).toContain("intercepts pointer events");
   });
 });
 

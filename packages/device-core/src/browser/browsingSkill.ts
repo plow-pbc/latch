@@ -63,14 +63,14 @@ url, title, links, forms, tables, pages.
   searches all frames (pass \`frame\` to target one).
 - **A click that fails is not a reason to reach for \`eval\`.** A click \`eval\` synthesizes
   arrives with \`isTrusted: false\`, which is exactly what a site's bot defenses look for —
-  and the click you route around is usually the one that gets the session flagged. \`click\`
-  has two knobs instead: \`timeout_ms\` (up to ${MAX_CLICK_TIMEOUT_MS}) for a page that is still settling, and
-  \`force: true\` for an element that will not hold still. Both keep the click inside the
-  browser, so the page sees a real one.
-- **\`force\` does not push a click past something that is covering the element** — nothing
-  can, a person could not click it either. It skips the wait, and then reports what got the
-  click instead ("div.modal-backdrop.show got it instead"). Deal with that thing: screenshot,
-  then click the banner's or modal's own button — a real click on whatever is on top lands.
+  and the click you route around is usually the one that gets the session flagged. Give the
+  click a longer \`timeout_ms\` instead (up to ${MAX_CLICK_TIMEOUT_MS}) when the page is
+  still settling.
+- **A click nothing can reach is telling you something.** When a cookie banner or a modal
+  backdrop is over the element, the failure names it ("<div class=\"modal-backdrop show\">
+  intercepts pointer events") — and no click gets through it, because a person's would not
+  either. Screenshot, then click the banner's or modal's own button: a real click on
+  whatever is on top lands.
 - Captcha/blocked: tell the user; try an alternative site.
 
 ## Credentials (logins, cards, identities) — the value is never handed back to you
