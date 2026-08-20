@@ -120,8 +120,13 @@ class Handle:
 class Hidden(RuntimeError):
     """What a frame holding the field but refusing to show it answers with.
 
-    Its own type, so a scenario can say WHICH frame's failure came back.
+    Its own type, so a scenario can say WHICH frame's failure came back — the
+    generic "selector not found" the loop falls back to is a RuntimeError too.
     """
+
+
+class Detached(RuntimeError):
+    """What a frame that went away answers with. Its own type for the same reason."""
 
 
 class Frame:
@@ -162,6 +167,8 @@ class Frame:
 
     def wait_for_selector(self, selector, timeout=None):
         self.trace.append("frame.wait_for_selector")
+        if self.detached:
+            raise Detached("frame was detached")
         node = self._node(selector)
         if node is None:
             raise RuntimeError("selector not found: %s" % selector)
@@ -224,21 +231,25 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     return out
 
 
-def ranked(server):
-    """A frame holding the field and refusing to show it, with a frame that went
-    away sorting after it. The answer has to be the one from the frame that had
-    the field -- a frame with nothing in it must not overwrite it."""
+def ranked(server, with_holder=True):
+    """Which frame's failure comes back.
+
+    A frame that went away must not overwrite the answer from one that held the
+    field and refused to show it -- and must still be heard when it is the only
+    thing that happened. Siblings come first, so the order under test is
+    holder-then-gone; the main frame is last and has nothing.
+    """
     trace: list[str] = []
-    holder = Frame(trace, nodes={"#pass": Handle(trace)}, hides=True)
-    gone = Frame(trace, nodes={}, detached=True)
-    # Siblings first, so the order under test is holder-then-gone; the main
-    # frame is last and has nothing, which is the page shape this is about.
-    session = server.Session(Page(Frame(trace, nodes={}), extra_frames=[holder, gone]))
+    siblings = [Frame(trace, nodes={"#pass": Handle(trace)}, hides=True)] if with_holder else []
+    siblings.append(Frame(trace, nodes={}, detached=True))
+    session = server.Session(Page(Frame(trace, nodes={}), extra_frames=siblings))
+    out = {"error": None, "tried": 0}
     try:
         session.handle({"action": "fill", "selector": "#pass", "value": "x"}, "/tmp")
     except Exception as exc:  # noqa: BLE001 — the scenario under test
-        return {"error": type(exc).__name__}
-    return {"error": None}
+        out["error"] = type(exc).__name__
+    out["tried"] = trace.count("frame.wait_for_selector")
+    return out
 
 
 def ledger(server, script):
@@ -353,6 +364,7 @@ def main() -> int:
         # which may be the last secret, so the mark must still be there.
         "plain_failed": run(server, base, detach_before_fill=True, marked=True),
         "ranked": ranked(server),
+        "ranked_only_gone": ranked(server, with_holder=False),
     }
     fill_pass = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0, "mask": True}
     fill_addr_at_pass = {"action": "fill", "selector": "#pass", "value": "1 Elm St", "frame": 0}

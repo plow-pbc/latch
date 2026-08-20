@@ -519,7 +519,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
           sibling_marked: boolean;
         };
       };
-      ranked: { error: string | null };
+      ranked: { error: string | null; tried: number };
+      ranked_only_gone: { error: string | null; tried: number };
     }>(FILL_PROBE);
   })();
 
@@ -534,8 +535,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
 
   it("reports the frame that had the field, not one that went away after it", () => {
     // Both answer `wait_for_selector` with a failure, and only one of them was
-    // ever going to be able to fill anything.
-    expect(probed.ranked.error).toBe("Hidden");
+    // ever going to be able to fill anything. Every frame is tried either way.
+    expect(probed.ranked).toEqual({ error: "Hidden", tried: 3 });
+    // …and the frame that went away is still heard when nothing else spoke.
+    expect(probed.ranked_only_gone).toEqual({ error: "Detached", tried: 2 });
   });
 
   it("hands the device an identity to check the fill against", () => {

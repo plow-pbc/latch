@@ -126,10 +126,12 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     const hidden = await act("fill", { selector: "#card-hidden", value: "x" }, false);
     expect(hidden.isError).toBe(true);
     // The stable half, then the discriminating half: a frame that simply hasn't
-    // got the field also times out, but reports nothing resolved. "hidden" is
-    // Playwright's call-log wording and tracks the pin in runtime.lock.json.
+    // got the field also times out, but resolves nothing — and the selector's
+    // own name appears either way, so it cannot be the discriminator.
+    // "resolved to" is Playwright call-log wording; it tracks the pin in
+    // runtime.lock.json.
     expect(JSON.stringify(hidden.payload)).toContain("Timeout");
-    expect(JSON.stringify(hidden.payload)).toContain("hidden");
+    expect(JSON.stringify(hidden.payload)).toContain("resolved to");
 
     await act("fill_secret", { selector: "#card-number", item: "C1", field: "number" });
     await act("fill_secret", { selector: "#card-cvv", item: "C1", field: "cvv" });
