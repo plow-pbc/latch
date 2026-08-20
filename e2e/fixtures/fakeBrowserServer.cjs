@@ -30,7 +30,7 @@
  * Scripted page behaviors:
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
- *   click "#swallowed" with force: fails the way one nothing received does
+ *   click "#swallowed" when forced: fails the way a click nothing received does
  */
 "use strict";
 const fs = require("node:fs");
