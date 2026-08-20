@@ -449,7 +449,7 @@ class Session:
                 # holding it and refusing to hand it over -- hidden, never
                 # settling -- is the answer the caller is waiting for, and
                 # Playwright reports both as the same timeout.
-                if fr.query_selector(sel) is not None:
+                if self.holds(fr, sel):
                     raise
                 raise NotAttempted("%s is not in frame %d" % (sel, i)) from exc
             if el is None:

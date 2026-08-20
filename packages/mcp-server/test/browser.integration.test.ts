@@ -125,7 +125,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // the second of those is worth burying.
     const hidden = await act("fill", { selector: "#card-hidden", value: "x" }, false);
     expect(hidden.isError).toBe(true);
-    expect(JSON.stringify(hidden.payload)).toContain("#card-hidden");
+    expect(JSON.stringify(hidden.payload)).toContain("Timeout");
     expect(JSON.stringify(hidden.payload)).not.toContain("is not in frame");
 
     await act("fill_secret", { selector: "#card-number", item: "C1", field: "number" });
