@@ -1007,6 +1007,18 @@ describe("whether a fill that failed left anything behind", () => {
     el: { value?: string; textContent?: string },
     previous: string,
   ) => boolean;
+  const snapshot = loadScript("VALUE_SNAPSHOT_JS") as (el: {
+    value?: string;
+    textContent?: string;
+  }) => string;
+
+  it.each([
+    { what: "an input", el: { value: "1 Elm" } },
+    // The row that goes red if the snapshot is taken through `value`.
+    { what: "a contenteditable", el: { textContent: "1 Elm" } },
+  ])("captures what $what was holding", ({ el }) => {
+    expect(snapshot(el)).toBe("1 Elm");
+  });
 
   it.each([
     { what: "an input still holding what it held", el: { value: "1 Elm" }, before: "1 Elm", nothing: true },
@@ -1020,9 +1032,7 @@ describe("whether a fill that failed left anything behind", () => {
       nothing: true,
     },
     { what: "an emptied contenteditable", el: { textContent: "" }, before: "1 Elm", nothing: true },
-    // The row that fails if this asks a contenteditable for its `value`: it
-    // reads as empty, so a node holding half a credential is called harmless
-    // and has its mark taken off.
+    // The row that goes red if the question is asked through `value`.
     {
       what: "a contenteditable holding more than it did",
       el: { textContent: "1 Elm Sec" },
