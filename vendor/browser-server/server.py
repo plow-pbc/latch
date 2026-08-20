@@ -511,10 +511,10 @@ class Session:
                             # the fallback above -- nothing held the selector,
                             # so every frame is tried and the wait is really
                             # waiting: it gets half a slice to see the element
-                            # appear. That is
-                            # the intended trade -- when a frame does hold the
-                            # selector, which is the path this exists for, the
-                            # wait returns at once and the click has the slice.
+                            # appear. That is the intended trade -- when a frame
+                            # does hold the selector, which is the path this
+                            # exists for, the wait returns at once and the click
+                            # has the whole slice.
                             slice_end = time.monotonic() + left / 1000.0
                             el = fr.wait_for_selector(
                                 sel, timeout=max(left // 2, 1), state="attached"
