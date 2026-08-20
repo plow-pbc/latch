@@ -205,16 +205,19 @@ describe("audit grouping for browser sessions", () => {
     expect(closeRow.text).toBe(closeText);
   });
 
-  it("a browser that crashed without closing its session still reads as Crashed", () => {
-    // The other half of the same verdict: the host audits browser_crashed, and
-    // a session whose close never arrived is exactly when an owner is looking.
+  it("a browser that died with no session open is a crash of its own", () => {
+    // The host audits browser_crashed with only a code — no session, no intent
+    // — so it cannot join any activity, and there is no session close to carry
+    // the verdict. It is a row nobody owns, which is the point: an owner still
+    // sees that the browser died.
     const acts = auditActivities([
-      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
-      { event: "browser_crashed", session: "S", code: 9, ts: "2026-08-10T10:00:05Z" },
+      { event: "browser_crashed", code: 9, ts: "2026-08-10T10:00:05Z" },
     ]);
     expect(acts[0]!.status).toBe("Crashed");
     expect(acts[0]!.tone).toBe("red");
     expect(acts[0]!.category).toBe("failed");
+    expect(acts[0]!.timeline[0]!.text).toBe("Browser crashed");
+    expect(acts[0]!.timeline[0]!.state).toBe("bad");
   });
 
   it("a session-scoped metadata read stays with its session, not a row of its own", () => {
