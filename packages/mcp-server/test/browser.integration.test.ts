@@ -158,20 +158,22 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       );
       expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
       session = opened.payload.session as string;
+      let closed;
       try {
         await run();
       } finally {
-        // A close that quietly failed would leave the browser up and surface
-        // as a baffling failure in the next block instead of this one.
-        const closed = await callTool(server, "plow_browser_close", { session }, AGENT);
-        expect(closed.isError, JSON.stringify(closed.payload)).toBe(false);
+        closed = await callTool(server, "plow_browser_close", { session }, AGENT);
       }
+      // Asserted after the try, not inside it: a block that failed because the
+      // browser died would also fail to close, and throwing here would bury
+      // the assertion that actually explains what went wrong.
+      expect(closed.isError, JSON.stringify(closed.payload)).toBe(false);
     };
     // /menu serves the menu to whoever holds the cookie and bounces everyone
     // else to the login page. Both outcomes are asserted positively: "not the
     // menu" would also be satisfied by a blank page or a fixture that renamed
     // its heading, neither of which says anything about a cookie jar.
-    const atMenu = async () => {
+    const menuPageText = async () => {
       await act("goto", { url: site.url + "/menu" });
       return (await act("text")).payload.text as string;
     };
@@ -181,22 +183,30 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
       // Cold, before anything is proven about persistence — without this the
       // assertion below would also pass on a profile some other test signed in.
-      expect(await atMenu()).toMatch(SIGNED_OUT);
+      expect(await menuPageText()).toMatch(SIGNED_OUT);
       await act("goto", { url: site.url + "/" });
       await act("fill", { selector: "#user", value: "jon@example.com" });
       await act("fill", { selector: "#pass", value: "pizza-time-99" });
       await act("click", { selector: "#login" });
-      expect(await atMenu()).toMatch(SIGNED_IN);
+      expect(await menuPageText()).toMatch(SIGNED_IN);
     });
 
     // Same grant, new session, no login: the cookie jar came back.
     await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
-      expect(await atMenu()).toMatch(SIGNED_IN);
+      expect(await menuPageText()).toMatch(SIGNED_IN);
     });
 
     // A different grant on the same site starts from nothing.
     await browseAs(["127.0.0.1", "margherita.example"], async () => {
-      expect(await atMenu()).toMatch(SIGNED_OUT);
+      expect(await menuPageText()).toMatch(SIGNED_OUT);
+    });
+
+    // And the first grant still has its own. Without this the whole test also
+    // passes on an implementation that keeps ONE profile and wipes it whenever
+    // the grant changes — which is cross-grant isolation bought by forgetting
+    // everything, not the store this is meant to describe.
+    await browseAs(["127.0.0.1", "pepperoni.example"], async () => {
+      expect(await menuPageText()).toMatch(SIGNED_IN);
     });
   }, 300_000);
 });
