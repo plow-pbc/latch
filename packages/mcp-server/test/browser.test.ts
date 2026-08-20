@@ -425,12 +425,14 @@ describe("browser tools (fake runtime)", () => {
   it("DOMO_BROWSER_FRESH_PROFILE gives every session a profile with no history", async () => {
     vi.stubEnv("DOMO_BROWSER_FRESH_PROFILE", "1");
     cleanups.push(() => vi.unstubAllEnvs());
-    const { server, argvLog } = makeServer();
+    const { server, device, argvLog } = makeServer();
 
     const session = await open(server, ["pizza.example"]);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
     expect(launches(argvLog)[0]).not.toContain("--profile-dir");
+    // And the log says so rather than naming a directory called "".
+    expect(audited(device, "browser_started")).toEqual([null]);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {

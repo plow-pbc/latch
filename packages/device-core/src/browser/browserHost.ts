@@ -65,7 +65,13 @@ interface Pending {
 /** File inside a profile marking it given up — see abandonProfile(). */
 const ABANDONED_MARKER = "domo-abandoned";
 
-/** Flush one path to the platter. Directories take an fd too, for the entry. */
+/**
+ * Push one path out of the page cache. Directories take an fd too, for the
+ * entry. Not a power-cut guarantee on macOS: `fsync(2)` there does not flush
+ * the drive's own write cache, and `F_FULLFSYNC` — which would — has no Node
+ * binding. What this buys is the seconds-long writeback window, which is the
+ * asymmetry that matters against a browser whose SQLite writes fsync too.
+ */
 function fsync(target: string): void {
   const fd = fs.openSync(target, "r");
   try {
@@ -209,11 +215,12 @@ export class BrowserHost {
   abandonProfile(): void {
     const dir = this.startedDir;
     if (!dir) return;
-    // Durable before this returns, because the widening it gates is not. The
-    // browser's own cookie writes go through SQLite, which fsyncs; a plain
-    // writeFileSync sits in the page cache for seconds. Lose power in that
-    // window and the widened origin's cookies survive while the marker that
-    // retires their jar does not — the escape, reassembled by a power cut.
+    // Out of the page cache before this returns, because the cookies it
+    // retires do not wait there: the browser's writes go through SQLite,
+    // which fsyncs, while a plain writeFileSync sits for seconds. Lose power
+    // in that window and the widened origin's cookies survive while the
+    // marker retiring their jar does not — the escape, reassembled by a power
+    // cut. See fsync() for what this does and does not promise.
     const file = path.join(dir, ABANDONED_MARKER);
     fs.writeFileSync(file, "");
     fsync(file);
@@ -354,7 +361,7 @@ export class BrowserHost {
               // for the first profile a grant opens, but a widening leaves
               // that one behind and the next gets a suffix — so the owner
               // cannot work it out from the origins alone.
-              profile: profileDir ? path.basename(profileDir) : "",
+              profile: profileDir ? path.basename(profileDir) : null,
             });
             resolve();
           }
