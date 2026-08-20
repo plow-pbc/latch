@@ -313,12 +313,13 @@ export function encryptCipher(
  *
  * The form sends the revision it was opened on. If that is no longer the
  * vault's, everything the owner is looking at may be out of date — not only
- * the URLs — so the save has nothing safe to write. A form that sends no
- * revision at all is not making a claim about what it saw and is left alone;
- * so is a brand new item, which has no stored version to be behind.
+ * the URLs — so the save has nothing safe to write. An edit that names no
+ * revision made no claim about what it saw, which is the same position:
+ * it cannot be trusted over whatever is stored. Only a new item is exempt,
+ * having no stored version to be behind.
  */
 export function staleEdit(existing: Cipher | null, revision: string | undefined): boolean {
-  return !!existing && revision !== undefined && revision !== String(existing.revisionDate ?? "");
+  return !!existing && revision !== String(existing.revisionDate ?? "");
 }
 
 /**

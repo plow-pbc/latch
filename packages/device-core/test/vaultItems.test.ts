@@ -165,10 +165,10 @@ describe("an edit", () => {
     expect(staleEdit(now, "2026-08-20T04:00:00Z")).toBe(true);
     // Still the version the form was opened on: nothing to refuse.
     expect(staleEdit(now, "2026-08-20T04:05:00Z")).toBe(false);
-    // A caller that makes no claim about what it saw is left alone, and a new
-    // item has no stored version to be behind.
-    expect(staleEdit(now, undefined)).toBe(false);
-    expect(staleEdit(null, "2026-08-20T04:00:00Z")).toBe(false);
+    // An edit that names no revision made no claim about what it saw, which is
+    // no better a position; only a new item is exempt.
+    expect(staleEdit(now, undefined)).toBe(true);
+    expect(staleEdit(null, undefined)).toBe(false);
   });
 
   it("stores every URL with the checksum other clients verify", () => {

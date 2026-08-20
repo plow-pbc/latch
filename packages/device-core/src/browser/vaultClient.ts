@@ -181,10 +181,7 @@ export class VaultClient {
     // pass a check made here, so an edit also tells the vault which version it
     // was built on. The vault compares that against the row it is about to
     // overwrite, inside the write, and refuses whichever one loses the race.
-    const body =
-      input.itemId && input.revision !== undefined
-        ? { ...cipher, lastKnownRevisionDate: input.revision }
-        : cipher;
+    const body = input.itemId ? { ...cipher, lastKnownRevisionDate: input.revision } : cipher;
     const saved = JSON.parse(
       input.itemId
         ? await this.call("PUT", `/api/ciphers/${encodeURIComponent(input.itemId)}`, JSON.stringify(body))
