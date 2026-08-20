@@ -157,27 +157,28 @@ class Handle:
         after a fill that did not land is the whole point of one of these
         scenarios."""
         self.typed_delay = delay
-        self.typed = (self.typed or "") + text
-        self.type_calls += 1
         # One entry per contiguous run of keys, not per key: the trace records
         # the SHAPE of the fill, and `type_calls` carries the count.
         if self.trace[-1:] != ["handle.type"]:
             self.trace.append("handle.type")
         if self.type_fails:
-            # Not one key arrived. The node holds what the clear left it.
+            # Not one key arrived: nothing is counted as typed, and the node
+            # holds what the assignment left it.
             self.trace[-1] = "handle.type-failed"
             raise RuntimeError("Element is not attached to the DOM")
+        self.typed = (self.typed or "") + text
+        self.type_calls += 1
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
         # is the only way a scenario can tell the head was assigned at all.
-        if self.partial_fill:
-            # Some of it went in and then the field went away: the node is
-            # holding something nobody can account for.
-            self.value = (self.value or "") + text
+        self.value = (self.value or "") + text
+        if self.partial_fill and self.type_calls > 1:
+            # Some of it went in and then the field went away. It takes more
+            # than one key for that to be interesting: what the node is left
+            # holding has to be something a comparison could get wrong.
             self.trace[-1] = "handle.type-failed"
             raise RuntimeError("Element is not attached to the DOM")
-        self.value = (self.value or "") + text
 
 
 class Frame:
@@ -282,6 +283,33 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
     out["node_len"] = len(frame.handle.value or "")
+    return out
+
+
+def two_frames(server):
+    """A fill that fails AFTER changing a node, on a page where the selector
+    resolves in a later frame too.
+
+    The caller named no frame, so the search walks them — and the question is
+    whether a failure in the first one is allowed to become a success in the
+    second. It must not: that leaves two fields holding something and reports
+    the identity of the one that happened to work.
+    """
+    trace: list[str] = []
+    first = Frame(trace, partial_fill=True, value="1 Elm St", document_token="doc-a")
+    second = Frame(trace, document_token="doc-b")
+    page = Page(second, extra_frames=[first])
+    session = server.Session(page)
+    out = {"error": None, "result": None}
+    try:
+        out["result"] = session.handle(
+            {"action": "fill", "selector": "#pass", "value": "hunter2", "mask": True}, "/tmp")
+    except Exception as exc:  # noqa: BLE001 — the scenario under test
+        out["error"] = type(exc).__name__
+    # Whether the frame BEHIND the failure was touched. A length, never a value.
+    out["second_len"] = len(second.handle.value or "")
+    out["first_changed"] = first.handle.value != "1 Elm St"
+    out["trace"] = trace
     return out
 
 
@@ -434,6 +462,7 @@ def main() -> int:
     ledger_fill = {**fill_pass, "frame": 1}
     ledger_overwrite = {**fill_addr_at_pass, "frame": 1}
     observe = {"action": "forms"}
+    result["two_frames"] = two_frames(server)
     result["ledger"] = {
         "kept": ledger(server, [{"cmd": ledger_fill}, {"cmd": observe}]),
         "visible_overwrite": ledger(server, [

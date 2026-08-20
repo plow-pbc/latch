@@ -517,6 +517,13 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       };
     } & {
       constants: { typed_chars: number };
+      two_frames: {
+        error: string | null;
+        result: unknown;
+        second_len: number;
+        first_changed: boolean;
+        trace: string[];
+      };
       ledger: {
         [scenario: string]: {
           steps: { step: string; result: { ok?: boolean; mask?: string } | null }[];
@@ -600,6 +607,20 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // cases, is the table over KEYS_DROPPED_JS further down.
     expect(probed.plain.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
     expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
+  });
+
+  it("does not try the next frame once a node has been changed", () => {
+    // The caller named no frame, so the search walks them — and the fill fails
+    // in the first after already changing it. Retrying in the second would
+    // leave two fields holding something and report the identity of whichever
+    // happened to work.
+    const run = probed.two_frames;
+    expect(run.first_changed).toBe(true);
+    expect(run.error).toBe("RuntimeError");
+    expect(run.result).toBeNull();
+    expect(run.second_len).toBe(0);
+    // One resolution, not one per frame.
+    expect(run.trace.filter((t) => t === "frame.wait_for_selector")).toHaveLength(1);
   });
 
   it("fails loudly when the field will not take the value at all", () => {

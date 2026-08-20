@@ -262,7 +262,12 @@ def _type_value(el, value):
     remaining keys wherever focus went -- five digits of a live code into five
     sibling fields the mark was never put on, readable from `forms` and from a
     screenshot. Refocusing per key keeps every character in the node the device
-    approved, and a node that goes away raises rather than typing on.
+    approved, and a node that goes away raises rather than typing on. What it
+    does NOT do is fill such a control: box one refuses every key after the
+    first, so the fallback below assigns the whole code into it (an assignment
+    ignores `maxlength`) and the form is left unsubmittable. That is the
+    deliberate trade — the credential stays in the node the owner approved, and
+    a segmented control takes one fill per box.
 
     A node that has gone away raises out of the first question asked of it, and
     every path from here on leaves the caller's failure handling to unwind it.
@@ -271,8 +276,15 @@ def _type_value(el, value):
         el.fill(value, timeout=ACTION_TIMEOUT_MS)
         return
     el.fill(value[:-TYPED_CHARS], timeout=ACTION_TIMEOUT_MS)
+    # The whole tail draws on ONE budget, not one per key: a per-key timeout of
+    # the tail's own budget would let TYPED_CHARS of them stack up to 88 times
+    # what a single call could ever spend.
+    deadline = time.monotonic() + (ACTION_TIMEOUT_MS + TYPING_MAX_MS) / 1000
     for ch in value[-TYPED_CHARS:]:
-        el.type(ch, delay=KEY_DELAY_MS, timeout=ACTION_TIMEOUT_MS + TYPING_MAX_MS)
+        left = (deadline - time.monotonic()) * 1000
+        if left <= 0:
+            raise RuntimeError("typing outran its budget")
+        el.type(ch, delay=KEY_DELAY_MS, timeout=left)
     if el.evaluate(KEYS_DROPPED_JS, value):
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
