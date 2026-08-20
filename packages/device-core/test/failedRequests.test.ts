@@ -33,6 +33,10 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     navigation: Envelope;
     subframe_navigation: Envelope;
     background_navigation: Envelope;
+    redirected_navigation: Envelope;
+    self_navigation: Envelope;
+    after_use_page: Envelope;
+    page_left_behind: Envelope;
     unattributable: Envelope;
     unattributable_navigation: Envelope;
     quiet: Envelope;
@@ -78,6 +82,29 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     // withheld from the agent that asked for the new one.
     expect(probed.navigation.failed_requests?.[0]).toMatchObject({
       url: "https://pizza.example/checkout",
+      frame_url: "https://pizza.example/checkout",
+    });
+  });
+
+  it("follows the redirect chain back to what the agent asked for", () => {
+    expect(probed.redirected_navigation.failed_requests?.[0]).toMatchObject({
+      url: "https://signin.pizza.example/b2c",
+      frame_url: "https://signin.pizza.example/b2c",
+    });
+  });
+
+  it("will not let a page navigating itself claim to be the agent's goto", () => {
+    expect(probed.self_navigation.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/anything-it-likes",
+      frame_url: "https://offsite.example/lander",
+    });
+  });
+
+  it("follows use_page: the agent drives the page it switched to, not the one it left", () => {
+    expect(probed.after_use_page.failed_requests?.[0]).toMatchObject({
+      frame_url: "https://pizza.example/pay",
+    });
+    expect(probed.page_left_behind.failed_requests?.[0]).toMatchObject({
       frame_url: "https://pizza.example/checkout",
     });
   });

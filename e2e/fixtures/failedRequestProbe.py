@@ -34,8 +34,10 @@ def load_server():
 
 
 class Request:
-    def __init__(self, method, navigation=False):
+    def __init__(self, method, navigation=False, url="", redirected_from=None):
         self.method = method
+        self.url = url
+        self.redirected_from = redirected_from
         self._navigation = navigation
 
     def is_navigation_request(self):
@@ -58,10 +60,10 @@ class Response:
 
     def __init__(self, status, url, method="GET", headers=None,
                  page="https://pizza.example/checkout", navigation=False, embedder=None,
-                 frame=None):
+                 frame=None, redirected_from=None):
         self.status = status
         self.url = url
-        self.request = Request(method, navigation)
+        self.request = Request(method, navigation, url, redirected_from)
         self.headers = headers or {}
         # `frame` names an existing document (the active page's main frame, say);
         # otherwise one is made up from `page`/`embedder`.
@@ -132,14 +134,53 @@ def main():
     feed(session, [Response(403, "https://pizza.example/x%d" % i) for i in range(9)])
     out["bounded"] = session.envelope({"ok": True})
 
-    # The page the agent is driving IS its own document when it navigates: when
-    # the headers arrive its frame still names the page being left, and
-    # attributing a refused goto to that page would withhold it from the agent
-    # that asked for the new one.
+    # The goto the agent asked for IS its own document: when the headers arrive
+    # the frame still names the page being left, and attributing a refused goto
+    # to that page would withhold it from the agent that asked for the new one.
+    # The frame's url stays stale here on purpose — only self-attribution can
+    # produce the answer this asserts.
     session = server.Session(Page())
+    session.goto_url = "https://pizza.example/checkout"
+    session.page.main_frame.url = "https://pizza.example/cart"
     feed(session, [Response(429, "https://pizza.example/checkout", navigation=True,
                             frame=session.page.main_frame)])
     out["navigation"] = session.envelope({"ok": True})
+
+    # Through a redirect: the site answered the requested url with a 302 and
+    # then refused. The agent still asked for it.
+    session = server.Session(Page())
+    session.goto_url = "https://pizza.example/signin"
+    session.page.main_frame.url = "https://pizza.example/cart"
+    feed(session, [Response(429, "https://signin.pizza.example/b2c", navigation=True,
+                            frame=session.page.main_frame,
+                            redirected_from=Request("GET", True, "https://pizza.example/signin"))])
+    out["redirected_navigation"] = session.envelope({"ok": True})
+
+    # The page navigating ITSELF is not the agent asking. An unapproved page
+    # scripting location = "<approved host>/<text of its choosing>" would
+    # otherwise write the agent's evidence.
+    session = server.Session(Page())
+    session.goto_url = "https://pizza.example/cart"
+    session.page.main_frame.url = "https://offsite.example/lander"
+    feed(session, [Response(404, "https://pizza.example/anything-it-likes", navigation=True,
+                            frame=session.page.main_frame)])
+    out["self_navigation"] = session.envelope({"ok": True})
+
+    # use_page moves the active page, and the check follows it: a goto in the
+    # popup the agent switched to is the agent's, and one in the page it left
+    # is not.
+    session = server.Session(Page())
+    popup = Page()
+    popup.main_frame.url = "https://pizza.example/opened"
+    left = session.page
+    session.page = popup
+    session.goto_url = "https://pizza.example/pay"
+    feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
+                            frame=popup.main_frame)])
+    out["after_use_page"] = session.envelope({"ok": True})
+    feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
+                            frame=left.main_frame)])
+    out["page_left_behind"] = session.envelope({"ok": True})
 
     # A navigation in a frame the agent is NOT driving -- a popup opened in the
     # background and then pointed somewhere -- is named by the document it is

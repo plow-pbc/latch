@@ -66,6 +66,9 @@ FAILED_REQUEST_HEADERS = ("retry-after", "server")
 # exchange budget.
 MAX_FAILED_REQUEST_URL = 200
 
+# How far back a refused navigation is traced to the url the agent asked for.
+MAX_REDIRECT_HOPS = 10
+
 
 def _strip_query(url):
     """Query and fragment carry tokens -- B2C hangs tx=StateProperties= there.
@@ -247,6 +250,10 @@ class Session:
         # Attached here rather than by the caller so a Session cannot exist
         # without it -- an action that silently reports nothing is the bug.
         self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
+        # The url the agent last asked this page to go to, query stripped. Only
+        # a navigation that answers THAT may be treated as the agent's own; see
+        # _asking_document.
+        self.goto_url = ""
         page.context.on("response", self.note_response)
 
     def _asking_document(self, response):
@@ -255,26 +262,47 @@ class Session:
         A navigation's frame has not committed the new url yet when its headers
         arrive, so asking the frame would name the document being LEFT -- and a
         `goto` that comes back 429 would be attributed to the previous page and
-        withheld from the agent that asked for it. Only the frame the agent is
-        driving, the active page's main frame, is treated as its own new
-        document: a subframe or a background popup was pointed at that url by
-        somebody else, and naming it after itself would let a page outside the
-        approved origins hand the agent any text it likes by choosing where to
-        point a frame. A frame that will not answer at all (a service worker's
-        request, a popup whose frame does not exist yet) names nothing rather
-        than losing the entry: the owner still sees it and the agent does not,
-        which is the safe direction.
+        withheld from the agent that asked for it. So a navigation names itself,
+        but only when it is the one the AGENT asked for: the active page's main
+        frame going where `goto` sent it (through however many redirects). Any
+        other navigation was pointed somewhere by the page rather than by the
+        agent -- a subframe, a background popup, or the active page scripting
+        its own `location` -- and naming it after itself would let a page
+        outside the approved origins write the agent's evidence by choosing a
+        url. Those are named by whoever drove them: the embedding frame, or the
+        document the frame is still showing. A frame that will not answer at all
+        (a service worker's request, a popup whose frame does not exist yet)
+        names nothing rather than losing the entry: the owner still sees it and
+        the agent does not, which is the safe direction.
         """
         try:
             frame = response.frame
             if not response.request.is_navigation_request():
                 return frame.url
-            if frame is self.page.main_frame:
+            if frame is self.page.main_frame and self._is_agent_goto(response):
                 return response.url
             parent = frame.parent_frame
             return parent.url if parent is not None else frame.url
         except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
             return ""
+
+    def _is_agent_goto(self, response):
+        """Is this response answering the `goto` the agent asked for?
+
+        Walked back through the redirect chain, because a site that answers the
+        requested url with a 302 and then refuses is the ordinary case and the
+        agent still asked for it.
+        """
+        if not self.goto_url:
+            return False
+        request = response.request
+        for _ in range(MAX_REDIRECT_HOPS):
+            if request is None:
+                return False
+            if _strip_query(request.url) == self.goto_url:
+                return True
+            request = request.redirected_from
+        return False
 
     def note_response(self, response):
         """Remember a request the site refused.
@@ -439,6 +467,9 @@ class Session:
             # 12s + 1s settle keeps the whole action under the device's 15s host
             # cap and the relay's ~20s exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
+            # What the agent asked for, so the refusal of THIS navigation can be
+            # told apart from one the page arranged for itself.
+            self.goto_url = _strip_query(cmd["url"])
             self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title()}
