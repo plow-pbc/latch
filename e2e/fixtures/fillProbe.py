@@ -70,9 +70,11 @@ class Handle:
         self.typeable = typeable
         # A field that says it takes characters and then sanitises away every
         # one it will not hold -- a number input handed something that is not a
-        # number, which ends up holding nothing at all. It is a property of the
-        # NODE: every question asked of it afterwards sees the empty field, the
-        # way the real one would.
+        # number. The keys are simply not applied, so the node keeps what the
+        # leading assignment left it: nothing, for a value short enough to type
+        # whole, and the assigned head for one that is not. Either way it is the
+        # NODE that holds it, so every question asked afterwards sees the same
+        # thing the real one would.
         self.drops_keys = drops_keys
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
