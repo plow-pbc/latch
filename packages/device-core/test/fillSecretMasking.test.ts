@@ -545,6 +545,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.typed_delay).toBeGreaterThan(0);
   });
 
+  it("assigns into a widget whose value is not the characters it is given", () => {
+    // A date, number, colour or range input composes its value out of
+    // something other than the string: typing "2026-08-19" into one lands the
+    // wrong day or nothing at all, where assigning it works. None of those are
+    // what an interrogating defense samples, so nothing is lost by assigning.
+    expect(probed.not_typeable.trace).not.toContain("handle.type");
+    expect(probed.not_typeable.typed_len).toBeNull();
+    expect(probed.not_typeable.node_len).toBe(probed.not_typeable.asked_len);
+    expect(probed.not_typeable.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("types the tail of a value too long to type whole, and lands the rest", () => {
     // Prose in a textarea cannot be typed key by key inside the relay's ~20 s
     // per-exchange ceiling, so the bulk is assigned and the field still ends on

@@ -177,6 +177,15 @@ DOC_TOKEN_JS = """() => {
 # one, and a partial fill that collided would look unchanged and have its mark
 # taken off, which is the one outcome this must never produce.
 VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
+
+# Whether a node's value is the characters it is given. A date, number, colour
+# or range widget composes its value out of something else entirely -- typing
+# "2026-08-19" into a date field lands the wrong day or nothing at all, where
+# assigning it works -- and none of those are what an interrogating defense
+# samples anyway. Anything not an <input> (a textarea, a contenteditable) takes
+# characters as characters.
+TYPEABLE_JS = """(el) => el.tagName !== "INPUT" ||
+    ["text", "password", "search", "tel", "url", "email", ""].includes(el.type)"""
 # Whether a fill that failed left anything behind. Unchanged is one way to hold
 # nothing unaccounted for; empty is the other -- a fill assigns before it types,
 # so a failure at the first key leaves the node holding nothing, and a node
@@ -215,6 +224,9 @@ def _type_value(el, value):
     The assignment doubles as the clear, so a node that has gone away raises
     there, before a single key is sent.
     """
+    if not el.evaluate(TYPEABLE_JS):
+        el.fill(value, timeout=ACTION_TIMEOUT_MS)
+        return
     el.fill(value[:-TYPED_CHARS], timeout=ACTION_TIMEOUT_MS)
     tail = value[-TYPED_CHARS:]
     if tail:

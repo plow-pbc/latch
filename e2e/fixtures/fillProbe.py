@@ -57,13 +57,16 @@ class Handle:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
-                 document_token="doc-1", type_fails=False):
+                 document_token="doc-1", type_fails=False, typeable=True):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
         # The keystrokes fail before the first one lands, so the node is left
         # holding what the clear left it: nothing.
         self.type_fails = type_fails
+        # False is a date/number/colour widget: its value is not the characters
+        # it is handed, so it is assigned rather than typed.
+        self.typeable = typeable
         self.mask_result = mask_result
         self.marked = marked
         # Which document this node is in, and what it currently holds. A fill
@@ -83,6 +86,8 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
+        if "tagName" in js:
+            return self.typeable
         if "=== previous" in js:
             previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
             now = self.value or ""
@@ -154,12 +159,13 @@ class Frame:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False, document_token="doc-1", type_fails=False):
+                 partial_fill=False, document_token="doc-1", type_fails=False,
+                 typeable=True):
         self.trace = trace
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token, type_fails)
+                             partial_fill, document_token, type_fails, typeable)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -212,11 +218,11 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1", type_fails=False):
+        document_token="doc-1", type_fails=False, typeable=True):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
-                  type_fails=type_fails)
+                  type_fails=type_fails, typeable=typeable)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -348,6 +354,9 @@ def main() -> int:
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
                                      marked=True, value="hunter2"),
         "plain": run(server, base),
+        # A date widget: its value is composed from something other than the
+        # characters, so keystrokes land the wrong day or nothing at all.
+        "not_typeable": run(server, {**base, "value": "2026-08-19"}, typeable=False),
         # Prose, not a credential: too long to type inside the budget. The bulk
         # is assigned and the field still ends on real keys.
         "long_value": run(server, {**base, "value": "x" * 2000}),
