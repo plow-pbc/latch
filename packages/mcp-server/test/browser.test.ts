@@ -315,29 +315,26 @@ describe("browser tools (fake runtime)", () => {
     expect(pizzaAgain).toBe(pizza);
   });
 
-  it("asking for a credential is not a widening, and keeps the jar", async () => {
-    // plow_browser_request carries credential items as well as origins, and
-    // one with no origins at all lands in the same extend() — the bound does
-    // not move, so neither should the profile. Giving it up here would sign
-    // the owner out of a site for the crime of asking for its password.
+  it("two widenings racing each other both land in the bound", async () => {
+    // extend() awaits a durable marker, so two approved requests can be in
+    // flight at once. Unqueued, both snapshot the old bound and the later one
+    // lands — origins the owner approved are dropped while the call that
+    // asked for them answers "completed".
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
-    const profiles = path.join(device.home, "device/browser/profiles");
-    const key = profileKeyForOrigins(["pizza.example"]);
-
     const session = await open(server, ["pizza.example"]);
-    const asked = await callTool(
-      server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT,
-    );
-    expect(asked.isError, JSON.stringify(asked.payload)).toBe(false);
-    expect(asked.payload.items).toEqual(["L1"]);
 
-    expect(abandoned(profiles, key)).toBe(false);
-    expect(audited(device, "browser_profile_abandoned")).toEqual([]);
-    await callTool(server, "plow_browser_close", { session }, AGENT);
+    const [bank, shop] = await Promise.all([
+      callTool(server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT),
+      callTool(server, "plow_browser_request", { session, origins: ["shop.example"] }, AGENT),
+    ]);
+    expect(bank.isError, JSON.stringify(bank.payload)).toBe(false);
+    expect(shop.isError, JSON.stringify(shop.payload)).toBe(false);
 
-    // And the next session on the same grant comes back to it.
-    await open(server, ["pizza.example"]);
-    expect(fs.readdirSync(profiles)).toEqual([key]);
+    const bound = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_extended")
+      .map((e) => jv(e as JSONValue).get("origins").value);
+    expect(bound.at(-1)).toEqual(["bank.example", "pizza.example", "shop.example"].sort());
   });
 
   it("a widened session's jar is given up, and no later session opens it", async () => {
@@ -458,5 +455,15 @@ describe("browser tools (fake runtime)", () => {
       .slice(before);
     expect(decisions.length).toBeGreaterThanOrEqual(2); // open + extend
     for (const d of decisions) expect(jv(d as JSONValue).get("source").str).toBe("rule");
+
+    // Asking for a credential is not a widening: the bound does not move, so
+    // the jar holds nothing its grant omits and must survive. Given it up, the
+    // owner would be signed out of a site for the crime of asking for its
+    // password, and the second run above would be browsing a fresh profile.
+    const profiles = path.join(device.home, "device/browser/profiles");
+    const key = profileKeyForOrigins(["pizza.example"]);
+    expect(abandoned(profiles, key)).toBe(false);
+    expect(audited(device, "browser_profile_abandoned")).toEqual([]);
+    expect(fs.readdirSync(profiles)).toEqual([key]);
   });
 });

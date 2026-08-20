@@ -86,8 +86,8 @@ export interface BrowserSessionInfo {
 export class BrowserSessions {
   private session: Session | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
-  /** Tail of the open queue — see open(). */
-  private opening: Promise<unknown> = Promise.resolve();
+  /** Tail of the lifecycle queue — see queued(). */
+  private lifecycle: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly host: BrowserHost,
@@ -118,17 +118,31 @@ export class BrowserSessions {
   }
 
   /**
-   * Open a new session (called only after an approved intent).
+   * One session lifecycle change at a time. Every one of them reads
+   * `this.session` or the host's profile identity, awaits, and then writes
+   * back — a browser cold start on open, a durable marker on extend, a
+   * shutdown on close — so run concurrently they interleave read-modify-write
+   * on the same state. Three ways that has bitten:
    *
-   * Serialized, because everything below reads `this.session` and the first
-   * open does not publish it until its browser is up — a ~30s cold start on a
-   * deferrable tool, so a second open really does arrive inside that window.
-   * Run concurrently, both callers see no session, both sail past the in-use
-   * guard, and the second browses in the first grant's profile: the very
-   * cross-grant sharing the per-grant store exists to prevent. Queued, the
-   * second caller finds the first's session and takes the refusal or the
-   * close-and-reopen it should have.
+   * - two opens both see no session, both pass the in-use guard, and the
+   *   second browses in the first grant's profile;
+   * - two extends both snapshot the old bound and the later one lands, so
+   *   origins or credential items the owner approved are silently dropped
+   *   while the call that asked for them reports completed;
+   * - an open landing inside an extend's await installs a new browser, and
+   *   the extend's continuation then clears ITS profile identity — so that
+   *   session's own widening finds nothing to give up, and its widened jar
+   *   stays open to the narrower grant.
+   *
+   * Queued, each one sees the state the one before it left.
    */
+  private queued<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.lifecycle.catch(() => undefined).then(work);
+    this.lifecycle = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Open a new session (called only after an approved intent). */
   open(
     intentId: string,
     agentId: string,
@@ -136,11 +150,9 @@ export class BrowserSessions {
     credentialMetadata: boolean,
     headed?: boolean,
   ): Promise<JSONValue> {
-    const opened = this.opening
-      .catch(() => undefined)
-      .then(() => this.openApproved(intentId, agentId, origins, credentialMetadata, headed));
-    this.opening = opened;
-    return opened;
+    return this.queued(() =>
+      this.openApproved(intentId, agentId, origins, credentialMetadata, headed),
+    );
   }
 
   private async openApproved(
@@ -153,7 +165,7 @@ export class BrowserSessions {
     if (this.session && this.session.agentId !== agentId) {
       return { status: "error", error: "browser is in use by another agent" };
     }
-    if (this.session) await this.close(this.session.handle, "reopened");
+    if (this.session) await this.closeSession(this.session.handle, "reopened");
 
     // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
     // start (~30s) absorbs into the deferred handle; every later `browser`
@@ -217,7 +229,20 @@ export class BrowserSessions {
   }
 
   /** Widen an existing session (called only after an approved intent). */
-  async extend(
+  extend(
+    intentId: string,
+    agentId: string,
+    handle: string,
+    origins: string[],
+    items: string[],
+    credentialMetadata: boolean,
+  ): Promise<JSONValue> {
+    return this.queued(() =>
+      this.extendApproved(intentId, agentId, handle, origins, items, credentialMetadata),
+    );
+  }
+
+  private async extendApproved(
     intentId: string,
     agentId: string,
     handle: string,
@@ -284,7 +309,12 @@ export class BrowserSessions {
     }
   }
 
-  async close(handle: string, reason: string): Promise<JSONValue> {
+  close(handle: string, reason: string): Promise<JSONValue> {
+    return this.queued(() => this.closeSession(handle, reason));
+  }
+
+  /** Unqueued: the reopen path inside openApproved already holds the queue. */
+  private async closeSession(handle: string, reason: string): Promise<JSONValue> {
     const s = this.session;
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
