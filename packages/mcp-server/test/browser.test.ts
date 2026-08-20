@@ -431,8 +431,12 @@ describe("browser tools (fake runtime)", () => {
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
     expect(launches(argvLog)[0]).not.toContain("--profile-dir");
-    // And the log says so rather than naming a directory called "".
-    expect(audited(device, "browser_started")).toEqual([null]);
+    // And the log says so rather than naming a directory called "" — asserted
+    // on the entry, since the helper's .str reads a missing key as null too.
+    const started = device.audit
+      .entries()
+      .find((e) => jv(e as JSONValue).get("event").str === "browser_started");
+    expect(jv(started as JSONValue).get("profile").value).toBeNull();
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {

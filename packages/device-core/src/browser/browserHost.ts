@@ -10,6 +10,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { JSONValue, jv } from "@domo/protocol";
@@ -66,18 +67,18 @@ interface Pending {
 const ABANDONED_MARKER = "domo-abandoned";
 
 /**
- * Push one path out of the page cache. Directories take an fd too, for the
+ * Push one path out of the page cache. Directories take a handle too, for the
  * entry. Not a power-cut guarantee on macOS: `fsync(2)` there does not flush
  * the drive's own write cache, and `F_FULLFSYNC` — which would — has no Node
  * binding. What this buys is the seconds-long writeback window, which is the
  * asymmetry that matters against a browser whose SQLite writes fsync too.
  */
-function fsync(target: string): void {
-  const fd = fs.openSync(target, "r");
+async function fsync(target: string): Promise<void> {
+  const handle = await fsp.open(target, "r");
   try {
-    fs.fsyncSync(fd);
+    await handle.sync();
   } finally {
-    fs.closeSync(fd);
+    await handle.close();
   }
 }
 
@@ -212,7 +213,7 @@ export class BrowserHost {
    * Camoufox goes on serving pages after its directory moves, but the cookies
    * written afterwards never reach disk.
    */
-  abandonProfile(): void {
+  async abandonProfile(): Promise<void> {
     const dir = this.startedDir;
     if (!dir) return;
     // Out of the page cache before this returns, because the cookies it
@@ -221,10 +222,13 @@ export class BrowserHost {
     // in that window and the widened origin's cookies survive while the
     // marker retiring their jar does not — the escape, reassembled by a power
     // cut. See fsync() for what this does and does not promise.
+    // Awaited rather than blocking: every browser action answers inside the
+    // relay's ~20s ceiling, and a synchronous flush on a stalling volume stops
+    // the timer that enforces it from ever firing.
     const file = path.join(dir, ABANDONED_MARKER);
-    fs.writeFileSync(file, "");
-    fsync(file);
-    fsync(dir); // the marker's own directory entry
+    await fsp.writeFile(file, "");
+    await fsync(file);
+    await fsync(dir); // the marker's own directory entry
     this.startedDir = null; // nothing to give up twice
     // Both sides of the reuse guard follow, or the very next action reads a
     // mismatch and restarts the browser out from under the session.

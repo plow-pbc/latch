@@ -238,7 +238,7 @@ describe("origin scope", () => {
     const locked = jv(await ctx.sessions.command(AGENT, s, { action: "text" }));
     expect(locked.get("status").str).toBe("error");
 
-    const ext = jv(ctx.sessions.extend("int-2", AGENT, s, ["popup.example"], [], false));
+    const ext = jv(await ctx.sessions.extend("int-2", AGENT, s, ["popup.example"], [], false));
     expect(ext.get("status").str).toBe("completed");
     const text = jv(await ctx.sessions.command(AGENT, s, { action: "text" }));
     expect(text.get("status").str).toBe("completed");
@@ -275,7 +275,7 @@ describe("credentials", () => {
     // reaches the agent, the secret is in model context, transcripts and any
     // provider that sees them.
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-3", AGENT, s, [], ["L1"], false);
+    await ctx.sessions.extend("int-3", AGENT, s, [], ["L1"], false);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(AGENT, s, {
@@ -295,7 +295,7 @@ describe("credentials", () => {
 
   it("fill_secret types the value on-device and never returns it", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);
+    await ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(AGENT, s, {
@@ -318,7 +318,7 @@ describe("credentials", () => {
 
   it("fill_secret is refused when the item belongs to another site (op origin check)", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", AGENT, s, [], ["X1"], false);
+    await ctx.sessions.extend("int-2", AGENT, s, [], ["X1"], false);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(AGENT, s, {
@@ -337,7 +337,7 @@ describe("credentials", () => {
 
   it("fill_secret refuses frames outside the session scope, allows approved card frames", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", AGENT, s, [], ["C1"], false);
+    await ctx.sessions.extend("int-2", AGENT, s, [], ["C1"], false);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/checkout" });
     // Scripted: "#card*" selectors live in a frame on payframe.example.
     const denied = jv(
@@ -351,7 +351,7 @@ describe("credentials", () => {
     expect(denied.get("status").str).toBe("error");
     expect(denied.get("error").str).toContain("payframe.example");
 
-    ctx.sessions.extend("int-3", AGENT, s, ["payframe.example"], [], false);
+    await ctx.sessions.extend("int-3", AGENT, s, ["payframe.example"], [], false);
     const ok = jv(
       await ctx.sessions.command(AGENT, s, {
         action: "fill_secret",
@@ -402,9 +402,9 @@ describe("access the owner's log could not record is not granted", () => {
     const opened = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
     const handle = opened.get("session").str!;
 
-    expect(() =>
+    await expect(
       sessions.extend("int-2", AGENT, handle, ["paypal.example"], ["L1"], true),
-    ).toThrow(/audit append failed/);
+    ).rejects.toThrow(/audit append failed/);
 
     // The agent must not be left holding origins and credential items that the
     // owner's log has no event for — that is access they cannot see.

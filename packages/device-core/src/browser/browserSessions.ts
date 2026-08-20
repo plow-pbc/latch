@@ -217,14 +217,14 @@ export class BrowserSessions {
   }
 
   /** Widen an existing session (called only after an approved intent). */
-  extend(
+  async extend(
     intentId: string,
     agentId: string,
     handle: string,
     origins: string[],
     items: string[],
     credentialMetadata: boolean,
-  ): JSONValue {
+  ): Promise<JSONValue> {
     const s = this.validate(agentId, handle);
     if (typeof s === "string") return { status: "error", error: s };
     // Work out the new bound without publishing it, because the record has to
@@ -247,7 +247,7 @@ export class BrowserSessions {
     // session's old bound, which is the safe end — a jar still answering to
     // the narrow grant while holding the widened origin's cookies is the
     // escape itself.
-    if (widened.length > s.origins.length) this.host.abandonProfile();
+    if (widened.length > s.origins.length) await this.host.abandonProfile();
     this.audit("browser_session_extended", {
       intentId,
       session: s.handle,

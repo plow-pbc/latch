@@ -478,7 +478,7 @@ export class DeviceAgent {
 
     const session = jv(payload).get("session").str;
     if (session !== null) {
-      return this.browserSessions.extend(
+      return await this.browserSessions.extend(
         intent.intentId,
         intent.agentId,
         session,
