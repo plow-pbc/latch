@@ -479,16 +479,14 @@ export class BrowserSessions {
     let strayedOrigin: string | null = null;
     if (strayed !== undefined) {
       strayedOrigin = hostOf(strayed) ?? strayed;
-      // Retire first, record second: a log the device cannot write must not be
-      // what decides whether a contaminated jar stays reusable. The refusal
-      // path records its own browser_profile_abandon_failed naming the same
-      // origin, so nothing goes unexplained either way.
+      // Retire, then record, then return. Retiring first because a log the
+      // device cannot write must never decide whether a contaminated jar stays
+      // reusable; recording before the return because the two paths that
+      // refuse the action — a retirement that failed, a mask that would not go
+      // back on — retire the jar just the same, and a viewer filtering on this
+      // event would otherwise see an abandoned profile with nothing naming
+      // what reached where.
       const refused = await this.retireProfile(s, strayedOrigin);
-      // Between the act and the return: every stray path records the
-      // violation, including the two that refuse the action — a retirement
-      // that failed, a mask that would not go back on. Both retire the jar
-      // just the same, and a viewer filtering on this event would otherwise
-      // see an abandoned profile with nothing naming what reached where.
       this.audit("browser_scope_violation", {
         session: s.handle,
         action: String(action.action),
