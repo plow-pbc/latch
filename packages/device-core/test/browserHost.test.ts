@@ -20,19 +20,22 @@ afterEach(async () => {
 
 function makeHost(
   env: Record<string, string> = {},
-  extra: Partial<{ startTimeoutMs: number; actionTimeoutMs: number; command: string[] }> = {},
+  // `missingCommand` points the host at a path inside its own temp dir that
+  // nothing creates — nonexistent by construction rather than by assumption.
+  extra: Partial<{ startTimeoutMs: number; actionTimeoutMs: number; missingCommand: boolean }> = {},
 ): {
   host: BrowserHost;
   events: string[];
 } {
   const events: string[] = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-"));
+  const { missingCommand, ...cfg } = extra;
   const host = new BrowserHost({
-    command: ["node", FAKE],
+    command: missingCommand === true ? [path.join(dir, "camoufox")] : ["node", FAKE],
     env,
     screenshotsDir: path.join(dir, "shots"),
     audit: (event: string, _fields: { [k: string]: JSONValue }) => events.push(event),
-    ...extra,
+    ...cfg,
   });
   hosts.push(host);
   return { host, events };
@@ -78,8 +81,7 @@ describe("BrowserHost", () => {
     // pins is the answer, not the letting go — nothing here can observe a
     // destroyed descriptor, so the release() call in that branch stays a
     // reasoned invariant rather than a checked one.
-    const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-")), "camoufox");
-    const { host } = makeHost({}, { command: [missing] });
+    const { host } = makeHost({}, { missingCommand: true });
     await expect(host.ensureReady()).rejects.toThrow(/failed to spawn/);
     // Twice, with no breaker reset in between: a spawn that never happened
     // leaves the host able to try again.
