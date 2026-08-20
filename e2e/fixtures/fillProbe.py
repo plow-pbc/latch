@@ -413,17 +413,9 @@ def main() -> int:
             {"cmd": observe},
         ]),
     }
-    # The numbers a single action's budget is made of, so a test asserting it
-    # fits the relay's ceiling reads them from the server rather than restating.
-    result["constants"] = {
-        "typed_chars": server.TYPED_CHARS,
-        "action_timeout_ms": server.ACTION_TIMEOUT_MS,
-        "attempt_max_ms": server.ATTEMPT_MAX_MS,
-        "relay_budget_ms": server.RELAY_BUDGET_MS,
-        "typing_max_ms": server.TYPING_MAX_MS,
-        "key_delay_ms": server.KEY_DELAY_MS,
-        "settle_ms": server.SETTLE_MS,
-    }
+    # How much of a value the server types, so a test asserting the split reads
+    # the number from the server rather than restating it.
+    result["constants"] = {"typed_chars": server.TYPED_CHARS}
     out.write(json.dumps(result))
     out.flush()
     return 0

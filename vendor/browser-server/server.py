@@ -69,15 +69,6 @@ KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
 TYPED_CHARS = TYPING_MAX_MS // KEY_DELAY_MS
 
-# The relay's pending future times out at 20 s, so a whole action has to answer
-# inside it -- however many frames it had to look through to find the element.
-RELAY_BUDGET_MS = 20000
-
-# What one attempt at an element action costs at worst: find the node, put a
-# value in it (whose own budget carries another action timeout for the keys),
-# and let the page settle.
-ATTEMPT_MAX_MS = ACTION_TIMEOUT_MS * 3 + TYPING_MAX_MS + SETTLE_MS
-
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -449,17 +440,13 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
-            # Every frame that does not hold the selector costs a whole
-            # ACTION_TIMEOUT_MS to rule out, and an ad-heavy page has plenty of
-            # them. Starting an attempt that cannot finish inside what is left
-            # spends the caller's answer on a timeout it will never see, so the
-            # loop stops looking once there is no budget left to look with.
-            deadline = time.monotonic() + RELAY_BUDGET_MS / 1000
+            # A caller that names no frame has every one of them ruled out at
+            # a whole ACTION_TIMEOUT_MS each, and typing makes the attempt that
+            # finally matches cost more than assigning did. Neither is bounded
+            # against the relay's ~20 s ceiling -- see issue #96.
             for i, fr in enumerate(self.page.frames):
                 if "frame" in cmd and i != int(cmd["frame"]):
                     continue
-                if time.monotonic() + ATTEMPT_MAX_MS / 1000 > deadline:
-                    break
                 try:
                     if action == "click":
                         fr.click(sel, timeout=ACTION_TIMEOUT_MS)

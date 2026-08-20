@@ -515,15 +515,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         asked_len: number;
       };
     } & {
-      constants: {
-        typed_chars: number;
-        action_timeout_ms: number;
-        attempt_max_ms: number;
-        relay_budget_ms: number;
-        typing_max_ms: number;
-        key_delay_ms: number;
-        settle_ms: number;
-      };
+      constants: { typed_chars: number };
       ledger: {
         [scenario: string]: {
           steps: { step: string; result: { ok?: boolean; mask?: string } | null }[];
@@ -545,20 +537,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
-  it("keeps a single action inside the relay's per-exchange ceiling", () => {
-    // One attempt has to fit, with room to have ruled a frame or two out
-    // first — the caller usually names no frame, so the server looks through
-    // them, and it stops looking once an attempt could no longer finish.
-    const c = probed.constants;
-    expect(c.attempt_max_ms).toBeLessThan(c.relay_budget_ms);
-    expect(c.attempt_max_ms).toBe(
-      c.action_timeout_ms * 3 + c.typing_max_ms + c.settle_ms,
-    );
-    // And the keystrokes cannot outrun the budget they are allowed to spend,
-    // however long the value is.
-    expect(c.typed_chars * c.key_delay_ms).toBeLessThanOrEqual(c.typing_max_ms);
-  });
-
   it("types the value in rather than assigning it", () => {
     // The bug this replaced: `el.fill()` sets `.value` and fires one `input`,
     // so a password box went from empty to complete with no keydown/keyup at
@@ -577,6 +555,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.long_value.asked_len).toBeGreaterThan(probed.constants.typed_chars);
     expect(probed.long_value.typed_delay).toBe(probed.plain.typed_delay);
     // A credential is shorter than the tail, so all of it is typed.
+    expect(probed.plain.asked_len).toBeLessThanOrEqual(probed.constants.typed_chars);
     expect(probed.plain.typed_len).toBe(probed.plain.asked_len);
     expect(probed.plain.node_len).toBe(probed.plain.asked_len);
     expect(probed.long_value.result).toEqual({ ok: true, frame: 0 });
