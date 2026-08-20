@@ -200,6 +200,15 @@ function handle(cmd) {
     return {
       forms: [
         { tag: "input", name: "q", frame: 0, frame_url: current().url },
+        // A value that happens to be a URL for an origin this session was
+        // never approved for — content of an approved page all the same.
+        {
+          tag: "input",
+          name: "next",
+          value: "https://offsite.example/cb?code=KEEPME",
+          frame: 0,
+          frame_url: current().url,
+        },
         // A third-party iframe on an approved page: its own origin was never
         // granted, and its URL carries a token.
         { tag: "input", name: "cvv", frame: 1, frame_url: "https://pay.example/f?tok=SECRET" },

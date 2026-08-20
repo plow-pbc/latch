@@ -348,6 +348,15 @@ describe("browser tools (fake runtime)", () => {
     expect(JSON.stringify(again.payload)).toContain("unknown session");
   });
 
+  it("refuses an action the schema does not list", async () => {
+    const { server } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const session = await open(server, ["pizza.example"]);
+    for (const action of ["locate", "view", "quit"]) {
+      const r = await callTool(server, "plow_browser", { session, action }, AGENT);
+      expect(r.isError, `${action}: ${JSON.stringify(r.payload)}`).toBe(true);
+    }
+  });
+
   it("keeps an unapproved frame's fields out, and an approved page's content in", async () => {
     // Two different rules, and the distinction is the point: content from a
     // frame this session never approved does not cross at all, while an
@@ -378,6 +387,10 @@ describe("browser tools (fake runtime)", () => {
     await act(server, session, "goto", { url: "https://pizza.example/menu?table=7" });
     const approved = await act(server, session, "forms");
     expect(JSON.stringify(approved.payload)).toContain("table=7");
+    // A field VALUE that happens to be a URL for an unapproved origin is
+    // still this page's content, and the agent asked for it. An earlier cut
+    // scrubbed it, which is the other direction of the same mistake.
+    expect(JSON.stringify(approved.payload)).toContain("code=KEEPME");
 
     // And the failure path, which leaves by a different door: a browser error
     // quotes the URL it was navigating to, and that reaches the agent AND the
