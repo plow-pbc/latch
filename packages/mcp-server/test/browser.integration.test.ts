@@ -164,6 +164,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // under test is that the budget goes on watching every frame for the thing
     // to become clickable — not on waiting in each frame in turn, which spends
     // a quarter of it blind to the other three.
+    const clearBackdrop = "document.querySelector('.modal-backdrop').remove();";
     const cover = (ms: number) =>
       "const c = document.createElement('div');" +
       "c.style.cssText = 'position:fixed;inset:0';" +
@@ -184,7 +185,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     ];
     for (const { label, selector, timeout, setup } of arrivals) {
       await act("goto", { url: site.url + "/blocked" });
-      await act("eval", { expression: "document.querySelector('.modal-backdrop').remove();" + setup });
+      await act("eval", { expression: clearBackdrop + setup });
       await act("click", { selector, ...(timeout === undefined ? {} : { timeout_ms: timeout }) });
       expect(await text(), label).toContain("clicked isTrusted=true");
     }
@@ -198,7 +199,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await act("goto", { url: site.url + "/blocked" });
     await act("eval", {
       expression:
-        "document.querySelector('.modal-backdrop').remove();" +
+        clearBackdrop +
         "setTimeout(() => {" +
         "  const f = document.createElement('iframe');" +
         "  f.src = '/late'; document.body.appendChild(f);" +
