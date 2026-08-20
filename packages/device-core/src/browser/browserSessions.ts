@@ -88,8 +88,21 @@ export interface BrowserSessionInfo {
  * few hundred MB, so the number is small and the limit is said out loud. */
 export const DEFAULT_MAX_BROWSERS = 3;
 
-/** Directories are named from an agent id, so it has to be safe to use. */
-const safeName = (id: string): string => id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "agent";
+/**
+ * The directory name for an agent's profile.
+ *
+ * Sanitising the id was not enough: stripping characters is lossy, so "a/b"
+ * and "ab" both became "ab" — two different agents sharing one profile, which
+ * is one agent inheriting the other's cookies and signed-in sessions. The
+ * name ends in a hash of the WHOLE id, so two ids can only collide if SHA-256
+ * does. The readable half is there for whoever reads the directory listing and
+ * carries no meaning.
+ */
+const profileName = (id: string): string => {
+  const readable = id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+  const digest = crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
+  return readable ? `${readable}-${digest}` : digest;
+};
 
 export class BrowserSessions {
   /** Every live session, by handle. The handle IS the browser: an agent that
@@ -269,7 +282,7 @@ export class BrowserSessions {
    * app-scoped $HOME) is per agent for the same reason.
    */
   private newHost(agentId: string): BrowserHost {
-    const dir = safeName(agentId);
+    const dir = profileName(agentId);
     if (this.browser.profileDir) fs.mkdirSync(path.join(this.browser.profileDir, dir), { recursive: true, mode: 0o700 });
     return new BrowserHost({
       ...this.browser,

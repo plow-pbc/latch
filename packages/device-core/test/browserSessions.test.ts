@@ -511,6 +511,32 @@ describe("access the owner's log could not record is not granted", () => {
   });
 });
 
+describe("one profile per agent, and never a shared one", () => {
+  it("keeps two ids apart when sanitising would fold them together", async () => {
+    // "a/b" and "ab" sanitise to the same string. Naming a profile directory
+    // that way handed the second agent the first one's cookies and signed-in
+    // sessions — the leak this test exists to prevent.
+    const pairs = [
+      ["a/b", "ab"],
+      ["agent 1", "agent1"],
+      ["../escape", "escape"],
+    ];
+    const seen = new Set<string>();
+    for (const ids of pairs) {
+      for (const id of ids) {
+        const r = jv(await ctx.sessions.open(`int-${id}`, id, ["pizza.example"], false));
+        expect(r.get("status").str).toBe("completed");
+        await ctx.sessions.close(r.get("session").str!, "test");
+      }
+    }
+    for (const dir of fs.readdirSync(path.join(ctx.dir, "profiles"))) seen.add(dir);
+    // Six distinct agent ids, six distinct profiles — and none of them escaped
+    // the profiles directory.
+    expect(seen.size).toBe(6);
+    for (const dir of seen) expect(dir).toMatch(/^[a-zA-Z0-9_-]+$/);
+  });
+});
+
 describe("three agents, three browsers, at once", () => {
   /**
    * The done condition: each agent drives its OWN browser in parallel, keeps
