@@ -1009,6 +1009,10 @@ describe("which nodes take typing", () => {
     { what: "an iframe inside a contenteditable region", el: inRegion("IFRAME"), typed: false },
     { what: "a span that only inherits the editable state", el: inRegion("SPAN"), typed: false },
     { what: "an editor explicitly turned off", el: host("DIV", "false", false), typed: false },
+    // `contenteditable` is enumerated: an unrecognised value means inherit, so
+    // a node carrying one outside any editable region is not a host — the only
+    // shape where the attribute and the state disagree.
+    { what: "an unrecognised contenteditable value outside a region", el: host("DIV", "banana", false), typed: false },
     // designMode: a genuine editing host that carries no attribute anywhere.
     { what: "the body of a document in designMode", el: element("BODY", { isContentEditable: true, ownerDocument: { designMode: "on" } }), typed: true },
     { what: "a body outside designMode", el: element("BODY", { isContentEditable: true, ownerDocument: { designMode: "off" } }), typed: false },
