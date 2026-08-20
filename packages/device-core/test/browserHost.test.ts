@@ -79,11 +79,14 @@ describe("BrowserHost", () => {
     // Taken means taken: the next asker gets nothing.
     expect(host.takeFailedRequests()).toEqual([]);
 
-    // Bounded: three armed clicks are six refusals, and the oldest two fall off.
+    // Bounded, and it is the OLDEST that falls off: a late 401 armed first is
+    // gone after three armed clicks put six newer refusals in front of it.
+    await host.sendAction({ action: "click", selector: "#blocked-later" });
     for (let i = 0; i < 3; i++) {
       await host.sendAction({ action: "click", selector: "#blocked" });
     }
-    expect(host.takeFailedRequests().length).toBe(5);
+    const capped = host.takeFailedRequests() as { status: number }[];
+    expect(capped.map((r) => r.status)).toEqual([429, 403, 429, 403, 429]);
 
     // And a late refusal still pending when the next one is scripted keeps its
     // place behind it rather than being lost — one ring, oldest last.
