@@ -12,6 +12,7 @@ import {
   normalizeOrigin,
   normalizedCapability,
   originMatches,
+  profileKeyForOrigins,
 } from "@domo/protocol";
 
 describe("normalizeOrigin", () => {
@@ -55,6 +56,29 @@ describe("originMatches", () => {
   it("empty host and bare wildcard never match", () => {
     expect(originMatches("", patterns)).toBe(false);
     expect(originMatches("anything.com", ["*."])).toBe(false);
+  });
+});
+
+describe("profileKeyForOrigins", () => {
+  it("is stable under order, case, and duplicates — the same grant, the same profile", () => {
+    const a = profileKeyForOrigins(["dominos.com", "*.Dominos.com"]);
+    expect(profileKeyForOrigins(["*.dominos.com", "DOMINOS.com", "dominos.com"])).toBe(a);
+  });
+
+  it("separates grants that are not the same set, including subset/superset", () => {
+    const costco = profileKeyForOrigins(["sameday.costco.com", "*.costco.com"]);
+    const withInstacart = profileKeyForOrigins([
+      "sameday.costco.com",
+      "*.costco.com",
+      "instacart.com",
+      "*.instacart.com",
+    ]);
+    expect(withInstacart).not.toBe(costco);
+    expect(profileKeyForOrigins(["reddit.com"])).not.toBe(costco);
+  });
+
+  it("is a bare filesystem-safe name, so it can be a directory", () => {
+    expect(profileKeyForOrigins(["*.dominos.com"])).toMatch(/^[0-9a-f]{16}$/);
   });
 });
 

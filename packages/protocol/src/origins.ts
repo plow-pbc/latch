@@ -6,6 +6,7 @@
  * suffix list, no eTLD+1 inference. What the approver saw on the card is
  * exactly what matches; "dominos.com" and "*.dominos.com" are two entries.
  */
+import { createHash } from "node:crypto";
 
 /**
  * Normalize a pattern to the form rule keys hash: lowercase, no scheme, no
@@ -34,4 +35,21 @@ export function originMatches(host: string, patterns: string[]): boolean {
     }
     return h === p;
   });
+}
+
+/**
+ * Directory name for the browser profile a grant may write to. Same
+ * normalization `normalizedCapability()` uses for rule keys, so a session
+ * opened against a remembered rule lands back in the profile that rule built.
+ *
+ * Keyed on the whole approved set rather than on a registrable domain,
+ * deliberately: this module infers no eTLD+1, and a profile keyed on one would
+ * be a wider store than the card the owner approved — `*.costco.com` state
+ * would be handed to a session granted only `sameday.costco.com`. Set-keying
+ * costs sharing between grants that overlap without being equal; that is the
+ * safe direction, since the narrower grant is the one that goes without.
+ */
+export function profileKeyForOrigins(origins: string[]): string {
+  const key = [...new Set(origins.map((o) => normalizeOrigin(o)))].sort().join("\n");
+  return createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
