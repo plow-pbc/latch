@@ -347,8 +347,8 @@ action (context-level, popups included) and every result carries them as
 `failed_requests` — status, method, a **query-stripped** url (B2C hangs
 `tx=StateProperties=` there), size, `Retry-After` and `Server`. Never a body: a
 body can echo a submitted credential. Bounded because the relay buffers a whole
-exchange. The browser reports and forgets; **`BrowserHost` holds them** until an agent
-action carries them out. That is deliberate: most of what asks the browser
+exchange. The browser reports and forgets; **`BrowserHost` holds them** until
+an agent action carries them out. That is deliberate: most of what asks the browser
 anything is the device itself — the owner's ~1/s viewer poll, the popup sweep,
 the frame lookup before a credential fill — and whichever of those was in flight
 would otherwise be the one that consumed a 429 and dropped it. Every response
