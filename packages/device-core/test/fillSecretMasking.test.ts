@@ -939,7 +939,7 @@ describe("which nodes take typing", () => {
   // that is missing or unrecognised, which is why `getAttribute` is here to
   // disagree with it.
   const input = (type: string, extra: Record<string, unknown> = {}) => ({
-    tagName: "INPUT", type, disabled: false, readOnly: false, isContentEditable: false,
+    tagName: "INPUT", type, disabled: false, readOnly: false,
     getAttribute: (k: string) => (k === "type" ? type : null), ...extra,
   });
   // `type` is not the input's alone: a textarea answers "textarea" and a select
@@ -948,21 +948,20 @@ describe("which nodes take typing", () => {
   // answered undefined would not notice.
   const textarea = (extra: Record<string, unknown> = {}) => ({
     tagName: "TEXTAREA", type: "textarea", disabled: false, readOnly: false,
-    isContentEditable: false, getAttribute: () => null, ...extra,
-  });
-  const select = (extra: Record<string, unknown> = {}) => ({
-    tagName: "SELECT", type: "select-one", disabled: false, isContentEditable: false,
     getAttribute: () => null, ...extra,
   });
+  // Any other element: it carries no `contenteditable`, which is what every
+  // node inside a rich-text region has in common with every node outside one.
   const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
-    tagName, isContentEditable: false, getAttribute: () => null, ...extra,
+    tagName, getAttribute: () => null, ...extra,
   });
-  // Inside a rich-text region: everything inherits the editable state, and only
-  // the host itself carries the attribute.
-  const inRegion = (tagName: string) => element(tagName, { isContentEditable: true });
-  const host = (tagName: string, attr: string = "", editable = true) =>
-    element(tagName, { isContentEditable: editable,
-                       getAttribute: (k: string) => (k === "contenteditable" ? attr : null) });
+  // One that declares itself an editor, with whatever value.
+  const host = (tagName: string, attr: string = "") =>
+    element(tagName, { getAttribute: (k: string) => (k === "contenteditable" ? attr : null) });
+  // A document put wholly into edit mode, which declares its own body and
+  // nothing else.
+  const inDesignMode = (tagName: string) =>
+    element(tagName, { ownerDocument: { designMode: "on" } });
 
   it.each([
     // Every type on the list, because dropping one silently sends that field
@@ -998,31 +997,28 @@ describe("which nodes take typing", () => {
     { what: "a range slider", el: input("range"), typed: false },
     { what: "a read-only textarea", el: textarea({ readOnly: true }), typed: false },
     { what: "a disabled textarea", el: textarea({ disabled: true }), typed: false },
-    { what: "a select, which has disabled but no readOnly", el: select(), typed: false },
-    // isContentEditable is inherited, so a form control inside a rich-text
-    // region answers true. Typing at a select there picks an option by
-    // type-ahead and reports ok.
-    // Inside a rich-text region every node answers isContentEditable — the
-    // control where typing picks an option by type-ahead, the embedded document
-    // the mask cannot reach, and every ordinary node between them. None carries
-    // the attribute, which is the one thing only the host has, and the tag is
-    // not what the answer turns on.
-    { what: "a select inside a contenteditable region", el: select({ isContentEditable: true }), typed: false },
-    { what: "an iframe inside a contenteditable region", el: inRegion("IFRAME"), typed: false },
-    { what: "a span that only inherits the editable state", el: inRegion("SPAN"), typed: false },
-    { what: "an editor explicitly turned off", el: host("DIV", "false", false), typed: false },
-    // `contenteditable` is enumerated, and anything outside its keywords means
-    // INHERIT — so carrying the attribute is not the same as declaring a host.
-    // Inside a region such a node answers non-null AND inherits true, which is
-    // the shape that would otherwise be typed into: select-all there replaces
-    // the whole region's content rather than the node's.
-    { what: "an unrecognised contenteditable value outside a region", el: host("DIV", "banana", false), typed: false },
-    { what: "an unrecognised contenteditable value inside a region", el: host("SPAN", "banana", true), typed: false },
-    { what: "the contenteditable=inherit older guidance taught", el: host("DIV", "inherit", true), typed: false },
-    { what: "an iframe carrying an invalid value inside a region", el: host("IFRAME", "banana", true), typed: false },
-    // designMode: a genuine editing host that carries no attribute anywhere.
-    { what: "the body of a document in designMode", el: element("BODY", { isContentEditable: true, ownerDocument: { designMode: "on" } }), typed: true },
-    { what: "a body outside designMode", el: element("BODY", { isContentEditable: true, ownerDocument: { designMode: "off" } }), typed: false },
+    // Nodes that declare nothing. Inside a rich-text region every one of them
+    // inherits the editable state — the control where typing picks an option by
+    // type-ahead, the embedded document the mask cannot reach, the ordinary span
+    // where select-all would replace the whole region — and none of them is the
+    // host, which is the only thing the predicate asks about.
+    { what: "a select", el: element("SELECT"), typed: false },
+    { what: "an iframe", el: element("IFRAME"), typed: false },
+    { what: "a span", el: element("SPAN"), typed: false },
+    { what: "an editor explicitly turned off", el: host("DIV", "false"), typed: false },
+    // `contenteditable` is enumerated, so anything outside its keywords means
+    // inherit: carrying the attribute is not declaring a host. These are the
+    // nodes that would otherwise be typed into on the strength of the attribute
+    // alone.
+    { what: "an unrecognised contenteditable value", el: host("SPAN", "banana"), typed: false },
+    { what: "the contenteditable=inherit older guidance taught", el: host("DIV", "inherit"), typed: false },
+    { what: "an iframe carrying an invalid value", el: host("IFRAME", "banana"), typed: false },
+    // designMode declares the body and nothing else: a control in such a
+    // document is no more the editing host than one in a region.
+    { what: "the body of a document in designMode", el: inDesignMode("BODY"), typed: true },
+    { what: "a select in a document in designMode", el: inDesignMode("SELECT"), typed: false },
+    { what: "an iframe in a document in designMode", el: inDesignMode("IFRAME"), typed: false },
+    { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), typed: false },
   ])("$what: typed=$typed", ({ el, typed }) => {
     expect(typeable(el)).toBe(typed);
   });
