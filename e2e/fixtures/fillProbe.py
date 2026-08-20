@@ -57,7 +57,7 @@ class Handle:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
-                 document_token="doc-1"):
+                 document_token="doc-1", typeable=True):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
@@ -68,6 +68,9 @@ class Handle:
         self.document_url = document_url
         self.document_token = document_token
         self.value = value
+        # What TYPEABLE_JS answers about this node: a <select>, a read-only or a
+        # disabled field says no, and is assigned rather than typed into.
+        self.typeable = typeable
 
     def evaluate(self, js, *args):
         # Recorded as a fact about the script, not its text: which one it is.
@@ -76,6 +79,8 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
+        if "isContentEditable" in js:
+            return self.typeable
         if "=== previous" in js:
             previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
             return (self.value or "") == previous
@@ -99,6 +104,16 @@ class Handle:
         # Here it is the string itself; the point is that the server never gets
         # to look at it, only to pass it back for comparison.
         return _Handle(self.evaluate(js, *args))
+
+    def fill(self, value, timeout=None):
+        # Assignment: the empty value that clears a field, one too long to type,
+        # one carrying a key rather than a character, and any node that will not
+        # take keystrokes at all.
+        if self.detach_before_fill:
+            self.trace.append("handle.fill-failed")
+            raise RuntimeError("Element is not attached to the DOM")
+        self.value = value
+        self.trace.append("handle.fill")
 
     def press(self, key, timeout=None):
         # The select-all a value is typed over. It is the FIRST thing that
@@ -146,7 +161,8 @@ class Frame:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False, document_token="doc-1", hides=False, detached=False):
+                 partial_fill=False, document_token="doc-1", hides=False, detached=False,
+                 typeable=True):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -155,7 +171,7 @@ class Frame:
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token)
+                             partial_fill, document_token, typeable)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -221,13 +237,14 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1"):
+        document_token="doc-1", typeable=True):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
-                  value=value, partial_fill=partial_fill, document_token=document_token)
+                  value=value, partial_fill=partial_fill, document_token=document_token,
+                  typeable=typeable)
     session = server.Session(Page(frame))
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
-           "ledgered": False}
+           "ledgered": False, "emptied": False}
     try:
         result = session.handle(dict(cmd), "/tmp")
         # The value is never part of this: only whether the fill happened, and
@@ -238,6 +255,9 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
         out["error"] = type(exc).__name__
     out["marked"] = frame.handle.marked
     out["value_kept"] = frame.handle.value == value
+    # Whether the node ends up holding nothing. The only value this file may
+    # report on, and the one a clear is judged by.
+    out["emptied"] = frame.handle.value == ""
     out["ledgered"] = bool(session.masked)
     return out
 
@@ -371,6 +391,14 @@ def main() -> int:
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
                                      marked=True, value="hunter2"),
         "plain": run(server, base),
+        # An empty value is a CLEAR, and has to leave the field empty: the mark
+        # comes off with it, and a node still holding the last secret behind a
+        # mark that has gone is legible in every screenshot from then on.
+        "cleared": run(server, {**base, "value": ""}, marked=True, value="hunter2"),
+        # A node that will not take keystrokes -- a <select>, a read-only or a
+        # disabled field. It is assigned, exactly as it was before typing, which
+        # is also how it keeps its loud refusal.
+        "not_typeable": run(server, {**base, "mask": True}, typeable=False),
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.
         "mask_blocked": run(server, {**base, "mask": True}, mask_result="unmasked"),

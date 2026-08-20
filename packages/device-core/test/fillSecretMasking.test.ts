@@ -519,6 +519,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         result: { ok?: boolean; mask?: string; frame?: number; frame_url?: string; frame_token?: string } | null;
         value_kept: boolean;
         ledgered: boolean;
+        emptied: boolean;
       };
     } & {
       ledger: {
@@ -748,6 +749,36 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     ]);
     expect(probed.plain.marked).toBe(false);
     expect(probed.plain.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("clears the field when the value is empty, and takes the mark with it", () => {
+    // There are no keystrokes that leave a field empty, so an empty value is
+    // assigned. Typing over a select-all would have typed nothing at all: the
+    // selection would survive, the node would keep the secret it was holding,
+    // and the unmark below it would strip the one thing keeping that secret out
+    // of screenshots and `forms`.
+    const cleared = probed.cleared;
+    expect(cleared.trace).toEqual([
+      "frame.wait_for_selector",
+      "handle.fill",
+      "handle.evaluate:unmark",
+    ]);
+    expect(cleared.emptied).toBe(true);
+    expect(cleared.marked).toBe(false);
+    expect(cleared.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("assigns into a node that will not take keystrokes", () => {
+    // A <select>, a read-only or a disabled field. `type()` refuses none of
+    // them -- it would focus the node and send the keys, and a credential typed
+    // at a read-only field is audited as filled and submitted empty. Assignment
+    // is what such a node got before there was typing, refusal included.
+    expect(probed.not_typeable.trace).toEqual([
+      "frame.wait_for_selector",
+      "handle.evaluate:mark",
+      "handle.fill",
+    ]);
+    expect(probed.not_typeable.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
   it("keeps the mark on when a visible fill fails", () => {

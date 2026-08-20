@@ -97,19 +97,49 @@ SCAN_INTERVAL_MS = 50
 # The CAP on how long Camoufox may spend moving the pointer to a target. With it
 # set, a mouse move is interpolated along a path; without it -- upstream's
 # default, and what shipped here -- every click teleports the cursor, and the
-# movement entropy an interrogation-style defense samples is simply absent. A
-# float sets that cap; `True` takes camoufox's own, which is "up to 1.5s" and
-# does not fit: a single click would spend half a default action budget
-# travelling. One second leaves two for the click itself (issue #86).
-HUMANIZE_MAX_SECONDS = 1.0
+# movement entropy an interrogation-style defense samples is simply absent
+# (issue #86). A float sets that cap; `True` takes camoufox's own "up to 1.5s".
+#
+# The travel is spent INSIDE a click's timeout, not added to it, and a click's
+# budget is divided among the frames that hold the selector -- so this has to
+# leave a click room to land in the smallest budget the device will pass:
+# MIN_CLICK_TIMEOUT_MS, which is raised alongside it. Half a second still draws
+# a whole path; what it does not do is eat a budget.
+HUMANIZE_MAX_SECONDS = 0.5
 
 # Keystroke cadence, and the ceiling on what one value may spend on it. A field
 # that goes from empty to complete with no keydown/keyup at all is the cheapest
-# bot tell there is, so every fill is typed. A long value trades cadence for the
+# bot tell there is, so a value is typed. A long one trades cadence for the
 # budget rather than the other way round: the keystrokes all still happen, they
 # just arrive faster.
 TYPING_DELAY_MS = 50
 TYPING_BUDGET_MS = 2000
+
+# Above this many characters a value is assigned rather than typed. Typing costs
+# a browser round-trip per character on top of the cadence, and a value this long
+# is a message body or an address -- never a credential submit, which is what the
+# keystrokes are for. Overrunning the device's 15s host cap does not fail the
+# action, it tears the browser down.
+MAX_TYPED_CHARS = 200
+
+# Characters `type()` would send as a KEY rather than a character: Enter submits
+# the form mid-value, Tab moves focus so the rest of the value lands in the next
+# field -- which on the credential path is the rest of a secret, typed into a
+# node nothing has masked.
+KEY_CHARS = ("\n", "\r", "\t")
+
+# Whether this node can be TYPED into. `fill()` refuses a disabled or read-only
+# field, and a <select> or a plain element outright; `type()` refuses nothing --
+# it focuses whatever it is given and sends the keys, so a credential typed at a
+# read-only field would be audited as filled and submitted empty, and a <select>
+# would silently change option by type-ahead. Anything this says no to is
+# assigned instead, which is what such a node got before there was typing at
+# all: the same value, or the same loud refusal.
+TYPEABLE_JS = """(el) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag !== "input" && tag !== "textarea" && !el.isContentEditable) return false;
+    return !el.disabled && !el.readOnly;
+}"""
 
 
 def _type_into(el, value):
@@ -129,13 +159,30 @@ def _type_into(el, value):
     character replaces the selection. Clearing with `fill("")` first would blank
     the field for real, and a fill that then failed would leave it empty rather
     than as it was found, which is the invariant every failure path here keeps.
+    A value that cannot be carried faithfully as keystrokes is assigned exactly
+    as it was before, empty values included: an empty one has no keystrokes to
+    make human anyway, and it still has to leave the field empty.
     """
-    el.press("Meta+a", timeout=DEFAULT_ACTION_TIMEOUT_MS)
-    delay = min(TYPING_DELAY_MS, TYPING_BUDGET_MS / max(len(value), 1))
-    # The timeout bounds the WHOLE call, the per-character delays included, so
-    # the typing time is added to it: the action timeout alone would fail a long
-    # value that is arriving perfectly well.
-    el.type(value, delay=delay, timeout=DEFAULT_ACTION_TIMEOUT_MS + delay * len(value))
+    if not (0 < len(value) <= MAX_TYPED_CHARS
+            and not any(c in value for c in KEY_CHARS)
+            and el.evaluate(TYPEABLE_JS)):
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        return
+    # One deadline for the whole thing: the chord and the keystrokes share it,
+    # so a fill costs at most an action timeout plus the typing allowance rather
+    # than one of each.
+    deadline = time.monotonic() + (DEFAULT_ACTION_TIMEOUT_MS + TYPING_BUDGET_MS) / 1000.0
+
+    def left():
+        return max(1, int((deadline - time.monotonic()) * 1000))
+
+    # ControlOrMeta resolves against the host Playwright is actually running on.
+    # The macOS pin above it is a FINGERPRINT, which says nothing about the
+    # machine -- and on the wrong one this chord is not select-all at all, so the
+    # value would be appended to whatever the field held.
+    el.press("ControlOrMeta+a", timeout=left())
+    delay = min(TYPING_DELAY_MS, TYPING_BUDGET_MS / len(value))
+    el.type(value, delay=delay, timeout=left())
 
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {

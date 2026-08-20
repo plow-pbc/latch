@@ -208,8 +208,10 @@ describe("session lifecycle", () => {
       [{ timeout_ms: 8000 }, 8000],
       [{ timeout_ms: 45_000 }, 11_000], // capped inside the exchange
       // Playwright reads 0 as "no timeout" — the floor is what keeps a click
-      // from parking until the host cap kills the browser under it.
-      [{ timeout_ms: 0 }, 500],
+      // from parking until the host cap kills the browser under it, and it sits
+      // above the humanized pointer travel a click now pays for out of that
+      // same budget.
+      [{ timeout_ms: 0 }, 1500],
       [{}, undefined], // asked for nothing, told the browser nothing
     ];
     for (const [extra] of clicks) {
