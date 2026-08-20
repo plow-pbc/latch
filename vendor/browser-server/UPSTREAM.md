@@ -26,9 +26,13 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     retries rather than parking a torn 504.
   - A fill TYPES its value — select-all, then a real key event per character
     (`_type_into`) — where upstream assigns `.value` through `fill()`. A field
-    that goes from empty to complete having received no keydown is the cheapest
-    bot tell there is. (It is not what blocked the Costco sign-in that prompted
-    this — that verdict lands before the page is touched; see issue #86.)
+    that goes from empty to complete having received no key event at all is a
+    bot tell, and interrogation-style defenses (Kasada, Akamai Bot Manager)
+    sample exactly that. It is hardening, not a fix for a known block: the
+    Costco 429 that prompted it was measured against this change and is decided
+    at the fingerprint level, before the page is touched (issue #86 records the
+    run). What it buys is that a credential submit no longer carries a free tell;
+    what it costs is on this list.
     Cadence is `TYPING_DELAY_MS`, and the chord plus the keystrokes share one
     deadline, so a fill costs at most `DEFAULT_ACTION_TIMEOUT_MS +
     TYPING_BUDGET_MS`. A value that cannot be carried faithfully as keystrokes
