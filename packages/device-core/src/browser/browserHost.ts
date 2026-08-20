@@ -125,8 +125,6 @@ export class BrowserHost {
   private get actionTimeout(): number {
     return this.cfg.actionTimeoutMs ?? 60_000;
   }
-  /** Grant the running browser opened for — null once it has been given up. */
-  private startedKey: string | null = null;
 
   constructor(private readonly cfg: BrowserHostConfig) {
     this.headedNow = cfg.headed === true;
@@ -330,19 +328,6 @@ export class BrowserHost {
   }
 
   private async ensureStarted(): Promise<void> {
-    // A running browser cannot be moved to another profile, so handing this
-    // caller the one already open would put their grant's cookies in another
-    // grant's jar — the thing the per-grant store exists to prevent. The
-    // profile asked for wins: put the wrong one away and start the right one.
-    // A session still holding the old browser learns the way it would from any
-    // browser that goes away.
-    if (this.child && this.profileKeyNow !== this.startedKey) {
-      try {
-        await this.shutdown();
-      } finally {
-        this.resetBreaker();
-      }
-    }
     if (this.child) return;
     if (this.starting) return this.starting;
 
@@ -380,7 +365,6 @@ export class BrowserHost {
       extraEnv.HOME = home;
     }
     const profileDir = await this.profileDirForStart();
-    this.startedKey = this.profileKeyNow;
     const argv = [
       ...this.cfg.command,
       "--screenshots-dir",
@@ -475,7 +459,6 @@ export class BrowserHost {
         rl.close();
         const wasReady = ready;
         this.child = null;
-        this.startedKey = null;
         // shutdown() owns the decision when it is the one stopping the
         // browser; an exit nobody asked for publishes nothing.
         if (!this.shuttingDown) this.profile = null;
@@ -500,7 +483,6 @@ export class BrowserHost {
 
       child.on("error", (err) => {
         this.child = null;
-        this.startedKey = null;
         // Only when it never became ready: the live directory is then exactly
         // the state the grant had before this attempt, so publishing it back
         // beats orphaning the only copy of those logins for the next sweep.

@@ -348,20 +348,23 @@ describe("browser tools (fake runtime)", () => {
     expect(JSON.stringify(again.payload)).toContain("unknown session");
   });
 
-  it("masks a token in any URL-shaped field, not the ones someone remembered", async () => {
-    // Three fields have leaked in turn — `touched`, then `url`, then a popup
-    // in `pages` — so this asserts the rule rather than the field: nothing
-    // URL-shaped for an unapproved origin keeps its query, wherever it sits.
+  it("keeps an unapproved frame's fields out, and an approved page's content in", async () => {
+    // Two different rules, and the distinction is the point: content from a
+    // frame this session never approved does not cross at all, while an
+    // approved page's own content crosses whole — including values that
+    // happen to look like URLs, which an earlier cut truncated.
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const session = await open(server, ["pizza.example", "*.pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/menu" });
     await act(server, session, "click", { selector: "#popup" });
 
-    // forms[].frame_url — a third-party iframe on an approved page, and the
-    // field that leaked after `url` and `pages` had each been named.
+    // The third-party iframe's fields are gone — not masked. Masking its URL
+    // still handed over the names, labels and values beside it.
     const forms = await act(server, session, "forms");
     expect(JSON.stringify(forms.payload)).not.toContain("SECRET");
-    expect(JSON.stringify(forms.payload)).toContain("pay.example/f");
+    expect(JSON.stringify(forms.payload)).not.toContain("pay.example");
+    expect(JSON.stringify(forms.payload)).not.toContain("cvv");
+    expect(JSON.stringify(forms.payload)).toContain("\"q\"");
 
     // pages[]: the popup's entry keeps an index and a masked URL to find the
     // way back, and loses the title, which is that page's own content.

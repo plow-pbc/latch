@@ -501,9 +501,9 @@ export class BrowserSessions {
         // No query survives into the log, approved or not — the line beside
         // it has always been written that way, and an approved site's own URL
         // carries session tokens too.
-        error: this.maskUrls(raw, () => false) as string,
+        error: this.maskUrls(raw, () => false),
       });
-      return { status: "error", error: this.redactFor(s, raw) as string };
+      return { status: "error", error: this.redactFor(s, raw) };
     }
   }
 
@@ -576,11 +576,23 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
-    // Everything leaving here goes through one redaction — see redactFor.
-    const contentKeys = new Set(["text", "data_b64", "result", "note"]);
-    for (const [k, v] of Object.entries(out)) {
-      if (!contentKeys.has(k)) out[k] = this.redactFor(s, v);
+    // What crosses is decided by origin, not by scrubbing strings. `forms` is
+    // the one answer that reaches into other documents — server.py tags each
+    // field with the frame it came from — so fields from a frame this session
+    // was never approved for do not cross at all. Masking their URL was the
+    // wrong seam: it let the names, labels and values through, and it
+    // truncated URL-shaped values on approved pages, which are just content.
+    if (Array.isArray(out.forms)) {
+      out.forms = out.forms.filter((f) => {
+        const u = jv(f).get("frame_url").str;
+        return u === null || this.inScope(s, u);
+      });
     }
+    // `links` and `tables` read the top document only, so the active page's
+    // own scope governs them — an out-of-scope one is locked and stripped
+    // below. That leaves two URL-bearing fields in the envelope, named here
+    // because the list is now closed rather than because it is short.
+    if (typeof out.url === "string") out.url = this.redactFor(s, out.url);
     // A page listing names windows this session never approved — the title is
     // that page's own content, which is deleted at the top level for exactly
     // this reason. The index and the masked URL are what an agent needs to
@@ -591,7 +603,9 @@ export class BrowserSessions {
         const u = jv(pg).get("url").str;
         if (entry === null || u === null || this.inScope(s, u)) return pg;
         const { title: _title, ...rest } = entry;
-        return rest;
+        // Enough to navigate back to, and nothing more: the title is that
+        // page's own content, and the query is where its token would be.
+        return { ...rest, url: stripQuery(u) };
       });
     }
     // Enforcement telemetry, not something to hand back: a transient redirect
@@ -631,20 +645,22 @@ export class BrowserSessions {
   }
 
   /**
-   * Mask what this session was never approved to see: any string that is, or
-   * quotes, a URL for an unapproved origin loses its query and fragment.
+   * Mask the URLs in one string: any that names an unapproved origin loses
+   * its query and fragment, where a redirect the owner never granted carries
+   * its token — `.../callback?code=SECRET`.
    *
-   * By rule rather than by field, because naming them is what kept failing —
-   * `touched` was closed and `url` leaked, `url` was closed and `pages[].url`
-   * leaked, then `forms[].frame_url`. There is no list of URL-shaped fields
-   * that stays complete. A redirect the owner never granted carries tokens in
-   * exactly that part: `.../callback?code=SECRET`.
+   * For strings only, and deliberately. Masking was tried as a general
+   * projection and it was the wrong seam in both directions: it let an
+   * unapproved frame's names, labels and values through while scrubbing its
+   * URL, and it truncated URL-shaped values on approved pages, which are just
+   * content. What decides whether content crosses is its origin, and that is
+   * decided by dropping it — see the `forms` filter in serverAction.
    *
    * This is the agent's policy: it keeps the query on a page it was approved
    * for, because it is driving that page and the query is part of where it
-   * is. `maskUrls` is the walk; the owner's log passes a stricter predicate.
+   * is. The owner's log passes a stricter predicate.
    */
-  private redactFor(s: Session, v: JSONValue): JSONValue {
+  private redactFor(s: Session, v: string): string {
     return this.maskUrls(v, (u) => this.inScope(s, u));
   }
 
@@ -655,8 +671,8 @@ export class BrowserSessions {
    * always been applied to the URL an audit line carries, because an approved
    * site's own URL holds session tokens too, and the log outlives the session.
    */
-  private maskUrls(v: JSONValue, keep: (url: string) => boolean): JSONValue {
-    if (typeof v === "string") {
+  private maskUrls(v: string, keep: (url: string) => boolean): string {
+    {
       // Per whitespace-delimited token: a string that IS a URL is one token,
       // and a browser error quoting the URL it was navigating to has that URL
       // as one of several. Judged from the scheme to the end of the token, so
@@ -675,13 +691,6 @@ export class BrowserSessions {
         })
         .join("");
     }
-    if (Array.isArray(v)) return v.map((x) => this.maskUrls(x ?? null, keep));
-    if (v !== null && typeof v === "object") {
-      return Object.fromEntries(
-        Object.entries(v).map(([k, x]) => [k, this.maskUrls(x ?? null, keep)]),
-      );
-    }
-    return v;
   }
 
   /**
