@@ -646,11 +646,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 
   it("types a 64-character credential whole", () => {
-    // TYPED_CHARS decides whether a value ends up typed or assigned, so it is
-    // chosen as a statement about credentials rather than derived from
-    // latency. An ordinary password, card number or one-time code is shorter
-    // than this; a long API key or a JWT is not, and lands with its head
-    // assigned and its tail typed.
+    // TYPED_CHARS decides whether a value ends up typed or assigned, and
+    // server.py's comment on it owns why the number is what it is. What this
+    // pins is that a credential the size it was chosen for is typed whole; the
+    // over-length case is the `long_value` test above.
     expect(probed.constants.typed_chars).toBeGreaterThanOrEqual(64);
     expect(probed.credential.typed_len).toBe(probed.credential.asked_len);
   });

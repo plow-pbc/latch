@@ -457,10 +457,10 @@ def main() -> int:
         # and the mark comes back off a field that is holding nothing.
         "keys_dropped_unfillable": run(server, {**base, "mask": True, "value": "hunter2"},
                                        drops_keys=True, assign_fails=True),
-        # A credential of the length the vault actually hands this path -- an
-        # API key, a token, a JWT. TYPED_CHARS decides whether one of these ends
-        # up typed or assigned, so it is pinned by a value of that size rather
-        # than by a seven-character password.
+        # A credential right at the TYPED_CHARS boundary, typed whole. A
+        # seven-character password passes at any value of that constant down to
+        # seven, so the number is pinned by one the size it was chosen for.
+        # `long_value` covers the other side: over-length, head assigned.
         "credential": run(server, {**base, "value": "k" * 64}),
         # Prose, not a credential: too long to type inside the budget. The bulk
         # is assigned and the field still ends on real keys.
