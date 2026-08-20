@@ -305,7 +305,7 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["key_timeouts_never_rise"] = (
         all(a >= b for a, b in zip(timeouts, timeouts[1:])) if len(timeouts) > 1 else None
     )
-    out["key_timeouts_distinct"] = len(set(timeouts))
+    out["key_timeouts_distinct"] = len(set(timeouts)) if len(timeouts) > 1 else None
     out["node_len"] = len(frame.handle.value or "")
     return out
 
