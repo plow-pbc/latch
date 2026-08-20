@@ -832,18 +832,22 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
 /** A `"""…"""` literal, lifted from the server so the test can't drift. */
 function loadScript(name: string): (el: unknown) => unknown {
   const src = fs.readFileSync(SERVER_PY, "utf8");
-  const m = new RegExp(`^${name} = f?"""([\\s\\S]*?)"""$`, "m").exec(src);
+  const m = new RegExp(`^${name} = (f)?"""([\\s\\S]*?)"""$`, "m").exec(src);
   if (!m) throw new Error(`${name} literal not found in server.py`);
   // Some are f-strings, interpolating a module-level `_NAME = "…"` fragment so
   // that a rule stated once is asked by every question that needs it. Resolving
-  // it here is what keeps this asserting the script the browser actually runs.
-  const body = m[1]
-    .replace(/\{(_[A-Z_]+)\}/g, (_whole, fragment: string) => {
-      const f = new RegExp(`^${fragment} = "(.*)"$`, "m").exec(src);
-      if (!f) throw new Error(`${fragment} fragment not found in server.py`);
-      return f[1];
-    })
-    .replace(/\{\{|\}\}/g, (brace) => brace[0]);
+  // it here is what keeps this asserting the script the browser actually runs —
+  // and only for those, because `}}` is ordinary JS in a plain literal and
+  // unescaping it there would lift source the server never runs.
+  const body = !m[1]
+    ? m[2]
+    : m[2]
+        .replace(/\{(_[A-Z_]+)\}/g, (_whole, fragment: string) => {
+          const f = new RegExp(`^${fragment} = "(.*)"$`, "m").exec(src);
+          if (!f) throw new Error(`${fragment} fragment not found in server.py`);
+          return f[1];
+        })
+        .replace(/\{\{|\}\}/g, (brace) => brace[0]);
   return new Function(`return (${body})`)() as (el: unknown) => unknown;
 }
 
@@ -991,6 +995,42 @@ describe("whether the keys landed", () => {
     },
   ])("$what needs the assignment: $fallback", ({ el, wanted, fallback }) => {
     expect(dropped(el, wanted)).toBe(fallback);
+  });
+});
+
+describe("whether a fill that failed left anything behind", () => {
+  // `NOTHING_LANDED_JS` decides whether a node that raised mid-fill is put back
+  // as it was found or kept marked and ledgered. Reading a contenteditable as
+  // an input reads it as empty, which calls a half-landed credential harmless
+  // and strips the mark off it — so both ways a node can hold text are here.
+  const nothingLanded = loadScript("NOTHING_LANDED_JS") as unknown as (
+    el: { value?: string; textContent?: string },
+    previous: string,
+  ) => boolean;
+
+  it.each([
+    { what: "an input still holding what it held", el: { value: "1 Elm" }, before: "1 Elm", nothing: true },
+    { what: "an emptied input", el: { value: "" }, before: "1 Elm", nothing: true },
+    // Something landed in it that nobody can account for.
+    { what: "an input holding more than it did", el: { value: "1 Elm Sec" }, before: "1 Elm", nothing: false },
+    {
+      what: "a contenteditable still holding what it held",
+      el: { textContent: "1 Elm" },
+      before: "1 Elm",
+      nothing: true,
+    },
+    { what: "an emptied contenteditable", el: { textContent: "" }, before: "1 Elm", nothing: true },
+    // The row that fails if this asks a contenteditable for its `value`: it
+    // reads as empty, so a node holding half a credential is called harmless
+    // and has its mark taken off.
+    {
+      what: "a contenteditable holding more than it did",
+      el: { textContent: "1 Elm Sec" },
+      before: "1 Elm",
+      nothing: false,
+    },
+  ])("$what: nothing landed is $nothing", ({ el, before, nothing }) => {
+    expect(nothingLanded(el, before)).toBe(nothing);
   });
 });
 
