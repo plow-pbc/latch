@@ -238,8 +238,11 @@ def main():
     out["frames_crowd_out"] = feed(session, [
         Response(403, "https://pizza.example/api/x", page="https://pizza.example/"),
     ] + [
-        Response(410 + i, "https://ads.example/f%d" % i, navigation=True, page="about:blank",
-                 embedder="https://pizza.example/")
+        # Loaded frames, not blank ones: a sub-frame navigation names nobody
+        # whatever the frame is showing, so the row cannot pass for the wrong
+        # reason if the frame reading ever came back.
+        Response(410 + i, "https://ads.example/f%d" % i, navigation=True,
+                 page="https://ads.example/loaded", embedder="https://pizza.example/")
         for i in range(5)
     ])
 
