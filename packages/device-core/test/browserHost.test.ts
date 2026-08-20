@@ -66,12 +66,16 @@ describe("BrowserHost", () => {
     // the one that consumed a 429 and dropped it.
     const { host } = makeHost();
     await host.sendAction({ action: "click", selector: "#blocked" });
-    expect(await host.viewFrame()).not.toBeNull(); // a reply nobody reads them off
+    // Scripted: this one's refusal settles late, so it arrives on the viewer
+    // poll — a reply nobody reads refusals off. Held, not dropped, is the whole
+    // reason the buffer lives in this class.
+    await host.sendAction({ action: "click", selector: "#blocked-later" });
+    expect(await host.viewFrame()).not.toBeNull();
     await host.sendAction({ action: "click", selector: "#blocked" });
-    await host.sendAction({ action: "click", selector: "#blocked" });
-    // Six seen, five kept, newest first — the oldest is what falls off.
+    // Six seen, five kept, newest first — the oldest is what falls off, and the
+    // poll-borne 401 is in the middle where it arrived.
     const held = host.takeFailedRequests() as { status: number }[];
-    expect(held.map((r) => r.status)).toEqual([429, 403, 429, 403, 429]);
+    expect(held.map((r) => r.status)).toEqual([429, 403, 401, 429, 403]);
     // Taken means taken: the next asker gets nothing.
     expect(host.takeFailedRequests()).toEqual([]);
   });
@@ -80,14 +84,16 @@ describe("BrowserHost", () => {
     const { host, events } = makeHost({ CRASH_AFTER: "1" });
     let crashes = 0;
     host.onCrash = () => crashes++;
-    await host.sendAction({ action: "url" });
+    await host.sendAction({ action: "click", selector: "#blocked" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
     expect(events).toContain("browser_crashed");
     // The session layer is told, so it can close its books.
     expect(crashes).toBe(1);
-    // Next action restarts a fresh server (state reset to about:blank).
+    // Next action restarts a fresh server (state reset to about:blank), and a
+    // new browser saw none of the dead one's traffic.
     const r = await host.sendAction({ action: "url" });
     expect(r.url).toBe("about:blank");
+    expect(host.takeFailedRequests()).toEqual([]);
   });
 
   it("trips the circuit breaker after repeated crashes", async () => {

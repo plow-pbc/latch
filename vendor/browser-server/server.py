@@ -347,9 +347,9 @@ class Session:
                 "url": _strip_query(response.url)[:MAX_FAILED_REQUEST_URL],
             }
             self.failed.append(entry)
-            # Enrichment, in its own try: a response that will not answer about
-            # its headers still refused something, and status and method are the
-            # part worth having.
+            # Appended BEFORE the headers are asked for: a response that will
+            # not answer about them still refused something, and status and
+            # method are the part worth having.
             for name in FAILED_REQUEST_HEADERS:
                 value = response.headers.get(name)
                 if value:

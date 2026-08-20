@@ -32,6 +32,8 @@
  *                     approved page, one from elsewhere, and one whose url
  *                     still carries a query, to prove the device strips too
  *   click "#refuses"  refused AND fails, so the refusal has to ride an error
+ *   click "#blocked-later"  the refusal settles after the click answered, so it
+ *                     rides whatever reply comes next — a viewer poll, say
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
  *   click "#swallowed" fails the way a click something is covering does
@@ -41,8 +43,11 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 
 /** Refusals waiting for the next reply, most recent first, exactly as
- * server.py's reply_with_failures hands them over. */
+ * server.py's reply_with_failures hands them over. `failedNext` is one that
+ * settles after the action answered — a real XHR does, and it then rides
+ * whatever reply comes next, including one the device asked for itself. */
 let failed = [];
+let failedNext = [];
 
 const state = {
   pages: [{ url: "about:blank", title: "blank" }],
@@ -61,7 +66,8 @@ function envelope(result) {
 /** Every reply carries what the page's requests did — a result or an error. */
 function withFailures(reply) {
   const carried = failed;
-  failed = [];
+  failed = failedNext;
+  failedNext = [];
   return carried.length === 0 ? reply : { ...reply, failed_requests: carried };
 }
 
@@ -119,6 +125,9 @@ function handle(cmd) {
         `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
           `  - <div class="modal-backdrop show"></div> intercepts pointer events\n`,
       );
+    }
+    if (cmd.selector === "#blocked-later") {
+      failedNext = [{ status: 401, method: "GET", url: "https://pizza.example/api/whoami" }];
     }
     if (cmd.selector === "#blocked" || cmd.selector === "#refuses") {
       failed = [
