@@ -503,12 +503,17 @@ class Session:
                             # so what is watched is what is clicked -- and
                             # `attached` rather than the default `visible`,
                             # because skipping that wait is the point of force.
+                            slice_end = time.monotonic() + left / 1000.0
                             el = fr.wait_for_selector(sel, timeout=left, state="attached")
                             if el is None:
                                 raise RuntimeError("selector not found: %s" % sel)
                             watch = fr.evaluate_handle(CLICK_WATCH_JS, el)
                             try:
-                                rest = int((deadline - time.monotonic()) * 1000)
+                                # This frame's slice, not the rest of the whole
+                                # budget: a node that resolves and then will not
+                                # take the click must not spend what the next
+                                # frame's attempt needs.
+                                rest = int((slice_end - time.monotonic()) * 1000)
                                 el.click(timeout=max(rest, 1), force=True)
                                 blocked = self.ask_watcher(watch, CLICK_LANDED_JS)
                             finally:

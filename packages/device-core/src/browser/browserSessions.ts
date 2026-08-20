@@ -311,6 +311,23 @@ export class BrowserSessions {
 
     const p = jv(params);
     const action = p.get("action").str ?? "";
+    // The click escape hatches, and only for a click: the agent may ask a slow
+    // page for more than the default, up to what the exchange can carry, and
+    // may say "click it anyway". Both are typed rather than passed through —
+    // `force: "false"` is truthy to the Python side. They are read here, before
+    // the command runs, because the clicks worth counting later are the ones
+    // that fail, and those are audited from the catch below.
+    const knobs: { force?: true; timeout_ms?: number } = {};
+    if (action === "click") {
+      const timeoutMs = p.get("timeout_ms").num;
+      if (timeoutMs !== null) {
+        knobs.timeout_ms = Math.min(
+          Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
+          MAX_CLICK_TIMEOUT_MS,
+        );
+      }
+      if (p.get("force").bool === true) knobs.force = true;
+    }
 
     try {
       // Lockout: on an out-of-scope page, only way-back actions run.
@@ -358,7 +375,7 @@ export class BrowserSessions {
         }
         default: {
           // Pass-through actions; the server rejects unknown ones.
-          const forwarded: { [k: string]: JSONValue } = { action };
+          const forwarded: { [k: string]: JSONValue } = { action, ...knobs };
           for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
             const v = p.get(key).value;
             if (v !== null && v !== undefined) forwarded[key] = v;
@@ -369,20 +386,6 @@ export class BrowserSessions {
             const secs = p.get("seconds").num ?? 1;
             forwarded.seconds = Math.min(Math.max(secs, 0), MAX_WAIT_SECONDS);
           }
-          // The click escape hatches, and only for a click: the agent may ask a
-          // slow page for more than the default, up to what the exchange can
-          // carry, and may say "click it anyway". Both are typed rather than
-          // passed through — `force: "false"` is truthy to the Python side.
-          if (action === "click") {
-            const timeoutMs = p.get("timeout_ms").num;
-            if (timeoutMs !== null) {
-              forwarded.timeout_ms = Math.min(
-                Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
-                MAX_CLICK_TIMEOUT_MS,
-              );
-            }
-            if (p.get("force").bool === true) forwarded.force = true;
-          }
           return await this.serverAction(s, forwarded);
         }
       }
@@ -392,6 +395,7 @@ export class BrowserSessions {
         session: s.handle,
         action,
         url: stripQuery(s.lastUrl),
+        ...knobs,
         error: message,
       });
       return { status: "error", error: message };

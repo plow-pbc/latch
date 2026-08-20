@@ -218,8 +218,9 @@ describe("session lifecycle", () => {
 
     // And the audit log says which clicks needed a knob, so the next look at a
     // session that went wrong can count them.
-    const forced = ctx.events.filter((e) => e.event === "browser_command" && e.fields.force === true);
-    expect(forced).toHaveLength(1);
+    const audited = ctx.events.filter((e) => e.event === "browser_command");
+    expect(audited.filter((e) => e.fields.force === true)).toHaveLength(1);
+    expect(audited.filter((e) => e.fields.timeout_ms === 11_000)).toHaveLength(1);
   });
 });
 
