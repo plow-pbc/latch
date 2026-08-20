@@ -31,8 +31,8 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     sample exactly that. It is hardening, not a fix for a known block: the
     Costco 429 that prompted it was measured against this change and is decided
     at the fingerprint level, before the page is touched (issue #86 records the
-    run). What it buys is that a credential submit no longer carries a free tell;
-    what it costs is on this list.
+    run): what it buys is that a credential submit no longer carries a free
+    tell.
     Cadence is `TYPING_DELAY_MS`, and the chord plus the keystrokes share one
     deadline, so a fill costs at most `DEFAULT_ACTION_TIMEOUT_MS +
     TYPING_BUDGET_MS`. A value that cannot be carried faithfully as keystrokes
