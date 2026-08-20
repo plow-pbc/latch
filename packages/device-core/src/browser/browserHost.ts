@@ -339,10 +339,12 @@ export class BrowserHost {
       });
 
       child.on("exit", (code, signal) => {
-        // The reader is not let go SYNCHRONOUSLY here — exit and the stdout
-        // read are separate poll events, so the goodbye can still be in the
-        // pipe. Every path that has nothing readable left calls release(); see
-        // its call sites rather than a list kept in prose here.
+        // A browser that WAS ready is not let go here: exit and the stdout read
+        // are separate poll events, so its goodbye can still be in the pipe,
+        // and the crash branch below lets go a tick later once that has been
+        // read. One that never said hello has no goodbye to wait for and is let
+        // go straight away. Either way it goes through release(); see its call
+        // sites rather than a list kept in prose here.
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
