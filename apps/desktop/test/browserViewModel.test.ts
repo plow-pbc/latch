@@ -128,7 +128,7 @@ describe("audit grouping for browser sessions", () => {
   // refusals were recorded never showed them. Both while it is still open —
   // the case the pane is watched for — and after it closes.
   it.each([
-    { when: "still open", close: [], status: "Requests refused", closeText: null },
+    { when: "still open", close: [], status: "Requests refused", closeText: "" },
     {
       when: "closed",
       // What the browser had not reported yet is drained onto the closing
@@ -155,9 +155,24 @@ describe("audit grouping for browser sessions", () => {
     expect(cmd.text).toContain("429 POST https://costco.com");
     expect(cmd.text).toContain("(+1 more)");
     expect(cmd.state).toBe("bad");
-    const closeRow = browser.timeline.find((t) => t.text.includes("session closed"));
-    expect(closeRow?.text ?? null).toBe(closeText);
-    expect(closeRow?.state).toBe(closeText === null ? undefined : "bad");
+    if (closeText) {
+      const closeRow = browser.timeline.find((t) => t.text.includes("session closed"))!;
+      expect(closeRow.text).toBe(closeText);
+      expect(closeRow.state).toBe("bad");
+    }
+  });
+
+  it("an ordinary close stays ordinary — zinc, and a neutral row", () => {
+    // The other end of the same verdict: everything above reads a close as bad
+    // for some reason, so nothing was left saying what a close with no reason
+    // to be bad looks like.
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:05Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Closed");
+    expect(acts[0]!.tone).toBe("zinc");
+    expect(acts[0]!.timeline.find((t) => t.text.includes("session closed"))!.state).toBe("neutral");
   });
 
   // A crash outranks what the session accumulated before it, so the badge is
