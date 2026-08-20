@@ -435,12 +435,16 @@ class Session:
             deadline = time.monotonic() + budget_ms / 1000.0
             frames = self.indexed_frames(cmd)
             if action == "click":
+                # Re-enumerated between passes rather than snapshotted: a
+                # consent or payment iframe injected while we wait is a NEW
+                # frame object, and the selector this loop is waiting for often
+                # arrives inside exactly that one. Not so for a frame the
+                # caller named: that index is validated once and then held --
+                # re-resolving it would abort the wait the moment the page
+                # drops any iframe, and could only ever retarget a different
+                # frame as the indices shift under it.
+                rescan = "frame" not in cmd
                 while True:
-                    # Re-enumerated every pass, not snapshotted: a consent or
-                    # payment iframe injected while we wait is a NEW frame
-                    # object, and the selector this loop is waiting for often
-                    # arrives inside exactly that.
-                    frames = self.indexed_frames(cmd)
                     holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
                     if holding:
                         frames = holding
@@ -450,6 +454,8 @@ class Session:
                             "no frame has %s after %dms" % (sel, budget_ms)
                         )
                     self.page.wait_for_timeout(SCAN_INTERVAL_MS)
+                    if rescan:
+                        frames = self.indexed_frames(cmd)
             for tried, (i, fr) in enumerate(frames):
                 try:
                     if action == "click":
