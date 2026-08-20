@@ -68,6 +68,7 @@ class NotAttempted(RuntimeError):
     failed for a reason worth reading -- not visible, detached, navigated away.
     """
 
+
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
