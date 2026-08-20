@@ -60,8 +60,9 @@ describe("BrowserHost", () => {
   });
 
   it("answers the exit itself when the browser dies before saying hello", async () => {
-    // A camoufox that cannot launch — missing binary, locked profile — exits
-    // before the ready line. That has to answer as its own failure, not by
+    // A camoufox that cannot launch — a locked profile, no usable display —
+    // exits before the ready line. (A missing binary never gets that far; that
+    // is the spawn case below.) That has to answer as its own failure, not by
     // parking the caller until the start timeout.
     const { host } = makeHost({ EXIT_BEFORE_READY: "1" });
     // The exit itself is what this pins. Whether the browser's own stderr made
@@ -77,7 +78,8 @@ describe("BrowserHost", () => {
     // pins is the answer, not the letting go — nothing here can observe a
     // destroyed descriptor, so the release() call in that branch stays a
     // reasoned invariant rather than a checked one.
-    const { host } = makeHost({}, { command: [path.join(os.tmpdir(), "domo-nonexistent-camoufox")] });
+    const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-")), "camoufox");
+    const { host } = makeHost({}, { command: [missing] });
     await expect(host.ensureReady()).rejects.toThrow(/failed to spawn/);
     // Twice, with no breaker reset in between: a spawn that never happened
     // leaves the host able to try again.
