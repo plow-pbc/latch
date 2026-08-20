@@ -649,7 +649,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // TYPED_CHARS decides whether a value ends up typed or assigned, and
     // server.py's comment on it owns why the number is what it is. What this
     // pins is that a credential the size it was chosen for is typed whole; the
-    // over-length case is the `long_value` test above.
+    // over-length case is "types the tail of a value too long to type whole".
     expect(probed.constants.typed_chars).toBeGreaterThanOrEqual(64);
     expect(probed.credential.typed_len).toBe(probed.credential.asked_len);
   });
