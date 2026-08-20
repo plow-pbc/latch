@@ -133,6 +133,10 @@ class Frame:
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1"):
         self.trace = trace
+        # Deliberately fixed while the element's document_url is a parameter:
+        # the two disagreeing is what a frame navigating between two reads
+        # looks like, and the locate scenario turns on being able to say so.
+        # Parameterise this and that scenario stops discriminating.
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,

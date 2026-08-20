@@ -689,7 +689,12 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // credential, so it has to be the element's.
     const out = probed.locate_reads_the_element;
     expect(out.error).toBeNull();
-    expect(out.result).toMatchObject({ frame_url: "https://payframe.example/card" });
+    // Both halves from that one evaluation: the URL the origin is checked
+    // against, and the token that later says "still this document".
+    expect(out.result).toMatchObject({
+      frame_url: "https://payframe.example/card",
+      frame_token: "doc-1",
+    });
   });
 
   it("keeps the marks across a route change inside one document", () => {
