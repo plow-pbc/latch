@@ -15,6 +15,7 @@ import {
 } from "@domo/protocol";
 import {
   AuditLog,
+  DeviceAgent,
   FileOps,
   FileOpsError,
   HeadlessPolicy,
@@ -204,5 +205,22 @@ describe("AuditLog", () => {
     expect(log.entries()).toHaveLength(1);
     expect(() => log.clear()).not.toThrow();
     expect(log.entries()).toHaveLength(0);
+  });
+});
+
+describe("shutting the machine down", () => {
+  it("stops the vault even when the browser cleanup fails", async () => {
+    // The vault runs as a detached child: it survives the app unless it is
+    // told to stop. A close that throws — a full disk on the audit append —
+    // used to skip that line and leave the vault serving after the app quit.
+    const device = new DeviceAgent(tempDir(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
+    let stopped = false;
+    Object.assign(device, {
+      browserSessions: { closeAll: () => Promise.reject(new Error("audit log is full")) },
+      vaultServer: { stop: () => { stopped = true; } },
+    });
+
+    await expect(device.shutdown()).rejects.toThrow("audit log is full");
+    expect(stopped).toBe(true);
   });
 });

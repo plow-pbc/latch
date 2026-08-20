@@ -260,8 +260,14 @@ export class DeviceAgent {
 
   /** Close any live browser session, and the vault if we are running one. */
   async shutdown(): Promise<void> {
-    await this.browserSessions?.closeAll("shutdown");
-    this.vaultServer?.stop();
+    // The vault runs as a detached child, so it outlives us unless we stop it:
+    // a browser cleanup that throws must not be what leaves it running after
+    // the app is gone. The failure still reaches the caller.
+    try {
+      await this.browserSessions?.closeAll("shutdown");
+    } finally {
+      this.vaultServer?.stop();
+    }
   }
 
   /**
