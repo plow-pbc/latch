@@ -175,14 +175,16 @@ class Handle:
             raise RuntimeError("Element is not attached to the DOM")
         self.typed = (self.typed or "") + text
         self.type_calls += 1
-        # Spend a millisecond BEFORE reading the budget, so the gap between the
-        # first key's and the last's is one this fixture caused rather than
-        # however many microseconds the interpreter took between statements.
-        # Playwright spends the key's delay at this point.
+        # A millisecond per key, wherever in this body it falls: `timeout` is
+        # already fixed by the time this runs, so what the spend moves is the
+        # NEXT key's budget, which the caller computes from the same deadline.
+        # Over a tail that is a gap this fixture caused rather than however many
+        # microseconds the interpreter took between two statements. Playwright
+        # spends the key's delay here.
         time.sleep(0.001)
         self.key_timeout_max = max(self.key_timeout_max or 0, timeout)
-        self.key_timeout_min = min(
-            self.key_timeout_min if self.key_timeout_min is not None else timeout, timeout)
+        if self.key_timeout_min is None or timeout < self.key_timeout_min:
+            self.key_timeout_min = timeout
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
@@ -297,9 +299,11 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
-    # The largest budget any one key was handed. A shared deadline is already
-    # counting down by the first key, so this is under the tail's whole budget;
-    # a per-key timeout hands out exactly the whole of it.
+    # The largest and smallest budget any key was handed -- the first key's and
+    # the last's. A shared deadline is already counting down by the first, so
+    # even that one is under the tail's whole budget, and the gap to the last is
+    # what the tail spent. A per-key timeout hands out exactly the whole budget
+    # every time: at the ceiling, and no gap.
     out["key_timeout_max"] = frame.handle.key_timeout_max
     out["key_timeout_min"] = frame.handle.key_timeout_min
     out["node_len"] = len(frame.handle.value or "")

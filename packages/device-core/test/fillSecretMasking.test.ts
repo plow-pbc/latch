@@ -634,8 +634,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // tail's own would let them stack to TYPED_CHARS times it. A shared
     // deadline is already counting down by the first key, so no key is ever
     // handed the whole of it — which a per-key timeout hands out every time.
-    // The fixture spends a millisecond before each key reads its budget, so
-    // the gap between the first key's and the last's is one it caused.
+    // The fixture spends a millisecond per key, which comes off the shared
+    // deadline before the next key's budget is computed — so the gap between
+    // the first key's and the last's is one it caused, not one the interpreter
+    // happened to leave.
     const run = probed.long_value;
     expect(run.key_timeout_max).toBeLessThan(c.typing_max_ms);
     expect(run.key_timeout_max! - run.key_timeout_min!).toBeGreaterThanOrEqual(
