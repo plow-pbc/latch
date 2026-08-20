@@ -53,10 +53,17 @@ function writeVault(dir: string): string {
 
 function makeServer(
   delegate: PolicyDelegate = new HeadlessPolicy({ intent: "allow_once" }),
-): { server: DomoMcpServer; device: DeviceAgent; fillLog: string; argvLog: string } {
+): {
+  server: DomoMcpServer;
+  device: DeviceAgent;
+  fillLog: string;
+  argvLog: string;
+  cmdLog: string;
+} {
   const dir = tempDir();
   const fillLog = path.join(dir, "fills.log");
   const argvLog = path.join(dir, "argv.log");
+  const cmdLog = path.join(dir, "cmds.log");
   const runtime: ResolvedBrowserRuntime = {
     serverCommand: ["node", FAKE_SERVER],
     credentialBrokerCommand: ["node", FAKE_BROKER],
@@ -64,6 +71,7 @@ function makeServer(
       FAKE_BROKER_VAULT: writeVault(dir),
       FAKE_FILL_LOG: fillLog,
       FAKE_ARGV_LOG: argvLog,
+      FAKE_CMD_LOG: cmdLog,
     },
     camoufoxInstallDir: null,
   };
@@ -71,7 +79,7 @@ function makeServer(
   const server = createDomoMcpServer(device);
   cleanups.push(() => server.close());
   cleanups.push(() => device.shutdown());
-  return { server, device, fillLog, argvLog };
+  return { server, device, fillLog, argvLog, cmdLog };
 }
 
 /** How each browser launch was spawned, oldest first. */
@@ -348,12 +356,23 @@ describe("browser tools (fake runtime)", () => {
     expect(JSON.stringify(again.payload)).toContain("unknown session");
   });
 
-  it("refuses an action the schema does not list", async () => {
-    const { server } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+  it("refuses an action the schema does not list, before the browser sees it", async () => {
+    // `isError` alone would not pin this: `view` dies at the fake as an
+    // unknown action and `quit` stops the browser, both truthy for reasons
+    // that have nothing to do with the enum. What the enum buys is that the
+    // browser is never asked — so the command log is the oracle.
+    const { server, cmdLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/" });
+
     for (const action of ["locate", "view", "quit"]) {
       const r = await callTool(server, "plow_browser", { session, action }, AGENT);
       expect(r.isError, `${action}: ${JSON.stringify(r.payload)}`).toBe(true);
+      expect(JSON.stringify(r.payload)).toMatch(/action/i);
+    }
+    const asked = fs.readFileSync(cmdLog, "utf8");
+    for (const action of ["locate", "view", "quit"]) {
+      expect(asked, `${action} reached the browser`).not.toContain(`"${action}"`);
     }
   });
 
@@ -390,7 +409,9 @@ describe("browser tools (fake runtime)", () => {
     // A field VALUE that happens to be a URL for an unapproved origin is
     // still this page's content, and the agent asked for it. An earlier cut
     // scrubbed it, which is the other direction of the same mistake.
-    expect(JSON.stringify(approved.payload)).toContain("code=KEEPME");
+    expect(JSON.stringify(approved.payload)).toContain(
+      "https://offsite.example/cb?code=KEEPME",
+    );
 
     // And the failure path, which leaves by a different door: a browser error
     // quotes the URL it was navigating to, and that reaches the agent AND the

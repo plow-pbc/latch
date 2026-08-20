@@ -309,6 +309,14 @@ export class BrowserSessions {
       items: itemList,
     });
     s.origins = widened;
+    // The recovery this exists for: an origin the session strayed to and has
+    // now been approved for stops being reported as unreadable. The jar it
+    // contaminated stays given up — that happened before the approval — but
+    // every later response saying the page cannot be read would be false.
+    s.strayedSeen = new Set([...s.strayedSeen].filter((o) => !originMatches(o, widened)));
+    if (s.strayed !== null && originMatches(s.strayed, widened)) {
+      s.strayed = [...s.strayedSeen][0] ?? null;
+    }
     s.credentialItems = widenedItems;
     if (credentialMetadata) s.credentialMetadata = true;
     s.lastActivity = Date.now();
@@ -431,7 +439,7 @@ export class BrowserSessions {
     try {
       // Lockout: on an out-of-scope page, only way-back actions run.
       if (!this.inScope(s, s.lastUrl) && !LOCKOUT_ALLOWED.has(action)) {
-        const origin = hostOf(s.lastUrl) ?? s.lastUrl;
+        const origin = hostOf(s.lastUrl) ?? stripQuery(s.lastUrl);
         this.audit("browser_scope_violation", {
           session: s.handle,
           action,
@@ -612,6 +620,12 @@ export class BrowserSessions {
     // this session was never approved for can carry an OAuth code or token in
     // its query, and the scope check has already read what it needed.
     delete out.touched;
+    // `locate` answers with the URL of whichever frame owns a selector, at the
+    // top level. `plow_browser`'s action enum (packages/mcp-server/src/tools.ts)
+    // is what keeps an agent from asking for it — enforced by the SDK's schema
+    // validation before the handler runs — but this layer is callable directly
+    // and should not depend on a list in another package to stay safe.
+    delete out.frame_url;
     // A popup can stray while the active page stays in scope, so nothing below
     // would mention it — and the agent would carry on unaware that this
     // browser's saved cookies are gone. Say so where it can act on it.

@@ -577,6 +577,26 @@ describe("access the owner's log could not record is not granted", () => {
     expect(published(watched.dir)).toEqual([]);
   });
 
+  it("stops calling an origin unreadable once the owner has approved it", async () => {
+    // The documented recovery: land out of scope, ask for that origin, carry
+    // on. The jar stays given up — it was contaminated before the approval —
+    // but a response still saying the page cannot be read would be false.
+    const opened = jv(await ctx.sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const handle = opened.get("session").str!;
+    await ctx.sessions.command(AGENT, handle, { action: "goto", url: "https://pizza.example/" });
+    const strayed = jv(
+      await ctx.sessions.command(AGENT, handle, { action: "click", selector: "#offsite" }),
+    );
+    expect(strayed.get("out_of_scope").str).toBe("offsite.example");
+
+    await ctx.sessions.extend("int-2", AGENT, handle, ["offsite.example"], [], false);
+    const after = jv(
+      await ctx.sessions.command(AGENT, handle, { action: "url" }),
+    );
+    expect(after.get("out_of_scope").value).toBeNull();
+    expect(after.get("retired_store").value).toBeNull();
+  });
+
   it("a browser that dies unexpectedly publishes nothing", async () => {
     // The asymmetry the store rests on: a browser that died may have been
     // mid-request to an origin the scope check never got to see, so "we do not
