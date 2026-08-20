@@ -2,7 +2,7 @@
  * The deferred-result contract (design §4.3).
  *
  * A tunnelled call has a hard ceiling: the relay's pending future times out at
- * 20 seconds, so nothing on this Mac may block past its call budget — not a
+ * 25 seconds, so nothing on this Mac may block past its call budget — not a
  * human who has walked away from an approval, not a slow command. Any
  * tool that cannot finish inside the budget returns a handle instead, keeps the
  * work running, and the agent retrieves the outcome later with `plow_get_result`.
@@ -57,8 +57,8 @@ export type PendingReason = "awaiting_approval" | "running";
  * `awaiting_approval` must not claim a dialog is on screen, because often
  * there is not one. It means "no decision yet", and that covers the work
  * before anyone is asked (path resolution, writing the approval record), the
- * adversarial reviewer thinking — a 30s budget against this 8s one, so in that
- * mode deferring while nobody has been asked is the ORDINARY case — and the
+ * adversarial reviewer thinking — a 30s budget against this 15s one, so in
+ * that mode deferring while nobody has been asked is still commonplace — and the
  * approve/deny modes, which never show a human anything at all.
  *
  * An earlier version of this note hedged on whether approval was *needed*,
