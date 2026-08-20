@@ -521,11 +521,22 @@ export class BrowserSessions {
         // is the safe end because no access was granted. Here the request has
         // already gone out, so a jar that cannot be retired must not survive
         // to be handed on — the session ends rather than the action.
-        this.audit("browser_profile_abandon_failed", {
-          session: s.handle,
-          origin,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        // Best-effort, and deliberately not in front of the close: what fails
+        // here is a write inside the profile directory, and the audit log
+        // lives on the same volume — so the case that reaches this branch is
+        // exactly the case where recording it throws too. Letting that skip
+        // the close would leave the session live on a jar holding the
+        // unapproved origin's cookies, which is the fail-open this exists to
+        // shut.
+        try {
+          this.audit("browser_profile_abandon_failed", {
+            session: s.handle,
+            origin,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } catch {
+          /* the close below is the act; the record is the nice-to-have */
+        }
         await this.close(s.handle, "profile could not be retired");
         return {
           status: "error",

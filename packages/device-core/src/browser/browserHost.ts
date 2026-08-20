@@ -260,8 +260,10 @@ export class BrowserHost {
     const key = this.profileKeyNow;
     if (!root || !key) return null;
     // The name IS the grant: a session opens the directory its origins hash
-    // to. A widening gives one up without moving it, so step over those — the
-    // jar behind that name holds state for origins this grant does not name.
+    // to, and the reap has just cleared the ones that were given up, so that
+    // name is normally free. The suffix below is the fallback for a profile
+    // the reap could not delete — stepped over, never adopted, since the jar
+    // behind it holds state for origins this grant does not name.
     this.reapAbandoned(root);
     let dir = path.join(root, key);
     for (let n = 2; this.abandoned(dir); n++) dir = path.join(root, `${key}-${n}`);
@@ -408,10 +410,9 @@ export class BrowserHost {
             this.cfg.audit?.("browser_started", {
               pid: child.pid ?? -1,
               browser_version: this.browserVersion,
-              // Which store this browser is on. The name is the grant's hash
-              // for the first profile a grant opens, but a widening leaves
-              // that one behind and the next gets a suffix — so the owner
-              // cannot work it out from the origins alone.
+              // Which store this browser is on. A name is reused once the
+              // profile that had it is reaped, so hashing the origins says
+              // which name — not which jar. This does.
               profile: profileDir ? path.basename(profileDir) : null,
             });
             resolve();
