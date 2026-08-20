@@ -571,17 +571,30 @@ export class BrowserSessions {
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
     // Every URL leaving here keeps its query only if this session is approved
-    // for it. A redirect the owner never granted can carry a token in its
-    // query or fragment — `.../callback?code=SECRET` — and removing the
-    // leaking field one at a time has twice now left the next one leaking.
-    // The audit log has always been written this way; so is the answer now.
-    const safe = (u: string): JSONValue => (this.inScope(s, u) ? u : stripQuery(u));
-    if (typeof out.url === "string") out.url = safe(out.url);
-    if (Array.isArray(out.pages)) {
-      out.pages = out.pages.map((pg) => {
-        const u = jv(pg).get("url").str;
-        return u === null ? pg : { ...(jv(pg).obj ?? {}), url: safe(u) };
-      });
+    // for it: a redirect the owner never granted can carry a token in its
+    // query or fragment — `.../callback?code=SECRET`.
+    //
+    // Applied to the whole answer rather than to named fields, because naming
+    // them is what kept failing. `touched` was closed, and `url` leaked; `url`
+    // was closed, and `pages[].url` leaked; then `forms[].frame_url`. There is
+    // no list of URL-shaped fields that stays complete, so this walks what is
+    // being returned. Page content is exempt — the agent is entitled to it on
+    // an approved page, and it is already stripped on one that is not.
+    const contentKeys = new Set(["text", "data_b64", "result", "note", "error"]);
+    const redact = (v: JSONValue): JSONValue => {
+      if (typeof v === "string") {
+        return hostOf(v) !== null && !this.inScope(s, v) ? stripQuery(v) : v;
+      }
+      if (Array.isArray(v)) return v.map((x) => redact(x ?? null));
+      if (v !== null && typeof v === "object") {
+        return Object.fromEntries(
+          Object.entries(v).map(([k, x]) => [k, contentKeys.has(k) ? x : redact(x ?? null)]),
+        );
+      }
+      return v;
+    };
+    for (const [k, v] of Object.entries(out)) {
+      if (!contentKeys.has(k)) out[k] = redact(v);
     }
     // Enforcement telemetry, not something to hand back: a transient redirect
     // this session was never approved for can carry an OAuth code or token in

@@ -34,9 +34,10 @@
  *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
- *   click "#popup"     opens a second page on https://popup.example/pay
+ *   click "#popup"     opens a second page on https://popup.example/pay?token=SECRET
+ *                      (token-bearing on purpose, so redaction is testable)
  *   click "#flash"     touches https://flash.example/collect and closes it again
- *   click "#offsite"   navigates the page to https://offsite.example/lander
+ *   click "#offsite"   navigates to https://offsite.example/lander?code=SECRET-TOKEN
  *   click "#swallowed" fails the way a click something is covering does
  */
 "use strict";
@@ -129,8 +130,8 @@ function handle(cmd) {
       );
     }
     if (cmd.selector === "#popup") {
-      state.pages.push({ url: "https://popup.example/pay", title: "popup" });
-      state.touched.push("https://popup.example/pay");
+      state.pages.push({ url: "https://popup.example/pay?token=SECRET", title: "popup" });
+      state.touched.push("https://popup.example/pay?token=SECRET");
     } else if (cmd.selector === "#offsite") {
       // Token-bearing on purpose: the shape an OAuth redirect has.
       current().url = "https://offsite.example/lander?code=SECRET-TOKEN";

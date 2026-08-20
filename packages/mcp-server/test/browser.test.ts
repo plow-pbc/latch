@@ -348,6 +348,27 @@ describe("browser tools (fake runtime)", () => {
     expect(JSON.stringify(again.payload)).toContain("unknown session");
   });
 
+  it("masks a token in any URL-shaped field, not the ones someone remembered", async () => {
+    // Three fields have leaked in turn — `touched`, then `url`, then a popup
+    // in `pages` — so this asserts the rule rather than the field: nothing
+    // URL-shaped for an unapproved origin keeps its query, wherever it sits.
+    const { server } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const session = await open(server, ["pizza.example", "*.pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/menu" });
+    await act(server, session, "click", { selector: "#popup" });
+
+    // pages[]: the popup's own entry, which naming `url` alone would miss.
+    const listed = await act(server, session, "pages");
+    expect(JSON.stringify(listed.payload)).not.toContain("SECRET");
+    expect(JSON.stringify(listed.payload)).toContain("popup.example/pay");
+
+    // And the approved page keeps everything — this masks what was never
+    // granted, not everything with a question mark in it.
+    await act(server, session, "goto", { url: "https://pizza.example/menu?table=7" });
+    const forms = await act(server, session, "forms");
+    expect(JSON.stringify(forms.payload)).toContain("table=7");
+  });
+
   it("a page that navigates out of scope retires the jar, with no widening at all", async () => {
     // The scope check runs on where the action LANDED, so by the time it
     // fires Camoufox has already made that request with whatever cookies it
