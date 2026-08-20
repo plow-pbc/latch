@@ -436,7 +436,8 @@ describe("browser tools (fake runtime)", () => {
     const started = device.audit
       .entries()
       .find((e) => jv(e as JSONValue).get("event").str === "browser_started");
-    expect(jv(started as JSONValue).get("profile").value).toBeNull();
+    expect(started).toBeDefined();
+    expect(jv(started as JSONValue).obj).toHaveProperty("profile", null);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {

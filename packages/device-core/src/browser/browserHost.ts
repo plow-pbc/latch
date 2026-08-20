@@ -226,9 +226,18 @@ export class BrowserHost {
     // relay's ~20s ceiling, and a synchronous flush on a stalling volume stops
     // the timer that enforces it from ever firing.
     const file = path.join(dir, ABANDONED_MARKER);
-    await fsp.writeFile(file, "");
-    await fsync(file);
-    await fsync(dir); // the marker's own directory entry
+    try {
+      await fsp.writeFile(file, "");
+      await fsync(file);
+      await fsync(dir); // the marker's own directory entry
+    } catch (error: unknown) {
+      // All of it or none: a marker left behind by a failed flush retires the
+      // grant on disk while the caller sees the widening fail, so the owner
+      // loses those logins with nothing in the log to say why — which is the
+      // unexplained sign-out the event below exists to explain.
+      await fsp.rm(file, { force: true });
+      throw error;
+    }
     this.startedDir = null; // nothing to give up twice
     // Both sides of the reuse guard follow, or the very next action reads a
     // mismatch and restarts the browser out from under the session.
