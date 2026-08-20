@@ -147,7 +147,16 @@ export class DeviceAgent {
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        profileDir: path.join(browserDir, "profile"),
+        // One profile per approved origin set, so a login the owner approved
+        // for one task is not handed to the next session on an unrelated site,
+        // and a site's verdict on us — a bot block included — is confined to
+        // the grant that earned it. DOMO_BROWSER_FRESH_PROFILE=1 drops the
+        // store entirely: every session starts with no cookies at all, which
+        // is how a block is reproduced without first wiping by hand.
+        profilesDir:
+          process.env.DOMO_BROWSER_FRESH_PROFILE === "1"
+            ? undefined
+            : path.join(browserDir, "profiles"),
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the

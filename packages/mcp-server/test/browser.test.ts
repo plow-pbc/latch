@@ -210,6 +210,42 @@ describe("browser tools (fake runtime)", () => {
     expect(opened).toEqual([false, true]);
   });
 
+  it("each approved origin set browses in its own profile, and comes back to it", async () => {
+    const { server, argvLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+
+    const runOnce = async (origins: string[]) => {
+      const session = await open(server, origins);
+      await callTool(server, "plow_browser_close", { session }, AGENT);
+    };
+    await runOnce(["pizza.example", "*.pizza.example"]);
+    await runOnce(["bank.example"]);
+    // The same grant, spelled differently: the profile is the set, not the string.
+    await runOnce(["*.PIZZA.example", "pizza.example"]);
+
+    const profileOf = (argv: string) => {
+      const parts = argv.split(/\s+/);
+      const i = parts.indexOf("--profile-dir");
+      return i === -1 ? null : parts[i + 1];
+    };
+    const [pizza, bank, pizzaAgain] = launches(argvLog).map(profileOf);
+    expect(pizza).toBeTruthy();
+    // The bank session cannot read what the pizza session left behind...
+    expect(bank).not.toBe(pizza);
+    // ...and pizza is recognized when it comes back.
+    expect(pizzaAgain).toBe(pizza);
+  });
+
+  it("DOMO_BROWSER_FRESH_PROFILE gives every session a profile with no history", async () => {
+    vi.stubEnv("DOMO_BROWSER_FRESH_PROFILE", "1");
+    cleanups.push(() => vi.unstubAllEnvs());
+    const { server, argvLog } = makeServer();
+
+    const session = await open(server, ["pizza.example"]);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+
+    expect(launches(argvLog)[0]).not.toContain("--profile-dir");
+  });
+
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const runOnce = async () => {

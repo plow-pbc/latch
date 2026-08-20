@@ -34,7 +34,15 @@ export interface BrowserHostConfig {
   command: string[];
   env?: Record<string, string>;
   screenshotsDir: string;
-  profileDir?: string;
+  /**
+   * Parent of the per-grant profiles. The dir used for a given start is chosen
+   * by `ensureReady`, one per approved origin set. Omit it (or start without a
+   * key) and the browser runs with no persistent profile at all: a fresh cookie
+   * jar every launch, which is what a bot-block reproduction needs.
+   */
+  profilesDir?: string;
+  /** Profiles kept under `profilesDir`; least recently used are removed. */
+  maxProfiles?: number;
   /** Camoufox install dir (config.json + browsers/). When set, the server is
    * spawned with an app-scoped $HOME whose Library/Caches/camoufox symlinks
    * to it — camoufox finds a ready install, the user's shared cache is never
@@ -59,6 +67,9 @@ interface Pending {
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
+/** Per-grant profiles retained before the least recently used are dropped. */
+const DEFAULT_MAX_PROFILES = 20;
+
 export class BrowserHost {
   private child: ChildProcess | null = null;
   private starting: Promise<void> | null = null;
@@ -76,6 +87,8 @@ export class BrowserHost {
 
   /** Window mode of the current (or next) browser — a session may switch it. */
   private headedNow: boolean;
+  /** Profile the next browser opens, one per approved origin set. */
+  private profileKeyNow: string | null = null;
 
   constructor(private readonly cfg: BrowserHostConfig) {
     this.headedNow = cfg.headed === true;
@@ -152,9 +165,62 @@ export class BrowserHost {
    * the mode is simply chosen for the next start — closing a session already
    * shut the previous browser down.
    */
-  ensureReady(headed?: boolean): Promise<void> {
+  ensureReady(headed?: boolean, profileKey?: string | null): Promise<void> {
     this.headedNow = headed ?? this.cfg.headed === true;
+    this.profileKeyNow = profileKey ?? null;
     return this.ensureStarted();
+  }
+
+  /**
+   * Where the next browser keeps its cookies, localStorage and cache: one
+   * directory per approved origin set, so what a session leaves behind is
+   * reachable only by a session the owner approved for the same origins. Null
+   * — no key, or no profiles dir — leaves `--profile-dir` off the command line
+   * and the browser runs with nothing persisted.
+   */
+  private profileDirForStart(): string | null {
+    const root = this.cfg.profilesDir;
+    if (!root || !this.profileKeyNow) return null;
+    const dir = path.join(root, this.profileKeyNow);
+    fs.mkdirSync(dir, { recursive: true });
+    // Stamp on use: the reaper below evicts by mtime, and a profile the browser
+    // opened but never wrote to would otherwise look untouched since its birth.
+    const now = new Date();
+    fs.utimesSync(dir, now, now);
+    this.reapProfiles(root);
+    return dir;
+  }
+
+  /**
+   * Keep the profile store bounded. One profile per origin set means one per
+   * site the owner ever browsed, each a full Firefox profile with its own
+   * cache, and nothing else deletes them. Evicting the least recently used
+   * costs that grant its logins, which is what a first visit already is.
+   */
+  private reapProfiles(root: string): void {
+    const keep = this.cfg.maxProfiles ?? DEFAULT_MAX_PROFILES;
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(root);
+    } catch {
+      return; // just created it, or it went away under us — nothing to reap
+    }
+    if (entries.length <= keep) return;
+    const byAge = entries
+      .map((name) => {
+        const full = path.join(root, name);
+        try {
+          return { full, used: fs.statSync(full).mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter((e): e is { full: string; used: number } => e !== null)
+      .sort((a, b) => b.used - a.used);
+    for (const stale of byAge.slice(keep)) {
+      fs.rmSync(stale.full, { recursive: true, force: true });
+      this.cfg.audit?.("browser_profile_evicted", { profile: path.basename(stale.full) });
+    }
   }
 
   private ensureStarted(): Promise<void> {
@@ -196,11 +262,12 @@ export class BrowserHost {
       fs.symlinkSync(this.cfg.camoufoxInstallDir, link);
       extraEnv.HOME = home;
     }
+    const profileDir = this.profileDirForStart();
     const argv = [
       ...this.cfg.command,
       "--screenshots-dir",
       this.cfg.screenshotsDir,
-      ...(this.cfg.profileDir ? ["--profile-dir", this.cfg.profileDir] : []),
+      ...(profileDir ? ["--profile-dir", profileDir] : []),
       ...(this.headedNow ? ["--headed"] : []),
     ];
     const child = spawn(argv[0], argv.slice(1), {

@@ -20,10 +20,16 @@ afterEach(async () => {
 
 function makeHost(
   env: Record<string, string> = {},
-  extra: Partial<{ startTimeoutMs: number; actionTimeoutMs: number }> = {},
+  extra: Partial<{
+    startTimeoutMs: number;
+    actionTimeoutMs: number;
+    profilesDir: string;
+    maxProfiles: number;
+  }> = {},
 ): {
   host: BrowserHost;
   events: string[];
+  dir: string;
 } {
   const events: string[] = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-"));
@@ -35,8 +41,31 @@ function makeHost(
     ...extra,
   });
   hosts.push(host);
-  return { host, events };
+  return { host, events, dir };
 }
+
+describe("BrowserHost profile store", () => {
+  it("drops the least recently used profile once the store is over its cap", async () => {
+    const profiles = fs.mkdtempSync(path.join(os.tmpdir(), "domo-profiles-"));
+    const stale = (name: string, agoMs: number) => {
+      const full = path.join(profiles, name);
+      fs.mkdirSync(full);
+      const when = new Date(Date.now() - agoMs);
+      fs.utimesSync(full, when, when);
+      return full;
+    };
+    const yesterday = stale("yesterday", 24 * 3600_000);
+    const lastWeek = stale("last-week", 7 * 24 * 3600_000);
+
+    const { host, events } = makeHost({}, { profilesDir: profiles, maxProfiles: 2 });
+    await host.ensureReady(false, "today");
+
+    expect(fs.existsSync(path.join(profiles, "today"))).toBe(true);
+    expect(fs.existsSync(yesterday)).toBe(true);
+    expect(fs.existsSync(lastWeek)).toBe(false);
+    expect(events).toContain("browser_profile_evicted");
+  });
+});
 
 describe("BrowserHost", () => {
   it("starts lazily, reports ready, and correlates responses by id", async () => {

@@ -21,7 +21,13 @@
  * what the agent observes/interacts with and where credentials get typed.
  */
 import crypto from "node:crypto";
-import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
+import {
+  JSONValue,
+  jv,
+  originMatches,
+  normalizeOrigin,
+  profileKeyForOrigins,
+} from "@domo/protocol";
 import { BrowserHost } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
 
@@ -127,8 +133,15 @@ export class BrowserSessions {
     // action is non-deferrable and must answer well inside the relay's ~20s
     // per-exchange ceiling, which it can only do against an already-running
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
+    // The profile is the grant: cookies, storage and cache written here are
+    // reachable only by a later session the owner approved for the same
+    // origins. Fixed at open — `extend()` widens a browser that is already
+    // running, and restarting it would take the live page with it, so state a
+    // widening writes lands in the opening grant's profile. That union is
+    // still a bound the owner approved inside this session.
+    const profileKey = profileKeyForOrigins(origins);
     try {
-      await this.host.ensureReady(headed);
+      await this.host.ensureReady(headed, profileKey);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { status: "error", error: `browser failed to start: ${message}` };
