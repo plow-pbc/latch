@@ -143,10 +143,27 @@ describe("an edit", () => {
     expect(edit(["https://a.example", "", "https://c.example"], { ...dropped, id: "item-1" }).login.uris)
       .toEqual([A, C]);
 
+    // Edited into a duplicate of a row further down: the row that did not
+    // change keeps its entry. The fallback may not reach past an entry that
+    // is still the position match of a row it has not got to yet.
+    const shadowed = edit(["https://c.example", "https://b.example", "https://c.example"]).login.uris;
+    expect(shadowed[1]).toEqual(B);
+    expect(shadowed[2]).toEqual(C);
+    expect(shadowed[0].match).toBeNull();
+
     // Listed twice: one stored entry cannot be handed to both.
     const twice = edit(["https://a.example", "https://a.example"]).login.uris;
     expect(twice[0]).toEqual(A);
     expect(twice[1].match).toBeNull();
+
+    // One entry answers once. Here the first row is retyped to B and picks up
+    // B's entry by address; a third row typed as B must get an entry of its
+    // own, not a second reference to the same one.
+    const reused = edit(["https://b.example", "", "https://b.example"]).login.uris;
+    expect(reused[0]).toEqual(B);
+    expect(reused[1]).not.toBe(reused[0]);
+    expect(reused[1].uri).not.toEqual(reused[0].uri);
+    expect(reused[1].match).toBeNull();
 
     // Omitted: an edit that mentions no URL changes none of them.
     expect(edit(null).login.uris).toEqual(many.login.uris);

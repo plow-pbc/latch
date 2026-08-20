@@ -288,7 +288,12 @@ export function encryptCipher(
       uris = input.urls
         .map((u, i) => {
           if (!u) return null;                                // the owner emptied this row
-          const at = holds(unclaimed[i], u) ? i : unclaimed.findIndex((e) => holds(e, u));
+          // The fallback may not take an entry that is still its own row's
+          // position match: that row has not been reached yet, and the entry
+          // is the one thing it can be given without rewriting it.
+          const at = holds(unclaimed[i], u)
+            ? i
+            : unclaimed.findIndex((e, j) => holds(e, u) && !holds(e, input.urls![j]));
           const held = at === -1 ? null : unclaimed[at];
           if (at !== -1) delete unclaimed[at];                // claimed; position is kept
           // Unchanged, and visible to every other client: the stored entry as it is.
