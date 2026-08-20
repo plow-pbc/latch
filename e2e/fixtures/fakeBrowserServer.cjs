@@ -28,9 +28,10 @@
  *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
- *   click "#popup"    opens a second page on https://popup.example/pay
- *   click "#flash"    touches https://flash.example/collect and closes it again
- *   click "#offsite"  navigates the page to https://offsite.example/lander
+ *   click "#popup"     opens a second page on https://popup.example/pay
+ *   click "#flash"     touches https://flash.example/collect and closes it again
+ *   click "#offsite"   navigates the page to https://offsite.example/lander
+ *   click "#swallowed" fails the way a click something is covering does
  */
 "use strict";
 const fs = require("node:fs");
@@ -108,6 +109,13 @@ function handle(cmd) {
       // page_count never moves, so `touched` is the only trace of it.
       state.touched.push("https://flash.example/collect");
       return { ok: true };
+    }
+    // The shape a real click failure has: the browser names what was over it.
+    if (cmd.selector === "#swallowed") {
+      throw new Error(
+        `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
+          `  - <div class="modal-backdrop show"></div> intercepts pointer events\n`,
+      );
     }
     if (cmd.selector === "#popup") {
       state.touched.push("https://popup.example/pay");

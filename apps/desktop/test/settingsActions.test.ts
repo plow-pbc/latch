@@ -4,10 +4,8 @@
  *
  * The distinction matters: the availability helpers were already tested, and
  * they stayed green while nothing proved the handlers actually *called* them.
- * Deleting the guard that refuses an unavailable provider, or forgetting to
- * persist the fallback to Ask, left every test passing. These tests execute the
- * guards and then re-read the settings **from disk**, because an interlock that
- * does not survive a relaunch is not an interlock.
+ * These tests execute the mutations and then re-read the settings **from
+ * disk**, because a rule that does not survive a relaunch is not a rule.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
@@ -21,14 +19,11 @@ import {
   readInference,
   revokeAndSignOut,
   setAgentPurpose,
-  setAnthropicApiKey,
   setApprovalMode,
-  setInferenceProvider,
   signOutOfPlow,
 } from "../src/settingsActions.js";
 
 const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
-const ANTHROPIC_KEY = "sk-ant-do-not-leak-me";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -63,131 +58,10 @@ function expectSignedOutWithAdversarial(home: string) {
   });
 }
 
-describe("any known provider is selectable, credential or not", () => {
-  it("stores a provider that has no credential, and says it has none", () => {
-    // The gate is gone. Parking the reviewer on a provider that cannot answer
-    // used to be refused here; it is a state the user is allowed to be in now,
-    // and one that denies — legibly — at review time instead of being
-    // prevented. `available` still reports the truth, for the note in Settings.
-    const home = homeWith({ inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL });
-
-    const status = setInferenceProvider(home, "anthropic");
-
-    expect(stored(home).inferenceProvider).toBe("anthropic");
-    expect(status.provider).toBe("anthropic");
-    expect(status.available.anthropic).toBe(false);
-  });
-
-  it("allows a provider that does have a credential", () => {
-    const home = homeWith({
-      inferenceProvider: "plow",
-      relayCredential: PLOW_CREDENTIAL,
-      anthropicApiKey: ANTHROPIC_KEY,
-    });
-
-    expect(setInferenceProvider(home, "anthropic").provider).toBe("anthropic");
-    expect(stored(home).inferenceProvider).toBe("anthropic");
-  });
-
-  it("refuses a provider name nobody recognises", () => {
-    const home = homeWith({ inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL });
-    for (const junk of ["openai", "", null, 7, { provider: "plow" }, ["plow"]]) {
-      setInferenceProvider(home, junk);
-      expect(stored(home).inferenceProvider).toBe("plow");
-    }
-  });
-
-  it("reports the truth back to the renderer either way", () => {
-    // Accepted or refused, the answer is the real state, so the renderer cannot
-    // sit on an optimistic guess about which provider is live.
-    const home = homeWith({ inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL });
-    expect(setInferenceProvider(home, "anthropic")).toEqual(readInference(home));
-    expect(setInferenceProvider(home, "nope")).toEqual(readInference(home));
-  });
-
-  it("switching to an unusable provider keeps the mode the user chose", () => {
-    // The old contract retired Adversarial here, so the stored mode could never
-    // name a reviewer that cannot run. That rewrote the user's choice behind
-    // them; now the choice stands and the consequence is a denial they can read.
-    const home = homeWith({
-      approvalMode: "adversarial",
-      inferenceProvider: "anthropic",
-      anthropicApiKey: ANTHROPIC_KEY,
-      relayCredential: PLOW_CREDENTIAL,
-    });
-    setInferenceProvider(home, "plow");
-    expect(stored(home).approvalMode).toBe("adversarial");
-
-    // Take the Plow credential away: the mode SURVIVES, unusable and honest.
-    signOutOfPlow(home);
-    expect(stored(home).inferenceProvider).toBe("plow");
-    expect(stored(home).approvalMode).toBe("adversarial");
-    expect(readInference(home).available.plow).toBe(false);
-  });
-});
-
-describe("a credential change never rewrites the mode the user chose", () => {
-  // What a key change does depends on TWO things: whether the new value counts
-  // as a credential at all, and whether the provider it belongs to is the one
-  // doing the reviewing. Every row carries both, and its own expectations.
-  const credentialChangeCases = [
-    {
-      name: "clearing the key while Anthropic is active",
-      over: { inferenceProvider: "anthropic" as const, anthropicApiKey: ANTHROPIC_KEY },
-      mode: "adversarial" as const,
-      set: "",
-      key: "",
-      expected: "adversarial" as const,
-    },
-    {
-      name: "a whitespace-only key counts as cleared",
-      over: { inferenceProvider: "anthropic" as const, anthropicApiKey: ANTHROPIC_KEY },
-      mode: "adversarial" as const,
-      set: "   ",
-      key: "",
-      expected: "adversarial" as const,
-    },
-    {
-      // Plow is doing the reviewing; the Anthropic key going away changes
-      // nothing about whether the reviewer can run.
-      name: "clearing the INACTIVE provider's key leaves the mode alone",
-      over: {
-        inferenceProvider: "plow" as const,
-        relayCredential: PLOW_CREDENTIAL,
-        anthropicApiKey: ANTHROPIC_KEY,
-      },
-      mode: "adversarial" as const,
-      set: "",
-      key: "",
-      expected: "adversarial" as const,
-    },
-    {
-      name: "storing a key does not resurrect Adversarial mode on its own",
-      over: { inferenceProvider: "anthropic" as const },
-      mode: "ask" as const,
-      set: ANTHROPIC_KEY,
-      key: ANTHROPIC_KEY,
-      expected: "ask" as const,
-    },
-  ];
-
-  for (const c of credentialChangeCases) {
-    it(c.name, () => {
-      const home = homeWith({ approvalMode: c.mode, ...c.over });
-
-      setAnthropicApiKey(home, c.set);
-
-      expect(stored(home).anthropicApiKey).toBe(c.key);
-      expect(stored(home).approvalMode).toBe(c.expected);
-    });
-  }
-});
-
 describe("Plow sign-out forgets the credential and leaves the mode alone", () => {
   it("forgets the credential and keeps the stored mode", () => {
     const home = homeWith({
       approvalMode: "adversarial",
-      inferenceProvider: "plow",
       relayCredential: PLOW_CREDENTIAL,
       accountUid: "u_someone",
       mcpUrl: "https://api.plow.co/v1/relay/devices/u_someone/mcp",
@@ -198,11 +72,9 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
     expectSignedOutWithAdversarial(home);
   });
 
-  it("signing out while Anthropic is the reviewer leaves the mode alone", () => {
+  it("signing out with Adversarial selected leaves the mode alone", () => {
     const home = homeWith({
       approvalMode: "adversarial",
-      inferenceProvider: "anthropic",
-      anthropicApiKey: ANTHROPIC_KEY,
       relayCredential: PLOW_CREDENTIAL,
     });
 
@@ -223,13 +95,13 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
 
 describe("Adversarial mode is selectable whether or not a reviewer can run", () => {
   it("stores it even with no credential — it denies rather than being refused", () => {
-    const home = homeWith({ approvalMode: "ask", inferenceProvider: "plow", relayCredential: "" });
+    const home = homeWith({ approvalMode: "ask", relayCredential: "" });
     expect(setApprovalMode(home, "adversarial")).toBe("adversarial");
     expect(stored(home).approvalMode).toBe("adversarial");
   });
 
   it("accepts it when the active provider has a credential", () => {
-    const home = homeWith({ inferenceProvider: "plow", relayCredential: PLOW_CREDENTIAL });
+    const home = homeWith({ relayCredential: PLOW_CREDENTIAL });
     expect(setApprovalMode(home, "adversarial")).toBe("adversarial");
     expect(stored(home).approvalMode).toBe("adversarial");
   });
@@ -248,17 +120,11 @@ describe("Adversarial mode is selectable whether or not a reviewer can run", () 
 });
 
 describe("the persisted file keeps its guarantees", () => {
-  it("what the renderer is handed never contains either credential", () => {
-    const home = homeWith({ relayCredential: PLOW_CREDENTIAL, anthropicApiKey: ANTHROPIC_KEY });
-    const serialized = JSON.stringify([
-      readInference(home),
-      setInferenceProvider(home, "anthropic"),
-      setInferenceProvider(home, "nonsense"),
-    ]);
+  it("what the renderer is handed never contains the credential", () => {
+    const home = homeWith({ relayCredential: PLOW_CREDENTIAL });
+    const serialized = JSON.stringify(readInference(home));
     expect(serialized).not.toContain(PLOW_CREDENTIAL);
-    expect(serialized).not.toContain(ANTHROPIC_KEY);
     expect(serialized).not.toContain(PLOW_CREDENTIAL.slice(0, 10));
-    expect(serialized).not.toContain(ANTHROPIC_KEY.slice(0, 10));
   });
 });
 
@@ -269,7 +135,6 @@ describe("signing out retires the credential server-side, best effort", () => {
       accountUid: "u_someone",
       mcpUrl: "https://api.plow.co/v1/relay/devices/u_someone/mcp",
       approvalMode: "adversarial",
-      inferenceProvider: "plow",
     });
 
   it("asks Plow to revoke, using the credential being retired", async () => {
@@ -442,8 +307,8 @@ describe("the purpose statement is owner-authored data", () => {
    * state that denies and explains itself, so the mode survives the write.
    */
   for (const c of [
-    { name: "with a credential", over: { inferenceProvider: "plow" as const, relayCredential: PLOW_CREDENTIAL } },
-    { name: "without one", over: { inferenceProvider: "anthropic" as const } },
+    { name: "with a credential", over: { relayCredential: PLOW_CREDENTIAL } },
+    { name: "without one", over: { relayCredential: "" } },
   ]) {
     it(`leaves the stored mode alone, ${c.name}`, () => {
       const home = homeWith({ approvalMode: "adversarial", ...c.over });

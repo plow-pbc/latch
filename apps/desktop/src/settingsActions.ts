@@ -9,7 +9,7 @@
  * Every one of these reads and writes the on-disk settings under `DOMO_HOME`,
  * so what a test observes is what actually survives a relaunch.
  */
-import { INFERENCE_PROVIDERS, loadSettings, saveSettings, Settings } from "./settings.js";
+import { loadSettings, saveSettings, Settings } from "./settings.js";
 import { InferenceStatus, inferenceStatus } from "./reviewPolicy.js";
 
 /** Read-modify-write. What the user chose is what stays on disk. */
@@ -25,26 +25,6 @@ export function readInference(home: string): InferenceStatus {
   return inferenceStatus(loadSettings(home));
 }
 
-/**
- * Select a provider: any known one, credential or not. A reviewer that cannot
- * answer denies at review time and says so, which is a state the user is
- * allowed to be in.
- *
- * An unknown provider name IS refused — input validation on the untrusted side
- * of the bridge, not a policy gate.
- */
-export function setInferenceProvider(home: string, provider: unknown): InferenceStatus {
-  const next = INFERENCE_PROVIDERS.find((p) => p === provider);
-  const settings = loadSettings(home);
-  if (!next) return inferenceStatus(settings);
-  return inferenceStatus(update(home, (s) => (s.inferenceProvider = next)));
-}
-
-/** Store (or clear) the Anthropic key. */
-export function setAnthropicApiKey(home: string, key: unknown): void {
-  update(home, (s) => (s.anthropicApiKey = typeof key === "string" ? key.trim() : ""));
-}
-
 /** What the owner wrote about what agents are for. Empty until they write it. */
 export function readAgentPurpose(home: string): string {
   return loadSettings(home).agentPurpose ?? "";
@@ -58,8 +38,8 @@ export function readAgentPurpose(home: string): string {
  * lets the reviewer prompt label the text as owner-authored rather than
  * agent-supplied.
  *
- * Anything that is not a string stores as empty, the same coercion the API key
- * gets: the renderer is sandboxed but still the untrusted side of the bridge,
+ * Anything that is not a string stores as empty: the renderer is sandboxed but
+ * still the untrusted side of the bridge,
  * and a hand-made call must not be able to park a non-string in a field the
  * prompt builder will interpolate.
  *
@@ -74,9 +54,9 @@ export function setAgentPurpose(home: string, purpose: unknown): string {
 /**
  * Forget this Mac's Plow credential.
  *
- * Sign-out takes the Plow reviewer's credential with it, so it has to retire
- * Adversarial mode exactly the way clearing the Anthropic key does — otherwise
- * signing out leaves a stored mode naming a reviewer with no way to run.
+ * The stored approval mode is left alone. Adversarial with no credential is a
+ * legal state that denies legibly, and rewriting the owner's choice behind
+ * their back on sign-out was never the honest way to say so.
  */
 export function signOutOfPlow(home: string): void {
   update(home, (s) => {

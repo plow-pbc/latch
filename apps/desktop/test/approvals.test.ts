@@ -71,7 +71,11 @@ describe("approvals card", () => {
     expect(PURPOSE_CAVEATS).toContain("Requests that fit may be approved without asking you.");
   });
 
-  it("points Ask mode at where a suggestion is turned on", () => {
-    expect(mode("ask").hint).toContain("Settings");
+  it("points Ask mode at the suggestions toggle in its own card", () => {
+    // The toggle used to live in Settings, and the hint sent people there. It
+    // is a row of this card now, so the sentence must not send anyone to a pane
+    // that no longer has one.
+    expect(mode("ask").hint).toContain("turn that on below");
+    expect(mode("ask").hint).not.toContain("Settings");
   });
 });
