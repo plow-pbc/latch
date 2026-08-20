@@ -19,7 +19,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     listens: string[];
     refused: Envelope;
     page_navigating_itself: Envelope;
-    device_goto: Envelope;
+    during_a_device_goto: Envelope;
     flag_during: { goto: boolean; back: boolean };
     flag_after: { goto: boolean; back: boolean };
     unattributable: Envelope;
@@ -60,14 +60,17 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.flag_after).toEqual({ goto: false, back: false });
   });
 
-  it("lets a goto the device issued answer for itself", () => {
-    // Driven for real: the refusal arrives while the goto is in flight, which
-    // is when one does. Its frame still names the page being left at that
-    // moment, so a refused goto would otherwise look like somebody else's.
-    expect(probed.device_goto.failed_requests?.[0]).toMatchObject({
-      origin: "https://pizza.example",
-      initiator: "https://pizza.example",
-    });
+  it("lets only the goto's own navigation answer for itself, in its own window", () => {
+    // Three refusals arrive while a device goto is in flight, most recent
+    // first. Only the main frame's navigation is the device's asking; the
+    // subresource and the child frame's navigation are named by the document
+    // that asked — the page being left, which is what its frame still says.
+    expect((probed.during_a_device_goto.failed_requests ?? [])
+      .map((r) => [r.status, r.initiator])).toEqual([
+      [404, "https://offsite.example"],
+      [403, "https://offsite.example"],
+      [429, "https://pizza.example"],
+    ]);
   });
 
   it("names nobody when the frame will not answer", () => {

@@ -67,22 +67,23 @@ class Page:
     """The active page, recording whether the device's navigation flag was up
     while each navigation ran — that flag is what a security gate reads."""
 
-    def __init__(self, session=None):
+    def __init__(self):
         self.url = "https://pizza.example/checkout"
         self.main_frame = object()
         self.context = Context()
         self.context.pages.append(self)
-        self.session = session
+        # Wired by whoever hands this page to a Session.
+        self.session = None
         self.flag_during = {}
-        self.flag_after = {}
-        # A response the page receives while a navigation is in flight, which is
-        # when a real one arrives: headers first, before the call returns.
-        self.during_navigation = None
+        # Responses the page receives while the NEXT navigation is in flight,
+        # which is when real ones arrive: headers first, before the call
+        # returns. Fired once and cleared.
+        self.during_next_navigation = None
 
     def _navigate(self, action):
         self.flag_during[action] = self.session.in_device_nav
-        if self.during_navigation is not None:
-            hook, self.during_navigation = self.during_navigation, None
+        if self.during_next_navigation is not None:
+            hook, self.during_next_navigation = self.during_next_navigation, None
             hook()
 
     def goto(self, _url, **_kw):
@@ -141,17 +142,28 @@ def main():
     driven = server.Session(Page())
     driven.page.session = driven
     driven.page.main_frame = main
-    # The refusal arrives DURING the goto, as a real one does, so nothing about
-    # the flag is set by hand.
-    driven.page.during_navigation = lambda: driven.note_response(
-        Response(429, "https://pizza.example/checkout", navigation=True, frame=main))
+    # Three refusals arrive DURING the goto, as real ones do — nothing about the
+    # flag is set by hand. Only the one that is a MAIN-FRAME NAVIGATION may
+    # answer for itself; a subresource fetched in that same window, or a child
+    # frame's navigation, is named by the document that asked, or a page would
+    # pass its own trouble off as the destination's.
+    elsewhere = type("Frame", (), {"url": "https://offsite.example/lander"})()
+    driven.page.during_next_navigation = lambda: [
+        driven.note_response(Response(429, "https://pizza.example/checkout",
+                                      navigation=True, frame=main)),
+        driven.note_response(Response(403, "https://pizza.example/api/x",
+                                      navigation=False, frame=main)),
+        driven.note_response(Response(404, "https://pizza.example/iframe",
+                                      navigation=True, frame=elsewhere)),
+    ]
+    flag_after = {}
     driven.handle({"action": "goto", "url": "https://pizza.example/checkout"}, "/tmp")
-    driven.page.flag_after["goto"] = driven.in_device_nav
-    out["device_goto"] = driven.reply_with_failures({})
+    flag_after["goto"] = driven.in_device_nav
+    out["during_a_device_goto"] = driven.reply_with_failures({})
     driven.handle({"action": "back"}, "/tmp")
-    driven.page.flag_after["back"] = driven.in_device_nav
+    flag_after["back"] = driven.in_device_nav
     out["flag_during"] = driven.page.flag_during
-    out["flag_after"] = driven.page.flag_after
+    out["flag_after"] = flag_after
 
     # A frame that will not answer names nobody, and the device withholds those
     # from the agent rather than guessing.
