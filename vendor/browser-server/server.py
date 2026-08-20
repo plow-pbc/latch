@@ -68,7 +68,6 @@ SETTLE_MS = 1000
 # value fits -- a long API key or a JWT does not -- and one that does not lands
 # with its head assigned and its last TYPED_CHARS typed, which still ends the
 # field on real keys.
-
 KEY_DELAY_MS = 45
 # What a key may cost beyond its delay: the round trip that dispatches it and
 # the actionability check in front of it. A few milliseconds on a local page.
