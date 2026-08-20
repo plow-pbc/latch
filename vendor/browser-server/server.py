@@ -47,6 +47,33 @@ if sys.platform == "darwin":
 
 MAX_ERROR_LEN = 500
 
+# How long an element gets to turn up before it is a failure. A page that cannot
+# answer in this long is one the agent retries; parking on it spends the relay's
+# per-exchange budget for nothing -- and this is spent once PER FRAME on a page
+# whose caller did not name one, so it is the term that has to stay small.
+ACTION_TIMEOUT_MS = 3000
+
+# What an operation on an ALREADY RESOLVED node gets. Far less, because there is
+# nothing left to wait for: the node is in hand, and anything it still blocks on
+# is a page that will not settle rather than one that has not loaded.
+HANDLE_TIMEOUT_MS = 1000
+
+# What every action that moves the page gives it to settle afterwards, so the
+# answer describes where the page ended up rather than where it was mid-flight.
+SETTLE_MS = 1000
+
+# A value ENDS as keystrokes, never as a bare assignment. `fill()` sets `.value`
+# and fires `input`/`change`, so a password box goes from empty to complete with
+# no keydown/keypress/keyup at all -- the cheapest signal an interrogating
+# defense has. Keystrokes cost a delay each, and an agent may fill a field with
+# prose, so only the last TYPED_CHARS of a value are typed and the bulk ahead of
+# them is assigned: a credential is shorter than that and is typed whole, while
+# a 5 000-character message body still lands, still ends on real keys, and
+# still fits inside the relay's per-exchange ceiling.
+KEY_DELAY_MS = 45
+TYPING_MAX_MS = 4000
+TYPED_CHARS = TYPING_MAX_MS // KEY_DELAY_MS
+
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -155,7 +182,14 @@ DOC_TOKEN_JS = """() => {
 # one, and a partial fill that collided would look unchanged and have its mark
 # taken off, which is the one outcome this must never produce.
 VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
-VALUE_UNCHANGED_JS = """(el, previous) => (el.value || '') === previous"""
+# Whether a fill that failed left anything behind. Unchanged is one way to hold
+# nothing unaccounted for; empty is the other -- a fill assigns before it types,
+# so a failure at the first key leaves the node holding nothing, and a node
+# holding nothing has nothing to conceal.
+NOTHING_LANDED_JS = """(el, previous) => {
+    const now = el.value || '';
+    return now === '' || now === previous;
+}"""
 
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
@@ -172,6 +206,24 @@ UNMASK_JS = """(el) => {
 def _respond(payload):
     _RESP.write(json.dumps(payload, ensure_ascii=False) + "\n")
     _RESP.flush()
+
+
+def _type_value(el, value):
+    """Put `value` into a resolved node so that the field ends on real keys.
+
+    Everything before the last TYPED_CHARS is assigned in one go -- that is the
+    `el.fill()` the rest of this exists to avoid, used deliberately, because a
+    field an agent filled with prose cannot be typed key by key inside the
+    budget. What a defense samples is that keys arrived at the field at all, and
+    they do: the tail is always typed, and a credential is shorter than the tail.
+
+    The assignment doubles as the clear, so a node that has gone away raises
+    there, before a single key is sent.
+    """
+    el.fill(value[:-TYPED_CHARS], timeout=HANDLE_TIMEOUT_MS)
+    tail = value[-TYPED_CHARS:]
+    if tail:
+        el.type(tail, delay=KEY_DELAY_MS, timeout=HANDLE_TIMEOUT_MS + TYPING_MAX_MS)
 
 
 def _parse_args():
@@ -329,7 +381,7 @@ class Session:
             # cap and the relay's ~20s exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
             self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(SETTLE_MS)
             return {"title": self.page.title()}
 
         if action == "pages":
@@ -354,7 +406,7 @@ class Session:
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
             self.page.go_back(timeout=12000, wait_until="domcontentloaded")
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(SETTLE_MS)
             return {"title": self.page.title(), "moved": self.page.url != was}
 
         if action == "view":
@@ -398,7 +450,7 @@ class Session:
                     continue
                 try:
                     if action == "click":
-                        fr.click(sel, timeout=3000)
+                        fr.click(sel, timeout=ACTION_TIMEOUT_MS)
                     else:
                         # ONE resolved node for the whole fill. Resolving the
                         # selector a second time is the re-resolution failure
@@ -408,7 +460,7 @@ class Session:
                         # the handle and filling through the SAME handle makes
                         # that impossible -- a node that goes away raises here
                         # and the value is never typed.
-                        el = fr.wait_for_selector(sel, timeout=3000)
+                        el = fr.wait_for_selector(sel, timeout=ACTION_TIMEOUT_MS)
                         if el is None:
                             raise RuntimeError("selector not found: %s" % sel)
                         # The device checked an origin before it went away to
@@ -443,13 +495,13 @@ class Session:
                                 before.dispose()
                                 return {"ok": False, "mask": state, "frame": i}
                             try:
-                                el.fill(cmd["value"], timeout=3000)
+                                _type_value(el, cmd["value"])
                             except Exception:
                                 # Nothing landed: put the node back as it was
                                 # found. Something did: it is holding a value
                                 # nobody can account for, so the mark stays and
                                 # the ledger learns about it.
-                                if el.evaluate(VALUE_UNCHANGED_JS, before):
+                                if el.evaluate(NOTHING_LANDED_JS, before):
                                     if not was_marked:
                                         el.evaluate(UNMASK_JS)
                                 else:
@@ -463,11 +515,11 @@ class Session:
                         # in, never before: a fill that times out would
                         # otherwise leave the node holding the previous
                         # secret with nothing left to hide it.
-                        el.fill(cmd["value"], timeout=3000)
+                        _type_value(el, cmd["value"])
                         el.evaluate(UNMASK_JS)
                         self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
                     if action == "click":
-                        self.page.wait_for_timeout(1000)
+                        self.page.wait_for_timeout(SETTLE_MS)
                     return {"ok": True, "frame": i}
                 except Exception as exc:
                     last = exc
@@ -499,7 +551,7 @@ class Session:
                 "top": "window.scrollTo(0,0)",
             }
             self.page.evaluate(js_map.get(d, js_map["down"]))
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(SETTLE_MS)
             return {"ok": True}
 
         if action == "wait":
@@ -543,6 +595,9 @@ def main():
     # Always present a macOS fingerprint: this device IS a Mac, and the pin is
     # what lets the packaged app drop Camoufox's bundled Windows/Linux spoofing
     # fonts (~360 MB/arch) — a macOS fingerprint renders with the system fonts.
+    #
+    # `humanize` is NOT passed, and the empty pointer path is a known cost --
+    # see UPSTREAM.md. It hangs this browser build outright.
     kwargs = {"headless": not args.headed, "os": "macos"}
     if args.executable:
         kwargs["executable_path"] = args.executable

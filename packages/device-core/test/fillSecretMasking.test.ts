@@ -509,8 +509,19 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         result: { ok?: boolean; mask?: string; frame?: number; frame_url?: string; frame_token?: string } | null;
         value_kept: boolean;
         ledgered: boolean;
+        typed_delay: number | null;
+        typed_len: number | null;
+        node_len: number;
       };
     } & {
+      constants: {
+        typed_chars: number;
+        action_timeout_ms: number;
+        handle_timeout_ms: number;
+        typing_max_ms: number;
+        key_delay_ms: number;
+        settle_ms: number;
+      };
       ledger: {
         [scenario: string]: {
           steps: { step: string; result: { ok?: boolean; mask?: string } | null }[];
@@ -526,9 +537,50 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.trace).toEqual([
       "frame.wait_for_selector",
       "handle.evaluate:mark",
-      "handle.fill",
+      "handle.clear",
+      "handle.type",
     ]);
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+  });
+
+  it("keeps a single action inside the relay's per-exchange ceiling", () => {
+    // The relay's pending future times out at 20 s and a whole action has to
+    // answer inside it. A fill is the slowest — wait_for_selector, then the
+    // assignment, then the keystrokes, whose own budget already carries a
+    // handle timeout inside it — and the caller usually names no frame, so
+    // every frame ahead of the one holding the selector costs another
+    // wait_for_selector before any of that starts.
+    const MISSES = 2;
+    const c = probed.constants;
+    const fill = c.action_timeout_ms + c.handle_timeout_ms
+      + (c.handle_timeout_ms + c.typing_max_ms);
+    expect(fill + MISSES * c.action_timeout_ms + c.settle_ms).toBeLessThan(20_000);
+    // And the keystrokes cannot outrun the budget they are allowed to spend,
+    // however long the value is.
+    expect(c.typed_chars * c.key_delay_ms).toBeLessThanOrEqual(c.typing_max_ms);
+  });
+
+  it("types the value in rather than assigning it", () => {
+    // The bug this replaced: `el.fill()` sets `.value` and fires one `input`,
+    // so a password box went from empty to complete with no keydown/keyup at
+    // all. Interrogation-style bot defenses read exactly that (issue #86).
+    expect(probed.plain.typed_delay).toBeGreaterThan(0);
+    expect(probed.masked.typed_delay).toBeGreaterThan(0);
+  });
+
+  it("types the tail of a value too long to type whole, and lands the rest", () => {
+    // Prose in a textarea cannot be typed key by key inside the relay's ~20 s
+    // per-exchange ceiling, so the bulk is assigned and the field still ends on
+    // real keys. What matters is that the whole value still lands: the head is
+    // not dropped, it just does not arrive as keystrokes.
+    const LONG = 2000;
+    expect(probed.long_value.typed_len).toBe(probed.constants.typed_chars);
+    expect(probed.long_value.node_len).toBe(LONG);
+    expect(probed.long_value.typed_delay).toBe(probed.plain.typed_delay);
+    // A credential is shorter than the tail, so all of it is typed.
+    expect(probed.plain.typed_len).toBe("hunter2".length);
+    expect(probed.plain.node_len).toBe("hunter2".length);
+    expect(probed.long_value.result).toEqual({ ok: true, frame: 0 });
   });
 
   it("hands the device an identity to check the fill against", () => {
@@ -574,7 +626,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(orphan.trace).toEqual([
       "frame.wait_for_selector",
       "handle.evaluate:mark",
-      "handle.fill-failed",
+      "handle.clear-failed",
       "handle.evaluate:unmark",
     ]);
     expect(orphan.marked).toBe(false);
@@ -605,6 +657,16 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       scenario: "orphan_mark_premarked",
       marked: true, ledgered: false, valueKept: true,
     },
+    {
+      what: "a long secret's head landed and its keys did not: still ledgered",
+      scenario: "orphan_mark_long",
+      marked: true, ledgered: true, valueKept: false,
+    },
+    {
+      what: "the clear landed and no key did: an empty node concealed nothing",
+      scenario: "typing_never_started",
+      marked: false, ledgered: false, valueKept: false,
+    },
   ])("$what", ({ scenario, marked, ledgered, valueKept }) => {
     const run = probed[scenario];
     expect(run.marked).toBe(marked);
@@ -613,8 +675,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 
   it("does not type the value when the marked node went away", () => {
-    expect(probed.detached.trace).not.toContain("handle.fill");
-    expect(probed.detached.trace).toContain("handle.fill-failed");
+    expect(probed.detached.trace).not.toContain("handle.type");
+    expect(probed.detached.trace).toContain("handle.clear-failed");
     expect(probed.detached.error).toBe("RuntimeError");
     // Nothing landed, so the mark does not survive either — a node that went
     // away mid-fill is put back as it was found, same as any other fill that
@@ -630,8 +692,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "frame.wait_for_selector",
       "handle.evaluate:mark",
     ]);
-    expect(probed.mask_blocked.trace).not.toContain("handle.fill");
-    expect(probed.mask_blocked.trace).not.toContain("handle.fill-failed");
+    expect(probed.mask_blocked.trace).not.toContain("handle.clear");
+    expect(probed.mask_blocked.trace).not.toContain("handle.type");
     expect(probed.mask_blocked.result).toEqual({ ok: false, mask: "unmasked", frame: 0 });
   });
 
@@ -710,7 +772,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // hiding it if the fill then timed out.
     expect(probed.plain.trace).toEqual([
       "frame.wait_for_selector",
-      "handle.fill",
+      "handle.clear",
+      "handle.type",
       "handle.evaluate:unmark",
     ]);
     expect(probed.plain.marked).toBe(false);
@@ -720,7 +783,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   it("keeps the mark on when a visible fill fails", () => {
     // The node still holds the previous secret; the mark is what stops it being
     // read off the screen, so it stays until something replaces the value.
-    expect(probed.plain_failed.trace).toEqual(["frame.wait_for_selector", "handle.fill-failed"]);
+    expect(probed.plain_failed.trace).toEqual([
+      "frame.wait_for_selector",
+      "handle.clear-failed",
+    ]);
     expect(probed.plain_failed.trace).not.toContain("handle.evaluate:unmark");
     expect(probed.plain_failed.marked).toBe(true);
     expect(probed.plain_failed.error).toBe("RuntimeError");

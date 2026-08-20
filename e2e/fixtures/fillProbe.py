@@ -57,10 +57,13 @@ class Handle:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
-                 document_token="doc-1"):
+                 document_token="doc-1", type_fails=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
+        # The keystrokes fail before the first one lands, so the node is left
+        # holding what the clear left it: nothing.
+        self.type_fails = type_fails
         self.mask_result = mask_result
         self.marked = marked
         # Which document this node is in, and what it currently holds. A fill
@@ -68,6 +71,10 @@ class Handle:
         self.document_url = document_url
         self.document_token = document_token
         self.value = value
+        # What per-key delay the keystrokes carried, and the text they carried.
+        # Only the LENGTH of that text is ever reported out of this file.
+        self.typed_delay = None
+        self.typed = None
 
     def evaluate(self, js, *args):
         # Recorded as a fact about the script, not its text: which one it is.
@@ -78,7 +85,8 @@ class Handle:
             return self.document_token
         if "=== previous" in js:
             previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
-            return (self.value or "") == previous
+            now = self.value or ""
+            return now == "" or now == previous
         if "el.value" in js:
             return self.value or ""
         if "setAttribute" in js and "data-domo-secret" in js:
@@ -101,20 +109,39 @@ class Handle:
         return _Handle(self.evaluate(js, *args))
 
     def fill(self, value, timeout=None):
-        # A failed fill is traced too, and distinctly: "did it try" and "did it
-        # land" are different questions, and what happens after a fill that did
-        # not land is the whole point of one of these scenarios.
+        """The assignment that opens a fill: everything ahead of the typed tail,
+        which for a value short enough to type whole is the empty string.
+
+        A node that has gone away fails HERE, which is the point of doing it
+        first: nothing is typed into a field nobody can find.
+        """
+        if self.detach_before_fill:
+            self.trace.append("handle.clear-failed")
+            raise RuntimeError("Element is not attached to the DOM")
+        self.value = value
+        self.trace.append("handle.clear")
+
+    def type(self, text, delay=None, timeout=None):
+        """The keystrokes. A failure is traced distinctly from a success:
+        "did it try" and "did it land" are different questions, and what happens
+        after a fill that did not land is the whole point of one of these
+        scenarios."""
+        self.typed_delay = delay
+        self.typed = text
+        if self.type_fails:
+            # Not one key arrived. The node holds what the clear left it.
+            self.trace.append("handle.type-failed")
+            raise RuntimeError("Element is not attached to the DOM")
+        # Keys land ON what the assignment left, never instead of it -- which
+        # is the only way a scenario can tell the head was assigned at all.
         if self.partial_fill:
             # Some of it went in and then the field went away: the node is
             # holding something nobody can account for.
-            self.value = value
-            self.trace.append("handle.fill-failed")
+            self.value = (self.value or "") + text
+            self.trace.append("handle.type-failed")
             raise RuntimeError("Element is not attached to the DOM")
-        if self.detach_before_fill:
-            self.trace.append("handle.fill-failed")
-            raise RuntimeError("Element is not attached to the DOM")
-        self.value = value
-        self.trace.append("handle.fill")
+        self.value = (self.value or "") + text
+        self.trace.append("handle.type")
 
 
 class Frame:
@@ -127,12 +154,12 @@ class Frame:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False, document_token="doc-1"):
+                 partial_fill=False, document_token="doc-1", type_fails=False):
         self.trace = trace
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token)
+                             partial_fill, document_token, type_fails)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -156,8 +183,6 @@ class Frame:
     def fill(self, selector, value, timeout=None):
         self.trace.append("frame.fill")
 
-    def click(self, selector, timeout=None):
-        self.trace.append("frame.click")
 
 
 class Page:
@@ -187,11 +212,13 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1"):
+        document_token="doc-1", type_fails=False):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
-                  value=value, partial_fill=partial_fill, document_token=document_token)
-    session = server.Session(Page(frame))
+                  value=value, partial_fill=partial_fill, document_token=document_token,
+                  type_fails=type_fails)
+    page = Page(frame)
+    session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
            "ledgered": False}
     try:
@@ -205,6 +232,13 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["marked"] = frame.handle.marked
     out["value_kept"] = frame.handle.value == value
     out["ledgered"] = bool(session.masked)
+    # The delay between keystrokes, which is what makes them keystrokes rather
+    # than an assignment. A number, never anything derived from a value.
+    out["typed_delay"] = frame.handle.typed_delay
+    # How many characters went in as keys, and how many the node ended up
+    # holding. Lengths, never values.
+    out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
+    out["node_len"] = len(frame.handle.value or "")
     return out
 
 
@@ -313,6 +347,18 @@ def main() -> int:
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
                                      marked=True, value="hunter2"),
         "plain": run(server, base),
+        # Prose, not a credential: too long to type inside the budget. The bulk
+        # is assigned and the field still ends on real keys.
+        "long_value": run(server, {**base, "value": "x" * 2000}),
+        # A long SECRET whose head was assigned and whose keys then failed: the
+        # node holds real credential content, so the mark stays and it is
+        # ledgered. The short-value shape assigned nothing and cannot show this.
+        "orphan_mark_long": run(server, {**base, "mask": True, "value": "s" * 2000},
+                                partial_fill=True, value="1 Elm St"),
+        # The clear landed and then not one key did, so the node holds nothing.
+        # A field holding nothing has nothing to conceal.
+        "typing_never_started": run(server, {**base, "mask": True}, type_fails=True,
+                                    value="1 Elm St"),
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.
         "mask_blocked": run(server, {**base, "mask": True}, mask_result="unmasked"),
@@ -365,6 +411,16 @@ def main() -> int:
             {"rerender": "#pass"},
             {"cmd": observe},
         ]),
+    }
+    # The numbers a single action's budget is made of, so a test asserting it
+    # fits the relay's ceiling reads them from the server rather than restating.
+    result["constants"] = {
+        "typed_chars": server.TYPED_CHARS,
+        "action_timeout_ms": server.ACTION_TIMEOUT_MS,
+        "handle_timeout_ms": server.HANDLE_TIMEOUT_MS,
+        "typing_max_ms": server.TYPING_MAX_MS,
+        "key_delay_ms": server.KEY_DELAY_MS,
+        "settle_ms": server.SETTLE_MS,
     }
     out.write(json.dumps(result))
     out.flush()
