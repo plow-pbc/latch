@@ -563,7 +563,7 @@ export const TOOLS: ToolSpec[] = [
         // This branch replaces the result wholesale, so anything the agent
         // needs has to be named here — a refusal dropped on the screenshot is
         // dropped on the action an agent takes after every navigation.
-        const failed = r.get("failed_requests").value;
+        const failed = r.get("failed_requests").arr;
         const meta = {
           url: r.get("url").str ?? "",
           page_count: r.get("page_count").int ?? 1,

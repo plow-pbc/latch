@@ -59,6 +59,9 @@ interface Pending {
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
+/** How many refused requests the host holds for the next agent action. */
+const MAX_FAILED_REQUESTS = 5;
+
 export class BrowserHost {
   private child: ChildProcess | null = null;
   private starting: Promise<void> | null = null;
@@ -66,6 +69,7 @@ export class BrowserHost {
   private pending = new Map<number, Pending>();
   private restartTimes: number[] = [];
   private stderrTail: string[] = [];
+  private failedRequests: JSONValue[] = [];
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
@@ -88,6 +92,23 @@ export class BrowserHost {
   /** Whether the next (or current) browser shows a window. */
   get headed(): boolean {
     return this.headedNow;
+  }
+
+  /**
+   * Requests the site refused, taken off every server response and held until
+   * an agent action carries them out (most recent first, bounded).
+   *
+   * The browser reports what it saw to whoever asked, and most of the asking is
+   * the device's own: the owner's viewer polls ~1/s, the popup sweep runs
+   * `pages`, a credential fill runs `locate` first. Whichever of those was in
+   * flight would otherwise be the one that consumed a 429 and dropped it, so
+   * the browser reports and forgets and the holding happens here — the one
+   * place every response passes through, whoever asked for it.
+   */
+  takeFailedRequests(): JSONValue[] {
+    const taken = this.failedRequests;
+    this.failedRequests = [];
+    return taken;
   }
 
   /** Send one action to the server, lazily starting it. */
@@ -210,6 +231,8 @@ export class BrowserHost {
     });
     this.child = child;
     this.stderrTail = [];
+    // A new browser saw none of the old one's traffic.
+    this.failedRequests = [];
 
     child.stderr!.setEncoding("utf8");
     child.stderr!.on("data", (chunk: string) => {
@@ -265,7 +288,15 @@ export class BrowserHost {
         if (error !== null) {
           p.reject(new Error(error));
         } else {
-          p.resolve(m.get("result").obj as { [k: string]: JSONValue } ?? {});
+          const result = (m.get("result").obj as { [k: string]: JSONValue }) ?? {};
+          const failed = result.failed_requests;
+          // Held here, not passed on: what reaches the agent is built by the
+          // session layer out of what it takes, never inherited from a result.
+          delete result.failed_requests;
+          if (Array.isArray(failed)) {
+            this.failedRequests = [...failed, ...this.failedRequests].slice(0, MAX_FAILED_REQUESTS);
+          }
+          p.resolve(result);
         }
       });
 

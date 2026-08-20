@@ -42,24 +42,26 @@ interface Session {
  * needs to find its way back. Nothing that observes or touches page content. */
 const LOCKOUT_ALLOWED = new Set(["url", "pages", "use_page", "goto"]);
 
-/** Strip query/fragment for audit lines — they carry tokens. */
+/** Strip query/fragment and any userinfo for audit lines — both carry secrets. */
 export function stripQuery(url: string): string {
   const i = url.search(/[?#]/);
-  return i === -1 ? url : url.slice(0, i);
+  const cut = i === -1 ? url : url.slice(0, i);
+  // https://user:pass@host/x — a password in a url is still a password, and the
+  // audit log is durable.
+  return cut.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, "$1");
 }
 
 /**
- * Requests the site itself refused during an action, as the browser reported
- * them. The browser strips each url before it records one; this strips again
- * rather than trusting that, because these land in the owner's log and a token
+ * Requests the site itself refused, as the browser reported them. The browser
+ * strips and caps each url before it records one; this does it again rather
+ * than trusting that, because these land in the owner's durable log and a token
  * written there cannot be taken back. Bounded here as well: what the agent gets
  * has to fit in one relay exchange whatever the browser sends.
  */
-function failedRequests(value: JSONValue | undefined): JSONValue[] {
-  if (!Array.isArray(value)) return [];
+function failedRequests(value: JSONValue[]): JSONValue[] {
   return value.slice(0, MAX_FAILED_REQUESTS).map((entry) => {
     const e = jv(entry);
-    return { ...(e.obj ?? {}), url: stripQuery(e.get("url").str ?? "") };
+    return { ...(e.obj ?? {}), url: stripQuery(e.get("url").str ?? "").slice(0, MAX_URL_LEN) };
   });
 }
 
@@ -82,8 +84,10 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  */
 const MAX_WAIT_SECONDS = 12;
 
-/** How many refused requests one result may carry (server.py bounds its own). */
+/** How many refused requests one result may carry, and how long a url on one
+ * may be (server.py bounds both on its side too). */
 const MAX_FAILED_REQUESTS = 5;
+const MAX_URL_LEN = 200;
 
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
@@ -396,6 +400,10 @@ export class BrowserSessions {
     s: Session,
     action: { [k: string]: JSONValue },
   ): Promise<JSONValue> {
+    // Where we were before this action decides whether its refusals are the
+    // agent's to see: on a page outside the approved origins nothing is, and
+    // the way back must not carry that page's traffic home with it.
+    const wasInScope = this.inScope(s, s.lastUrl);
     const result = await this.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
@@ -409,7 +417,7 @@ export class BrowserSessions {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
-    const failed = failedRequests(result.failed_requests);
+    const failed = wasInScope ? failedRequests(this.host.takeFailedRequests()) : [];
     this.audit("browser_command", {
       session: s.handle,
       action: String(action.action),
@@ -437,10 +445,6 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
-    // Derived, never inherited: the spread above carries the browser's own
-    // value, and a malformed one would then reach the agent unstripped while
-    // the owner's log recorded nothing.
-    delete out.failed_requests;
     if (failed.length) out.failed_requests = failed;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.

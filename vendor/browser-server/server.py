@@ -61,14 +61,6 @@ MAX_FAILED_REQUESTS = 5
 # which is the call worth getting right.
 FAILED_REQUEST_HEADERS = ("retry-after", "server")
 
-# Actions the DEVICE issues for itself: the owner's viewer polls `view` about
-# once a second while a session is live, the popup sweep runs `pages`, and a
-# credential fill runs `locate` first. Nothing reads a refusal off any of those
-# results, so draining onto one throws it away -- and the viewer alone would eat
-# almost every refusal there is. They wait for the next action the agent asked
-# for, which is where the agent is standing.
-INTERNAL_ACTIONS = ("view", "pages", "locate")
-
 # Longest url kept on a refused request. Paths carry the diagnosis (which
 # endpoint refused), so they stay; a pathological one still cannot park the
 # exchange budget.
@@ -365,7 +357,7 @@ class Session:
     def pages(self):
         return self.page.context.pages
 
-    def envelope(self, result, action=""):
+    def envelope(self, result):
         """Every response carries where we are, so the client can enforce scope
         and notice popups without extra round-trips."""
         out = dict(result)
@@ -375,12 +367,13 @@ class Session:
         except Exception:
             out["url"] = ""
             out["page_count"] = 0
-        # Most recent first, and drained: a refusal is reported on the action it
-        # arrived during and never again. One that lands after the action
-        # answered (a click's XHR settling late) rides the next one, which is
-        # where the agent is still standing -- so an action nobody reads the
-        # refusals off must not drain them.
-        if self.failed and action not in INTERNAL_ACTIONS:
+        # Most recent first, and reported once: every response carries what
+        # arrived since the last one and the ring is emptied. Which of those
+        # responses an AGENT is waiting on is not knowable here -- the device
+        # asks for plenty on its own account -- so the browser reports and
+        # forgets, and BrowserHost holds them until an agent action carries
+        # them out.
+        if self.failed:
             out["failed_requests"] = list(reversed(self.failed))
             self.failed.clear()
         return out
@@ -672,7 +665,7 @@ def main():
 
             try:
                 result = session.handle(cmd, args.screenshots_dir)
-                _respond({"id": rid, "result": session.envelope(result, cmd.get("action", ""))})
+                _respond({"id": rid, "result": session.envelope(result)})
             except Exception as exc:  # noqa: BLE001 — every failure must answer
                 _respond({"id": rid, "error": str(exc)[:MAX_ERROR_LEN]})
         # EOF on stdin: supervisor died — fall through and let the context close.

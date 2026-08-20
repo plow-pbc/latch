@@ -279,6 +279,30 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toBeUndefined();
   });
 
+  it("survives the owner's viewer poll, which asks the browser on its own account", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" });
+    // The viewer polls this ~1/s while a session is live and reads a JPEG off
+    // the answer. The refusal that settles late must not be spent on it.
+    expect(await ctx.host.viewFrame()).not.toBeNull();
+    const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
+    expect(shot.get("failed_requests").value).toEqual([
+      { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
+    ]);
+  });
+
+  it("does not carry an out-of-scope page's traffic home with the way back", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // Scripted: "#offsite" leaves the approved origins with a refusal of its own.
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" });
+    const back = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));
+    expect(back.get("status").str).toBe("completed");
+    expect(back.get("failed_requests").value).toBeNull();
+    expect(JSON.stringify(back.value)).not.toContain("offsite.example");
+  });
+
   it("hands the agent nothing it cannot read — a malformed list is not passed through", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });

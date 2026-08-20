@@ -99,30 +99,22 @@ def main():
     # A refused XHR is kept, with the query gone and the diagnostic headers on.
     feed(session, [Response(429, "https://signin.example/tenant/SelfAsserted?tx=StateProperties=SECRET&p=B2C_1",
                             "POST", {"content-length": "1180", "retry-after": "30", "server": "cloudfront"})])
-    out["refused"] = session.envelope({"ok": True}, "click")
+    out["refused"] = session.envelope({"ok": True})
 
     # Drained exactly once: the next action does not re-report it.
-    out["drained"] = session.envelope({"ok": True}, "screenshot")
-
-    # The owner's viewer polls ~1/s while a session is live, and nothing reads a
-    # refusal off a viewer frame. If that drained, the viewer being open would
-    # eat almost every refusal before the agent's next action saw it.
-    session = server.Session(Page())
-    feed(session, [Response(403, "https://pizza.example/api/cart")])
-    out["viewer_poll"] = session.envelope({"data_b64": "x"}, "view")
-    out["after_viewer_poll"] = session.envelope({"ok": True}, "click")
+    out["drained"] = session.envelope({"ok": True})
 
     # A page that works keeps nothing, redirects included — a login flow is
     # mostly 3xx and they would push the one refusal out of the ring.
     session = server.Session(Page())
     feed(session, [Response(200, "https://pizza.example/a"), Response(204, "https://pizza.example/b"),
                    Response(302, "https://pizza.example/c"), Response(304, "https://pizza.example/d")])
-    out["quiet"] = session.envelope({"ok": True}, "click")
+    out["quiet"] = session.envelope({"ok": True})
 
     # Bounded, most recent first: a chatty page cannot blow the exchange budget.
     session = server.Session(Page())
     feed(session, [Response(403, "https://pizza.example/x%d" % i) for i in range(9)])
-    out["bounded"] = session.envelope({"ok": True}, "click")
+    out["bounded"] = session.envelope({"ok": True})
 
     # A response that will not answer its own questions takes nothing down.
     class Hostile(Response):
@@ -136,7 +128,7 @@ def main():
 
     session = server.Session(Page())
     feed(session, [Hostile(429, "https://pizza.example/boom"), Response(401, "https://pizza.example/ok")])
-    out["hostile"] = session.envelope({"ok": True}, "click")
+    out["hostile"] = session.envelope({"ok": True})
 
     real_stdout.write(json.dumps(out) + "\n")
     real_stdout.flush()

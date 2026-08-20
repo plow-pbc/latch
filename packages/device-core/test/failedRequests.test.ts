@@ -29,8 +29,6 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     listens: string[];
     refused: Envelope;
     drained: Envelope;
-    viewer_poll: Envelope;
-    after_viewer_poll: Envelope;
     quiet: Envelope;
     bounded: Envelope;
     hostile: Envelope;
@@ -57,10 +55,6 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.drained.failed_requests).toBeUndefined();
   });
 
-  it("does not spend a refusal on the owner's viewer poll, which nobody reads", () => {
-    expect(probed.viewer_poll.failed_requests).toBeUndefined();
-    expect((probed.after_viewer_poll.failed_requests ?? []).map((r) => r.status)).toEqual([403]);
-  });
 
   it("keeps nothing for a page that worked, redirects included", () => {
     expect(probed.quiet.failed_requests).toBeUndefined();
