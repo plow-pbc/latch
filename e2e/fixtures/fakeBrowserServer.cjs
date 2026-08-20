@@ -132,8 +132,9 @@ function handle(cmd) {
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
       state.touched.push("https://popup.example/pay");
     } else if (cmd.selector === "#offsite") {
-      current().url = "https://offsite.example/lander";
-      state.touched.push("https://offsite.example/lander");
+      // Token-bearing on purpose: the shape an OAuth redirect has.
+      current().url = "https://offsite.example/lander?code=SECRET-TOKEN";
+      state.touched.push("https://offsite.example/lander?code=SECRET-TOKEN");
     }
     return { ok: true, frame: 0 };
   }

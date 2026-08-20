@@ -121,22 +121,24 @@ export class BrowserSessions {
     return originMatches(host, s.origins);
   }
 
-  /** Whether a URL is inside the live session's grant. True with no session:
-   * there is nothing approved and nothing being driven to contradict. */
-  urlInScope(url: string): boolean {
-    const s = this.session;
-    return s ? this.inScope(s, url) : true;
-  }
-
-  /** The live session as the owner's viewer sees it, or null. */
-  current(): BrowserSessionInfo | null {
+  /**
+   * The live session as the owner's viewer sees it, or null.
+   *
+   * `observedUrl` is a page the caller has just seen — the viewer's frame,
+   * which is newer than anything `lastUrl` knows, since only an agent command
+   * writes that. Judging it here rather than through a separate predicate is
+   * what keeps the verdict and the liveness answer from disagreeing: a session
+   * that closed while the frame was being fetched answers null, instead of a
+   * closing off-scope page labelled approved.
+   */
+  current(observedUrl?: string): BrowserSessionInfo | null {
     const s = this.session;
     if (!s) return null;
     return {
       origins: [...s.origins],
       agentId: s.agentId,
       lastUrl: s.lastUrl,
-      inScope: this.inScope(s, s.lastUrl),
+      inScope: this.inScope(s, observedUrl ?? s.lastUrl),
     };
   }
 
@@ -568,6 +570,19 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
+    // Every URL leaving here keeps its query only if this session is approved
+    // for it. A redirect the owner never granted can carry a token in its
+    // query or fragment — `.../callback?code=SECRET` — and removing the
+    // leaking field one at a time has twice now left the next one leaking.
+    // The audit log has always been written this way; so is the answer now.
+    const safe = (u: string): JSONValue => (this.inScope(s, u) ? u : stripQuery(u));
+    if (typeof out.url === "string") out.url = safe(out.url);
+    if (Array.isArray(out.pages)) {
+      out.pages = out.pages.map((pg) => {
+        const u = jv(pg).get("url").str;
+        return u === null ? pg : { ...(jv(pg).obj ?? {}), url: safe(u) };
+      });
+    }
     // Enforcement telemetry, not something to hand back: a transient redirect
     // this session was never approved for can carry an OAuth code or token in
     // its query, and the scope check has already read what it needed.

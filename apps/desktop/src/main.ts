@@ -618,18 +618,17 @@ ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
 // for. `frame` is null while the browser is busy or restarting — the renderer
 // keeps showing the frame it already has rather than flickering.
 ipcMain.handle("viewer:state", async () => {
-  const session = device?.browserSessions?.current() ?? null;
-  const frame = session ? await device!.browserViewFrame() : null;
+  const live = device?.browserSessions?.current() ?? null;
+  const frame = live ? await device!.browserViewFrame() : null;
+  // Read again with the frame in hand: it judges the page actually being
+  // drawn, which `lastUrl` cannot — only an agent command writes that — and
+  // it answers null if the session closed while the frame was being fetched,
+  // so a closing off-scope page is never drawn as an approved live one.
+  const session = device?.browserSessions?.current(frame?.url) ?? null;
   return {
     active: session !== null,
     origins: session?.origins ?? [],
-    // Judged on the URL actually being drawn. `session.inScope` answers for
-    // `lastUrl`, which only an agent command updates — so a redirect between
-    // commands would be shown as an off-scope page labelled approved, which
-    // is the one thing this thumbnail exists to make visible.
-    inScope: frame
-      ? (device?.browserSessions?.urlInScope(frame.url) ?? true)
-      : (session?.inScope ?? true),
+    inScope: session?.inScope ?? true,
     url: frame?.url ?? session?.lastUrl ?? "",
     frame: frame ? { dataB64: frame.dataB64, mime: frame.mime } : null,
   };

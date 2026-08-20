@@ -365,6 +365,10 @@ describe("browser tools (fake runtime)", () => {
     // #offsite navigates the page to https://offsite.example/lander.
     const strayed = await act(server, session, "click", { selector: "#offsite" });
     expect(strayed.payload.out_of_scope).toBe("offsite.example");
+    // The origin, never the query: a redirect the owner never approved can
+    // carry a token in it, and this response goes to the agent.
+    expect(JSON.stringify(strayed.payload)).not.toContain("SECRET-TOKEN");
+    expect(strayed.payload.url).toBe("https://offsite.example/lander");
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
     // Never published, so the grant it was filed under has nothing to claim.

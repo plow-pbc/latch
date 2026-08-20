@@ -157,9 +157,15 @@ describe("session lifecycle", () => {
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
     await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" });
     expect(ctx.sessions.current()).toMatchObject({
-      lastUrl: "https://offsite.example/lander",
+      // Query intact, unlike the agent's copy: this is the owner's own view of
+      // where their browser is, and hiding it from them serves nobody.
+      lastUrl: "https://offsite.example/lander?code=SECRET-TOKEN",
       inScope: false,
     });
+
+    // And the frame the viewer just polled is what the verdict answers for,
+    // not the URL the last agent command left behind.
+    expect(ctx.sessions.current("https://pizza.example/menu")?.inScope).toBe(true);
 
     await ctx.sessions.close(s, "test");
     expect(ctx.sessions.current()).toBeNull();
