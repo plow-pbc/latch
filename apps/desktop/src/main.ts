@@ -77,12 +77,6 @@ if (migrateLegacyHome(instance.home)) {
 // identity goes on first, and the display name is put back as the first thing
 // in `whenReady` — early enough that the menus, windows and tray built after it
 // all read the real product name.
-//
-// This line is now the ONLY thing holding the identity: package.json's
-// productName used to spell the same string, so a reordering that let the
-// default stand still latched the right key by accident. It says "Plow Latch"
-// now, so a reordering would latch `Plow Latch Safe Storage` and orphan every
-// vault — the PR #42 failure exactly.
 app.setName(instance.vaultIdentity);
 app.setPath("userData", instance.electronData);
 app.setPath("sessionData", instance.electronData);
