@@ -164,6 +164,21 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
 
     await act("goto", { url: site.url + "/blocked" });
 
+    // The page has four frames and a click's budget covers the whole action, so
+    // the frame holding the element has to be found before the budget is split
+    // — otherwise a default click gets a quarter of it and starts failing where
+    // it used to work. A cover that clears after 1.2 s is over that quarter.
+    await act("eval", {
+      expression:
+        "document.querySelector('.modal-backdrop').remove();" +
+        "const c = document.createElement('div');" +
+        "c.style.cssText = 'position:fixed;inset:0';" +
+        "document.body.appendChild(c); setTimeout(() => c.remove(), 1200)",
+    });
+    await act("click", { selector: "#continue" });
+    expect(await text()).toContain("clicked isTrusted=true");
+    await act("goto", { url: site.url + "/blocked" });
+
     // The shape the Costco log has: visible, enabled, stable — and unclickable.
     const blocked = await act("click", { selector: "#continue", timeout_ms: 1000 }, false);
     expect(blocked.isError).toBe(true);

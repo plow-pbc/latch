@@ -186,27 +186,40 @@ describe("session lifecycle", () => {
 
   it("hands the browser the click escape hatches, timeout bounded like a wait", async () => {
     const s = await openSession(["pizza.example"]);
-    const clicks: [Record<string, JSONValue>, JSONValue | undefined][] = [
-      [{ force: true }, undefined],
-      [{ timeout_ms: 8000 }, 8000],
-      [{ timeout_ms: 45_000 }, 12_000], // capped: one exchange can't run past the ceiling
+    const clicks: [Record<string, JSONValue>, JSONValue | undefined, true | undefined][] = [
+      [{ force: true }, undefined, true],
+      [{ timeout_ms: 8000 }, 8000, undefined],
+      [{ timeout_ms: 45_000 }, 11_000, undefined], // capped inside the exchange
       // Playwright reads 0 as "no timeout" — the floor is what keeps a click
       // from parking until the host cap kills the browser under it.
-      [{ timeout_ms: 0 }, 500],
-      [{}, undefined], // asked for nothing, told the browser nothing
+      [{ timeout_ms: 0 }, 500, undefined],
+      // Truthy to Python, so it must not survive the boundary as one.
+      [{ force: "false" }, undefined, undefined],
+      [{}, undefined, undefined], // asked for nothing, told the browser nothing
     ];
     for (const [extra] of clicks) {
       const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#go", ...extra }));
       expect(r.get("status").str).toBe("completed");
     }
+    // Neither knob belongs to any other action.
+    await ctx.sessions.command(AGENT, s, { action: "scroll", timeout_ms: 9000, force: true });
+
     const sent = fs
       .readFileSync(ctx.cmdLog, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l) as { action: string; force?: boolean; timeout_ms?: number })
-      .filter((c) => c.action === "click");
-    expect(sent.map((c) => c.timeout_ms)).toEqual(clicks.map(([, want]) => want));
-    expect(sent.map((c) => c.force)).toEqual([true, undefined, undefined, undefined, undefined]);
+      .map((l) => JSON.parse(l) as { action: string; force?: boolean; timeout_ms?: number });
+    const clicked = sent.filter((c) => c.action === "click");
+    expect(clicked.map((c) => c.timeout_ms)).toEqual(clicks.map(([, want]) => want));
+    expect(clicked.map((c) => c.force)).toEqual(clicks.map(([, , want]) => want));
+    const scrolled = sent.find((c) => c.action === "scroll")!;
+    expect(scrolled.timeout_ms).toBeUndefined();
+    expect(scrolled.force).toBeUndefined();
+
+    // And the audit log says which clicks needed a knob, so the next look at a
+    // session that went wrong can count them.
+    const forced = ctx.events.filter((e) => e.event === "browser_command" && e.fields.force === true);
+    expect(forced).toHaveLength(1);
   });
 });
 

@@ -171,30 +171,30 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 # A forced click skips the check that guarantees delivery, so delivery has to be
 # observed instead: Playwright reports success the moment it has dispatched the
 # event, and an overlay, `pointer-events: none` or a disabled control swallows it
-# silently. The watcher lives on a handle rather than on `window` -- nothing the
-# page can see -- and the answer is "" when the element (or something inside it)
-# received the click, otherwise a description of what did.
+# silently. The watcher holds the SAME node the click is aimed at -- not a
+# selector re-queried against the DOM, which would be wrong for every selector
+# engine that is not plain CSS -- and lives on a handle rather than on `window`,
+# so there is nothing for the page to see. The answer is "" when the node (or
+# something inside it) received the click, otherwise what did.
 CLICK_OFF_JS = """(s) => document.removeEventListener("click", s.on, true)"""
 
-CLICK_WATCH_JS = """(sel) => {
-  const name = (el) => el.tagName.toLowerCase()
-    + (el.id ? "#" + el.id : "")
-    + (typeof el.className === "string" && el.className.trim()
-        ? "." + el.className.trim().split(/\\s+/).join(".") : "");
+CLICK_WATCH_JS = """(el) => {
+  const name = (n) => n.tagName.toLowerCase()
+    + (n.id ? "#" + n.id : "")
+    + (typeof n.className === "string" && n.className.trim()
+        ? "." + n.className.trim().split(/\\s+/).join(".") : "");
   const s = {got: false, other: null};
   s.on = (e) => {
-    const el = document.querySelector(sel);
-    if (el !== null && (el === e.target || el.contains(e.target))) s.got = true;
+    if (el === e.target || el.contains(e.target)) s.got = true;
     else if (s.other === null) s.other = name(e.target);
   };
   document.addEventListener("click", s.on, true);
   return s;
 }"""
 
-CLICK_LANDED_JS = """(s, sel) => {
+CLICK_LANDED_JS = """(s) => {
   if (s.got) return "";
   if (s.other !== null) return s.other + " got it instead";
-  if (document.querySelector(sel) === null) return "the element went away";
   return "nothing received it -- the element is disabled, or has pointer-events: none";
 }"""
 
@@ -338,16 +338,32 @@ class Session:
             out["page_count"] = 0
         return out
 
-    def ask_watcher(self, watch, js, *args):
+    def holds(self, frame, selector):
+        """Does this frame have the selector right now? Instant, never waits."""
+        try:
+            return frame.query_selector(selector) is not None
+        except Exception:  # noqa: BLE001 -- a frame that went away holds nothing
+            return False
+
+    def ask_watcher(self, watch, js):
         """Ask the click watcher something, tolerating a document that has gone.
 
         A forced click on a link or a submit navigates, and the handle's context
-        dies with the old document -- which is itself proof the click landed.
+        dies with the old document -- which is itself proof the click landed, so
+        "nothing to report" is the honest answer rather than a failure.
         """
         try:
-            return watch.evaluate(js, *args)
-        except Exception:
+            return watch.evaluate(js)
+        except Exception:  # noqa: BLE001 -- the document the watcher lived in
             return ""
+
+    def drop_watcher(self, watch):
+        """Take the listener back off and let the handle go, whatever happened."""
+        self.ask_watcher(watch, CLICK_OFF_JS)
+        try:
+            watch.dispose()
+        except Exception:  # noqa: BLE001 -- disposing must never fail a click
+            pass
 
     def frames_for(self, cmd):
         """Explicit frame index if given, else all frames (login forms hide in iframes)."""
@@ -445,19 +461,26 @@ class Session:
             # Both search every frame for the selector, so a per-frame timeout
             # is really N x itself -- past the caps the number was chosen
             # against. A click's timeout is therefore the budget for the WHOLE
-            # action, shared out over the frames left to try: a frame that fails
-            # early hands the rest of the budget to the next one, and a frame
-            # that holds the element clicks straight away and never spends it.
+            # action, shared out over the frames left to try. To keep that from
+            # starving the frame that matters on an ad-laden page, the frames
+            # that already hold the selector are tried first and alone: the scan
+            # is the same instant `query_selector` sweep `locate` does, and the
+            # usual answer is one frame, which then gets the entire budget.
+            # Only when nothing holds it yet is the budget split over every
+            # frame, waiting for it to appear.
             # (`fill` keeps its per-frame default: a credential field is found
             # by searching frames, and shortening the later ones would drop
             # fills that work today.)
-            frames = self.frames_for(cmd)
-            first = int(cmd["frame"]) if "frame" in cmd else 0
+            base = int(cmd["frame"]) if "frame" in cmd else 0
+            frames = [(base + n, fr) for n, fr in enumerate(self.frames_for(cmd))]
+            if action == "click":
+                holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
+                if holding:
+                    frames = holding
             deadline = time.monotonic() + (
                 int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS) / 1000.0
             )
-            for tried, fr in enumerate(frames):
-                i = first + tried
+            for tried, (i, fr) in enumerate(frames):
                 try:
                     if action == "click":
                         left = int(
@@ -476,15 +499,20 @@ class Session:
                             # does NOT do is push a click past whatever is in
                             # the way, so delivery is watched and a swallowed
                             # click is an error rather than a cheerful lie.
-                            watch = fr.evaluate_handle(CLICK_WATCH_JS, sel)
+                            # ONE resolved node for the watcher and the click,
+                            # so what is watched is what is clicked -- and
+                            # `attached` rather than the default `visible`,
+                            # because skipping that wait is the point of force.
+                            el = fr.wait_for_selector(sel, timeout=left, state="attached")
+                            if el is None:
+                                raise RuntimeError("selector not found: %s" % sel)
+                            watch = fr.evaluate_handle(CLICK_WATCH_JS, el)
                             try:
-                                fr.click(sel, timeout=left, force=True)
-                                blocked = self.ask_watcher(watch, CLICK_LANDED_JS, sel)
+                                rest = int((deadline - time.monotonic()) * 1000)
+                                el.click(timeout=max(rest, 1), force=True)
+                                blocked = self.ask_watcher(watch, CLICK_LANDED_JS)
                             finally:
-                                # Always: a listener left on a document the next
-                                # click still reaches is page-visible litter.
-                                self.ask_watcher(watch, CLICK_OFF_JS)
-                                watch.dispose()
+                                self.drop_watcher(watch)
                             if blocked:
                                 raise RuntimeError(
                                     "forced click on %s was not received: %s. Deal with what "

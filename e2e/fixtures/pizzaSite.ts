@@ -129,6 +129,11 @@ export function createPizzaSite(): Promise<PizzaSite> {
          <button id="dismiss" type="button"
                  style="position:fixed;top:0;right:0">Close</button>
          <a id="leave" href="/confirm?n=9" style="position:fixed;bottom:0;left:0">Leave</a>
+         <!-- The ad-laden shape a click budget has to survive: the element is
+              in one frame and the page has several. -->
+         <iframe src="/payframe" width="10" height="10"></iframe>
+         <iframe src="/payframe" width="10" height="10"></iframe>
+         <iframe src="/payframe" width="10" height="10"></iframe>
          <p id="result">no click yet</p>
          <script>
            document.getElementById("continue").addEventListener("click", (e) => {

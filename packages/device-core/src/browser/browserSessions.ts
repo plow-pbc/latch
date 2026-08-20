@@ -68,13 +68,15 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
 const MAX_WAIT_SECONDS = 12;
 
 /**
- * Bounds on a `click`'s caller-supplied `timeout_ms`, for the same reason: the
- * ceiling keeps one click inside the exchange, and the floor exists because
- * Playwright reads a zero timeout as *no* timeout — an agent asking for 0 would
- * park the click until the host cap killed the browser out from under it.
+ * Bounds on a `click`'s caller-supplied `timeout_ms`, for the same reason. The
+ * ceiling is a second under the `wait` one because a click also pays the
+ * server's 1 s post-click settle, and overrunning the 15 s host cap does not
+ * fail the click — it tears the browser down. The floor exists because
+ * Playwright reads a zero timeout as *no* timeout, so an agent asking for 0
+ * would park the click until exactly that happened.
  */
 const MIN_CLICK_TIMEOUT_MS = 500;
-const MAX_CLICK_TIMEOUT_MS = MAX_WAIT_SECONDS * 1000;
+const MAX_CLICK_TIMEOUT_MS = (MAX_WAIT_SECONDS - 1) * 1000;
 
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
@@ -357,7 +359,7 @@ export class BrowserSessions {
         default: {
           // Pass-through actions; the server rejects unknown ones.
           const forwarded: { [k: string]: JSONValue } = { action };
-          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame", "force"]) {
+          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
             const v = p.get(key).value;
             if (v !== null && v !== undefined) forwarded[key] = v;
           }
@@ -367,14 +369,19 @@ export class BrowserSessions {
             const secs = p.get("seconds").num ?? 1;
             forwarded.seconds = Math.min(Math.max(secs, 0), MAX_WAIT_SECONDS);
           }
-          // Same reasoning for a click's timeout: the agent may ask a slow page
-          // for more than the default, up to what the exchange can carry.
-          const timeoutMs = p.get("timeout_ms").num;
-          if (action === "click" && timeoutMs !== null) {
-            forwarded.timeout_ms = Math.min(
-              Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
-              MAX_CLICK_TIMEOUT_MS,
-            );
+          // The click escape hatches, and only for a click: the agent may ask a
+          // slow page for more than the default, up to what the exchange can
+          // carry, and may say "click it anyway". Both are typed rather than
+          // passed through — `force: "false"` is truthy to the Python side.
+          if (action === "click") {
+            const timeoutMs = p.get("timeout_ms").num;
+            if (timeoutMs !== null) {
+              forwarded.timeout_ms = Math.min(
+                Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
+                MAX_CLICK_TIMEOUT_MS,
+              );
+            }
+            if (p.get("force").bool === true) forwarded.force = true;
           }
           return await this.serverAction(s, forwarded);
         }
@@ -413,6 +420,10 @@ export class BrowserSessions {
       session: s.handle,
       action: String(action.action),
       url: stripQuery(url),
+      // What the agent had to reach for, so the next look at a session that
+      // went wrong can count it the way this one counted `eval`.
+      ...(action.force === true ? { force: true } : {}),
+      ...(action.timeout_ms !== undefined ? { timeout_ms: action.timeout_ms } : {}),
     });
 
     // The browser puts the mark back on every concealed field before it lets
