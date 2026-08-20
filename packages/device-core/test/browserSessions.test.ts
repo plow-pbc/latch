@@ -212,10 +212,10 @@ describe("session lifecycle", () => {
 
     // And the audit log says which clicks needed it — including, above all, the
     // ones that failed, which are what a look at a bad session goes looking for.
-    const clamped = jv(await ctx.sessions.command(AGENT, s, {
+    const swallowed = jv(await ctx.sessions.command(AGENT, s, {
       action: "click", selector: "#swallowed", timeout_ms: 6000,
     }));
-    expect(clamped.get("status").str).toBe("error");
+    expect(swallowed.get("status").str).toBe("error");
     const audited = ctx.events.filter((e) => e.event === "browser_command");
     expect(audited.filter((e) => e.fields.timeout_ms === 11_000)).toHaveLength(1);
     const failure = audited.at(-1)!.fields;

@@ -30,7 +30,7 @@
  * Scripted page behaviors:
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
- *   click "#swallowed"  fails the way a click something is covering does
+ *   click "#swallowed" fails the way a click something is covering does
  */
 "use strict";
 const fs = require("node:fs");
@@ -101,7 +101,7 @@ function handle(cmd) {
     // The shape a real click failure has: the browser names what was over it.
     if (cmd.selector === "#swallowed") {
       throw new Error(
-        `Frame.click: Timeout 3000ms exceeded.\nCall log:\n` +
+        `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
           `  - <div class="modal-backdrop show"></div> intercepts pointer events\n`,
       );
     }
