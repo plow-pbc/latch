@@ -340,7 +340,7 @@ class Session:
         This is the whole of what `click` and `fill` have in common: candidates
         are tried in order, an answer ends it -- including a refusal a fill
         returns rather than raises -- and when none answers the caller hears the
-        last failure rather than a generic one. `attempt` is handed the frame's
+        first failure rather than a generic one. `attempt` is handed the frame's
         index on the page, the frame, and how many candidates are left counting
         it: a click divides what is left of its budget by that, a fill has no
         budget to divide and ignores it.
@@ -350,10 +350,9 @@ class Session:
             try:
                 return attempt(i, fr, len(frames) - tried)
             except Exception as exc:  # noqa: BLE001 -- re-raised below
-                # The FIRST failure, not the last: a later candidate that never
-                # really got tried (a click with no budget left) would
-                # otherwise bury the frame that failed for a reason worth
-                # reading -- not visible, detached, navigated away.
+                # A candidate that never really got tried -- a click with no
+                # budget left -- must not bury one that did and failed for a
+                # reason worth reading: not visible, detached, navigated away.
                 last = last or exc
         raise last or RuntimeError("selector not found: %s" % sel)
 
