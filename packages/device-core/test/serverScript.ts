@@ -10,12 +10,12 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const SERVER_PY = fileURLToPath(
+const SERVER_PY = fileURLToPath(
   new URL("../../../vendor/browser-server/server.py", import.meta.url),
 );
 
 /** The body of a `NAME = """…"""` literal, with any `% OTHER` composed in. */
-export function scriptSource(name: string): string {
+function scriptSource(name: string): string {
   const src = fs.readFileSync(SERVER_PY, "utf8");
   const m = new RegExp(`^${name} = """([\\s\\S]*?)"""( % (\\w+))?$`, "m").exec(src);
   if (!m) throw new Error(`${name} literal not found in server.py`);
