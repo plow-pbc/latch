@@ -81,18 +81,19 @@ function failedRequests(value: JSONValue[]): JSONValue[] {
  * document that asked. Destination alone would let a page the session is locked
  * out of fetch a url it knows will fail on an approved host and pass that off
  * as the approved page's own trouble — and an asker the browser could not name
- * is exactly what such a page reaches for (a blank child frame, a service
- * worker), so those are withheld too and kept only for the owner. The initiator
- * itself is never handed over; the agent gets the host that refused, which is
- * the diagnosis.
+ * goes the same way, withheld from the agent and kept for the owner. That is
+ * not only the exotic case (a service worker, a request nobody saw asked): it
+ * is every frame's own document load, since nothing can say whether the frame
+ * moved itself or its embedder moved it. The initiator itself is never handed
+ * over; the agent gets the host that refused, which is the diagnosis.
  */
 function forAgent(entries: JSONValue[], approved: (host: string) => boolean): JSONValue[] {
   return entries.flatMap((entry) => {
     const e = jv(entry);
     const host = hostOf(e.get("origin").str ?? "");
     const asker = hostOf(e.get("initiator").str ?? "");
-    // Fail closed on an asker the browser could not name: a blank child frame
-    // or a service worker is exactly what an unapproved page would reach for.
+    // Fail closed on an asker the browser could not name — see above for what
+    // that covers, which is more than the exotic cases.
     if (host === null || asker === null) return [];
     if (!approved(host) || !approved(asker)) return [];
     const retryAfter = e.get("retry_after").str;

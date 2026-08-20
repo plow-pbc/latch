@@ -23,6 +23,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     blind_navigation: Envelope;
     unremembered: Envelope;
     forgets_the_answered: number;
+    frames_crowd_out: Envelope;
     unattributable: Envelope;
     drained: Envelope;
     quiet: Envelope;
@@ -64,6 +65,12 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
       ]);
   });
 
+  it("forgets a request the moment it comes back fine", () => {
+    // Otherwise completed traffic crowds a still-pending refusal out of the
+    // ledger, and the refusal arrives naming nobody.
+    expect(probed.forgets_the_answered).toBe(0);
+  });
+
   it("reads who asked when the request was MADE, not when it was answered", () => {
     // Otherwise a page asks for something it knows will fail, moves itself to
     // an approved origin, and the refusal reads as that origin's own trouble.
@@ -103,6 +110,16 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
 
   it("keeps nothing for a page that worked, redirects included", () => {
     expect(probed.quiet.failed_requests).toBeUndefined();
+  });
+
+  it("lets a page's failing frames crowd out the refusal the agent could have used", () => {
+    // One ring holds what the owner may see and what the agent may, so five
+    // frame loads — ad iframes returning 4xx is ordinary — push the one
+    // attributable refusal out. Accepted, and asserted so it stays a decision:
+    // the owner needs the whole picture, and the agent's next action gets
+    // whatever comes next.
+    expect((probed.frames_crowd_out.failed_requests ?? []).map((r) => r.initiator))
+      .toEqual(["", "", "", "", ""]);
   });
 
   it("keeps the most recent few, most recent first", () => {

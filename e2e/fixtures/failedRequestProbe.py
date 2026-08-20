@@ -231,6 +231,18 @@ def main():
                                   Response(302, "https://pizza.example/b"),
                                   Response(304, "https://pizza.example/c")])
 
+    # One ring for both kinds: a page with several failing frames — ad and
+    # tracking iframes returning 4xx is ordinary — can push the one attributable
+    # refusal out of it. Asserted so the trade-off is a decision.
+    session = server.Session(Page())
+    out["frames_crowd_out"] = feed(session, [
+        Response(403, "https://pizza.example/api/x", page="https://pizza.example/"),
+    ] + [
+        Response(410 + i, "https://ads.example/f%d" % i, navigation=True, page="about:blank",
+                 embedder="https://pizza.example/")
+        for i in range(5)
+    ])
+
     # Bounded, most recent first: a chatty page cannot blow the exchange budget.
     session = server.Session(Page())
     out["bounded"] = feed(session, [

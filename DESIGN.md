@@ -355,8 +355,11 @@ whichever was in flight would otherwise consume a 429 and drop it.
 navigation is the visible case — the agent goes somewhere, is refused, and the
 page is right there in its next screenshot. Everything else a page asks for on
 its own account is invisible, a payment or sign-in iframe that will not load
-included, and that is what is kept. A frame's own document load is named by
-whoever embedded it, since the frame is still blank when it asks.
+included, and that is what is kept. A frame's own document load names nobody:
+nothing can say whether the frame moved itself or its embedder moved it, and
+blanking a frame makes either look like the other. So the owner's log keeps
+those and the agent does not see them — it learns of a frame that will not
+load from what that frame asks for once it has, which is attributable.
 
 **Origins, and both ends of them.** A url is the page's to choose, and every
 part of one but the origin can carry a secret — a query, userinfo, and a path
@@ -370,9 +373,9 @@ approved host and pass that off as the approved page's own trouble. Who asked
 is read when the request is MADE, not when it is answered: a page that asks
 for something it knows will fail and then moves itself to an approved origin
 would otherwise have the refusal read as that origin's. A request the browser
-cannot attribute — a blank or blob: frame, a service worker, one it never saw
-asked — names nobody and is withheld from the agent while the owner still sees
-it.
+cannot attribute — any frame's own document load, a service worker's request,
+one it never saw asked — names nobody and is withheld from the agent while the
+owner still sees it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

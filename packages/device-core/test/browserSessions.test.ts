@@ -594,11 +594,25 @@ describe("access the owner's log could not record is not granted", () => {
         }
       },
     });
-    const sessions = new BrowserSessions(host, null, () => {}, 60_000);
+    const events: Ctx["events"] = [];
+    const sessions = new BrowserSessions(host, null, (event, fields) => events.push({ event, fields }), 60_000);
     const handle = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true))
       .get("session")
       .str!;
+    // A refusal the device is holding when the shutdown throws is exactly when
+    // the last thing the page said is worth having, so the closing line is
+    // written either way.
+    await sessions.command(AGENT, handle, { action: "goto", url: "https://pizza.example/" });
+    await sessions.command(AGENT, handle, { action: "click", selector: "#blocked-later" });
+    expect(await host.viewFrame()).not.toBeNull();
     await expect(sessions.close(handle, "agent")).rejects.toThrow(/audit append failed/);
+    const closed = events.filter((e) => e.event === "browser_session_closed").pop();
+    expect(closed?.fields.failed_requests).toEqual([
+      {
+        status: 401, method: "GET", origin: "https://pizza.example",
+        initiator: "https://pizza.example",
+      },
+    ]);
 
     const retry = jv(await sessions.open("int-2", AGENT, ["pizza.example"], true));
     expect(retry.get("status").str).toBe("completed");

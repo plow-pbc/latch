@@ -51,7 +51,10 @@ MAX_ERROR_LEN = 500
 
 # How many refused requests one reply can carry back. The relay buffers a whole
 # exchange, so a chatty page must not be able to park one; a handful of the most
-# recent is what says "you are blocked".
+# recent is what says "you are blocked". One ring holds both what the agent may
+# see and what only the owner may, so a page with several failing frames can
+# push an attributable refusal out of it -- accepted: the owner is the one who
+# needs the whole picture, and the agent's next action gets whatever comes next.
 MAX_FAILED_REQUESTS = 5
 
 # How many in-flight requests are remembered by who asked for them. A page can
