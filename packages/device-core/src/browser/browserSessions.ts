@@ -293,8 +293,12 @@ export class BrowserSessions {
     action: string,
     url: string,
     extra: { [k: string]: JSONValue } = {},
+    // fill_secret writes its own credential_* line for every outcome it has, so
+    // it asks for a browser_command line only when there is a refusal on it.
+    alwaysAudit = true,
   ): JSONValue[] {
     const failed = failedRequests(this.host.takeFailedRequests());
+    if (!alwaysAudit && failed.length === 0) return [];
     this.audit("browser_command", {
       session: s.handle,
       action,
@@ -403,13 +407,19 @@ export class BrowserSessions {
       }
 
       switch (action) {
-        case "fill_secret":
-          return await this.fillSecret(
+        case "fill_secret": {
+          // Its own `locate` and `fill` round-trips leave refusals in the host,
+          // and it builds its results by hand rather than through serverAction
+          // — so the report happens here, once, over every way it can answer.
+          const filled = await this.fillSecret(
             s,
             p.get("selector").str ?? "",
             p.get("item").str ?? "",
             p.get("field").str ?? "",
           );
+          const visible = this.reportRefusals(s, action, s.lastUrl, {}, false);
+          return visible.length ? { ...(jv(filled).obj ?? {}), failed_requests: visible } : filled;
+        }
         case "goto": {
           const target = p.get("url").str ?? "";
           const host = hostOf(target);

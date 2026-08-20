@@ -337,6 +337,26 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toEqual([entry]);
   });
 
+  it("reports on a credential fill too, which asks the browser for itself twice", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);
+    // Scripted: the page refuses a request while the fill's own locate/fill
+    // round-trips are in flight. fill_secret builds its result by hand, so it
+    // is the one action that could drop them.
+    const filled = jv(await ctx.sessions.command(AGENT, s, {
+      action: "fill_secret", selector: "#refused-pass", item: "L1", field: "password",
+    }));
+    expect(filled.get("status").str).toBe("completed");
+    const entry = {
+      status: 401, method: "POST",
+      url: "https://pizza.example/api/session", frame_url: "https://pizza.example/",
+    };
+    expect(filled.get("failed_requests").value).toEqual([entry]);
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toEqual([entry]);
+  });
+
   it("survives the owner's viewer poll, which asks the browser on its own account", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });

@@ -235,6 +235,14 @@ function handle(cmd) {
       ...(cmd.mask ? { mask: "stylesheet" } : {}),
     };
   }
+  if (a === "locate" && cmd.selector === "#refused-pass") {
+    // The page was refusing while the credential was being placed — the
+    // refusals ride the locate/fill round-trips the device makes for itself.
+    state.failed = [{
+      status: 401, method: "POST",
+      url: "https://pizza.example/api/session", frame_url: "https://pizza.example/",
+    }];
+  }
   if (a === "locate") {
     // The token is what the fill is checked against; the url is what the device
     // checks an origin against.

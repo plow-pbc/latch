@@ -203,33 +203,28 @@ describe("browser tools (fake runtime)", () => {
     ]);
   });
 
-  it("an action that failed tells the agent what its own requests did", async () => {
-    // The whole point of the feature, end to end: an error crosses MCP as a
-    // string, so the refusal has to be IN that string or the agent retries
-    // blind — which is the 27-minute loop this exists to end.
-    const { server } = makeServer();
+  it("says what the page's requests did even when the answer is an error", async () => {
+    // An error crosses MCP as a string, so anything not said IN it is not said
+    // at all — and the refusal is usually the reason for the error. Both shapes
+    // of error go through that one path: the device refusing an observation it
+    // cannot make safely, and an action the browser itself failed.
+    const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once" }), {
+      FAKE_REMASK_FAILS: "1",
+    });
     const session = await open(server, ["pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/" });
+
+    await act(server, session, "click", { selector: "#blocked" });
+    const refused = await act(server, session, "screenshot");
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.payload)).toContain("https://pizza.example/api/whoami");
+
     const failed = await act(server, session, "click", { selector: "#refuses" });
     expect(failed.isError).toBe(true);
     const text = JSON.stringify(failed.payload);
     expect(text).toContain("Timeout 3000ms exceeded");
     expect(text).toContain("the page's own requests were refused");
     expect(text).toContain("https://pizza.example/api/submit");
-  });
-
-  it("says what the page's requests did even when the answer is an error", async () => {
-    // A refused observation is still an answer the agent has to act on, and an
-    // error is a string here — anything not said in it is not said at all.
-    const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once" }), {
-      FAKE_REMASK_FAILS: "1",
-    });
-    const session = await open(server, ["pizza.example"]);
-    await act(server, session, "goto", { url: "https://pizza.example/" });
-    await act(server, session, "click", { selector: "#blocked" });
-    const refused = await act(server, session, "screenshot");
-    expect(refused.isError).toBe(true);
-    expect(JSON.stringify(refused.payload)).toContain("https://pizza.example/api/whoami");
   });
 
   it("denyKinds credential blocks fill grants while browsing still works", async () => {

@@ -73,73 +73,38 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
   });
 
 
-  it("will not credit a background popup's navigation to the url it was pointed at", () => {
-    // Otherwise a locked page opens a popup, points it at an approved host, and
-    // the path it chose is handed to the agent as the approved page's own.
-    expect(probed.background_navigation.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/anything-it-likes",
-      frame_url: "https://offsite.example/lander",
-    });
-  });
+  // Who a refusal is attributed to, one row per way a navigation can happen.
+  // The rule under all of them: a page must never get to write the agent's
+  // evidence by choosing a url, so only the goto this session issued — on the
+  // page it is driving, through however many redirects — names itself.
+  const ATTRIBUTION: [name: string, key: keyof typeof probed, url: string, frameUrl: string][] = [
+    ["the goto the agent asked for names itself, not the page being left",
+      "navigation", "https://pizza.example/checkout", "https://pizza.example/checkout"],
+    ["a redirect chain is walked back to what the agent asked for",
+      "redirected_navigation", "https://signin.pizza.example/b2c", "https://signin.pizza.example/b2c"],
+    ["a sign-in-length chain — the browser's full 20 redirects — still is",
+      "long_chain", "https://signin.pizza.example/b2c/end", "https://signin.pizza.example/b2c/end"],
+    ["one redirect further gives up, and gives up on the safe side",
+      "over_the_hop_limit", "https://pizza.example/end", "https://pizza.example/cart"],
+    ["a page navigating ITSELF is named by the document it is showing",
+      "self_navigation", "https://pizza.example/anything-it-likes", "https://offsite.example/lander"],
+    ["a subframe's navigation belongs to whoever embedded it",
+      "subframe_navigation", "https://pizza.example/anything-it-likes", "https://offsite.example/lander"],
+    ["a background popup's is named by what it is showing, not where it was pointed",
+      "background_navigation", "https://pizza.example/anything-it-likes", "https://offsite.example/lander"],
+    ["the settle second after a goto is outside the window",
+      "during_the_settle", "https://pizza.example/checkout", "https://offsite.example/lander"],
+    ["nothing survives the goto for back, use_page or a scripted location to claim",
+      "after_the_goto_returned", "https://pizza.example/pay", "https://pizza.example/cart"],
+  ];
 
-  it("attributes a refused navigation to the page asked for, not the one being left", () => {
-    // Otherwise a goto that comes back 429 is credited to the previous page and
-    // withheld from the agent that asked for the new one.
-    expect(probed.navigation.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/checkout",
-      frame_url: "https://pizza.example/checkout",
-    });
+  it.each(ATTRIBUTION)("%s", (_name, key, url, frame_url) => {
+    expect((probed[key] as Envelope).failed_requests?.[0]).toMatchObject({ url, frame_url });
   });
 
   it("records what the goto asked for, stripped, on the way in", () => {
     // The plumbing, not just the predicate: the real command handler ran.
     expect(probed.navigation_asked_for).toBe("https://pizza.example/checkout?tx=SECRET");
-  });
-
-  it("walks a sign-in-length chain — the browser's full 20 redirects — back to what was asked for", () => {
-    expect(probed.long_chain.failed_requests?.[0]).toMatchObject({
-      url: "https://signin.pizza.example/b2c/end",
-      frame_url: "https://signin.pizza.example/b2c/end",
-    });
-  });
-
-  it("leaves nothing behind for a page to navigate into once the goto returned", () => {
-    // The pointer lives only while the navigation is in flight, so there is no
-    // stale target for back, use_page, or a scripted location to claim.
-    expect(probed.after_the_goto_returned.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/pay",
-      frame_url: "https://pizza.example/cart",
-    });
-  });
-
-  it("gives up on a redirect chain longer than the browser's own ceiling", () => {
-    expect(probed.over_the_hop_limit.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/end",
-      frame_url: "https://pizza.example/cart",
-    });
-  });
-
-  it("stops believing the goto's url before the page gets its settle second", () => {
-    // The settle is a whole second in which a page could navigate itself to the
-    // url the agent asked for and have its own traffic called the agent's.
-    expect(probed.during_the_settle.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/checkout",
-      frame_url: "https://offsite.example/lander",
-    });
-  });
-
-  it("follows the redirect chain back to what the agent asked for", () => {
-    expect(probed.redirected_navigation.failed_requests?.[0]).toMatchObject({
-      url: "https://signin.pizza.example/b2c",
-      frame_url: "https://signin.pizza.example/b2c",
-    });
-  });
-
-  it("will not let a page navigating itself claim to be the agent's goto", () => {
-    expect(probed.self_navigation.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/anything-it-likes",
-      frame_url: "https://offsite.example/lander",
-    });
   });
 
   it("follows use_page: the agent drives the page it switched to, not the one it left", () => {
@@ -148,13 +113,6 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     });
     expect(probed.page_left_behind.failed_requests?.[0]).toMatchObject({
       frame_url: "https://pizza.example/checkout",
-    });
-  });
-
-  it("credits a subframe's navigation to whoever embedded it", () => {
-    expect(probed.subframe_navigation.failed_requests?.[0]).toMatchObject({
-      url: "https://pizza.example/anything-it-likes",
-      frame_url: "https://offsite.example/lander",
     });
   });
 
