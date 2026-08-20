@@ -335,12 +335,11 @@ export class BrowserSessions {
     const legacy = this.browser.legacyProfileDir;
     fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
     if (legacy && fs.existsSync(legacy)) {
-      try {
-        fs.renameSync(legacy, dir);
-        return;
-      } catch {
-        /* a rename across devices, or a race with another claim: start clean */
-      }
+      // Loudly, like the app's home migration: a rename that fails and is
+      // swallowed hands the owner a clean profile and no reason why, which
+      // reads as "Domo signed me out of everything".
+      fs.renameSync(legacy, dir);
+      return;
     }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
@@ -390,12 +389,19 @@ export class BrowserSessions {
     if (agentId !== undefined && s.agentId !== agentId) {
       return { status: "error", error: "session belongs to a different agent" };
     }
-    this.sessions.delete(handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
+    // The claim is held until the browser is really down. Releasing it first
+    // lets the same agent reopen while Camoufox still has the profile, and
+    // Firefox locks a profile against a second copy of itself.
+    //
     // Only this session's browser goes away; everyone else keeps theirs. The
     // profile stays: it belongs to the agent, not to this session, which is
     // what "your profile persists between sessions" means.
-    await this.stop(s.host);
+    try {
+      await this.stop(s.host);
+    } finally {
+      this.sessions.delete(handle);
+    }
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
