@@ -182,7 +182,8 @@ class Handle:
         # microseconds the interpreter took between two statements. Playwright
         # spends the key's delay here.
         time.sleep(0.001)
-        self.key_timeout_max = max(self.key_timeout_max or 0, timeout)
+        if self.key_timeout_max is None or timeout > self.key_timeout_max:
+            self.key_timeout_max = timeout
         if self.key_timeout_min is None or timeout < self.key_timeout_min:
             self.key_timeout_min = timeout
         if self.drops_keys:
