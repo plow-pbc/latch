@@ -448,6 +448,19 @@ export class BrowserSessions {
       ...(failed.length ? { failed_requests: failed } : {}),
     });
 
+    // The agent hears only about the origins it was approved for — judged per
+    // entry rather than by where this action happened to land, so a refusal on
+    // the approved page still arrives when a sign-in redirect has parked the
+    // session somewhere else. BOTH ends have to be approved: which of its
+    // requests were refused is an observation of the document that made them,
+    // and an unapproved one would otherwise be choosing the text it hands the
+    // agent by choosing what to fetch. An entry the browser could not attribute
+    // carries no document and stays with the owner.
+    const visible = failed.filter((entry) => {
+      const e = entry as { url: string; frame_url: string };
+      return this.approved(s, e.frame_url) && this.approved(s, e.url);
+    });
+
     // The browser puts the mark back on every concealed field before it lets
     // anything be observed, and says so when one of them would not take. It
     // sends no picture and no field list in that case, and neither does this:
@@ -464,22 +477,14 @@ export class BrowserSessions {
           `${String(action.action)} was refused: a field on this page holds a value the vault ` +
           `conceals and the page will not let it be hidden on screen. Navigate away from it, ` +
           `or fill that field by hand.`,
+        // This refusal is the device's, not the site's — what the page's own
+        // requests did still belongs to the agent, and the entries are already
+        // out of the host.
+        ...(visible.length ? { failed_requests: visible } : {}),
       };
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
-    // The agent hears only about the origins it was approved for — judged per
-    // entry rather than by where this action happened to land, so a refusal on
-    // the approved page still arrives when a sign-in redirect has parked the
-    // session somewhere else. BOTH ends have to be approved: which of its
-    // requests were refused is an observation of the document that made them,
-    // and an unapproved one would otherwise be choosing the text it hands the
-    // agent by choosing what to fetch. An entry the browser could not attribute
-    // carries no document and stays with the owner.
-    const visible = failed.filter((entry) => {
-      const e = entry as { url: string; frame_url: string };
-      return this.approved(s, e.frame_url) && this.approved(s, e.url);
-    });
     if (visible.length) out.failed_requests = visible;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.

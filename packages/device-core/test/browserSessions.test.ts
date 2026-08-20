@@ -333,6 +333,7 @@ describe("requests the site refused", () => {
     };
     expect(shot.get("failed_requests").value).toEqual([entry]);
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.action).toBe("screenshot");
     expect(command?.fields.failed_requests).toEqual([entry]);
   });
 
@@ -407,6 +408,17 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toEqual([
       { status: 503, method: "GET", url: "https://pizza.example/api/sw", frame_url: "" },
     ]);
+  });
+
+  it("drops refusals a browser puts where this side no longer reads them", async () => {
+    // A mismatched vendored server.py nesting them inside `result` would
+    // otherwise ride the spread straight past the approved-origin filter.
+    ctx = makeCtx({ FAKE_NEST_FAILURES: "1" });
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" }));
+    expect(r.get("failed_requests").value).toBeNull();
+    expect(JSON.stringify(r.value)).not.toContain("offsite.example/api/who");
   });
 
   it("hands the agent nothing it cannot read — a malformed list is not passed through", async () => {

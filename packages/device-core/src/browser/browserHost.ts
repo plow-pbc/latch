@@ -115,8 +115,16 @@ export class BrowserHost {
   async sendAction(action: { [k: string]: JSONValue }): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown) throw new BrowserCrashedError("browser host is shut down");
     await this.ensureStarted();
+    return this.request(this.child!, action);
+  }
+
+  /** One request/response with a running browser. Used by shutdown too, which
+   * has already latched `shuttingDown` and cannot go through sendAction. */
+  private request(
+    child: ChildProcess,
+    action: { [k: string]: JSONValue },
+  ): Promise<{ [k: string]: JSONValue }> {
     const id = this.nextId++;
-    const child = this.child!;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -307,9 +315,10 @@ export class BrowserHost {
       });
 
       child.on("exit", (code, signal) => {
-        // rl is deliberately NOT closed here — the stream ends on its own when
-        // the child's stdout does, and closing early truncates whatever it
-        // said on the way out.
+        // Closed with the child it belongs to: a reader left alive past exit
+        // can hand the NEXT browser's list the dead one's refusals, and
+        // shutdown waits for the goodbye reply itself rather than for the pipe.
+        rl.close();
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
@@ -361,16 +370,21 @@ export class BrowserHost {
     this.shuttingDown = true;
     const child = this.child;
     if (!child) return;
-    // `close`, not `exit`: the browser answers `quit` with the last refusals it
-    // saw, and exit fires before its stdout has necessarily been drained.
     const exited = new Promise<void>((resolve) => {
-      child.once("close", () => resolve());
+      child.once("exit", () => resolve());
     });
-    try {
-      child.stdin!.write(JSON.stringify({ id: this.nextId++, action: "quit" }) + "\n");
-    } catch {
-      /* stdin already closed */
-    }
+    // Ask it to go, and WAIT for the answer rather than for the pipes: that
+    // reply carries the last refusals the page produced, and having read it is
+    // the only guarantee they were read at all. `exit` still drives the kill
+    // escalation below — `close` would wait on a Firefox grandchild holding the
+    // pipe, long after there is anything left to signal.
+    await withTimeout(
+      this.request(child, { action: "quit" }).then(
+        () => undefined,
+        () => undefined,
+      ),
+      2000,
+    );
     if (!(await withTimeout(exited, 3000))) {
       this.killGroup("SIGTERM");
       if (!(await withTimeout(exited, 5000))) {

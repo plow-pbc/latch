@@ -18,6 +18,9 @@
  *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
  *                            server does when the resolved node is in a
  *                            different document than the one approved
+ *   FAKE_NEST_FAILURES=1     put failed_requests inside `result` instead of on the
+ *                            reply, the way a mismatched vendored server.py would —
+ *                            the device must drop it rather than pass it through
  *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
  *                            server refuses when a mark will not go back on
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
@@ -72,12 +75,16 @@ function withFailures(reply) {
   const failed = state.failed;
   state.failed = state.failedNext;
   state.failedNext = [];
-  return failed.length === 0 ? reply : { ...reply, failed_requests: failed };
+  if (failed.length === 0) return reply;
+  if (process.env.FAKE_NEST_FAILURES === "1" && reply.result) {
+    return { ...reply, result: { ...reply.result, failed_requests: failed } };
+  }
+  return { ...reply, failed_requests: failed };
 }
 
-function respond(obj) {
+function respond(obj, flushed) {
   if (process.env.GARBAGE === "1") process.stdout.write("firefox noise: not json\n");
-  process.stdout.write(JSON.stringify(obj) + "\n");
+  process.stdout.write(JSON.stringify(obj) + "\n", flushed);
 }
 
 function handle(cmd) {
@@ -286,8 +293,7 @@ function main() {
       // macOS, and exiting on top of the write discards it — the real server
       // ends by falling out of its loop, so the fixture must not model a
       // truncated goodbye.
-      const last = JSON.stringify(withFailures({ id: cmd.id, result: { ok: true } })) + "\n";
-      process.stdout.write(last, () => process.exit(0));
+      respond(withFailures({ id: cmd.id, result: { ok: true } }), () => process.exit(0));
       return;
     }
     if (process.env.FAKE_CMD_LOG) {
