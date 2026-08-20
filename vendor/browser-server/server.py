@@ -139,9 +139,16 @@ TYPEABLE_JS = """(el) => {
         // be closed; the attribute is only ever on the host, so ask for it. A
         // bare `contenteditable` and `="plaintext-only"` are hosts, `="false"`
         // is not, and a custom editor that carries it is one like any other.
+        // `designMode = "on"` is the one host that carries no attribute: it makes
+        // the document's own body editable, which is the classic iframe editor.
         const attr = el.getAttribute("contenteditable");
-        if (attr === null) return false;
-        return el.isContentEditable === true && attr.toLowerCase() !== "false";
+        if (attr === null) {
+            const doc = el.ownerDocument;
+            return tag === "body" && !!doc && doc.designMode === "on";
+        }
+        // `contenteditable="false"` is already answered by isContentEditable --
+        // the attribute puts the node in the explicitly-not-editable state.
+        return el.isContentEditable === true;
     }
     if (tag === "input" && !typed.includes(el.type)) return false;
     return !el.disabled && !el.readOnly;

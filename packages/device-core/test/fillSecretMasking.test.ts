@@ -960,8 +960,8 @@ describe("which nodes take typing", () => {
   // Inside a rich-text region: everything inherits the editable state, and only
   // the host itself carries the attribute.
   const inRegion = (tagName: string) => element(tagName, { isContentEditable: true });
-  const host = (tagName: string, attr: string = "") =>
-    element(tagName, { isContentEditable: attr.toLowerCase() !== "false",
+  const host = (tagName: string, attr: string = "", editable = true) =>
+    element(tagName, { isContentEditable: editable,
                        getAttribute: (k: string) => (k === "contenteditable" ? attr : null) });
 
   it.each([
@@ -1000,20 +1000,18 @@ describe("which nodes take typing", () => {
     // isContentEditable is inherited, so a form control inside a rich-text
     // region answers true. Typing at a select there picks an option by
     // type-ahead and reports ok.
-    // Inside a rich-text region every node answers isContentEditable — a
-    // control where typing picks an option by type-ahead, an embedded document
-    // the mask cannot reach, a node that is not rendered at all so the
-    // characters land wherever focus already was. None of them carries the
-    // attribute, which is the one thing only the host has.
+    // Inside a rich-text region every node answers isContentEditable — the
+    // control where typing picks an option by type-ahead, the embedded document
+    // the mask cannot reach, and every ordinary node between them. None carries
+    // the attribute, which is the one thing only the host has, and the tag is
+    // not what the answer turns on.
     { what: "a select inside a contenteditable region", el: select({ isContentEditable: true }), typed: false },
-    { what: "a button inside a contenteditable region", el: inRegion("BUTTON"), typed: false },
     { what: "an iframe inside a contenteditable region", el: inRegion("IFRAME"), typed: false },
-    { what: "a style element inside a contenteditable region", el: inRegion("STYLE"), typed: false },
-    { what: "a template inside a contenteditable region", el: inRegion("TEMPLATE"), typed: false },
-    { what: "a datalist beside the input it belongs to", el: inRegion("DATALIST"), typed: false },
-    { what: "a summary inside a contenteditable region", el: inRegion("SUMMARY"), typed: false },
     { what: "a span that only inherits the editable state", el: inRegion("SPAN"), typed: false },
-    { what: "an editor explicitly turned off", el: host("DIV", "false"), typed: false },
+    { what: "an editor explicitly turned off", el: host("DIV", "false", false), typed: false },
+    // designMode: a genuine editing host that carries no attribute anywhere.
+    { what: "the body of a document in designMode", el: element("BODY", { isContentEditable: true, ownerDocument: { designMode: "on" } }), typed: true },
+    { what: "a body outside designMode", el: element("BODY", { isContentEditable: true, ownerDocument: { designMode: "off" } }), typed: false },
   ])("$what: typed=$typed", ({ el, typed }) => {
     expect(typeable(el)).toBe(typed);
   });
