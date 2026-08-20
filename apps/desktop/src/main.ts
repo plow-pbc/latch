@@ -998,16 +998,22 @@ app.whenReady().then(async () => {
 });
 
 let quitting = false;
+let cleanedUp = false;
 app.on("before-quit", (event) => {
-  if (quitting) return;
-  // Hold the quit open: shutting the browsers down is what deletes their
-  // profiles, and a fire-and-forget shutdown lets Electron exit first, leaving
-  // a dead session's cookies on disk. Every step of it is timeout-bounded, so
-  // this waits seconds, not forever, and the second quit goes straight through.
-  quitting = true;
+  // The only quit that goes through is the one this handler asks for, once the
+  // browsers are down and their profiles are back where they belong. Everybody
+  // else waits — including somebody hitting Quit again because the first one
+  // seemed slow, which used to take the app out mid-teardown.
+  if (cleanedUp) return;
   event.preventDefault();
+  if (quitting) return;
+  quitting = true;
   // Kill any live Camoufox session/process group so Firefox children don't outlive us.
-  void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => app.quit());
+  // Every step of it is timeout-bounded, so this waits seconds, not forever.
+  void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
+    cleanedUp = true;
+    app.quit();
+  });
 });
 
 app.on("window-all-closed", () => {
