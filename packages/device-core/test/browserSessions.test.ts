@@ -383,14 +383,14 @@ describe("audit hygiene", () => {
 describe("access the owner's log could not record is not granted", () => {
   /** A session store whose audit append fails once for one event, as a full
    * disk or a bad permission would. */
-  function failingAudit(failOn: string): BrowserSessions {
+  function failingAudit(failOn: string, once = true): BrowserSessions {
     let fired = false;
     return new BrowserSessions(
       ctx.host,
       null,
       (event: string) => {
-        if (event === failOn && !fired) {
-          fired = true; // fails once, so a retry can be observed
+        if (event === failOn && !(once && fired)) {
+          fired = true; // once: fails a single time, so a retry can be observed
           throw new Error("audit append failed");
         }
       },
@@ -426,6 +426,29 @@ describe("access the owner's log could not record is not granted", () => {
     expect(again.get("session").str).toBeTruthy();
     expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([key]);
     expect(fs.existsSync(path.join(ctx.dir, "profiles", key, "domo-abandoned"))).toBe(false);
+    await sessions.closeAll("test");
+  });
+
+  it("retires a strayed jar even when recording the action throws", async () => {
+    // The retirement runs ahead of every audit append for exactly this reason:
+    // the response is already in the jar, so a log the device cannot write
+    // must not be what decides whether the jar stays reusable.
+    const sessions = failingAudit("browser_navigated", false);
+    const origins = ["pizza.example", "*.pizza.example"];
+    const opened = jv(await sessions.open("int-1", AGENT, origins, true));
+    const handle = opened.get("session").str!;
+    const marker = path.join(
+      ctx.dir, "profiles", profileKeyForOrigins(origins), "domo-abandoned",
+    );
+
+    // #offsite navigates the page to https://offsite.example/lander.
+    const strayed = jv(
+      await sessions.command(AGENT, handle, { action: "click", selector: "#offsite" }),
+    );
+    expect(strayed.get("error").str).toMatch(/audit append failed/);
+
+    // The action could not be recorded; the jar was retired regardless.
+    expect(fs.existsSync(marker)).toBe(true);
     await sessions.closeAll("test");
   });
 

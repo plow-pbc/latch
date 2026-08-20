@@ -463,14 +463,17 @@ export class BrowserSessions {
     const result = await this.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
-    const opened = pageCount === s.knownPageCount ? [] : await this.pageUrls();
+    const pages = pageCount === s.knownPageCount ? [] : await this.pageUrls();
 
     // First, ahead of every audit append and every early return below. The
     // response is already in the jar — a mask failure that returns, or an
     // audit that throws, must not be able to leave it filed under a grant it
     // no longer matches. A popup counts: it was fetched with this browser's
     // cookies and stored whatever came back, exactly like the active page.
-    const strayed = [url, ...opened.map((p) => p.url)].find(
+    // `url` as well as the list: pageUrls() is best-effort and answers empty
+    // when the browser will not say, and the active page is the one origin
+    // that is never in doubt. A duplicate costs a comparison.
+    const strayed = [url, ...pages.map((p) => p.url)].find(
       (u) => u !== "" && !this.inScope(s, u),
     );
     if (strayed !== undefined) {
@@ -485,7 +488,7 @@ export class BrowserSessions {
     }
     if (pageCount !== s.knownPageCount) {
       s.knownPageCount = pageCount;
-      for (const pg of opened) {
+      for (const pg of pages) {
         this.audit("browser_navigated", {
           session: s.handle,
           url: stripQuery(pg.url),
@@ -546,6 +549,7 @@ export class BrowserSessions {
     return out;
   }
 
+  /** Every page the browser has open, not only the new ones. Best-effort. */
   private async pageUrls(): Promise<{ url: string; i: number }[]> {
     try {
       const pages = await this.host.sendAction({ action: "pages" });
