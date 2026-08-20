@@ -57,7 +57,7 @@ class Handle:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
-                 document_token="doc-1", typeable=True):
+                 document_token="doc-1", typeable=True, fill_refuses=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
@@ -68,9 +68,13 @@ class Handle:
         self.document_url = document_url
         self.document_token = document_token
         self.value = value
-        # What TYPEABLE_JS answers about this node: a <select>, a read-only or a
-        # disabled field says no, and is assigned rather than typed into.
+        # What TYPEABLE_JS answers about this node: a <select>, a checkbox, a
+        # date input, a read-only or a disabled field all say no, and are
+        # assigned rather than typed into. Assignment is not the same as
+        # acceptance: Playwright's `fill()` sets a date and REFUSES a read-only
+        # field or a checkbox, so the two answers are separate here too.
         self.typeable = typeable
+        self.fill_refuses = fill_refuses
 
     def evaluate(self, js, *args):
         # Recorded as a fact about the script, not its text: which one it is.
@@ -112,6 +116,9 @@ class Handle:
         if self.detach_before_fill:
             self.trace.append("handle.fill-failed")
             raise RuntimeError("Element is not attached to the DOM")
+        if self.fill_refuses:
+            self.trace.append("handle.fill-failed")
+            raise RuntimeError('Input of type "checkbox" cannot be filled')
         self.value = value
         self.trace.append("handle.fill")
 
@@ -162,7 +169,7 @@ class Frame:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", hides=False, detached=False,
-                 typeable=True):
+                 typeable=True, fill_refuses=False):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -171,7 +178,7 @@ class Frame:
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token, typeable)
+                             partial_fill, document_token, typeable, fill_refuses)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -237,11 +244,11 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1", typeable=True):
+        document_token="doc-1", typeable=True, fill_refuses=False):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
-                  typeable=typeable)
+                  typeable=typeable, fill_refuses=fill_refuses)
     session = server.Session(Page(frame))
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
            "ledgered": False, "emptied": False}
@@ -395,10 +402,24 @@ def main() -> int:
         # comes off with it, and a node still holding the last secret behind a
         # mark that has gone is legible in every screenshot from then on.
         "cleared": run(server, {**base, "value": ""}, marked=True, value="hunter2"),
-        # A node that will not take keystrokes -- a <select>, a read-only or a
-        # disabled field. It is assigned, exactly as it was before typing, which
-        # is also how it keeps its loud refusal.
+        # A node that will not take keystrokes but does take a value: a date
+        # input, which Firefox lays out as segments a typed value would fill in
+        # locale order. Assigned, exactly as it was before there was typing.
         "not_typeable": run(server, {**base, "mask": True}, typeable=False),
+        # A node that will not take one at all -- a read-only field, a checkbox,
+        # a <select>. `fill()` refuses it, and the refusal has to reach the
+        # caller rather than being reported as a fill that happened.
+        "fill_refused": run(server, {**base, "mask": True}, typeable=False,
+                            fill_refuses=True),
+        # A value carrying a key rather than a character: type() would send Tab,
+        # moving focus so the rest of it lands in the next field -- on this path,
+        # the rest of a secret, into a node nothing has masked.
+        "key_char": run(server, {**base, "value": "one\ttwo", "mask": True}),
+        # Longer than MAX_TYPED_CHARS: typing costs a round-trip per character,
+        # and the host cap does not fail an action it overruns, it tears the
+        # browser down.
+        "too_long": run(server, {**base, "value": "x" * (server.MAX_TYPED_CHARS + 1),
+                                 "mask": True}),
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.
         "mask_blocked": run(server, {**base, "mask": True}, mask_result="unmasked"),

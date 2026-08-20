@@ -128,15 +128,20 @@ MAX_TYPED_CHARS = 200
 # node nothing has masked.
 KEY_CHARS = ("\n", "\r", "\t")
 
-# Whether this node can be TYPED into. `fill()` refuses a disabled or read-only
-# field, and a <select> or a plain element outright; `type()` refuses nothing --
-# it focuses whatever it is given and sends the keys, so a credential typed at a
-# read-only field would be audited as filled and submitted empty, and a <select>
-# would silently change option by type-ahead. Anything this says no to is
-# assigned instead, which is what such a node got before there was typing at
-# all: the same value, or the same loud refusal.
+# Whether this node takes TYPING. `type()` refuses nothing -- it focuses
+# whatever it is given and sends the keys -- so every node `fill()` treats
+# specially has to be recognised here instead: a credential typed at a read-only
+# field would be audited as filled and submitted empty, a <select> would change
+# option by type-ahead, "yes" typed at a checkbox toggles nothing and reports
+# ok, and Firefox lays a date input out as segments that take a typed
+# 2026-08-20 in whatever order the locale puts them. So this admits only the
+# text-carrying inputs, and everything else is ASSIGNED -- which is exactly what
+# such a node got before there was typing at all: the same value where `fill()`
+# sets one, and the same loud refusal where it will not.
 TYPEABLE_JS = """(el) => {
+    const typed = ["text", "email", "password", "search", "tel", "url", "number"];
     const tag = el.tagName.toLowerCase();
+    if (tag === "input" && !typed.includes((el.type || "text").toLowerCase())) return false;
     if (tag !== "input" && tag !== "textarea" && !el.isContentEditable) return false;
     return !el.disabled && !el.readOnly;
 }"""
@@ -179,7 +184,9 @@ def _type_into(el, value):
     # ControlOrMeta resolves against the host Playwright is actually running on.
     # The macOS pin above it is a FINGERPRINT, which says nothing about the
     # machine -- and on the wrong one this chord is not select-all at all, so the
-    # value would be appended to whatever the field held.
+    # value would be appended to whatever the field held. The device is a Mac, so
+    # the two agree; tie the chord to the pin rather than the host if that pin
+    # ever becomes something a caller chooses.
     el.press("ControlOrMeta+a", timeout=left())
     delay = min(TYPING_DELAY_MS, TYPING_BUDGET_MS / len(value))
     el.type(value, delay=delay, timeout=left())
@@ -617,7 +624,10 @@ class Session:
         last = None
         for tried, (i, fr) in enumerate(frames):
             left = int((deadline - time.monotonic()) * 1000 / (len(frames) - tried))
-            if left <= 0:
+            # Travel is spent inside the attempt, so a share that cannot cover it
+            # buys nothing: trying fewer frames with time to move beats trying
+            # all of them with the pointer still in flight when each expires.
+            if left <= HUMANIZE_MAX_SECONDS * 1000:
                 # The selector IS somewhere -- the scan said so -- but the
                 # budget went on waiting for it. Saying "not found" here would
                 # be false and would send the agent looking elsewhere when what

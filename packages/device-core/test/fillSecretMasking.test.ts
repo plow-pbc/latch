@@ -768,17 +768,44 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(cleared.result).toEqual({ ok: true, frame: 0 });
   });
 
-  it("assigns into a node that will not take keystrokes", () => {
-    // A <select>, a read-only or a disabled field. `type()` refuses none of
-    // them -- it would focus the node and send the keys, and a credential typed
-    // at a read-only field is audited as filled and submitted empty. Assignment
-    // is what such a node got before there was typing, refusal included.
-    expect(probed.not_typeable.trace).toEqual([
+  // Every value and every node keystrokes cannot carry faithfully, and there is
+  // one answer for all of them: assign it, exactly as it was assigned before
+  // there was any typing. `type()` refuses none of these — it focuses whatever
+  // it is given and sends the keys, so "yes" at a checkbox toggles nothing, a
+  // <select> changes option by type-ahead, a credential at a read-only field is
+  // audited as filled and submitted empty, a Tab moves focus so the rest of a
+  // secret lands in an unmarked neighbour, and a long value spends a round-trip
+  // per character against a host cap that kills the browser rather than the
+  // action.
+  it.each([
+    { what: "a node that takes a value but not keystrokes (a date input)", scenario: "not_typeable" },
+    { what: "a value carrying a key rather than a character", scenario: "key_char" },
+    { what: "a value longer than a credential could be", scenario: "too_long" },
+  ])("assigns $what", ({ scenario }) => {
+    expect(probed[scenario].trace).toEqual([
       "frame.wait_for_selector",
       "handle.evaluate:mark",
       "handle.fill",
     ]);
-    expect(probed.not_typeable.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+    expect(probed[scenario].result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+  });
+
+  it("hands back the refusal of a node that will not take a value at all", () => {
+    // A read-only field, a checkbox, a <select>: `fill()` refuses them, and that
+    // refusal is the whole reason assignment is the fallback. Reporting one as
+    // filled would leave the mask on and ledgered over a node nothing was
+    // written to, and the agent submitting a form it believes it completed.
+    const refused = probed.fill_refused;
+    expect(refused.error).toBe("RuntimeError");
+    expect(refused.trace).toEqual([
+      "frame.wait_for_selector",
+      "handle.evaluate:mark",
+      "handle.fill-failed",
+      "handle.evaluate:unmark",
+    ]);
+    expect(refused.marked).toBe(false);
+    expect(refused.value_kept).toBe(true);
+    expect(refused.ledgered).toBe(false);
   });
 
   it("keeps the mark on when a visible fill fails", () => {
