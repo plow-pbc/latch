@@ -20,7 +20,7 @@ afterEach(async () => {
 
 function makeHost(
   env: Record<string, string> = {},
-  extra: Partial<{ startTimeoutMs: number; actionTimeoutMs: number }> = {},
+  extra: Partial<{ startTimeoutMs: number; actionTimeoutMs: number; command: string[] }> = {},
 ): {
   host: BrowserHost;
   events: string[];
@@ -77,13 +77,10 @@ describe("BrowserHost", () => {
     // pins is the answer, not the letting go — nothing here can observe a
     // destroyed descriptor, so the release() call in that branch stays a
     // reasoned invariant rather than a checked one.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-host-"));
-    const host = new BrowserHost({
-      command: [path.join(dir, "nonexistent-camoufox")],
-      screenshotsDir: path.join(dir, "shots"),
-    });
+    const { host } = makeHost({}, { command: [path.join(os.tmpdir(), "domo-nonexistent-camoufox")] });
     await expect(host.ensureReady()).rejects.toThrow(/failed to spawn/);
-    host.resetBreaker();
+    // Twice, with no breaker reset in between: a spawn that never happened
+    // leaves the host able to try again.
     await expect(host.ensureReady()).rejects.toThrow(/failed to spawn/);
   });
 

@@ -344,8 +344,9 @@ export class BrowserHost {
         // it is let go once that has been read — a tick later in the crash
         // branch below, or in shutdown() after the awaited goodbye when the
         // stop was a deliberate one. A browser that never said hello has no
-        // goodbye to wait for and is let go straight away. Either way it goes through release(); see its call
-        // sites rather than a list kept in prose here.
+        // goodbye to wait for and is let go straight away. Either way it goes
+        // through release(); see its call sites rather than a list kept in
+        // prose here.
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
