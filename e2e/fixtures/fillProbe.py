@@ -169,12 +169,15 @@ class Frame:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", hides=False, detached=False,
-                 typeable=True, fill_refuses=False):
+                 typeable=True, fill_refuses=False, click_fails=False):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
         self.hides = hides
         self.detached = detached
+        # A frame that has the selector and will not take the click: what makes
+        # the loop go on to the next holder instead of stopping at the first.
+        self.click_fails = click_fails
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
@@ -210,7 +213,13 @@ class Frame:
         self.trace.append("frame.fill")
 
     def click(self, selector, timeout=None):
-        self.trace.append("frame.click")
+        # The budget this attempt was handed, not just that one happened: the
+        # loop divides a click's budget among the frames holding the selector,
+        # and a share too small to move the pointer in is a click that cannot
+        # land however ready the page is.
+        self.trace.append("frame.click:%d" % (timeout or 0))
+        if self.click_fails:
+            raise RuntimeError("%s never became clickable" % selector)
 
 
 class Page:
@@ -291,6 +300,25 @@ def ranked(server, with_holder=True, holder_first=True):
         out["error"] = type(exc).__name__
     out["tried"] = trace.count("frame.wait_for_selector")
     return out
+
+
+def clicked(server, holders, budget_ms):
+    """How a click's budget is spent across the frames that hold the selector.
+
+    Every holder refuses, so the loop tries all of them and the trace carries
+    what each was given. Nothing else can answer this: the arithmetic is over a
+    monotonic deadline and a frame list, and the browser is not involved.
+    """
+    trace: list[str] = []
+    frames = [Frame(trace, nodes={"#go": Handle(trace)}, click_fails=True)
+              for _ in range(holders)]
+    session = server.Session(Page(Frame(trace, nodes={}), extra_frames=frames))
+    try:
+        session.handle({"action": "click", "selector": "#go", "timeout_ms": budget_ms}, "/tmp")
+    except Exception:  # noqa: BLE001 -- every holder refuses, by construction
+        pass
+    given = [int(t.split(":")[1]) for t in trace if t.startswith("frame.click:")]
+    return {"tried": len(given), "smallest": min(given) if given else 0}
 
 
 def ledger(server, script):
@@ -426,6 +454,10 @@ def main() -> int:
         # A visible fill that fails: the node still holds whatever was in it,
         # which may be the last secret, so the mark must still be there.
         "plain_failed": run(server, base, detach_before_fill=True, marked=True),
+        # A budget divided among holders: every one of them is tried, and none
+        # is handed less than the pointer needs to reach it.
+        "click_shared": clicked(server, holders=3, budget_ms=1500),
+        "click_alone": clicked(server, holders=1, budget_ms=1500),
         "ranked": ranked(server),
         "ranked_only_gone": ranked(server, with_holder=False),
         "ranked_gone_first": ranked(server, holder_first=False),

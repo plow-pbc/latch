@@ -531,6 +531,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         };
       };
       ranked: { error: string | null; tried: number };
+      click_shared: { tried: number; smallest: number };
+      click_alone: { tried: number; smallest: number };
       ranked_only_gone: { error: string | null; tried: number };
       ranked_gone_first: { error: string | null; tried: number };
     }>(FILL_PROBE);
@@ -549,6 +551,20 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "handle.type",
     ]);
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+  });
+
+  it("tries every frame that holds the selector, with room to reach each one", () => {
+    // The pointer travels inside the attempt, so an equal division can hand a
+    // frame less than the journey: on the smallest budget the device passes,
+    // three holders would get 500ms each — exactly the travel cap — and the
+    // click would expire mid-flight. Every holder is still tried; what changes
+    // is that none of them is handed a share it cannot move in.
+    expect(probed.click_shared.tried).toBe(3);
+    expect(probed.click_shared.smallest).toBeGreaterThanOrEqual(500);
+    // One holder is handed the whole budget, not a share of it — less whatever
+    // the scan itself spent getting there.
+    expect(probed.click_alone.tried).toBe(1);
+    expect(probed.click_alone.smallest).toBeGreaterThan(1400);
   });
 
   it("reports the frame that had the field, wherever the one that went away sits", () => {

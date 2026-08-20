@@ -100,11 +100,10 @@ SCAN_INTERVAL_MS = 50
 # movement entropy an interrogation-style defense samples is simply absent
 # (issue #86). A float sets that cap; `True` takes camoufox's own "up to 1.5s".
 #
-# The travel is spent INSIDE a click's timeout, not added to it, and a click's
-# budget is divided among the frames that hold the selector -- so this has to
-# leave a click room to land in the smallest budget the device will pass:
-# MIN_CLICK_TIMEOUT_MS, which is raised alongside it. Half a second still draws
-# a whole path; what it does not do is eat a budget.
+# The travel is spent INSIDE a click's timeout rather than added to it, so the
+# cap is a floor on what any attempt needs: the device's MIN_CLICK_TIMEOUT_MS is
+# set above it, and `_click` hands every frame it tries at least this much. Half
+# a second still draws a whole path; what it does not do is eat a budget.
 HUMANIZE_MAX_SECONDS = 0.5
 
 # Keystroke cadence, and the ceiling on what one value may spend on it. A field
@@ -623,15 +622,15 @@ class Session:
 
         last = None
         for tried, (i, fr) in enumerate(frames):
-            left = int((deadline - time.monotonic()) * 1000 / (len(frames) - tried))
-            # Humanized pointer travel is spent inside each attempt, so a budget
-            # divided among several holders can expire with the cursor still in
-            # flight. The share is not compared against the cap: the cap is a
-            # ceiling on the journey, not its cost, and refusing to try a frame
-            # that might well have taken the click is the worse answer. The
-            # device's floor is what guarantees room to move in the single-frame
-            # case the scan usually narrows to.
-            if left <= 0:
+            # Humanized pointer travel is spent INSIDE an attempt, so an equal
+            # division can hand a frame less than the journey and expire with the
+            # cursor still moving. Each attempt therefore gets at least the
+            # travel cap, borrowed from the shares below it: earlier frames spend
+            # generously, later ones inherit what is left, and no frame is ever
+            # skipped -- the budget as a whole is what runs out, which is the
+            # thing the answer below can say honestly.
+            remaining = int((deadline - time.monotonic()) * 1000)
+            if remaining <= 0:
                 # The selector IS somewhere -- the scan said so -- but the
                 # budget went on waiting for it. Saying "not found" here would
                 # be false and would send the agent looking elsewhere when what
@@ -641,6 +640,8 @@ class Session:
                     "found %s with no time left to click it" % sel
                 )
                 break
+            left = min(remaining, max(remaining // (len(frames) - tried),
+                                      int(HUMANIZE_MAX_SECONDS * 1000)))
             try:
                 fr.click(sel, timeout=left)
                 self.page.wait_for_timeout(1000)
