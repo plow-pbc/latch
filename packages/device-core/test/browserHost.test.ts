@@ -98,8 +98,14 @@ describe("BrowserHost", () => {
     host.onCrash = () => crashes++;
     await host.sendAction({ action: "click", selector: "#blocked" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
+    // In flight fails at once; the crash notice waits for the child's pipes to
+    // end, because the session closes its books inside it and the browser's
+    // last line may still be on its way.
+    expect(crashes).toBe(0);
+    for (let i = 0; i < 50 && crashes === 0; i++) {
+      await new Promise((r) => setTimeout(r, 1));
+    }
     expect(events).toContain("browser_crashed");
-    // The session layer is told, so it can close its books.
     expect(crashes).toBe(1);
     // Next action restarts a fresh server (state reset to about:blank), and a
     // new browser saw none of the dead one's traffic.

@@ -90,6 +90,20 @@ afterEach(async () => {
 
 const AGENT = "agent-1";
 
+/** The refusal "#blocked-later" scripts: it settles after the click answered,
+ * so it arrives on the owner's viewer poll with no action left to carry it. */
+const LATE_REFUSAL = {
+  status: 401, method: "GET",
+  origin: "https://pizza.example", initiator: "https://pizza.example",
+};
+
+/** Leave that refusal in the device, held for whatever comes next. */
+async function holdLateRefusal(sessions: BrowserSessions, host: BrowserHost, handle: string) {
+  await sessions.command(AGENT, handle, { action: "goto", url: "https://pizza.example/" });
+  await sessions.command(AGENT, handle, { action: "click", selector: "#blocked-later" });
+  expect(await host.viewFrame()).not.toBeNull();
+}
+
 async function openSession(origins: string[], metadata = true): Promise<string> {
   const r = jv(await ctx.sessions.open("int-1", AGENT, origins, metadata));
   expect(r.get("status").str).toBe("completed");
@@ -121,20 +135,13 @@ describe("session lifecycle", () => {
     const s = await openSession(["pizza.example"]);
     // A refusal the device is holding when the browser dies belongs on the
     // closing line as much as on an orderly close.
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked-later" });
-    expect(await ctx.host.viewFrame()).not.toBeNull();
+    await holdLateRefusal(ctx.sessions, ctx.host, s);
     // What DeviceAgent's host.onCrash wiring calls when the browser dies.
     ctx.sessions.noteCrash();
     const closed = ctx.events.find((e) => e.event === "browser_session_closed");
     expect(closed?.fields.session).toBe(s);
     expect(closed?.fields.reason).toBe("crashed");
-    expect(closed?.fields.failed_requests).toEqual([
-      {
-        status: 401, method: "GET", origin: "https://pizza.example",
-        initiator: "https://pizza.example",
-      },
-    ]);
+    expect(closed?.fields.failed_requests).toEqual([LATE_REFUSAL]);
     expect(ctx.sessions.current()).toBeNull();
     // The handle died with the browser.
     const r = jv(await ctx.sessions.command(AGENT, s, { action: "url" }));
@@ -341,20 +348,12 @@ describe("requests the site refused", () => {
 
   it("puts what the device is still holding on the closing line", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    // Scripted: "#blocked-later" is a refusal that settles after the click
-    // answered, so it arrives on the viewer poll with no action left to carry
-    // it out. The owner's log is promised every entry the device received.
-    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked-later" });
-    expect(await ctx.host.viewFrame()).not.toBeNull();
+    // Nothing follows to carry it out, and the owner's log is promised every
+    // entry the device received.
+    await holdLateRefusal(ctx.sessions, ctx.host, s);
     await ctx.sessions.close(s, "agent");
     const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
-    expect(closed?.fields.failed_requests).toEqual([
-      {
-        status: 401, method: "GET", origin: "https://pizza.example",
-        initiator: "https://pizza.example",
-      },
-    ]);
+    expect(closed?.fields.failed_requests).toEqual([LATE_REFUSAL]);
   });
 
   it("lets a page's failing frames crowd out the one the agent could have used", async () => {
@@ -618,17 +617,10 @@ describe("access the owner's log could not record is not granted", () => {
     // A refusal the device is holding when the shutdown throws is exactly when
     // the last thing the page said is worth having, so the closing line is
     // written either way.
-    await sessions.command(AGENT, handle, { action: "goto", url: "https://pizza.example/" });
-    await sessions.command(AGENT, handle, { action: "click", selector: "#blocked-later" });
-    expect(await host.viewFrame()).not.toBeNull();
+    await holdLateRefusal(sessions, host, handle);
     await expect(sessions.close(handle, "agent")).rejects.toThrow(/audit append failed/);
     const closed = events.filter((e) => e.event === "browser_session_closed").pop();
-    expect(closed?.fields.failed_requests).toEqual([
-      {
-        status: 401, method: "GET", origin: "https://pizza.example",
-        initiator: "https://pizza.example",
-      },
-    ]);
+    expect(closed?.fields.failed_requests).toEqual([LATE_REFUSAL]);
 
     const retry = jv(await sessions.open("int-2", AGENT, ["pizza.example"], true));
     expect(retry.get("status").str).toBe("completed");

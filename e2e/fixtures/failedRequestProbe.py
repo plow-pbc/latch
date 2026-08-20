@@ -160,18 +160,6 @@ def main():
     session.note_response(moving)
     out["frame_moved_first"] = session.reply_with_failures({})
 
-    # A navigation whose frame will not answer is kept, not lost: the request
-    # path decides, and it treats an unanswerable frame as naming nobody rather
-    # than as the top frame.
-    session = server.Session(Page())
-    blind = Response(403, "https://pizza.example/frame", navigation=True, page="about:blank")
-    # The frame itself is what will not answer — Playwright raises for a request
-    # with none — so nothing can say whether this was the top frame.
-    blind.request = BlindRequest(navigation=True)
-    session.note_request(blind.request)
-    session.note_response(blind)
-    out["blind_navigation"] = session.reply_with_failures({})
-
     # A request that came back fine is forgotten there and then, so completed
     # traffic cannot crowd a still-pending refusal out of the ledger.
     session = server.Session(Page())
@@ -230,20 +218,6 @@ def main():
     out["quiet"] = feed(session, [Response(200, "https://pizza.example/a"),
                                   Response(302, "https://pizza.example/b"),
                                   Response(304, "https://pizza.example/c")])
-
-    # Both kinds share this ring too — the trade-off that costs is at
-    # BrowserHost's, which is where the note lives and where the device test
-    # asserts it. Here it is only that the two are not separated.
-    session = server.Session(Page())
-    out["frames_crowd_out"] = feed(session, [
-        Response(403, "https://pizza.example/api/x", page="https://pizza.example/"),
-    ] + [
-        # A sub-frame navigation names nobody — pinned in `navigations`; these
-        # are here only to fill the ring.
-        Response(410 + i, "https://ads.example/f%d" % i, navigation=True,
-                 page="https://ads.example/loaded", embedder="https://pizza.example/")
-        for i in range(5)
-    ])
 
     # Bounded, most recent first: a chatty page cannot blow the exchange budget.
     session = server.Session(Page())

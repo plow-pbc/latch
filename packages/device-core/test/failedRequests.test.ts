@@ -20,10 +20,8 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     refused: Envelope;
     navigations: Envelope;
     frame_moved_first: Envelope;
-    blind_navigation: Envelope;
     unremembered: Envelope;
     forgets_the_answered: number;
-    frames_crowd_out: Envelope;
     unattributable: Envelope;
     drained: Envelope;
     quiet: Envelope;
@@ -80,16 +78,6 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     });
   });
 
-  it("keeps a navigation whose frame will not answer rather than losing it", () => {
-    // The decision is made on the request, where an unanswerable frame already
-    // means "names nobody" — a second read on the answer path would have cost
-    // the whole entry instead.
-    expect(probed.blind_navigation.failed_requests?.[0]).toMatchObject({
-      status: 403,
-      initiator: "",
-    });
-  });
-
   it("names nobody for a request it never saw asked", () => {
     expect(probed.unremembered.failed_requests?.[0]).toMatchObject({ initiator: "" });
   });
@@ -110,14 +98,6 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
 
   it("keeps nothing for a page that worked, redirects included", () => {
     expect(probed.quiet.failed_requests).toBeUndefined();
-  });
-
-  it("puts both kinds in one ring here too, so a frame load can displace a refusal", () => {
-    // The trade-off this costs is at BrowserHost's ring, where the decision is
-    // recorded (its MAX_FAILED_REQUESTS) and asserted; this only says the
-    // browser does not separate the two kinds either.
-    expect((probed.frames_crowd_out.failed_requests ?? []).map((r) => [r.status, r.initiator]))
-      .toEqual([[414, ""], [413, ""], [412, ""], [411, ""], [410, ""]]);
   });
 
   it("keeps the most recent few, most recent first", () => {

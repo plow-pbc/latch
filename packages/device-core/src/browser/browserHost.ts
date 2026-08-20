@@ -304,7 +304,6 @@ export class BrowserHost {
       });
 
       child.on("exit", (code, signal) => {
-        rl.close();
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
@@ -314,8 +313,15 @@ export class BrowserHost {
         }
         this.pending.clear();
         if (wasReady && !this.shuttingDown) {
-          this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
-          this.onCrash?.();
+          // On `close`, not here: exit fires before the child's stdout has
+          // necessarily been read, and the session closes its books inside
+          // onCrash — so the last thing the browser said would be lost. Waiting
+          // for the pipes to end costs nothing; the calls above have already
+          // failed everything that was in flight.
+          child.once("close", () => {
+            this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
+            this.onCrash?.();
+          });
         }
         if (!ready) {
           ready = true; // don't double-settle
