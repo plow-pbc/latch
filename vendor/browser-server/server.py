@@ -508,9 +508,10 @@ class Session:
                             # happened to leave fails on the clock rather than
                             # on anything about the page, and the watcher never
                             # gets to say what happened. The price is paid by
-                            # the fallback below, where nothing held the
-                            # selector and the wait is really waiting: it gets
-                            # half a slice to see the element appear. That is
+                            # the fallback above -- nothing held the selector,
+                            # so every frame is tried and the wait is really
+                            # waiting: it gets half a slice to see the element
+                            # appear. That is
                             # the intended trade -- when a frame does hold the
                             # selector, which is the path this exists for, the
                             # wait returns at once and the click has the slice.
