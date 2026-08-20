@@ -9,12 +9,7 @@
  * `server.py` evaluates against a stub document — no Python, no browser.
  */
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
-import { fileURLToPath } from "node:url";
-
-const SERVER_PY = fileURLToPath(
-  new URL("../../../vendor/browser-server/server.py", import.meta.url),
-);
+import { runInScope } from "./serverScript.js";
 
 /** Values planted in the stub page. Never asserted on — only searched for. */
 const SECRETS = ["hunter2", "4111111111111111", "737"];
@@ -28,29 +23,16 @@ interface Field {
   filled: boolean;
 }
 
-/** The `FIELD_JS` literal, lifted from the server so the test can't drift. */
-function loadScanner(): (doc: unknown) => Field[] {
-  const src = fs.readFileSync(SERVER_PY, "utf8");
-  const m = /^FIELD_JS = """([\s\S]*?)"""$/m.exec(src);
-  if (!m) throw new Error("FIELD_JS literal not found in server.py");
-  // The literal reads `location.href` alongside the fields so the two cannot
-  // disagree; the stub supplies one and the scan's own answer is `.fields`.
-  const fn = new Function("document", "location", `return (${m[1]})().fields;`);
-  return ((doc: unknown) =>
-    (fn as (d: unknown, l: unknown) => Field[])(doc, { href: "https://stub.example/" })) as (
-    doc: unknown,
-  ) => Field[];
-}
+/** The scan's whole answer: its document's URL beside its fields. */
+type Scan = (doc: unknown, loc: unknown) => { url: string; fields: Field[] };
 
-/** The whole answer, not just its fields — see the contract test below. */
-function loadScanRaw(): (doc: unknown, loc: unknown) => { url: string; fields: Field[] } {
-  const src = fs.readFileSync(SERVER_PY, "utf8");
-  const m = /^FIELD_JS = """([\s\S]*?)"""$/m.exec(src);
-  if (!m) throw new Error("FIELD_JS literal not found in server.py");
-  return new Function("document", "location", `return (${m[1]})();`) as (
-    doc: unknown,
-    loc: unknown,
-  ) => { url: string; fields: Field[] };
+const loadScanRaw = (): Scan =>
+  runInScope<{ url: string; fields: Field[] }>("FIELD_JS", "document", "location") as Scan;
+
+/** Just the fields, for the cases that are about what a field reports. */
+function loadScanner(): (doc: unknown) => Field[] {
+  const scan = loadScanRaw();
+  return (doc) => scan(doc, { href: "https://stub.example/" }).fields;
 }
 
 interface Stub {
@@ -150,18 +132,12 @@ describe("forms field scan", () => {
     // frame, and the token says "still this document" when the value comes
     // back. Read separately, a navigation between them puts one document's
     // element behind another document's origin.
-    const src = fs.readFileSync(SERVER_PY, "utf8");
-    const m = /^DOC_WHERE_JS = """([\s\S]*?)""" % DOC_TOKEN_JS$/m.exec(src);
-    if (!m) throw new Error("DOC_WHERE_JS literal not found in server.py");
-    const token = /^DOC_TOKEN_JS = """([\s\S]*?)"""$/m.exec(src);
-    if (!token) throw new Error("DOC_TOKEN_JS literal not found in server.py");
-
-    const composed = m[1].replace("%s", token[1]);
     const win: Record<string, unknown> = {};
-    const run = new Function("window", "location", `return (${composed})();`) as (
-      w: unknown,
-      l: unknown,
-    ) => { url: string; token: string };
+    const run = runInScope<{ url: string; token: string }>(
+      "DOC_WHERE_JS",
+      "window",
+      "location",
+    );
 
     const first = run(win, { href: "https://payframe.example/card?tok=abc" });
     expect(first.url).toBe("https://payframe.example/card?tok=abc");

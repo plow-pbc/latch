@@ -18,15 +18,13 @@ import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
 import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-core";
 import { havePython, runProbe } from "./pythonProbe.js";
+import { loadScript, runInScope } from "./serverScript.js";
 
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
 );
 const FAKE_BROKER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeVaultBroker.cjs", import.meta.url),
-);
-const SERVER_PY = fileURLToPath(
-  new URL("../../../vendor/browser-server/server.py", import.meta.url),
 );
 const FILL_PROBE = fileURLToPath(new URL("../../../e2e/fixtures/fillProbe.py", import.meta.url));
 
@@ -727,13 +725,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 });
 
-/** A `"""…"""` literal, lifted from the server so the test can't drift. */
-function loadScript(name: string): (el: unknown) => unknown {
-  const src = fs.readFileSync(SERVER_PY, "utf8");
-  const m = new RegExp(`^${name} = """([\\s\\S]*?)"""$`, "m").exec(src);
-  if (!m) throw new Error(`${name} literal not found in server.py`);
-  return new Function(`return (${m[1]})`)() as (el: unknown) => unknown;
-}
+
 
 interface StubEl {
   attrs: Record<string, string>;
@@ -832,8 +824,8 @@ function stubPage(
 }
 
 describe("the mark the page ends up carrying", () => {
-  const mark = loadScript("MASK_JS") as (el: StubEl) => string;
-  const unmark = loadScript("UNMASK_JS") as (el: StubEl) => boolean;
+  const mark = loadScript<(el: StubEl) => string>("MASK_JS");
+  const unmark = loadScript<(el: StubEl) => boolean>("UNMASK_JS");
 
   it("puts the attribute the forms scan looks for on the element, and nothing else", () => {
     const page = stubPage();
@@ -904,16 +896,14 @@ describe("the mark the page ends up carrying", () => {
   it("lets the forms scan report a cleared node normally again", () => {
     // The other half of a stale mark: `forms` keys on the attribute, so a node
     // that was a password and is now a username has to read as a username.
-    const src = fs.readFileSync(SERVER_PY, "utf8");
-    const m = /^FIELD_JS = """([\s\S]*?)"""$/m.exec(src);
-    if (!m) throw new Error("FIELD_JS literal not found in server.py");
     // `.fields`, and a stub `location`: the scan reads its document's own URL
     // from inside the same evaluation so the two cannot disagree.
-    const run = new Function("document", "location", `return (${m[1]})().fields;`) as (
-      doc: unknown,
-      loc: unknown,
-    ) => { value: string; secret: boolean; filled: boolean }[];
-    const scan = (doc: unknown) => run(doc, { href: "https://pizza.example/" });
+    const run = runInScope<{ fields: { value: string; secret: boolean; filled: boolean }[] }>(
+      "FIELD_JS",
+      "document",
+      "location",
+    );
+    const scan = (doc: unknown) => run(doc, { href: "https://pizza.example/" }).fields;
 
     const page = stubPage();
     const el = page.el();

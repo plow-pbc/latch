@@ -143,8 +143,7 @@ class Frame:
         return self.handle if self.nodes is None else self.nodes.get(selector)
 
     def evaluate(self, expression, *args, **kwargs):
-        if "location.href" in expression and "__domoDocumentToken" in expression:
-            return {"url": "https://pizza.example/login", "token": self.document_token}
+        # DOC_WHERE_JS is only ever evaluated on an element handle, never here.
         if "__domoDocumentToken" in expression:
             return self.document_token
         # The forms scanner, over no fields. It reads its document's own URL
