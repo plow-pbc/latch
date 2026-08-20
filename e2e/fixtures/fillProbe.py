@@ -238,7 +238,6 @@ class Frame:
         return node
 
 
-
 class Page:
     def __init__(self, frame, extra_frames=()):
         self.url = "https://pizza.example/login"
