@@ -400,8 +400,10 @@ describe("browser tools (fake runtime)", () => {
     // The owner's log carries it too, and the active page — which never left
     // scope — keeps its content, unlike the branch where the driven page strays.
     expect(audited(device, "browser_scope_violation", "origin")).toEqual(["popup.example"]);
-    // The active page never left scope, so it is not locked — unlike the
-    // branch where the driven page strays, which strips content and refuses.
+    // End-to-end: the session is not locked, unlike the branch where the
+    // driven page strays. This does not constrain what `popped` itself
+    // carried — nothing here does, and the fake server's click returns no
+    // content to constrain.
     const still = await act(server, session, "text");
     expect(still.isError).toBe(false);
     expect(String(still.payload.text)).toContain("pizza.example/menu");
