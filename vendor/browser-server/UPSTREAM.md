@@ -24,6 +24,13 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     single action answers inside Domo's 15 s host cap and the relay's ~20 s
     per-exchange ceiling; a genuinely slower page fails cleanly and the agent
     retries rather than parking a torn 504.
+  - Element actions default to a 3 s timeout (`DEFAULT_ACTION_TIMEOUT_MS`) for
+    the same budget. `click` takes a caller-supplied `timeout_ms`, bounding the
+    WHOLE action rather than each frame the loop tries — the device clamps it to
+    11 s (a second under the `wait` ceiling, for the 1 s post-click settle) so N
+    frames still answer inside the caps. It exists so a click on a page that is
+    still settling has an answer other than `eval`, whose synthesized clicks
+    carry `isTrusted: false` and are what gets a session flagged.
   - Started directly by the Domo device supervisor — no CLI, no `os.fork`, no
     fixed 4 s sleep, no `.state.json`, no Unix socket.
   - JSON lines over **stdio** with request ids; original stdout is dup'ed as

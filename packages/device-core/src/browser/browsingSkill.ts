@@ -5,6 +5,7 @@
  * vendor/browser-server/UPSTREAM.md).
  */
 import { Skill } from "../skills.js";
+import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
 
 export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
@@ -60,7 +61,16 @@ url, title, links, forms, tables, pages.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after
   you've seen the page. \`forms\` lists every input across frames with labels; \`fill\`
   searches all frames (pass \`frame\` to target one).
-- Cookie banners/modals: \`eval 'document.querySelector("[id*=cookie] button, [class*=consent] button")?.click()'\`.
+- **A click that fails is not a reason to reach for \`eval\`.** A click \`eval\` synthesizes
+  arrives with \`isTrusted: false\`, which is exactly what a site's bot defenses look for —
+  and the click you route around is usually the one that gets the session flagged. Give the
+  click a longer \`timeout_ms\` instead (up to ${MAX_CLICK_TIMEOUT_MS}) when the page is
+  still settling.
+- **A click nothing can reach is telling you something.** When a cookie banner or a modal
+  backdrop is over the element, the failure names it ("<div class=\"modal-backdrop show\">
+  intercepts pointer events") — and no click gets through it, because a person's would not
+  either. Screenshot, then click the banner's or modal's own button: a real click on
+  whatever is on top lands.
 - Captcha/blocked: tell the user; try an alternative site.
 
 ## Credentials (logins, cards, identities) — the value is never handed back to you

@@ -146,4 +146,95 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(opAudit).toContain("RELEASED");
     expect(opAudit).not.toContain("pizza-time-99");
   }, 300_000);
+
+  // Issue #88. The claim that cannot be faked and is the whole point: a click
+  // Playwright dispatches is trusted, and one synthesized in `eval` is not.
+  it("clicks a page a stuck agent would have reached for eval on", async () => {
+    const opened = await callTool(
+      server, "plow_browser_open",
+      { origins: ["127.0.0.1"], headed: false, goal: "get past a modal backdrop" },
+      AGENT,
+    );
+    expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
+    session = opened.payload.session as string;
+    const text = async () => (await act("text")).payload.text as string;
+
+    // Three ways a click arrives too early, one row each. The page has four
+    // frames and a click's budget covers the whole action, so what is really
+    // under test is that the budget goes on watching every frame for the thing
+    // to become clickable — not on waiting in each frame in turn, which spends
+    // a quarter of it blind to the other three.
+    const clearBackdrop = "document.querySelector('.modal-backdrop').remove();";
+    const cover = (ms: number) =>
+      "const c = document.createElement('div');" +
+      "c.style.cssText = 'position:fixed;inset:0';" +
+      `document.body.appendChild(c); setTimeout(() => c.remove(), ${ms})`;
+    const arrivals = [
+      // A cover that clears at 1.2 s — already past the quarter a naive split
+      // would give the frame that matters.
+      { label: "cover clears at 1.2s", selector: "#continue", timeout: undefined,
+        setup: cover(1200) },
+      // …and one that clears at 4 s, past the 3 s the tool allowed at all
+      // before this change. This is the recovery `timeout_ms` exists for.
+      { label: "cover clears at 4s, timeout_ms 6000", selector: "#continue", timeout: 6000,
+        setup: cover(4000) },
+      // The element itself arriving late, rather than being uncovered.
+      { label: "element returns at 1s", selector: "#continue", timeout: undefined,
+        setup: "const b = document.getElementById('continue'); b.remove();" +
+               "setTimeout(() => document.body.appendChild(b), 1000)" },
+    ];
+    for (const { label, selector, timeout, setup } of arrivals) {
+      await act("goto", { url: site.url + "/blocked" });
+      await act("eval", { expression: clearBackdrop + setup });
+      await act("click", { selector, ...(timeout === undefined ? {} : { timeout_ms: timeout }) });
+      expect(await text(), label).toContain("clicked isTrusted=true");
+    }
+
+    // The other side of that: a frame injected while the click waits is NOT
+    // eligible. The owner approved origins for the page the device could see,
+    // and a page that knows a click is in flight could otherwise race a frame
+    // carrying the same selector into the DOM (issue #95). What has to hold is
+    // that the frame arrives AFTER the click has taken its list — 2 s in,
+    // against a 5 s budget, so neither end of that ordering is marginal.
+    await act("goto", { url: site.url + "/blocked" });
+    await act("eval", {
+      expression:
+        clearBackdrop +
+        "setTimeout(() => {" +
+        "  const f = document.createElement('iframe');" +
+        "  f.src = '/late'; document.body.appendChild(f);" +
+        "}, 2000)",
+    });
+    const injected = await act("click", { selector: "#late", timeout_ms: 5000 }, false);
+    expect(injected.isError).toBe(true);
+    expect(JSON.stringify(injected.payload)).toContain("no frame has #late");
+    // …and the same click once the frame is part of the page the command sees.
+    // Without this the refusal above would read identically if the injection
+    // had never happened at all — a renamed route, a typo, a 404. Note what it
+    // pins: the freeze is per COMMAND, so a frame that arrived mid-wait is
+    // ordinary on the next one. If #95 ever makes eligibility origin-scoped,
+    // this line is expected to change rather than being a contract to defend.
+    await act("click", { selector: "#late" });
+
+    await act("goto", { url: site.url + "/blocked" });
+
+    // The shape the Costco log has: visible, enabled, stable — and unclickable.
+    // No click gets through a backdrop; the failure names it, which is what the
+    // agent needs to know instead of reaching for `eval`.
+    const blocked = await act("click", { selector: "#continue", timeout_ms: 1000 }, false);
+    expect(blocked.isError).toBe(true);
+    expect(JSON.stringify(blocked.payload)).toContain("intercepts pointer events");
+    expect(await text()).toContain("no click yet");
+
+    // The way through: deal with what is in the way, with a real click.
+    await act("click", { selector: "#dismiss" });
+    await act("click", { selector: "#continue" });
+    expect(await text()).toContain("clicked isTrusted=true");
+
+    // And the fallback all of this exists to replace: the page can tell.
+    await act("eval", { expression: "document.querySelector('#continue').click()" });
+    expect(await text()).toContain("clicked isTrusted=false");
+
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+  }, 300_000);
 });
