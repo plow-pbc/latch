@@ -74,9 +74,11 @@ function withFailures(reply) {
   return carried.length === 0 ? reply : { ...reply, failed_requests: carried };
 }
 
-function respond(obj) {
+function respond(obj, flushed) {
   if (process.env.GARBAGE === "1") process.stdout.write("firefox noise: not json\n");
-  process.stdout.write(JSON.stringify(obj) + "\n");
+  // The callback matters on the way out: a pipe write is async on macOS, and
+  // exiting on top of one truncates the last thing this server said.
+  process.stdout.write(JSON.stringify(obj) + "\n", flushed);
 }
 
 function handle(cmd) {
@@ -269,7 +271,15 @@ function main() {
     }
     state.commands++;
     if (process.env.CRASH_AFTER && state.commands > Number(process.env.CRASH_AFTER)) {
-      process.exit(9);
+      // A last word on the way out: a real browser can answer a request and die
+      // before the device has read the line.
+      respond({
+        failed_requests: [{
+          status: 503, method: "GET", origin: "https://pizza.example",
+          initiator: "https://pizza.example",
+        }],
+      }, () => process.exit(9));
+      return;
     }
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.

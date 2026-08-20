@@ -3,7 +3,7 @@
  * correlation, garbage tolerance, crash → reject + lazy restart, circuit
  * breaker, start timeout, and group shutdown.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -94,19 +94,23 @@ describe("BrowserHost", () => {
 
   it("rejects pending on crash and lazily restarts", async () => {
     const { host, events } = makeHost({ CRASH_AFTER: "1" });
+    // What the dying browser said last, as the session sees it: the notice is
+    // where the books are closed, so the line has to be there by then.
+    let heldAtCrash: unknown[] = [];
     let crashes = 0;
-    host.onCrash = () => crashes++;
+    host.onCrash = () => {
+      crashes++;
+      heldAtCrash = host.takeFailedRequests();
+    };
     await host.sendAction({ action: "click", selector: "#blocked" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
-    // In flight fails at once; the crash notice waits for the child's pipes to
-    // end, because the session closes its books inside it and the browser's
-    // last line may still be on its way.
-    expect(crashes).toBe(0);
-    for (let i = 0; i < 50 && crashes === 0; i++) {
-      await new Promise((r) => setTimeout(r, 1));
-    }
+    await vi.waitFor(() => expect(crashes).toBe(1));
     expect(events).toContain("browser_crashed");
-    expect(crashes).toBe(1);
+    // Its last word is in there. Whether the deferral was needed to get it
+    // there depends on which of exit and the stdout read the kernel dispatches
+    // first, so this covers the path rather than pinning the mechanism — the
+    // deferral is what makes the order stop mattering.
+    expect((heldAtCrash as { status: number }[]).map((r) => r.status)).toContain(503);
     // Next action restarts a fresh server (state reset to about:blank), and a
     // new browser saw none of the dead one's traffic.
     const r = await host.sendAction({ action: "url" });

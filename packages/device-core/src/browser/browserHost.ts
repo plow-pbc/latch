@@ -59,6 +59,10 @@ interface Pending {
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
+/** Longest the crash notice waits for the dying browser's last line — the pipes
+ * ending is the signal, this is the backstop for a grandchild holding them. */
+const CRASH_NOTICE_GRACE_MS = 250;
+
 /** How many refused requests the host holds for the next agent action. This is
  * the bound that bites: the browser's own ring is drained by every reply, most
  * of which are the device's own, while these accumulate until an agent action
@@ -313,15 +317,22 @@ export class BrowserHost {
         }
         this.pending.clear();
         if (wasReady && !this.shuttingDown) {
-          // On `close`, not here: exit fires before the child's stdout has
-          // necessarily been read, and the session closes its books inside
-          // onCrash — so the last thing the browser said would be lost. Waiting
-          // for the pipes to end costs nothing; the calls above have already
-          // failed everything that was in flight.
-          child.once("close", () => {
+          // Not here: exit fires before the child's stdout has necessarily been
+          // read, and the session closes its books inside onCrash — so the last
+          // thing the browser said would be lost. Whichever comes first, the
+          // pipes ending or a short grace: a Firefox grandchild can hold them
+          // open for as long as it likes, and a session left open against a
+          // dead browser is worse than a missed line. And not at all if a new
+          // browser has started meanwhile — its ring is not this one's.
+          let notified = false;
+          const notify = () => {
+            if (notified || this.child !== null) return;
+            notified = true;
             this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
             this.onCrash?.();
-          });
+          };
+          child.once("close", notify);
+          setTimeout(notify, CRASH_NOTICE_GRACE_MS).unref?.();
         }
         if (!ready) {
           ready = true; // don't double-settle
