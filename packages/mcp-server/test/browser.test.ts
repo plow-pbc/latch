@@ -343,8 +343,9 @@ describe("browser tools (fake runtime)", () => {
     // would carry it to that origin on the first click or redirect, ahead of
     // the post-action scope lock. The state the queue's third interleaving —
     // an open arriving inside a widening — would corrupt is what this asserts,
-    // but sequentially: nothing here exercises that interleaving, which the
-    // queue prevents and the two races above are what pin.
+    // but sequentially: nothing here drives that interleaving, and no test
+    // does. The queue prevents it; what the two races above pin is the
+    // queue's serialization, which it relies on.
     const { server, device, argvLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
     const opening = profileKeyForOrigins(["pizza.example"]);
