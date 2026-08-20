@@ -141,7 +141,9 @@ class Frame:
     def evaluate(self, expression, *args, **kwargs):
         if "__domoDocumentToken" in expression:
             return self.document_token
-        return []          # the forms scanner, over no fields
+        # The forms scanner, over no fields. It reads its document's own URL
+        # from inside the same evaluation, so the answer carries both.
+        return {"url": "https://pizza.example/login", "fields": []}
 
     def query_selector(self, selector):
         return self._node(selector)

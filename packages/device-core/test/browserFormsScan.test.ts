@@ -33,8 +33,17 @@ function loadScanner(): (doc: unknown) => Field[] {
   const src = fs.readFileSync(SERVER_PY, "utf8");
   const m = /^FIELD_JS = """([\s\S]*?)"""$/m.exec(src);
   if (!m) throw new Error("FIELD_JS literal not found in server.py");
-  const fn = new Function("document", `return (${m[1]})();`);
-  return fn as (doc: unknown) => Field[];
+  // The literal reads `location.href` alongside the fields so the two cannot
+  // disagree; the stub supplies one and the scan's own answer is `.fields`.
+  const fn = new Function(
+    "document",
+    "location",
+    `return (${m[1]})().fields;`,
+  );
+  return ((doc: unknown) =>
+    (fn as (d: unknown, l: unknown) => Field[])(doc, { href: "https://stub.example/" })) as (
+    doc: unknown,
+  ) => Field[];
 }
 
 interface Stub {

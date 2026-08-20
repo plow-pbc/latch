@@ -907,9 +907,13 @@ describe("the mark the page ends up carrying", () => {
     const src = fs.readFileSync(SERVER_PY, "utf8");
     const m = /^FIELD_JS = """([\s\S]*?)"""$/m.exec(src);
     if (!m) throw new Error("FIELD_JS literal not found in server.py");
-    const scan = new Function("document", `return (${m[1]})();`) as (
+    // `.fields`, and a stub `location`: the scan reads its document's own URL
+    // from inside the same evaluation so the two cannot disagree.
+    const run = new Function("document", "location", `return (${m[1]})().fields;`) as (
       doc: unknown,
+      loc: unknown,
     ) => { value: string; secret: boolean; filled: boolean }[];
+    const scan = (doc: unknown) => run(doc, { href: "https://pizza.example/" });
 
     const page = stubPage();
     const el = page.el();

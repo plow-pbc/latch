@@ -59,7 +59,12 @@ DEFAULT_ACTION_TIMEOUT_MS = 3000
 # appear. The scan itself is instant; this is just how long it sleeps between.
 SCAN_INTERVAL_MS = 50
 
-FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
+# The document's own URL comes back from INSIDE the same evaluation as its
+# fields, so the two cannot disagree. Read separately, a frame that navigates in
+# between hands the client the old document's fields under the new document's
+# origin — and the client decides by that origin whether they may cross.
+FIELD_JS = """() => ({ url: location.href, fields:
+  Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
     if (!lab) lab = el.getAttribute("aria-label") || el.getAttribute("placeholder") || "";
@@ -78,7 +83,7 @@ FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea"
       secret: secret, filled: val.length > 0,
       value: secret ? "" : val.substring(0, 50)
     };
-  })"""
+  }) })"""
 
 LINKS_JS = """() => {
     const seen = new Set();
@@ -610,9 +615,10 @@ class Session:
                     got = fr.evaluate(FIELD_JS)
                 except Exception:
                     continue
-                for f in got:
+                for f in got["fields"]:
                     f["frame"] = i
-                    f["frame_url"] = fr.url
+                    # From the evaluation, not a second read of fr.url.
+                    f["frame_url"] = got["url"]
                     fields.append(f)
             return {"forms": fields}
 

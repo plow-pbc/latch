@@ -42,10 +42,9 @@ interface Session {
   lastActivity: number;
   lastUrl: string;
   knownPageCount: number;
-  /** First origin this session reached outside its grant, once it has. */
-  strayed: string | null;
-  /** Every such origin, so the same one is not recorded twice. */
-  strayedSeen: Set<string>;
+  /** Origins this session reached outside its grant, in the order it did.
+   * The first is what a response reports; a widening drops what it approves. */
+  strayed: Set<string>;
 }
 
 /** Actions allowed while the active page is out of scope: only what an agent
@@ -219,8 +218,7 @@ export class BrowserSessions {
       lastActivity: Date.now(),
       lastUrl: "",
       knownPageCount: 1,
-      strayed: null,
-      strayedSeen: new Set(),
+      strayed: new Set(),
     };
     // Same order as extend(), and for the same reason: a session the owner's
     // log has no event for is a browser they cannot see being used at all.
@@ -313,10 +311,7 @@ export class BrowserSessions {
     // now been approved for stops being reported as unreadable. The jar it
     // contaminated stays given up — that happened before the approval — but
     // every later response saying the page cannot be read would be false.
-    s.strayedSeen = new Set([...s.strayedSeen].filter((o) => !originMatches(o, widened)));
-    if (s.strayed !== null && originMatches(s.strayed, widened)) {
-      s.strayed = [...s.strayedSeen][0] ?? null;
-    }
+    s.strayed = new Set([...s.strayed].filter((o) => !originMatches(o, widened)));
     s.credentialItems = widenedItems;
     if (credentialMetadata) s.credentialMetadata = true;
     s.lastActivity = Date.now();
@@ -538,7 +533,7 @@ export class BrowserSessions {
     // persistent profile restored at launch is in none of those. The response
     // always names the page we are on. A duplicate costs one comparison.
     for (const u of [url, ...pages.map((p) => p.url)]) this.noteStray(s, u, action);
-    const strayedOrigin = s.strayed;
+    const strayedOrigin = [...s.strayed][0] ?? null;
 
     const navigated = url !== s.lastUrl;
     s.lastUrl = url;
@@ -717,11 +712,10 @@ export class BrowserSessions {
   private noteStray(s: Session, url: string, action?: { [k: string]: JSONValue }): void {
     if (url === "" || this.inScope(s, url)) return;
     const origin = hostOf(url) ?? url;
-    if (s.strayed === null) s.strayed = origin;
     // The same origin reaches here from more than one place — the browser
     // reports the navigation, and the response names the page it left us on.
-    const first = !s.strayedSeen.has(origin);
-    s.strayedSeen.add(origin);
+    const first = !s.strayed.has(origin);
+    s.strayed.add(origin);
     // Every append below is inside the guard, abandonProfile()'s own included:
     // this runs in the host's line reader, where a throw takes the process
     // down — and it would be taking it down over a retirement that had

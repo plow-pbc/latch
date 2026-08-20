@@ -64,7 +64,10 @@ url, title, links, forms, tables, pages.
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after
-  you've seen the page. \`forms\` lists every input across frames with labels; \`fill\`
+  you've seen the page. \`forms\` lists inputs across the frames of the page with labels —
+  a frame on an origin the owner has not approved is not among them, so if a payment or
+  login iframe seems to have no fields, ask for its origin with \`plow_browser_request\`
+  rather than concluding the page has none; \`fill\`
   searches all frames (pass \`frame\` to target one).
 - **A click that fails is not a reason to reach for \`eval\`.** A click \`eval\` synthesizes
   arrives with \`isTrusted: false\`, which is exactly what a site's bot defenses look for —
