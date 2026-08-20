@@ -156,7 +156,10 @@ export class VaultClient {
     // Every URL the form showed is checked, because every one of them is a URL
     // the owner just looked at; a login with none can never be filled.
     if (type === 1 && input.urls !== undefined) {
-      input = { ...input, urls: checkedUrls(input.urls) };
+      // A blank is an emptied row holding its position, not a URL to check.
+      const typed = checkedUrls(input.urls.filter((u) => u.trim() !== ""));
+      let at = 0;
+      input = { ...input, urls: input.urls.map((u) => (u.trim() === "" ? "" : typed[at++])) };
     }
     // Omitted means "leave it as it is"; supplied and blank means the owner
     // cleared the one field the list has to show, which is not a save.

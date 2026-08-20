@@ -41,6 +41,9 @@ let nextId = 1;
 /** Product Hunt's URL entries as they were before a site was removed. */
 let phUris = [];
 
+/** The URL list the form last sent, straight out of the renderer. */
+let sentUrls = null;
+
 function seed(input) {
   const id = `item-${nextId++}`;
   ciphers.set(id, { ...encryptCipher(input, null, account), id });
@@ -78,6 +81,7 @@ async function setUp() {
     decryptField(ciphers.get(itemId), account, field),
   );
   ipcMain.handle("vault:saveItem", async (_e, input) => {
+    sentUrls = input.urls ?? null;
     const existing = input.itemId ? ciphers.get(input.itemId) : null;
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
     const given =
@@ -182,6 +186,13 @@ const SCREENS = [
     after: async (win) => {
       await clickText(win, "Save");
       await settle(win);
+      // The renderer's half of the contract: the emptied row travels as a
+      // blank holding its place. Splice it out instead and two rows holding
+      // the same address become indistinguishable to the save.
+      const wantSent = ["https://www.producthunt.com", "", "https://api.producthunt.com"];
+      if (JSON.stringify(sentUrls) !== JSON.stringify(wantSent)) {
+        throw new Error(`form sent ${JSON.stringify(sentUrls)}, wanted the blank kept at its position: ${JSON.stringify(wantSent)}`);
+      }
       const item = ciphers.get("item-1");
       const urls = decryptItem(item, account).urls;
       const want = ["https://www.producthunt.com", "https://api.producthunt.com"];

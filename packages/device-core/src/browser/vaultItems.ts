@@ -267,29 +267,38 @@ export function encryptCipher(
   cipher.card = null;
   cipher.identity = null;
   if (type === 1) {
-    // The form shows every URL, so an edit sends every URL. Each address is
-    // matched to the stored entry that already holds it — wherever that entry
-    // sits — so an unchanged URL is passed through exactly as stored, match
-    // rule and all, and only a changed or added one is written anew. An entry
-    // is claimed once, so a login listing the same address twice cannot hand
-    // one entry to both. Matching on the address rather than on the position
-    // is what makes this safe to repeat: a save whose response was lost can be
-    // retried against the item it already wrote and change nothing.
+    // The form shows every URL, so an edit sends every URL, and an emptied
+    // row travels as a blank rather than vanishing. Two things identify the
+    // entry a row was drawn from, in that order:
+    //
+    //   position — which row this is. The only thing that tells two identical
+    //     addresses apart, so it is asked first.
+    //   address  — which site this is. Used when positions no longer line up:
+    //     a reorder, or a save whose response was lost being retried against
+    //     the item it already wrote and compacted.
+    //
+    // An entry answers once. Whatever is left over was removed or replaced.
     const previous = existing?.login?.uris ?? [];
     delete out.uris;
     let uris = previous;
     if (input.urls !== undefined) {
-      const unclaimed = [...previous];
-      uris = input.urls.filter(Boolean).map((u) => {
-        const at = unclaimed.findIndex((p) => dec(p.uri, key) === u);
-        const held = at === -1 ? null : unclaimed.splice(at, 1)[0];
-        // Unchanged, and visible to every other client: the stored entry as it is.
-        if (held?.uriChecksum) return held;
-        // New, or stored without a checksum — a URL nothing else can see, where
-        // rewriting it is the repair. Either way its match rule, if it had one,
-        // is the owner's and survives.
-        return { uri: enc(u, key), uriChecksum: checksum(u, key), match: held?.match ?? null };
-      });
+      const unclaimed: (typeof previous)[number][] = [...previous];
+      const holds = (e: (typeof previous)[number] | undefined, u: string) =>
+        !!e && dec(e.uri, key) === u;
+      uris = input.urls
+        .map((u, i) => {
+          if (!u) return null;                                // the owner emptied this row
+          const at = holds(unclaimed[i], u) ? i : unclaimed.findIndex((e) => holds(e, u));
+          const held = at === -1 ? null : unclaimed[at];
+          if (at !== -1) delete unclaimed[at];                // claimed; position is kept
+          // Unchanged, and visible to every other client: the stored entry as it is.
+          if (held?.uriChecksum) return held;
+          // New, or stored without a checksum — a URL nothing else can see, where
+          // rewriting it is the repair. Either way its match rule, if it had one,
+          // is the owner's and survives.
+          return { uri: enc(u, key), uriChecksum: checksum(u, key), match: held?.match ?? null };
+        })
+        .filter((u): u is NonNullable<typeof u> => u !== null);
     }
     cipher.login = { ...out, uris } as Cipher["login"];
   } else if (type === 2) {

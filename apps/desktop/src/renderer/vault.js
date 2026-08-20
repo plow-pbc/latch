@@ -186,7 +186,10 @@ function vurls(ctx) {
       [icon("close", { class: "vico", strokeWidth: "1.8" })]);
     const row = el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input, drop])]);
     drop.addEventListener("click", () => {
-      ctx.urlInputs.splice(ctx.urlInputs.indexOf(input), 1);
+      // Emptied in place, not spliced out of urlInputs: the box's position is
+      // what tells the save which stored entry this row was drawn from, and
+      // two rows can hold the same address.
+      input.value = "";
       row.remove();
       ctx.onChange?.();
     });
@@ -233,7 +236,7 @@ function vpayload(type, ctx) {
   const payload = { type, name: ctx.inputs.name.value.trim() };
   for (const group of VAULT_TYPES[type].groups) {
     if (group.urls) {
-      payload.urls = ctx.urlInputs.map((i) => i.value.trim()).filter(Boolean);
+      payload.urls = ctx.urlInputs.map((i) => i.value.trim());
       continue;
     }
     for (const field of group.fields) {

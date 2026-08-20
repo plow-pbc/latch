@@ -126,19 +126,21 @@ describe("an edit", () => {
     expect(changed.login.uris.slice(1)).toEqual([B, C]);
     expect(changed.login.uris[0].match).toBeNull();
 
-    // Removed: the two that stayed keep their own entries — matching on the
-    // address, not the position, is what stops C reconciling against B's.
-    const dropped = edit(["https://a.example", "https://c.example"]);
+    // Removed: the form sends the emptied row as a blank holding its place,
+    // and the two that stayed keep their own entries.
+    const dropped = edit(["https://a.example", "", "https://c.example"]);
     expect(dropped.login.uris).toEqual([A, C]);
 
-    // Reordered: nothing was edited, so nothing is rewritten.
+    // Reordered: positions no longer name the same rows, so the address does.
+    // Nothing was edited, so nothing is rewritten.
     expect(edit(["https://c.example", "https://a.example", "https://b.example"]).login.uris)
       .toEqual([C, A, B]);
 
-    // Retried: a save whose response was lost, sent again against the item it
-    // already wrote. It has to be a no-op — reconciling by position used to
-    // recreate C here and silently blank the match rule it was saved with.
-    expect(edit(["https://a.example", "https://c.example"], { ...dropped, id: "item-1" }).login.uris)
+    // Retried: a save whose response was lost, sent again from the still-open
+    // form against the item it already wrote and compacted. It has to be a
+    // no-op — position 2 no longer exists, and matching on the address is what
+    // stops C being recreated with the match rule blanked.
+    expect(edit(["https://a.example", "", "https://c.example"], { ...dropped, id: "item-1" }).login.uris)
       .toEqual([A, C]);
 
     // Listed twice: one stored entry cannot be handed to both.
@@ -148,6 +150,26 @@ describe("an edit", () => {
 
     // Omitted: an edit that mentions no URL changes none of them.
     expect(edit(null).login.uris).toEqual(many.login.uris);
+  });
+
+  it("tells two identical addresses apart by the row they came from", () => {
+    // The web vault can store one address twice under different match rules;
+    // the form shows two boxes that look the same. Which row the owner removed
+    // is the only thing that says which rule survives, and an address alone
+    // cannot carry that.
+    const url = "https://a.example";
+    const both = encryptCipher({ type: "login", name: "n", password: "x", urls: [url, url] }, null, account);
+    both.login.uris = both.login.uris.map((u, i) => ({ ...u, match: i }));
+    const stored = { ...both, id: "item-1" };
+    const rules = (c) => c.login.uris.map((u) => u.match);
+
+    // Removed the first row: the second row's rule is the one that survives.
+    expect(rules(encryptCipher({ itemId: "item-1", urls: ["", url] }, stored, account))).toEqual([1]);
+    // Removed the second: the first's.
+    expect(rules(encryptCipher({ itemId: "item-1", urls: [url, ""] }, stored, account))).toEqual([0]);
+    // Neither removed: both keep their own, and neither entry is used twice.
+    expect(encryptCipher({ itemId: "item-1", urls: [url, url] }, stored, account).login.uris)
+      .toEqual(both.login.uris);
   });
 
   it("stores every URL with the checksum other clients verify", () => {
