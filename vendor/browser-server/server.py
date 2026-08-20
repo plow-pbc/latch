@@ -67,31 +67,6 @@ FAILED_REQUEST_HEADERS = ("retry-after", "server")
 MAX_FAILED_REQUEST_URL = 200
 
 
-def _asking_document(response):
-    """The url of the document whose request this was.
-
-    A MAIN-frame navigation is its own document: when its headers arrive the
-    frame has not committed the new url yet, so asking the frame would name the
-    page being left -- and a `goto` that comes back 429 would then be attributed
-    to the previous page and withheld from the agent that asked for it. A
-    SUBframe navigation is not: the document that chose that url is the one that
-    embedded the frame, and crediting it to itself would let a page outside the
-    approved origins hand the agent any text it likes by pointing an iframe at
-    an approved host. A frame that will not answer at all (a service worker's
-    request, a popup whose frame does not exist yet) leaves this empty rather
-    than losing the entry: the owner still sees it, and the agent is told
-    nothing, which is the safe direction.
-    """
-    try:
-        frame = response.frame
-        if response.request.is_navigation_request():
-            parent = frame.parent_frame
-            return response.url if parent is None else parent.url
-        return frame.url
-    except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
-        return ""
-
-
 def _strip_query(url):
     """Query and fragment carry tokens -- B2C hangs tx=StateProperties= there.
 
@@ -274,6 +249,33 @@ class Session:
         self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
         page.context.on("response", self.note_response)
 
+    def _asking_document(self, response):
+        """The url of the document whose request this was.
+
+        A navigation's frame has not committed the new url yet when its headers
+        arrive, so asking the frame would name the document being LEFT -- and a
+        `goto` that comes back 429 would be attributed to the previous page and
+        withheld from the agent that asked for it. Only the frame the agent is
+        driving, the active page's main frame, is treated as its own new
+        document: a subframe or a background popup was pointed at that url by
+        somebody else, and naming it after itself would let a page outside the
+        approved origins hand the agent any text it likes by choosing where to
+        point a frame. A frame that will not answer at all (a service worker's
+        request, a popup whose frame does not exist yet) names nothing rather
+        than losing the entry: the owner still sees it and the agent does not,
+        which is the safe direction.
+        """
+        try:
+            frame = response.frame
+            if not response.request.is_navigation_request():
+                return frame.url
+            if frame is self.page.main_frame:
+                return response.url
+            parent = frame.parent_frame
+            return parent.url if parent is not None else frame.url
+        except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
+            return ""
+
     def note_response(self, response):
         """Remember a request the site refused.
 
@@ -295,7 +297,7 @@ class Session:
                 # outside the approved origins is not one the agent may learn
                 # anything about, including which of its requests were refused
                 # and where they were aimed.
-                "frame_url": _strip_query(_asking_document(response))[:MAX_FAILED_REQUEST_URL],
+                "frame_url": _strip_query(self._asking_document(response))[:MAX_FAILED_REQUEST_URL],
             }
             try:
                 entry["bytes"] = int(headers.get("content-length"))

@@ -32,6 +32,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     drained: Envelope;
     navigation: Envelope;
     subframe_navigation: Envelope;
+    background_navigation: Envelope;
     unattributable: Envelope;
     unattributable_navigation: Envelope;
     quiet: Envelope;
@@ -62,6 +63,15 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.drained.failed_requests).toBeUndefined();
   });
 
+
+  it("will not credit a background popup's navigation to the url it was pointed at", () => {
+    // Otherwise a locked page opens a popup, points it at an approved host, and
+    // the path it chose is handed to the agent as the approved page's own.
+    expect(probed.background_navigation.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/anything-it-likes",
+      frame_url: "https://offsite.example/lander",
+    });
+  });
 
   it("attributes a refused navigation to the page asked for, not the one being left", () => {
     // Otherwise a goto that comes back 429 is credited to the previous page and

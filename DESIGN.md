@@ -354,13 +354,16 @@ the frame lookup before a credential fill — and whichever of those was in flig
 would otherwise be the one that consumed a 429 and dropped it. Every response
 passes through one place, so that is where they wait.
 Each entry names the document that asked (`frame_url`) as well as what it asked
-for. A **main-frame** navigation is its own document — the frame has not
-committed the new url yet when the headers arrive, so asking it would name the
-page being left; a **subframe** navigation belongs to the frame that embedded
-it, and a frame that cannot be resolved at all (a service worker's request, a
-popup before its frame exists) names nothing, which withholds it, and
-`BrowserSessions` re-strips both before either reaches the agent or the audit
-log. **The owner's log gets every entry** — an out-of-scope page being refused
+for. The **active page's main frame** is its own document when it navigates —
+the frame has not committed the new url yet when the headers arrive, so asking
+it would name the page being left. Nothing else is: a subframe navigation
+belongs to the frame that embedded it, a background popup's to whatever it is
+currently showing, and a frame that cannot be resolved at all (a service
+worker's request, a popup before its frame exists) names nothing. Only the frame
+the agent is driving may name itself; anywhere else, the url was chosen by
+somebody who must not get to write the agent's evidence.
+`BrowserSessions` re-strips the query from both `frame_url` and the requested
+url before either reaches the agent or the audit log. **The owner's log gets every entry** — an out-of-scope page being refused
 is exactly what they are watching for, and whatever is still held when a session
 closes or the browser dies goes on the closing line. **The agent gets only the
 entries with both ends inside the approved origins**, judged per entry rather

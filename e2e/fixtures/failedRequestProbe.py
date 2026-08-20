@@ -57,12 +57,15 @@ class Response:
     """
 
     def __init__(self, status, url, method="GET", headers=None,
-                 page="https://pizza.example/checkout", navigation=False, embedder=None):
+                 page="https://pizza.example/checkout", navigation=False, embedder=None,
+                 frame=None):
         self.status = status
         self.url = url
         self.request = Request(method, navigation)
         self.headers = headers or {}
-        self.frame = Frame(page, None if embedder is None else Frame(embedder))
+        # `frame` names an existing document (the active page's main frame, say);
+        # otherwise one is made up from `page`/`embedder`.
+        self.frame = frame or Frame(page, None if embedder is None else Frame(embedder))
 
     def body(self):
         raise AssertionError("the listener read a response body")
@@ -85,6 +88,7 @@ class Context:
 class Page:
     def __init__(self):
         self.url = "https://pizza.example/checkout"
+        self.main_frame = Frame(self.url)
         self.context = Context()
         self.context.pages.append(self)
 
@@ -128,13 +132,22 @@ def main():
     feed(session, [Response(403, "https://pizza.example/x%d" % i) for i in range(9)])
     out["bounded"] = session.envelope({"ok": True})
 
-    # A navigation IS its own document: when its headers arrive the frame still
-    # names the page being left, and attributing a refused goto to that page
-    # would withhold it from the agent that asked for the new one.
+    # The page the agent is driving IS its own document when it navigates: when
+    # the headers arrive its frame still names the page being left, and
+    # attributing a refused goto to that page would withhold it from the agent
+    # that asked for the new one.
     session = server.Session(Page())
-    feed(session, [Response(429, "https://pizza.example/checkout", page="https://pizza.example/cart",
-                            navigation=True)])
+    feed(session, [Response(429, "https://pizza.example/checkout", navigation=True,
+                            frame=session.page.main_frame)])
     out["navigation"] = session.envelope({"ok": True})
+
+    # A navigation in a frame the agent is NOT driving -- a popup opened in the
+    # background and then pointed somewhere -- is named by the document it is
+    # showing, never by the url somebody else chose for it.
+    session = server.Session(Page())
+    feed(session, [Response(404, "https://pizza.example/anything-it-likes", navigation=True,
+                            page="https://offsite.example/lander")])
+    out["background_navigation"] = session.envelope({"ok": True})
 
     # A SUBframe navigation belongs to whoever embedded it. Crediting it to
     # itself would let an unapproved page point an iframe at an approved host
