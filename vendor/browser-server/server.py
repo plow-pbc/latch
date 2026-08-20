@@ -53,6 +53,13 @@ MAX_ERROR_LEN = 500
 # whose caller did not name one, so it is the term that has to stay small.
 ACTION_TIMEOUT_MS = 3000
 
+# What the device gives a browser action before it gives up on it
+# (`actionTimeoutMs` in deviceAgent.ts). Nothing here is told when that happens
+# -- the device drops its pending entry and sends this process nothing -- so a
+# fill that ran past it would go on typing a credential into a page whose
+# answer nobody is waiting for. Every budget below has to add up to less.
+HOST_CAP_MS = 15000
+
 # What every action that moves the page gives it to settle afterwards, so the
 # answer describes where the page ended up rather than where it was mid-flight.
 SETTLE_MS = 1000
@@ -60,30 +67,15 @@ SETTLE_MS = 1000
 # A value ENDS as keystrokes, never as a bare assignment. `fill()` sets `.value`
 # and fires `input`/`change`, so a password box goes from empty to complete with
 # no keydown/keypress/keyup at all -- the cheapest signal an interrogating
-# defense has. Keystrokes cost a delay each, and an agent may fill a field with
-# prose, so only the last TYPED_CHARS of a value are typed and the bulk ahead of
-# them is assigned: a credential -- a password, an API key, a JWT of ordinary
-# length -- is shorter than that and is typed whole, while a 5 000-character
-# message body still lands and still ends on real keys. What
-# the cap buys is that TYPING cannot grow with the length of the value. It is
-# not a bound on what the whole action costs. Every fill also runs several
-# `evaluate` calls, and a masked one about twice as many; none of them take a
-# timeout and no default covers them, so a page that will not run script wedges
-# this process -- it reads stdin serially, so every later command in the session
-# queues behind the one that will not return, and nothing on the device cancels
-# it. A caller that names no frame pays for the frame search on top of that
-# (the loop below, #96).
+# defense has. Keystrokes cost a delay each and an agent may fill a field with
+# prose, so only the last TYPED_CHARS are typed and the bulk ahead of them is
+# assigned. TYPED_CHARS is a statement about credentials, not about latency:
+# nothing this vault releases into a sign-in form -- a password, a card number,
+# a one-time code, an API token -- is longer than this, so a credential is typed
+# whole and a message body still ends on real keys.
 KEY_DELAY_MS = 45
-# What a key costs BEYOND its delay: the round trip that dispatches it and the
-# actionability check in front of it. Each key is sent on its own so that the
-# node the mark is on is refocused before every one, so the tail pays this
-# TYPED_CHARS times rather than once -- which is why the budget has to know
-# about it. A few milliseconds on a local page; sized well above that.
-KEY_OVERHEAD_MS = 30
-# What the whole tail may spend, delays and round trips together -- and so, at
-# what a key costs, how many characters of it there are room for.
-TYPING_MAX_MS = 7000
-TYPED_CHARS = TYPING_MAX_MS // (KEY_DELAY_MS + KEY_OVERHEAD_MS)
+TYPED_CHARS = 64
+TYPING_MAX_MS = 5000
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
@@ -287,8 +279,7 @@ def _type_value(el, value):
     el.fill(value[:-TYPED_CHARS], timeout=ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
     # the tail's own budget would let TYPED_CHARS of them stack up to that many
-    # times what a single call could ever spend. TYPED_CHARS is sized so the
-    # delays leave room in it for that many round trips.
+    # times what a single call could ever spend, and past HOST_CAP_MS.
     deadline = time.monotonic() + TYPING_MAX_MS / 1000
     for ch in value[-TYPED_CHARS:]:
         left = (deadline - time.monotonic()) * 1000

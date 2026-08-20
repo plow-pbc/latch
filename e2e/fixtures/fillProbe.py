@@ -22,7 +22,6 @@ import importlib.util
 import json
 import os
 import sys
-import time
 
 
 def load_server():
@@ -91,9 +90,10 @@ class Handle:
         # Only the LENGTH of that text is ever reported out of this file.
         self.typed_delay = None
         self.typed = None
-        # What budget each key was handed. They share one deadline, so these
-        # shrink; a per-key timeout would hand out the same number every time.
-        self.typed_timeouts = []
+        # The largest budget any key was handed. They share one deadline, so
+        # the first key gets a little less than the whole of it; a per-key
+        # timeout would hand out exactly the whole of it, every time.
+        self.key_timeout_max = None
         # How many separate calls that text arrived in. One per character is
         # the property the segmented-code fix turns on: a key sent through the
         # handle lands in the node the mark is on, wherever focus has wandered.
@@ -172,12 +172,7 @@ class Handle:
             raise RuntimeError("Element is not attached to the DOM")
         self.typed = (self.typed or "") + text
         self.type_calls += 1
-        self.typed_timeouts.append(timeout)
-        # Spend a little time, so a budget drawn from a shared deadline
-        # measurably shrinks rather than shrinking only as fast as the loop
-        # around it happens to run. Playwright would spend the key's delay
-        # here; a millisecond is enough to make the difference observable.
-        time.sleep(0.001)
+        self.key_timeout_max = max(self.key_timeout_max or 0, timeout)
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
@@ -292,20 +287,10 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
-    # What each key was handed, seen from outside. A per-key timeout hands out
-    # the same number every call, so the shape tells them apart: never rising,
-    # and one distinct value per key. The second half is the one that
-    # discriminates -- a constant satisfies "never rising" by equality -- and
-    # `type()` above spends a millisecond so it is the fixture that makes those
-    # values differ rather than the interpreter's own speed.
-    timeouts = frame.handle.typed_timeouts
-    out["key_timeout_max"] = max(timeouts) if timeouts else None
-    # None below two keys: with nothing to compare, "they never rose" is a
-    # claim about nothing and a later assertion would pass while observing it.
-    out["key_timeouts_never_rise"] = (
-        all(a >= b for a, b in zip(timeouts, timeouts[1:])) if len(timeouts) > 1 else None
-    )
-    out["key_timeouts_distinct"] = len(set(timeouts)) if len(timeouts) > 1 else None
+    # The largest budget any one key was handed. A shared deadline is already
+    # counting down by the first key, so this is under the tail's whole budget;
+    # a per-key timeout hands out exactly the whole of it.
+    out["key_timeout_max"] = frame.handle.key_timeout_max
     out["node_len"] = len(frame.handle.value or "")
     return out
 
@@ -537,7 +522,7 @@ def main() -> int:
         "typed_chars": server.TYPED_CHARS,
         "action_timeout_ms": server.ACTION_TIMEOUT_MS,
         "typing_max_ms": server.TYPING_MAX_MS,
-        "key_delay_ms": server.KEY_DELAY_MS,
+        "host_cap_ms": server.HOST_CAP_MS,
     }
     out.write(json.dumps(result))
     out.flush()

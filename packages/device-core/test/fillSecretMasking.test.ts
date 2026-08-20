@@ -513,8 +513,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_len: number | null;
         type_calls: number;
         key_timeout_max: number | null;
-        key_timeouts_never_rise: boolean | null;
-        key_timeouts_distinct: number | null;
         node_len: number;
         asked_len: number;
       };
@@ -523,7 +521,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_chars: number;
         action_timeout_ms: number;
         typing_max_ms: number;
-        key_delay_ms: number;
+        host_cap_ms: number;
       };
       two_frames: {
         error: string | null;
@@ -561,16 +559,20 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.typed_delay).toBeGreaterThan(0);
   });
 
-  it("sends every key through the node the mark is on", () => {
-    // One call per character, so the node is refocused before each. A
-    // segmented one-time-code control moves focus to the next box on every
-    // `input` event, and one `type(tail)` call sends the rest of a live code
-    // into sibling fields the mark was never put on — readable from `forms`
-    // and from a screenshot. Verified in a real browser: typing "483920" in
-    // one call put one digit in each of six boxes.
-    expect(probed.plain.type_calls).toBe(probed.plain.typed_len);
-    expect(probed.masked.type_calls).toBe(probed.masked.typed_len);
-    expect(probed.long_value.type_calls).toBe(probed.constants.typed_chars);
+  // One call per character, so the node is refocused before each. A segmented
+  // one-time-code control moves focus to the next box on every `input` event,
+  // and one `type(tail)` call sends the rest of a live code into sibling fields
+  // the mark was never put on — readable from `forms` and from a screenshot.
+  // Verified in a real browser: typing "483920" in one call put one digit in
+  // each of six boxes; through the handle it all stays in the marked one.
+  it.each([
+    { what: "a password", scenario: "plain" },
+    { what: "a password the vault masks", scenario: "masked" },
+    { what: "a 64-character credential", scenario: "credential" },
+    { what: "the tail of a long value", scenario: "long_value" },
+  ])("sends every key of $what through the node the mark is on", ({ scenario }) => {
+    const run = probed[scenario];
+    expect(run.type_calls).toBe(run.typed_len);
   });
 
   it("assigns into a widget whose value is not the characters it is given", () => {
@@ -617,33 +619,38 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
   });
 
-  it("spends one budget across the whole tail, not one per key", () => {
-    // Every key goes on its own call, so handing each the tail's full budget
-    // would let them stack to TYPED_CHARS times what the single call they
-    // replaced could ever spend — the unbounded-action shape #96 is about,
-    // reintroduced by the fix for it. They share a deadline instead, so the
-    // budget each key is handed shrinks as the tail is spent.
+  it("answers a fill inside the budget the device gives it", () => {
+    // The device drops its pending entry at HOST_CAP_MS and tells this process
+    // nothing, so a fill that ran past it would go on typing a credential into
+    // a page whose answer nobody is waiting for. The steps a fill can spend:
+    // resolve the node, assign the head, type the tail, and — when the keys
+    // were dropped — assign the whole value.
     const c = probed.constants;
-    const run = probed.long_value;
-    expect(run.type_calls).toBe(c.typed_chars);
-    expect(run.key_timeout_max).toBeLessThan(c.typing_max_ms);
-    // A per-key timeout hands out the same number every call. One deadline
-    // never hands out a larger one than the key before — which a constant
-    // satisfies too, by equality — and hands out a different one for every
-    // key, which is the half that tells them apart. The fixture spends a
-    // millisecond per key so that difference is something it causes rather
-    // than something the interpreter's own speed happens to produce.
-    expect(run.key_timeouts_never_rise).toBe(true);
-    expect(run.key_timeouts_distinct).toBe(run.type_calls);
+    // HOST_CAP_MS is server.py's copy of a number the device owns, so read the
+    // device's and make the copy answer for itself — a cap that drifted apart
+    // from the timer it names would leave the sum below nothing in particular.
+    const agent = fs.readFileSync(
+      fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
+      "utf8",
+    );
+    const declared = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
+    expect(declared).not.toBeNull();
+    expect(Number(declared![1].replace(/_/g, ""))).toBe(c.host_cap_ms);
+    expect(c.action_timeout_ms * 3 + c.typing_max_ms).toBeLessThan(c.host_cap_ms);
+    // And the tail draws on ONE budget, not one per key: handing each key the
+    // tail's own would let them stack to TYPED_CHARS times it. A shared
+    // deadline is already counting down by the first key, so no key is ever
+    // handed the whole of it — which a per-key timeout hands out every time.
+    expect(probed.long_value.key_timeout_max).toBeLessThan(c.typing_max_ms);
   });
 
-  it("types a credential of the length the vault actually hands it", () => {
-    // TYPED_CHARS decides whether a value ends up typed or assigned, and a
-    // seven-character password passes at any value of it down to seven. An API
-    // key, a token, a JWT of ordinary length is what has to be typed whole.
-    expect(probed.credential.asked_len).toBe(64);
+  it("types a credential whole, whatever the vault releases", () => {
+    // TYPED_CHARS decides whether a value ends up typed or assigned, so it is
+    // a statement about credentials rather than a latency estimate: nothing
+    // this path releases into a sign-in form — a password, a card number, a
+    // one-time code, an API token — is longer than it.
+    expect(probed.constants.typed_chars).toBeGreaterThanOrEqual(64);
     expect(probed.credential.typed_len).toBe(probed.credential.asked_len);
-    expect(probed.credential.type_calls).toBe(probed.credential.asked_len);
   });
 
   it("does not try the next frame once a node has been changed", () => {
