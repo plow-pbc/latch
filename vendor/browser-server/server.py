@@ -440,17 +440,18 @@ class Session:
             if action == "click":
                 budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
                 deadline = time.monotonic() + budget_ms / 1000.0
-                while "frame" not in cmd:
-                    holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
-                    if holding:
-                        frames = holding
-                        break
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError(
-                            "no frame has %s after %dms" % (sel, budget_ms)
-                        )
-                    self.page.wait_for_timeout(SCAN_INTERVAL_MS)
-                    frames = self.indexed_frames(cmd)
+                if "frame" not in cmd:
+                    while True:
+                        holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
+                        if holding:
+                            frames = holding
+                            break
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(
+                                "no frame has %s after %dms" % (sel, budget_ms)
+                            )
+                        self.page.wait_for_timeout(SCAN_INTERVAL_MS)
+                        frames = self.indexed_frames(cmd)
             for tried, (i, fr) in enumerate(frames):
                 try:
                     if action == "click":
