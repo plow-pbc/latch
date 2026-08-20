@@ -71,8 +71,7 @@ SETTLE_MS = 1000
 # this process -- it reads stdin serially, so every later command in the session
 # queues behind the one that will not return, and nothing on the device cancels
 # it. A caller that names no frame pays for the frame search on top of that
-# (the loop below, #96). A caller that names no frame pays for the frame
-# search on top of that (the loop below, #96).
+# (the loop below, #96).
 KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
 TYPED_CHARS = TYPING_MAX_MS // KEY_DELAY_MS
@@ -184,6 +183,7 @@ DOC_TOKEN_JS = """() => {
 # crosses the wire. A hash was tried and is not good enough: "BB" and "Aa" share
 # one, and a partial fill that collided would look unchanged and have its mark
 # taken off, which is the one outcome this must never produce.
+
 # Whether a node's value is the characters it is given. A date or a
 # datetime-local composes its out of something else entirely -- typing
 # "2026-08-19" into one lands 6081-02-02, silently -- and a colour or a range

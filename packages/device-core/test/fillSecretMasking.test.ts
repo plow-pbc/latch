@@ -582,10 +582,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "handle.assign",
       "handle.evaluate:unmark",
     ]);
-    // The ordinary case does not pay for the fallback, and neither does a
-    // field that REFORMATS what it took — a card number that spaces itself out
-    // holds something other than what was asked for on purpose, and the keys
-    // it took are not thrown away to re-assign over them.
+    // A field that took the keys pays for no fallback — neither the ordinary
+    // one nor the one whose head was assigned and tail typed. Which fields
+    // count as having taken them, including the reshaping and contenteditable
+    // cases, is the table over KEYS_DROPPED_JS further down.
     expect(probed.plain.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
     expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
   });
