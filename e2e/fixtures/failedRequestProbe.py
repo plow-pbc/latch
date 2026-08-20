@@ -113,6 +113,9 @@ class Page:
     def bring_to_front(self):
         pass
 
+    def go_back(self, **_kw):
+        pass
+
 
 def feed(session, responses):
     for r in responses:
@@ -186,19 +189,41 @@ def main():
                             frame=session.page.main_frame)])
     out["self_navigation"] = session.envelope({"ok": True})
 
-    # A chain longer than the browser's own ceiling gives up rather than
-    # walking forever, and gives up on the safe side.
+    # `back` lands somewhere it cannot know in advance, so it claims nothing:
+    # the pointer the last goto left must not authorise the navigation it
+    # happens to match.
+    session = server.Session(Page())
+    session.handle({"action": "goto", "url": "https://pizza.example/pay"}, "/tmp")
+    session.handle({"action": "back"}, "/tmp")
+    session.page.main_frame.url = "https://pizza.example/cart"
+    feed(session, [Response(429, "https://pizza.example/pay", navigation=True,
+                            frame=session.page.main_frame)])
+    out["after_back"] = session.envelope({"ok": True})
+
+    # A long chain -- the shape of a B2C/SSO sign-in, and the reason the walk
+    # goes as far as the browser's own ceiling. Hard-coded, so shortening the
+    # ceiling fails here rather than rescaling with it.
+    session = server.Session(Page())
+    session.goto_url = "https://pizza.example/signin"
+    session.page.main_frame.url = "https://pizza.example/cart"
+    hop = Request("GET", True, "https://pizza.example/signin")
+    for i in range(18):
+        hop = Request("GET", True, "https://signin.pizza.example/hop%d" % i, hop)
+    feed(session, [Response(429, "https://signin.pizza.example/b2c/end", navigation=True,
+                            frame=session.page.main_frame, redirected_from=hop)])
+    out["long_chain"] = session.envelope({"ok": True})
+
+    # A chain longer than that ceiling gives up rather than walking forever,
+    # and gives up on the safe side.
     session = server.Session(Page())
     session.goto_url = "https://pizza.example/start"
     session.page.main_frame.url = "https://pizza.example/cart"
-    root = server_request = Request("GET", True, "https://pizza.example/start")
-    for hop in range(server.MAX_REDIRECT_HOPS + 1):
-        server_request = Request("GET", True, "https://pizza.example/hop%d" % hop, server_request)
+    over = Request("GET", True, "https://pizza.example/start")
+    for i in range(server.MAX_REDIRECT_HOPS + 1):
+        over = Request("GET", True, "https://pizza.example/hop%d" % i, over)
     feed(session, [Response(429, "https://pizza.example/end", navigation=True,
-                            frame=session.page.main_frame,
-                            redirected_from=server_request)])
+                            frame=session.page.main_frame, redirected_from=over)])
     out["over_the_hop_limit"] = session.envelope({"ok": True})
-    assert root is not None
 
     # use_page moves the active page, and the check follows it: a goto in the
     # popup the agent switched to is the agent's, one in the page it left is

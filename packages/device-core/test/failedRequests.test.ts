@@ -39,6 +39,8 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     page_left_behind: Envelope;
     stale_pointer: Envelope;
     over_the_hop_limit: Envelope;
+    long_chain: Envelope;
+    after_back: Envelope;
     navigation_asked_for: string;
     unattributable: Envelope;
     unattributable_navigation: Envelope;
@@ -92,6 +94,20 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
   it("records what the goto asked for, stripped, on the way in", () => {
     // The plumbing, not just the predicate: the real command handler ran.
     expect(probed.navigation_asked_for).toBe("https://pizza.example/checkout?tx=SECRET");
+  });
+
+  it("walks a sign-in-length chain — 19 hops — back to what was asked for", () => {
+    expect(probed.long_chain.failed_requests?.[0]).toMatchObject({
+      url: "https://signin.pizza.example/b2c/end",
+      frame_url: "https://signin.pizza.example/b2c/end",
+    });
+  });
+
+  it("lets no navigation ride on the pointer a goto left, once back has run", () => {
+    expect(probed.after_back.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/pay",
+      frame_url: "https://pizza.example/cart",
+    });
   });
 
   it("gives up on a redirect chain longer than the browser's own ceiling", () => {
