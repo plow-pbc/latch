@@ -96,6 +96,14 @@ describe("profileKeyForOrigins", () => {
     expect(() => profileKeyForOrigins(["*."])).toThrow();
   });
 
+  it("ignores an entry that bounds nothing instead of failing the grant", () => {
+    // originMatches never matches these, so a junk element changes nothing
+    // about the bound — and must not cost an approved session its browser.
+    expect(profileKeyForOrigins(["dominos.com", "", "*."])).toBe(
+      profileKeyForOrigins(["dominos.com"]),
+    );
+  });
+
   it("cannot be made to collide by a pattern that spells the separator", () => {
     // Origins arrive as an unvalidated tool argument, and the key is the only
     // thing keeping one grant's cookies away from another's.

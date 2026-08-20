@@ -21,6 +21,7 @@ import {
   JSONValue,
   jv,
   makeIntent,
+  usableOrigins,
 } from "@domo/protocol";
 import { DeviceAgent, MAX_FILE_BYTES } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
@@ -413,7 +414,9 @@ export const TOOLS: ToolSpec[] = [
     async run(args, ctx, progress) {
       const a = jv(args);
       const origins = strings(a.get("origins").arr);
-      if (origins.length === 0) throw new ToolError("missing 'origins'");
+      // Usable, not merely present: a list of blanks would otherwise reach the
+      // owner as an approval card with a blank bound on it.
+      if (usableOrigins(origins).length === 0) throw new ToolError("missing 'origins'");
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });

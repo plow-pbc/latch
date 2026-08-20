@@ -38,6 +38,17 @@ export function originMatches(host: string, patterns: string[]): boolean {
 }
 
 /**
+ * The patterns in a grant that can actually match a host, normalized, deduped
+ * and sorted. `originMatches` never matches an empty pattern or a bare "*.",
+ * so those bound nothing and are dropped here rather than at each caller.
+ */
+export function usableOrigins(origins: string[]): string[] {
+  return [...new Set(origins.map((o) => normalizeOrigin(o)))]
+    .filter((p) => p !== "" && p !== "*.")
+    .sort();
+}
+
+/**
  * Directory name for the browser profile a grant may write to. Same
  * normalization `normalizedCapability()` uses for rule keys, so a session
  * opened against a remembered rule lands back in the profile that rule built.
@@ -54,14 +65,13 @@ export function profileKeyForOrigins(origins: string[]): string {
   // contain the separator cannot spell a different set that hashes the same.
   // These come straight from a tool argument, so "no host looks like that"
   // is not something this function gets to assume.
-  const patterns = [...new Set(origins.map((o) => normalizeOrigin(o)))].sort();
+  const patterns = usableOrigins(origins);
   // A grant with nothing usable in it would otherwise share one profile with
-  // every other such grant. It can only arrive from a bug upstream — the tool
-  // already refuses an empty list — so say so rather than picking a store.
-  if (patterns.some((p) => p === "" || p === "*.")) {
-    throw new Error(`profileKeyForOrigins: empty origin in ${JSON.stringify(origins)}`);
+  // every other such grant. The boundary refuses it first, so reaching here is
+  // a bug — say so rather than picking a store.
+  if (patterns.length === 0) {
+    throw new Error(`profileKeyForOrigins: no usable origin in ${JSON.stringify(origins)}`);
   }
-  if (patterns.length === 0) throw new Error("profileKeyForOrigins: no origins");
   const key = patterns.map((o) => `${o.length}:${o}`).join("");
   return Hashing.sha256Hex(Buffer.from(key, "utf8")).slice(0, 16);
 }
