@@ -580,10 +580,15 @@ export class BrowserSessions {
     // no list of URL-shaped fields that stays complete, so this walks what is
     // being returned. Page content is exempt — the agent is entitled to it on
     // an approved page, and it is already stripped on one that is not.
-    const contentKeys = new Set(["text", "data_b64", "result", "note", "error"]);
+    const contentKeys = new Set(["text", "data_b64", "result", "note"]);
     const redact = (v: JSONValue): JSONValue => {
       if (typeof v === "string") {
-        return hostOf(v) !== null && !this.inScope(s, v) ? stripQuery(v) : v;
+        if (hostOf(v) !== null) return !this.inScope(s, v) ? stripQuery(v) : v;
+        // A sentence is not a URL, but a browser error quotes the URL it was
+        // navigating to — so the same rule applies to what is embedded in one.
+        return v.replace(/https?:\/\/[^\s"'<>]+/g, (u) =>
+          this.inScope(s, u) ? u : stripQuery(u),
+        );
       }
       if (Array.isArray(v)) return v.map((x) => redact(x ?? null));
       if (v !== null && typeof v === "object") {
@@ -595,6 +600,19 @@ export class BrowserSessions {
     };
     for (const [k, v] of Object.entries(out)) {
       if (!contentKeys.has(k)) out[k] = redact(v);
+    }
+    // A page listing names windows this session never approved — the title is
+    // that page's own content, which is deleted at the top level for exactly
+    // this reason. The index and the masked URL are what an agent needs to
+    // find its way back; the title is not.
+    if (Array.isArray(out.pages)) {
+      out.pages = out.pages.map((pg) => {
+        const entry = jv(pg).obj;
+        const u = jv(pg).get("url").str;
+        if (entry === null || u === null || this.inScope(s, u)) return pg;
+        const { title: _title, ...rest } = entry;
+        return rest;
+      });
     }
     // Enforcement telemetry, not something to hand back: a transient redirect
     // this session was never approved for can carry an OAuth code or token in

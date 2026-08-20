@@ -357,16 +357,24 @@ describe("browser tools (fake runtime)", () => {
     await act(server, session, "goto", { url: "https://pizza.example/menu" });
     await act(server, session, "click", { selector: "#popup" });
 
-    // pages[]: the popup's own entry, which naming `url` alone would miss.
+    // forms[].frame_url — a third-party iframe on an approved page, and the
+    // field that leaked after `url` and `pages` had each been named.
+    const forms = await act(server, session, "forms");
+    expect(JSON.stringify(forms.payload)).not.toContain("SECRET");
+    expect(JSON.stringify(forms.payload)).toContain("pay.example/f");
+
+    // pages[]: the popup's entry keeps an index and a masked URL to find the
+    // way back, and loses the title, which is that page's own content.
     const listed = await act(server, session, "pages");
     expect(JSON.stringify(listed.payload)).not.toContain("SECRET");
+    expect(JSON.stringify(listed.payload)).not.toContain("popup\"");
     expect(JSON.stringify(listed.payload)).toContain("popup.example/pay");
 
     // And the approved page keeps everything — this masks what was never
     // granted, not everything with a question mark in it.
     await act(server, session, "goto", { url: "https://pizza.example/menu?table=7" });
-    const forms = await act(server, session, "forms");
-    expect(JSON.stringify(forms.payload)).toContain("table=7");
+    const approved = await act(server, session, "forms");
+    expect(JSON.stringify(approved.payload)).toContain("table=7");
   });
 
   it("a page that navigates out of scope retires the jar, with no widening at all", async () => {

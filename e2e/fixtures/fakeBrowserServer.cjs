@@ -187,7 +187,15 @@ function handle(cmd) {
   if (a === "url") return {};
   if (a === "title") return { title: current().title };
   if (a === "links") return { links: [] };
-  if (a === "forms") return { forms: [{ tag: "input", name: "q", frame: 0, frame_url: current().url }] };
+  if (a === "forms")
+    return {
+      forms: [
+        { tag: "input", name: "q", frame: 0, frame_url: current().url },
+        // A third-party iframe on an approved page: its own origin was never
+        // granted, and its URL carries a token.
+        { tag: "input", name: "cvv", frame: 1, frame_url: "https://pay.example/f?tok=SECRET" },
+      ],
+    };
   if (a === "tables") return { tables: [] };
   throw new Error("unknown action: " + a);
 }
