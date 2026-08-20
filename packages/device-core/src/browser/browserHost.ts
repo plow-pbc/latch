@@ -333,9 +333,11 @@ export class BrowserHost {
       });
 
       child.on("exit", (code, signal) => {
-        // The reader is NOT closed here — exit and the stdout read are separate
-        // poll events, so the goodbye can still be in the pipe. It closes
-        // itself when the stream ends, or when a new browser supersedes it.
+        // Not closed SYNCHRONOUSLY here — exit and the stdout read are separate
+        // poll events, so the goodbye can still be in the pipe. Each path
+        // closes it once nothing readable is left: the crash path below after
+        // the deferred notice, a browser that never became ready right away,
+        // and a graceful stop in shutdown() after the awaited quit reply.
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
@@ -359,6 +361,9 @@ export class BrowserHost {
           });
         }
         if (!ready) {
+          // Nothing said hello, so nothing is going to say anything else.
+          rl.close();
+          if (this.reader === rl) this.reader = null;
           ready = true; // don't double-settle
           clearTimeout(startTimer);
           reject(
