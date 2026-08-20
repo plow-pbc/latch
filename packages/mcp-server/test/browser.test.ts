@@ -379,6 +379,41 @@ describe("browser tools (fake runtime)", () => {
     expect(audited(device, "browser_profile_reaped")).toEqual([key]);
   });
 
+  it("a jar that cannot be retired takes the session down with it", async () => {
+    // Opposite failure semantics to a widening, where a failed retirement is
+    // the safe end because nothing was granted: here the request has already
+    // gone out, so a jar that cannot be marked must not survive to be handed
+    // to a later action.
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+    const key = profileKeyForOrigins(["pizza.example", "*.pizza.example"]);
+
+    const session = await open(server, ["pizza.example", "*.pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/menu" });
+    const dir = path.join(profiles, key);
+    fs.chmodSync(dir, 0o500); // the marker write fails EACCES; the audit log does not
+    try {
+      const strayed = await act(server, session, "click", { selector: "#offsite" }, false);
+      expect(strayed.isError).toBe(true);
+      expect(JSON.stringify(strayed.payload)).toContain("could not be retired");
+      expect(strayed.payload.text).toBeUndefined();
+      expect(strayed.payload.data_b64).toBeUndefined();
+    } finally {
+      fs.chmodSync(dir, 0o700);
+    }
+
+    // The session is gone, not merely erroring — nothing else reaches that jar.
+    expect(audited(device, "browser_profile_abandoned")).toEqual([]);
+    const closed = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_closed")
+      .map((e) => jv(e as JSONValue).get("reason").str);
+    expect(closed.at(-1)).toBe("profile could not be retired");
+    const after = await act(server, session, "text", {}, false);
+    expect(after.isError).toBe(true);
+    expect(JSON.stringify(after.payload)).toContain("unknown session");
+  });
+
   it("a widened session's jar is given up, and no later session opens it", async () => {
     // The escape this closes: state written for the widened origin sits in a
     // jar filed under the narrower grant, and the next session on that grant
