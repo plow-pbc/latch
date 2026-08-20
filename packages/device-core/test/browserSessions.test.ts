@@ -499,6 +499,33 @@ describe("access the owner's log could not record is not granted", () => {
     expect(published(ctx2.dir)).toEqual([]);
   });
 
+  it("gives the profile back when the browser never launched", async () => {
+    // The start claims the saved profile by renaming it to a live name before
+    // the spawn. A spawn that fails must hand it back: otherwise the only copy
+    // of that grant's logins sits under a name nothing claims, and the next
+    // start sweeps it.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-nospawn-"));
+    const profiles = path.join(dir, "profiles");
+    const key = profileKeyForOrigins(["pizza.example"]);
+    fs.mkdirSync(path.join(profiles, key), { recursive: true });
+    fs.writeFileSync(path.join(profiles, key, "cookies.sqlite"), "a login worth keeping");
+
+    const host = new BrowserHost({
+      command: ["/nonexistent/browser-that-cannot-start"],
+      env: {},
+      screenshotsDir: path.join(dir, "shots"),
+      profilesDir: profiles,
+      audit: () => {},
+    });
+    const sessions = new BrowserSessions(host, null, () => {}, 60_000);
+    const opened = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    expect(opened.get("error").str).toMatch(/failed to start|ENOENT|spawn/i);
+
+    expect(fs.readFileSync(path.join(profiles, key, "cookies.sqlite"), "utf8")).toBe(
+      "a login worth keeping",
+    );
+  });
+
   it("classifies an origin reported after the action gave up waiting", async () => {
     // A response that arrives past its own timeout has no one waiting for it,
     // but it is still evidence — the browser reached that origin and the jar

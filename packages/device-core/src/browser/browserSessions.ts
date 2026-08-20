@@ -121,6 +121,13 @@ export class BrowserSessions {
     return originMatches(host, s.origins);
   }
 
+  /** Whether a URL is inside the live session's grant. True with no session:
+   * there is nothing approved and nothing being driven to contradict. */
+  urlInScope(url: string): boolean {
+    const s = this.session;
+    return s ? this.inScope(s, url) : true;
+  }
+
   /** The live session as the owner's viewer sees it, or null. */
   current(): BrowserSessionInfo | null {
     const s = this.session;
@@ -503,20 +510,18 @@ export class BrowserSessions {
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
     const pages = pageCount === s.knownPageCount ? [] : await this.pageUrls();
 
-
     // First, ahead of every audit append and every early return below. The
     // response is already in the jar — a mask failure that returns, or an
     // audit that throws, must not be able to leave it filed under a grant it
     // no longer matches. A popup counts: it was fetched with this browser's
     // cookies and stored whatever came back, exactly like the active page.
-    // `url` as well as the list: pageUrls() is best-effort and answers empty
-    // when the browser will not say, and the active page is the one origin
-    // that is never in doubt. A duplicate costs a comparison.
-    // Popups opened before this command: the browser reports a top-level URL
-    // as it is shown, which covers everything this command reached, but a
-    // window already open when the session started has nothing left to report.
-    // The active page needs no second look — its navigation was reported too.
-    for (const p of pages) this.noteStray(s, p.url, action);
+    // `url` as well as the browser's own reports, because it is the only
+    // unconditional one: `pages` is empty unless the count moved, `pageUrls()`
+    // answers `[]` on any failure, and server.py watches the page it was
+    // handed plus whatever arrives on `context.on("page")` — a tab a
+    // persistent profile restored at launch is in none of those. The response
+    // always names the page we are on. A duplicate costs one comparison.
+    for (const u of [url, ...pages.map((p) => p.url)]) this.noteStray(s, u, action);
     const strayedOrigin = s.strayed;
 
     const navigated = url !== s.lastUrl;

@@ -531,7 +531,6 @@ export class BrowserHost {
     }
   }
 
-  /** Graceful quit, then SIGTERM the group, then SIGKILL. Idempotent. */
   /**
    * Ask the browser to quit and wait for it to say so — the acknowledgement is
    * what makes its jar publishable, so a browser that merely stopped soon
