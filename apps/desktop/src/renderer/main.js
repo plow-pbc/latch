@@ -285,7 +285,7 @@ function createAuditRow(id) {
   const timeCw = el("div", { class: "cw" });
   const badgeCw = el("div", { class: "cw" });
   const iconWrap = el("span", { class: "ic-wrap" });
-  const titleSpan = el("span");
+  const titleSpan = el("span", { class: "t-title" });
   const actCw = el("div", { class: "cw" }, [el("div", { class: "t-act" }, [iconWrap, titleSpan])]);
   const tr = el("tr", {}, [
     el("td", { class: "t-time" }, [timeCw]),

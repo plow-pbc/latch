@@ -227,6 +227,17 @@ td { padding: 9px 12px; vertical-align: middle; }
 .cw { display: block; }
 .t-time { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .t-act { display: flex; align-items: center; gap: 8px; }
+/* Table-only: a long activity title (a multi-line request or a URL with no
+   spaces) shows at most 4 lines, then is cut off with an ellipsis. The detail
+   pane still carries the full text. */
+.t-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
 .ic-wrap {
   width: 22px; height: 22px; border-radius: 6px;
   display: inline-flex; align-items: center; justify-content: center;
