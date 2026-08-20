@@ -43,6 +43,21 @@ export const DENIAL_SOURCE_NO_CREDITS = "no_credits";
 export const DENIAL_SOURCE_NO_REVIEWER = "no_reviewer";
 
 /**
+ * Denied because the reviewer looked and would not commit — it answered `ask`,
+ * in a mode where there is nobody to ask. Distinct from the source below, and
+ * the distinction is the whole point: this is a reviewer that ran.
+ */
+export const DENIAL_SOURCE_REVIEWER_UNDECIDED = "reviewer_undecided";
+
+/**
+ * Denied because the reviewer never reached a verdict at all — it timed out,
+ * the provider errored or rate-limited, or the answer did not parse. A
+ * transient condition wearing the same `deny` as a decision, so it says which
+ * it was.
+ */
+export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
+
+/**
  * Denial sources whose reason is worth telling the calling agent, and the exact
  * sentence it gets.
  *
@@ -67,6 +82,14 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   // Mac, then try again" — following it, the user clicks a dead prompt, nothing
   // runs, and the retry's dialog (queued behind that window) appears as if they
   // had been asked twice. That is the loop, driven by our own copy.
+  [DENIAL_SOURCE_REVIEWER_UNDECIDED]:
+    "the reviewer would not decide this one, and this Mac is set to let the " +
+    "reviewer decide — so there is no one to escalate to and it was denied " +
+    "rather than left waiting. Narrow the request and try again",
+  [DENIAL_SOURCE_REVIEWER_UNAVAILABLE]:
+    "the reviewer could not be reached, so no verdict was possible, and this " +
+    "Mac is set to let the reviewer decide — denied rather than left waiting. " +
+    "This is transient; try again",
   [DENIAL_SOURCE_NO_REVIEWER]:
     "inference unavailable: Adversarial mode is selected but its provider has " +
     "no credential on this Mac, so the reviewer could not run and the " +

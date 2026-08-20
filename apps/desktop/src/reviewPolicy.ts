@@ -8,7 +8,12 @@
  * device. `main.ts` keeps only the Electron-shaped adapter around it.
  */
 import { Intent, JSONValue } from "@domo/protocol";
-import { DENIAL_SOURCE_NO_CREDITS, DENIAL_SOURCE_NO_REVIEWER } from "@domo/device-core";
+import {
+  DENIAL_SOURCE_NO_CREDITS,
+  DENIAL_SOURCE_NO_REVIEWER,
+  DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
+  DENIAL_SOURCE_REVIEWER_UNDECIDED,
+} from "@domo/device-core";
 import {
   agentHistory,
   PLOW_REVIEWER_INFO,
@@ -197,11 +202,20 @@ export async function decideIntent(
     if (cause === "no_credits") {
       return { decision: "deny", source: DENIAL_SOURCE_NO_CREDITS };
     }
-    // Any other "ask" — the reviewer could not decide; hand it to the human,
-    // telling them what it said rather than prompting them out of nowhere.
+    // Any other "ask". This mode has no human in it — the owner chose "the
+    // reviewer decides", and a modal here contradicts the setting: it appears
+    // on a Mac whose owner has said they are not answering, waits out its
+    // fifteen minutes, and holds every request behind it while it does, because
+    // approvals are serialized. So the fallback is a verdict.
+    //
+    // Deny, because it is the fail-closed answer and because none of the ways
+    // of arriving here are an argument for access: the reviewer looked and
+    // would not commit, or it never answered. Which of those it was is the
+    // source, so a log tells a reviewer that hesitated from one that was down.
     return {
-      decision: await deps.openApproval(Promise.resolve({ decision: null, reason })),
-      source: "ask",
+      decision: "deny",
+      source:
+        cause === "unavailable" ? DENIAL_SOURCE_REVIEWER_UNAVAILABLE : DENIAL_SOURCE_REVIEWER_UNDECIDED,
     };
   }
 

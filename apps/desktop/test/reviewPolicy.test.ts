@@ -201,13 +201,13 @@ describe("decideIntent — adversarial mode", () => {
   const adversarial = (over: Partial<Settings> = {}) =>
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
 
-  // One review, three verdicts, three outcomes. The `ask` row is the one that
-  // must not be read as an approval: it hands over to the human without
-  // highlighting a button, rather than deciding.
+  // One review, three verdicts, three outcomes — and no dialog in any of them.
+  // The owner chose "the reviewer decides"; a modal in this mode contradicts
+  // that, so an `ask` is a denial here rather than a handover.
   const decisionCases = [
-    { verdict: "allow" as const, decision: "allow_once", source: "adversarial", dialogs: 0 },
-    { verdict: "deny" as const, decision: "deny", source: "adversarial", dialogs: 0 },
-    { verdict: "ask" as const, decision: "allow_once", source: "ask", dialogs: 1 },
+    { verdict: "allow" as const, decision: "allow_once", source: "adversarial" },
+    { verdict: "deny" as const, decision: "deny", source: "adversarial" },
+    { verdict: "ask" as const, decision: "deny", source: "reviewer_undecided" },
   ];
 
   for (const c of decisionCases) {
@@ -218,19 +218,53 @@ describe("decideIntent — adversarial mode", () => {
         decision: "allow_once",
       });
       expect(await h.run()).toEqual({ decision: c.decision, source: c.source });
-      expect(h.openApproval).toHaveBeenCalledTimes(c.dialogs);
-      // Only the handover carries a dialog. It highlights no button — the
-      // reviewer reached no verdict — but it does tell the human what was
-      // said, rather than prompting them out of nowhere.
-      if (c.dialogs) {
-        expect(h.dialogs).toHaveLength(1);
-        await expect(h.dialogs[0]).resolves.toEqual({
-          decision: null,
-          reason: "genuinely ambiguous",
-        });
-      }
+      expect(h.openApproval).not.toHaveBeenCalled();
     });
   }
+
+  /**
+   * The routes into a dialog were never one route. A model can answer `ask`; a
+   * call can time out; a provider can error or rate-limit; an answer can fail
+   * to parse. Each arrives as the same `ask` verdict and each used to open the
+   * same window, so each needs its own proof that it no longer does.
+   */
+  describe("no route reaches a modal", () => {
+    const routes = [
+      { name: "the model answers ask", reason: "genuinely ambiguous", cause: undefined, source: "reviewer_undecided" },
+      { name: "the call times out", reason: "reviewer timed out", cause: "unavailable" as const, source: "reviewer_unavailable" },
+      { name: "the provider errors", reason: "reviewer error", cause: "unavailable" as const, source: "reviewer_unavailable" },
+      { name: "the provider rate-limits", reason: "Plow returned HTTP 429", cause: "unavailable" as const, source: "reviewer_unavailable" },
+      { name: "the verdict does not parse", reason: "reviewer returned no usable verdict", cause: "unavailable" as const, source: "reviewer_unavailable" },
+    ];
+
+    for (const r of routes) {
+      it(`${r.name} → deny, sourced ${r.source}`, async () => {
+        // `decision` is what the dialog WOULD have answered. Nothing may turn
+        // it into execution, because nothing may open it.
+        const h = harness(adversarial(), {
+          verdict: "ask",
+          reason: r.reason,
+          cause: r.cause,
+          decision: "allow_once",
+        });
+        expect(await h.run()).toEqual({ decision: "deny", source: r.source });
+        expect(h.openApproval).not.toHaveBeenCalled();
+        // The reason the reviewer gave is still recorded, so the source is a
+        // summary of the timeline rather than a replacement for it.
+        expect(h.records[1].fields).toMatchObject({ verdict: "ask", reason: r.reason });
+      });
+    }
+
+    it("leaves Ask mode's dialog exactly where it was", async () => {
+      const h = harness(settings({ relayCredential: PLOW_CREDENTIAL }), {
+        verdict: "ask",
+        reason: "genuinely ambiguous",
+        decision: "allow_once",
+      });
+      expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
+      expect(h.openApproval).toHaveBeenCalledOnce();
+    });
+  });
 
   it("out of credits denies, and says so through the decision's source", async () => {
     // The reviewer the user configured can never run, so falling back to a
