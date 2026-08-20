@@ -512,7 +512,6 @@ function refusedSuffix(ev: ReturnType<typeof jv>): string {
 function describeStep(e: JSONValue): AuditStep {
   const ev = jv(e);
   const event = ev.get("event").str ?? "";
-  const argv = () => (ev.get("argv").arr ?? []).filter((a): a is string => typeof a === "string").join(" ");
   let text: string;
   let state: StepState = "neutral";
   switch (event) {
@@ -562,14 +561,14 @@ function describeStep(e: JSONValue): AuditStep {
     case "approval_abandoned":
       text = "Never answered — the app closed while the approval was pending";
       break;
-    case "exec_start": text = `Run started: ${argv()}`; break;
+    case "exec_start": text = `Run started: ${execArgv(e)}`; break;
     case "exec_end":
       text = `Run finished (exit ${ev.get("exit_code").int ?? -1})`;
       state = ev.get("exit_code").int === 0 ? "ok" : "bad";
       break;
     case "exec_error": text = `Run error: ${ev.get("error").str ?? ""}`; state = "bad"; break;
     case "exec_refused":
-      text = `Refused before approval: ${argv()} — ${ev.get("reason").str ?? ""}`;
+      text = `Refused before approval: ${execArgv(e)} — ${ev.get("reason").str ?? ""}`;
       state = "bad";
       break;
     case "file_read": text = `File read: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
