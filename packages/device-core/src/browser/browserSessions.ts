@@ -46,6 +46,8 @@ interface Session {
   auditId: string;
   /** Closes THIS session when it goes quiet; sessions do not share a clock. */
   idleTimer: NodeJS.Timeout | null;
+  /** Set the moment a close starts, and never unset: it ends here. */
+  closing: boolean;
 
   handle: string;
   agentId: string;
@@ -265,6 +267,7 @@ export class BrowserSessions {
       profile,
       auditId: digest(handle),
       idleTimer: null,
+      closing: false,
       agentId,
       origins: origins.map(normalizeOrigin),
       credentialMetadata,
@@ -453,9 +456,18 @@ export class BrowserSessions {
     if (agentId !== undefined && s.agentId !== agentId) {
       return { status: "error", error: "session belongs to a different Plow credential" };
     }
-    // The claim is held until the browser is really down. Releasing it first
-    // lets the same credential reopen while Camoufox still has the profile,
-    // and Firefox locks a profile against a second copy of itself.
+    // The session stays registered across the shutdown below — the claim is
+    // held until the browser is really down — so it is still reachable while
+    // it is on its way out: the idle clock can come due, or a second close can
+    // arrive. Either would run a whole second teardown and write the owner a
+    // second "closed" line for one session. The clock is stopped and the way
+    // back in is shut here, before anything is awaited.
+    if (s.closing) return { status: "completed" };
+    s.closing = true;
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    // The claim itself is held until the browser is really down. Releasing it
+    // first lets the same credential reopen while Camoufox still has the
+    // profile, and Firefox locks a profile against a second copy of itself.
     //
     // Only this session's browser goes away; everyone else keeps theirs, and
     // this one's profile goes with it — nothing is left for the next agent.

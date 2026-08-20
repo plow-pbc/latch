@@ -751,6 +751,24 @@ describe("one profile per session, and never a shared one", () => {
     expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
   });
 
+  it("closes once, however many callers and clocks arrive at the same time", async () => {
+    // The session stays registered while its browser shuts down, so it is
+    // still reachable then: a second close, or the idle clock coming due
+    // mid-shutdown, used to run a whole second teardown and write the owner a
+    // second "closed" line for the one session.
+    const handle = await openSession(["pizza.example"]);
+    const before = ctx.events.length;
+    await Promise.all([
+      ctx.sessions.close(handle, "agent"),
+      ctx.sessions.close(handle, "idle"),
+    ]);
+    const closed = ctx.events
+      .slice(before)
+      .filter((e) => e.event === "browser_session_closed");
+    expect(closed).toHaveLength(1);
+    expect(closed[0].fields.reason).toBe("agent");
+  });
+
   it("refuses to open once the app is on its way out", async () => {
     // An intent can sit waiting for the owner and be approved mid-quit. The
     // browser it would start is one nobody is left to close.
