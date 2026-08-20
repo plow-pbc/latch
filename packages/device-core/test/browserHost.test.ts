@@ -65,6 +65,7 @@ describe("BrowserHost", () => {
     // credential fill's locate — and whichever was in flight would otherwise be
     // the one that consumed a 429 and dropped it.
     const { host } = makeHost();
+    const statuses = () => (host.takeFailedRequests() as { status: number }[]).map((r) => r.status);
     await host.sendAction({ action: "click", selector: "#blocked" });
     // Scripted: this one's refusal settles late, so it arrives on the viewer
     // poll — a reply nobody reads refusals off. Held, not dropped, is the whole
@@ -74,26 +75,23 @@ describe("BrowserHost", () => {
     await host.sendAction({ action: "click", selector: "#blocked" });
     // Five seen so far, and the poll-borne 401 sits in the middle where it
     // arrived rather than at either end.
-    expect((host.takeFailedRequests() as { status: number }[]).map((r) => r.status))
-      .toEqual([429, 403, 401, 429, 403]);
+    expect(statuses()).toEqual([429, 403, 401, 429, 403]);
     // Taken means taken: the next asker gets nothing.
     expect(host.takeFailedRequests()).toEqual([]);
 
-    // Bounded, and it is the OLDEST that falls off: a late 401 armed first is
-    // gone after three armed clicks put six newer refusals in front of it.
+    // Bounded, and it is the OLDEST that falls off: seven refusals, five kept —
+    // the 401 armed first and the 403 behind it are what go.
     await host.sendAction({ action: "click", selector: "#blocked-later" });
     for (let i = 0; i < 3; i++) {
       await host.sendAction({ action: "click", selector: "#blocked" });
     }
-    const capped = host.takeFailedRequests() as { status: number }[];
-    expect(capped.map((r) => r.status)).toEqual([429, 403, 429, 403, 429]);
+    expect(statuses()).toEqual([429, 403, 429, 403, 429]);
 
     // And a late refusal still pending when the next one is scripted keeps its
     // place behind it rather than being lost — one ring, oldest last.
     await host.sendAction({ action: "click", selector: "#blocked-later" });
     await host.sendAction({ action: "click", selector: "#blocked" });
-    expect((host.takeFailedRequests() as { status: number }[]).map((r) => r.status))
-      .toEqual([429, 403, 401]);
+    expect(statuses()).toEqual([429, 403, 401]);
   });
 
   it("rejects pending on crash and lazily restarts", async () => {
