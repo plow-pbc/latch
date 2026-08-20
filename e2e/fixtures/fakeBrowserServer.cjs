@@ -35,6 +35,8 @@
  *   click "#offsite"  navigates the page to https://offsite.example/lander, one
  *                     of whose requests was refused — and another that settles
  *                     while parked there
+ *   click "#dies"     reports one refusal and exits(9) without answering — the
+ *                     crash path, where the last thing said is easiest to lose
  *   click "#refuses"  throws, and the refusals it saw ride the error reply
  *   click "#blocked"  the page's own requests come back refused: seven 4xx
  *                     responses, the way the real server reports the ones it
@@ -309,6 +311,18 @@ function main() {
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
     if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
+    if (cmd.action === "click" && cmd.selector === "#dies") {
+      // Says what the page's requests did, then dies without answering the
+      // command — the shape where the device's own bookkeeping decides whether
+      // the owner ever learns it.
+      respond({
+        failed_requests: [{
+          status: 429, method: "GET",
+          url: "https://pizza.example/api/last-gasp", frame_url: "https://pizza.example/",
+        }],
+      }, () => process.exit(9));
+      return;
+    }
     let reply;
     try {
       reply = { id: cmd.id, result: envelope(handle(cmd)) };

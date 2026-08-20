@@ -76,6 +76,9 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
     env: { FAKE_BROKER_VAULT: vaultPath },
   });
   const sessions = new BrowserSessions(host, credentials, audit, 60_000);
+  // Wired as DeviceAgent wires it, so a crash closes the books the way it does
+  // in production rather than only when a test calls noteCrash by hand.
+  host.onCrash = () => sessions.noteCrash();
   return { sessions, host, events, dir, fillLog };
 }
 
@@ -293,6 +296,28 @@ describe("requests the site refused", () => {
       {
         status: 401, method: "GET",
         url: "https://pizza.example/api/whoami", frame_url: "https://pizza.example/",
+      },
+    ]);
+  });
+
+  it("logs the last thing a dying browser said, on the crash path itself", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // Scripted: "#dies" reports a refusal and exits without answering. The
+    // command fails; the record of why must not die with the browser. What this
+    // cannot do is force the interleaving — whether the line is parsed before
+    // or after `exit` is dispatched is the kernel's business — so it covers the
+    // path, and the setImmediate around onCrash is what makes the order not
+    // matter.
+    const dead = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#dies" }));
+    expect(dead.get("status").str).toBe("error");
+    await new Promise((r) => setTimeout(r, 50));
+    const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
+    expect(closed?.fields.reason).toBe("crashed");
+    expect(closed?.fields.failed_requests).toEqual([
+      {
+        status: 429, method: "GET",
+        url: "https://pizza.example/api/last-gasp", frame_url: "https://pizza.example/",
       },
     ]);
   });
