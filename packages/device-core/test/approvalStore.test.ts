@@ -56,31 +56,26 @@ const answersIn = (ms: number, decision: IntentDecision = "allow_once"): PolicyD
  */
 function startApproval(store: ApprovalStore, intent: Intent): void {
   let settled = false;
-  let failure: unknown;
-  // The outcome is absorbed from the first tick rather than at teardown, so an
-  // approval that blows up mid-test cannot itself become the run-level
-  // unhandled rejection this helper exists to remove. It is rethrown below.
-  const pending = store.decideIntent(intent).then(
-    () => {
-      settled = true;
-    },
-    (error: unknown) => {
-      settled = true;
-      failure = error;
-    },
-  );
+  const pending = store.decideIntent(intent);
+  // Handled from the first tick, so an approval that blows up mid-test cannot
+  // itself become the run-level unhandled rejection this helper exists to
+  // remove. Cleanup awaits `pending` directly, so the failure still lands on
+  // the test that started it.
+  void pending.catch(() => {}).finally(() => {
+    settled = true;
+  });
   cleanups.push(async () => {
-    // The waiter is registered a few awaits into `decideIntent`, so a teardown
-    // that lands early has to wait for the store to become answerable at all.
+    // `resolve` is the readiness signal, not `pending()`: it consults the
+    // waiting map, which still holds a record that another store opened on the
+    // same directory has since swept to `abandoned` — and that is exactly the
+    // state the restart test tears down in. The waiter is registered a few
+    // awaits into `decideIntent`, so a teardown that lands early waits for it.
     const deadline = Date.now() + 5_000;
     while (!settled && !store.resolve(intent.intentId, "deny", "teardown")) {
       if (Date.now() > deadline) throw new Error("the approval never became answerable in teardown");
       await new Promise((r) => setTimeout(r, 5));
     }
     await pending;
-    // A write that genuinely failed should fail the test that started it, by
-    // name, rather than being swallowed here.
-    if (failure !== undefined) throw failure;
   });
 }
 
