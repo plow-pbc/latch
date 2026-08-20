@@ -345,6 +345,10 @@ describe("browser tools (fake runtime)", () => {
       server, "plow_browser_request", { session, origins: ["shop.example"] }, AGENT,
     );
     expect(widenAgain.isError, JSON.stringify(widenAgain.payload)).toBe(false);
+    // That it landed, not just that it did not throw: extend() answers
+    // "completed" on a no-op too, and every assertion below holds for the
+    // wrong reason if this widening never happened.
+    expect(jv(widenAgain.payload as JSONValue).get("origins").arr).toContain("shop.example");
     expect(launches(argvLog)).toHaveLength(1);
     expect(audited(device, "browser_profile_abandoned")).toEqual([opening]);
     await callTool(server, "plow_browser_close", { session }, AGENT);
