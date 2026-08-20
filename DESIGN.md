@@ -347,7 +347,9 @@ action (context-level, popups included) and every result carries them as
 `failed_requests` — status, method, a **query-stripped** url (B2C hangs
 `tx=StateProperties=` there), size, `Retry-After` and `Server`. Never a body: a
 body can echo a submitted credential. Bounded because the relay buffers a whole
-exchange. `BrowserSessions` re-strips before the entries reach the agent or the
+exchange. The actions the device issues for itself — the owner's ~1/s viewer poll above
+all — never spend one; they wait for the action the agent asked for.
+`BrowserSessions` re-strips before the entries reach the agent or the
 audit log, and withholds them from the agent on an out-of-scope page like every
 other observation of that page.
 

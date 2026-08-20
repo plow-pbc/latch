@@ -437,6 +437,10 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
+    // Derived, never inherited: the spread above carries the browser's own
+    // value, and a malformed one would then reach the agent unstripped while
+    // the owner's log recorded nothing.
+    delete out.failed_requests;
     if (failed.length) out.failed_requests = failed;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.

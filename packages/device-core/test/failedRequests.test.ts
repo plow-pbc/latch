@@ -1,9 +1,10 @@
 /**
  * A page's own requests failing, made visible.
  *
- * Two halves: the real Python listener (through a probe, skipped where there is
- * no python3) decides what is kept and hands each entry over exactly once; the
- * enforcement layer re-strips, bounds, audits and withholds it out of scope.
+ * What the real Python listener keeps, and who it hands it to — driven through
+ * a probe, so it is skipped where there is no python3. The enforcement layer's
+ * half of this (re-strip, bound, audit, withhold off-scope) is in
+ * browserSessions.test.ts, against the fake server.
  */
 import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,8 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     listens: string[];
     refused: Envelope;
     drained: Envelope;
+    viewer_poll: Envelope;
+    after_viewer_poll: Envelope;
     quiet: Envelope;
     bounded: Envelope;
     hostile: Envelope;
@@ -52,6 +55,11 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
 
   it("hands each refusal over once, so the next action is not told again", () => {
     expect(probed.drained.failed_requests).toBeUndefined();
+  });
+
+  it("does not spend a refusal on the owner's viewer poll, which nobody reads", () => {
+    expect(probed.viewer_poll.failed_requests).toBeUndefined();
+    expect((probed.after_viewer_poll.failed_requests ?? []).map((r) => r.status)).toEqual([403]);
   });
 
   it("keeps nothing for a page that worked, redirects included", () => {

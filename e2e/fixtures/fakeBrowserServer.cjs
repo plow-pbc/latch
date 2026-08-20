@@ -36,6 +36,7 @@
  *                     saw during the action (already query-stripped there —
  *                     one here keeps its query, to prove the device strips too),
  *                     plus one that settles late and rides the next result
+ *   click "#malformed"  a failed_requests the device cannot read: not a list
  */
 "use strict";
 const fs = require("node:fs");
@@ -64,7 +65,7 @@ function envelope(result) {
     ...result,
     url: current().url,
     page_count: state.pages.length,
-    ...(failed.length ? { failed_requests: failed } : {}),
+    ...(failed.length === 0 ? {} : { failed_requests: failed }),
   };
 }
 
@@ -139,6 +140,10 @@ function handle(cmd) {
       state.failedNext = [
         { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
       ];
+    } else if (cmd.selector === "#malformed") {
+      // Not a list at all — a browser process that is not behaving is exactly
+      // what the device's own re-strip is for.
+      state.failed = "https://pizza.example/api/order?tx=StateProperties=SECRET";
     }
     return { ok: true, frame: 0 };
   }

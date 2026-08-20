@@ -279,6 +279,15 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toBeUndefined();
   });
 
+  it("hands the agent nothing it cannot read — a malformed list is not passed through", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#malformed" }));
+    expect(r.get("status").str).toBe("completed");
+    expect(r.get("failed_requests").value).toBeNull();
+    expect(JSON.stringify(r.value)).not.toContain("SECRET");
+  });
+
   it("withholds them from the agent off-scope, and keeps them for the owner", async () => {
     const s = await openSession(["pizza.example"]);
     // Scripted: "#offsite" lands off-scope having had a request refused. The
