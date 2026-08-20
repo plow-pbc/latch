@@ -353,6 +353,7 @@ the browser anything is the device itself — the owner's ~1/s viewer poll, the
 popup sweep, the frame lookup before a credential fill — and whichever of
 those was in flight would otherwise be the one that consumed a 429 and dropped
 it. Every response passes through one place, so that is where they wait.
+
 Each entry names the document that asked (`frame_url`) as well as what it
 asked for. A navigation names itself, but only when it answers the **`goto`
 this session issued** — the active page's main frame going where that `goto`
