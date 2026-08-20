@@ -178,12 +178,6 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
-# Whether a field still holds what it held a moment ago. The previous value
-# stays in the page as a handle and is compared there, so it is exact and never
-# crosses the wire. A hash was tried and is not good enough: "BB" and "Aa" share
-# one, and a partial fill that collided would look unchanged and have its mark
-# taken off, which is the one outcome this must never produce.
-
 # Whether a node's value is the characters it is given. A date or a
 # datetime-local composes its out of something else entirely -- typing
 # "2026-08-19" into one lands 6081-02-02, silently -- and a colour or a range
@@ -205,6 +199,11 @@ TYPEABLE_JS = """(el) => el.tagName !== "INPUT" ||
 # so every question below asks through this one.
 _HELD = "(el.value !== undefined ? el.value : (el.textContent || ''))"
 
+# What a node is holding, captured before a fill so a failure has something
+# exact to be compared against. It stays in the page as a handle and is compared
+# there, so it never crosses the wire. A hash was tried and is not good enough:
+# "BB" and "Aa" share one, and a partial fill that collided would look unchanged
+# and have its mark taken off, which is the one outcome that must never happen.
 VALUE_SNAPSHOT_JS = f"""(el) => {_HELD}"""
 
 # Whether the keys failed to land, in the only two shapes an assignment could
