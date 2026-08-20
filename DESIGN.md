@@ -360,8 +360,9 @@ it, through however many redirects. That exception exists because the frame has
 not committed the new url yet when the headers arrive, so asking it would name
 the page being left, and a refused `goto` would be credited to the page the
 agent was leaving. Everything else is named by whoever drove it: a subframe by
-the frame that embedded it, a background popup by the document it is showing,
-and a page scripting its own `location` by itself. `back` lands somewhere not
+the frame that embedded it, and a background popup or a page scripting its own
+`location` by the document that frame is still showing — never by the url it
+chose. `back` lands somewhere not
 known in advance, so it claims nothing, and `use_page` clears the pointer along
 with the page it belonged to. A frame that cannot be resolved at all (a service
 worker's request, a popup before its frame exists) names nothing. The rule

@@ -66,8 +66,8 @@ FAILED_REQUEST_HEADERS = ("retry-after", "server")
 # exchange budget.
 MAX_FAILED_REQUEST_URL = 200
 
-# How far back a refused navigation is traced to the url the agent asked for.
-# The browser's own redirect ceiling is 20, so a chain it followed is a chain
+# How many redirects back a refused navigation is traced to the url the agent
+# asked for. The browser's own ceiling is 20, so a chain it followed is a chain
 # this can follow: the walk only has to terminate, and every hop is compared
 # against the same one string.
 MAX_REDIRECT_HOPS = 20
@@ -299,7 +299,9 @@ class Session:
         if not self.goto_url:
             return False
         request = response.request
-        for _ in range(MAX_REDIRECT_HOPS):
+        # One more than the hop ceiling: the response's own request, then every
+        # redirect behind it.
+        for _ in range(MAX_REDIRECT_HOPS + 1):
             if request is None:
                 return False
             if _strip_query(request.url) == self.goto_url:

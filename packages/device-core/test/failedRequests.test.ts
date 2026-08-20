@@ -96,7 +96,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.navigation_asked_for).toBe("https://pizza.example/checkout?tx=SECRET");
   });
 
-  it("walks a sign-in-length chain — 19 hops — back to what was asked for", () => {
+  it("walks a sign-in-length chain — the browser's full 20 redirects — back to what was asked for", () => {
     expect(probed.long_chain.failed_requests?.[0]).toMatchObject({
       url: "https://signin.pizza.example/b2c/end",
       frame_url: "https://signin.pizza.example/b2c/end",
