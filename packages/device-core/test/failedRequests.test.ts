@@ -116,8 +116,8 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     // The trade-off this costs is at BrowserHost's ring, where the decision is
     // recorded (its MAX_FAILED_REQUESTS) and asserted; this only says the
     // browser does not separate the two kinds either.
-    expect((probed.frames_crowd_out.failed_requests ?? []).map((r) => r.initiator))
-      .toEqual(["", "", "", "", ""]);
+    expect((probed.frames_crowd_out.failed_requests ?? []).map((r) => [r.status, r.initiator]))
+      .toEqual([[414, ""], [413, ""], [412, ""], [411, ""], [410, ""]]);
   });
 
   it("keeps the most recent few, most recent first", () => {
