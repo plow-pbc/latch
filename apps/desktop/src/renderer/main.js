@@ -8,16 +8,6 @@ import {
   PURPOSE_LABEL,
 } from "./approvals.js";
 
-/**
- * The one way this app offers to give the reviewer a credential.
- *
- * There is no longer a screen that points the reviewer anywhere but the Plow
- * account, so this is the only remedy a card may name. A Mac whose stored
- * provider is something else gets the gap stated and no instruction — telling
- * someone to do a thing the app does not offer is worse than saying nothing.
- */
-const PLOW_REVIEWER_SETUP = "sign in to Plow in Settings";
-
 import { el, icon } from "./dom.js";
 import { renderVault } from "./vault.js";
 
@@ -746,12 +736,10 @@ async function renderAgents() {
 
   const renderApprovals = () => {
     const mode = inference.approvalMode;
-    const hasKey = inference.available[inference.provider];
-    // How to get a reviewer, named only when it is something this app can
-    // actually do; on a Mac pointed at any other provider the gap is stated on
-    // its own, because telling someone to use a control that is gone is the
-    // dead end this card exists to avoid.
-    const remedy = inference.provider === "plow" ? `: ${PLOW_REVIEWER_SETUP}.` : ".";
+    const hasKey = inference.available;
+    // How to get a reviewer. One reviewer, one answer — and the two sentences
+    // below both end in it, so they cannot come to disagree about the remedy.
+    const remedy = ": sign in to Plow in Settings.";
     // Only worth saying when the owner has actually asked the reviewer to
     // decide. The second half is the part people get wrong: a denial here is
     // not a freeze, because a rule already approved is a decision they made.
@@ -821,8 +809,8 @@ async function renderAgents() {
         "by an always-allow rule skip this — manage those in Rules. Anything the AI Reviewer " +
         "sees — the request, the paths asked for, the agent's identity, its goal and plan, the " +
         "capabilities it asked for, its recent activity on this Mac, and what you say agents " +
-        "are for — is sent to that reviewer's provider to be judged, and billed to that " +
-        "account; nothing from other agents goes with it.",
+        "are for — is sent to Plow to be judged, and billed to your account; nothing from " +
+        "other agents goes with it.",
       [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
     ),
   ]));
@@ -997,7 +985,7 @@ async function renderSettings() {
     el("span", { text: "Open Plow Latch when you log in" }),
   ]);
   // Why the toggle is dead, when it is: a disabled control that says nothing
-  // is a dead end (the provider chips' rule).
+  // is a dead end.
   const launchNote = el("p", { class: "faint cap-note", text:
     "Only the installed app can add itself as a login item, so this from-source run can't." });
   const applyLaunch = () => {

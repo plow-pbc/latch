@@ -1,6 +1,6 @@
 /**
  * How an operation intent gets decided — the branching between approval mode,
- * inference provider, credential availability, and the human dialog.
+ * credential availability, and the human dialog.
  *
  * This lives outside the Electron entry on purpose (same reason as
  * `viewModel.ts` and `spawnAgent.ts`): it is the security-relevant decision
@@ -16,15 +16,13 @@ import {
 } from "@domo/device-core";
 import {
   agentHistory,
-  PLOW_REVIEWER_INFO,
-  PLOW_REVIEWER_MODEL,
   REVIEWER_INFO,
   REVIEWER_MODEL,
   ReviewArgs,
   ReviewFailureCause,
   Verdict,
 } from "./adversarialAgent.js";
-import { INFERENCE_PROVIDERS, InferenceProvider, Settings } from "./settings.js";
+import { Settings } from "./settings.js";
 
 export type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
@@ -42,19 +40,15 @@ export interface ReviewHint {
   reason: string;
 }
 
-/** Which providers this Mac currently holds a credential for. */
-export type ProviderAvailability = Record<InferenceProvider, boolean>;
-
 /**
- * What the renderer is allowed to know about inference: the selection, which
- * providers are usable, and what the active one runs. **No credentials** — not
- * the relay credential, not the Anthropic key, not a prefix of either.
+ * What the renderer is allowed to know about inference: whether the reviewer
+ * can run, and what it runs. **No credentials** — not the relay credential, not
+ * a prefix of one.
  */
 export interface InferenceStatus {
-  provider: InferenceProvider;
-  /** Keyed by provider, so a caller never has to know their names to read it. */
-  available: ProviderAvailability;
-  /** Model + limits of the *active* provider, for display. */
+  /** Whether this Mac holds the credential the reviewer needs. */
+  available: boolean;
+  /** Model + limits, for display. */
   info: string;
   /**
    * The stored approval mode, in the SAME snapshot as availability. Reading the
@@ -64,51 +58,18 @@ export interface InferenceStatus {
   approvalMode: Settings["approvalMode"];
 }
 
-/**
- * The stored selection, defaulting to Plow. An absent field reads as `plow`, and
- * so does anything unrecognised — a hand-edited settings.json must not be able
- * to put the reviewer into an undefined state.
- */
-export function activeProvider(settings: Pick<Settings, "inferenceProvider">): InferenceProvider {
-  const stored = settings.inferenceProvider;
-  return INFERENCE_PROVIDERS.includes(stored as InferenceProvider)
-    ? (stored as InferenceProvider)
-    : "plow";
-}
-
-/** A provider is usable exactly when its credential is present. */
-export function providerAvailability(
-  settings: Pick<Settings, "relayCredential" | "anthropicApiKey">,
-): ProviderAvailability {
-  return {
-    plow: !!(settings.relayCredential ?? "").trim(),
-    anthropic: !!(settings.anthropicApiKey ?? "").trim(),
-  };
-}
-
-/** The model the given provider actually runs. Audited. */
-export function reviewerModel(provider: InferenceProvider): string {
-  return provider === "plow" ? PLOW_REVIEWER_MODEL : REVIEWER_MODEL;
-}
-
-export function reviewerInfo(provider: InferenceProvider): string {
-  return provider === "plow" ? PLOW_REVIEWER_INFO : REVIEWER_INFO;
-}
-
 /** The renderer-facing shape. Built here so there is one definition of "safe". */
 export function inferenceStatus(settings: Settings): InferenceStatus {
-  const provider = activeProvider(settings);
   return {
-    provider,
-    available: providerAvailability(settings),
-    info: reviewerInfo(provider),
+    available: reviewerAvailable(settings),
+    info: REVIEWER_INFO,
     approvalMode: settings.approvalMode ?? "ask",
   };
 }
 
-/** Can the reviewer run at all right now? */
+/** Can the reviewer run at all right now? Exactly: is this Mac signed in. */
 export function reviewerAvailable(settings: Settings): boolean {
-  return providerAvailability(settings)[activeProvider(settings)];
+  return !!(settings.relayCredential ?? "").trim();
 }
 
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
@@ -130,8 +91,8 @@ export interface DecideDeps {
  * Decide one intent. The returned `source` records HOW it was decided, for the
  * audit log.
  *
- * The adversarial-agent features need a credential for the selected provider;
- * without one, adversarial mode denies (`DENIAL_SOURCE_NO_REVIEWER`) and Ask
+ * The adversarial-agent features need a Plow credential; without one,
+ * adversarial mode denies (`DENIAL_SOURCE_NO_REVIEWER`) and Ask
  * mode's suggestions are skipped.
  */
 export async function decideIntent(
@@ -144,8 +105,6 @@ export async function decideIntent(
   if (mode === "approve") return { decision: "allow_once", source: "approve" };
   if (mode === "deny") return { decision: "deny", source: "policy" };
 
-  const provider = activeProvider(settings);
-
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
   // the request and the final decision.
@@ -154,17 +113,13 @@ export async function decideIntent(
     deps.record("adversarial_review_started", {
       intentId: intent.intentId,
       agent: intent.agentId,
-      // The provider that actually ran, and the model it actually used — the
-      // audit log is the test oracle, so it must not name a model that never
-      // saw this intent.
-      provider,
-      model: reviewerModel(provider),
+      // The model that actually ran — the audit log is the test oracle, so it
+      // must not name one that never saw this intent.
+      model: REVIEWER_MODEL,
     });
     const r = await deps.review({
       intent,
       history,
-      provider,
-      apiKey: (settings.anthropicApiKey ?? "").trim(),
       // A SECRET. It reaches the Authorization header of the Plow request and
       // nothing else — never the audit record below, never the renderer.
       plowCredential: (settings.relayCredential ?? "").trim(),
@@ -196,8 +151,8 @@ export async function decideIntent(
     const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
-    // The account cannot pay for inference, so the reviewer the user chose can
-    // never run. Deny — and say why, in a form the calling agent can read.
+    // The account cannot pay for inference, so the reviewer can never run.
+    // Deny — and say why, in a form the calling agent can read.
     // Quietly reverting to prompting a human would change the mode the user
     // configured, and would hide a standing condition behind one more dialog.
     if (cause === "no_credits") {
@@ -216,7 +171,9 @@ export async function decideIntent(
     return {
       decision: "deny",
       source:
-        cause === "unavailable" ? DENIAL_SOURCE_REVIEWER_UNAVAILABLE : DENIAL_SOURCE_REVIEWER_UNDECIDED,
+        cause === "unavailable"
+          ? DENIAL_SOURCE_REVIEWER_UNAVAILABLE
+          : DENIAL_SOURCE_REVIEWER_UNDECIDED,
     };
   }
 
@@ -224,7 +181,7 @@ export async function decideIntent(
   // the toggle and a credential are present. A 402 here costs only the hint —
   // the human was always the decider.
   //
-  // A hint is a nicety, so it is skipped when the provider has no credential:
+  // A hint is a nicety, so it is skipped when there is no credential:
   // running a review that cannot run would buy an audit pair and a null
   // suggestion. Not a gate — nothing the human chose is refused by it.
   const hint =
