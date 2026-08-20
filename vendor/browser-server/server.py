@@ -146,9 +146,15 @@ TYPEABLE_JS = """(el) => {
             const doc = el.ownerDocument;
             return tag === "body" && !!doc && doc.designMode === "on";
         }
-        // `contenteditable="false"` is already answered by isContentEditable --
-        // the attribute puts the node in the explicitly-not-editable state.
-        return el.isContentEditable === true;
+        // Carrying the attribute is not enough: it is enumerated, and anything
+        // outside its keywords -- "banana", or the "inherit" older guidance
+        // taught people to write -- means INHERIT, so a span in a rich-text
+        // region would answer non-null here and true below while not being the
+        // host at all. Typing at it would select-all and replace the whole
+        // region's content, not the span's.
+        const value = attr.toLowerCase();
+        const declared = value === "" || value === "true" || value === "plaintext-only";
+        return declared && el.isContentEditable === true;
     }
     if (tag === "input" && !typed.includes(el.type)) return false;
     return !el.disabled && !el.readOnly;
