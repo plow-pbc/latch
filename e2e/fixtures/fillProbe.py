@@ -57,7 +57,8 @@ class Handle:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
-                 document_token="doc-1", type_fails=False, typeable=True):
+                 document_token="doc-1", type_fails=False, typeable=True,
+                 drops_keys=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
@@ -67,6 +68,9 @@ class Handle:
         # False is a date, colour or range widget: assigned rather than typed,
         # because its value is not the characters it is handed.
         self.typeable = typeable
+        # A field that says it takes characters and then sanitises some of them
+        # away -- a number input handed something that is not a number.
+        self.drops_keys = drops_keys
         self.mask_result = mask_result
         self.marked = marked
         # Which document this node is in, and what it currently holds. A fill
@@ -88,6 +92,11 @@ class Handle:
             return self.document_token
         if "tagName" in js:
             return self.typeable
+        if "=== wanted" in js:
+            wanted = args[0] if args else None
+            # `drops_keys` is a field that sanitises away what it will not hold:
+            # the keys go in and the node ends up with something else.
+            return not self.drops_keys and (self.value or "") == wanted
         if "=== previous" in js:
             previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
             now = self.value or ""
@@ -121,10 +130,10 @@ class Handle:
         first: nothing is typed into a field nobody can find.
         """
         if self.detach_before_fill:
-            self.trace.append("handle.clear-failed")
+            self.trace.append("handle.assign-failed")
             raise RuntimeError("Element is not attached to the DOM")
         self.value = value
-        self.trace.append("handle.clear")
+        self.trace.append("handle.assign")
 
     def type(self, text, delay=None, timeout=None):
         """The keystrokes. A failure is traced distinctly from a success:
@@ -160,12 +169,12 @@ class Frame:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
-                 typeable=True):
+                 typeable=True, drops_keys=False):
         self.trace = trace
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token, type_fails, typeable)
+                             partial_fill, document_token, type_fails, typeable, drops_keys)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -218,11 +227,11 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1", type_fails=False, typeable=True):
+        document_token="doc-1", type_fails=False, typeable=True, drops_keys=False):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
-                  type_fails=type_fails, typeable=typeable)
+                  type_fails=type_fails, typeable=typeable, drops_keys=drops_keys)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -362,6 +371,10 @@ def main() -> int:
         # before the widget branch did.
         "not_typeable_masked": run(server, {**base, "mask": True, "value": "2026-08-19"},
                                    typeable=False),
+        # A field that took the keys and then sanitised some of them away, so
+        # the node does not hold what was asked for. Reporting that as a fill
+        # would tell the caller a credential landed when it did not.
+        "keys_dropped": run(server, {**base, "value": "hunter2"}, drops_keys=True),
         # Prose, not a credential: too long to type inside the budget. The bulk
         # is assigned and the field still ends on real keys.
         "long_value": run(server, {**base, "value": "x" * 2000}),

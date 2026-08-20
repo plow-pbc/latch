@@ -68,7 +68,9 @@ SETTLE_MS = 1000
 # not a bound on what the whole action costs. Every fill also runs several
 # `evaluate` calls, and a masked one about twice as many; none of them take a
 # timeout and no default covers them, so a page that will not run script hangs
-# the action outright. A caller that names no frame pays for the frame
+# this process. It reads stdin serially, one command at a time, so every later
+# command in the session queues behind the one that will not return -- and
+# nothing on the device cancels it (see the loop below). A caller that names no frame pays for the frame
 # search on top of that (the loop below, #96).
 KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
@@ -200,6 +202,11 @@ TYPEABLE_JS = """(el) => el.tagName !== "INPUT" ||
 # nothing unaccounted for; empty is the other -- a fill assigns before it types,
 # so a failure at the first key leaves the node holding nothing, and a node
 # holding nothing has nothing to conceal.
+# Whether the node ends up holding exactly what was asked for. Keys can be
+# dropped on the way in where an assignment could not be: a number field
+# sanitises away anything it will not hold, a maxlength truncates.
+HOLDS_JS = """(el, wanted) => (el.value || '') === wanted"""
+
 NOTHING_LANDED_JS = """(el, previous) => {
     const now = el.value || '';
     return now === '' || now === previous;
@@ -246,6 +253,12 @@ def _type_value(el, value):
     tail = value[-TYPED_CHARS:]
     if tail:
         el.type(tail, delay=KEY_DELAY_MS, timeout=ACTION_TIMEOUT_MS + TYPING_MAX_MS)
+    if not el.evaluate(HOLDS_JS, value):
+        # The keys did not compose what was asked for, so this node was not one
+        # that takes characters after all. Assign it, which is what this did
+        # before there were keystrokes at all: it either lands the value or it
+        # raises. What it must never do is report a value that is not there.
+        el.fill(value, timeout=ACTION_TIMEOUT_MS)
 
 
 def _parse_args():

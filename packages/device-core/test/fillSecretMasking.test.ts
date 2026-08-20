@@ -513,6 +513,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_len: number | null;
         node_len: number;
         asked_len: number;
+        drops_keys?: boolean;
       };
     } & {
       constants: { typed_chars: number };
@@ -531,7 +532,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.trace).toEqual([
       "frame.wait_for_selector",
       "handle.evaluate:mark",
-      "handle.clear",
+      "handle.assign",
       "handle.type",
     ]);
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
@@ -566,6 +567,23 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(masked.marked).toBe(true);
     expect(masked.ledgered).toBe(true);
     expect(masked.node_len).toBe(masked.asked_len);
+  });
+
+  it("assigns the value outright when the keys did not compose it", () => {
+    // A field can take the keys and sanitise some of them away — a number
+    // input handed something that is not a number does exactly that. Reporting
+    // that as a fill would tell the caller a credential landed when it did
+    // not, so the value is assigned instead: that either lands it or raises,
+    // which is what this did before there were keystrokes at all.
+    expect(probed.keys_dropped.trace).toEqual([
+      "frame.wait_for_selector",
+      "handle.assign",
+      "handle.type",
+      "handle.assign",
+      "handle.evaluate:unmark",
+    ]);
+    // The ordinary case does not pay for the fallback.
+    expect(probed.plain.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
   });
 
   it("types the tail of a value too long to type whole, and lands the rest", () => {
@@ -627,7 +645,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(orphan.trace).toEqual([
       "frame.wait_for_selector",
       "handle.evaluate:mark",
-      "handle.clear-failed",
+      "handle.assign-failed",
       "handle.evaluate:unmark",
     ]);
     expect(orphan.marked).toBe(false);
@@ -677,7 +695,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
 
   it("does not type the value when the marked node went away", () => {
     expect(probed.detached.trace).not.toContain("handle.type");
-    expect(probed.detached.trace).toContain("handle.clear-failed");
+    expect(probed.detached.trace).toContain("handle.assign-failed");
     expect(probed.detached.error).toBe("RuntimeError");
     // Nothing landed, so the mark does not survive either — a node that went
     // away mid-fill is put back as it was found, same as any other fill that
@@ -693,7 +711,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "frame.wait_for_selector",
       "handle.evaluate:mark",
     ]);
-    expect(probed.mask_blocked.trace).not.toContain("handle.clear");
+    expect(probed.mask_blocked.trace).not.toContain("handle.assign");
     expect(probed.mask_blocked.trace).not.toContain("handle.type");
     expect(probed.mask_blocked.result).toEqual({ ok: false, mask: "unmasked", frame: 0 });
   });
@@ -773,7 +791,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // hiding it if the fill then timed out.
     expect(probed.plain.trace).toEqual([
       "frame.wait_for_selector",
-      "handle.clear",
+      "handle.assign",
       "handle.type",
       "handle.evaluate:unmark",
     ]);
@@ -786,7 +804,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // read off the screen, so it stays until something replaces the value.
     expect(probed.plain_failed.trace).toEqual([
       "frame.wait_for_selector",
-      "handle.clear-failed",
+      "handle.assign-failed",
     ]);
     expect(probed.plain_failed.trace).not.toContain("handle.evaluate:unmark");
     expect(probed.plain_failed.marked).toBe(true);
@@ -899,6 +917,48 @@ function stubPage(
 }
 
 describe("the mark the page ends up carrying", () => {
+  const typeable = loadScript("TYPEABLE_JS") as (el: {
+    tagName: string;
+    type?: string;
+  }) => boolean;
+
+  // Which fields get real keys and which keep the assignment they always had.
+  // Asserted against the literal `server.py` evaluates, because the list IS the
+  // behavior — the probe stubs the answer, so only this can catch an edit to it.
+  it.each([
+    { what: "a text box", el: { tagName: "INPUT", type: "text" }, typed: true },
+    { what: "a password box", el: { tagName: "INPUT", type: "password" }, typed: true },
+    // A one-time code or a CVV is routinely declared this way, and it composes
+    // its value from the keys exactly as a text box does.
+    { what: "a number field", el: { tagName: "INPUT", type: "number" }, typed: true },
+    { what: "a tel field", el: { tagName: "INPUT", type: "tel" }, typed: true },
+    { what: "an email field", el: { tagName: "INPUT", type: "email" }, typed: true },
+    { what: "a search field", el: { tagName: "INPUT", type: "search" }, typed: true },
+    { what: "a url field", el: { tagName: "INPUT", type: "url" }, typed: true },
+    // An <input> with no type attribute reports "text", so there is no empty
+    // case to allow for — and this is the test that says so.
+    { what: "an input with no type", el: { tagName: "INPUT", type: "text" }, typed: true },
+    { what: "a textarea", el: { tagName: "TEXTAREA" }, typed: true },
+    { what: "a contenteditable", el: { tagName: "DIV" }, typed: true },
+    // Typing "2026-08-19" into one of these lands 6081-02-02, silently.
+    { what: "a date field", el: { tagName: "INPUT", type: "date" }, typed: false },
+    {
+      what: "a datetime-local field",
+      el: { tagName: "INPUT", type: "datetime-local" },
+      typed: false,
+    },
+    // These do take their characters; they are assigned because no defense
+    // samples them, so there is nothing to weigh against the path they had.
+    { what: "a time field", el: { tagName: "INPUT", type: "time" }, typed: false },
+    { what: "a month field", el: { tagName: "INPUT", type: "month" }, typed: false },
+    { what: "a week field", el: { tagName: "INPUT", type: "week" }, typed: false },
+    // Not textual at all: these refuse keys outright.
+    { what: "a colour picker", el: { tagName: "INPUT", type: "color" }, typed: false },
+    { what: "a range slider", el: { tagName: "INPUT", type: "range" }, typed: false },
+  ])("$what is $typed to type into", ({ el, typed }) => {
+    expect(typeable(el)).toBe(typed);
+  });
+
   const mark = loadScript("MASK_JS") as (el: StubEl) => string;
   const unmark = loadScript("UNMASK_JS") as (el: StubEl) => boolean;
 
