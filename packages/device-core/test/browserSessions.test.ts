@@ -769,6 +769,24 @@ describe("one profile per session, and never a shared one", () => {
     expect(closed[0].fields.reason).toBe("agent");
   });
 
+  it("waits for a close that is already running before it says the Mac is clear", async () => {
+    // Quitting settles on closeAll(). A session mid-teardown is still in the
+    // map, and answering for it early — "somebody else is closing it" — let
+    // Electron exit while that browser was still going down, profile and all.
+    const sessions = new BrowserSessions(
+      { ...ctx.browsers, env: { ...ctx.browsers.env, FAKE_QUIT_DELAY_MS: "300" } },
+      new CredentialBroker({ command: ["node", FAKE_BROKER], env: {} }),
+      (event, fields) => ctx.events.push({ event, fields }),
+      60_000,
+    );
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const agentClose = sessions.close(handle, "agent");
+
+    await sessions.closeAll("shutdown");
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
+    await agentClose;
+  });
+
   it("refuses to open once the app is on its way out", async () => {
     // An intent can sit waiting for the owner and be approved mid-quit. The
     // browser it would start is one nobody is left to close.

@@ -46,8 +46,8 @@ interface Session {
   auditId: string;
   /** Closes THIS session when it goes quiet; sessions do not share a clock. */
   idleTimer: NodeJS.Timeout | null;
-  /** Set the moment a close starts, and never unset: it ends here. */
-  closing: boolean;
+  /** The teardown, once one starts: everybody else waits on this one. */
+  closing: Promise<void> | null;
 
   handle: string;
   agentId: string;
@@ -267,7 +267,7 @@ export class BrowserSessions {
       profile,
       auditId: digest(handle),
       idleTimer: null,
-      closing: false,
+      closing: null,
       agentId,
       origins: origins.map(normalizeOrigin),
       credentialMetadata,
@@ -317,7 +317,6 @@ export class BrowserSessions {
       await rollBack();
       throw error;
     }
-    this.sessions.set(session.handle, session);
     this.armIdleTimer(session);
     return {
       status: "completed",
@@ -370,15 +369,7 @@ export class BrowserSessions {
     };
   }
 
-  /**
-   * A browser for this agent.
-   *
-   * The profile is keyed to the AGENT, not to the session: an agent that opens,
-   * signs into a site, closes, and opens again tomorrow is still signed in —
-   * which is what the tool has always promised. Two agents never share one,
-   * so neither can see the other's cookies. Everything else (screenshots, the
-   * app-scoped $HOME) is per agent for the same reason.
-   */
+  /** A browser on a disposable profile owned by this one session. */
   private newHost(profile: string): BrowserHost {
     if (this.browser.profileDir) this.ensureProfile(path.join(this.browser.profileDir, profile));
     return new BrowserHost({
@@ -462,8 +453,13 @@ export class BrowserSessions {
     // arrive. Either would run a whole second teardown and write the owner a
     // second "closed" line for one session. The clock is stopped and the way
     // back in is shut here, before anything is awaited.
-    if (s.closing) return { status: "completed" };
-    s.closing = true;
+    // Waiting on the first teardown rather than reporting a completion it has
+    // not reached: the app quits on this answer, and a browser still inside
+    // its shutdown would be left running with its profile on disk.
+    if (s.closing) {
+      await s.closing;
+      return { status: "completed" };
+    }
     if (s.idleTimer) clearTimeout(s.idleTimer);
     // The claim itself is held until the browser is really down. Releasing it
     // first lets the same credential reopen while Camoufox still has the
@@ -473,11 +469,15 @@ export class BrowserSessions {
     // this one's profile goes with it — nothing is left for the next agent.
     // Finalized whichever way the shutdown went: a stop that throws is exactly
     // when the last thing the page said is worth having.
-    try {
-      await this.stop(s.host);
-    } finally {
-      this.finalize(s, reason);
-    }
+    const teardown = (async () => {
+      try {
+        await this.stop(s.host);
+      } finally {
+        this.finalize(s, reason);
+      }
+    })();
+    s.closing = teardown;
+    await teardown;
     return { status: "completed" };
   }
 

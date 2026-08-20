@@ -148,10 +148,9 @@ export class DeviceAgent {
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        // One profile per agent, each under a directory of its own. The single
-        // `profile` directory that came before is never opened again: its
-        // cookies belong to whichever agents used it, so giving it to any one
-        // of them would leak logins between them. It is left where it is.
+        // One disposable profile per session, under here. The single `profile`
+        // directory every agent shared before is never opened again — its
+        // cookies belong to whoever used it — and is left exactly where it is.
         profileDir: path.join(browserDir, "profiles"),
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
