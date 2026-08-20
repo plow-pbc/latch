@@ -86,7 +86,7 @@ export function providerAvailability(
   };
 }
 
-/** The model the given provider actually runs. Audited, and shown in Settings. */
+/** The model the given provider actually runs. Audited. */
 export function reviewerModel(provider: InferenceProvider): string {
   return provider === "plow" ? PLOW_REVIEWER_MODEL : REVIEWER_MODEL;
 }
