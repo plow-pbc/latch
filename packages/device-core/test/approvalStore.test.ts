@@ -10,9 +10,9 @@ import path from "node:path";
 import { Capability, Intent, makeIntent } from "@domo/protocol";
 import { ApprovalStore, IntentDecision, PolicyDelegate } from "@domo/device-core";
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  while (cleanups.length) cleanups.pop()!();
+const cleanups: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+  while (cleanups.length) await cleanups.pop()!();
 });
 
 function tempDir(): string {
@@ -40,6 +40,49 @@ const silent: PolicyDelegate = { decideIntent: () => new Promise<IntentDecision>
 const answersIn = (ms: number, decision: IntentDecision = "allow_once"): PolicyDelegate => ({
   decideIntent: () => new Promise((r) => setTimeout(() => r(decision), ms)),
 });
+
+/**
+ * Start an approval the test will not answer, and finish it before the
+ * directory goes.
+ *
+ * `decideIntent` keeps working after the assertions are done: it writes the
+ * record a second time whenever the approval settles, and with a delegate that
+ * never answers that is when the deadline timer fires — which can be long after
+ * `afterEach` has removed the temp dir. That write then ENOENTs into an
+ * unhandled rejection, turning a run whose tests all passed red. Fire-and-forget
+ * is the bug, so the promise is held, denied, and awaited during cleanup — and
+ * because `cleanups` unwinds last-in-first-out, that happens before the removal
+ * this helper's directory registered.
+ */
+function startApproval(store: ApprovalStore, intent: Intent): void {
+  let settled = false;
+  let failure: unknown;
+  // The outcome is absorbed from the first tick rather than at teardown, so an
+  // approval that blows up mid-test cannot itself become the run-level
+  // unhandled rejection this helper exists to remove. It is rethrown below.
+  const pending = store.decideIntent(intent).then(
+    () => {
+      settled = true;
+    },
+    (error: unknown) => {
+      settled = true;
+      failure = error;
+    },
+  );
+  cleanups.push(async () => {
+    // The waiter is registered a few awaits into `decideIntent`, so a teardown
+    // that lands early has to wait for the store to become answerable at all.
+    const deadline = Date.now() + 5_000;
+    while (!settled && !store.resolve(intent.intentId, "deny", "teardown")) {
+      if (Date.now() > deadline) throw new Error("the approval never became answerable in teardown");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await pending;
+    // A write that genuinely failed should fail the test that started it, by
+    // name, rather than being swallowed here.
+    if (failure !== undefined) throw failure;
+  });
+}
 
 /**
  * Wait for the pending record to actually be on disk.
@@ -84,7 +127,7 @@ describe("the record exists before the answer does", () => {
     const dir = tempDir();
     const store = new ApprovalStore(dir, silent);
     const intent = intentFor();
-    void store.decideIntent(intent);
+    startApproval(store, intent);
     await pendingRecord(store);
 
     const [record] = await store.all();
@@ -105,7 +148,7 @@ describe("the record exists before the answer does", () => {
     const dir = tempDir();
     const store = new ApprovalStore(dir, silent);
     const intent = intentFor();
-    void store.decideIntent(intent);
+    startApproval(store, intent);
     await pendingRecord(store);
     const file = path.join(dir, `${intent.intentId}.json`);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
@@ -195,7 +238,7 @@ describe("across a restart", () => {
     const dir = tempDir();
     const first = new ApprovalStore(dir, silent, 5_000);
     const intent = intentFor();
-    void first.decideIntent(intent);
+    startApproval(first, intent);
     await pendingRecord(first);
     expect((await first.all())[0].status).toBe("pending");
 
