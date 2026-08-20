@@ -243,15 +243,13 @@ export class BrowserHost {
     const found = this.profileDirs(root).find((d) => this.grantOf(d) === key);
     if (found) return found;
     // Named for the grant that opened it, which is what makes the store
-    // readable. Nothing here answers to this grant, so an existing directory
-    // of that name is either a widened profile — which keeps its name, and
-    // this one goes beside it — or one from before the marker existed, back
-    // when the name WAS the grant. Adopt that one: opening a second jar beside
-    // it would strand the grant's logins somewhere nothing answers for.
+    // readable — but nothing here answers to this grant, so a directory of
+    // that name is one a widening left behind and this jar goes beside it. It
+    // is never adopted on the strength of its name: an unmarked directory is
+    // indistinguishable from a widened one whose marker was emptied, and
+    // adopting either hands this grant a jar holding wider state.
     let dir = path.join(root, key);
-    for (let n = 2; fs.existsSync(dir) && this.grantOf(dir) !== null; n++) {
-      dir = path.join(root, `${key}-${n}`);
-    }
+    for (let n = 2; fs.existsSync(dir); n++) dir = path.join(root, `${key}-${n}`);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, GRANT_MARKER), key);
     return dir;

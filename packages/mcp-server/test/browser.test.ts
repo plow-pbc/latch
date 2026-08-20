@@ -389,23 +389,15 @@ describe("browser tools (fake runtime)", () => {
     expect(grantOf(profiles, opening)).toBeNull();
     expect(regrants(device).at(-1)).toMatchObject({ profile: opening, superseded: true });
     await callTool(server, "plow_browser_close", { session }, AGENT);
-  });
 
-  it("adopts a profile from before the marker rather than stranding its logins", async () => {
-    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
-    const profiles = path.join(device.home, "device/browser/profiles");
-    const key = profileKeyForOrigins(["pizza.example"]);
-    // What the store looked like before the marker: the name was the grant.
-    fs.mkdirSync(path.join(profiles, key), { recursive: true });
-    fs.writeFileSync(path.join(profiles, key, "cookies.sqlite"), "a login from before");
-
+    // And the narrow grant does not get that jar back. An empty marker reads
+    // the same as no marker at all, so a profile can never be claimed on the
+    // strength of its name — it would be one holding the widened origin's
+    // cookies, handed to a session that was never approved for them.
     await open(server, ["pizza.example"]);
-
-    expect(fs.readdirSync(profiles)).toEqual([key]);
-    expect(grantOf(profiles, key)).toBe(key);
-    expect(fs.readFileSync(path.join(profiles, key, "cookies.sqlite"), "utf8")).toBe(
-      "a login from before",
-    );
+    expect(fs.readdirSync(profiles).sort()).toEqual([opening, `${opening}-2`, union]);
+    expect(grantOf(profiles, `${opening}-2`)).toBe(opening);
+    expect(grantOf(profiles, opening)).toBeNull();
   });
 
   it("a second widening re-marks the jar the session is on, not the one beside it", async () => {
