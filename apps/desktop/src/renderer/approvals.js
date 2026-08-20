@@ -28,7 +28,7 @@ export const APPROVAL_MODES = [
     value: "ask",
     label: "Ask me every time",
     showsPurpose: false,
-    hint: "Any request a rule doesn't already cover opens an approval window. The AI Reviewer can still suggest an answer — turn that on in Settings.",
+    hint: "Any request a rule doesn't already cover opens an approval window. The AI Reviewer can still suggest an answer — turn that on below.",
   },
   {
     value: "adversarial",

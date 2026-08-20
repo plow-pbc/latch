@@ -209,7 +209,7 @@ describe("a tool call end to end, in process", () => {
     {
       name: "a reviewer that does not exist",
       source: DENIAL_SOURCE_NO_REVIEWER,
-      fragments: [/no credential/, /could not run/, /Settings/],
+      fragments: [/no credential/, /could not run/],
     },
   ];
 

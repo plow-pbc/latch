@@ -27,8 +27,8 @@ import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
 import { normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 import type { InferenceProvider } from "./settings.js";
 
-// Displayed in Settings so it's clear what's being used. Keep in sync with the
-// requests below.
+// Recorded on every `adversarial_review_started`, so the audit log names the
+// model that actually saw the intent. Keep in sync with the requests below.
 export const REVIEWER_MODEL = "claude-haiku-4-5";
 /**
  * Plow's route to Anthropic goes through litellm, which only takes the *native*

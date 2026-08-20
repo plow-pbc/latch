@@ -9,16 +9,14 @@ import {
 } from "./approvals.js";
 
 /**
- * What the two panes call each reviewer provider, and what it takes to set one
- * up. Two panes say different things about the same missing credential — the
- * Agents card names the consequence, Settings names only the gap — so the
- * sentences differ but the FACTS must not. Which providers exist, and whether
- * each is usable, still comes from main; this is display knowledge only.
+ * The one way this app offers to give the reviewer a credential.
+ *
+ * There is no longer a screen that points the reviewer anywhere but the Plow
+ * account, so this is the only remedy a card may name. A Mac whose stored
+ * provider is something else gets the gap stated and no instruction — telling
+ * someone to do a thing the app does not offer is worse than saying nothing.
  */
-const REVIEWER_PROVIDERS = {
-  plow: { label: "Plow account", setup: "sign in to Plow" },
-  anthropic: { label: "Anthropic API key", setup: "add an Anthropic API key" },
-};
+const PLOW_REVIEWER_SETUP = "sign in to Plow in Settings";
 
 import { el, icon } from "./dom.js";
 import { renderVault } from "./vault.js";
@@ -31,8 +29,8 @@ const statusText = document.getElementById("statusText");
 let currentTab = "audit";
 let filter = "all";
 // The mounted Settings pane, while that tab is up. Holds a `refresh` that
-// updates the display nodes in place — the editable key field is never rebuilt,
-// so no amount of re-reading can take a half-typed key with it.
+// updates the display nodes in place, so a relay reconnect cannot reset the
+// pane under someone reading it.
 let settingsMounted = null;
 
 /** The Discord mark. Built apart from `icon()`: that helper draws stroked
@@ -485,9 +483,9 @@ let staticOpen = false;
  * `inert` while it is open, and a dialog nested inside the thing it disables
  * would disable itself.
  *
- * `nameInput` is held here and reused across refreshes for the reason the
- * API-key field is: a relay reconnect can redraw this while someone is halfway
- * through typing a name, and rebuilding the field would take the name with it.
+ * `nameInput` is held here and reused across refreshes: a relay reconnect can
+ * redraw this while someone is halfway through typing a name, and rebuilding
+ * the field would take the name with it.
  */
 let staticModal = null;
 
@@ -623,8 +621,7 @@ function syncStaticModal(s, redraw) {
  * come here to do, and burying it under the account read as optional.
  *
  * Returns nodes instead of painting the view: it is no longer a screen of its
- * own. `redraw` repaints only this group — the pane around it holds a
- * half-typed API-key field that must never be replaced under the user.
+ * own, and `redraw` repaints only this group rather than the pane around it.
  */
 function connectNodes(s, redraw) {
   // Not signed in should be unreachable — the gate means the main window does
@@ -720,8 +717,8 @@ async function renderAgents() {
   // nowhere else, and it reaches no rule key, grant, or sandbox profile.
   const purposeInput = el("textarea", { class: "text" });
   purposeInput.value = await window.domo.agentPurposeGet();
-  // On commit only, like the API-key field: an `input` handler would persist
-  // every half-written sentence on the way to the real one. The stored value is
+  // On commit only — blur or Enter: an `input` handler would persist every
+  // half-written sentence on the way to the real one. The stored value is
   // what goes back on screen, so the field shows what the reviewer will read.
   purposeInput.addEventListener("change", async () => {
     purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
@@ -731,22 +728,45 @@ async function renderAgents() {
     ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
   ]);
 
-  // What a reviewer with no credential costs, said rather than enforced. The
-  // remedy is a pane away in Settings, so the sentence names it — but the mode
-  // is still the owner's to choose, and choosing it is not an error to prevent.
+  // Whether the reviewer may speak up in Ask mode. It sits in this card because
+  // the mode it depends on is set here: the suggestion is only ever shown when
+  // a human is being asked, and only a reviewer with a credential can produce
+  // one, so both of its conditions are one row above it.
+  const suggestCheck = el("input", { attrs: { type: "checkbox" } });
+  suggestCheck.checked = await window.domo.showSuggestionsGet();
+  const suggestLabel = el("label", { class: "check block" }, [
+    suggestCheck,
+    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
+  ]);
+  suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
+
+  // What a reviewer with no credential costs, said rather than enforced — the
+  // mode is still the owner's to choose, and choosing it is not an error to
+  // prevent.
 
   const renderApprovals = () => {
     const mode = inference.approvalMode;
     const hasKey = inference.available[inference.provider];
+    // How to get a reviewer, named only when it is something this app can
+    // actually do; on a Mac pointed at any other provider the gap is stated on
+    // its own, because telling someone to use a control that is gone is the
+    // dead end this card exists to avoid.
+    const remedy = inference.provider === "plow" ? `: ${PLOW_REVIEWER_SETUP}.` : ".";
     // Only worth saying when the owner has actually asked the reviewer to
     // decide. The second half is the part people get wrong: a denial here is
     // not a freeze, because a rule already approved is a decision they made.
     modeNote.textContent =
       mode === "adversarial" && !hasKey
-        ? `The AI Reviewer has no credential: ${REVIEWER_PROVIDERS[inference.provider].setup} in Settings. ` +
+        ? `The AI Reviewer has no credential${remedy} ` +
           "Until then it denies anything it is asked to decide — requests already " +
           "covered by an always-allow rule keep running."
         : "";
+    // The suggestion is only ever shown in Ask mode, and only by a reviewer
+    // that can run. Dead rather than hidden: a checkbox that vanished would
+    // read as a setting the app lost.
+    const suggestOn = mode === "ask" && hasKey;
+    suggestCheck.disabled = !suggestOn;
+    suggestLabel.classList.toggle("disabled", !suggestOn);
     modeChips.replaceChildren(...APPROVAL_MODES.map(({ value, label }) => {
       const chip = el("span", {
         class: "chip" + (mode === value ? " active" : ""),
@@ -765,7 +785,14 @@ async function renderAgents() {
     // no longer offers falls back to the first mode rather than a blank card.
     const active = APPROVAL_MODES.find((m) => m.value === mode) ?? APPROVAL_MODES[0];
     purposeBlock.hidden = !active.showsPurpose;
-    modeHintLine.textContent = active.hint;
+    // Ask mode's hint points at the checkbox below it. With no credential that
+    // checkbox is dead, so pointing at it is an instruction that cannot be
+    // followed — say what is actually true instead.
+    modeHintLine.textContent =
+      mode === "ask" && !hasKey
+        ? "Any request a rule doesn't already cover opens an approval window. " +
+          `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`
+        : active.hint;
     modeHintLine.hidden = active.showsPurpose;
   };
   renderApprovals();
@@ -791,8 +818,12 @@ async function renderAgents() {
     group(
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip this — manage those in Rules.",
-      [modeChips, modeNote, purposeBlock, modeHintLine],
+        "by an always-allow rule skip this — manage those in Rules. Anything the AI Reviewer " +
+        "sees — the request, the paths asked for, the agent's identity, its goal and plan, the " +
+        "capabilities it asked for, its recent activity on this Mac, and what you say agents " +
+        "are for — is sent to that reviewer's provider to be judged, and billed to that " +
+        "account; nothing from other agents goes with it.",
+      [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
     ),
   ]));
 }
@@ -1014,124 +1045,11 @@ async function renderSettings() {
     ]);
   };
 
-  // Anthropic API key — one of the two ways to power the adversarial agent.
-  //
-  // It lives INSIDE Reviewer inference rather than in a group of its own,
-  // because it is not a setting: it is the credential one of the two providers
-  // runs on, and a heading of its own asked the reader to connect two boxes to
-  // work out why it was there. So it sits under the chip it enables, carrying
-  // its own label now that the group title no longer speaks for it.
-  const apiKeyInput = el("input", { class: "text", attrs: { type: "password", placeholder: "sk-ant-…" } });
-  apiKeyInput.value = await window.domo.apiKeyGet();
-  const apiKeyField = el("div", { class: "field keyfield" }, [
-    el("label", { text: "Anthropic API key" }),
-    apiKeyInput,
-    el("p", {
-      class: "faint keyfield-note",
-      text: "Runs the reviewer on your own Anthropic account instead of your Plow one. Stored on this Mac.",
-    }),
-  ]);
-
-  // Which backend runs the reviewer. `inference` carries a per-provider
-  // availability map and the active model — never a credential.
-  let inference = await window.domo.inferenceGet();
-  const reviewerNote = el("p", { class: "faint reviewer-note", text: "" });
-  const providerChips = el("div", { class: "chips" });
-  // This pane names the gap and nothing about the consequence, because the
-  // consequence depends on a mode it no longer owns: with the reviewer
-  // deciding, an unrunnable review denies; in Ask mode the same missing
-  // credential only costs the suggestion, and a human is asked as always. The
-  // Approvals card says which of those is happening.
-
-  // The mode itself is set in the Agents tab now; this pane only reads it, to
-  // decide whether the suggestions checkbox can do anything.
-  const showSuggestions = await window.domo.showSuggestionsGet();
-  // The reviewer needs a credential for the ACTIVE provider — a pasted
-  // Anthropic key does not enable it while Plow is selected, and vice versa.
-  let hasKey = inference.available[inference.provider];
-
-  const suggestCheck = el("input", { attrs: { type: "checkbox" } });
-  suggestCheck.checked = showSuggestions;
-  // Where the other half of this system lives. Said once, under the group that
-  // no longer holds it, so the move does not read as a removal.
-  const modeNote = el("p", { class: "faint chip-note", text:
-    "Whether the reviewer decides on its own is set in the Agents tab, under Approvals." });
-  const suggestLabel = el("label", { class: "check block" }, [
-    suggestCheck,
-    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
-  ]);
-  suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
-
-  // The suggestion is only ever shown in Ask mode, and only a reviewer with a
-  // credential can produce one.
-  const updateSuggestEnabled = () => {
-    const on = inference.approvalMode === "ask" && hasKey;
-    suggestCheck.disabled = !on;
-    suggestLabel.classList.toggle("disabled", !on);
-  };
-
-  // Every provider is selectable, credential or not. Main no longer refuses
-  // one, so the UI has nothing to mirror — what a missing credential costs is
-  // said in the note instead of being enforced by a faded chip.
-  const renderProviderChips = () => {
-    // No fallback copy: `available` comes from main's frozen provider list, so a
-    // key here that REVIEWER_PROVIDERS does not know is a bug to see, not to paper over.
-    const active = REVIEWER_PROVIDERS[inference.provider];
-    // The note carries both facts: which reviewer is running, and — when the
-    // SELECTED one has no credential — what that will cost. Only the selected
-    // provider matters here; what the other one is missing is not this Mac's
-    // problem until it is picked.
-    reviewerNote.textContent =
-      `Reviewer: ${inference.info}` +
-      (inference.available[inference.provider]
-        ? ""
-        : ` · ${active.label} is not configured — ${active.setup}.`);
-    providerChips.replaceChildren(...Object.keys(inference.available).map((value) => {
-      const chip = el("span", {
-        class: "chip" + (inference.provider === value ? " active" : ""),
-      }, [el("span", { text: REVIEWER_PROVIDERS[value].label })]);
-      if (inference.provider !== value) {
-        chip.addEventListener("click", async () => {
-          // Still what main stored rather than what was asked for: an unknown
-          // provider name is refused there, and the answer is the refusal.
-          applyInference(await window.domo.inferenceSet(value));
-        });
-      }
-      return chip;
-    }));
-  };
-
-  // Re-read the reviewer's state from main and redraw.
-  //
-  // This only READS. Main owns what is stored, so the renderer's job is to show
-  // it, never to decide it too — it used to write a mode fallback itself from a
-  // half-typed field, which persisted Ask while the stored key was still there
-  // and never put it back.
-  const applyInference = (next) => {
-    inference = next;
-    hasKey = next.available[next.provider];
-    renderProviderChips();
-    updateSuggestEnabled();
-  };
-
-  // Only on `change` — on commit (blur or Enter), never per keystroke. An
-  // `input` handler sees every transient value on the way to the real one,
-  // including the empty field between clearing and pasting.
-  apiKeyInput.addEventListener("change", async () => {
-    await window.domo.apiKeySet(apiKeyInput.value.trim());
-    applyInference(await window.domo.inferenceGet());
-  });
-
-  renderProviderChips();
-  updateSuggestEnabled();
-
-  // What a status change re-reads. Display nodes only: `apiKeyInput` is not
-  // among them and is never replaced, so there is no window in which a keystroke
-  // can be lost — no flag, no deferral, nothing to get the ordering wrong.
+  // What a status change re-reads: display nodes only, every one of them read
+  // back from main rather than remembered here.
   settingsMounted = {
     refresh: async () => {
       await refreshAccount();
-      applyInference(await window.domo.inferenceGet());
       applyCapabilities(await window.domo.capabilitiesGet());
       launch = await window.domo.launchGet();
       applyLaunch();
@@ -1155,13 +1073,6 @@ async function renderSettings() {
     group("Plow Account", "The account agents reach this Mac through.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), viewAccount, signOut, signIn]),
-    ]),
-    group("AI Reviewer", "Who runs the reviewer that judges each request. It receives the command, the paths asked for, and that agent's recent activity on this Mac. Billed to that account; nothing from other agents is sent.", [
-      providerChips,
-      reviewerNote,
-      apiKeyField,
-      suggestLabel,
-      modeNote,
     ]),
     group("Capabilities", "Extended capabilities that let Plow Latch reach parts of this Mac that macOS blocks by default.", [
       el("div", { class: "support-row" }, [
@@ -1246,16 +1157,12 @@ seg.addEventListener("mousedown", (e) => {
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
 window.domo.onStatusChanged(() => {
   refreshStatus();
-  // Signing in or out changes which providers Settings may offer, so an open
-  // Settings pane has to re-read — main fires this saying "Settings re-reads
-  // what changed", and until now only the header did.
-  //
-  // `status:changed` also fires on an ordinary relay reconnect, which the
-  // person typing a key did not ask for and must not be punished by — so this
-  // updates the account and provider nodes and leaves the field alone.
+  // Signing in or out changes what the account group says, so an open Settings
+  // pane has to re-read — main fires this saying "Settings re-reads what
+  // changed", and until now only the header did.
   if (currentTab === "settings") settingsMounted?.refresh();
   // Signing in or out changes whether the flow has a URL to show at all — and,
-  // since the Approvals card moved here, whether the reviewer can be selected.
+  // since the Approvals card moved here, whether the reviewer can run.
   if (currentTab === "agents") {
     agentsMounted?.refreshConnect();
     agentsMounted?.refreshApprovals();
@@ -1266,15 +1173,14 @@ window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
   // In place, never renderSettings(): a full rebuild resets the pane's scroll
-  // (and would eat a half-typed API key) on every background phase change.
+  // on every background phase change.
   if (currentTab === "settings") settingsMounted?.refreshUpdates();
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 window.domo.onShowSettings(() => selectTab("settings"));
 // Granting Full Disk Access happens in System Settings, and no event reaches
 // this app when it does — the moment the pane can learn the outcome is when
-// the person comes back. `refresh` updates display nodes only, so a focus
-// change can never cost a half-typed key.
+// the person comes back.
 window.addEventListener("focus", () => {
   if (currentTab === "settings") settingsMounted?.refresh();
 });
