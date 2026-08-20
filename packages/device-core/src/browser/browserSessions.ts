@@ -539,6 +539,10 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
+    // Enforcement telemetry, not something to hand back: a transient redirect
+    // this session was never approved for can carry an OAuth code or token in
+    // its query, and the scope check has already read what it needed.
+    delete out.touched;
     // A popup can stray while the active page stays in scope, so nothing below
     // would mention it — and the agent would carry on unaware that this
     // browser's saved cookies are gone. Say so where it can act on it.

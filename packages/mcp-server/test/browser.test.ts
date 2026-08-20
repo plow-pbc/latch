@@ -385,6 +385,11 @@ describe("browser tools (fake runtime)", () => {
 
     const flashed = await act(server, session, "click", { selector: "#flash" });
     expect(flashed.payload.retired_store).toBe("flash.example");
+    // The origin, not the URL: a redirect this session was never approved for
+    // can carry an OAuth code in its query, and the scope check has already
+    // read what it needed from it.
+    expect(flashed.payload.touched).toBeUndefined();
+    expect(JSON.stringify(flashed.payload)).not.toContain("/collect");
     expect(audited(device, "browser_scope_violation", "origin")).toEqual(["flash.example"]);
 
     await callTool(server, "plow_browser_close", { session }, AGENT);

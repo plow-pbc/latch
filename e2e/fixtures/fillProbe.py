@@ -173,7 +173,16 @@ class Page:
         class _Context:
             pages = [self]
 
+            # Session watches for popups through this; the stub only has to
+            # accept the registration, since nothing here opens one.
+            def on(self, event, handler):
+                pass
+
         self.context = _Context()
+        self.main_frame = frame
+
+    def on(self, event, handler):
+        pass  # nothing in this probe navigates
 
     def evaluate(self, expression, *args, **kwargs):
         return self.document_token

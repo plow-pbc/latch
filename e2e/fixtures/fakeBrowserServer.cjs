@@ -107,7 +107,7 @@ function handle(cmd) {
       // A popup that opens, exchanges cookies and closes inside one command:
       // page_count never moves, so `touched` is the only trace of it.
       state.touched.push("https://flash.example/collect");
-      return respond({ id: cmd.id, result: envelope({ ok: true }) });
+      return { ok: true };
     }
     if (cmd.selector === "#popup") {
       state.touched.push("https://popup.example/pay");

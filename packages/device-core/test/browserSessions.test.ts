@@ -439,6 +439,23 @@ describe("access the owner's log could not record is not granted", () => {
     expect(published(ctx.dir)).toEqual([profileKeyForOrigins(["pizza.example"])]);
   });
 
+  it("a browser that dies unexpectedly publishes nothing", async () => {
+    // The asymmetry the store rests on: a browser that died may have been
+    // mid-request to an origin the scope check never got to see, so "we do not
+    // know where it went" reads as "this jar does not go back". Publishing on
+    // every exit — which an earlier cut did — hands exactly that jar over.
+    const crashy = makeCtx({ CRASH_AFTER: "1" });
+    const opened = jv(await crashy.sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const handle = opened.get("session").str!;
+    await crashy.sessions.command(AGENT, handle, { action: "goto", url: "https://pizza.example/" });
+    await crashy.sessions
+      .command(AGENT, handle, { action: "text" })
+      .catch(() => undefined); // the browser exits under this one
+    await crashy.host.shutdown();
+
+    expect(published(crashy.dir)).toEqual([]);
+  });
+
   it.each(["browser_navigated", "browser_scope_violation"])(
     "retires a strayed jar even when %s cannot be recorded",
     async (failOn) => {

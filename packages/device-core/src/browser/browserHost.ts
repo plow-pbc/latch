@@ -102,9 +102,10 @@ export class BrowserHost {
   private headedNow: boolean;
   /** Profile the next browser opens, one per approved origin set. */
   private profileKeyNow: string | null = null;
-  /** The profile this browser is on: live while it runs, published on a clean
-   * stop. Null when the host has no persistent store. */
-  private profile: { saved: string; live: string; reusable: boolean } | null = null;
+  /** The profile this browser is on, while it is still publishable. Cleared
+   * the moment it stops being — a stray hop, a widening, an unexpected exit —
+   * so null alone means "this jar is not going back under its grant". */
+  private profile: { saved: string; live: string } | null = null;
   /** Grant the running browser opened for — null once it has been given up. */
   private startedKey: string | null = null;
 
@@ -207,14 +208,13 @@ export class BrowserHost {
    * retires all of that.
    */
   abandonProfile(): void {
-    if (!this.profile || !this.profile.reusable) return;
-    this.profile.reusable = false;
+    const profile = this.profile;
+    if (!profile) return;
+    this.profile = null;
     // The owner's record that this session's store will not be kept — it is
     // what an unexplained sign-out next session traces back to. Idempotent:
-    // straying twice is still one retirement.
-    this.cfg.audit?.("browser_profile_abandoned", {
-      profile: path.basename(this.profile.live),
-    });
+    // straying twice is still one retirement, because the second finds null.
+    this.cfg.audit?.("browser_profile_abandoned", { profile: path.basename(profile.live) });
   }
 
   /**
@@ -238,32 +238,38 @@ export class BrowserHost {
     this.sweepUnpublished(root);
     const saved = path.join(root, key);
     const live = `${saved}.live-${crypto.randomUUID()}`;
-    if (fs.existsSync(saved)) fs.renameSync(saved, live);
+    const claimed = fs.existsSync(saved);
+    if (claimed) fs.renameSync(saved, live);
     else fs.mkdirSync(live, { recursive: true });
-    // Durable before the browser opens it: were the rename lost to a crash
-    // while the jar kept its old name, the next session on this grant would
-    // claim a directory this one had been writing into.
-    await fsync(root);
-    this.profile = { saved, live, reusable: true };
+    try {
+      // Durable before the browser opens it: were the rename lost to a crash
+      // while the jar kept its old name, the next session on this grant would
+      // claim a directory this one had been writing into.
+      await fsync(root);
+    } catch (error: unknown) {
+      // Put it back. `this.profile` is not assigned yet, so leaving the only
+      // copy of that grant's logins under a live name would hand it to the
+      // next start's sweep — losing them to a flush that failed.
+      if (claimed) fs.renameSync(live, saved);
+      throw error;
+    }
+    this.profile = { saved, live };
     return live;
   }
 
   /**
-   * Publish the profile back under its grant, or leave it where no grant can
-   * find it. Called once the browser is down, so the rename is safe — moving
-   * a directory under a running Camoufox was tried and refuted: it goes on
-   * serving pages, but the cookies written afterwards never reach disk.
+   * Put the profile back under its grant. Only ever called for a browser that
+   * acknowledged an explicit quit: an unexpected exit — a crash, a kill, the
+   * process torn down at app quit — leaves the directory under its live name,
+   * where nothing can claim it and the next start's sweep collects it.
    *
-   * Discarding needs no work at all: an unpublished directory is already
-   * unclaimable, and the sweep on the next start collects it. That is also
-   * what a crash leaves behind, which is why the two need no separate paths.
+   * That asymmetry is the point. A browser that died may have been mid-request
+   * to an origin the scope check never got to see, so the only safe reading of
+   * "we do not know where it went" is "this jar does not go back".
    */
-  private settleProfile(): void {
-    const p = this.profile;
-    this.profile = null;
-    if (!p || !p.reusable) return;
+  private publishProfile(profile: { saved: string; live: string }): void {
     try {
-      fs.renameSync(p.live, p.saved);
+      fs.renameSync(profile.live, profile.saved);
     } catch {
       /* stays unclaimable, and the next start sweeps it */
     }
@@ -426,9 +432,9 @@ export class BrowserHost {
         const wasReady = ready;
         this.child = null;
         this.startedKey = null;
-        // The browser is down, so its files are ours again: back under the
-        // grant if it stayed inside it, left unclaimable if it did not.
-        this.settleProfile();
+        // Never publishes: an exit this handler sees is one nobody waited for,
+        // and shutdown() does the publishing when a quit is acknowledged.
+        this.profile = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
           clearTimeout(p.timer);
@@ -451,7 +457,7 @@ export class BrowserHost {
       child.on("error", (err) => {
         this.child = null;
         this.startedKey = null;
-        this.settleProfile();
+        this.profile = null;
         if (!ready) {
           ready = true;
           clearTimeout(startTimer);
@@ -488,7 +494,14 @@ export class BrowserHost {
     } catch {
       /* stdin already closed */
     }
-    if (!(await withTimeout(exited, 3000))) {
+    // Captured before the exit handler clears it, published only if the quit
+    // above is what ended the browser. Having to kill it means it never
+    // acknowledged, so what it was doing at the end is unknown — and unknown
+    // is not publishable.
+    const profile = this.profile;
+    if (await withTimeout(exited, 3000)) {
+      if (profile) this.publishProfile(profile);
+    } else {
       this.killGroup("SIGTERM");
       if (!(await withTimeout(exited, 5000))) {
         this.killGroup("SIGKILL");

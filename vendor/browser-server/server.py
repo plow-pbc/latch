@@ -214,23 +214,15 @@ class Session:
         # touched, not only what is still open, or that origin's state sits in
         # the profile with nothing having noticed it arrive.
         self.touched = []
-        try:
-            page.context.on("page", self._watch_page)
-        except Exception:
-            pass
+        page.context.on("page", self._watch_page)
         self._watch_page(page)
 
     def _watch_page(self, p):
-        try:
-            self.touched.append(p.url)
-            p.on(
-                "framenavigated",
-                lambda frame: self.touched.append(frame.url)
-                if frame is p.main_frame
-                else None,
-            )
-        except Exception:
-            pass  # a page that will not be watched still cannot be observed
+        self.touched.append(p.url)
+        p.on(
+            "framenavigated",
+            lambda frame: self.touched.append(frame.url) if frame is p.main_frame else None,
+        )
 
     def _forget_navigated(self):
         """A page showing a NEW DOCUMENT is not the page anything was filled on.
