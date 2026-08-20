@@ -47,11 +47,17 @@ if sys.platform == "darwin":
 
 MAX_ERROR_LEN = 500
 
-# How long an element gets to turn up before it is a failure. A page that cannot
-# answer in this long is one the agent retries; parking on it spends the relay's
-# per-exchange budget for nothing -- and this is spent once PER FRAME on a page
-# whose caller did not name one, so it is the term that has to stay small.
-ACTION_TIMEOUT_MS = 3000
+# How long one element action waits by default. Sized like the `goto` budget
+# above it: a single action has to answer inside the device's 15 s host cap and
+# the relay's ~20 s per-exchange ceiling, and a click that has not landed in
+# three seconds is usually telling the agent something -- so it fails fast and
+# the agent looks at the page. `click` takes a caller-supplied `timeout_ms`
+# instead when the agent knows the page is slow; the device clamps it.
+DEFAULT_ACTION_TIMEOUT_MS = 3000
+
+# How often a click re-scans the frames for its selector while waiting for it to
+# appear. The scan itself is instant; this is just how long it sleeps between.
+SCAN_INTERVAL_MS = 50
 
 # What every action that moves the page gives it to settle afterwards, so the
 # answer describes where the page ended up rather than where it was mid-flight.
@@ -72,20 +78,21 @@ KEY_DELAY_MS = 45
 # What a key may cost beyond its delay: the round trip that dispatches it and
 # the actionability check in front of it. A few milliseconds on a local page.
 KEY_OVERHEAD_MS = 30
-# A fill's TIMED cost is ACTION_TIMEOUT_MS three times (resolve, assign, and the
-# assignment a dropped-keys fallback makes) plus TYPING_MAX_MS, and that has to
-# stay under what the device gives a browser action before it gives up on it --
-# `actionTimeoutMs` in deviceAgent.ts, which fillSecretMasking.test.ts reads
-# there and asserts this sum against, in "keeps the timed budgets under the cap
-# the device arms". TYPING_MAX_MS is derived from TYPED_CHARS, so raising the
-# credential length has to answer to that cap. Nothing here is told when the
-# device does give up -- it drops its pending entry and sends this process
-# nothing -- so a fill that ran past it would go on typing a credential into a
-# page whose answer nobody is waiting for. The sum covers a fill that names its
-# frame on a page that runs script; two spends are outside it and neither is
-# bounded: a caller that names no frame pays ACTION_TIMEOUT_MS per frame it
-# rules out (the loop, #96), and every fill makes `evaluate` calls that take no
-# timeout at all, so a page that will not run script hangs regardless.
+# A fill's TIMED cost is DEFAULT_ACTION_TIMEOUT_MS three times (resolve, assign,
+# and the assignment a dropped-keys fallback makes) plus TYPING_MAX_MS, and that
+# has to stay under what the device gives a browser action before it gives up on
+# it -- `actionTimeoutMs` in deviceAgent.ts, which fillSecretMasking.test.ts
+# reads there and asserts this sum against, in "keeps the timed budgets under
+# the cap the device arms". TYPING_MAX_MS is derived from TYPED_CHARS, so
+# raising the credential length has to answer to that cap. Nothing here is told
+# when the device does give up -- it drops its pending entry and sends this
+# process nothing -- so a fill that ran past it would go on typing a credential
+# into a page whose answer nobody is waiting for. A fill searches the frames on
+# its own per-frame default, so that sum covers one that names its frame on a
+# page that runs script; two spends are outside it and neither is bounded: a
+# caller that names no frame pays DEFAULT_ACTION_TIMEOUT_MS per frame it rules
+# out (#96), and every fill makes `evaluate` calls that take no timeout at all,
+# so a page that will not run script hangs regardless.
 TYPED_CHARS = 64
 TYPING_MAX_MS = TYPED_CHARS * (KEY_DELAY_MS + KEY_OVERHEAD_MS)
 
@@ -191,6 +198,11 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
+# Whether a field still holds what it held a moment ago. The previous value
+# stays in the page as a handle and is compared there, so it is exact and never
+# crosses the wire. A hash was tried and is not good enough: "BB" and "Aa" share
+# one, and a partial fill that collided would look unchanged and have its mark
+# taken off, which is the one outcome this must never produce.
 # Whether a node's value is the characters it is given. A date or a
 # datetime-local composes its out of something else entirely -- typing
 # "2026-08-19" into one lands 6081-02-02, silently -- and a colour or a range
@@ -286,9 +298,9 @@ def _type_value(el, value):
     every path from here on leaves the caller's failure handling to unwind it.
     """
     if not el.evaluate(TYPEABLE_JS):
-        el.fill(value, timeout=ACTION_TIMEOUT_MS)
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
-    el.fill(value[:-TYPED_CHARS], timeout=ACTION_TIMEOUT_MS)
+    el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
     # the tail's own budget would let TYPED_CHARS of them stack up to that many
     # times what a single call could ever spend, and past the device's cap.
@@ -302,7 +314,7 @@ def _type_value(el, value):
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
-        el.fill(value, timeout=ACTION_TIMEOUT_MS)
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
 
 
 def _parse_args():
@@ -431,6 +443,18 @@ class Session:
             out["page_count"] = 0
         return out
 
+    def holds(self, frame, selector):
+        """Does this frame have the selector right now? Instant, never waits."""
+        try:
+            return frame.query_selector(selector) is not None
+        except Exception:  # noqa: BLE001 -- a frame that went away holds nothing
+            return False
+
+    def indexed_frames(self, cmd):
+        """`frames_for` with each frame's index on the page alongside it."""
+        base = int(cmd["frame"]) if "frame" in cmd else 0
+        return [(base + n, fr) for n, fr in enumerate(self.frames_for(cmd))]
+
     def frames_for(self, cmd):
         """Explicit frame index if given, else all frames (login forms hide in iframes)."""
         if "frame" in cmd:
@@ -524,21 +548,60 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
-            # A caller that names no frame has every one of them ruled out at
-            # a whole ACTION_TIMEOUT_MS each, and typing makes the attempt that
-            # finally matches cost more than assigning did. Neither is bounded
-            # against the relay's ~20 s ceiling. The device gives up at 15 s
-            # (deviceAgent.ts): its timer drops the pending entry and rejects,
-            # and sends nothing to this process. So the search here goes on
-            # ruling frames out, and on a fill goes on typing the value into a
-            # marked field, indefinitely after the exchange it was answering
-            # has been abandoned. Issue #96.
-            for i, fr in enumerate(self.page.frames):
-                if "frame" in cmd and i != int(cmd["frame"]):
-                    continue
+            frames = self.indexed_frames(cmd)
+            # A click that names no frame searches all of them, so a per-frame
+            # timeout would really be N x itself -- past the caps the number was
+            # chosen against. Its timeout is the budget for the WHOLE action,
+            # and the way to spend it is to find the frame first: since
+            # `query_selector` is instant, waiting for the selector to APPEAR is
+            # a scan of every frame at once rather than a wait carved up between
+            # them (which spends each frame's share blind to the others -- an
+            # element arriving in the first frame a moment after its share ran
+            # out was missed with most of the budget unspent). Whatever frame
+            # holds the selector gets what remains, and no frame holding it by
+            # the deadline is an honest "not found" rather than a timeout.
+            # The frames scanned are the ones the page had when the command
+            # arrived, and stay that way: re-reading them would let a frame
+            # injected DURING the wait be clicked, and the device approved
+            # origins for the page it could see, not for whatever arrives while
+            # it waits (issue #95, which is also where that capability comes
+            # back once frames carry an approved origin). The test holding this
+            # down lives in the Camoufox tier -- `just test-browser`, not
+            # `just test` -- so undoing it goes green in CI.
+            # A frame the caller NAMED skips the scan entirely and is simply
+            # waited in, which is what the click does anyway. `fill` is outside
+            # all of it: no budget reaches it, and it searches the frames on its
+            # own per-frame default, because a credential field is found by
+            # searching them and shortening the later ones would drop fills that
+            # work today.
+            if action == "click":
+                budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
+                deadline = time.monotonic() + budget_ms / 1000.0
+                if "frame" not in cmd:
+                    while True:
+                        holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
+                        if holding:
+                            frames = holding
+                            break
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(
+                                "no frame has %s after %dms" % (sel, budget_ms)
+                            )
+                        self.page.wait_for_timeout(SCAN_INTERVAL_MS)
+            for tried, (i, fr) in enumerate(frames):
                 if action == "click":
                     try:
-                        fr.click(sel, timeout=ACTION_TIMEOUT_MS)
+                        left = int(
+                            (deadline - time.monotonic()) * 1000 / (len(frames) - tried)
+                        )
+                        if left <= 0:
+                            # Distinct from the not-found above: the selector IS
+                            # there, the budget went on waiting for it.
+                            last = last or RuntimeError(
+                                "found %s with no time left to click it" % sel
+                            )
+                            break
+                        fr.click(sel, timeout=left)
                     except Exception as exc:
                         last = exc
                         continue
@@ -559,7 +622,7 @@ class Session:
                 # retried in the frame below, leaves two fields holding
                 # something and reports the success of the second one.
                 try:
-                    el = fr.wait_for_selector(sel, timeout=ACTION_TIMEOUT_MS)
+                    el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
                 except Exception as exc:
                     last = exc
                     continue
@@ -686,9 +749,6 @@ def main():
     # Always present a macOS fingerprint: this device IS a Mac, and the pin is
     # what lets the packaged app drop Camoufox's bundled Windows/Linux spoofing
     # fonts (~360 MB/arch) — a macOS fingerprint renders with the system fonts.
-    #
-    # `humanize` is NOT passed, and the empty pointer path is a known cost --
-    # see UPSTREAM.md. It hangs this browser build outright.
     kwargs = {"headless": not args.headed, "os": "macos"}
     if args.executable:
         kwargs["executable_path"] = args.executable

@@ -28,8 +28,9 @@
  *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
- *   click "#popup"    opens a second page on https://popup.example/pay
- *   click "#offsite"  navigates the page to https://offsite.example/lander
+ *   click "#popup"     opens a second page on https://popup.example/pay
+ *   click "#offsite"   navigates the page to https://offsite.example/lander
+ *   click "#swallowed" fails the way a click something is covering does
  */
 "use strict";
 const fs = require("node:fs");
@@ -97,6 +98,13 @@ function handle(cmd) {
   if (a === "text") return { text: "fake page text of " + current().url };
   if (a === "eval") return { result: "eval:" + cmd.expression };
   if (a === "click") {
+    // The shape a real click failure has: the browser names what was over it.
+    if (cmd.selector === "#swallowed") {
+      throw new Error(
+        `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
+          `  - <div class="modal-backdrop show"></div> intercepts pointer events\n`,
+      );
+    }
     if (cmd.selector === "#popup") {
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
     } else if (cmd.selector === "#offsite") {

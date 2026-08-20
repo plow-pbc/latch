@@ -533,7 +533,7 @@ def main() -> int:
     # the number from the server rather than restating it.
     result["constants"] = {
         "typed_chars": server.TYPED_CHARS,
-        "action_timeout_ms": server.ACTION_TIMEOUT_MS,
+        "action_timeout_ms": server.DEFAULT_ACTION_TIMEOUT_MS,
         "typing_max_ms": server.TYPING_MAX_MS,
     }
     out.write(json.dumps(result))
