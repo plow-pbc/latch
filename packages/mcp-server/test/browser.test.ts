@@ -78,6 +78,16 @@ function makeServer(
 const launches = (argvLog: string): string[] =>
   fs.readFileSync(argvLog, "utf8").trim().split("\n");
 
+/** Every browser_profile_rekeyed the device recorded, oldest first. */
+const rekeys = (device: DeviceAgent): Record<string, unknown>[] =>
+  device.audit
+    .entries()
+    .filter((e) => jv(e as JSONValue).get("event").str === "browser_profile_rekeyed")
+    .map((e) => {
+      const f = jv(e as JSONValue);
+      return { from: f.get("from").str, to: f.get("to").str, superseded: f.get("superseded").bool };
+    });
+
 const events = (device: DeviceAgent): string[] =>
   device.audit.entries().map((e) => jv(e as JSONValue).get("event").str ?? "");
 
@@ -324,6 +334,7 @@ describe("browser tools (fake runtime)", () => {
     // At the widening, not at close: quit, kill -9 and power loss all skip a
     // close, and each would leave the jar under the key it opened with.
     expect(fs.readdirSync(profiles)).toEqual([union]);
+    expect(rekeys(device).at(-1)).toEqual({ from: opening, to: union, superseded: false });
     await callTool(server, "plow_browser_close", { session }, AGENT);
     expect(fs.existsSync(path.join(profiles, opening))).toBe(false);
   });
@@ -348,6 +359,9 @@ describe("browser tools (fake runtime)", () => {
       "the older login",
     );
     expect(fs.readdirSync(profiles).sort()).toEqual([union, `${union}.superseded`]);
+    // The owner is told to find a profile by hashing its origins, so the event
+    // has to name the directory it wrote — which here is not the key.
+    expect(rekeys(device).at(-1)).toMatchObject({ to: `${union}.superseded`, superseded: true });
   });
 
   it("a second agent racing the cold start is refused, not handed the browser", async () => {

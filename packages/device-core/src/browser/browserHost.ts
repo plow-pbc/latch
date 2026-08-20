@@ -197,6 +197,13 @@ export class BrowserHost {
     const target = superseded ? `${to}.superseded` : to;
     if (superseded) fs.rmSync(target, { recursive: true, force: true });
     fs.renameSync(from, target);
+    // Both sides of the reuse guard follow the move: the running browser is on
+    // the new directory now, and moving only one of them would make the very
+    // next action read a mismatch and restart the live session's browser.
+    if (this.startedKey === fromKey) {
+      this.startedKey = path.basename(target);
+      this.profileKeyNow = this.startedKey;
+    }
     // The name actually written: the doc tells an owner to hash the origins to
     // find a profile, and on a collision that is not where this one went.
     this.cfg.audit?.("browser_profile_rekeyed", {

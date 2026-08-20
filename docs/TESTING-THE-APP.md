@@ -160,7 +160,8 @@ Widening a live session (`plow_browser_request` with new origins) moves its prof
 the widened set, right then — otherwise the jar would end up holding cookies for an origin its key
 does not name, and the next session on the narrower grant would send them. If a profile for the
 widened set already existed, that one stays and the session's lands beside it as `<key>.superseded`,
-which nothing reopens and which you can delete at any time. `browser_profile_rekeyed` records the
+which nothing reopens, and which is safe to delete once the session that produced it has closed —
+while that session runs it is the live browser's own profile. `browser_profile_rekeyed` records the
 move, naming the directory it actually wrote.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the

@@ -223,25 +223,26 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     session = opened.payload.session as string;
 
     await act("goto", { url: site.url + "/" });
-    await act("fill", { selector: "#user", value: "jon@example.com" });
-    await act("fill", { selector: "#pass", value: "pizza-time-99" });
-    await act("click", { selector: "#login" });
 
+    // Widen FIRST, so every cookie in this session is written after the move.
+    // Logging in first would only prove that a jar which already existed
+    // survives being renamed — the claim that matters is that Firefox keeps
+    // writing into it through its open fds once the path is gone.
     const widened = await callTool(
       server, "plow_browser_request", { session, origins: ["late.example"] }, AGENT,
     );
     expect(widened.isError, JSON.stringify(widened.payload)).toBe(false);
 
-    // The browser is still usable after the move, and still signed in.
+    // The browser is still usable, and this Set-Cookie lands post-rename.
+    await act("fill", { selector: "#user", value: "jon@example.com" });
+    await act("fill", { selector: "#pass", value: "pizza-time-99" });
+    await act("click", { selector: "#login" });
     await act("goto", { url: site.url + "/menu" });
     expect((await act("text")).payload.text as string).toMatch(/Menu/);
-    await act("click", { selector: "#pepperoni" });
-    await act("goto", { url: site.url + "/" });
-    expect((await act("text")).payload.text as string).toBeTruthy();
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    // And the jar it carried across the move is the one the widened grant
-    // finds — the cookie db survived the rename, not just the process.
+    // The widened grant finds that cookie — so the write went into the jar
+    // the move took with it, not to the name that stopped existing.
     const reopened = await callTool(
       server, "plow_browser_open",
       { origins: ["127.0.0.1", "late.example"], headed: false }, AGENT,
