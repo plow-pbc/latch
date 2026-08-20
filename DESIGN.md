@@ -343,8 +343,8 @@ and the owner's log recorded a plain click — the gap cost a 27-minute blind
 retry loop against a sign-in being rate-limited, and the only way to see the
 status was to hand-instrument `XMLHttpRequest` through `eval`, which is itself
 an automation signal. So the server keeps the last five 4xx/5xx per action
-(context-level, popups included) and every reply drains them — results, errors
-and the answer to `quit` alike, since a refusal that only rode success replies
+(context-level, popups included) and every reply an action produces drains them
+— an error as much as a result, since a refusal that only rode success replies
 is the one nobody would ever see. Never a body: a body can echo a submitted
 credential. `BrowserHost` holds them until an agent action carries them out,
 because most of what asks the browser anything is the device itself (the ~1/s

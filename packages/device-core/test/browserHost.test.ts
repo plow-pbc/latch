@@ -59,6 +59,23 @@ describe("BrowserHost", () => {
     expect(r.title).toBe("blank");
   });
 
+  it("holds refused requests across replies, newest first and bounded", async () => {
+    // The reason the buffer lives here: most of what asks the browser anything
+    // is the device's own doing — the ~1/s viewer poll, the popup sweep, a
+    // credential fill's locate — and whichever was in flight would otherwise be
+    // the one that consumed a 429 and dropped it.
+    const { host } = makeHost();
+    await host.sendAction({ action: "click", selector: "#blocked" });
+    expect(await host.viewFrame()).not.toBeNull(); // a reply nobody reads them off
+    await host.sendAction({ action: "click", selector: "#blocked" });
+    await host.sendAction({ action: "click", selector: "#blocked" });
+    // Six seen, five kept, newest first — the oldest is what falls off.
+    const held = host.takeFailedRequests() as { status: number }[];
+    expect(held.map((r) => r.status)).toEqual([429, 403, 429, 403, 429]);
+    // Taken means taken: the next asker gets nothing.
+    expect(host.takeFailedRequests()).toEqual([]);
+  });
+
   it("rejects pending on crash and lazily restarts", async () => {
     const { host, events } = makeHost({ CRASH_AFTER: "1" });
     let crashes = 0;

@@ -507,6 +507,8 @@ export class BrowserSessions {
           `${String(action.action)} was refused: a field on this page holds a value the vault ` +
           `conceals and the page will not let it be hidden on screen. Navigate away from it, ` +
           `or fill that field by hand.`,
+        // Already out of the host, so nothing else will carry them.
+        ...(refused.length ? { failed_requests: refused } : {}),
       };
     }
 

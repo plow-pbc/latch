@@ -60,7 +60,9 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     ]);
   });
 
-  it("survives a response that will not answer, and keeps the next one", () => {
-    expect((probed.hostile.failed_requests ?? []).map((r) => r.status)).toEqual([401]);
+  it("keeps the diagnosis when a response will not answer about its headers", () => {
+    // Status and method are the payload; Retry-After and Server are enrichment,
+    // so a response that has gone detached loses the enrichment and no more.
+    expect((probed.hostile.failed_requests ?? []).map((r) => r.status)).toEqual([401, 429]);
   });
 });

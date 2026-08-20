@@ -341,27 +341,32 @@ class Session:
         try:
             if response.status < 400:
                 return
-            headers = response.headers
             entry = {
                 "status": response.status,
                 "method": response.request.method,
                 "url": _strip_query(response.url)[:MAX_FAILED_REQUEST_URL],
             }
+            self.failed.append(entry)
+            # Enrichment, in its own try: a response that will not answer about
+            # its headers still refused something, and status and method are the
+            # part worth having.
             for name in FAILED_REQUEST_HEADERS:
-                value = headers.get(name)
+                value = response.headers.get(name)
                 if value:
                     entry[name.replace("-", "_")] = str(value)[:100]
-            self.failed.append(entry)
         except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
             pass
 
     def reply_with_failures(self, reply):
         """Add what the page's requests did to a reply, and forget it.
 
-        Every reply goes through here -- a result, an error, the answer to
-        `quit` -- because a refusal that arrives during the action that FAILED
-        is the one most worth having, and a seam only the success path passes
+        Every reply an action produces goes through here, a result and an error
+        alike, because a refusal that arrives during the action that FAILED is
+        the one most worth having and a seam only the success path passes
         through is a seam that loses it. Most recent first, reported once.
+        `quit` is deliberately outside it: the device is shutting the browser
+        down and discards that reply, so anything still in the ring dies with
+        the session it belonged to.
         """
         if self.failed:
             reply["failed_requests"] = list(reversed(self.failed))
