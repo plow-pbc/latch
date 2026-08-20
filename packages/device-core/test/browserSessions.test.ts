@@ -290,7 +290,7 @@ describe("origin scope", () => {
 describe("requests the site refused", () => {
   const ORDER = { status: 429, method: "POST", host: "pizza.example", retry_after: "30" };
 
-  it("tells the agent the host, and the owner's log the whole url", async () => {
+  it("tells the agent the host, and only when both ends were approved", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
     // Scripted: "#blocked" is a click whose XHRs the site answers 429, plus a
@@ -298,19 +298,19 @@ describe("requests the site refused", () => {
     const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" }));
     expect(r.get("status").str).toBe("completed");
 
-    // The agent gets the host and nothing a page could have written: no path,
-    // and nothing at all from an origin it was not approved for.
+    // The agent hears about the approved page's own trouble and nothing else:
+    // not the third-party beacon (unapproved destination), and not the 404 the
+    // locked-out page aimed AT the approved origin (unapproved asker) — which
+    // would otherwise read as the approved page's own.
     expect(r.get("failed_requests").value).toEqual([ORDER]);
     expect(JSON.stringify(r.value)).not.toContain("tracker.example");
-    expect(JSON.stringify(r.value)).not.toContain("SECRET");
+    expect(JSON.stringify(r.value)).not.toContain("404");
 
-    // The owner is the one person a page cannot mislead by choosing a url, so
-    // their log keeps both entries in full — query stripped.
+    // The owner sees all three, with who asked — nobody can mislead them by
+    // choosing a url, and an origin is all any of it is.
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
-    expect(command?.fields.failed_requests).toEqual([
-      { status: 429, method: "POST", url: "https://pizza.example/api/order", retry_after: "30" },
-      { status: 403, method: "GET", url: "https://tracker.example/beacon" },
-    ]);
+    expect(command?.fields.failed_requests).toHaveLength(3);
+    expect(JSON.stringify(command?.fields.failed_requests)).toContain("offsite.example");
   });
 
   it("says nothing when the page's requests were answered", async () => {
@@ -333,7 +333,7 @@ describe("requests the site refused", () => {
     expect(r.get("failed_requests").value).toEqual([ORDER]);
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
     expect(command?.fields.error).toContain("Timeout");
-    expect(command?.fields.failed_requests).toHaveLength(2);
+    expect(command?.fields.failed_requests).toHaveLength(3);
   });
 });
 

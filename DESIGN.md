@@ -351,14 +351,18 @@ because most of what asks the browser anything is the device itself (the ~1/s
 viewer poll, the popup sweep, a credential fill's `locate`) and whichever was
 in flight would otherwise consume a 429 and drop it.
 
-**The owner's log gets the whole entry; the agent gets the host.** A page
-chooses the urls it fetches, so a path handed to the agent is text that page
-wrote — and an unapproved page must not get to write the agent's evidence.
-A host cannot be written that way: it is either one the session was approved
-for or it is not, which is also the whole filter. So the agent is told
-`{status, method, host}` (plus `Retry-After`/`Server` when sent) for approved
-origins only, while `audit.ndjson` keeps the query-stripped url in full for the
-owner, who is the one person a page cannot mislead by choosing it.
+**Origins, and both ends of them.** A url is the page's to choose, and every
+part of one but the origin can carry a secret — a query, userinfo, and a path
+as much as either, since `/reset/<token>` is a url sites really send. So an
+entry is the origin that refused, the origin that asked, the status and the
+method, and nothing else; the owner's log gets all of it, and the agent is told
+`{status, method, host}` (plus `Retry-After`/`Server` when sent) only when
+**both** origins are inside the session's. Destination alone would let a page
+the session is locked out of fetch a url it knows will fail on an approved host
+and pass that off as the approved page's own trouble. A request the browser
+cannot attribute — a navigation from a blank page, a service worker — names no
+asker and is the device's own; there is no text in an origin to smuggle either
+way, which is why this needs no attribution machinery beyond the two fields.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

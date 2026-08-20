@@ -35,11 +35,13 @@ class Response:
     quietly answered would let that regress unnoticed.
     """
 
-    def __init__(self, status, url, method="GET", headers=None):
+    def __init__(self, status, url, method="GET", headers=None, page="", navigation=False):
         self.status = status
         self.url = url
-        self.request = type("Request", (), {"method": method})()
+        self.request = type("Request", (), {"method": method,
+                                            "is_navigation_request": lambda _s=None: navigation})()
         self.headers = headers or {}
+        self.frame = type("Frame", (), {"url": page})()
 
     def body(self):
         raise AssertionError("the listener read a response body")
@@ -82,11 +84,21 @@ def main():
     session = server.Session(Page())
     out["listens"] = session.page.context.listeners
 
-    # A refused request is kept with its query and its userinfo gone, and the
-    # two headers worth having.
+    # A refused request keeps its origin and nothing else — not the path, which
+    # a site can put a token in as readily as a query.
     out["refused"] = feed(session, [Response(
-        429, "https://user:pw@signin.example/tenant/SelfAsserted?tx=StateProperties=SECRET",
-        "POST", {"retry-after": "30", "server": "cloudfront"})])
+        429, "https://user:pw@signin.example/reset/TOKEN?tx=StateProperties=SECRET",
+        "POST", {"retry-after": "30", "server": "cloudfront"},
+        page="https://pizza.example/checkout")])
+
+    # Who asked, at origin granularity: a navigation answers for itself, since
+    # its frame still names the page being left.
+    session = server.Session(Page())
+    out["initiators"] = feed(session, [
+        Response(403, "https://pizza.example/api/x", page="https://offsite.example/lander"),
+        Response(429, "https://pizza.example/checkout", navigation=True,
+                 page="https://offsite.example/lander"),
+    ])
 
     # Handed over once: the next reply is not told again.
     out["drained"] = session.reply_with_failures({})
@@ -102,20 +114,6 @@ def main():
     session = server.Session(Page())
     out["bounded"] = feed(session, [
         Response(403, "https://pizza.example/x%d" % i) for i in range(9)])
-
-    # A response that will not answer its own questions takes nothing down.
-    class Hostile(Response):
-        @property
-        def headers(self):
-            raise RuntimeError("detached")
-
-        @headers.setter
-        def headers(self, _v):
-            pass
-
-    session = server.Session(Page())
-    out["hostile"] = feed(session, [Hostile(429, "https://pizza.example/boom"),
-                                    Response(401, "https://pizza.example/ok")])
 
     real_stdout.write(json.dumps(out) + "\n")
     real_stdout.flush()

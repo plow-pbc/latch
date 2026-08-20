@@ -11,32 +11,43 @@ import { havePython, runProbe } from "./pythonProbe.js";
 const PROBE = fileURLToPath(new URL("../../../e2e/fixtures/failedRequestProbe.py", import.meta.url));
 
 interface Envelope {
-  failed_requests?: { status: number; method: string; url: string }[];
+  failed_requests?: { status: number; method: string; origin: string; initiator: string }[];
 }
 
 describe.skipIf(!havePython())("the real response listener in server.py", () => {
   const probed = runProbe<{
     listens: string[];
     refused: Envelope;
+    initiators: Envelope;
     drained: Envelope;
     quiet: Envelope;
     bounded: Envelope;
-    hostile: Envelope;
   }>(PROBE);
 
   it("listens on the context, so a popup's refusals count too", () => {
     expect(probed.listens).toEqual(["response"]);
   });
 
-  it("keeps a refusal without its query or its userinfo", () => {
+  it("keeps the origin that refused and nothing a site could put a token in", () => {
+    // Not the path either: /reset/<token> is a url sites really send.
     expect(probed.refused.failed_requests).toEqual([
       {
         status: 429,
         method: "POST",
-        url: "https://signin.example/tenant/SelfAsserted",
+        origin: "https://signin.example",
+        initiator: "https://pizza.example",
         retry_after: "30",
         server: "cloudfront",
       },
+    ]);
+  });
+
+  it("names who asked, with a navigation answering for itself", () => {
+    // The frame still names the page being left while a navigation's headers
+    // arrive, so a refused goto would otherwise look like somebody else's.
+    expect((probed.initiators.failed_requests ?? []).map((r) => r.initiator)).toEqual([
+      "https://pizza.example",
+      "https://offsite.example",
     ]);
   });
 
@@ -51,18 +62,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
   it("keeps the most recent few, most recent first", () => {
     const kept = probed.bounded.failed_requests ?? [];
     expect(kept.length).toBe(5);
-    expect(kept.map((r) => r.url)).toEqual([
-      "https://pizza.example/x8",
-      "https://pizza.example/x7",
-      "https://pizza.example/x6",
-      "https://pizza.example/x5",
-      "https://pizza.example/x4",
-    ]);
+    expect(kept.map((r) => r.status)).toEqual([403, 403, 403, 403, 403]);
   });
 
-  it("keeps the diagnosis when a response will not answer about its headers", () => {
-    // Status and method are the payload; Retry-After and Server are enrichment,
-    // so a response that has gone detached loses the enrichment and no more.
-    expect((probed.hostile.failed_requests ?? []).map((r) => r.status)).toEqual([401, 429]);
-  });
 });

@@ -49,11 +49,10 @@ if sys.platform == "darwin":
 
 MAX_ERROR_LEN = 500
 
-# How many refused requests one reply can carry back, and how long a recorded
-# url may be. The relay buffers a whole exchange, so a chatty page must not be
-# able to park one; a handful of the most recent is what says "you are blocked".
+# How many refused requests one reply can carry back. The relay buffers a whole
+# exchange, so a chatty page must not be able to park one; a handful of the most
+# recent is what says "you are blocked".
 MAX_FAILED_REQUESTS = 5
-MAX_FAILED_REQUEST_URL = 200
 
 # Kept off a refused request beyond status/method/url. Never a body -- a body
 # can echo a submitted credential -- and never an arbitrary header: Set-Cookie
@@ -63,12 +62,17 @@ MAX_FAILED_REQUEST_URL = 200
 FAILED_REQUEST_HEADERS = ("retry-after", "server")
 
 
-def _strip_query(url):
-    """Query and fragment carry tokens -- B2C hangs tx=StateProperties= there --
-    and userinfo carries a password outright. Stripped where the url is
-    recorded, so nothing downstream is holding one."""
-    cut = url.split("?", 1)[0].split("#", 1)[0]
-    return re.sub(r"^([a-z][a-z0-9+.-]*://)[^/]*@", r"\1", cut, flags=re.I)
+def _origin(url):
+    """Scheme and host, and nothing else.
+
+    A url is the page's to choose, and every other part of one can carry a
+    secret: a query (B2C hangs tx=StateProperties= there), userinfo, and a path
+    as much as either -- /reset/<token> is a url a site really sends. The origin
+    is the part that says who refused, which is the whole diagnosis, and the
+    only part nobody can write anything into.
+    """
+    m = re.match(r"^([a-z][a-z0-9+.-]*://)(?:[^/@]*@)?([^/?#]*)", url, flags=re.I)
+    return "" if m is None else m.group(1) + m.group(2).split("@")[-1]
 
 # How long one element action waits by default. Sized like the `goto` budget
 # above it: a single action has to answer inside the device's 15 s host cap and
@@ -344,18 +348,38 @@ class Session:
             entry = {
                 "status": response.status,
                 "method": response.request.method,
-                "url": _strip_query(response.url)[:MAX_FAILED_REQUEST_URL],
+                "origin": _origin(response.url),
+                # WHICH document asked. Both ends have to be approved before the
+                # device shows an entry to the agent: destination alone lets a
+                # page the session is locked out of fetch a url it knows will
+                # fail on an approved host and pass that off as the approved
+                # page's own trouble. An origin is all this is, so there is
+                # nothing here a page can write text into either.
+                "initiator": self._initiator(response),
             }
-            self.failed.append(entry)
-            # Appended BEFORE the headers are asked for: a response that will
-            # not answer about them still refused something, and status and
-            # method are the part worth having.
             for name in FAILED_REQUEST_HEADERS:
                 value = response.headers.get(name)
                 if value:
                     entry[name.replace("-", "_")] = str(value)[:100]
+            self.failed.append(entry)
         except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
             pass
+
+    def _initiator(self, response):
+        """The origin of the document whose request this was, "" if unknowable.
+
+        A navigation answers for itself: its frame has not committed the new url
+        yet, so asking the frame would name the page being left and a refused
+        `goto` would look like somebody else's. Anything the frame will not
+        answer (a service worker) names nothing, and the device treats that as
+        the device's own -- there is no text in an origin to smuggle either way.
+        """
+        try:
+            if response.request.is_navigation_request():
+                return _origin(response.url)
+            return _origin(response.frame.url)
+        except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
+            return ""
 
     def reply_with_failures(self, reply):
         """Add what the page's requests did to a reply, and forget it.

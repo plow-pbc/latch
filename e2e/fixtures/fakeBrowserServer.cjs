@@ -28,9 +28,9 @@
  *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
- *   click "#blocked"  the page's own requests come back refused — one from the
- *                     approved page, one from elsewhere, and one whose url
- *                     still carries a query, to prove the device strips too
+ *   click "#blocked"  the page's own requests come back refused — one on the
+ *                     approved origin, one on a third party, and one the
+ *                     locked-out page aimed AT the approved origin
  *   click "#refuses"  refused AND fails, so the refusal has to ride an error
  *   click "#blocked-later"  the refusal settles after the click answered, so it
  *                     rides whatever reply comes next — a viewer poll, say
@@ -127,7 +127,10 @@ function handle(cmd) {
       );
     }
     if (cmd.selector === "#blocked-later") {
-      failedNext = [{ status: 401, method: "GET", url: "https://pizza.example/api/whoami" }];
+      failedNext = [{
+        status: 401, method: "GET", origin: "https://pizza.example",
+        initiator: "https://pizza.example",
+      }];
     }
     if (cmd.selector === "#blocked" || cmd.selector === "#refuses") {
       // Prepended, not assigned: the real server appends into one ring and
@@ -136,11 +139,13 @@ function handle(cmd) {
       // BrowserHost caps what it holds regardless.
       failed = [
         {
-          status: 429, method: "POST",
-          url: "https://pizza.example/api/order?tx=StateProperties=SECRET",
-          retry_after: "30",
+          status: 429, method: "POST", origin: "https://pizza.example",
+          initiator: "https://pizza.example", retry_after: "30",
         },
-        { status: 403, method: "GET", url: "https://tracker.example/beacon" },
+        { status: 403, method: "GET", origin: "https://tracker.example",
+          initiator: "https://pizza.example" },
+        { status: 404, method: "GET", origin: "https://pizza.example",
+          initiator: "https://offsite.example" },
         ...failed,
       ];
       if (cmd.selector === "#refuses") throw new Error("locator.click: Timeout 3000ms exceeded.");

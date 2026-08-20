@@ -49,30 +49,32 @@ export function stripQuery(url: string): string {
   return cut.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, "$1");
 }
 
-/**
- * Requests the site itself refused during an action, as the browser reported
- * them — re-stripped here because they land in the owner's durable log and a
- * token written there cannot be taken back.
- */
+/** Requests the site itself refused during an action, as the browser reported
+ * them: origins only, so nothing a page chose the text of reaches either the
+ * owner's durable log or the agent. */
 function failedRequests(value: JSONValue[]): JSONValue[] {
-  return value.flatMap((entry) => {
-    const e = jv(entry);
-    if (e.obj === null) return [];
-    return [{ ...e.obj, url: stripQuery(e.get("url").str ?? "") }];
-  });
+  return value.flatMap((entry) => (jv(entry).obj === null ? [] : [entry]));
 }
 
 /**
- * What the AGENT is told about a refusal: the host, never the path. A page
- * chooses the urls it fetches, so a path handed to the agent is text that page
- * wrote; a host cannot be, since it is either one the session was approved for
- * or it is dropped. That is also why this is the only filter needed.
+ * What the AGENT is told about a refusal, and whether it is told at all.
+ *
+ * Both ends must be inside the approved origins: the host that refused, and the
+ * document that asked. Destination alone would let a page the session is locked
+ * out of fetch a url it knows will fail on an approved host and pass that off
+ * as the approved page's own trouble. A document the browser could not name is
+ * the device's own asking — a `goto` from a blank page, a service worker — and
+ * passes. The initiator itself is never handed over; the agent gets the host
+ * that refused, which is the diagnosis.
  */
-function forAgent(entries: JSONValue[], approved: (host: string) => boolean): JSONValue[] {
+function forAgent(entries: JSONValue[], approved: (origin: string) => boolean): JSONValue[] {
   return entries.flatMap((entry) => {
     const e = jv(entry);
-    const host = hostOf(e.get("url").str ?? "");
-    if (host === null || !approved(host)) return [];
+    const origin = e.get("origin").str ?? "";
+    const initiator = e.get("initiator").str ?? "";
+    const host = hostOf(origin);
+    if (host === null || !approved(origin)) return [];
+    if (initiator !== "" && !approved(initiator)) return [];
     const retryAfter = e.get("retry_after").str;
     const server = e.get("server").str;
     return [{
@@ -465,7 +467,10 @@ export class BrowserSessions {
       ...extra,
       ...(failed.length ? { failed_requests: failed } : {}),
     });
-    return forAgent(failed, (host) => originMatches(host, s.origins));
+    return forAgent(failed, (origin) => {
+      const host = hostOf(origin);
+      return host !== null && originMatches(host, s.origins);
+    });
   }
 
   /** Send to the server, then observe where we landed and sweep popups. */
