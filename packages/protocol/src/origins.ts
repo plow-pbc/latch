@@ -6,7 +6,7 @@
  * suffix list, no eTLD+1 inference. What the approver saw on the card is
  * exactly what matches; "dominos.com" and "*.dominos.com" are two entries.
  */
-import { createHash } from "node:crypto";
+import { Hashing } from "./identity.js";
 
 /**
  * Normalize a pattern to the form rule keys hash: lowercase, no scheme, no
@@ -54,9 +54,14 @@ export function profileKeyForOrigins(origins: string[]): string {
   // contain the separator cannot spell a different set that hashes the same.
   // These come straight from a tool argument, so "no host looks like that"
   // is not something this function gets to assume.
-  const key = [...new Set(origins.map((o) => normalizeOrigin(o)))]
-    .sort()
-    .map((o) => `${o.length}:${o}`)
-    .join("");
-  return createHash("sha256").update(key).digest("hex").slice(0, 16);
+  const patterns = [...new Set(origins.map((o) => normalizeOrigin(o)))].sort();
+  // A grant with nothing usable in it would otherwise share one profile with
+  // every other such grant. It can only arrive from a bug upstream — the tool
+  // already refuses an empty list — so say so rather than picking a store.
+  if (patterns.some((p) => p === "" || p === "*.")) {
+    throw new Error(`profileKeyForOrigins: empty origin in ${JSON.stringify(origins)}`);
+  }
+  if (patterns.length === 0) throw new Error("profileKeyForOrigins: no origins");
+  const key = patterns.map((o) => `${o.length}:${o}`).join("");
+  return Hashing.sha256Hex(Buffer.from(key, "utf8")).slice(0, 16);
 }

@@ -77,6 +77,25 @@ describe("profileKeyForOrigins", () => {
     expect(profileKeyForOrigins(["reddit.com"])).not.toBe(costco);
   });
 
+  it("normalizes the way rule keys do, so a remembered rule finds its profile", () => {
+    // The claim the store rests on: a session opened against a rule the owner
+    // already approved lands back in the profile that rule built.
+    const cap: Capability = {
+      kind: "browser",
+      origins: ["HTTPS://Dominos.com:443/", "*.DOMINOS.com", "dominos.com."],
+      reason: "order pizza",
+    };
+    expect(profileKeyForOrigins(cap.origins!)).toBe(
+      profileKeyForOrigins(normalizedCapability(cap).origins!),
+    );
+  });
+
+  it("refuses a grant with no usable origin rather than picking a store", () => {
+    expect(() => profileKeyForOrigins([])).toThrow();
+    expect(() => profileKeyForOrigins(["   "])).toThrow();
+    expect(() => profileKeyForOrigins(["*."])).toThrow();
+  });
+
   it("cannot be made to collide by a pattern that spells the separator", () => {
     // Origins arrive as an unvalidated tool argument, and the key is the only
     // thing keeping one grant's cookies away from another's.
