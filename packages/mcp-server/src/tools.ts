@@ -413,10 +413,12 @@ export const TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
-      const origins = strings(a.get("origins").arr);
-      // Usable, not merely present: a list of blanks would otherwise reach the
-      // owner as an approval card with a blank bound on it.
-      if (usableOrigins(origins).length === 0) throw new ToolError("missing 'origins'");
+      // Filtered at construction, so the card the owner reads, the rule they
+      // may save, the session's bound and its profile all name one set — an
+      // entry that bounds nothing would otherwise show as a blank on the card
+      // and make the saved rule un-rematchable.
+      const origins = usableOrigins(strings(a.get("origins").arr));
+      if (origins.length === 0) throw new ToolError("missing 'origins'");
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });
@@ -469,7 +471,7 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const session = a.get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
-      const origins = strings(a.get("origins").arr);
+      const origins = usableOrigins(strings(a.get("origins").arr));
       const items = strings(a.get("credential_items").arr);
       const capabilities: Capability[] = [];
       if (origins.length > 0) capabilities.push({ kind: "browser", origins });

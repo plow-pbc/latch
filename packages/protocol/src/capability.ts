@@ -6,7 +6,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import { canonicalBytes, canonicalJSON, JSONValue } from "./json.js";
 import { Hashing } from "./identity.js";
-import { normalizeOrigin } from "./origins.js";
+import { usableOrigins } from "./origins.js";
 
 export type CapabilityKind =
   | "fs.read"
@@ -39,7 +39,7 @@ export function normalizedCapability(c: Capability): Capability {
   delete out.reason;
   if (out.paths) out.paths = out.paths.map((p) => canonicalize(p)).sort();
   if (out.cwd !== undefined) out.cwd = canonicalize(out.cwd);
-  if (out.origins) out.origins = out.origins.map((o) => normalizeOrigin(o)).sort();
+  if (out.origins) out.origins = usableOrigins(out.origins);
   if (out.items) out.items = [...out.items].sort();
   return out;
 }

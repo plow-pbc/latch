@@ -49,9 +49,10 @@ export function usableOrigins(origins: string[]): string[] {
 }
 
 /**
- * Directory name for the browser profile a grant may write to. Same
- * normalization `normalizedCapability()` uses for rule keys, so a session
- * opened against a remembered rule lands back in the profile that rule built.
+ * Directory name for the browser profile a grant may write to. Built from
+ * `usableOrigins`, which is also what `normalizedCapability()` runs for rule
+ * keys, so a session opened against a remembered rule lands back in the
+ * profile that rule built.
  *
  * Keyed on the whole approved set rather than on a registrable domain,
  * deliberately: this module infers no eTLD+1, and a profile keyed on one would
@@ -61,17 +62,16 @@ export function usableOrigins(origins: string[]): string[] {
  * safe direction, since the narrower grant is the one that goes without.
  */
 export function profileKeyForOrigins(origins: string[]): string {
-  // Length-prefixed, so the encoding is injective: a pattern that happens to
-  // contain the separator cannot spell a different set that hashes the same.
-  // These come straight from a tool argument, so "no host looks like that"
-  // is not something this function gets to assume.
   const patterns = usableOrigins(origins);
-  // A grant with nothing usable in it would otherwise share one profile with
-  // every other such grant. The boundary refuses it first, so reaching here is
-  // a bug — say so rather than picking a store.
+  // The boundary refuses an unusable grant first, so reaching here is a bug —
+  // say so rather than picking a store every such grant would share.
   if (patterns.length === 0) {
     throw new Error(`profileKeyForOrigins: no usable origin in ${JSON.stringify(origins)}`);
   }
+  // Length-prefixed, so the encoding is injective: a pattern that happens to
+  // contain the separator cannot spell a different set that hashes the same.
+  // These come from a tool argument, so "no host looks like that" is not
+  // something this function gets to assume.
   const key = patterns.map((o) => `${o.length}:${o}`).join("");
   return Hashing.sha256Hex(Buffer.from(key, "utf8")).slice(0, 16);
 }

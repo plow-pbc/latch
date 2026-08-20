@@ -210,6 +210,31 @@ describe("browser tools (fake runtime)", () => {
     expect(opened).toEqual([false, true]);
   });
 
+  it("an origin that bounds nothing never reaches the owner's approval card", async () => {
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+
+    // A list of nothing but unmatchable patterns is refused before the owner
+    // is asked to approve a blank bound.
+    const blank = await callTool(
+      server, "plow_browser_open", { origins: ["   ", "*."] }, AGENT,
+    );
+    expect(blank.isError).toBe(true);
+    expect(JSON.stringify(blank.payload)).toContain("origins");
+
+    // A real origin carrying one alongside it opens, with the junk dropped —
+    // the card, the session bound and the profile all name the same set.
+    const opened = await callTool(
+      server, "plow_browser_open", { origins: ["pizza.example", ""] }, AGENT,
+    );
+    expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
+    expect(opened.payload.origins).toEqual(["pizza.example"]);
+    const bound = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_opened")
+      .map((e) => jv(e as JSONValue).get("origins").value);
+    expect(bound.at(-1)).toEqual(["pizza.example"]);
+  });
+
   it("each approved origin set browses in its own profile, and comes back to it", async () => {
     const { server, argvLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
 

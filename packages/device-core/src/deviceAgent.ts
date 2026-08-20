@@ -9,14 +9,7 @@
  * in-process from an authenticated agent's call and never crosses a wire, so
  * there is no signature to verify and no agent public key to pin.
  */
-import {
-  capabilityDisplay,
-  Intent,
-  intentIsExpired,
-  JSONValue,
-  jv,
-  usableOrigins,
-} from "@domo/protocol";
+import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -494,7 +487,7 @@ export class DeviceAgent {
         metadata,
       );
     }
-    if (usableOrigins(origins).length === 0) {
+    if (origins.length === 0) {
       return { status: "error", error: "plow_browser_open requires at least one origin" };
     }
     // Window mode is delivery detail too: it changes nothing about what the
