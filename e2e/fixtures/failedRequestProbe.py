@@ -34,8 +34,12 @@ def load_server():
 
 
 class Request:
-    def __init__(self, method):
+    def __init__(self, method, navigation=False):
         self.method = method
+        self._navigation = navigation
+
+    def is_navigation_request(self):
+        return self._navigation
 
 
 class Frame:
@@ -51,10 +55,11 @@ class Response:
     quietly answered would let that regress unnoticed.
     """
 
-    def __init__(self, status, url, method="GET", headers=None, page="https://pizza.example/checkout"):
+    def __init__(self, status, url, method="GET", headers=None,
+                 page="https://pizza.example/checkout", navigation=False):
         self.status = status
         self.url = url
-        self.request = Request(method)
+        self.request = Request(method, navigation)
         self.headers = headers or {}
         self.frame = Frame(page)
 
@@ -121,6 +126,30 @@ def main():
     session = server.Session(Page())
     feed(session, [Response(403, "https://pizza.example/x%d" % i) for i in range(9)])
     out["bounded"] = session.envelope({"ok": True})
+
+    # A navigation IS its own document: when its headers arrive the frame still
+    # names the page being left, and attributing a refused goto to that page
+    # would withhold it from the agent that asked for the new one.
+    session = server.Session(Page())
+    feed(session, [Response(429, "https://pizza.example/checkout", page="https://pizza.example/cart",
+                            navigation=True)])
+    out["navigation"] = session.envelope({"ok": True})
+
+    # A frame that will not answer -- a service worker's request, or a popup's
+    # opening navigation before its frame exists. The entry is still kept, with
+    # nothing claimed about who asked.
+    class NoFrame(Response):
+        @property
+        def frame(self):
+            raise RuntimeError("no frame for this request")
+
+        @frame.setter
+        def frame(self, _v):
+            pass
+
+    session = server.Session(Page())
+    feed(session, [NoFrame(403, "https://pizza.example/api/sw")])
+    out["unattributable"] = session.envelope({"ok": True})
 
     # A response that will not answer its own questions takes nothing down.
     class Hostile(Response):

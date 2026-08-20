@@ -196,7 +196,7 @@ describe("browser tools (fake runtime)", () => {
     expect(meta.failed_requests).toEqual([
       {
         status: 401, method: "GET",
-        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+        url: "https://pizza.example/api/whoami", frame_url: "https://pizza.example/",
       },
     ]);
   });

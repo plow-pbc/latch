@@ -67,7 +67,7 @@ function failedRequests(value: JSONValue[]): JSONValue[] {
     return [{
       ...e.obj,
       url: stripQuery(e.get("url").str ?? "").slice(0, MAX_URL_LEN),
-      page: stripQuery(e.get("page").str ?? "").slice(0, MAX_URL_LEN),
+      frame_url: stripQuery(e.get("frame_url").str ?? "").slice(0, MAX_URL_LEN),
     }];
   });
 }
@@ -471,13 +471,14 @@ export class BrowserSessions {
     // The agent hears only about the origins it was approved for — judged per
     // entry rather than by where this action happened to land, so a refusal on
     // the approved page still arrives when a sign-in redirect has parked the
-    // session somewhere else. BOTH ends have to be approved: the page that
-    // asked is an observation of that page, and an unapproved one would
-    // otherwise be choosing the text it hands the agent by choosing what to
-    // fetch.
+    // session somewhere else. BOTH ends have to be approved: which of its
+    // requests were refused is an observation of the document that made them,
+    // and an unapproved one would otherwise be choosing the text it hands the
+    // agent by choosing what to fetch. An entry the browser could not attribute
+    // carries no document and stays with the owner.
     const visible = failed.filter((entry) => {
-      const e = entry as { url: string; page: string };
-      return this.approved(s, e.page) && this.approved(s, e.url);
+      const e = entry as { url: string; frame_url: string };
+      return this.approved(s, e.frame_url) && this.approved(s, e.url);
     });
     if (visible.length) out.failed_requests = visible;
     // If the action itself landed us out of scope, say so in the result — the

@@ -16,7 +16,7 @@ interface FailedRequest {
   status: number;
   method: string;
   url: string;
-  page: string;
+  frame_url: string;
   bytes?: number;
   retry_after?: string;
   server?: string;
@@ -30,6 +30,8 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     listens: string[];
     refused: Envelope;
     drained: Envelope;
+    navigation: Envelope;
+    unattributable: Envelope;
     quiet: Envelope;
     bounded: Envelope;
     hostile: Envelope;
@@ -46,7 +48,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
         method: "POST",
         url: "https://signin.example/tenant/SelfAsserted",
         // Which document asked — the device needs both ends approved.
-        page: "https://pizza.example/checkout",
+        frame_url: "https://pizza.example/checkout",
         bytes: 1180,
         retry_after: "30",
         server: "cloudfront",
@@ -58,6 +60,23 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.drained.failed_requests).toBeUndefined();
   });
 
+
+  it("attributes a refused navigation to the page asked for, not the one being left", () => {
+    // Otherwise a goto that comes back 429 is credited to the previous page and
+    // withheld from the agent that asked for the new one.
+    expect(probed.navigation.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/checkout",
+      frame_url: "https://pizza.example/checkout",
+    });
+  });
+
+  it("keeps a refusal it cannot attribute, claiming nothing about who asked", () => {
+    expect(probed.unattributable.failed_requests?.[0]).toMatchObject({
+      status: 403,
+      url: "https://pizza.example/api/sw",
+      frame_url: "",
+    });
+  });
 
   it("keeps nothing for a page that worked, redirects included", () => {
     expect(probed.quiet.failed_requests).toBeUndefined();

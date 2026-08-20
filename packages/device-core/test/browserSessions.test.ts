@@ -260,7 +260,7 @@ describe("requests the site refused", () => {
       method: "POST",
       // The browser strips it too; the device does not take that on trust.
       url: "https://pizza.example/api/order",
-      page: "https://pizza.example/",
+      frame_url: "https://pizza.example/",
       bytes: 1180,
       retry_after: "30",
     });
@@ -293,7 +293,7 @@ describe("requests the site refused", () => {
     expect(closed?.fields.failed_requests).toEqual([
       {
         status: 401, method: "GET",
-        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+        url: "https://pizza.example/api/whoami", frame_url: "https://pizza.example/",
       },
     ]);
   });
@@ -311,7 +311,7 @@ describe("requests the site refused", () => {
     expect(closed?.fields.failed_requests).toEqual([
       {
         status: 401, method: "GET",
-        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+        url: "https://pizza.example/api/whoami", frame_url: "https://pizza.example/",
       },
     ]);
   });
@@ -327,7 +327,7 @@ describe("requests the site refused", () => {
     expect(shot.get("failed_requests").value).toEqual([
       {
         status: 401, method: "GET",
-        url: "https://pizza.example/api/whoami", page: "https://pizza.example/",
+        url: "https://pizza.example/api/whoami", frame_url: "https://pizza.example/",
       },
     ]);
   });
@@ -345,7 +345,7 @@ describe("requests the site refused", () => {
     expect(back.get("failed_requests").value).toEqual([
       {
         status: 401, method: "POST",
-        url: "https://pizza.example/api/signin", page: "https://pizza.example/",
+        url: "https://pizza.example/api/signin", frame_url: "https://pizza.example/",
       },
     ]);
     // What the unapproved page aimed at the approved origin is that page's
@@ -358,6 +358,20 @@ describe("requests the site refused", () => {
     expect(JSON.stringify([back.value, shot.value])).not.toContain("offsite.example");
     // The owner still sees what that page's requests did.
     expect(JSON.stringify(ctx.events)).toContain("offsite.example/api/late");
+  });
+
+  it("keeps an unattributable refusal for the owner and not for the agent", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // A service worker's request has no document behind it. Which document
+    // asked is what decides whether the agent may hear about it, so an entry
+    // that names none stays with the owner.
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#unattributed" }));
+    expect(r.get("failed_requests").value).toBeNull();
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toEqual([
+      { status: 503, method: "GET", url: "https://pizza.example/api/sw", frame_url: "" },
+    ]);
   });
 
   it("hands the agent nothing it cannot read — a malformed list is not passed through", async () => {
@@ -383,7 +397,7 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toEqual([
       {
         status: 403, method: "GET",
-        url: "https://offsite.example/api/who", page: "https://offsite.example/lander",
+        url: "https://offsite.example/api/who", frame_url: "https://offsite.example/lander",
       },
     ]);
   });

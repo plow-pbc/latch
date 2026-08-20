@@ -57,9 +57,12 @@ url, title, links, forms, tables, pages.
   with \`goto\` instead; cookies and the session survive.
 - **An action that "worked" but changed nothing: read \`failed_requests\`.** A result carries
   it when the page's own requests came back refused — most recent first, each with
-  \`status\`, \`method\`, the \`url\` asked for and the \`page\` that asked, plus \`bytes\`,
-  \`retry_after\` and \`server\` when the response carried them. You are told about the
-  approved origins only, so a page outside them reports nothing. A 401 or 403
+  \`status\`, \`method\`, the \`url\` asked for and the \`frame_url\` of the document that
+  asked, plus \`bytes\`, \`retry_after\` and \`server\` when the response carried them. Both
+  ends have to be inside your approved origins: a request made BY a page outside them —
+  an embedded third-party checkout or sign-in frame is the common one — reports nothing,
+  so widen the session to that origin with \`plow_browser_request\` if a flow that runs in
+  one goes quiet. A 401 or 403
   means the sign-in did not take; a 429 means you are being throttled or blocked, and a 429
   with no \`retry_after\` is usually the latter, so waiting will not help. One can settle
   after the action answered and ride the next result — the screenshot you take next.

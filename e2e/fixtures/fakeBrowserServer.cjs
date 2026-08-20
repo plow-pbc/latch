@@ -37,6 +37,7 @@
  *                     saw during the action (already query-stripped there —
  *                     one here keeps its query, to prove the device strips too),
  *                     plus one that settles late and rides the next result
+ *   click "#unattributed"  a refusal the browser could not attribute to a document
  *   click "#malformed"   a failed_requests the device cannot read: not a list
  *   click "#malformed-entries"  a list whose entries are not objects
  */
@@ -125,7 +126,7 @@ function handle(cmd) {
       current().url = "https://offsite.example/lander";
       state.failed = [{
         status: 403, method: "GET",
-        url: "https://offsite.example/api/who", page: "https://offsite.example/lander",
+        url: "https://offsite.example/api/who", frame_url: "https://offsite.example/lander",
       }];
       // One from the page it left, one from the approved page whose XHR was
       // still in flight — the sign-in-redirect shape — and one the unapproved
@@ -133,15 +134,15 @@ function handle(cmd) {
       state.failedNext = [
         {
           status: 429, method: "GET",
-          url: "https://offsite.example/api/late", page: "https://offsite.example/lander",
+          url: "https://offsite.example/api/late", frame_url: "https://offsite.example/lander",
         },
         {
           status: 401, method: "POST",
-          url: "https://pizza.example/api/signin", page: "https://pizza.example/",
+          url: "https://pizza.example/api/signin", frame_url: "https://pizza.example/",
         },
         {
           status: 403, method: "GET",
-          url: "https://pizza.example/api/probed-by-offsite", page: "https://offsite.example/lander",
+          url: "https://pizza.example/api/probed-by-offsite", frame_url: "https://offsite.example/lander",
         },
       ];
     } else if (cmd.selector === "#blocked") {
@@ -150,7 +151,7 @@ function handle(cmd) {
           status: 429,
           method: "POST",
           url: "https://pizza.example/api/order?tx=StateProperties=SECRET",
-          page: "https://pizza.example/",
+          frame_url: "https://pizza.example/",
           bytes: 1180,
           retry_after: "30",
         },
@@ -158,7 +159,7 @@ function handle(cmd) {
           status: 403,
           method: "GET",
           url: `https://pizza.example/api/x${i}`,
-          page: "https://pizza.example/",
+          frame_url: "https://pizza.example/",
         })),
       ];
       state.failedNext = [
@@ -166,9 +167,14 @@ function handle(cmd) {
           status: 401,
           method: "GET",
           url: "https://pizza.example/api/whoami",
-          page: "https://pizza.example/",
+          frame_url: "https://pizza.example/",
         },
       ];
+    } else if (cmd.selector === "#unattributed") {
+      state.failed = [{
+        status: 503, method: "GET",
+        url: "https://pizza.example/api/sw", frame_url: "",
+      }];
     } else if (cmd.selector === "#malformed") {
       // Not a list at all — a browser process that is not behaving is exactly
       // what the device's own re-strip is for.

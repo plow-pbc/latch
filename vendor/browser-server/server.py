@@ -67,6 +67,26 @@ FAILED_REQUEST_HEADERS = ("retry-after", "server")
 MAX_FAILED_REQUEST_URL = 200
 
 
+def _asking_document(response):
+    """The url of the document whose request this was.
+
+    A navigation response IS its own document: when its headers arrive the frame
+    has not committed the new url yet, so asking the frame would name the page
+    being left -- and a `goto` that comes back 429 would then be attributed to
+    the previous page and withheld from the agent that asked for it. A frame
+    that will not answer at all (a service worker's request, a popup's opening
+    navigation before its frame exists) leaves this empty rather than losing the
+    entry: the owner still sees it, and the agent is told nothing, which is the
+    safe direction.
+    """
+    try:
+        if response.request.is_navigation_request():
+            return response.url
+        return response.frame.url
+    except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
+        return ""
+
+
 def _strip_query(url):
     """Query and fragment carry tokens -- B2C hangs tx=StateProperties= there.
 
@@ -261,15 +281,16 @@ class Session:
             if response.status < 400:
                 return
             headers = response.headers
+            request = response.request
             entry = {
                 "status": response.status,
-                "method": response.request.method,
+                "method": request.method,
                 "url": _strip_query(response.url)[:MAX_FAILED_REQUEST_URL],
-                # WHICH document asked. The device needs both ends: a page
+                # WHICH document asked. The device needs both ends: a document
                 # outside the approved origins is not one the agent may learn
                 # anything about, including which of its requests were refused
                 # and where they were aimed.
-                "page": _strip_query(response.frame.url)[:MAX_FAILED_REQUEST_URL],
+                "frame_url": _strip_query(_asking_document(response))[:MAX_FAILED_REQUEST_URL],
             }
             try:
                 entry["bytes"] = int(headers.get("content-length"))
