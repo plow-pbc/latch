@@ -8,8 +8,9 @@
  * Knobs (env):
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
- *   CRASH_AFTER=n      say one last thing (a 599 refusal) and exit(9) after n
- *                      commands (crash/restart tests)
+ *   CRASH_AFTER=n      after n commands, say one last thing (a 599 refusal),
+ *                      then exit(9) a beat later so the parent reads the line
+ *                      before the death — collapsing that beat re-opens a race
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
@@ -52,6 +53,11 @@ const readline = require("node:readline");
  * whatever reply comes next, including one the device asked for itself. */
 let failed = [];
 let failedNext = [];
+
+/** How long the crash path waits between its last line and its death. Wide
+ * enough that a stalled loop still reads the line first; a flake here means
+ * raise it, not that the device regressed. */
+const CRASH_LINE_BEAT_MS = 50;
 
 const state = {
   pages: [{ url: "about:blank", title: "blank" }],
@@ -274,18 +280,17 @@ function main() {
     if (process.env.CRASH_AFTER && state.commands > Number(process.env.CRASH_AFTER)) {
       // A last word on the way out: a real browser can answer a request and die
       // before the device has read the line.
+      // 599: a status nothing else here emits, so a test can say this line is
+      // the one that arrived on the way out. The death comes a beat after it,
+      // because the parent reads this pipe on one event and learns of the exit
+      // on another, and libuv gives them no relative order — the beat is the
+      // margin that keeps the test about the contract rather than the race.
       respond({
-        // 599: a status nothing else here emits, so a test can say this line
-        // is the one that arrived on the way out.
         failed_requests: [{
           status: 599, method: "GET", origin: "https://pizza.example",
           initiator: "https://pizza.example",
         }],
-        // Death a beat after the line, so a reader of this fixture is not
-        // relying on which of two same-tick events the parent's loop drains
-        // first — the point is that the last word arrives, not that it wins a
-        // race.
-      }, () => setTimeout(() => process.exit(9), 20));
+      }, () => setTimeout(() => process.exit(9), CRASH_LINE_BEAT_MS));
       return;
     }
     // HANG_ACTION=<name>: never answer that action, to exercise the host's

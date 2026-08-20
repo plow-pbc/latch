@@ -107,11 +107,12 @@ describe("BrowserHost", () => {
     await vi.waitFor(() => expect(crashes).toBe(1));
     expect(events).toContain("browser_crashed");
     // Its last word — a 599 nothing else here emits — is there, and newest
-    // first. The fixture puts a beat between the line and the death so this is
-    // about the contract rather than about which of two same-tick events the
-    // loop drains first; in production that order is the kernel's, and every
-    // mechanism tried for taking it out of the kernel's hands cost more than
-    // the line it saved.
+    // first. The fixture puts a beat between the line and the death (its
+    // CRASH_LINE_BEAT_MS) so this is about the contract and not about which
+    // pending event libuv drains first — a flake here means the beat was too
+    // short for a stalled box, not that the device regressed. In production
+    // that order is the kernel's, and every mechanism tried for taking it out
+    // of the kernel's hands cost more than the line it saved.
     expect((heldAtCrash as { status: number }[])[0]).toMatchObject({ status: 599 });
     // Next action restarts a fresh server (state reset to about:blank), and a
     // new browser saw none of the dead one's traffic.
