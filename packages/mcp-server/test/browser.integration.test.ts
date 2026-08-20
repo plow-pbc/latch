@@ -192,18 +192,25 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // The other side of that: a frame injected while the click waits is NOT
     // eligible. The owner approved origins for the page the device could see,
     // and a page that knows a click is in flight could otherwise race a frame
-    // carrying the same selector into the DOM (issue #95).
+    // carrying the same selector into the DOM (issue #95). What has to hold is
+    // that the frame arrives AFTER the click has taken its list — 2 s in,
+    // against a 5 s budget, so neither end of that ordering is marginal.
     await act("goto", { url: site.url + "/blocked" });
     await act("eval", {
       expression:
+        "document.querySelector('.modal-backdrop').remove();" +
         "setTimeout(() => {" +
         "  const f = document.createElement('iframe');" +
         "  f.src = '/late'; document.body.appendChild(f);" +
-        "}, 1000)",
+        "}, 2000)",
     });
-    const injected = await act("click", { selector: "#late", timeout_ms: 3000 }, false);
+    const injected = await act("click", { selector: "#late", timeout_ms: 5000 }, false);
     expect(injected.isError).toBe(true);
     expect(JSON.stringify(injected.payload)).toContain("no frame has #late");
+    // …and the same click once the frame is part of the page the command sees.
+    // Without this the refusal above would read identically if the injection
+    // had never happened at all — a renamed route, a typo, a 404.
+    await act("click", { selector: "#late" });
 
     await act("goto", { url: site.url + "/blocked" });
 
