@@ -435,9 +435,10 @@ class Session:
             # remains, and nothing holding it by the deadline is an honest "not
             # found" rather than a timeout. A frame the caller NAMED skips all
             # of that and is simply waited in, which is what the click does
-            # anyway -- as does `fill`, which keeps its per-frame default
-            # because a credential field is found by searching the frames and
-            # shortening the later ones would drop fills that work today.
+            # anyway. `fill` is outside all of it: no budget reaches it, and it
+            # searches the frames on its own per-frame default, because a
+            # credential field is found by searching them and shortening the
+            # later ones would drop fills that work today.
             if action == "click" and "frame" not in cmd:
                 while True:
                     holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
