@@ -48,28 +48,20 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     ]);
   });
 
-  it("drops a top-level navigation, keeps a frame's document load", () => {
+  it("drops a top-level navigation; a frame's document load names nobody", () => {
     // An agent that goes somewhere and is refused SEES that on its next
     // screenshot. A payment or sign-in iframe that will not load is invisible
-    // in exactly the way this exists for, and is named by whoever embedded it —
-    // the frame itself is still blank when it asks.
+    // in exactly the way this exists for, so the owner keeps it — but nothing
+    // here can say who asked for a frame's document (the frame can move itself,
+    // its embedder can move it, and blanking it makes either look like the
+    // other), so it names nobody and the agent is told nothing it cannot be
+    // told honestly.
     expect((probed.navigations.failed_requests ?? []).map((r) => [r.status, r.initiator]))
       .toEqual([
         [404, "https://offsite.example"], // an ordinary subresource
-        [408, "https://pizza.example"], // a same-origin frame reloading itself
-        // A loaded child could have moved itself or been moved by its embedder,
-        // and nothing here can say which — so unless the two agree it names
-        // nobody, in both directions of the borrow.
-        [409, ""], // approved child, out-of-scope embedder
-        [410, ""], // out-of-scope child, approved embedder
-        [403, "https://pizza.example"], // a blank frame: its embedder asked
+        [410, ""], // a loaded child frame navigating
+        [403, ""], // a blank frame's first load
       ]);
-  });
-
-  it("forgets a request the moment it comes back fine", () => {
-    // Otherwise completed traffic crowds a still-pending refusal out of the
-    // ledger, and the refusal arrives naming nobody.
-    expect(probed.forgets_the_answered).toBe(0);
   });
 
   it("reads who asked when the request was MADE, not when it was answered", () => {

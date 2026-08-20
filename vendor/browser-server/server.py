@@ -366,16 +366,15 @@ class Session:
                     # it would cost the whole entry.
                     origin = None
                 else:
-                    # A child frame's document load: nobody can say from here
-                    # whether the frame moved itself or its embedder moved it.
-                    # A blank frame has not moved itself yet, so its embedder
-                    # asked. Otherwise the two have to agree -- when they do,
-                    # either answer is the same origin; when they do not, one of
-                    # them would be borrowing the other's name, so it names
-                    # nobody and the owner keeps it alone.
-                    own = _origin(frame.url)
-                    embedder = _origin(frame.parent_frame.url)
-                    origin = embedder if own in ("", embedder) else ""
+                    # A frame's own document load names NOBODY. Playwright does
+                    # not say who asked for one, and neither the frame's url nor
+                    # its embedder's can stand in: a loaded child can move
+                    # itself, an embedder can move a child, and a frame can be
+                    # blanked and moved in two steps to look like either. So the
+                    # owner keeps these and the agent is told nothing it cannot
+                    # be told honestly. What the frame asks for AFTER it loads
+                    # is attributable, and is where the diagnosis lives anyway.
+                    origin = ""
             except Exception:  # noqa: BLE001 — an unattributable request is still a request
                 origin = ""
             # Keyed on the request itself, and holding it: an id alone can be
