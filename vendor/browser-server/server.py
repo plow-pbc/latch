@@ -94,6 +94,49 @@ DEFAULT_ACTION_TIMEOUT_MS = 3000
 # appear. The scan itself is instant; this is just how long it sleeps between.
 SCAN_INTERVAL_MS = 50
 
+# The CAP on how long Camoufox may spend moving the pointer to a target. With it
+# set, a mouse move is interpolated along a path; without it -- upstream's
+# default, and what shipped here -- every click teleports the cursor, and the
+# movement entropy an interrogation-style defense samples is simply absent. A
+# float sets that cap; `True` takes camoufox's own, which is "up to 1.5s" and
+# does not fit: a single click would spend half a default action budget
+# travelling. One second leaves two for the click itself (issue #86).
+HUMANIZE_MAX_SECONDS = 1.0
+
+# Keystroke cadence, and the ceiling on what one value may spend on it. A field
+# that goes from empty to complete with no keydown/keyup at all is the cheapest
+# bot tell there is, so every fill is typed. A long value trades cadence for the
+# budget rather than the other way round: the keystrokes all still happen, they
+# just arrive faster.
+TYPING_DELAY_MS = 50
+TYPING_BUDGET_MS = 2000
+
+
+def _type_into(el, value):
+    """Put a value into an ALREADY-RESOLVED node the way a person would.
+
+    `fill()` assigns `.value` and fires one `input` event -- a password field
+    goes from empty to complete having received no key event at all, which is
+    what gets the session classified (issue #86). `type()` sends a real
+    keydown/keypress/keyup per character instead.
+
+    Playwright documents `press_sequentially` as the spelling of this, but it
+    lives on Locator, and a fill holds an ElementHandle on purpose: ONE resolved
+    node for the whole fill, marked and filled through the same handle. `type`
+    is that handle's equivalent.
+
+    Select-all is how whatever the field was holding goes away -- the first
+    character replaces the selection. Clearing with `fill("")` first would blank
+    the field for real, and a fill that then failed would leave it empty rather
+    than as it was found, which is the invariant every failure path here keeps.
+    """
+    el.press("Meta+a", timeout=DEFAULT_ACTION_TIMEOUT_MS)
+    delay = min(TYPING_DELAY_MS, TYPING_BUDGET_MS / max(len(value), 1))
+    # The timeout bounds the WHOLE call, the per-character delays included, so
+    # the typing time is added to it: the action timeout alone would fail a long
+    # value that is arriving perfectly well.
+    el.type(value, delay=delay, timeout=DEFAULT_ACTION_TIMEOUT_MS + delay * len(value))
+
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
@@ -607,7 +650,7 @@ class Session:
                         before.dispose()
                         return {"ok": False, "mask": state, "frame": i}
                     try:
-                        el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
+                        _type_into(el, cmd["value"])
                     except Exception:
                         # Nothing landed: put the node back as it was found.
                         # Something did: it is holding a value nobody can account
@@ -625,7 +668,7 @@ class Session:
                 # Not a secret. The mark comes off AFTER the value is in, never
                 # before: a fill that times out would otherwise leave the node
                 # holding the previous secret with nothing left to hide it.
-                el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
+                _type_into(el, cmd["value"])
                 el.evaluate(UNMASK_JS)
                 self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
                 return {"ok": True, "frame": i}
@@ -789,7 +832,11 @@ def main():
     # Always present a macOS fingerprint: this device IS a Mac, and the pin is
     # what lets the packaged app drop Camoufox's bundled Windows/Linux spoofing
     # fonts (~360 MB/arch) — a macOS fingerprint renders with the system fonts.
-    kwargs = {"headless": not args.headed, "os": "macos"}
+    kwargs = {
+        "headless": not args.headed,
+        "os": "macos",
+        "humanize": HUMANIZE_MAX_SECONDS,
+    }
     if args.executable:
         kwargs["executable_path"] = args.executable
     if args.profile_dir:

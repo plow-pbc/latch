@@ -24,6 +24,17 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     single action answers inside Domo's 15 s host cap and the relay's ~20 s
     per-exchange ceiling; a genuinely slower page fails cleanly and the agent
     retries rather than parking a torn 504.
+  - `humanize` is passed at launch, capped at one second
+    (`HUMANIZE_MAX_SECONDS`). Upstream leaves it off, so every click teleported
+    the pointer and there was no cursor path for a defense to sample at all
+    (issue #86). The cap is the budget: camoufox's own default is "up to 1.5 s",
+    which would spend half a default action travelling.
+  - A fill TYPES its value — select-all, then a real key event per character
+    (`_type_into`) — where upstream assigns `.value` through `fill()`. A field
+    that goes from empty to complete having received no keydown is the cheapest
+    bot tell there is, and it is what blocked a Costco sign-in behind Kasada.
+    Cadence is `TYPING_DELAY_MS`, bounded per value by `TYPING_BUDGET_MS` so a
+    long value stays inside the exchange ceiling.
   - Element actions default to a 3 s timeout (`DEFAULT_ACTION_TIMEOUT_MS`) for
     the same budget. `click` takes a caller-supplied `timeout_ms`, bounding the
     WHOLE action rather than each frame the loop tries — the device clamps it to

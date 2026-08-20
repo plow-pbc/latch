@@ -535,11 +535,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     }>(FILL_PROBE);
   })();
 
-  it("resolves the node once and marks it before the value goes in", () => {
+  it("resolves the node once, marks it, and types the value in", () => {
+    // The mark lands on the same node the value does — and the value arrives as
+    // keystrokes. `fill()` assigns .value and fires one input event, so the
+    // field goes from empty to complete having received no key event at all,
+    // which is what gets the session classified (issue #86). The select-all is
+    // how whatever the field held goes away.
     expect(probed.masked.trace).toEqual([
       "frame.wait_for_selector",
       "handle.evaluate:mark",
-      "handle.fill",
+      "handle.press",
+      "handle.type",
     ]);
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
@@ -600,7 +606,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(orphan.trace).toEqual([
       "frame.wait_for_selector",
       "handle.evaluate:mark",
-      "handle.fill-failed",
+      "handle.press-failed",
       "handle.evaluate:unmark",
     ]);
     expect(orphan.marked).toBe(false);
@@ -639,8 +645,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 
   it("does not type the value when the marked node went away", () => {
-    expect(probed.detached.trace).not.toContain("handle.fill");
-    expect(probed.detached.trace).toContain("handle.fill-failed");
+    expect(probed.detached.trace).not.toContain("handle.type");
+    expect(probed.detached.trace).toContain("handle.press-failed");
     expect(probed.detached.error).toBe("RuntimeError");
     // Nothing landed, so the mark does not survive either — a node that went
     // away mid-fill is put back as it was found, same as any other fill that
@@ -656,8 +662,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "frame.wait_for_selector",
       "handle.evaluate:mark",
     ]);
-    expect(probed.mask_blocked.trace).not.toContain("handle.fill");
-    expect(probed.mask_blocked.trace).not.toContain("handle.fill-failed");
+    expect(probed.mask_blocked.trace).not.toContain("handle.type");
+    expect(probed.mask_blocked.trace).not.toContain("handle.press");
     expect(probed.mask_blocked.result).toEqual({ ok: false, mask: "unmasked", frame: 0 });
   });
 
@@ -736,7 +742,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // hiding it if the fill then timed out.
     expect(probed.plain.trace).toEqual([
       "frame.wait_for_selector",
-      "handle.fill",
+      "handle.press",
+      "handle.type",
       "handle.evaluate:unmark",
     ]);
     expect(probed.plain.marked).toBe(false);
@@ -746,7 +753,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   it("keeps the mark on when a visible fill fails", () => {
     // The node still holds the previous secret; the mark is what stops it being
     // read off the screen, so it stays until something replaces the value.
-    expect(probed.plain_failed.trace).toEqual(["frame.wait_for_selector", "handle.fill-failed"]);
+    expect(probed.plain_failed.trace).toEqual(["frame.wait_for_selector", "handle.press-failed"]);
     expect(probed.plain_failed.trace).not.toContain("handle.evaluate:unmark");
     expect(probed.plain_failed.marked).toBe(true);
     expect(probed.plain_failed.error).toBe("RuntimeError");

@@ -100,21 +100,28 @@ class Handle:
         # to look at it, only to pass it back for comparison.
         return _Handle(self.evaluate(js, *args))
 
-    def fill(self, value, timeout=None):
-        # A failed fill is traced too, and distinctly: "did it try" and "did it
-        # land" are different questions, and what happens after a fill that did
+    def press(self, key, timeout=None):
+        # The select-all a value is typed over. It is the FIRST thing that
+        # touches the node, so a node that has gone away fails here -- before a
+        # single character is typed, which is why the field is still holding
+        # exactly what the fill found.
+        if self.detach_before_fill:
+            self.trace.append("handle.press-failed")
+            raise RuntimeError("Element is not attached to the DOM")
+        self.trace.append("handle.press")
+
+    def type(self, value, delay=None, timeout=None):
+        # A failed type is traced too, and distinctly: "did it try" and "did it
+        # land" are different questions, and what happens after a value that did
         # not land is the whole point of one of these scenarios.
         if self.partial_fill:
             # Some of it went in and then the field went away: the node is
             # holding something nobody can account for.
             self.value = value
-            self.trace.append("handle.fill-failed")
-            raise RuntimeError("Element is not attached to the DOM")
-        if self.detach_before_fill:
-            self.trace.append("handle.fill-failed")
+            self.trace.append("handle.type-failed")
             raise RuntimeError("Element is not attached to the DOM")
         self.value = value
-        self.trace.append("handle.fill")
+        self.trace.append("handle.type")
 
 
 class Hidden(RuntimeError):
