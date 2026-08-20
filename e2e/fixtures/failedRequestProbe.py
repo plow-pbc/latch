@@ -147,7 +147,9 @@ def main():
     # answer for itself; a subresource fetched in that same window, or a child
     # frame's navigation, is named by the document that asked, or a page would
     # pass its own trouble off as the destination's.
-    elsewhere = type("Frame", (), {"url": "https://offsite.example/lander"})()
+    # A url of its own, so the assertion says WHICH frame the initiator is read
+    # from rather than only that it is not the destination.
+    elsewhere = type("Frame", (), {"url": "https://widget.example/frame"})()
     driven.page.during_next_navigation = lambda: [
         driven.note_response(Response(429, "https://pizza.example/checkout",
                                       navigation=True, frame=main)),

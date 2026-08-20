@@ -67,7 +67,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     // that asked — the page being left, which is what its frame still says.
     expect((probed.during_a_device_goto.failed_requests ?? [])
       .map((r) => [r.status, r.initiator])).toEqual([
-      [404, "https://offsite.example"],
+      [404, "https://widget.example"],
       [403, "https://offsite.example"],
       [429, "https://pizza.example"],
     ]);
