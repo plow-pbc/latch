@@ -417,8 +417,6 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
-            budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
-            deadline = time.monotonic() + budget_ms / 1000.0
             frames = self.indexed_frames(cmd)
             # A click that names no frame searches all of them, so a per-frame
             # timeout would really be N x itself -- past the caps the number was
@@ -439,8 +437,10 @@ class Session:
             # searches the frames on its own per-frame default, because a
             # credential field is found by searching them and shortening the
             # later ones would drop fills that work today.
-            if action == "click" and "frame" not in cmd:
-                while True:
+            if action == "click":
+                budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
+                deadline = time.monotonic() + budget_ms / 1000.0
+                while "frame" not in cmd:
                     holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
                     if holding:
                         frames = holding
