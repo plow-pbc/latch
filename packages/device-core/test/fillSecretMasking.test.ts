@@ -645,11 +645,12 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     );
   });
 
-  it("types a credential whole, whatever the vault releases", () => {
+  it("types a 64-character credential whole", () => {
     // TYPED_CHARS decides whether a value ends up typed or assigned, so it is
-    // a statement about credentials rather than a latency estimate: nothing
-    // this path releases into a sign-in form — a password, a card number, a
-    // one-time code, an API token — is longer than it.
+    // chosen as a statement about credentials rather than derived from
+    // latency. An ordinary password, card number or one-time code is shorter
+    // than this; a long API key or a JWT is not, and lands with its head
+    // assigned and its tail typed.
     expect(probed.constants.typed_chars).toBeGreaterThanOrEqual(64);
     expect(probed.credential.typed_len).toBe(probed.credential.asked_len);
   });

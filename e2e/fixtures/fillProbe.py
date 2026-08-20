@@ -237,9 +237,6 @@ class Frame:
             raise RuntimeError("selector not found: %s" % selector)
         return node
 
-    def fill(self, selector, value, timeout=None):
-        self.trace.append("frame.fill")
-
 
 
 class Page:
