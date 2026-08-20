@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 
 
 def load_server():
@@ -172,6 +173,11 @@ class Handle:
         self.typed = (self.typed or "") + text
         self.type_calls += 1
         self.typed_timeouts.append(timeout)
+        # Spend a little time, so a budget drawn from a shared deadline
+        # measurably shrinks rather than shrinking only as fast as the loop
+        # around it happens to run. Playwright would spend the key's delay
+        # here; a millisecond is enough to make the difference observable.
+        time.sleep(0.001)
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
@@ -292,7 +298,11 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     # without resting on how large a wall-clock delta happens to be.
     timeouts = frame.handle.typed_timeouts
     out["key_timeout_max"] = max(timeouts) if timeouts else None
-    out["key_timeouts_never_rise"] = all(a >= b for a, b in zip(timeouts, timeouts[1:]))
+    # None below two keys: with nothing to compare, "they never rose" is a
+    # claim about nothing and a later assertion would pass while observing it.
+    out["key_timeouts_never_rise"] = (
+        all(a >= b for a, b in zip(timeouts, timeouts[1:])) if len(timeouts) > 1 else None
+    )
     out["key_timeouts_distinct"] = len(set(timeouts))
     out["node_len"] = len(frame.handle.value or "")
     return out

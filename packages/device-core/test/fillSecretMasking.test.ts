@@ -513,7 +513,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_len: number | null;
         type_calls: number;
         key_timeout_max: number | null;
-        key_timeouts_never_rise: boolean;
+        key_timeouts_never_rise: boolean | null;
         key_timeouts_distinct: number;
         node_len: number;
         asked_len: number;
