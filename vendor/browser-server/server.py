@@ -97,8 +97,9 @@ SCAN_INTERVAL_MS = 50
 # Keystroke cadence, and the ceiling on what one value may spend on it. A field
 # that goes from empty to complete with no keydown/keyup at all is a bot tell,
 # and an interrogation-style defense samples exactly that, so a value is typed.
-# Hardening rather than a fix for a known block -- issue #86 has the live run,
-# where the verdict lands before the page is touched. A long value trades
+# Hardening rather than a fix for a known block: the Costco 429 that prompted it
+# is decided before the page is touched, and issue #86 has that run. A long
+# value trades
 # cadence for the budget rather than the other way round: the keystrokes all
 # still happen, they just arrive faster.
 TYPING_DELAY_MS = 50
