@@ -334,7 +334,7 @@ class Session:
             return [frames[i]]
         return self.page.frames
 
-    def _first_frame_that_works(self, frames, attempt, missing):
+    def _first_frame_that_works(self, frames, sel, attempt):
         """Try `attempt` against each candidate frame; the first to answer wins.
 
         This is the whole of what `click` and `fill` have in common: candidates
@@ -350,8 +350,12 @@ class Session:
             try:
                 return attempt(i, fr, len(frames) - tried)
             except Exception as exc:  # noqa: BLE001 -- re-raised below
-                last = exc
-        raise last or RuntimeError(missing)
+                # The FIRST failure, not the last: a later candidate that never
+                # really got tried (a click with no budget left) would
+                # otherwise bury the frame that failed for a reason worth
+                # reading -- not visible, detached, navigated away.
+                last = last or exc
+        raise last or RuntimeError("selector not found: %s" % sel)
 
     def _click(self, cmd):
         """One click, inside a budget that covers the whole action.
@@ -405,9 +409,7 @@ class Session:
             self.page.wait_for_timeout(1000)
             return {"ok": True, "frame": i}
 
-        return self._first_frame_that_works(
-            frames, attempt, "selector not found: %s" % sel
-        )
+        return self._first_frame_that_works(frames, sel, attempt)
 
     def _fill(self, cmd):
         """One fill, searching the frames on the per-frame default.
@@ -477,9 +479,7 @@ class Session:
             self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
             return {"ok": True, "frame": i}
 
-        return self._first_frame_that_works(
-            self.indexed_frames(cmd), attempt, "selector not found: %s" % sel
-        )
+        return self._first_frame_that_works(self.indexed_frames(cmd), sel, attempt)
 
     def handle(self, cmd, screenshots_dir):
         action = cmd.get("action", "")
