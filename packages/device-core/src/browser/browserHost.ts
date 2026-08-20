@@ -341,9 +341,10 @@ export class BrowserHost {
       child.on("exit", (code, signal) => {
         // A browser that WAS ready is not let go here: exit and the stdout read
         // are separate poll events, so its goodbye can still be in the pipe,
-        // and the crash branch below lets go a tick later once that has been
-        // read. One that never said hello has no goodbye to wait for and is let
-        // go straight away. Either way it goes through release(); see its call
+        // it is let go once that has been read — a tick later in the crash
+        // branch below, or in shutdown() after the awaited goodbye when the
+        // stop was a deliberate one. A browser that never said hello has no
+        // goodbye to wait for and is let go straight away. Either way it goes through release(); see its call
         // sites rather than a list kept in prose here.
         const wasReady = ready;
         this.child = null;
