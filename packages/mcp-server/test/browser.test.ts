@@ -312,17 +312,42 @@ describe("browser tools (fake runtime)", () => {
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
 
+    const opening = profileKeyForOrigins(["pizza.example"]);
+    const union = profileKeyForOrigins(["pizza.example", "bank.example"]);
+
     const session = await open(server, ["pizza.example"]);
     const widen = await callTool(
       server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT,
     );
     expect(widen.isError, JSON.stringify(widen.payload)).toBe(false);
+
+    // At the widening, not at close: quit, kill -9 and power loss all skip a
+    // close, and each would leave the jar under the key it opened with.
+    expect(fs.readdirSync(profiles)).toEqual([union]);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+    expect(fs.existsSync(path.join(profiles, opening))).toBe(false);
+  });
+
+  it("widening onto an established profile leaves that one where it is", async () => {
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+    const union = profileKeyForOrigins(["pizza.example", "bank.example"]);
+
+    // A grant that has been browsed before, with something in its jar.
+    const established = await open(server, ["pizza.example", "bank.example"]);
+    await callTool(server, "plow_browser_close", { session: established }, AGENT);
+    fs.writeFileSync(path.join(profiles, union, "cookies.sqlite"), "the older login");
+
+    const session = await open(server, ["pizza.example"]);
+    await callTool(server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    const opening = profileKeyForOrigins(["pizza.example"]);
-    const union = profileKeyForOrigins(["pizza.example", "bank.example"]);
-    expect(fs.readdirSync(profiles)).toEqual([union]);
-    expect(fs.existsSync(path.join(profiles, opening))).toBe(false);
+    // The established jar outlives one session, so it stays; the widened one
+    // lands on a name no key can spell rather than replacing it.
+    expect(fs.readFileSync(path.join(profiles, union, "cookies.sqlite"), "utf8")).toBe(
+      "the older login",
+    );
+    expect(fs.readdirSync(profiles).sort()).toEqual([union, `${union}.superseded`]);
   });
 
   it("a second agent racing the cold start is refused, not handed the browser", async () => {

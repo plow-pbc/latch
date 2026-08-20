@@ -169,16 +169,18 @@ export class BrowserHost {
   }
 
   /**
-   * Move a stopped profile to the key its contents now answer to. `extend()`
-   * widens a live grant without restarting the browser, so the jar ends the
-   * session holding state for origins the opening key does not name — left
-   * where it is, the next session on the narrower grant would reopen it and
-   * carry the widened origin's cookies to that origin on the first click or
-   * redirect, ahead of the scope lock. Re-keyed, the narrower grant opens
-   * cold and only a session approved for the union finds it again.
+   * Move the live profile to the key its contents now answer to, at the moment
+   * `extend()` widens the grant — not at close. A POSIX rename is safe under a
+   * running Firefox, which keeps writing through its open fds, and doing it
+   * here is what makes the guarantee independent of shutdown: quit, `kill -9`
+   * and power loss all leave the jar already keyed for what it holds, where a
+   * close-time move would leave it under the narrow key it opened with and
+   * hand the widened origin's cookies to the next narrow session.
    *
-   * A jar already sitting on the destination is replaced: the two cannot be
-   * merged, and this one is the later of the two.
+   * A jar already on the destination is the established one for that grant and
+   * outlives any single session, so it stays; this one only has to stop
+   * answering to the key it opened under. The name it lands on carries a dot,
+   * which no key can spell, so nothing reopens it.
    */
   rekeyProfile(fromKey: string, toKey: string): void {
     const root = this.cfg.profilesDir;
@@ -186,9 +188,11 @@ export class BrowserHost {
     const from = path.join(root, fromKey);
     if (!fs.existsSync(from)) return;
     const to = path.join(root, toKey);
-    fs.rmSync(to, { recursive: true, force: true });
-    fs.renameSync(from, to);
-    this.cfg.audit?.("browser_profile_rekeyed", { from: fromKey, to: toKey });
+    const superseded = fs.existsSync(to);
+    const target = superseded ? `${to}.superseded` : to;
+    if (superseded) fs.rmSync(target, { recursive: true, force: true });
+    fs.renameSync(from, target);
+    this.cfg.audit?.("browser_profile_rekeyed", { from: fromKey, to: toKey, superseded });
   }
 
   /**

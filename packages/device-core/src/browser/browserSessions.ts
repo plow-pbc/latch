@@ -246,6 +246,13 @@ export class BrowserSessions {
       origins: widened,
       items: itemList,
     });
+    // Before the widened bound goes live, so the jar can never be holding
+    // state for an origin its key does not name. If the move fails the
+    // widening does not happen: an un-rekeyed jar under the narrow key is the
+    // escape itself, so failing the call is the safe end of it.
+    const widenedKey = profileKeyForOrigins(widened);
+    this.host.rekeyProfile(s.profileKey, widenedKey);
+    s.profileKey = widenedKey;
     s.origins = widened;
     s.credentialItems = widenedItems;
     if (credentialMetadata) s.credentialMetadata = true;
@@ -282,9 +289,6 @@ export class BrowserSessions {
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     await this.stopBrowser();
-    // After the browser is down, so the files are ours to move: a session the
-    // owner widened wrote state for origins its opening key does not name.
-    this.host.rekeyProfile(s.profileKey, profileKeyForOrigins(s.origins));
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
@@ -299,10 +303,6 @@ export class BrowserSessions {
     if (!s) return;
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    // The browser is gone, so the jar is ours to move — and a widened session
-    // that crashed leaves exactly the same escape a widened session that
-    // closed would (close()).
-    this.host.rekeyProfile(s.profileKey, profileKeyForOrigins(s.origins));
     this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
   }
 

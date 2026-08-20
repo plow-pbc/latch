@@ -149,11 +149,18 @@ sqlite3 "$HOME_DIR/device/browser/profiles/<key>/cookies.sqlite" \
 `$DOMO_HOME` is set by the `just` recipes, not in your shell, so spell the home out — the packaged
 install's is the unsuffixed `~/Library/Application Support/Plow-Latch`.
 
-The directory name is a hash of the approved origins, so there is no reading it off the site name —
-`ls -lt` and take the one whose mtime matches the session you care about. Deleting a profile
+The directory name is a hash of the approved origins, so there is no reading it off the site name.
+`browser_session_opened` in the audit log gives you the origins; hash the same list to find the
+directory (`ls -lt` is a weak guide — a rename carries the old mtime with it). Deleting a profile
 directory is safe with the app shut down; it costs that grant its logins and nothing else. A store
 older than this change has a single `device/browser/profile` beside `profiles/` with everything
 mixed together; nothing reads it any more, so delete it whenever.
+
+Widening a live session (`plow_browser_request` with new origins) moves its profile to the key for
+the widened set, right then — otherwise the jar would end up holding cookies for an origin its key
+does not name, and the next session on the narrower grant would send them. If a profile for the
+widened set already existed, that one stays and the session's lands beside it as `<key>.superseded`,
+which nothing reopens. `browser_profile_rekeyed` records the move.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:
