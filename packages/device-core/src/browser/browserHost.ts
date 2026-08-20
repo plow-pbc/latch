@@ -59,6 +59,15 @@ interface Pending {
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
+/** How many refused requests the host holds for the next agent action. This is
+ * the bound that bites: the browser's own ring is drained by every reply, most
+ * of which are the device's own, while these accumulate until an agent action
+ * takes them. One ring holds what the agent may see and what only the owner
+ * may, so a page with several failing frames can push an attributable refusal
+ * out of it — accepted, since the owner is the one who needs the whole picture
+ * and the agent's next action gets whatever comes next. */
+const MAX_FAILED_REQUESTS = 5;
+
 export class BrowserHost {
   private child: ChildProcess | null = null;
   private starting: Promise<void> | null = null;
@@ -66,6 +75,7 @@ export class BrowserHost {
   private pending = new Map<number, Pending>();
   private restartTimes: number[] = [];
   private stderrTail: string[] = [];
+  private failedRequests: JSONValue[] = [];
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
@@ -88,6 +98,22 @@ export class BrowserHost {
   /** Whether the next (or current) browser shows a window. */
   get headed(): boolean {
     return this.headedNow;
+  }
+
+  /**
+   * Requests the site refused, taken off every server reply and held until an
+   * agent action carries them out (most recent first, bounded).
+   *
+   * The browser reports what it saw to whoever asked, and most of the asking is
+   * the device's own: the owner's viewer polls ~1/s, the popup sweep runs
+   * `pages`, a credential fill runs `locate` first. Whichever was in flight
+   * would otherwise be the one that consumed a 429 and dropped it, so the
+   * holding happens here — the one place every reply passes through.
+   */
+  takeFailedRequests(): JSONValue[] {
+    const taken = this.failedRequests;
+    this.failedRequests = [];
+    return taken;
   }
 
   /** Send one action to the server, lazily starting it. */
@@ -210,6 +236,8 @@ export class BrowserHost {
     });
     this.child = child;
     this.stderrTail = [];
+    // A new browser saw none of the old one's traffic.
+    this.failedRequests = [];
 
     child.stderr!.setEncoding("utf8");
     child.stderr!.on("data", (chunk: string) => {
@@ -235,6 +263,10 @@ export class BrowserHost {
       startTimer.unref?.();
 
       rl.on("line", (line) => {
+        // A browser that has been replaced says nothing anyone wants: its
+        // refusals belong to a session that is over, and appending them here
+        // would file one browser's traffic under another's.
+        if (this.child !== child) return;
         let msg: JSONValue;
         try {
           msg = JSON.parse(line) as JSONValue;
@@ -255,6 +287,12 @@ export class BrowserHost {
           }
           return;
         }
+        // Before anything else this line might be: an action that FAILED
+        // carries refusals too, and those are the ones worth having.
+        const failed = m.get("failed_requests").value;
+        if (Array.isArray(failed)) {
+          this.failedRequests = [...failed, ...this.failedRequests].slice(0, MAX_FAILED_REQUESTS);
+        }
         const id = m.get("id").int;
         if (id === null) return;
         const p = this.pending.get(id);
@@ -270,7 +308,6 @@ export class BrowserHost {
       });
 
       child.on("exit", (code, signal) => {
-        rl.close();
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
@@ -280,6 +317,15 @@ export class BrowserHost {
         }
         this.pending.clear();
         if (wasReady && !this.shuttingDown) {
+          // Here, in order with the exit that caused it. Waiting for the
+          // browser's last line first — for its pipes to end, for a grace
+          // period, for a restart to flush a held notice — bought a worse
+          // problem each time than the line it saved: a session left open
+          // against a dead browser, or an action quietly completing over a
+          // browser its session no longer owns. In practice the line is already
+          // in the ring; it is lost only if the kernel dispatched exit ahead of
+          // a pending read, which nothing here can arrange and no test could
+          // pin.
           this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
           this.onCrash?.();
         }

@@ -8,7 +8,9 @@
  * Knobs (env):
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
- *   CRASH_AFTER=n      exit(9) after n commands (crash/restart tests)
+ *   CRASH_AFTER=n      after n commands, say one last thing (a 599 refusal),
+ *                      then exit(9) a beat later so the parent reads the line
+ *                      before the death — collapsing that beat re-opens a race
  *   GARBAGE=1          print a non-JSON line before every response
  *   FAKE_FILL_LOG=path append "selector\tvalue\tframe" per fill (secret-arrival proof)
  *   FAKE_CARD_FRAME_URL=url  frame_url reported by locate for "#card*" selectors
@@ -28,6 +30,15 @@
  *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
+ *   click "#blocked"  the page's own requests come back refused — one on the
+ *                     approved origin, one on a third party, and one the
+ *                     locked-out page aimed AT the approved origin
+ *   click "#refuses"  refused AND fails, so the refusal has to ride an error
+ *   click "#blocked-later"  the refusal settles after the click answered, so it
+ *                     rides whatever reply comes next — a viewer poll, say
+ *   click "#frames-fail"  on the NEXT reply: one attributable refusal and five
+ *                     frame loads the browser cannot attribute — six for a ring
+ *                     that holds five, so the oldest is pushed out
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
  *   click "#swallowed" fails the way a click something is covering does
@@ -35,6 +46,18 @@
 "use strict";
 const fs = require("node:fs");
 const readline = require("node:readline");
+
+/** Refusals waiting for the next reply, most recent first, exactly as
+ * server.py's reply_with_failures hands them over. `failedNext` is one that
+ * settles after the action answered — a real XHR does, and it then rides
+ * whatever reply comes next, including one the device asked for itself. */
+let failed = [];
+let failedNext = [];
+
+/** How long the crash path waits between its last line and its death. Wide
+ * enough that a stalled loop still reads the line first; a flake here means
+ * raise it, not that the device regressed. */
+const CRASH_LINE_BEAT_MS = 50;
 
 const state = {
   pages: [{ url: "about:blank", title: "blank" }],
@@ -50,9 +73,19 @@ function envelope(result) {
   return { ...result, url: current().url, page_count: state.pages.length };
 }
 
-function respond(obj) {
+/** Every reply carries what the page's requests did — a result or an error. */
+function withFailures(reply) {
+  const carried = failed;
+  failed = failedNext;
+  failedNext = [];
+  return carried.length === 0 ? reply : { ...reply, failed_requests: carried };
+}
+
+function respond(obj, flushed) {
   if (process.env.GARBAGE === "1") process.stdout.write("firefox noise: not json\n");
-  process.stdout.write(JSON.stringify(obj) + "\n");
+  // The callback matters on the way out: a pipe write is async on macOS, and
+  // exiting on top of one truncates the last thing this server said.
+  process.stdout.write(JSON.stringify(obj) + "\n", flushed);
 }
 
 function handle(cmd) {
@@ -104,6 +137,48 @@ function handle(cmd) {
         `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
           `  - <div class="modal-backdrop show"></div> intercepts pointer events\n`,
       );
+    }
+    if (cmd.selector === "#frames-fail") {
+      // Most recent first, so the attributable one is last — the entry the ring
+      // drops, and the one the agent could have used.
+      failedNext = [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          status: 414 - i, method: "GET", origin: "https://ads.example", initiator: "",
+        })),
+        {
+          status: 401, method: "GET", origin: "https://pizza.example",
+          initiator: "https://pizza.example",
+        },
+      ];
+    }
+    if (cmd.selector === "#blocked-later") {
+      failedNext = [{
+        status: 401, method: "GET", origin: "https://pizza.example",
+        initiator: "https://pizza.example",
+      }];
+    }
+    if (cmd.selector === "#blocked" || cmd.selector === "#refuses") {
+      // Prepended, not assigned: the real server appends into one ring and
+      // drains it reversed, so a late refusal still pending here keeps its
+      // place — after the newer pair, being older. Bounding is not modelled;
+      // BrowserHost caps what it holds regardless.
+      failed = [
+        {
+          status: 429, method: "POST", origin: "https://pizza.example",
+          initiator: "https://pizza.example", retry_after: "30",
+          // A field this side does not know: the device rebuilds each entry
+          // from what it does, so a vendored server that grew one cannot write
+          // it into the owner's durable log.
+          url: "https://pizza.example/cart?token=SECRET",
+        },
+        { status: 403, method: "GET", origin: "https://tracker.example",
+          initiator: "https://pizza.example" },
+        { status: 404, method: "GET", origin: "https://pizza.example",
+          initiator: "https://offsite.example" },
+        { status: 503, method: "GET", origin: "https://pizza.example", initiator: "" },
+        ...failed,
+      ];
+      if (cmd.selector === "#refuses") throw new Error("locator.click: Timeout 3000ms exceeded.");
     }
     if (cmd.selector === "#popup") {
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
@@ -203,16 +278,31 @@ function main() {
     }
     state.commands++;
     if (process.env.CRASH_AFTER && state.commands > Number(process.env.CRASH_AFTER)) {
-      process.exit(9);
+      // A last word on the way out: a real browser can answer a request and die
+      // before the device has read the line.
+      // 599: a status nothing else here emits, so a test can say this line is
+      // the one that arrived on the way out. The death comes a beat after it,
+      // because the parent reads this pipe on one event and learns of the exit
+      // on another, and libuv gives them no relative order — the beat is the
+      // margin that keeps the test about the contract rather than the race.
+      respond({
+        failed_requests: [{
+          status: 599, method: "GET", origin: "https://pizza.example",
+          initiator: "https://pizza.example",
+        }],
+      }, () => setTimeout(() => process.exit(9), CRASH_LINE_BEAT_MS));
+      return;
     }
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
     if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
+    let reply;
     try {
-      respond({ id: cmd.id, result: envelope(handle(cmd)) });
+      reply = { id: cmd.id, result: envelope(handle(cmd)) };
     } catch (e) {
-      respond({ id: cmd.id, error: String(e.message || e).slice(0, 500) });
+      reply = { id: cmd.id, error: String(e.message || e).slice(0, 500) };
     }
+    respond(withFailures(reply));
   });
   rl.on("close", () => process.exit(0));
 }

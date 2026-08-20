@@ -93,7 +93,10 @@ export function createPizzaSite(): Promise<PizzaSite> {
       html(
         "Checkout",
         `<h1>Checkout — ${pizza}</h1>
-         <iframe id="payframe" src="/payframe?pizza=${encodeURIComponent(pizza)}" width="400" height="300"></iframe>`,
+         <iframe id="payframe" src="/payframe?pizza=${encodeURIComponent(pizza)}" width="400" height="300"></iframe>
+         <!-- After the payment frame on purpose: the frame holding a field is
+              not the last one on a real checkout page. -->
+         <iframe id="tracker" src="/tracker" width="10" height="10"></iframe>`,
       );
     } else if (req.method === "GET" && url.pathname === "/payframe") {
       const pizza = url.searchParams.get("pizza") ?? "";
@@ -103,6 +106,11 @@ export function createPizzaSite(): Promise<PizzaSite> {
            <input type="hidden" name="pizza" value="${pizza}">
            <label>Card number <input id="card-number" name="number" type="text"></label>
            <label>CVV <input id="card-cvv" name="cvv" type="text"></label>
+           <!-- Only in this frame, and refuses to be filled: proves a fill
+                reports the frame that actually failed, not the outer frames
+                that simply do not have the field. -->
+           <label>Locked <input id="card-locked" type="text" readonly></label>
+           <input id="card-hidden" type="text" style="display:none">
            <button id="pay" type="submit">Pay</button>
          </form>`,
       );
@@ -146,6 +154,10 @@ export function createPizzaSite(): Promise<PizzaSite> {
            });
          </script>`,
       );
+    } else if (req.method === "GET" && url.pathname === "/tracker") {
+      // Inert, and only ever embedded: somewhere for a frame to be that has
+      // nothing an action could resolve.
+      html("Tracker", `<p>tracking</p>`);
     } else if (req.method === "GET" && url.pathname === "/late") {
       // A frame that did not exist when the click was asked for. The owner
       // approved origins for the page the device could see, so this must NOT

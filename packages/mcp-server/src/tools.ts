@@ -523,7 +523,9 @@ export const TOOLS: ToolSpec[] = [
       "'forms'; it does not cover 'eval', which reads a field's value straight out of the " +
       "page, so never inspect a field you filled that way. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
-      "page_count (watch it for popups; switch with use_page).",
+      "page_count (watch it for popups; switch with use_page), and 'failed_requests' when the " +
+      "page's own requests came back refused — a 401, 403 or 429 there is why an action that " +
+      "reported success changed nothing, so read it before retrying.",
     inputSchema: {
       type: "object",
       required: ["session", "action"],
@@ -571,21 +573,36 @@ export const TOOLS: ToolSpec[] = [
 
       const response = await ctx.device.browserCommand(ctx.agent.agentId, session, params);
       const r = jv(response);
-      if (r.get("status").str === "error") throw new ToolError(r.get("error").str ?? "browser error");
+      if (r.get("status").str === "error") {
+        // An error is a string here, so anything the device attached to it has
+        // to be said IN that string — and what the page's own requests did is
+        // usually the reason for the error.
+        const refused = r.get("failed_requests").arr;
+        throw new ToolError(
+          (r.get("error").str ?? "browser error") +
+            (refused === null ? "" : ` — the page's own requests were refused: ${canonicalJSON(refused)}`),
+        );
+      }
 
       // Screenshot becomes an MCP image block so the agent can SEE the page.
+      // Built from the SAME cleaned result as every other action — only the
+      // binary transport fields are lifted out — so a diagnostic added to a
+      // result reaches a screenshot without a second copy of this code.
+      const out = { ...(r.obj ?? {}) };
+      delete out.status;
       const imageB64 = r.get("data_b64").str;
       if (action === "screenshot" && imageB64 !== null) {
-        const meta = { url: r.get("url").str ?? "", page_count: r.get("page_count").int ?? 1 };
+        const mimeType = r.get("mime").str ?? "image/jpeg";
+        delete out.data_b64;
+        delete out.mime;
+        delete out.path;
         return {
           __mcpContent: [
-            { type: "image", data: imageB64, mimeType: r.get("mime").str ?? "image/jpeg" },
-            { type: "text", text: canonicalJSON(meta as JSONValue) },
+            { type: "image", data: imageB64, mimeType },
+            { type: "text", text: canonicalJSON(out as JSONValue) },
           ],
         };
       }
-      const out = { ...(r.obj ?? {}) };
-      delete out.status;
       return out as JSONValue;
     },
   },
