@@ -281,7 +281,11 @@ function main() {
           status: 599, method: "GET", origin: "https://pizza.example",
           initiator: "https://pizza.example",
         }],
-      }, () => process.exit(9));
+        // Death a beat after the line, so a reader of this fixture is not
+        // relying on which of two same-tick events the parent's loop drains
+        // first — the point is that the last word arrives, not that it wins a
+        // race.
+      }, () => setTimeout(() => process.exit(9), 20));
       return;
     }
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
