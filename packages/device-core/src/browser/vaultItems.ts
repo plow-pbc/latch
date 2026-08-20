@@ -267,23 +267,29 @@ export function encryptCipher(
   cipher.card = null;
   cipher.identity = null;
   if (type === 1) {
-    // The form shows every URL, so an edit sends every URL. Entry by entry:
-    // one whose address did not change is passed through exactly as stored —
-    // match rule and all — and only a changed or added one is written anew.
+    // The form shows every URL, so an edit sends every URL. Each address is
+    // matched to the stored entry that already holds it — wherever that entry
+    // sits — so an unchanged URL is passed through exactly as stored, match
+    // rule and all, and only a changed or added one is written anew. An entry
+    // is claimed once, so a login listing the same address twice cannot hand
+    // one entry to both. Matching on the address rather than on the position
+    // is what makes this safe to repeat: a save whose response was lost can be
+    // retried against the item it already wrote and change nothing.
     const previous = existing?.login?.uris ?? [];
     delete out.uris;
     let uris = previous;
     if (input.urls !== undefined) {
-      uris = input.urls
-        .map((u, i) => {
-          if (u === "") return null;                          // the owner emptied this row
-          const same = previous[i] && dec(previous[i].uri, key) === u;
-          // Unchanged: the stored entry, as it is — unless it has no checksum,
-          // which is a URL nothing else can see, and rewriting it is the repair.
-          if (same && previous[i].uriChecksum) return previous[i];
-          return { uri: enc(u, key), uriChecksum: checksum(u, key), match: same ? previous[i].match ?? null : null };
-        })
-        .filter((u): u is NonNullable<typeof u> => u !== null);
+      const unclaimed = [...previous];
+      uris = input.urls.filter(Boolean).map((u) => {
+        const at = unclaimed.findIndex((p) => dec(p.uri, key) === u);
+        const held = at === -1 ? null : unclaimed.splice(at, 1)[0];
+        // Unchanged, and visible to every other client: the stored entry as it is.
+        if (held?.uriChecksum) return held;
+        // New, or stored without a checksum — a URL nothing else can see, where
+        // rewriting it is the repair. Either way its match rule, if it had one,
+        // is the owner's and survives.
+        return { uri: enc(u, key), uriChecksum: checksum(u, key), match: held?.match ?? null };
+      });
     }
     cipher.login = { ...out, uris } as Cipher["login"];
   } else if (type === 2) {

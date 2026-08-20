@@ -106,7 +106,7 @@ describe("an edit", () => {
     });
   });
 
-  it("writes only the URL positions that changed, and drops the ones emptied", () => {
+  it("keeps the entry an unchanged URL already had, wherever it sits", () => {
     const many = encryptCipher(
       { type: "login", name: "GitHub", password: "x",
         urls: ["https://a.example", "https://b.example", "https://c.example"] },
@@ -116,21 +116,35 @@ describe("an edit", () => {
     // The stored entries carry match rules the form never shows.
     many.login.uris = many.login.uris.map((u, i) => ({ ...u, match: i }));
     const stored = { ...many, id: "item-1" };
-    const edit = (urls) => encryptCipher({ itemId: "item-1", ...(urls ? { urls } : { username: "new" }) }, stored, account);
+    const [A, B, C] = many.login.uris;
+    const edit = (urls, from = stored) =>
+      encryptCipher({ itemId: "item-1", ...(urls ? { urls } : { username: "new" }) }, from, account);
 
-    // Changed: only the first is written anew; the others are the objects they were.
+    // Changed: only the one that changed is written anew; the others are the
+    // objects they were, match rule and all.
     const changed = edit(["https://a.example/login", "https://b.example", "https://c.example"]);
-    expect(changed.login.uris.slice(1)).toEqual(many.login.uris.slice(1));
+    expect(changed.login.uris.slice(1)).toEqual([B, C]);
     expect(changed.login.uris[0].match).toBeNull();
 
-    // Emptied: the middle position still travels, so the third reconciles
-    // against its own entry rather than the one above it.
-    const dropped = edit(["https://a.example", "", "https://c.example"]);
-    expect(dropped.login.uris).toEqual([many.login.uris[0], many.login.uris[2]]);
-    expect(decryptItem({ ...dropped, id: "item-1" }, account).urls).toEqual([
-      "https://a.example",
-      "https://c.example",
-    ]);
+    // Removed: the two that stayed keep their own entries — matching on the
+    // address, not the position, is what stops C reconciling against B's.
+    const dropped = edit(["https://a.example", "https://c.example"]);
+    expect(dropped.login.uris).toEqual([A, C]);
+
+    // Reordered: nothing was edited, so nothing is rewritten.
+    expect(edit(["https://c.example", "https://a.example", "https://b.example"]).login.uris)
+      .toEqual([C, A, B]);
+
+    // Retried: a save whose response was lost, sent again against the item it
+    // already wrote. It has to be a no-op — reconciling by position used to
+    // recreate C here and silently blank the match rule it was saved with.
+    expect(edit(["https://a.example", "https://c.example"], { ...dropped, id: "item-1" }).login.uris)
+      .toEqual([A, C]);
+
+    // Listed twice: one stored entry cannot be handed to both.
+    const twice = edit(["https://a.example", "https://a.example"]).login.uris;
+    expect(twice[0]).toEqual(A);
+    expect(twice[1].match).toBeNull();
 
     // Omitted: an edit that mentions no URL changes none of them.
     expect(edit(null).login.uris).toEqual(many.login.uris);

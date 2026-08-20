@@ -186,10 +186,7 @@ function vurls(ctx) {
       [icon("close", { class: "vico", strokeWidth: "1.8" })]);
     const row = el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input, drop])]);
     drop.addEventListener("click", () => {
-      // Emptied and detached, never spliced out of urlInputs: vpayload sends the
-      // boxes by position, and a shorter list would reconcile every URL below
-      // this one against the entry that belongs to the row above it.
-      input.value = "";
+      ctx.urlInputs.splice(ctx.urlInputs.indexOf(input), 1);
       row.remove();
       ctx.onChange?.();
     });
@@ -236,9 +233,7 @@ function vpayload(type, ctx) {
   const payload = { type, name: ctx.inputs.name.value.trim() };
   for (const group of VAULT_TYPES[type].groups) {
     if (group.urls) {
-      // Positions are kept, blanks included: dropping them here would shift
-      // every later URL onto another one's stored entry.
-      payload.urls = ctx.urlInputs.map((i) => i.value.trim());
+      payload.urls = ctx.urlInputs.map((i) => i.value.trim()).filter(Boolean);
       continue;
     }
     for (const field of group.fields) {
