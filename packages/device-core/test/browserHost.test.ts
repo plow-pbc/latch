@@ -66,7 +66,11 @@ describe("BrowserHost", () => {
     await host.sendAction({ action: "url" });
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(BrowserCrashedError);
     expect(events).toContain("browser_crashed");
-    // The session layer is told, so it can close its books.
+    // The session layer is told a tick later, deliberately: it closes its books
+    // inside that callback, and the browser's last line may still be in the
+    // pipe when `exit` is dispatched.
+    expect(crashes).toBe(0);
+    await new Promise((r) => setImmediate(r));
     expect(crashes).toBe(1);
     // Next action restarts a fresh server (state reset to about:blank).
     const r = await host.sendAction({ action: "url" });
