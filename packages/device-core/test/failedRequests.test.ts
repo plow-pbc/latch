@@ -75,10 +75,13 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     ]);
   });
 
-  it("names nobody when the frame will not answer", () => {
-    // A service worker, a blank child frame — the device withholds these from
-    // the agent rather than guessing, and the owner still sees them.
-    expect(probed.unattributable.failed_requests?.[0]).toMatchObject({ initiator: "" });
+  it("names nobody when the frame will not answer, or answers with nothing", () => {
+    // A service worker's request raises on `frame`; an about:blank/srcdoc/blob:
+    // child frame answers with a url that names no origin. Both are what a
+    // locked-out page would reach for, so both name nobody and the device
+    // withholds them from the agent while the owner still sees them.
+    expect((probed.unattributable.failed_requests ?? []).map((r) => r.initiator))
+      .toEqual(["", ""]);
   });
 
   it("hands each refusal over once, so the next reply is not told again", () => {

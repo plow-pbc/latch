@@ -179,7 +179,13 @@ def main():
             pass
 
     session = server.Session(Page())
-    out["unattributable"] = feed(session, [NoFrame(403, "https://pizza.example/api/sw")])
+    out["unattributable"] = feed(session, [
+        NoFrame(403, "https://pizza.example/api/sw"),
+        # A frame with no origin of its own — about:blank, srcdoc, blob: — is
+        # the cheaper version of the same thing: the frame answers, but with a
+        # url that names nobody. It must land in the same place.
+        Response(429, "https://pizza.example/api/x", page="about:blank"),
+    ])
 
     # Handed over once: the next reply is not told again.
     out["drained"] = session.reply_with_failures({})
