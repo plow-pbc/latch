@@ -64,11 +64,34 @@ class Context:
 
 
 class Page:
-    def __init__(self):
+    """The active page, recording whether the device's navigation flag was up
+    while each navigation ran — that flag is what a security gate reads."""
+
+    def __init__(self, session=None):
         self.url = "https://pizza.example/checkout"
         self.main_frame = object()
         self.context = Context()
         self.context.pages.append(self)
+        self.session = session
+        self.flag_during = {}
+
+    def _navigate(self, action):
+        self.flag_during[action] = self.session.in_device_nav
+
+    def goto(self, _url, **_kw):
+        self._navigate("goto")
+
+    def go_back(self, **_kw):
+        self._navigate("back")
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+    def title(self):
+        return "checkout"
+
+    def evaluate(self, *_a, **_kw):
+        return "doc-1"
 
 
 def feed(session, responses):
@@ -106,10 +129,19 @@ def main():
         Response(403, "https://pizza.example/api/x", page="https://offsite.example/lander"),
         Response(429, "https://pizza.example/checkout", navigation=True, frame=main),
     ])
-    session.in_goto = True
-    out["device_goto"] = feed(session, [
+    # Driven through the real handler: the flag is up while the navigation runs
+    # and down after, for `goto` and for `back` alike.
+    driven = server.Session(Page())
+    driven.page.session = driven
+    driven.page.main_frame = main
+    driven.handle({"action": "goto", "url": "https://pizza.example/checkout"}, "/tmp")
+    driven.handle({"action": "back"}, "/tmp")
+    out["flag_during"] = driven.page.flag_during
+    out["flag_after"] = driven.in_device_nav
+    driven.in_device_nav = True
+    out["device_goto"] = feed(driven, [
         Response(429, "https://pizza.example/checkout", navigation=True, frame=main)])
-    session.in_goto = False
+    driven.in_device_nav = False
 
     # A frame that will not answer names nobody, and the device withholds those
     # from the agent rather than guessing.

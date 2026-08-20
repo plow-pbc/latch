@@ -19,6 +19,7 @@ Adapted from plow-pbc/camoufox-cli scripts/camoufox_cli.py (see UPSTREAM.md).
 import argparse
 import base64
 import collections
+import contextlib
 import json
 import os
 import re
@@ -253,9 +254,10 @@ class Session:
         # per-page listener would be blind to exactly the ones worth seeing.
         # Attached here so a Session cannot exist without it.
         self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
-        # True only while a `goto` this device issued is in flight, which is the
-        # one window in which a navigation is the DEVICE's rather than a page's.
-        self.in_goto = False
+        # True only while a navigation this device issued -- `goto` or `back` --
+        # is in flight, which is the one window in which a navigation is the
+        # DEVICE's rather than a page's.
+        self.in_device_nav = False
         page.context.on("response", self.note_response)
 
     def _forget_navigated(self):
@@ -368,11 +370,20 @@ class Session:
         except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
             pass
 
+    @contextlib.contextmanager
+    def _device_nav(self):
+        """Marks a navigation as this device's for as long as it is in flight."""
+        self.in_device_nav = True
+        try:
+            yield
+        finally:
+            self.in_device_nav = False
+
     def _initiator(self, response):
         """The origin of the document whose request this was, "" if unknowable.
 
-        A navigation the DEVICE asked for (`goto`, `back`) answers for itself: its frame has not
-        committed the new url yet, so asking the frame would name the page being
+        A navigation the DEVICE asked for (`goto`, `back`) answers for itself:
+        its frame has not committed the new url yet, so asking the frame would name the page being
         left and a refused `goto` would look like somebody else's. Every other
         navigation is the page's own doing and is named by the document it is
         still showing -- otherwise a locked-out page could point itself at an
@@ -384,7 +395,7 @@ class Session:
             frame = response.frame
             if (
                 response.request.is_navigation_request()
-                and self.in_goto
+                and self.in_device_nav
                 and frame is self.page.main_frame
             ):
                 return _origin(response.url)
@@ -460,11 +471,8 @@ class Session:
             # 12s + 1s settle keeps the whole action under the device's 15s host
             # cap and the relay's ~20s exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
-            self.in_goto = True
-            try:
+            with self._device_nav():
                 self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
-            finally:
-                self.in_goto = False
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title()}
 
@@ -489,14 +497,11 @@ class Session:
             # Neither history.back() nor page.go_back() actually moves a tab
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
-            # Device-issued like `goto`, and the case that matters most: an
-            # agent backing out of a page it is locked out of would otherwise
-            # have the refusal attributed to that page and withheld.
-            self.in_goto = True
-            try:
+            # Device-issued like `goto`: a refused `go_back` would otherwise be
+            # attributed to the document being left rather than the one asked
+            # for. (Only ever in scope — `back` is not a lockout-allowed action.)
+            with self._device_nav():
                 self.page.go_back(timeout=12000, wait_until="domcontentloaded")
-            finally:
-                self.in_goto = False
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title(), "moved": self.page.url != was}
 

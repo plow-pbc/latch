@@ -20,6 +20,8 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     refused: Envelope;
     page_navigating_itself: Envelope;
     device_goto: Envelope;
+    flag_during: { goto: boolean; back: boolean };
+    flag_after: boolean;
     unattributable: Envelope;
     drained: Envelope;
     quiet: Envelope;
@@ -49,6 +51,13 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     // refusal reads as that host's own trouble.
     expect((probed.page_navigating_itself.failed_requests ?? []).map((r) => r.initiator))
       .toEqual(["https://offsite.example", "https://offsite.example"]);
+  });
+
+  it("raises the device-navigation flag for goto and back, and lowers it after", () => {
+    // The flag is what the attribution gate reads, so both branches that set it
+    // are driven through the real handler rather than assigned by hand.
+    expect(probed.flag_during).toEqual({ goto: true, back: true });
+    expect(probed.flag_after).toBe(false);
   });
 
   it("lets a goto the device issued answer for itself", () => {
