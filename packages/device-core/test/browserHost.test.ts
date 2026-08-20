@@ -74,7 +74,7 @@ describe("BrowserHost", () => {
     expect(await host.viewFrame()).not.toBeNull();
     await host.sendAction({ action: "click", selector: "#blocked" });
     // The poll-borne 401 sits where it arrived rather than at either end.
-    expect(takeStatuses()).toEqual([429, 403, 404, 401, 429]);
+    expect(takeStatuses()).toEqual([429, 403, 404, 503, 401]);
     // Taken means taken: the next asker gets nothing.
     expect(host.takeFailedRequests()).toEqual([]);
 
@@ -83,13 +83,13 @@ describe("BrowserHost", () => {
     for (let i = 0; i < 3; i++) {
       await host.sendAction({ action: "click", selector: "#blocked" });
     }
-    expect(takeStatuses()).toEqual([429, 403, 404, 429, 403]);
+    expect(takeStatuses()).toEqual([429, 403, 404, 503, 429]);
 
     // And a late refusal still pending when the next one is scripted keeps its
     // place behind it rather than being lost — one ring, oldest last.
     await host.sendAction({ action: "click", selector: "#blocked-later" });
     await host.sendAction({ action: "click", selector: "#blocked" });
-    expect(takeStatuses()).toEqual([429, 403, 404, 401]);
+    expect(takeStatuses()).toEqual([429, 403, 404, 503, 401]);
   });
 
   it("rejects pending on crash and lazily restarts", async () => {

@@ -305,11 +305,14 @@ describe("requests the site refused", () => {
     expect(r.get("failed_requests").value).toEqual([ORDER]);
     expect(JSON.stringify(r.value)).not.toContain("tracker.example");
     expect(JSON.stringify(r.value)).not.toContain("404");
+    // Nor the one the browser could not attribute: an asker it cannot name is
+    // what an unapproved page reaches for, so it fails closed.
+    expect(JSON.stringify(r.value)).not.toContain("503");
 
     // The owner sees all three, with who asked — nobody can mislead them by
     // choosing a url, and an origin is all any of it is.
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
-    expect(command?.fields.failed_requests).toHaveLength(3);
+    expect(command?.fields.failed_requests).toHaveLength(4);
     expect(JSON.stringify(command?.fields.failed_requests)).toContain("offsite.example");
   });
 
@@ -333,7 +336,7 @@ describe("requests the site refused", () => {
     expect(r.get("failed_requests").value).toEqual([ORDER]);
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
     expect(command?.fields.error).toContain("Timeout");
-    expect(command?.fields.failed_requests).toHaveLength(3);
+    expect(command?.fields.failed_requests).toHaveLength(4);
   });
 });
 

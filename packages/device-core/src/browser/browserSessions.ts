@@ -49,11 +49,29 @@ export function stripQuery(url: string): string {
   return cut.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, "$1");
 }
 
-/** Requests the site itself refused during an action, as the browser reported
- * them: origins only, so nothing a page chose the text of reaches either the
- * owner's durable log or the agent. */
+/**
+ * Requests the site itself refused during an action, rebuilt from the fields
+ * this side knows: origins, a status, a method, two headers. Rebuilt rather
+ * than forwarded because `audit.ndjson` is durable and `server.py` is vendored
+ * (see its UPSTREAM.md) — a sync that reintroduced a url would otherwise write
+ * paths into the owner's log with nothing here to stop it.
+ */
 function failedRequests(value: JSONValue[]): JSONValue[] {
-  return value.flatMap((entry) => (jv(entry).obj === null ? [] : [entry]));
+  return value.flatMap((entry) => {
+    const e = jv(entry);
+    if (e.obj === null) return [];
+    const kept: { [k: string]: JSONValue } = {
+      status: e.get("status").int ?? 0,
+      method: e.get("method").str ?? "",
+      origin: e.get("origin").str ?? "",
+      initiator: e.get("initiator").str ?? "",
+    };
+    for (const header of ["retry_after", "server"]) {
+      const value = e.get(header).str;
+      if (value !== null) kept[header] = value;
+    }
+    return [kept];
+  });
 }
 
 /**
@@ -73,8 +91,9 @@ function forAgent(entries: JSONValue[], approved: (origin: string) => boolean): 
     const origin = e.get("origin").str ?? "";
     const initiator = e.get("initiator").str ?? "";
     const host = hostOf(origin);
-    if (host === null || !approved(origin)) return [];
-    if (initiator !== "" && !approved(initiator)) return [];
+    // Fail closed on an asker the browser could not name: a blank child frame
+    // or a service worker is exactly what an unapproved page would reach for.
+    if (host === null || !approved(origin) || !approved(initiator)) return [];
     const retryAfter = e.get("retry_after").str;
     const server = e.get("server").str;
     return [{

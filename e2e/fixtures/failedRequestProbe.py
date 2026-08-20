@@ -35,13 +35,16 @@ class Response:
     quietly answered would let that regress unnoticed.
     """
 
-    def __init__(self, status, url, method="GET", headers=None, page="", navigation=False):
+    def __init__(self, status, url, method="GET", headers=None, page="", navigation=False,
+                 frame=None):
         self.status = status
         self.url = url
         self.request = type("Request", (), {"method": method,
                                             "is_navigation_request": lambda _s=None: navigation})()
         self.headers = headers or {}
-        self.frame = type("Frame", (), {"url": page})()
+        # `frame` is the object identity the server compares against the active
+        # page's main frame; `page` is the url that frame is showing.
+        self.frame = frame if frame is not None else type("Frame", (), {"url": page})()
 
     def body(self):
         raise AssertionError("the listener read a response body")
@@ -63,6 +66,7 @@ class Context:
 class Page:
     def __init__(self):
         self.url = "https://pizza.example/checkout"
+        self.main_frame = object()
         self.context = Context()
         self.context.pages.append(self)
 
@@ -91,14 +95,35 @@ def main():
         "POST", {"retry-after": "30", "server": "cloudfront"},
         page="https://pizza.example/checkout")])
 
-    # Who asked, at origin granularity: a navigation answers for itself, since
-    # its frame still names the page being left.
+    # Who asked, at origin granularity. Only a navigation the DEVICE issued
+    # answers for itself — a page pointing ITSELF at an approved host is named
+    # by the document it is still showing, or it could pass its own trouble off
+    # as that host's.
     session = server.Session(Page())
-    out["initiators"] = feed(session, [
+    main = type("Frame", (), {"url": "https://offsite.example/lander"})()
+    session.page.main_frame = main
+    out["page_navigating_itself"] = feed(session, [
         Response(403, "https://pizza.example/api/x", page="https://offsite.example/lander"),
-        Response(429, "https://pizza.example/checkout", navigation=True,
-                 page="https://offsite.example/lander"),
+        Response(429, "https://pizza.example/checkout", navigation=True, frame=main),
     ])
+    session.in_goto = True
+    out["device_goto"] = feed(session, [
+        Response(429, "https://pizza.example/checkout", navigation=True, frame=main)])
+    session.in_goto = False
+
+    # A frame that will not answer names nobody, and the device withholds those
+    # from the agent rather than guessing.
+    class NoFrame(Response):
+        @property
+        def frame(self):
+            raise RuntimeError("no frame for this request")
+
+        @frame.setter
+        def frame(self, _v):
+            pass
+
+    session = server.Session(Page())
+    out["unattributable"] = feed(session, [NoFrame(403, "https://pizza.example/api/sw")])
 
     # Handed over once: the next reply is not told again.
     out["drained"] = session.reply_with_failures({})

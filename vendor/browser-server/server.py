@@ -253,6 +253,9 @@ class Session:
         # per-page listener would be blind to exactly the ones worth seeing.
         # Attached here so a Session cannot exist without it.
         self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
+        # True only while a `goto` this device issued is in flight, which is the
+        # one window in which a navigation is the DEVICE's rather than a page's.
+        self.in_goto = False
         page.context.on("response", self.note_response)
 
     def _forget_navigated(self):
@@ -368,16 +371,24 @@ class Session:
     def _initiator(self, response):
         """The origin of the document whose request this was, "" if unknowable.
 
-        A navigation answers for itself: its frame has not committed the new url
-        yet, so asking the frame would name the page being left and a refused
-        `goto` would look like somebody else's. Anything the frame will not
-        answer (a service worker) names nothing, and the device treats that as
-        the device's own -- there is no text in an origin to smuggle either way.
+        A navigation the DEVICE asked for answers for itself: its frame has not
+        committed the new url yet, so asking the frame would name the page being
+        left and a refused `goto` would look like somebody else's. Every other
+        navigation is the page's own doing and is named by the document it is
+        still showing -- otherwise a locked-out page could point itself at an
+        approved host and have the refusal read as that host's own trouble.
+        Anything the frame will not answer (a service worker, a blank child
+        frame) names nothing, and the device withholds those from the agent.
         """
         try:
-            if response.request.is_navigation_request():
+            frame = response.frame
+            if (
+                response.request.is_navigation_request()
+                and self.in_goto
+                and frame is self.page.main_frame
+            ):
                 return _origin(response.url)
-            return _origin(response.frame.url)
+            return _origin(frame.url)
         except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
             return ""
 
@@ -449,7 +460,11 @@ class Session:
             # 12s + 1s settle keeps the whole action under the device's 15s host
             # cap and the relay's ~20s exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
-            self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
+            self.in_goto = True
+            try:
+                self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
+            finally:
+                self.in_goto = False
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title()}
 

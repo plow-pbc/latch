@@ -18,7 +18,9 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
   const probed = runProbe<{
     listens: string[];
     refused: Envelope;
-    initiators: Envelope;
+    page_navigating_itself: Envelope;
+    device_goto: Envelope;
+    unattributable: Envelope;
     drained: Envelope;
     quiet: Envelope;
     bounded: Envelope;
@@ -42,13 +44,26 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     ]);
   });
 
-  it("names who asked, with a navigation answering for itself", () => {
-    // The frame still names the page being left while a navigation's headers
-    // arrive, so a refused goto would otherwise look like somebody else's.
-    expect((probed.initiators.failed_requests ?? []).map((r) => r.initiator)).toEqual([
-      "https://pizza.example",
-      "https://offsite.example",
-    ]);
+  it("names a page that navigated ITSELF, not the host it aimed at", () => {
+    // Otherwise a locked-out page points itself at an approved host and the
+    // refusal reads as that host's own trouble.
+    expect((probed.page_navigating_itself.failed_requests ?? []).map((r) => r.initiator))
+      .toEqual(["https://offsite.example", "https://offsite.example"]);
+  });
+
+  it("lets a goto the device issued answer for itself", () => {
+    // Its frame still names the page being left while the headers arrive, so a
+    // refused goto would otherwise look like somebody else's.
+    expect(probed.device_goto.failed_requests?.[0]).toMatchObject({
+      origin: "https://pizza.example",
+      initiator: "https://pizza.example",
+    });
+  });
+
+  it("names nobody when the frame will not answer", () => {
+    // A service worker, a blank child frame — the device withholds these from
+    // the agent rather than guessing, and the owner still sees them.
+    expect(probed.unattributable.failed_requests?.[0]).toMatchObject({ initiator: "" });
   });
 
   it("hands each refusal over once, so the next reply is not told again", () => {

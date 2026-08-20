@@ -146,6 +146,7 @@ function handle(cmd) {
           initiator: "https://pizza.example" },
         { status: 404, method: "GET", origin: "https://pizza.example",
           initiator: "https://offsite.example" },
+        { status: 503, method: "GET", origin: "https://pizza.example", initiator: "" },
         ...failed,
       ];
       if (cmd.selector === "#refuses") throw new Error("locator.click: Timeout 3000ms exceeded.");
