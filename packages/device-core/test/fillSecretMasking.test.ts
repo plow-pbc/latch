@@ -513,6 +513,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         typed_len: number | null;
         type_calls: number;
         key_timeout_max: number | null;
+        key_timeout_min: number | null;
         node_len: number;
         asked_len: number;
       };
@@ -619,7 +620,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
   });
 
-  it("answers a frame-named fill inside the budget the device gives it", () => {
+  it("keeps the timed budgets under the cap the device arms", () => {
     // The device drops its pending entry at HOST_CAP_MS and tells this process
     // nothing, so a fill that ran past it would go on typing a credential into
     // a page whose answer nobody is waiting for. The TIMED steps a fill can
@@ -633,8 +634,13 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // tail's own would let them stack to TYPED_CHARS times it. A shared
     // deadline is already counting down by the first key, so no key is ever
     // handed the whole of it — which a per-key timeout hands out every time.
-    // The fixture spends a millisecond per key so that gap is one it causes.
-    expect(probed.long_value.key_timeout_max).toBeLessThan(c.typing_max_ms);
+    // The fixture spends a millisecond before each key reads its budget, so
+    // the gap between the first key's and the last's is one it caused.
+    const run = probed.long_value;
+    expect(run.key_timeout_max).toBeLessThan(c.typing_max_ms);
+    expect(run.key_timeout_max! - run.key_timeout_min!).toBeGreaterThanOrEqual(
+      run.type_calls - 1,
+    );
   });
 
   it("types a credential whole, whatever the vault releases", () => {
@@ -1017,25 +1023,6 @@ function stubPage(
   };
 }
 
-describe("the cap the fill's budgets are measured against", () => {
-  // HOST_CAP_MS is server.py's copy of a number the device owns, so read the
-  // device's and make the copy answer for itself — a cap that drifted from the
-  // timer it names would leave the budget sum under nothing in particular.
-  // Two source texts and no Python, so it holds on a host without one.
-  it("is the timer the device actually arms", () => {
-    const server = fs.readFileSync(SERVER_PY, "utf8");
-    const agent = fs.readFileSync(
-      fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
-      "utf8",
-    );
-    const declared = /^HOST_CAP_MS = (\d+)$/m.exec(server);
-    const armed = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
-    expect(declared).not.toBeNull();
-    expect(armed).not.toBeNull();
-    expect(Number(declared![1])).toBe(Number(armed![1].replace(/_/g, "")));
-  });
-});
-
 describe("whether the keys landed", () => {
   // `KEYS_DROPPED_JS` decides whether a typed fill has to fall back to
   // assigning the value outright. It is the difference between repairing a
@@ -1266,5 +1253,24 @@ describe("the mark the page ends up carrying", () => {
     const [plain] = scan({ querySelectorAll: () => [el] });
     expect(plain.secret).toBe(false);
     expect(plain.value).toBe("jon@example.com");
+  });
+});
+
+describe("the cap the fill's budgets are measured against", () => {
+  // HOST_CAP_MS is server.py's copy of a number the device owns, so read the
+  // device's and make the copy answer for itself — a cap that drifted from the
+  // timer it names would leave the budget sum under nothing in particular.
+  // Two source texts and no Python, so it holds on a host without one.
+  it("is the timer the device actually arms", () => {
+    const server = fs.readFileSync(SERVER_PY, "utf8");
+    const agent = fs.readFileSync(
+      fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
+      "utf8",
+    );
+    const declared = /^HOST_CAP_MS = (\d+)$/m.exec(server);
+    const armed = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
+    expect(declared).not.toBeNull();
+    expect(armed).not.toBeNull();
+    expect(Number(declared![1])).toBe(Number(armed![1].replace(/_/g, "")));
   });
 });

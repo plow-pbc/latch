@@ -91,10 +91,12 @@ class Handle:
         # Only the LENGTH of that text is ever reported out of this file.
         self.typed_delay = None
         self.typed = None
-        # The largest budget any key was handed. They share one deadline, so
-        # the first key gets a little less than the whole of it; a per-key
-        # timeout would hand out exactly the whole of it, every time.
+        # The largest and smallest budget any key was handed -- the first key's
+        # and the last's. They share one deadline, so the gap between them is
+        # what the tail spent; a per-key timeout hands out the same number every
+        # time and leaves no gap at all.
         self.key_timeout_max = None
+        self.key_timeout_min = None
         # How many separate calls that text arrived in. One per character is
         # the property the segmented-code fix turns on: a key sent through the
         # handle lands in the node the mark is on, wherever focus has wandered.
@@ -173,12 +175,14 @@ class Handle:
             raise RuntimeError("Element is not attached to the DOM")
         self.typed = (self.typed or "") + text
         self.type_calls += 1
-        self.key_timeout_max = max(self.key_timeout_max or 0, timeout)
-        # Spend a little, so a budget drawn from a shared deadline is visibly
-        # under the whole of it rather than under it by however many
-        # microseconds the interpreter took to get here. Playwright spends the
-        # key's delay at this point.
+        # Spend a millisecond BEFORE reading the budget, so the gap between the
+        # first key's and the last's is one this fixture caused rather than
+        # however many microseconds the interpreter took between statements.
+        # Playwright spends the key's delay at this point.
         time.sleep(0.001)
+        self.key_timeout_max = max(self.key_timeout_max or 0, timeout)
+        self.key_timeout_min = min(
+            self.key_timeout_min if self.key_timeout_min is not None else timeout, timeout)
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
@@ -297,6 +301,7 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     # counting down by the first key, so this is under the tail's whole budget;
     # a per-key timeout hands out exactly the whole of it.
     out["key_timeout_max"] = frame.handle.key_timeout_max
+    out["key_timeout_min"] = frame.handle.key_timeout_min
     out["node_len"] = len(frame.handle.value or "")
     return out
 
