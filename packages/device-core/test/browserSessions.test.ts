@@ -299,12 +299,10 @@ describe("requests the site refused", () => {
     expect(r.get("status").str).toBe("completed");
 
     // The agent hears about the approved page's own trouble and nothing else:
-    // not the third-party beacon (unapproved destination), and not the 404 the
+    // not the third-party beacon (unapproved destination), not the 404 the
     // locked-out page aimed AT the approved origin (unapproved asker) — which
-    // would otherwise read as the approved page's own.
-    // One row, and the exact one: the third-party beacon, the 404 the
-    // locked-out page aimed at the approved origin, and the 503 the browser
-    // could not attribute are all absent by construction.
+    // would otherwise read as the approved page's own — and not the 503 the
+    // browser could not attribute at all (unnameable asker).
     expect(r.get("failed_requests").value).toEqual([ORDER]);
 
     // The owner sees all four, with who asked — nobody can mislead them by

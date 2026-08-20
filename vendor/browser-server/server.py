@@ -56,11 +56,11 @@ MAX_ERROR_LEN = 500
 MAX_FAILED_REQUESTS = 5
 
 # Kept off a refused request beyond status/method/origin/initiator. Never a
-# body -- a body
-# can echo a submitted credential -- and never an arbitrary header: Set-Cookie
-# and friends live there. Retry-After says "wait" rather than "you are blocked",
-# and its ABSENCE on a 429 is diagnostic in itself; Server usually distinguishes
-# an origin rate-limiting us from a bot vendor refusing us.
+# body -- a body can echo a submitted credential -- and never an arbitrary
+# header: Set-Cookie and friends live there. Retry-After says "wait" rather
+# than "you are blocked", and its ABSENCE on a 429 is diagnostic in itself;
+# Server usually distinguishes an origin rate-limiting us from a bot vendor
+# refusing us.
 FAILED_REQUEST_HEADERS = ("retry-after", "server")
 
 
