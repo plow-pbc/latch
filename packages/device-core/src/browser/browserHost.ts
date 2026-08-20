@@ -420,10 +420,15 @@ export class BrowserHost {
     // instead, which readline does only after emitting every buffered line.
     // `exit` still drives the kill escalation below; waiting on the pipes there
     // would hang on a Firefox grandchild holding them.
-    // Raced against exit: a Firefox grandchild holding the pipe means the
-    // stream never ends, and the buffered goodbye is harvested as soon as the
-    // loop turns anyway — without the race that case would spend the whole cap.
-    const readable = Promise.race([this.readerFinished ?? Promise.resolve(), exited]);
+    // Raced against exit PLUS a loop turn: a Firefox grandchild holding the
+    // pipe means the stream never ends, so waiting only on the reader would
+    // spend the whole cap — but resolving on the exit event itself is no wait
+    // at all, since that is the event which rejected the request in the first
+    // place. The turn is what lets a line already in the pipe be parsed.
+    const readable = Promise.race([
+      this.readerFinished ?? Promise.resolve(),
+      exited.then(() => new Promise<void>((r) => setImmediate(r))),
+    ]);
     await withTimeout(
       this.request(child, { action: "quit" }).then(
         () => undefined,
