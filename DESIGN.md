@@ -353,9 +353,12 @@ anything is the device itself — the owner's ~1/s viewer poll, the popup sweep,
 the frame lookup before a credential fill — and whichever of those was in flight
 would otherwise be the one that consumed a 429 and dropped it. Every response
 passes through one place, so that is where they wait.
-Each entry names the document that asked (`frame_url` — a navigation is its
-own, since the frame has not committed it yet when the headers arrive) as well
-as what it asked for, and
+Each entry names the document that asked (`frame_url`) as well as what it asked
+for. A **main-frame** navigation is its own document — the frame has not
+committed the new url yet when the headers arrive, so asking it would name the
+page being left; a **subframe** navigation belongs to the frame that embedded
+it, and a frame that cannot be resolved at all (a service worker's request, a
+popup before its frame exists) names nothing, which withholds it, and
 `BrowserSessions` re-strips both before either reaches the agent or the audit
 log. **The owner's log gets every entry** — an out-of-scope page being refused
 is exactly what they are watching for, and whatever is still held when a session

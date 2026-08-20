@@ -33,6 +33,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     navigation: Envelope;
     subframe_navigation: Envelope;
     unattributable: Envelope;
+    unattributable_navigation: Envelope;
     quiet: Envelope;
     bounded: Envelope;
     hostile: Envelope;
@@ -82,6 +83,15 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.unattributable.failed_requests?.[0]).toMatchObject({
       status: 403,
       url: "https://pizza.example/api/sw",
+      frame_url: "",
+    });
+  });
+
+  it("names nothing for a popup's opening navigation either, on purpose", () => {
+    // window.open from a page outside the approved origins is the same smuggle
+    // as the iframe, so an unresolvable frame stays unattributed here too.
+    expect(probed.unattributable_navigation.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/popup",
       frame_url: "",
     });
   });

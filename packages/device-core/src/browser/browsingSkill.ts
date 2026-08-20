@@ -62,7 +62,9 @@ url, title, links, forms, tables, pages.
   ends have to be inside your approved origins: a request made BY a page outside them —
   an embedded third-party checkout or sign-in frame is the common one — reports nothing,
   so widen the session to that origin with \`plow_browser_request\` if a flow that runs in
-  one goes quiet. A 401 or 403
+  one goes quiet. A popup's own opening navigation is not attributable either and reports
+  nothing whatever you widen: switch to it with \`pages\`/\`use_page\` and \`goto\` the url
+  again to see the status. A 401 or 403
   means the sign-in did not take; a 429 means you are being throttled or blocked, and a 429
   with no \`retry_after\` is usually the latter, so waiting will not help. One can settle
   after the action answered and ride the next result — the screenshot you take next.

@@ -160,6 +160,13 @@ def main():
     feed(session, [NoFrame(403, "https://pizza.example/api/sw")])
     out["unattributable"] = session.envelope({"ok": True})
 
+    # A popup's opening navigation is the same answer and deliberately so:
+    # window.open from a page outside the approved origins is the iframe smuggle
+    # by another door, so an unresolvable frame names nothing even here.
+    session = server.Session(Page())
+    feed(session, [NoFrame(403, "https://pizza.example/popup", navigation=True)])
+    out["unattributable_navigation"] = session.envelope({"ok": True})
+
     # A response that will not answer its own questions takes nothing down.
     class Hostile(Response):
         @property
