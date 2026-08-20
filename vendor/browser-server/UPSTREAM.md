@@ -27,7 +27,8 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
   - A fill TYPES its value — select-all, then a real key event per character
     (`_type_into`) — where upstream assigns `.value` through `fill()`. A field
     that goes from empty to complete having received no keydown is the cheapest
-    bot tell there is, and it is what blocked a Costco sign-in behind Kasada.
+    bot tell there is. (It is not what blocked the Costco sign-in that prompted
+    this — that verdict lands before the page is touched; see issue #86.)
     Cadence is `TYPING_DELAY_MS`, and the chord plus the keystrokes share one
     deadline, so a fill costs at most `DEFAULT_ACTION_TIMEOUT_MS +
     TYPING_BUDGET_MS`. A value that cannot be carried faithfully as keystrokes
