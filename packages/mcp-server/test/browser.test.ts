@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { JSONValue, jv } from "@domo/protocol";
+import { JSONValue, jv, profileKeyForOrigins } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy, PolicyDelegate, ResolvedBrowserRuntime } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer, RelayAuth } from "@domo/mcp-server";
 import { callTool, parse, rpc } from "./client.js";
@@ -302,6 +302,27 @@ describe("browser tools (fake runtime)", () => {
     expect(bank).not.toBe(pizza);
     // ...and pizza is recognized when it comes back.
     expect(pizzaAgain).toBe(pizza);
+  });
+
+  it("a widened session's jar stops answering to the grant it opened under", async () => {
+    // The escape this closes: state written for the widened origin would sit
+    // in the opening grant's profile, and the next session on that narrower
+    // grant would carry it to that origin on the first click or redirect,
+    // ahead of the post-action scope lock.
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+
+    const session = await open(server, ["pizza.example"]);
+    const widen = await callTool(
+      server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT,
+    );
+    expect(widen.isError, JSON.stringify(widen.payload)).toBe(false);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+
+    const opening = profileKeyForOrigins(["pizza.example"]);
+    const union = profileKeyForOrigins(["pizza.example", "bank.example"]);
+    expect(fs.readdirSync(profiles)).toEqual([union]);
+    expect(fs.existsSync(path.join(profiles, opening))).toBe(false);
   });
 
   it("a second agent racing the cold start is refused, not handed the browser", async () => {

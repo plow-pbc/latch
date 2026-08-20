@@ -41,8 +41,6 @@ export interface BrowserHostConfig {
    * jar every launch, which is what a bot-block reproduction needs.
    */
   profilesDir?: string;
-  /** Profiles kept under `profilesDir`; least recently used are removed. */
-  maxProfiles?: number;
   /** Camoufox install dir (config.json + browsers/). When set, the server is
    * spawned with an app-scoped $HOME whose Library/Caches/camoufox symlinks
    * to it — camoufox finds a ready install, the user's shared cache is never
@@ -66,9 +64,6 @@ interface Pending {
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
-
-/** Per-grant profiles retained before the least recently used are dropped. */
-const DEFAULT_MAX_PROFILES = 20;
 
 export class BrowserHost {
   private child: ChildProcess | null = null;
@@ -174,6 +169,29 @@ export class BrowserHost {
   }
 
   /**
+   * Move a stopped profile to the key its contents now answer to. `extend()`
+   * widens a live grant without restarting the browser, so the jar ends the
+   * session holding state for origins the opening key does not name — left
+   * where it is, the next session on the narrower grant would reopen it and
+   * carry the widened origin's cookies to that origin on the first click or
+   * redirect, ahead of the scope lock. Re-keyed, the narrower grant opens
+   * cold and only a session approved for the union finds it again.
+   *
+   * A jar already sitting on the destination is replaced: the two cannot be
+   * merged, and this one is the later of the two.
+   */
+  rekeyProfile(fromKey: string, toKey: string): void {
+    const root = this.cfg.profilesDir;
+    if (!root || fromKey === toKey) return;
+    const from = path.join(root, fromKey);
+    if (!fs.existsSync(from)) return;
+    const to = path.join(root, toKey);
+    fs.rmSync(to, { recursive: true, force: true });
+    fs.renameSync(from, to);
+    this.cfg.audit?.("browser_profile_rekeyed", { from: fromKey, to: toKey });
+  }
+
+  /**
    * Where the next browser keeps its cookies, localStorage and cache: one
    * directory per approved origin set, so what a session leaves behind is
    * reachable only by a session the owner approved for the same origins. Null
@@ -185,51 +203,7 @@ export class BrowserHost {
     if (!root || !this.profileKeyNow) return null;
     const dir = path.join(root, this.profileKeyNow);
     fs.mkdirSync(dir, { recursive: true });
-    // Stamp on use: the reaper below evicts by mtime, and a profile the browser
-    // opened but never wrote to would otherwise look untouched since its birth.
-    const now = new Date();
-    fs.utimesSync(dir, now, now);
-    this.reapProfiles(root);
     return dir;
-  }
-
-  /**
-   * Keep the profile store bounded. One profile per origin set means one per
-   * site the owner ever browsed, each a full Firefox profile with its own
-   * cache, and nothing else deletes them. Evicting the least recently used
-   * costs that grant its logins, which is what a first visit already is.
-   */
-  private reapProfiles(root: string): void {
-    const keep = this.cfg.maxProfiles ?? DEFAULT_MAX_PROFILES;
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(root);
-    } catch {
-      return; // just created it, or it went away under us — nothing to reap
-    }
-    if (entries.length <= keep) return;
-    const byAge = entries
-      .map((name) => {
-        const full = path.join(root, name);
-        try {
-          return { full, used: fs.statSync(full).mtimeMs };
-        } catch {
-          return null;
-        }
-      })
-      .filter((e): e is { full: string; used: number } => e !== null)
-      .sort((a, b) => b.used - a.used);
-    for (const stale of byAge.slice(keep)) {
-      // Best-effort: an undeletable profile is wasted disk, but throwing here
-      // would abort the start — and three of those trip the circuit breaker,
-      // turning a housekeeping problem into no browser at all.
-      try {
-        fs.rmSync(stale.full, { recursive: true, force: true });
-        this.cfg.audit?.("browser_profile_evicted", { profile: path.basename(stale.full) });
-      } catch {
-        /* try again on the next start */
-      }
-    }
   }
 
   private async ensureStarted(): Promise<void> {

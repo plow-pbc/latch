@@ -60,21 +60,22 @@ describe("originMatches", () => {
 });
 
 describe("profileKeyForOrigins", () => {
-  it("is stable under order, case, and duplicates — the same grant, the same profile", () => {
-    const a = profileKeyForOrigins(["dominos.com", "*.Dominos.com"]);
-    expect(profileKeyForOrigins(["*.dominos.com", "DOMINOS.com", "dominos.com"])).toBe(a);
-  });
-
-  it("separates grants that are not the same set, including subset/superset", () => {
-    const costco = profileKeyForOrigins(["sameday.costco.com", "*.costco.com"]);
-    const withInstacart = profileKeyForOrigins([
-      "sameday.costco.com",
-      "*.costco.com",
-      "instacart.com",
-      "*.instacart.com",
-    ]);
-    expect(withInstacart).not.toBe(costco);
-    expect(profileKeyForOrigins(["reddit.com"])).not.toBe(costco);
+  // One contract: two origin lists share a profile exactly when they are the
+  // same approved set. Origins arrive as an unvalidated tool argument, and
+  // this key is the only thing keeping one grant's cookies from another's.
+  it.each([
+    ["order, case and duplicates are the same grant",
+      ["dominos.com", "*.Dominos.com"], ["*.dominos.com", "DOMINOS.com", "dominos.com"], true],
+    ["an entry that bounds nothing is not part of the grant",
+      ["dominos.com", "", "*."], ["dominos.com"], true],
+    ["a superset is a different grant",
+      ["sameday.costco.com", "*.costco.com"],
+      ["sameday.costco.com", "*.costco.com", "instacart.com", "*.instacart.com"], false],
+    ["an unrelated grant is a different grant", ["reddit.com"], ["*.costco.com"], false],
+    ["a pattern spelling the separator cannot forge another set",
+      ["a.example\nb.example"], ["a.example", "b.example"], false],
+  ] as [string, string[], string[], boolean][])("%s", (_name, left, right, same) => {
+    expect(profileKeyForOrigins(left) === profileKeyForOrigins(right)).toBe(same);
   });
 
   it("normalizes the way rule keys do, so a remembered rule finds its profile", () => {
@@ -94,22 +95,6 @@ describe("profileKeyForOrigins", () => {
     expect(() => profileKeyForOrigins([])).toThrow();
     expect(() => profileKeyForOrigins(["   "])).toThrow();
     expect(() => profileKeyForOrigins(["*."])).toThrow();
-  });
-
-  it("ignores an entry that bounds nothing instead of failing the grant", () => {
-    // originMatches never matches these, so a junk element changes nothing
-    // about the bound — and must not cost an approved session its browser.
-    expect(profileKeyForOrigins(["dominos.com", "", "*."])).toBe(
-      profileKeyForOrigins(["dominos.com"]),
-    );
-  });
-
-  it("cannot be made to collide by a pattern that spells the separator", () => {
-    // Origins arrive as an unvalidated tool argument, and the key is the only
-    // thing keeping one grant's cookies away from another's.
-    expect(profileKeyForOrigins(["a.example\nb.example"])).not.toBe(
-      profileKeyForOrigins(["a.example", "b.example"]),
-    );
   });
 
   it("is a bare filesystem-safe name, so it can be a directory", () => {

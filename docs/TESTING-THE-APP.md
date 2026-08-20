@@ -155,10 +155,6 @@ directory is safe with the app shut down; it costs that grant its logins and not
 older than this change has a single `device/browser/profile` beside `profiles/` with everything
 mixed together; nothing reads it any more, so delete it whenever.
 
-The store keeps the 20 most recently used profiles and deletes the rest, so a site you have not
-visited in a long while can be signed out with nothing else having changed. `browser_profile_evicted`
-in the audit log is that having happened.
-
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:
 

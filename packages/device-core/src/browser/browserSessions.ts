@@ -37,6 +37,8 @@ interface Session {
   handle: string;
   agentId: string;
   origins: string[];
+  /** Profile this session's browser opened — see close(). */
+  profileKey: string;
   credentialMetadata: boolean;
   credentialItems: Set<string>;
   lastActivity: number;
@@ -162,10 +164,9 @@ export class BrowserSessions {
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
     // The profile is the grant: cookies, storage and cache written here are
     // reachable only by a later session the owner approved for the same
-    // origins. Fixed at open — `extend()` widens a browser that is already
-    // running, and restarting it would take the live page with it, so state a
-    // widening writes lands in the opening grant's profile. That union is
-    // still a bound the owner approved inside this session.
+    // origins. Fixed at open, because `extend()` widens a browser that is
+    // already running and restarting it would take the live page with it —
+    // close() then moves the jar to the key its contents answer to.
     const profileKey = profileKeyForOrigins(origins);
     try {
       await this.host.ensureReady(headed, profileKey);
@@ -178,6 +179,7 @@ export class BrowserSessions {
       handle: crypto.randomUUID(),
       agentId,
       origins: usableOrigins(origins),
+      profileKey,
       credentialMetadata,
       credentialItems: new Set(),
       lastActivity: Date.now(),
@@ -280,6 +282,9 @@ export class BrowserSessions {
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     await this.stopBrowser();
+    // After the browser is down, so the files are ours to move: a session the
+    // owner widened wrote state for origins its opening key does not name.
+    this.host.rekeyProfile(s.profileKey, profileKeyForOrigins(s.origins));
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
@@ -294,6 +299,10 @@ export class BrowserSessions {
     if (!s) return;
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    // The browser is gone, so the jar is ours to move — and a widened session
+    // that crashed leaves exactly the same escape a widened session that
+    // closed would (close()).
+    this.host.rekeyProfile(s.profileKey, profileKeyForOrigins(s.origins));
     this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
   }
 

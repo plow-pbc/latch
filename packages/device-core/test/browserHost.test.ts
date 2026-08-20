@@ -20,16 +20,10 @@ afterEach(async () => {
 
 function makeHost(
   env: Record<string, string> = {},
-  extra: Partial<{
-    startTimeoutMs: number;
-    actionTimeoutMs: number;
-    profilesDir: string;
-    maxProfiles: number;
-  }> = {},
+  extra: Partial<{ startTimeoutMs: number; actionTimeoutMs: number }> = {},
 ): {
   host: BrowserHost;
   events: string[];
-  dir: string;
 } {
   const events: string[] = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-"));
@@ -41,51 +35,8 @@ function makeHost(
     ...extra,
   });
   hosts.push(host);
-  return { host, events, dir };
+  return { host, events };
 }
-
-describe("BrowserHost profile store", () => {
-  it("drops the least recently used profile once the store is over its cap", async () => {
-    const profiles = fs.mkdtempSync(path.join(os.tmpdir(), "domo-profiles-"));
-    const stale = (name: string, agoMs: number) => {
-      const full = path.join(profiles, name);
-      fs.mkdirSync(full);
-      const when = new Date(Date.now() - agoMs);
-      fs.utimesSync(full, when, when);
-      return full;
-    };
-    const yesterday = stale("yesterday", 24 * 3600_000);
-    const lastWeek = stale("last-week", 7 * 24 * 3600_000);
-
-    const { host, events } = makeHost({}, { profilesDir: profiles, maxProfiles: 2 });
-    await host.ensureReady(false, "today");
-
-    expect(fs.existsSync(path.join(profiles, "today"))).toBe(true);
-    expect(fs.existsSync(yesterday)).toBe(true);
-    expect(fs.existsSync(lastWeek)).toBe(false);
-    expect(events).toContain("browser_profile_evicted");
-  });
-
-  it("keeps the profile a grant just opened, however old its files are", async () => {
-    const profiles = fs.mkdtempSync(path.join(os.tmpdir(), "domo-profiles-"));
-    const age = (name: string, agoMs: number) => {
-      const full = path.join(profiles, name);
-      fs.mkdirSync(full);
-      const when = new Date(Date.now() - agoMs);
-      fs.utimesSync(full, when, when);
-    };
-    age("ancient", 365 * 24 * 3600_000);
-    age("newer-but-unused", 3600_000);
-
-    const { host } = makeHost({}, { profilesDir: profiles, maxProfiles: 1 });
-    await host.ensureReady(false, "ancient");
-
-    // Recency is last use, not last write: a grant that signs in once and
-    // reads for a year must not be evicted out from under itself.
-    expect(fs.existsSync(path.join(profiles, "ancient"))).toBe(true);
-    expect(fs.existsSync(path.join(profiles, "newer-but-unused"))).toBe(false);
-  });
-});
 
 describe("BrowserHost", () => {
   it("starts lazily, reports ready, and correlates responses by id", async () => {
