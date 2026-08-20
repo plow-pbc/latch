@@ -68,7 +68,11 @@ SETTLE_MS = 1000
 # value fits -- a long API key or a JWT does not -- and one that does not lands
 # with its head assigned and its last TYPED_CHARS typed, which still ends the
 # field on real keys.
-#
+
+KEY_DELAY_MS = 45
+# What a key may cost beyond its delay: the round trip that dispatches it and
+# the actionability check in front of it. A few milliseconds on a local page.
+KEY_OVERHEAD_MS = 30
 # A fill's TIMED cost is ACTION_TIMEOUT_MS three times (resolve, assign, and the
 # assignment a dropped-keys fallback makes) plus TYPING_MAX_MS, and that has to
 # stay under what the device gives a browser action before it gives up on it --
@@ -83,10 +87,6 @@ SETTLE_MS = 1000
 # bounded: a caller that names no frame pays ACTION_TIMEOUT_MS per frame it
 # rules out (the loop, #96), and every fill makes `evaluate` calls that take no
 # timeout at all, so a page that will not run script hangs regardless.
-KEY_DELAY_MS = 45
-# What a key may cost beyond its delay: the round trip that dispatches it and
-# the actionability check in front of it. A few milliseconds on a local page.
-KEY_OVERHEAD_MS = 30
 TYPED_CHARS = 64
 TYPING_MAX_MS = TYPED_CHARS * (KEY_DELAY_MS + KEY_OVERHEAD_MS)
 
