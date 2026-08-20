@@ -72,12 +72,18 @@ describe("BrowserHost", () => {
     await host.sendAction({ action: "click", selector: "#blocked-later" });
     expect(await host.viewFrame()).not.toBeNull();
     await host.sendAction({ action: "click", selector: "#blocked" });
-    // Six seen, five kept, newest first — the oldest is what falls off, and the
-    // poll-borne 401 is in the middle where it arrived.
-    const held = host.takeFailedRequests() as { status: number }[];
-    expect(held.map((r) => r.status)).toEqual([429, 403, 401, 429, 403]);
+    // Five seen so far, and the poll-borne 401 sits in the middle where it
+    // arrived rather than at either end.
+    expect((host.takeFailedRequests() as { status: number }[]).map((r) => r.status))
+      .toEqual([429, 403, 401, 429, 403]);
     // Taken means taken: the next asker gets nothing.
     expect(host.takeFailedRequests()).toEqual([]);
+
+    // Bounded: three armed clicks are six refusals, and the oldest two fall off.
+    for (let i = 0; i < 3; i++) {
+      await host.sendAction({ action: "click", selector: "#blocked" });
+    }
+    expect(host.takeFailedRequests().length).toBe(5);
 
     // And a late refusal still pending when the next one is scripted keeps its
     // place behind it rather than being lost — one ring, oldest last.
