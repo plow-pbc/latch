@@ -341,10 +341,17 @@ describe("browser tools (fake runtime)", () => {
     // restart it, which would cost the session its page. A second widening
     // has nothing left to give up, so it is not a second jar or a second line.
     await act(server, session, "text");
-    await callTool(server, "plow_browser_request", { session, origins: ["shop.example"] }, AGENT);
+    const widenAgain = await callTool(
+      server, "plow_browser_request", { session, origins: ["shop.example"] }, AGENT,
+    );
+    expect(widenAgain.isError, JSON.stringify(widenAgain.payload)).toBe(false);
     expect(launches(argvLog)).toHaveLength(1);
     expect(audited(device, "browser_profile_abandoned")).toEqual([opening]);
     await callTool(server, "plow_browser_close", { session }, AGENT);
+    // Checked here, where one entry is the whole answer: after the later
+    // sessions below, a jar wrongly filed under pizza+bank would be
+    // indistinguishable from the one they legitimately open.
+    expect(fs.readdirSync(profiles)).toEqual([opening]);
 
     // Every later session steps over it — the narrow grant it was filed under
     // included, which is the one that could actually send those cookies.
@@ -352,11 +359,9 @@ describe("browser tools (fake runtime)", () => {
       const later = await open(server, origins);
       await callTool(server, "plow_browser_close", { session: later }, AGENT);
     }
-    expect(fs.readdirSync(profiles).sort()).toEqual([
-      opening,
-      `${opening}-2`,
-      profileKeyForOrigins(["pizza.example", "bank.example"]),
-    ]);
+    expect(fs.readdirSync(profiles).sort()).toEqual(
+      [opening, `${opening}-2`, profileKeyForOrigins(["pizza.example", "bank.example"])].sort(),
+    );
     expect(abandoned(profiles, `${opening}-2`)).toBe(false);
   });
 
