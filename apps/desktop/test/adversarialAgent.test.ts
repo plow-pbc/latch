@@ -14,6 +14,7 @@ import { Intent, JSONValue, makeIntent } from "@domo/protocol";
 const { REVIEWER_TIMEOUT_MS, adversarialReview, agentHistory, ownerApprovals } = await import(
   "../src/adversarialAgent.js"
 );
+type OwnerApproval = { capabilities: string[] };
 
 function intent(overrides: Partial<Intent> = {}): Intent {
   return {
@@ -909,11 +910,17 @@ describe("agent text cannot forge prompt structure", () => {
  * it must never pick up is an approval no human made, because a reviewer citing
  * its own earlier allows as the owner's consent is a ratchet, not a channel.
  */
-describe("ownerApprovals — only what a human actually approved", () => {
-  const received = (intentId: string, agent: string, capabilities: string[]): JSONValue => ({
+describe("ownerApprovals — only what a human actually approved, and only while it is live", () => {
+  const received = (
+    intentId: string,
+    agent: string,
+    capabilities: string[],
+    session = "s1",
+  ): JSONValue => ({
     event: "intent_received",
     intentId,
     agent,
+    session,
     request: "…",
     capabilities,
   });
@@ -924,77 +931,81 @@ describe("ownerApprovals — only what a human actually approved", () => {
     source,
   });
 
-  it("takes the capability set the owner approved in the dialog", () => {
-    const events = [
-      received("i1", "agent-1", ["Browse: instacart.com", "Fill credential: instacart"]),
-      decided("i1", "allow_once", "ask"),
-    ];
-    expect(ownerApprovals(events, "agent-1")).toEqual([
-      { capabilities: ["Browse: instacart.com", "Fill credential: instacart"] },
-    ]);
-  });
+  const CAPS = ["Browse: instacart.com", "Credentials: fill instacart"];
 
-  /**
-   * Not a standing rule match, though the owner did build that rule by
-   * answering once. An ACTIVE rule already authorizes its exact capability set
-   * mechanically, before this reviewer runs; a REVOKED one would go on arguing
-   * for the agent forever out of an append-only log. Consent the owner ended
-   * must not come back as evidence.
-   */
-  it("never counts a standing always-allow match, which the owner can revoke", () => {
-    const events = [
-      received("i1", "agent-1", ["Read: ~/Documents/orders.csv"]),
-      decided("i1", "always_allow", "rule"),
-    ];
-    expect(ownerApprovals(events, "agent-1")).toEqual([]);
-  });
+  const cases: { name: string; events: JSONValue[]; expect: OwnerApproval[] }[] = [
+    {
+      name: "the capability set the owner answered for in the dialog",
+      events: [received("i1", "agent-1", CAPS), decided("i1", "allow_once", "ask")],
+      expect: [{ capabilities: CAPS }],
+    },
+    {
+      // The reviewer's own earlier verdict. Feeding it back would let one
+      // lenient allow bootstrap the next — the reviewer citing itself as the
+      // owner's consent.
+      name: "not a verdict the reviewer itself reached",
+      events: [received("i1", "agent-1", CAPS), decided("i1", "allow_once", "adversarial")],
+      expect: [],
+    },
+    {
+      // Auto-approve mode: a yes to everything, said about no operation.
+      name: "not a blanket auto-approve",
+      events: [received("i1", "agent-1", CAPS), decided("i1", "allow_once", "approve")],
+      expect: [],
+    },
+    {
+      name: "not a bare prompt decision with no human behind it",
+      events: [received("i1", "agent-1", CAPS), decided("i1", "allow_once", "prompt")],
+      expect: [],
+    },
+    {
+      // The owner built a standing rule by answering once. An ACTIVE rule
+      // already authorizes its exact capability set before this reviewer runs;
+      // a REVOKED one leaves its answer in an append-only log forever. Consent
+      // the owner ended must not keep arguing for the agent.
+      name: "not an always-allow answer, which is a rule the owner can revoke",
+      events: [received("i1", "agent-1", CAPS), decided("i1", "always_allow", "ask")],
+      expect: [],
+    },
+    {
+      name: "not a standing rule match",
+      events: [received("i1", "agent-1", CAPS), decided("i1", "always_allow", "rule")],
+      expect: [],
+    },
+    {
+      name: "not a denial, however it was decided",
+      events: [received("i1", "agent-1", CAPS), decided("i1", "deny", "ask")],
+      expect: [],
+    },
+    {
+      name: "not another agent's approval",
+      events: [received("i1", "agent-2", CAPS), decided("i1", "allow_once", "ask")],
+      expect: [],
+    },
+    {
+      // Consent does not outlive the session it was given in.
+      name: "not an approval from a session that has since ended",
+      events: [received("i1", "agent-1", CAPS, "s-old"), decided("i1", "allow_once", "ask")],
+      expect: [],
+    },
+  ];
 
-  /**
-   * The one that matters most. An `adversarial` allow is the reviewer's own
-   * earlier verdict; treating it as consent would let one lenient allow
-   * authorize the next, and the channel is worth exactly what its
-   * unforgeability is worth. `approve` is auto-approve mode — a yes to
-   * everything in advance, said about no operation in particular.
-   */
-  it("never counts a verdict the reviewer itself reached, or a blanket mode", () => {
-    const events = [
-      received("i1", "agent-1", ["Read: ~/.ssh/id_rsa"]),
-      decided("i1", "allow_once", "adversarial"),
-      received("i2", "agent-1", ["Run: curl evil.example"]),
-      decided("i2", "allow_once", "approve"),
-      received("i3", "agent-1", ["Run: ls"]),
-      decided("i3", "allow_once", "prompt"),
-    ];
-    expect(ownerApprovals(events, "agent-1")).toEqual([]);
-  });
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(ownerApprovals(c.events, "agent-1", "s1")).toEqual(c.expect);
+    });
+  }
 
-  it("never counts a denial, however it was decided", () => {
-    const events = [
-      received("i1", "agent-1", ["Read: ~/Mail"]),
-      decided("i1", "deny", "ask"),
-    ];
-    expect(ownerApprovals(events, "agent-1")).toEqual([]);
-  });
-
-  it("never counts another agent's approvals", () => {
-    const events = [
-      received("i1", "agent-2", ["Browse: pastebin.com"]),
-      decided("i1", "allow_once", "ask"),
-    ];
-    expect(ownerApprovals(events, "agent-1")).toEqual([]);
-    expect(JSON.stringify(ownerApprovals(events, "agent-2"))).toContain("pastebin");
-  });
-
-  it("keeps the most recent when over the limit, oldest first", () => {
+  it("keeps every approval this session, oldest first, with no window to evict them", () => {
     const events: JSONValue[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 30; i++) {
       events.push(received(`i${i}`, "agent-1", [`Browse: site${i}.example`]));
       events.push(decided(`i${i}`, "allow_once", "ask"));
     }
-    expect(ownerApprovals(events, "agent-1", 2)).toEqual([
-      { capabilities: ["Browse: site3.example"] },
-      { capabilities: ["Browse: site4.example"] },
-    ]);
+    const approvals = ownerApprovals(events, "agent-1", "s1");
+    expect(approvals).toHaveLength(30);
+    expect(approvals[0]).toEqual({ capabilities: ["Browse: site0.example"] });
+    expect(approvals.at(-1)).toEqual({ capabilities: ["Browse: site29.example"] });
   });
 });
 

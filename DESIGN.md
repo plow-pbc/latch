@@ -618,14 +618,18 @@ agent. It used to be deny-only ("fitting the description is not a reason to
 relax anything below"), which left the reviewer no way to say yes to the owner's
 own errand.
 
-*Secondary: recorded approvals.* `intent_decision` with `source: ask`, plus the
-`rule` matches those created. They corroborate an errand; they cannot stand in
-for a statement, and an empty list means nothing — in adversarial mode no dialog
+*Secondary: recorded approvals.* `intent_decision` with `source: ask` and
+`allow_once`, from THIS session (`intent_received` records the session id for
+that purpose). They corroborate an errand; they cannot stand in for a statement,
+and an empty list means nothing — in adversarial mode no dialog
 is ever shown, so no new approval is ever created (on the head chef's device, 4
 of 91 recorded decisions came from a human). `source: adversarial` is excluded
 deliberately: a reviewer citing its own past allows as consent is a ratchet, not
 a channel. `approve` (blanket mode) is excluded for saying nothing about any
-particular operation.
+particular operation. `always_allow` answers and `rule` matches are excluded
+because an active rule already authorizes its exact capability set before the
+reviewer runs, while a revoked one would keep arguing for the agent out of an
+append-only log — consent the owner ended must not outlive the ending.
 
 **The floor is a naming requirement, not a forbidden list.** Irreversible and
 egress-shaped acts — deletion at scale, force push, publishing, spending money,

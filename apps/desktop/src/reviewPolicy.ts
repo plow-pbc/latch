@@ -116,7 +116,7 @@ export async function decideIntent(
     // never see what they said to the agent — this Mac is not the channel they
     // talk on — so their recorded approvals are the consent signal, and the one
     // input to the review that can authorize anything.
-    const approvals = ownerApprovals(entries, intent.agentId);
+    const approvals = ownerApprovals(entries, intent.agentId, intent.sessionId);
     deps.record("adversarial_review_started", {
       intentId: intent.intentId,
       agent: intent.agentId,

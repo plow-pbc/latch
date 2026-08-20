@@ -53,8 +53,15 @@ export function approvalViewModel(
   });
   const display = (c: Capability): string => {
     if (c.kind === "credential" && c.access === "fill" && credentialItems.length > 0) {
+      // Title and category for the human, and the stable id beside them. The
+      // id is what everything downstream keys on — the audit row, the rule, and
+      // the approval line a later review is shown — so a dialog that showed
+      // only the title left the owner approving one label and the reviewer
+      // reading another, with nothing joining the two.
       const names = credentialItems.map((i) =>
-        i.title !== null ? `'${i.title}' (${i.category ?? "?"})` : `${i.id} (unknown item)`,
+        i.title !== null
+          ? `'${i.title}' (${i.category ?? "?"}, id ${i.id})`
+          : `${i.id} (unknown item)`,
       );
       // What the owner is actually granting: the value is typed here and never
       // handed back to the agent — but the agent is driving the page it lands
