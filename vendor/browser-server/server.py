@@ -129,17 +129,19 @@ TYPEABLE_JS = """(el) => {
     const typed = ["text", "email", "password", "search", "tel", "url", "number"];
     const tag = el.tagName.toLowerCase();
     if (tag !== "input" && tag !== "textarea") {
-        // `isContentEditable` is the COMPUTED, inherited state, not "does this
-        // node carry the attribute": every element inside an editable region
-        // answers true. So the nodes that must never take keystrokes are named
-        // -- the form controls, where typing picks an option by type-ahead, and
-        // the ones that are not rendered at all, which cannot take focus, so
-        // the characters land wherever focus already was. A `disabled` property
-        // is not that line: a form-associated custom element has one, and a
-        // custom editor is exactly the node that SHOULD be typed into.
-        const never = ["select", "button", "option", "optgroup", "fieldset",
-                       "style", "script", "link"];
-        return el.isContentEditable === true && !never.includes(tag);
+        // The node has to BE the editing host, not merely sit inside one.
+        // `isContentEditable` is the computed, inherited state, so everything in
+        // a rich-text region answers true -- a <select> (typing picks an option
+        // by type-ahead), an <iframe> (focus succeeds and the characters go into
+        // the embedded document, where the mask cannot reach), a <style> or a
+        // <template> (not rendered, so focus is a no-op and the characters land
+        // wherever focus already was). Naming those was a list that could never
+        // be closed; the attribute is only ever on the host, so ask for it. A
+        // bare `contenteditable` and `="plaintext-only"` are hosts, `="false"`
+        // is not, and a custom editor that carries it is one like any other.
+        const attr = el.getAttribute("contenteditable");
+        if (attr === null) return false;
+        return el.isContentEditable === true && attr.toLowerCase() !== "false";
     }
     if (tag === "input" && !typed.includes(el.type)) return false;
     return !el.disabled && !el.readOnly;

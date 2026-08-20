@@ -36,11 +36,14 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     one holding a newline or a tab (`type()` sends those as Enter and Tab —
     submitting the form, or moving focus so the rest of a secret lands in the
     next field), and any node `TYPEABLE_JS` says no to. That last is every node
-    `fill()` treats specially: only the text-carrying `<input>` types (plus a
-    textarea or a contenteditable) are typed, so a checkbox, a radio, a file
-    picker, a submit button, a hidden input, a date input and a `<select>` are
-    all assigned — which is where `fill()`'s loud refusal, or its value-setting,
-    lives. `type()` accepts every one of them silently.
+    `fill()` treats specially, and every node that is not a text host. Typed:
+    the text-carrying `<input>` types, a `<textarea>`, and an element that
+    CARRIES `contenteditable` itself. Assigned: a checkbox, a radio, a file
+    picker, a submit button, a hidden input, a date input, a `<select>` — where
+    `fill()`'s loud refusal or its value-setting lives — and everything that
+    merely sits inside a rich-text region, since `isContentEditable` is
+    inherited and `type()` would send a secret's characters into an embedded
+    document, an option chosen by type-ahead, or wherever focus already was.
   - Element actions default to a 3 s timeout (`DEFAULT_ACTION_TIMEOUT_MS`) for
     the same budget. `click` takes a caller-supplied `timeout_ms`, bounding the
     WHOLE action rather than each frame the loop tries — the device clamps it to

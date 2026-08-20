@@ -957,6 +957,12 @@ describe("which nodes take typing", () => {
   const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
     tagName, isContentEditable: false, getAttribute: () => null, ...extra,
   });
+  // Inside a rich-text region: everything inherits the editable state, and only
+  // the host itself carries the attribute.
+  const inRegion = (tagName: string) => element(tagName, { isContentEditable: true });
+  const host = (tagName: string, attr: string = "") =>
+    element(tagName, { isContentEditable: attr.toLowerCase() !== "false",
+                       getAttribute: (k: string) => (k === "contenteditable" ? attr : null) });
 
   it.each([
     // Every type on the list, because dropping one silently sends that field
@@ -977,7 +983,10 @@ describe("which nodes take typing", () => {
     // markup where the two disagree on more than presence.
     { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), typed: true },
     { what: "a textarea", el: textarea(), typed: true },
-    { what: "a contenteditable div, which has no disabled or readOnly at all", el: element("DIV", { isContentEditable: true }), typed: true },
+    { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), typed: true },
+    { what: "a div marked contenteditable=true", el: host("DIV", "true"), typed: true },
+    { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), typed: true },
+    { what: "a custom element that carries the attribute", el: host("X-EDITOR"), typed: true },
     { what: "a checkbox", el: input("checkbox"), typed: false },
     { what: "a radio button", el: input("radio"), typed: false },
     { what: "a file picker", el: input("file"), typed: false },
@@ -991,25 +1000,20 @@ describe("which nodes take typing", () => {
     // isContentEditable is inherited, so a form control inside a rich-text
     // region answers true. Typing at a select there picks an option by
     // type-ahead and reports ok.
+    // Inside a rich-text region every node answers isContentEditable — a
+    // control where typing picks an option by type-ahead, an embedded document
+    // the mask cannot reach, a node that is not rendered at all so the
+    // characters land wherever focus already was. None of them carries the
+    // attribute, which is the one thing only the host has.
     { what: "a select inside a contenteditable region", el: select({ isContentEditable: true }), typed: false },
-    { what: "a button inside a contenteditable region", el: element("BUTTON", { disabled: false, isContentEditable: true }), typed: false },
-    // A custom editor is a text host that happens to carry a disabled property,
-    // which several ordinary elements do — so the controls are named by tag
-    // rather than inferred from that property.
-    { what: "a contenteditable custom element with a disabled property", el: element("X-EDITOR", { disabled: false, isContentEditable: true }), typed: true },
-    // Every name on that list, because dropping one lets those keystrokes
-    // through: a control picks an option by type-ahead, and a node that is not
-    // rendered cannot take focus, so the characters — a secret's, on this path
-    // — go wherever focus already was.
-    { what: "an option inside a contenteditable region", el: element("OPTION", { isContentEditable: true }), typed: false },
-    { what: "an optgroup inside a contenteditable region", el: element("OPTGROUP", { isContentEditable: true }), typed: false },
-    { what: "a fieldset inside a contenteditable region", el: element("FIELDSET", { isContentEditable: true }), typed: false },
-    { what: "a style element inside a contenteditable region", el: element("STYLE", { isContentEditable: true }), typed: false },
-    { what: "a script element inside a contenteditable region", el: element("SCRIPT", { isContentEditable: true }), typed: false },
-    { what: "a link element inside a contenteditable region", el: element("LINK", { isContentEditable: true }), typed: false },
-    { what: "a plain div", el: element("DIV"), typed: false },
-    { what: "a read-only text field", el: input("text", { readOnly: true }), typed: false },
-    { what: "a disabled text field", el: input("text", { disabled: true }), typed: false },
+    { what: "a button inside a contenteditable region", el: inRegion("BUTTON"), typed: false },
+    { what: "an iframe inside a contenteditable region", el: inRegion("IFRAME"), typed: false },
+    { what: "a style element inside a contenteditable region", el: inRegion("STYLE"), typed: false },
+    { what: "a template inside a contenteditable region", el: inRegion("TEMPLATE"), typed: false },
+    { what: "a datalist beside the input it belongs to", el: inRegion("DATALIST"), typed: false },
+    { what: "a summary inside a contenteditable region", el: inRegion("SUMMARY"), typed: false },
+    { what: "a span that only inherits the editable state", el: inRegion("SPAN"), typed: false },
+    { what: "an editor explicitly turned off", el: host("DIV", "false"), typed: false },
   ])("$what: typed=$typed", ({ el, typed }) => {
     expect(typeable(el)).toBe(typed);
   });
