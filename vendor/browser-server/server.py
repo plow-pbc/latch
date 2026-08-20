@@ -431,9 +431,13 @@ class Session:
             # injected while we wait is a NEW frame object and the selector
             # often arrives inside exactly that one; whatever holds it gets what
             # remains, and nothing holding it by the deadline is an honest "not
-            # found" rather than a timeout. A frame the caller NAMED skips all
-            # of that and is simply waited in, which is what the click does
-            # anyway. `fill` is outside all of it: no budget reaches it, and it
+            # found" rather than a timeout. The frames are the ones the page had
+            # when the command arrived, and stay that way: re-reading them would
+            # let a frame injected DURING the wait be clicked, and the device
+            # approved origins for the page it could see, not for whatever
+            # arrives while it waits (issue #95). A frame the caller NAMED skips
+            # the scan entirely and is simply waited in, which is what the click
+            # does anyway. `fill` is outside all of it: no budget reaches it, and it
             # searches the frames on its own per-frame default, because a
             # credential field is found by searching them and shortening the
             # later ones would drop fills that work today.
@@ -451,7 +455,6 @@ class Session:
                                 "no frame has %s after %dms" % (sel, budget_ms)
                             )
                         self.page.wait_for_timeout(SCAN_INTERVAL_MS)
-                        frames = self.indexed_frames(cmd)
             for tried, (i, fr) in enumerate(frames):
                 try:
                     if action == "click":

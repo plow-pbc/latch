@@ -181,13 +181,6 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       { label: "element returns at 1s", selector: "#continue", timeout: undefined,
         setup: "const b = document.getElementById('continue'); b.remove();" +
                "setTimeout(() => document.body.appendChild(b), 1000)" },
-      // And a frame that did not exist when the click started: the scan has to
-      // re-enumerate, or the injected iframe is never looked in at all.
-      { label: "frame injected at 1s", selector: "#late", timeout: undefined,
-        setup: "setTimeout(() => {" +
-               "  const f = document.createElement('iframe');" +
-               "  f.src = '/late'; document.body.appendChild(f);" +
-               "}, 1000)" },
     ];
     for (const { label, selector, timeout, setup } of arrivals) {
       await act("goto", { url: site.url + "/blocked" });
