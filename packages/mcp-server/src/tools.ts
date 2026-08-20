@@ -642,10 +642,16 @@ export const TOOLS: ToolSpec[] = [
       properties: { session: { type: "string" } },
       additionalProperties: false,
     },
-    deferrable: false,
-    async run(args, ctx) {
+    // Closing is quick, but it queues behind the session's other lifecycle
+    // changes — and an open in front of it is paying a ~30s cold browser
+    // start. Non-deferrable, that wait becomes a relay timeout at ~20s and the
+    // agent never learns whether the session closed; deferrable, it hands back
+    // a handle and answers when its turn comes.
+    deferrable: true,
+    async run(args, ctx, progress) {
       const session = jv(args).get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
+      progress.decided();
       await ctx.device.browserCommand(ctx.agent.agentId, session, { action: "close" });
       return { closed: true };
     },

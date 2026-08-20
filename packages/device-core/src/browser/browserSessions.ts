@@ -272,13 +272,22 @@ export class BrowserSessions {
     // session's old bound, which is the safe end — a jar still answering to
     // the narrow grant while holding the widened origin's cookies is the
     // escape itself.
-    if (widened.length > s.origins.length) await this.host.abandonProfile();
-    this.audit("browser_session_extended", {
-      intentId,
-      session: s.handle,
-      origins: widened,
-      items: itemList,
-    });
+    const keepProfile =
+      widened.length > s.origins.length ? await this.host.abandonProfile() : null;
+    try {
+      this.audit("browser_session_extended", {
+        intentId,
+        session: s.handle,
+        origins: widened,
+        items: itemList,
+      });
+    } catch (error: unknown) {
+      // The bound is not granted, so the jar must not be retired either — a
+      // widening that failed to be recorded would otherwise cost the owner
+      // that site's logins for good, silently.
+      await keepProfile?.();
+      throw error;
+    }
     s.origins = widened;
     s.credentialItems = widenedItems;
     if (credentialMetadata) s.credentialMetadata = true;

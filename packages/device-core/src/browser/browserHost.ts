@@ -213,9 +213,10 @@ export class BrowserHost {
    * Camoufox goes on serving pages after its directory moves, but the cookies
    * written afterwards never reach disk.
    */
-  async abandonProfile(): Promise<void> {
+  async abandonProfile(): Promise<() => Promise<void>> {
     const dir = this.startedDir;
-    if (!dir) return;
+    const key = this.startedKey;
+    if (!dir) return async () => undefined;
     // Out of the page cache before this returns, because the cookies it
     // retires do not wait there: the browser's writes go through SQLite,
     // which fsyncs, while a plain writeFileSync sits for seconds. Lose power
@@ -244,6 +245,18 @@ export class BrowserHost {
     this.startedKey = null;
     this.profileKeyNow = null;
     this.cfg.audit?.("browser_profile_abandoned", { profile: path.basename(dir) });
+    // Undo, for a caller whose widening does not survive being recorded. The
+    // marker is durable by the time this returns, so a rollback has to be too:
+    // left behind, it retires a jar the owner is still entitled to and signs
+    // them out of that site for good, with nothing in the log to say why.
+    return async () => {
+      await fsp.rm(file, { force: true });
+      await fsync(dir);
+      this.startedDir = dir;
+      this.startedKey = key;
+      this.profileKeyNow = key;
+      this.cfg.audit?.("browser_profile_kept", { profile: path.basename(dir) });
+    };
   }
 
   private profileDirForStart(): string | null {

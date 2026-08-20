@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { JSONValue, jv } from "@domo/protocol";
+import { JSONValue, jv, profileKeyForOrigins } from "@domo/protocol";
 import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-core";
 
 const FAKE_SERVER = fileURLToPath(
@@ -69,6 +69,7 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
     command: ["node", FAKE_SERVER],
     env: { FAKE_FILL_LOG: fillLog, ...serverEnv },
     screenshotsDir: path.join(dir, "shots"),
+    profilesDir: path.join(dir, "profiles"),
     audit,
   });
   const credentials = new CredentialBroker({
@@ -411,6 +412,19 @@ describe("access the owner's log could not record is not granted", () => {
     const live = sessions.current()!;
     expect(live.origins).toEqual(["pizza.example"]);
     expect(live.origins).not.toContain("paypal.example");
+
+    // And the jar must not have been retired for a widening that never
+    // happened — the owner would be signed out of that site for good, with
+    // nothing in the log to explain it.
+    const key = profileKeyForOrigins(["pizza.example"]);
+    const profile = path.join(ctx.dir, "profiles", key);
+    expect(fs.existsSync(path.join(profile, "domo-abandoned"))).toBe(false);
+    await sessions.closeAll("test");
+
+    // Reopening the same grant comes back to it rather than starting fresh.
+    const again = jv(await sessions.open("int-3", AGENT, ["pizza.example"], true));
+    expect(again.get("session").str).toBeTruthy();
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([key]);
     await sessions.closeAll("test");
   });
 
