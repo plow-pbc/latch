@@ -67,10 +67,11 @@ SETTLE_MS = 1000
 # the cap buys is that TYPING cannot grow with the length of the value. It is
 # not a bound on what the whole action costs. Every fill also runs several
 # `evaluate` calls, and a masked one about twice as many; none of them take a
-# timeout and no default covers them, so a page that will not run script hangs
-# this process. It reads stdin serially, one command at a time, so every later
-# command in the session queues behind the one that will not return -- and
-# nothing on the device cancels it (see the loop below). A caller that names no frame pays for the frame
+# timeout and no default covers them, so a page that will not run script wedges
+# this process -- it reads stdin serially, so every later command in the session
+# queues behind the one that will not return, and nothing on the device cancels
+# it. A caller that names no frame pays for the frame search on top of that
+# (the loop below, #96). A caller that names no frame pays for the frame
 # search on top of that (the loop below, #96).
 KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
@@ -202,10 +203,17 @@ TYPEABLE_JS = """(el) => el.tagName !== "INPUT" ||
 # nothing unaccounted for; empty is the other -- a fill assigns before it types,
 # so a failure at the first key leaves the node holding nothing, and a node
 # holding nothing has nothing to conceal.
-# Whether the node ends up holding exactly what was asked for. Keys can be
-# dropped on the way in where an assignment could not be: a number field
-# sanitises away anything it will not hold, a maxlength truncates.
-HOLDS_JS = """(el, wanted) => (el.value || '') === wanted"""
+# Whether the keys failed to land, in the only two shapes an assignment could
+# repair: the field took none of them, or it took a prefix and stopped. A number
+# input sanitises away anything it will not hold; a maxlength truncates. A field
+# that REFORMATS what it was given -- a card number, a phone -- took every key
+# and holds something else on purpose, so it is not a prefix and is left alone.
+# `value` is how an input holds its text and `textContent` is how a
+# contenteditable does; asking the wrong one of a node calls every fill dropped.
+KEYS_DROPPED_JS = """(el, wanted) => {
+    const now = el.value !== undefined ? el.value : (el.textContent || '');
+    return now !== wanted && wanted.startsWith(now);
+}"""
 
 NOTHING_LANDED_JS = """(el, previous) => {
     const now = el.value || '';
@@ -253,9 +261,8 @@ def _type_value(el, value):
     tail = value[-TYPED_CHARS:]
     if tail:
         el.type(tail, delay=KEY_DELAY_MS, timeout=ACTION_TIMEOUT_MS + TYPING_MAX_MS)
-    if not el.evaluate(HOLDS_JS, value):
-        # The keys did not compose what was asked for, so this node was not one
-        # that takes characters after all. Assign it, which is what this did
+    if el.evaluate(KEYS_DROPPED_JS, value):
+        # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
         el.fill(value, timeout=ACTION_TIMEOUT_MS)

@@ -582,8 +582,25 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "handle.assign",
       "handle.evaluate:unmark",
     ]);
-    // The ordinary case does not pay for the fallback.
+    // The ordinary case does not pay for the fallback, and neither does a
+    // field that REFORMATS what it took — a card number that spaces itself out
+    // holds something other than what was asked for on purpose, and the keys
+    // it took are not thrown away to re-assign over them.
     expect(probed.plain.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
+    expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
+  });
+
+  it("fails loudly when the field will not take the value at all", () => {
+    // The end of that path: the keys were dropped and the assignment is
+    // refused too. Nothing landed, so the caller hears about it rather than
+    // being told a credential went in — and because something was concealed
+    // here, the node stays marked and ledgered rather than being handed back
+    // to the forms scan.
+    const run = probed.keys_dropped_unfillable;
+    expect(run.trace.at(-1)).toBe("handle.assign-failed");
+    expect(run.error).toBe("RuntimeError");
+    expect(run.marked).toBe(true);
+    expect(run.ledgered).toBe(true);
   });
 
   it("types the tail of a value too long to type whole, and lands the rest", () => {
@@ -916,7 +933,7 @@ function stubPage(
   };
 }
 
-describe("the mark the page ends up carrying", () => {
+describe("which fields take real keys", () => {
   const typeable = loadScript("TYPEABLE_JS") as (el: {
     tagName: string;
     type?: string;
@@ -958,7 +975,9 @@ describe("the mark the page ends up carrying", () => {
   ])("$what is $typed to type into", ({ el, typed }) => {
     expect(typeable(el)).toBe(typed);
   });
+});
 
+describe("the mark the page ends up carrying", () => {
   const mark = loadScript("MASK_JS") as (el: StubEl) => string;
   const unmark = loadScript("UNMASK_JS") as (el: StubEl) => boolean;
 

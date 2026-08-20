@@ -58,7 +58,7 @@ class Handle:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
                  document_token="doc-1", type_fails=False, typeable=True,
-                 drops_keys=False):
+                 drops_keys=False, assign_fails=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
@@ -71,6 +71,9 @@ class Handle:
         # A field that says it takes characters and then sanitises some of them
         # away -- a number input handed something that is not a number.
         self.drops_keys = drops_keys
+        # And one that will not take the value by assignment either, which is
+        # the loud failure the keystroke path must never swallow.
+        self.assign_fails = assign_fails
         self.mask_result = mask_result
         self.marked = marked
         # Which document this node is in, and what it currently holds. A fill
@@ -92,11 +95,13 @@ class Handle:
             return self.document_token
         if "tagName" in js:
             return self.typeable
-        if "=== wanted" in js:
+        if "startsWith(now)" in js:
             wanted = args[0] if args else None
             # `drops_keys` is a field that sanitises away what it will not hold:
-            # the keys go in and the node ends up with something else.
-            return not self.drops_keys and (self.value or "") == wanted
+            # the keys go in and the node comes back empty, which is a prefix of
+            # anything. A node that took them holds what it was handed.
+            now = "" if self.drops_keys else (self.value or "")
+            return now != wanted and (wanted or "").startswith(now)
         if "=== previous" in js:
             previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
             now = self.value or ""
@@ -132,6 +137,11 @@ class Handle:
         if self.detach_before_fill:
             self.trace.append("handle.assign-failed")
             raise RuntimeError("Element is not attached to the DOM")
+        if self.assign_fails and self.typed is not None:
+            # The fallback, after the keys were dropped: the field will not take
+            # this value at all. Nothing landed and the caller has to hear so.
+            self.trace.append("handle.assign-failed")
+            raise RuntimeError("Cannot type text into input[type=number]")
         self.value = value
         self.trace.append("handle.assign")
 
@@ -169,12 +179,13 @@ class Frame:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
-                 typeable=True, drops_keys=False):
+                 typeable=True, drops_keys=False, assign_fails=False):
         self.trace = trace
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token, type_fails, typeable, drops_keys)
+                             partial_fill, document_token, type_fails, typeable, drops_keys,
+                             assign_fails)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -227,11 +238,13 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1", type_fails=False, typeable=True, drops_keys=False):
+        document_token="doc-1", type_fails=False, typeable=True, drops_keys=False,
+        assign_fails=False):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
-                  type_fails=type_fails, typeable=typeable, drops_keys=drops_keys)
+                  type_fails=type_fails, typeable=typeable, drops_keys=drops_keys,
+                  assign_fails=assign_fails)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -375,6 +388,11 @@ def main() -> int:
         # the node does not hold what was asked for. Reporting that as a fill
         # would tell the caller a credential landed when it did not.
         "keys_dropped": run(server, {**base, "value": "hunter2"}, drops_keys=True),
+        # And the field will not take it by assignment either. This is the loud
+        # end of the path: nothing landed, the caller hears about it, and the
+        # mark that went on for a secret comes back off.
+        "keys_dropped_unfillable": run(server, {**base, "mask": True, "value": "hunter2"},
+                                       drops_keys=True, assign_fails=True),
         # Prose, not a credential: too long to type inside the budget. The bulk
         # is assigned and the field still ends on real keys.
         "long_value": run(server, {**base, "value": "x" * 2000}),
