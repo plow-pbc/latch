@@ -120,6 +120,14 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(locked.isError).toBe(true);
     expect(JSON.stringify(locked.payload)).toContain("not editable");
 
+    // Same rule for a frame that HAS the field and will not hand it over: a
+    // hidden one times out exactly like a frame that hasn't got it, and only
+    // the second of those is worth burying.
+    const hidden = await act("fill", { selector: "#card-hidden", value: "x" }, false);
+    expect(hidden.isError).toBe(true);
+    expect(JSON.stringify(hidden.payload)).toContain("#card-hidden");
+    expect(JSON.stringify(hidden.payload)).not.toContain("is not in frame");
+
     await act("fill_secret", { selector: "#card-number", item: "C1", field: "number" });
     await act("fill_secret", { selector: "#card-cvv", item: "C1", field: "cvv" });
     await act("click", { selector: "#pay" });

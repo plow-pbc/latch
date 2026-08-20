@@ -443,7 +443,14 @@ class Session:
             # the value is never typed.
             try:
                 el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-            except Exception as exc:  # noqa: BLE001 -- this frame simply hasn't got it
+            except Exception as exc:  # noqa: BLE001 -- sorted out by the ask below
+                # Which kind of nothing: a frame that hasn't got the field is
+                # the ordinary case and says nothing worth keeping, but one
+                # holding it and refusing to hand it over -- hidden, never
+                # settling -- is the answer the caller is waiting for, and
+                # Playwright reports both as the same timeout.
+                if fr.query_selector(sel) is not None:
+                    raise
                 raise NotAttempted("%s is not in frame %d" % (sel, i)) from exc
             if el is None:
                 raise NotAttempted("%s is not in frame %d" % (sel, i))

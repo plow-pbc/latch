@@ -110,6 +110,7 @@ export function createPizzaSite(): Promise<PizzaSite> {
                 reports the frame that actually failed, not the outer frames
                 that simply do not have the field. -->
            <label>Locked <input id="card-locked" type="text" readonly></label>
+           <input id="card-hidden" type="text" style="display:none">
            <button id="pay" type="submit">Pay</button>
          </form>`,
       );
