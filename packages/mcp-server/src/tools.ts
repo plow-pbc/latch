@@ -568,7 +568,7 @@ export const TOOLS: ToolSpec[] = [
       const maxChars = a.get("max_chars").int;
       if (maxChars !== null) params.max = maxChars;
 
-      const response = await ctx.device.browserCommand(ctx.agent.agentId, session, params);
+      const response = await ctx.device.browserCommand(session, params);
       const r = jv(response);
       if (r.get("status").str === "error") {
         // An error is a string here, so anything the device attached to it has
@@ -649,7 +649,7 @@ export const TOOLS: ToolSpec[] = [
       if (session === null) throw new ToolError("missing 'session'");
       // The device answers with an error for a handle it does not know, and
       // saying "closed" anyway would tell the caller it worked.
-      const result = jv(await ctx.device.browserCommand(ctx.agent.agentId, session, { action: "close" }));
+      const result = jv(await ctx.device.browserCommand(session, { action: "close" }));
       const error = result.get("error").str;
       if (error !== null) throw new ToolError(error);
       return { closed: true };

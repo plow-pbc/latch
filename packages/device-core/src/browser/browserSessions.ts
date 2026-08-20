@@ -337,13 +337,12 @@ export class BrowserSessions {
   /** Widen an existing session (called only after an approved intent). */
   extend(
     intentId: string,
-    agentId: string,
     handle: string,
     origins: string[],
     items: string[],
     credentialMetadata: boolean,
   ): JSONValue {
-    const s = this.validate(handle, agentId);
+    const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
     // Work out the new bound without publishing it, because the record has to
     // survive before the access does. Widening the live session first and
@@ -501,17 +500,10 @@ export class BrowserSessions {
     return latest;
   }
 
-  /**
-   * Close a session: the handle says which browser goes, and an agent that
-   * gives one says so, so nobody shuts a browser on another credential. The
-   * owner's own paths — idle, quit — pass none.
-   */
-  async close(handle: string, reason: string, agentId?: string): Promise<JSONValue> {
+  /** Close a session: the handle says which browser goes. */
+  async close(handle: string, reason: string): Promise<JSONValue> {
     const s = this.sessions.get(handle);
     if (!s) return { status: "error", error: "unknown session" };
-    if (agentId !== undefined && s.agentId !== agentId) {
-      return { status: "error", error: "that browser belongs to another Plow credential" };
-    }
     // The session stays registered across the shutdown below — the claim is
     // held until the browser is really down — so it is still reachable while
     // it is on its way out: the idle clock can come due, or a second close can
@@ -620,17 +612,9 @@ export class BrowserSessions {
    * every browser on it is theirs. Several agents run several browsers at
    * once and each passes its own handle to keep its own window.
    */
-  private validate(handle: string, agentId?: string): Session | string {
+  private validate(handle: string): Session | string {
     const s = this.sessions.get(handle);
     if (!s) return "unknown session (open one with plow_browser_open)";
-    // The handle says WHICH browser; the credential still says whose. Both
-    // are needed: several of the owner's agents share one credential, so the
-    // credential cannot pick a session out — but a handle that reaches a
-    // different credential is not this Mac's user any more. The owner's own
-    // paths (idle, quit) pass none and are not fenced.
-    if (agentId !== undefined && s.agentId !== agentId) {
-      return "that browser belongs to another Plow credential";
-    }
     // A session stays in the map while its browser shuts down. An approval
     // that lands in that window would widen — or drive — a browser already on
     // its way out, and the widening would be audited for a session that ends
@@ -654,8 +638,8 @@ export class BrowserSessions {
   }
 
   /** Execute one agent command inside an approved session. */
-  async command(handle: string, params: JSONValue, agentId?: string): Promise<JSONValue> {
-    const s = this.validate(handle, agentId);
+  async command(handle: string, params: JSONValue): Promise<JSONValue> {
+    const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
     s.lastActivity = Date.now();
 

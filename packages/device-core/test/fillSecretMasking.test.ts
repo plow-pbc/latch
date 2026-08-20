@@ -131,7 +131,7 @@ const audited = (): string =>
 async function session(): Promise<string> {
   const opened = await ctx.sessions.open("i1", "agent-1", ["pizza.example", "payframe.example"], false);
   const handle = (opened as { session: string }).session;
-  ctx.sessions.extend("i2", "agent-1", handle, [], ["L1", "C1", "I1"], false);
+  ctx.sessions.extend("i2", handle, [], ["L1", "C1", "I1"], false);
   await ctx.sessions.command(handle, {
     action: "goto",
     url: "https://pizza.example/login",
@@ -242,7 +242,7 @@ describe("fill_secret marking", () => {
     );
     const opened = await sessions.open("i1", "agent-1", ["pizza.example"], false);
     const h = (opened as { session: string }).session;
-    sessions.extend("i2", "agent-1", h, [], ["L1"], false);
+    sessions.extend("i2", h, [], ["L1"], false);
     await sessions.command(h, { action: "goto", url: "https://pizza.example/login" });
     const before = fills().length;
     const result = await sessions.command(h, {
