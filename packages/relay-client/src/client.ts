@@ -62,6 +62,15 @@ export class RelayClient {
   private heartbeat: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+  /**
+   * When the relay was last heard from. A silent socket is the failure this
+   * exists for: when wifi vanishes or the Mac wakes on another network, the
+   * TCP connection is dead but nothing tells us — outbound frames sit in a
+   * buffer and neither `close` nor `error` fires until the OS gives up minutes
+   * later. Until then the app claims Connected, calls fail, and the client is
+   * not reconnecting, because reconnection hangs off that same close.
+   */
+  private lastInboundAt = 0;
   /** Requests being served right now, so shutdown can wait for them. */
   private readonly inFlight = new Set<Promise<void>>();
 
@@ -155,6 +164,18 @@ export class RelayClient {
       return;
     }
     this.conn = conn;
+    this.lastInboundAt = Date.now();
+    // A cadence the *last* relay advertised says nothing about this socket, and
+    // inheriting a short one would have the watchdog close a perfectly healthy
+    // replacement whose handshake merely took longer than two of them. Back to
+    // ours until this connection has advertised its own.
+    this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+    // Armed here, not at `auth.ok`: a socket that opens and then goes silent
+    // before the handshake completes is the same dead socket, and waiting for
+    // an `auth.ok` that will never arrive would leave it sitting until the OS
+    // timeout — the exact failure this whole path exists to end. The beat sends
+    // nothing until we are authenticated; it only watches.
+    this.startHeartbeat(conn);
 
     conn.onLine = (line) => this.onFrame(conn, line);
     conn.onClose = () => this.onClose();
@@ -166,6 +187,9 @@ export class RelayClient {
   }
 
   private onFrame(conn: Connection, line: Buffer): void {
+    // Any frame at all proves the socket is alive — including one we go on to
+    // ignore, so this is stamped before the parse can reject it.
+    this.lastInboundAt = Date.now();
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(line.toString("utf8")) as Record<string, unknown>;
@@ -297,7 +321,24 @@ export class RelayClient {
   private startHeartbeat(conn: Connection): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = setInterval(() => {
-      this.send(conn, { type: "ping" });
+      // A live relay is never silent for two intervals: before the handshake
+      // it is sending us the challenge, and after it answers every ping. Two
+      // intervals of nothing means the socket is gone, whatever the OS still
+      // believes. Closing it here
+      // routes the failure down the ordinary path: `onClose` clears the status
+      // and starts the backoff, so the indicator and the reconnect are right
+      // for the same reason they are right on a clean drop. The check happens
+      // on a beat, so a dead socket is noticed between two and three intervals
+      // after the last frame.
+      if (Date.now() - this.lastInboundAt >= this.heartbeatIntervalMs * 2) {
+        this.say("no frame from the relay in two heartbeats; dropping the socket");
+        conn.close();
+        return;
+      }
+      // Before `auth.ok` there is nothing to ping with: the relay is mid
+      // handshake and an unexpected frame is not ours to invent. The liveness
+      // check above still runs, which is the point.
+      if (this.connected) this.send(conn, { type: "ping" });
     }, this.heartbeatIntervalMs);
     this.heartbeat.unref?.();
   }

@@ -64,7 +64,7 @@ describe("readCredentialsState", () => {
   it("carries locked through to the screen instead of flattening it", () => {
     const dir = tempDir();
     fs.writeFileSync(path.join(dir, "vault-account.enc"), Buffer.concat([Buffer.from("ENC1"), Buffer.from("x")]));
-    expect(readCredentialsState("https://vault.local", dir)).toEqual({
+    expect(readCredentialsState(dir)).toEqual({
       status: "locked",
       reason: "no-storage",
     });
@@ -75,10 +75,10 @@ describe("readCredentialsState", () => {
     new VaultSecretStore(dir).write({ email: "a@local", password: "pw" });
     // The state is a fact about the account, never the account: the only code
     // that needs the password reads the store itself.
-    expect(readCredentialsState("https://vault.local", dir)).toEqual({ status: "ok" });
+    expect(readCredentialsState(dir)).toEqual({ status: "ok" });
   });
 
   it("says empty when there is genuinely nothing", () => {
-    expect(readCredentialsState("https://vault.local", tempDir())).toEqual({ status: "empty" });
+    expect(readCredentialsState(tempDir())).toEqual({ status: "empty" });
   });
 });

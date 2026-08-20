@@ -57,7 +57,16 @@ export class VaultClient {
     // Before the session, every time: a vault that exited since the last call
     // has to come back up, and a cached session would talk to a closed port.
     await this.server.start();
-    if (this.session) return this.session;
+    // The address is the server's to own, and it moves: a vault that exited and
+    // came back with a stranger holding the old port serves on the next one
+    // (see `VaultServer.selectPort`). A session that kept the address it signed
+    // in on would send the owner's next action to that stranger — the very
+    // failure this whole path exists to prevent. The token survives the move:
+    // it is signed by the key in the data directory, which did not change.
+    if (this.session) {
+      this.session.http.url = this.server.url;
+      return this.session;
+    }
     const account = this.server.account;
     if (!account) throw new Error("this machine has no vault account yet");
     const http: VaultHttp = { url: this.server.url, ca: httpCa(this.server.certPath) };

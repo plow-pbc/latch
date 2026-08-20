@@ -1,4 +1,4 @@
-# Packaging config for `just package` — signed + notarized Plow.app + DMG.
+# Packaging config for `just package` — signed + notarized "Plow Latch.app" + DMG.
 # Signing identity is pinned to the Plow Developer ID; notarization credentials
 # come from the keychain profile named by APPLE_KEYCHAIN_PROFILE (see justfile).
 # appId is NOT renamed with the product. It is the bundle identity macOS and
@@ -7,11 +7,11 @@
 # the `domo` publish prefix below — it is baked into shipped bundles as
 # app-update.yml.
 appId: co.plow.domo-desktop
-productName: Plow
+productName: Plow Latch
 
 # Hyphenated artifact names: these become S3 keys and feed URLs, where spaces
 # (the productName default) mean %20-encoding everywhere a human pastes a link.
-artifactName: Plow-${version}-${arch}.${ext}
+artifactName: Plow-Latch-${version}-${arch}.${ext}
 
 directories:
   output: release
@@ -114,8 +114,8 @@ afterPack: build/afterPack.cjs
 
 dmg:
   # No ${arch}: the only DMG is universal, and this name is the public
-  # download link (promote copies it to the stable domo/Plow.dmg key).
-  artifactName: Plow-${version}.${ext}
+  # download link (promote copies it to the stable domo/Plow-Latch.dmg key).
+  artifactName: Plow-Latch-${version}.${ext}
   # lzfse instead of the default zlib — meaningfully smaller download, needs
   # macOS 10.11+ to mount (well below the app's own floor). ULMO (lzma, a bit
   # smaller still) isn't in electron-builder 26's schema yet.

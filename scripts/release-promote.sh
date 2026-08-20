@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Promote a versioned Plow release candidate to the stable keys that
+# Promote a versioned Plow Latch release candidate to the stable keys that
 # installed apps poll. The Domo analog of Plow's plowd-promote-release.
 #
 # Copies s3://<bucket>/<prefix>/releases/<version>-<build>/* onto stable keys:
 #   <prefix>/<zip> + .blockmap        what electron-updater downloads
-#   <prefix>/Plow.dmg(.sha256)         the stable human download link
+#   <prefix>/Plow-Latch.dmg(.sha256)   the stable human download link
 #   <prefix>/latest-mac.yml           the feed — copied LAST, because writing
 #                                     it is the moment existing installs see
 #                                     the update; every byte it references must
@@ -53,8 +53,8 @@ aws_args=()
 # array is empty there. The +-expansion is the 3.2-safe idiom.
 
 src="${prefix}/releases/${version}-${build}"
-zip_name="Plow-${version}-universal.zip"
-dmg_name="Plow-${version}.dmg"
+zip_name="Plow-Latch-${version}-universal.zip"
+dmg_name="Plow-Latch-${version}.dmg"
 
 # Fail before touching anything if the candidate is incomplete.
 for key in "$zip_name" "$zip_name.blockmap" "$dmg_name" "$dmg_name.sha256" "latest-mac.yml"; do
@@ -73,14 +73,16 @@ copy() {
 # that's the exact string inside latest-mac.yml, resolved relative to the feed.
 copy "$zip_name" "$zip_name"
 copy "$zip_name.blockmap" "$zip_name.blockmap"
+copy "$dmg_name" "Plow-Latch.dmg"
+copy "$dmg_name.sha256" "Plow-Latch.dmg.sha256"
+# The pre-rename download links, kept alive: both have been handed out, and a
+# 404 is a worse welcome than a correctly-named file. Two copies per promote.
 copy "$dmg_name" "Plow.dmg"
 copy "$dmg_name.sha256" "Plow.dmg.sha256"
-# The pre-rename download link, kept alive: it has been handed out, and a 404
-# is a worse welcome than a correctly-named file. Costs one copy per promote.
 copy "$dmg_name" "Domo-Desktop.dmg"
 copy "$dmg_name.sha256" "Domo-Desktop.dmg.sha256"
 copy "latest-mac.yml" "latest-mac.yml"
 
 echo "Promoted ${version} (${build}) to stable:"
 echo "  feed:     https://s3.us-west-2.amazonaws.com/${bucket}/${prefix}/latest-mac.yml"
-echo "  download: https://s3.us-west-2.amazonaws.com/${bucket}/${prefix}/Plow.dmg"
+echo "  download: https://s3.us-west-2.amazonaws.com/${bucket}/${prefix}/Plow-Latch.dmg"

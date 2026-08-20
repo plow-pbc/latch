@@ -9,9 +9,9 @@
 #               are on main.
 #   --branch    Prints the name in ANY checkout, main included. This keys the
 #               per-branch dev state (app home ~/Library/Application
-#               Support/Domo-<branch>, Electron userData suffix), so every
+#               Support/Plow-Latch-<branch>, Electron userData suffix), so every
 #               from-source run is isolated from every other and from the
-#               packaged install's unsuffixed "Domo" home.
+#               packaged install's unsuffixed "Plow-Latch" home.
 #
 # Normalization: any byte outside [A-Za-z0-9._-] becomes "-", runs collapse,
 # and leading dots/dashes are stripped, so "feature/foo bar" -> "feature-foo-bar".

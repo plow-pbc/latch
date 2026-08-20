@@ -13,17 +13,17 @@ root    := justfile_directory()
 worktree := `sh scripts/worktree-name.sh`
 # The normalized branch name of THIS checkout — main or worktree. Every
 # from-source run keeps its state in ~/Library/Application Support under a
-# branch-suffixed folder ("Domo-<branch>"), so checkouts run side by side and
-# none of them ever touches the packaged install's unsuffixed "Domo" home.
-# Nothing lands in dotfolders at the top of $HOME.
+# branch-suffixed folder ("Plow-Latch-<branch>"), so checkouts run side by side
+# and none of them ever touches the packaged install's unsuffixed "Plow-Latch"
+# home. Nothing lands in dotfolders at the top of $HOME.
 branch := `sh scripts/worktree-name.sh --branch`
 appsupport := env_var('HOME') / "Library" / "Application Support"
-nethome := appsupport / ("Domo-" + branch)
+nethome := appsupport / ("Plow-Latch-" + branch)
 # Where `just app` keeps state when DOMO_API_BASE_URL points somewhere other
 # than production. A credential is only valid against the environment that
 # minted it, so `export DOMO_API_BASE_URL=…; just app` must never write a local
 # credential into the production-facing home. An explicit DOMO_HOME still wins.
-localhome := appsupport / ("Domo-" + branch + "-local")
+localhome := appsupport / ("Plow-Latch-" + branch + "-local")
 apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
     env_var_or_default("DOMO_HOME", "")
   } else if env_var_or_default("DOMO_API_BASE_URL", "") != "" {
@@ -33,11 +33,11 @@ apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
   }
 # Where the evidence scripts drop screenshots. Per-worktree so simultaneous
 # runs don't clobber each other's output; explicit OUT/OUT_DIR/SETTINGS_OUT/
-# CHIPS_OUT/AGENTS_OUT/AGENTS_OPEN_OUT/VAULT_OUT env vars still win inside the
+# AGENTS_OUT/AGENTS_OPEN_OUT/VAULT_OUT env vars still win inside the
 # recipes. EVERY capture a script can write needs its variable passed below —
 # one that is missed silently falls back to bare /tmp and two checkouts
 # overwrite each other's evidence while both runs still report success.
-outdir := if worktree == "" { "/tmp" } else { "/tmp/domo-" + worktree }
+outdir := if worktree == "" { "/tmp" } else { "/tmp/plow-latch-" + worktree }
 
 _default:
     @just --list
@@ -91,7 +91,7 @@ test-browser: build
     DOMO_CAMOUFOX="{{root}}/vendor/camoufox-browser/$(uname -m)" \
         npx vitest run packages/mcp-server/test/browser.integration.test.ts
 
-# Package the desktop app: signed + notarized "Plow.app" + DMG, in
+# Package the desktop app: signed + notarized "Plow Latch.app" + DMG, in
 # apps/desktop/release/. Signs with the Plow Developer ID (must be in the
 # keychain). One-time setup for notarization — store credentials under a
 # keychain profile (default name "domo-notary"):
@@ -142,7 +142,7 @@ _package profile flags: build
     version="${base}.${build}"; \
     sha="$(git -C "{{root}}" rev-parse --short=12 HEAD)"; \
     [ -z "$(git -C "{{root}}" status --porcelain)" ] || sha="${sha}-dirty"; \
-    echo "packaging Plow ${version} (${sha})"; \
+    echo "packaging Plow Latch ${version} (${sha})"; \
     cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac --publish never -c.extraMetadata.version="$version" -c.extraMetadata.gitCommit="$sha" -c.buildVersion="$build" -c.mac.extendInfo.DomoGitCommit="$sha" {{flags}}
 
 # Build, sign, notarize, and upload a versioned release candidate to
@@ -153,13 +153,13 @@ _package profile flags: build
 # credentials (CI's OIDC role).
 release profile="domo-notary" s3_profile="plow": _main-only
     @just package "{{profile}}"; \
-    plist="{{root}}/apps/desktop/release/mac-universal/Plow.app/Contents/Info.plist"; \
+    plist="{{root}}/apps/desktop/release/mac-universal/Plow Latch.app/Contents/Info.plist"; \
     version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"; \
     build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"; \
     bash scripts/release-upload.sh --version "$version" --build "$build" --profile "{{s3_profile}}"
 
 # Ship an uploaded candidate: copy its artifacts onto the stable keys installed
-# apps poll (domo/latest-mac.yml + zip, domo/Plow.dmg). In CI this runs
+# apps poll (domo/latest-mac.yml + zip, domo/Plow-Latch.dmg). In CI this runs
 # from the promote workflow when a draft GitHub release is published.
 promote version build s3_profile="plow":
     bash scripts/release-promote.sh --version "{{version}}" --build "{{build}}" --profile "{{s3_profile}}"
@@ -167,15 +167,16 @@ promote version build s3_profile="plow":
 # Serve THIS checkout's apps/desktop/release/ as a local update feed, for
 # testing the whole update loop with no S3. The loop:
 #   1. just package-unnotarized                  # build A
-#   2. cp -R "apps/desktop/release/mac-universal/Plow.app" /Applications
+#   2. cp -R "apps/desktop/release/mac-universal/Plow Latch.app" /Applications
 #   3. just package-unnotarized                  # build B — wait for the next
 #      minute first: the version stamp has minute granularity, and a same-
 #      minute rebuild is the SAME version, which the updater ignores
 #   4. just serve-updates
-#   5. DOMO_HOME=/tmp/domo-update-test DOMO_UPDATE_FEED_URL=http://127.0.0.1:8043 \
-#        "/Applications/Plow.app/Contents/MacOS/Plow"
+#   5. DOMO_HOME=/tmp/plow-latch-update-test DOMO_UPDATE_FEED_URL=http://127.0.0.1:8043 \
+#        "/Applications/Plow Latch.app/Contents/MacOS/Plow Latch"
 #   6. Tray → "Check for Updates…" → restart → the startup log reports B.
-# DOMO_HOME keeps the test app out of the real packaged install's "Domo" home;
+# DOMO_HOME keeps the test app out of the real packaged install's "Plow-Latch"
+# home;
 # copying (not downloading) build A avoids quarantine/translocation, which
 # would break Squirrel.Mac's app swap.
 # For UI-only iteration skip all of that: DOMO_SIMULATE_UPDATE=available just
@@ -194,18 +195,18 @@ serve-updates port="8043":
 #
 #   just app                                            # production, {{nethome}}
 #   DOMO_API_BASE_URL=http://localhost:4242 just app    # that relay, {{localhome}}
-#   DOMO_HOME=/tmp/domo-x just app                      # an explicit home wins
+#   DOMO_HOME=/tmp/plow-latch-x just app                      # an explicit home wins
 #
 # Both defaults are keyed on this checkout's branch, so checkouts run side by
-# side and no from-source run ever opens the packaged install's plain "Domo"
-# home. Each home signs in on its own — never copy a relay credential between
+# side and no from-source run ever opens the packaged install's plain
+# "Plow-Latch" home. Each home signs in on its own — never copy a relay credential between
 # homes (the relay does not support two devices on one credential).
 
 # Launch the desktop app. DOMO_BRANCH picks this checkout's per-branch home
 # (one folder per instance — Electron's own state lives inside it) and brands
 # the app name/tray tooltip with the branch, so from-source runs never collide
 # with each other — or with the packaged install, which runs unbranded from
-# the plain "Domo" home.
+# the plain "Plow-Latch" home.
 app: build
     DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" npx electron "{{root}}/apps/desktop"
 
@@ -214,8 +215,6 @@ verify-preload: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" \
       SETTINGS_OUT="${SETTINGS_OUT:-{{outdir}}/settings-account.png}" \
-      CHIPS_OUT="${CHIPS_OUT:-{{outdir}}/settings-chips.png}" \
-      UNGATED_OUT="${UNGATED_OUT:-{{outdir}}/settings-ungated.png}" \
       AGENTS_OUT="${AGENTS_OUT:-{{outdir}}/agents.png}" \
       AGENTS_OPEN_OUT="${AGENTS_OPEN_OUT:-{{outdir}}/agents-open.png}" \
       APPROVALS_OUT="${APPROVALS_OUT:-{{outdir}}/agents-approvals.png}" \
@@ -261,8 +260,8 @@ audit:
     @cat "{{apphome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
 
 # Wipe THIS checkout's app home (identity, rules, audit log, settings) — that
-# is this branch's "Domo-<branch>" home, never another checkout's and never
-# the packaged install's plain "Domo".
+# is this branch's "Plow-Latch-<branch>" home, never another checkout's and
+# never the packaged install's plain "Plow-Latch".
 clean:
     rm -rf "{{apphome}}"
     @echo "wiped {{apphome}}"

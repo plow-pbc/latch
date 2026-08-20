@@ -36,11 +36,28 @@ export const DENIAL_SOURCE_NO_CREDITS = "no_credits";
 
 /**
  * A delegate that denies because the reviewer it was told to use does not
- * exist — no credential for the selected provider. Same channel as
+ * exist — this Mac holds no Plow credential. Same channel as
  * `no_credits`, and the same reasoning: a standing condition the caller can
  * act on, so it says so instead of looking like a decision someone made.
  */
 export const DENIAL_SOURCE_NO_REVIEWER = "no_reviewer";
+
+/**
+ * Denied because the reviewer looked and would not commit — it answered `ask`,
+ * in a mode where there is nobody to ask. Distinct from the source below, and
+ * the distinction is the whole point: this is a reviewer that ran.
+ */
+export const DENIAL_SOURCE_REVIEWER_UNDECIDED = "reviewer_undecided";
+
+/**
+ * Denied because the reviewer never reached a verdict at all — it timed out,
+ * the provider errored or rate-limited, it declined to assess, or the answer
+ * did not parse. Not a decision, wearing the same `deny` as one, so it says
+ * which it was. It does not say WHY there was no verdict: the reviewer may have
+ * been unreachable or may have run and produced nothing usable, and nothing
+ * here can tell the two apart, so nothing here claims to.
+ */
+export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
 
 /**
  * Denial sources whose reason is worth telling the calling agent, and the exact
@@ -67,10 +84,18 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   // Mac, then try again" — following it, the user clicks a dead prompt, nothing
   // runs, and the retry's dialog (queued behind that window) appears as if they
   // had been asked twice. That is the loop, driven by our own copy.
+  [DENIAL_SOURCE_REVIEWER_UNDECIDED]:
+    "the reviewer would not decide this one, and this Mac is set to let the " +
+    "reviewer decide — so there is no one to escalate to and it was denied " +
+    "rather than left waiting. Narrow the request and try again",
+  [DENIAL_SOURCE_REVIEWER_UNAVAILABLE]:
+    "the reviewer produced no usable verdict — it did not answer, or answered " +
+    "with something that was not one — and this Mac is set to let the reviewer " +
+    "decide, so it was denied rather than left waiting. Trying again may work",
   [DENIAL_SOURCE_NO_REVIEWER]:
-    "inference unavailable: Adversarial mode is selected but its provider has " +
-    "no credential on this Mac, so the reviewer could not run and the " +
-    "operation was denied — the owner needs to add one in Settings",
+    "inference unavailable: Adversarial mode is selected but this Mac has no " +
+    "credential for Plow, so the reviewer could not run and the operation was " +
+    "denied",
   [APPROVAL_SOURCE_EXPIRED]:
     "no one answered in time, so the request expired and was denied — a timeout, " +
     "not a refusal. Try again to raise a fresh request; any prompt still on the " +

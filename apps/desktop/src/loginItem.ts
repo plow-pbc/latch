@@ -9,6 +9,9 @@
  * mirror could only drift. So every read asks the OS fresh (the same reason
  * `capabilities:get` re-probes Full Disk Access) and a write reports back
  * what the OS then holds, not what was asked for.
+ * (`Settings.launchAtLoginDefaulted` is not that field: it records that the
+ * one-time first-run default — main.ts's `applyFirstRunLaunchAtLogin` — has
+ * run, never what the bit is.)
  *
  * Only the packaged install is supported. A from-source run is the stock
  * Electron.app bundle, so registering it would enroll the development binary

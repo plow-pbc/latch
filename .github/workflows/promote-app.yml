@@ -2,7 +2,7 @@ name: App release
 
 # Fires when a draft GitHub Release (created by build-release-candidate.yml) is
 # published. Copies the versioned S3 artifacts onto the stable keys installed
-# apps poll (domo/latest-mac.yml + zip, domo/Plow.dmg) — publishing the
+# apps poll (domo/latest-mac.yml + zip, domo/Plow-Latch.dmg) — publishing the
 # draft IS the approval to ship.
 
 on:

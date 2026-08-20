@@ -1,10 +1,11 @@
 /**
- * The decision path: approval mode × inference provider × credential
+ * The decision path: approval mode × credential
  * availability. This is the gate the whole app exists to be, and until the
  * branching moved out of `main.ts` none of it was reachable by a test.
  *
  * What must hold, whatever the settings say:
- *   - a review that cannot run never becomes an approval — it becomes a dialog;
+ *   - a review that cannot run never becomes an approval — in adversarial mode
+ *     it denies, in Ask mode the dialog was always the decider;
  *   - the audit log names the model that actually ran;
  *   - the relay credential reaches the reviewer and nothing else.
  *
@@ -20,17 +21,13 @@ import { Settings } from "../src/settings.js";
 import { auditActivities, decidedByLabel } from "../src/viewModel.js";
 import {
   ReviewHint,
-  activeProvider,
   decideIntent,
   inferenceStatus,
-  providerAvailability,
   reviewerAvailable,
-  reviewerInfo,
-  reviewerModel,
 } from "../src/reviewPolicy.js";
+import { REVIEWER_MODEL } from "../src/adversarialAgent.js";
 
 const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
-const ANTHROPIC_KEY = "sk-ant-do-not-leak-me";
 
 function settings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -40,8 +37,6 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     selectedTab: "audit",
     approvalMode: "ask",
     showAgentSuggestions: true,
-    anthropicApiKey: "",
-    inferenceProvider: "plow",
     agentPurpose: "",
     ...overrides,
   };
@@ -95,89 +90,36 @@ function harness(
   return { run, records, reviewCalls, dialogs, review, openApproval };
 }
 
-describe("provider selection reads the stored setting safely", () => {
-  it("defaults to plow when the field is absent", () => {
-    const s = settings();
-    delete (s as Partial<Settings>).inferenceProvider;
-    expect(activeProvider(s)).toBe("plow");
-  });
-
-  it("defaults to plow for a value nobody recognises", () => {
-    // A hand-edited settings.json must not be able to park the reviewer in an
-    // undefined state.
-    for (const junk of ["openai", "", "PLOW", null, 7]) {
-      expect(activeProvider({ inferenceProvider: junk as never })).toBe("plow");
-    }
-  });
-
-  it("honours a real selection", () => {
-    expect(activeProvider(settings({ inferenceProvider: "anthropic" }))).toBe("anthropic");
-  });
-});
-
-describe("availability is credential presence, per provider", () => {
-  it("neither, one, or both", () => {
-    expect(providerAvailability(settings())).toEqual({ plow: false, anthropic: false });
-    expect(providerAvailability(settings({ relayCredential: PLOW_CREDENTIAL }))).toEqual({
-      plow: true,
-      anthropic: false,
-    });
-    expect(providerAvailability(settings({ anthropicApiKey: ANTHROPIC_KEY }))).toEqual({
-      plow: false,
-      anthropic: true,
-    });
-    expect(
-      providerAvailability(settings({ relayCredential: PLOW_CREDENTIAL, anthropicApiKey: ANTHROPIC_KEY })),
-    ).toEqual({ plow: true, anthropic: true });
+describe("availability is credential presence", () => {
+  it("signed in, or not", () => {
+    expect(reviewerAvailable(settings())).toBe(false);
+    expect(reviewerAvailable(settings({ relayCredential: PLOW_CREDENTIAL }))).toBe(true);
   });
 
   it("whitespace is not a credential", () => {
-    expect(providerAvailability(settings({ relayCredential: "   ", anthropicApiKey: "  " }))).toEqual({
-      plow: false,
-      anthropic: false,
-    });
-  });
-
-  it("the other provider's credential does not make the active one usable", () => {
-    // The trap this replaces: a single `hasKey` boolean that made a pasted
-    // Anthropic key look like it powered the Plow reviewer.
-    expect(reviewerAvailable(settings({ inferenceProvider: "plow", anthropicApiKey: ANTHROPIC_KEY }))).toBe(false);
-    expect(
-      reviewerAvailable(settings({ inferenceProvider: "anthropic", relayCredential: PLOW_CREDENTIAL })),
-    ).toBe(false);
+    expect(reviewerAvailable(settings({ relayCredential: "   " }))).toBe(false);
   });
 });
 
 describe("the model reported is the model that runs", () => {
-  it("per provider", () => {
-    // The wire id, provider prefix included — a bare id is rejected by
-    // Plow's allowlist, and this is the value the audit log records.
-    expect(reviewerModel("plow")).toBe("anthropic/claude-sonnet-4-6");
-    expect(reviewerModel("anthropic")).toBe("claude-haiku-4-5");
-    expect(reviewerInfo("plow")).toContain("anthropic/claude-sonnet-4-6");
-    expect(reviewerInfo("anthropic")).toContain("claude-haiku-4-5");
+  it("the wire id, provider prefix and all", () => {
+    // A bare id is rejected by Plow's allowlist, and this is the value the
+    // audit log records.
+    expect(REVIEWER_MODEL).toBe("anthropic/claude-sonnet-4-6");
   });
 
-  it("the audit record names the provider and its model, not a fixed one", async () => {
+  it("the audit record names the model that ran", async () => {
     // The audit log is the test oracle (CLAUDE.md). A review recorded under a
     // model that never saw the intent makes it lie.
-    for (const [provider, model] of [
-      ["plow", "anthropic/claude-sonnet-4-6"],
-      ["anthropic", "claude-haiku-4-5"],
-    ] as const) {
-      const h = harness(
-        settings({
-          approvalMode: "adversarial",
-          inferenceProvider: provider,
-          relayCredential: PLOW_CREDENTIAL,
-          anthropicApiKey: ANTHROPIC_KEY,
-        }),
-        { verdict: "allow" },
-      );
-      await h.run();
-      const started = h.records.find((r) => r.event === "adversarial_review_started");
-      expect(started?.fields).toMatchObject({ provider, model });
-    }
+    const h = harness(
+      settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      { verdict: "allow" },
+    );
+    await h.run();
+    const started = h.records.find((r) => r.event === "adversarial_review_started");
+    expect(started?.fields).toMatchObject({ model: "anthropic/claude-sonnet-4-6" });
+    // The provider field went with the choice it recorded.
+    expect(started?.fields).not.toHaveProperty("provider");
   });
 });
 
@@ -201,13 +143,13 @@ describe("decideIntent — adversarial mode", () => {
   const adversarial = (over: Partial<Settings> = {}) =>
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
 
-  // One review, three verdicts, three outcomes. The `ask` row is the one that
-  // must not be read as an approval: it hands over to the human without
-  // highlighting a button, rather than deciding.
+  // One review, three verdicts, three outcomes — and no dialog in any of them.
+  // The owner chose "the reviewer decides"; a modal in this mode contradicts
+  // that, so an `ask` is a denial here rather than a handover.
   const decisionCases = [
-    { verdict: "allow" as const, decision: "allow_once", source: "adversarial", dialogs: 0 },
-    { verdict: "deny" as const, decision: "deny", source: "adversarial", dialogs: 0 },
-    { verdict: "ask" as const, decision: "allow_once", source: "ask", dialogs: 1 },
+    { verdict: "allow" as const, decision: "allow_once", source: "adversarial" },
+    { verdict: "deny" as const, decision: "deny", source: "adversarial" },
+    { verdict: "ask" as const, decision: "deny", source: "reviewer_undecided" },
   ];
 
   for (const c of decisionCases) {
@@ -218,19 +160,48 @@ describe("decideIntent — adversarial mode", () => {
         decision: "allow_once",
       });
       expect(await h.run()).toEqual({ decision: c.decision, source: c.source });
-      expect(h.openApproval).toHaveBeenCalledTimes(c.dialogs);
-      // Only the handover carries a dialog. It highlights no button — the
-      // reviewer reached no verdict — but it does tell the human what was
-      // said, rather than prompting them out of nowhere.
-      if (c.dialogs) {
-        expect(h.dialogs).toHaveLength(1);
-        await expect(h.dialogs[0]).resolves.toEqual({
-          decision: null,
-          reason: "genuinely ambiguous",
-        });
-      }
+      expect(h.openApproval).not.toHaveBeenCalled();
     });
   }
+
+  /**
+   * A review that reached no verdict — timed out, errored, rate-limited, refused,
+   * answered unparseably — arrives here as one shape: `ask` with `cause: "unavailable"`
+   * (adversarialAgent.test.ts pins each real failure onto that cause). It used
+   * to open the dialog, so it needs its own proof that it no longer does; and
+   * Ask mode's dialog has to still be there afterwards.
+   */
+  describe("no route reaches a modal", () => {
+    it("a review with no usable verdict → deny, sourced reviewer_unavailable", async () => {
+      // `decision` is what the dialog WOULD have answered. Nothing may turn
+      // it into execution, because nothing may open it.
+      const h = harness(adversarial(), {
+        verdict: "ask",
+        reason: "reviewer timed out",
+        cause: "unavailable",
+        decision: "allow_once",
+      });
+      expect(await h.run()).toEqual({ decision: "deny", source: "reviewer_unavailable" });
+      expect(h.openApproval).not.toHaveBeenCalled();
+      // The Activity pane shows this source, and it says only what is known.
+      // "Could not run" would be a false account of a reviewer that ran and
+      // refused, which lands on this same cause.
+      expect(decidedByLabel("reviewer_unavailable")).toBe("AI Reviewer (no usable verdict)");
+      // The reason the reviewer gave is still recorded, so the source is a
+      // summary of the timeline rather than a replacement for it.
+      expect(h.records[1].fields).toMatchObject({ verdict: "ask", reason: "reviewer timed out" });
+    });
+
+    it("leaves Ask mode's dialog exactly where it was", async () => {
+      const h = harness(settings({ relayCredential: PLOW_CREDENTIAL }), {
+        verdict: "ask",
+        reason: "genuinely ambiguous",
+        decision: "allow_once",
+      });
+      expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
+      expect(h.openApproval).toHaveBeenCalledOnce();
+    });
+  });
 
   it("out of credits denies, and says so through the decision's source", async () => {
     // The reviewer the user configured can never run, so falling back to a
@@ -256,12 +227,11 @@ describe("decideIntent — adversarial mode", () => {
     expect(h.records[1].fields).toMatchObject({ verdict: "deny", reason: "reads credentials" });
   });
 
-  // The security property, per shape of "the active provider cannot run": an
+  // The security property, per shape of "the reviewer cannot run": an
   // unusable reviewer DENIES, never approves — and a credential belonging to
-  // the OTHER provider does not quietly stand in for the one that was selected.
   //
-  // This used to fall to the dialog, because selecting a provider without its
-  // credential was refused and the mode was retired to Ask behind the user. The
+  // This used to fall to the dialog, because Adversarial without a credential
+  // was refused and the mode was retired to Ask behind the user. The
   // gate is gone: the state is reachable, so it has to answer for itself. Deny
   // is the fail-closed answer, and `no_reviewer` is what makes it legible
   // instead of looking like a decision somebody made.
@@ -270,12 +240,8 @@ describe("decideIntent — adversarial mode", () => {
   // asking it would only buy an audit pair naming a model that never saw the
   // intent — which is why `reviewerAvailable` decides before `review()` runs.
   const unusableReviewers = [
-    { name: "the Plow reviewer has no credential at all", over: { inferenceProvider: "plow" as const, relayCredential: "" } },
-    {
-      name: "the Plow reviewer has only the other provider's credential",
-      over: { inferenceProvider: "plow" as const, relayCredential: "", anthropicApiKey: ANTHROPIC_KEY },
-    },
-    { name: "the Anthropic reviewer has no key", over: { inferenceProvider: "anthropic" as const, anthropicApiKey: "" } },
+    { name: "the reviewer has no credential at all", over: { relayCredential: "" } },
+    { name: "the credential is whitespace", over: { relayCredential: "   " } },
   ];
 
   for (const c of unusableReviewers) {
@@ -302,7 +268,7 @@ describe("decideIntent — adversarial mode", () => {
 });
 
 describe("decideIntent — ask mode and suggestions", () => {
-  it("suggests when the toggle is on and the active provider has a credential", async () => {
+  it("suggests when the toggle is on and there is a credential", async () => {
     const h = harness(
       settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
       { verdict: "allow", decision: "always_allow" },
@@ -335,7 +301,7 @@ describe("decideIntent — ask mode and suggestions", () => {
     expect(h.dialogs).toEqual([null]);
   });
 
-  it("skips the review when the active provider has no credential", async () => {
+  it("skips the review when there is no credential", async () => {
     const h = harness(settings({ approvalMode: "ask", showAgentSuggestions: true }));
     await h.run();
     expect(h.review).not.toHaveBeenCalled();
@@ -364,51 +330,32 @@ describe("decideIntent — ask mode and suggestions", () => {
 });
 
 describe("decideIntent — what reaches the reviewer", () => {
-  it("passes the selected provider and the Plow credential and base URL", async () => {
+  it("passes the Plow credential and base URL", async () => {
     const h = harness(
-      settings({
-        approvalMode: "adversarial",
-        inferenceProvider: "plow",
-        relayCredential: PLOW_CREDENTIAL,
-      }),
+      settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
       { verdict: "allow" },
     );
     await h.run();
     expect(h.reviewCalls[0]).toMatchObject({
-      provider: "plow",
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
     });
   });
 
-  it("passes the selected provider and the Anthropic key", async () => {
-    const h = harness(
-      settings({
-        approvalMode: "adversarial",
-        inferenceProvider: "anthropic",
-        anthropicApiKey: ANTHROPIC_KEY,
-      }),
-      { verdict: "allow" },
-    );
-    await h.run();
-    expect(h.reviewCalls[0]).toMatchObject({ provider: "anthropic", apiKey: ANTHROPIC_KEY });
-  });
-
-  it("puts neither credential into the audit log", async () => {
+  it("puts the credential into the audit log nowhere", async () => {
     // CLAUDE.md's highest-severity rule for this change. The reviewer gets the
     // credential; the audit trail must not.
     const h = harness(
       settings({
         approvalMode: "adversarial",
         relayCredential: PLOW_CREDENTIAL,
-        anthropicApiKey: ANTHROPIC_KEY,
       }),
       { verdict: "deny", reason: "nope" },
     );
     await h.run();
     const serialized = JSON.stringify(h.records);
     expect(serialized).not.toContain(PLOW_CREDENTIAL);
-    expect(serialized).not.toContain(ANTHROPIC_KEY);
+    expect(serialized).not.toContain(PLOW_CREDENTIAL.slice(0, 8));
   });
 });
 
@@ -465,33 +412,21 @@ describe("the approval dialog's advice note carries no credential either", () =>
 });
 
 describe("the renderer's view of inference carries no credentials", () => {
-  const full = settings({
-    inferenceProvider: "plow",
-    relayCredential: PLOW_CREDENTIAL,
-    anthropicApiKey: ANTHROPIC_KEY,
-  });
+  const full = settings({ relayCredential: PLOW_CREDENTIAL });
 
-  it("is booleans, a selection, a model string and the stored mode", () => {
+  it("is a boolean and the stored mode, and nothing else", () => {
     expect(inferenceStatus(full)).toEqual({
-      provider: "plow",
-      available: { plow: true, anthropic: true },
-      info: reviewerInfo("plow"),
+      available: true,
       approvalMode: full.approvalMode,
     });
   });
 
-  it("contains neither credential, nor any prefix of one", () => {
+  it("contains no credential, nor any prefix of one", () => {
     const serialized = JSON.stringify(inferenceStatus(full));
     expect(serialized).not.toContain(PLOW_CREDENTIAL);
-    expect(serialized).not.toContain(ANTHROPIC_KEY);
     expect(serialized).not.toContain(PLOW_CREDENTIAL.slice(0, 8));
-    expect(serialized).not.toContain(ANTHROPIC_KEY.slice(0, 8));
   });
 
-  it("reports the active provider's model, not a fixed one", () => {
-    expect(inferenceStatus(settings({ inferenceProvider: "plow" })).info).toContain("anthropic/claude-sonnet-4-6");
-    expect(inferenceStatus(settings({ inferenceProvider: "anthropic" })).info).toContain("claude-haiku-4-5");
-  });
 });
 
 // What used to sit here: `modeAfterAvailabilityChange`, which retired
@@ -507,11 +442,10 @@ describe("settings defaults", () => {
     ({ loadSettings } = await import("../src/settings.js"));
   });
 
-  it("a settings.json with no inferenceProvider reads as plow", () => {
-    // Existing installs upgrade onto Plow without a migration.
+  it("a settings.json that was never written reads as an unusable reviewer", () => {
     const s = loadSettings("/nonexistent-domo-home");
-    expect(s.inferenceProvider).toBe("plow");
-    expect(activeProvider(s)).toBe("plow");
+    expect(reviewerAvailable(s)).toBe(false);
+    expect(s.approvalMode).toBe("ask");
   });
 });
 
@@ -544,7 +478,6 @@ describe("the audit tells one coherent story about who decided", () => {
       settings({
         approvalMode: "adversarial",
         relayCredential: PLOW_CREDENTIAL,
-        inferenceProvider: "plow",
       }),
       { verdict: "ask", cause: "no_credits", reason: "insufficient Plow balance" },
     );
@@ -558,15 +491,42 @@ describe("the audit tells one coherent story about who decided", () => {
     expect(decidedByLabel(decision.source)).not.toContain("no_credits");
   });
 
-  it("a genuine abstention still reads as deferring, because it is one", async () => {
+  it("a genuine abstention reads as 'would not decide', because nobody is deferred to", async () => {
+    // The reviewer really did look and really did abstain — but in this mode
+    // that hands the decision to no one: the operation is denied with no
+    // dialog. "Defer to you" would name a person who was never asked.
     const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
       verdict: "ask",
       reason: "genuinely ambiguous",
     });
     const decision = await h.run();
     const lines = narrative(h.records, decision, intent().intentId);
-    expect(lines.some((l) => l.includes("defer to you"))).toBe(true);
-    expect(lines.some((l) => l.includes("could not run"))).toBe(false);
+    const reviewLine = lines.find((l) => l.startsWith("AI Reviewer:")) ?? "";
+    expect(reviewLine).toContain("would not decide");
+    expect(reviewLine).not.toContain("defer to you");
+    // Not "could not run" either — that is the other failure, and this one ran.
+    expect(reviewLine).not.toContain("could not run");
+    // …and the decision that follows names it in human words, not a raw token.
+    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (would not decide)");
+  });
+
+  it("a review that reached no verdict does not claim the reviewer never ran", async () => {
+    // `unavailable` is a bag: an outage, a rate limit, a refusal, an answer
+    // that did not parse. Only the first two mean the reviewer never ran, and
+    // nothing here knows which one happened — so the timeline says only that
+    // no verdict came back. "Could not run" belongs to `no_credits`, which
+    // does know.
+    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
+      verdict: "ask",
+      reason: "reviewer declined to assess",
+      cause: "unavailable",
+    });
+    const decision = await h.run();
+    const reviewLine =
+      narrative(h.records, decision, intent().intentId).find((l) => l.startsWith("AI Reviewer:")) ?? "";
+    expect(reviewLine).toContain("no usable verdict");
+    expect(reviewLine).not.toContain("could not run");
+    expect(decidedByLabel(decision.source)).toBe("AI Reviewer (no usable verdict)");
   });
 });
 

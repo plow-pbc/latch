@@ -6,18 +6,25 @@
  * One folder per instance: everything — settings, device identity, audit log,
  * AND Electron/Chromium's own state (userData/sessionData) — lives under a
  * single home in Application Support. Chromium state goes in `<home>/electron`
- * instead of the separate name-keyed "Plow*" folder Electron would
+ * instead of the separate name-keyed "Plow Latch*" folder Electron would
  * pick on its own.
  *
  * DOMO_BRANCH (set by `just app` to this checkout's normalized branch name,
- * never set in a packaged run) picks the per-branch home "Domo-<branch>" and
- * brands the instance so from-source runs never collide with each other or
- * with the packaged install, which runs unbranded from the plain "Domo" home.
- * An explicit DOMO_HOME wins over both, and Chromium state follows it, so a
- * throwaway home really is the instance's ONLY folder.
+ * never set in a packaged run) picks the per-branch home "Plow-Latch-<branch>"
+ * and brands the instance so from-source runs never collide with each other or
+ * with the packaged install, which runs unbranded from the plain "Plow-Latch"
+ * home. An explicit DOMO_HOME wins over both, and Chromium state follows it,
+ * so a throwaway home really is the instance's ONLY folder.
+ *
+ * The home was called "Domo" (and "Domo-<branch>") before the product became
+ * Plow Latch; startup moves such a folder to the new name before anything
+ * opens it — see migrateHome.ts, which derives the old name from HOME_PREFIX.
  */
 import path from "node:path";
 import { vaultStoreIdentity } from "@domo/device-core";
+
+/** The home's folder-name prefix. migrateHome.ts matches on it — keep them one. */
+export const HOME_PREFIX = "Plow-Latch";
 
 export interface InstancePaths {
   /** macOS app menu / dock title (set before ready via app.setName). */
@@ -42,10 +49,11 @@ export function resolveInstancePaths(opts: {
 }): InstancePaths {
   const branch = (opts.env.DOMO_BRANCH ?? "").trim();
   const home =
-    opts.env.DOMO_HOME ?? path.join(opts.appData, branch ? `Domo-${branch}` : "Domo");
+    opts.env.DOMO_HOME ??
+    path.join(opts.appData, branch ? `${HOME_PREFIX}-${branch}` : HOME_PREFIX);
   return {
-    appName: branch ? `Plow (${branch})` : "Plow",
-    trayTooltip: branch ? `Plow (${branch})` : "Plow",
+    appName: branch ? `Plow Latch (${branch})` : "Plow Latch",
+    trayTooltip: branch ? `Plow Latch (${branch})` : "Plow Latch",
     home,
     electronData: path.join(home, "electron"),
     vaultIdentity: vaultStoreIdentity(branch),

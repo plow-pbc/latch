@@ -1,10 +1,10 @@
 /**
  * App settings persisted under DOMO_HOME.
  *
- * This file holds secrets — the Plow relay credential and an Anthropic API key
- * — so it is written **owner-only**. It used to be written with no mode at all,
- * which on a shared or backed-up Mac is a plaintext credential anyone could
- * read. There is still no Keychain or `safeStorage` here; 0600 is the floor,
+ * This file holds a secret — the Plow relay credential — so it is written
+ * **owner-only**. It used to be written with no mode at all, which on a shared
+ * or backed-up Mac is a plaintext credential anyone could read. There is still
+ * no Keychain or `safeStorage` here; 0600 is the floor,
  * not the destination.
  */
 import fs from "node:fs";
@@ -20,27 +20,15 @@ export interface WindowBounds {
 /**
  * How operation intents are decided:
  *   - approve:     auto "allow once", no dialog
- *   - adversarial: a Claude-backed adversarial review decides. It FAILS CLOSED:
- *                  no API key, an API error, a timeout, a refusal or an answer
- *                  that is not a verdict all fall back to `ask`, so a broken
- *                  reviewer hands the decision to the human and never approves.
+ *   - adversarial: a Claude-backed adversarial review decides, and nothing else
+ *                  does — there is no human in this mode. It FAILS CLOSED: no
+ *                  credential, an API error, a timeout, a refusal or an answer
+ *                  that is not a verdict all deny the operation outright, each
+ *                  with a source saying which it was.
  *   - ask:         always show the approval dialog (default)
  *   - deny:        auto-deny, no dialog
  */
 export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
-
-/**
- * Which backend runs the adversarial reviewer:
- *   - plow:      Plow's API, billed to the signed-in Plow account, authenticated
- *                with this Mac's relay credential. The default.
- *   - anthropic: the Anthropic API with a key the user pastes below.
- *
- * The tuple is the single source: the type derives from it, validation iterates
- * it, and availability is keyed by it. Adding a provider is one edit here.
- */
-export const INFERENCE_PROVIDERS = ["plow", "anthropic"] as const;
-
-export type InferenceProvider = (typeof INFERENCE_PROVIDERS)[number];
 
 export interface Settings {
   /* There is deliberately NO API base URL here. It is baked into the build
@@ -75,10 +63,6 @@ export interface Settings {
   approvalMode: ApprovalMode;
   /** In Ask mode, highlight the button the adversarial agent suggests. */
   showAgentSuggestions: boolean;
-  /** Anthropic API key — required for the adversarial agent features. */
-  anthropicApiKey: string;
-  /** Which backend runs the reviewer. An absent field reads as `plow`. */
-  inferenceProvider: InferenceProvider;
   /**
    * What the owner of this Mac says agents are for, in their own words.
    *
@@ -100,6 +84,14 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
+  /** The first-run launch-at-login default has been applied (main.ts's
+   * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
+   * loginItem.ts explains why none exists — only the record that the one-time
+   * default ran, so it can never run twice and a user who turns the toggle off
+   * stays off. Deliberately survives sign-out: a re-setup is not a first run.
+   * A signed-in home from before this field existed is grandfathered on load —
+   * see `loadSettings` — for the same reason. */
+  launchAtLoginDefaulted: boolean;
 }
 
 function settingsPath(home: string): string {
@@ -114,17 +106,51 @@ export function loadSettings(home: string): Settings {
     selectedTab: "agents",
     approvalMode: "ask",
     showAgentSuggestions: true,
-    anthropicApiKey: "",
-    inferenceProvider: "plow",
     agentPurpose: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
+    launchAtLoginDefaulted: false,
   };
+  let parsed: unknown;
   try {
-    return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(home), "utf8")) };
+    parsed = JSON.parse(fs.readFileSync(settingsPath(home), "utf8"));
   } catch {
     return defaults;
   }
+  const settings =
+    parsed && typeof parsed === "object" ? { ...(parsed as Record<string, unknown>) } : {};
+  // Bring-your-own-key is gone, and its two fields go with it. Unknown keys
+  // otherwise ride this spread in and `saveSettings` writes them back, so a Mac
+  // that once pasted an Anthropic key would keep it forever — unread by
+  // anything, readable by anyone who opens the file. A secret nobody reads is
+  // still a secret. Delete these three lines once the fleet has turned over:
+  // they are a one-off, not a migration framework.
+  const retired = "anthropicApiKey" in settings || "inferenceProvider" in settings;
+  delete settings.anthropicApiKey;
+  delete settings.inferenceProvider;
+
+  const loaded = { ...defaults, ...settings };
+  // A signed-in home from before `launchAtLoginDefaulted` existed: its owner's
+  // launch-at-login choice predates the default, so reading the absent field as
+  // false would let a later re-setup flip the bit on them. Grandfather it as
+  // already defaulted. This can never swallow a genuinely new home's default:
+  // setup saves the whole Settings object, so any file holding a credential
+  // written since this field existed carries the key explicitly. Asked of the
+  // scrubbed record rather than the raw parse — the scrub only ever removes the
+  // retired key names, so the two answer this identically. It also has to run
+  // BEFORE the scrub's write below, or a home cleaned on this load is written
+  // back without the bit it was just granted.
+  if (!("launchAtLoginDefaulted" in settings) && loaded.relayCredential.trim()) {
+    loaded.launchAtLoginDefaulted = true;
+  }
+  // Take them OFF DISK here, rather than waiting for the next write of some
+  // unrelated setting — and let a failure THROW. Swallowing it would report a
+  // successful load while the credential is still in the file, which is the one
+  // outcome this exists to prevent; every other write in this module propagates
+  // too. It happens at most once, because the second read finds nothing to
+  // remove.
+  if (retired) saveSettings(home, loaded);
+  return loaded;
 }
 
 export function saveSettings(home: string, settings: Settings): void {
