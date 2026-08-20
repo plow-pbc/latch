@@ -434,9 +434,9 @@ describe("access the owner's log could not record is not granted", () => {
     async (failOn) => {
     // The retirement runs ahead of every audit append for exactly this reason:
     // the response is already in the jar, so a log the device cannot write
-    // must not be what decides whether the jar stays reusable. The second row
-    // is the append that sits closest to it, and the one an earlier ordering
-    // put in front.
+    // must not be what decides whether the jar stays reusable.
+    // `browser_scope_violation` is the append an earlier ordering put in front
+    // of the retirement.
     const sessions = failingAudit(failOn, false);
     const origins = ["pizza.example", "*.pizza.example"];
     const opened = jv(await sessions.open("int-1", AGENT, origins, true));
