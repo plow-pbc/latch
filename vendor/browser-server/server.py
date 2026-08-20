@@ -65,10 +65,10 @@ SETTLE_MS = 1000
 # them is assigned: a credential is shorter than that and is typed whole, while
 # a 5 000-character message body still lands and still ends on real keys. What
 # the cap buys is that TYPING cannot grow with the length of the value. It is
-# not a bound on what the whole action costs. Every fill also runs `evaluate` --
-# three of them plainly, five or more when the value is masked -- and those take
-# no timeout and no default covers them, so a page that will not run script
-# hangs the action outright. A caller that names no frame pays for the frame
+# not a bound on what the whole action costs. Every fill also runs several
+# `evaluate` calls, and a masked one about twice as many; none of them take a
+# timeout and no default covers them, so a page that will not run script hangs
+# the action outright. A caller that names no frame pays for the frame
 # search on top of that (the loop below, #96).
 KEY_DELAY_MS = 45
 TYPING_MAX_MS = 4000
