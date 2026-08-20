@@ -315,6 +315,31 @@ describe("browser tools (fake runtime)", () => {
     expect(pizzaAgain).toBe(pizza);
   });
 
+  it("asking for a credential is not a widening, and keeps the jar", async () => {
+    // plow_browser_request carries credential items as well as origins, and
+    // one with no origins at all lands in the same extend() — the bound does
+    // not move, so neither should the profile. Giving it up here would sign
+    // the owner out of a site for the crime of asking for its password.
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+    const key = profileKeyForOrigins(["pizza.example"]);
+
+    const session = await open(server, ["pizza.example"]);
+    const asked = await callTool(
+      server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT,
+    );
+    expect(asked.isError, JSON.stringify(asked.payload)).toBe(false);
+    expect(asked.payload.items).toEqual(["L1"]);
+
+    expect(abandoned(profiles, key)).toBe(false);
+    expect(audited(device, "browser_profile_abandoned")).toEqual([]);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+
+    // And the next session on the same grant comes back to it.
+    await open(server, ["pizza.example"]);
+    expect(fs.readdirSync(profiles)).toEqual([key]);
+  });
+
   it("a widened session's jar is given up, and no later session opens it", async () => {
     // The escape this closes: state written for the widened origin sits in a
     // jar filed under the narrower grant, and the next session on that grant
@@ -367,6 +392,15 @@ describe("browser tools (fake runtime)", () => {
       [opening, `${opening}-2`, profileKeyForOrigins(["pizza.example", "bank.example"])].sort(),
     );
     expect(abandoned(profiles, `${opening}-2`)).toBe(false);
+
+    // Which one each browser opened is in the log, because the owner cannot
+    // work it out from the origins once a suffix is involved — the doc sends
+    // them here for exactly this case.
+    expect(audited(device, "browser_started")).toEqual([
+      opening,
+      `${opening}-2`,
+      profileKeyForOrigins(["pizza.example", "bank.example"]),
+    ]);
   });
 
   it("a second agent racing the cold start is refused, not handed the browser", async () => {

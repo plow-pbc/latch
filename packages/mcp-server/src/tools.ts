@@ -392,7 +392,9 @@ export const TOOLS: ToolSpec[] = [
       "Open a browser on the user's own Mac. Cookies and logins are kept per approved origin " +
       "set, so what an earlier session on the origins this task needs left behind is still " +
       "there — ask for the origins the task needs, not a wider list, or you land somewhere " +
-      "else. The browser can also " +
+      "else. Widening a session mid-task (plow_browser_request with new origins) gives that " +
+      "store up for good, so ask for what the task needs up front and expect to sign in again " +
+      "next time if you did not. The browser can also " +
       "fill passwords from their vault without returning them to you ('eval' is the exception: " +
       "it reads page values directly, and must not be pointed at a field you filled) — so use " +
       "it for sites that " +

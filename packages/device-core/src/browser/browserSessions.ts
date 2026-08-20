@@ -237,12 +237,17 @@ export class BrowserSessions {
     const widenedItems = new Set(s.credentialItems);
     for (const i of items) widenedItems.add(i);
     const itemList = [...widenedItems].sort();
-    // Before the record, unlike the bound itself: this grants no access, and a
-    // failed write must not leave a log line asserting a widening that did not
-    // happen. If it throws the call fails with the session's old bound, which
-    // is the safe end — a jar still answering to the narrow grant while
-    // holding the widened origin's cookies is the escape itself.
-    this.host.abandonProfile();
+    // Only when the bound actually grew. A request that asks for nothing but
+    // credential items comes through here too, with the origins unchanged —
+    // the jar then holds nothing the grant it is filed under does not name, so
+    // giving it up would sign the owner out of a site for asking for a
+    // password. Before the record, unlike the bound itself: this grants no
+    // access, and a failed write must not leave a log line asserting a
+    // widening that did not happen. If it throws the call fails with the
+    // session's old bound, which is the safe end — a jar still answering to
+    // the narrow grant while holding the widened origin's cookies is the
+    // escape itself.
+    if (widened.length > s.origins.length) this.host.abandonProfile();
     this.audit("browser_session_extended", {
       intentId,
       session: s.handle,

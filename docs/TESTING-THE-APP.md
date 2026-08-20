@@ -149,8 +149,9 @@ sqlite3 "$HOME_DIR/device/browser/profiles/<key>/cookies.sqlite" \
 `$DOMO_HOME` is set by the `just` recipes, not in your shell, so spell the home out — the packaged
 install's is the unsuffixed `~/Library/Application Support/Plow-Latch`.
 
-The directory name is the hash of the approved origins, so `browser_session_opened` in the audit
-log tells you which one a session used. Deleting a profile directory is safe with the app shut
+`browser_started` in the audit log names the directory that browser opened — read it there rather
+than hashing the origins yourself, since a grant whose first profile was given up opens `<key>-2`
+next time. Deleting a profile directory is safe with the app shut
 down; it costs that grant its logins and nothing else. A store older than this change has a single
 `device/browser/profile` beside `profiles/` with everything mixed together; nothing reads it any
 more, so delete it whenever.

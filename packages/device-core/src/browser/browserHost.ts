@@ -65,6 +65,16 @@ interface Pending {
 /** File inside a profile marking it given up — see abandonProfile(). */
 const ABANDONED_MARKER = "domo-abandoned";
 
+/** Flush one path to the platter. Directories take an fd too, for the entry. */
+function fsync(target: string): void {
+  const fd = fs.openSync(target, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
@@ -199,7 +209,15 @@ export class BrowserHost {
   abandonProfile(): void {
     const dir = this.startedDir;
     if (!dir) return;
-    fs.writeFileSync(path.join(dir, ABANDONED_MARKER), "");
+    // Durable before this returns, because the widening it gates is not. The
+    // browser's own cookie writes go through SQLite, which fsyncs; a plain
+    // writeFileSync sits in the page cache for seconds. Lose power in that
+    // window and the widened origin's cookies survive while the marker that
+    // retires their jar does not — the escape, reassembled by a power cut.
+    const file = path.join(dir, ABANDONED_MARKER);
+    fs.writeFileSync(file, "");
+    fsync(file);
+    fsync(dir); // the marker's own directory entry
     this.startedDir = null; // nothing to give up twice
     // Both sides of the reuse guard follow, or the very next action reads a
     // mismatch and restarts the browser out from under the session.
@@ -332,6 +350,11 @@ export class BrowserHost {
             this.cfg.audit?.("browser_started", {
               pid: child.pid ?? -1,
               browser_version: this.browserVersion,
+              // Which store this browser is on. The name is the grant's hash
+              // for the first profile a grant opens, but a widening leaves
+              // that one behind and the next gets a suffix — so the owner
+              // cannot work it out from the origins alone.
+              profile: profileDir ? path.basename(profileDir) : "",
             });
             resolve();
           }
