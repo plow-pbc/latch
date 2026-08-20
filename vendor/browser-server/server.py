@@ -86,8 +86,6 @@ SETTLE_MS = 1000
 KEY_DELAY_MS = 45
 # What a key may cost beyond its delay: the round trip that dispatches it and
 # the actionability check in front of it. A few milliseconds on a local page.
-# The tail's budget is derived from it rather than the other way around, so
-# that the number stating what a credential is stays free of latency.
 KEY_OVERHEAD_MS = 30
 TYPED_CHARS = 64
 TYPING_MAX_MS = TYPED_CHARS * (KEY_DELAY_MS + KEY_OVERHEAD_MS)
