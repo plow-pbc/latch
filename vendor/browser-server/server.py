@@ -478,11 +478,6 @@ class Session:
                         if el is None:
                             raise RuntimeError("selector not found: %s" % sel)
                         # The device checked an origin before it went away to
-                        # fetch the value. If the document behind this index is
-                        # no longer the one it checked, nothing here is what was
-                        # approved -- so nothing is marked, and nothing is
-                        # typed.
-                        # The device checked an origin before it went away to
                         # fetch the value. If the node it resolved is in a
                         # different DOCUMENT than the one it checked, nothing
                         # here is what was approved -- so nothing is marked and
