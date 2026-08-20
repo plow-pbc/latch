@@ -162,8 +162,9 @@ export class BrowserSessions {
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
     // The profile is the grant: cookies, storage and cache written here are
     // reachable only by a later session the owner approved for the same
-    // origins. A widening keeps this browser but not this grant — `extend()`
-    // re-marks the jar, so it never answers to a grant narrower than it holds.
+    // origins. A widening keeps this browser but gives up this jar — see
+    // `BrowserHost.abandonProfile()`; nothing reopens it once it holds state
+    // for origins the grant it was filed under does not name.
     const profileKey = profileKeyForOrigins(origins);
     try {
       await this.host.ensureReady(headed, profileKey);
@@ -237,13 +238,11 @@ export class BrowserSessions {
     for (const i of items) widenedItems.add(i);
     const itemList = [...widenedItems].sort();
     // Before the record, unlike the bound itself: this grants no access, and a
-    // failed move must not leave a log line asserting a widening that did not
-    // happen. If it throws, the call fails with the session's old bound — an
-    // un-rekeyed jar under the narrow key is the escape itself. Failing the
-    // other way round is benign: the browser writes narrow-grant state into
-    // the union key, which a union session is entitled to anyway.
-    const dir = this.host.profileDir;
-    if (dir) this.host.markProfileGrant(dir, profileKeyForOrigins(widened));
+    // failed write must not leave a log line asserting a widening that did not
+    // happen. If it throws the call fails with the session's old bound, which
+    // is the safe end — a jar still answering to the narrow grant while
+    // holding the widened origin's cookies is the escape itself.
+    this.host.abandonProfile();
     this.audit("browser_session_extended", {
       intentId,
       session: s.handle,

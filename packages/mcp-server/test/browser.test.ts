@@ -78,28 +78,16 @@ function makeServer(
 const launches = (argvLog: string): string[] =>
   fs.readFileSync(argvLog, "utf8").trim().split("\n");
 
-/** Every browser_profile_regranted the device recorded, oldest first. */
-const regrants = (device: DeviceAgent): Record<string, unknown>[] =>
+/** The `profile` of every audit line of this event, oldest first. */
+const audited = (device: DeviceAgent, event: string): (string | null)[] =>
   device.audit
     .entries()
-    .filter((e) => jv(e as JSONValue).get("event").str === "browser_profile_regranted")
-    .map((e) => {
-      const f = jv(e as JSONValue);
-      return {
-        profile: f.get("profile").str,
-        grant: f.get("grant").str,
-        superseded: f.get("superseded").bool,
-      };
-    });
+    .filter((e) => jv(e as JSONValue).get("event").str === event)
+    .map((e) => jv(e as JSONValue).get("profile").str);
 
-/** The grant a profile directory answers to, as the host records it. */
-const grantOf = (profiles: string, dir: string): string | null => {
-  try {
-    return fs.readFileSync(path.join(profiles, dir, "domo-grant"), "utf8").trim() || null;
-  } catch {
-    return null;
-  }
-};
+/** Whether a profile directory has been given up (see abandonProfile). */
+const abandoned = (profiles: string, dir: string): boolean =>
+  fs.existsSync(path.join(profiles, dir, "domo-abandoned"));
 
 const events = (device: DeviceAgent): string[] =>
   device.audit.entries().map((e) => jv(e as JSONValue).get("event").str ?? "");
@@ -327,18 +315,17 @@ describe("browser tools (fake runtime)", () => {
     expect(pizzaAgain).toBe(pizza);
   });
 
-  it("a widened session's jar stops answering to the grant it opened under", async () => {
-    // The escape this closes: state written for the widened origin would sit
-    // in a jar the narrower grant can still open, and the next session on that
-    // grant would carry it to that origin on the first click or redirect,
-    // ahead of the post-action scope lock.
+  it("a widened session's jar is given up, and no later session opens it", async () => {
+    // The escape this closes: state written for the widened origin sits in a
+    // jar filed under the narrower grant, and the next session on that grant
+    // would carry it to that origin on the first click or redirect, ahead of
+    // the post-action scope lock.
     const { server, device, argvLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
     const opening = profileKeyForOrigins(["pizza.example"]);
-    const union = profileKeyForOrigins(["pizza.example", "bank.example"]);
 
     const session = await open(server, ["pizza.example"]);
-    expect(grantOf(profiles, opening)).toBe(opening);
+    expect(abandoned(profiles, opening)).toBe(false);
 
     const widen = await callTool(
       server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT,
@@ -346,84 +333,44 @@ describe("browser tools (fake runtime)", () => {
     expect(widen.isError, JSON.stringify(widen.payload)).toBe(false);
 
     // At the widening, not at close: quit, kill -9 and power loss all skip a
-    // close, and each would leave the jar answering to the opening grant.
-    expect(grantOf(profiles, opening)).toBe(union);
-    expect(regrants(device).at(-1)).toEqual({
-      profile: opening, grant: union, superseded: false,
-    });
+    // close, and each would leave the jar open to the narrower grant.
+    expect(abandoned(profiles, opening)).toBe(true);
+    expect(audited(device, "browser_profile_abandoned").at(-1)).toBe(opening);
 
     // The live browser came along: an action after the widening must not
-    // restart it, which would cost the session its page and open a second
-    // profile for the grant it no longer holds.
+    // restart it, which would cost the session its page.
     await act(server, session, "text");
     expect(launches(argvLog)).toHaveLength(1);
-    expect(fs.readdirSync(profiles)).toEqual([opening]);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    // A later session on the narrow grant gets a jar of its own, not that one.
-    await open(server, ["pizza.example"]);
-    expect(fs.readdirSync(profiles).sort()).toEqual([opening, `${opening}-2`]);
-    expect(grantOf(profiles, `${opening}-2`)).toBe(opening);
+    // Every later session steps over it — the narrow grant it was filed under
+    // included, which is the one that could actually send those cookies.
+    for (const origins of [["pizza.example"], ["pizza.example", "bank.example"]]) {
+      const later = await open(server, origins);
+      await callTool(server, "plow_browser_close", { session: later }, AGENT);
+    }
+    expect(fs.readdirSync(profiles).sort()).toEqual([
+      opening,
+      `${opening}-2`,
+      profileKeyForOrigins(["pizza.example", "bank.example"]),
+    ]);
+    expect(abandoned(profiles, `${opening}-2`)).toBe(false);
   });
 
-  it("widening onto an established profile leaves that one answering for it", async () => {
+  it("a second widening gives up the jar the session moved on to", async () => {
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
     const opening = profileKeyForOrigins(["pizza.example"]);
-    const union = profileKeyForOrigins(["pizza.example", "bank.example"]);
-
-    // A grant that has been browsed before, with something in its jar.
-    const established = await open(server, ["pizza.example", "bank.example"]);
-    await callTool(server, "plow_browser_close", { session: established }, AGENT);
-    fs.writeFileSync(path.join(profiles, union, "cookies.sqlite"), "the older login");
-
-    const session = await open(server, ["pizza.example"]);
-    await callTool(server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT);
-
-    // The established jar outlives one session, so it keeps the grant; this
-    // one answers to nothing, which no key can spell.
-    expect(fs.readFileSync(path.join(profiles, union, "cookies.sqlite"), "utf8")).toBe(
-      "the older login",
-    );
-    expect(grantOf(profiles, union)).toBe(union);
-    expect(grantOf(profiles, opening)).toBeNull();
-    expect(regrants(device).at(-1)).toMatchObject({ profile: opening, superseded: true });
-    await callTool(server, "plow_browser_close", { session }, AGENT);
-
-    // And the narrow grant does not get that jar back. An empty marker reads
-    // the same as no marker at all, so a profile can never be claimed on the
-    // strength of its name — it would be one holding the widened origin's
-    // cookies, handed to a session that was never approved for them.
-    await open(server, ["pizza.example"]);
-    expect(fs.readdirSync(profiles).sort()).toEqual([opening, `${opening}-2`, union]);
-    expect(grantOf(profiles, `${opening}-2`)).toBe(opening);
-    expect(grantOf(profiles, opening)).toBeNull();
-  });
-
-  it("a second widening re-marks the jar the session is on, not the one beside it", async () => {
-    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
-    const profiles = path.join(device.home, "device/browser/profiles");
-    const opening = profileKeyForOrigins(["pizza.example"]);
-    const union = profileKeyForOrigins(["pizza.example", "bank.example"]);
-    const wider = profileKeyForOrigins(["pizza.example", "bank.example", "shop.example"]);
-
-    const established = await open(server, ["pizza.example", "bank.example"]);
-    await callTool(server, "plow_browser_close", { session: established }, AGENT);
-    fs.writeFileSync(path.join(profiles, union, "cookies.sqlite"), "the older login");
 
     const session = await open(server, ["pizza.example"]);
     await callTool(server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT);
     await callTool(server, "plow_browser_request", { session, origins: ["shop.example"] }, AGENT);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    // The second widening is about the session's own jar. Touching the one
-    // beside it would cost the established grant the logins the collision
-    // branch preserved, in a call that never went near them.
-    expect(fs.readFileSync(path.join(profiles, union, "cookies.sqlite"), "utf8")).toBe(
-      "the older login",
-    );
-    expect(grantOf(profiles, union)).toBe(union);
-    expect(grantOf(profiles, opening)).toBe(wider);
+    // The browser never left the jar it opened, so there is one to give up and
+    // giving it up twice is not a second directory or a second audit line.
+    expect(fs.readdirSync(profiles)).toEqual([opening]);
+    expect(audited(device, "browser_profile_abandoned")).toEqual([opening]);
   });
 
   it("a second agent racing the cold start is refused, not handed the browser", async () => {

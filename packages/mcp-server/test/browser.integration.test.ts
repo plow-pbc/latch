@@ -212,50 +212,37 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     });
   }, 300_000);
 
-  it("keeps writing to its jar after a widening, and the widened grant finds it", async () => {
-    // Widening rewrites the grant recorded INSIDE the live profile, so the jar
-    // stops answering to the narrower one it opened under while the directory
-    // stays exactly where Camoufox has it open. This is the test that refuted
-    // doing it as a rename: the browser went on serving pages afterwards, and
-    // every cookie written after the move was lost. No fake runtime can tell
-    // you either half of that.
-    // An origin set no other test in this file uses, so the jar cannot start
-    // out holding somebody else's sid — the fixture keeps every session it
-    // ever issued valid, so a borrowed cookie would satisfy every assertion
-    // below without a single post-rename byte reaching disk.
+  it("goes on browsing after a widening, and leaves nothing any later session can open", async () => {
+    // Widening gives the live profile up: the session keeps using it, and no
+    // later grant — the narrow one it was filed under least of all — reopens
+    // it. Both halves need a real browser: that Camoufox is unbothered by the
+    // marker, and that the jar it filled really is gone afterwards.
     const narrow = ["127.0.0.1", "widen-only.example"];
-    const wide = [...narrow, "late.example"];
     const openOn = async (origins: string[]) => {
       const r = await callTool(server, "plow_browser_open", { origins, headed: false }, AGENT);
       expect(r.isError, JSON.stringify(r.payload)).toBe(false);
       session = r.payload.session as string;
     };
+
     await openOn(narrow);
     await act("goto", { url: site.url + "/" });
-
-    // Widen FIRST, so every cookie in this session is written after it. This
-    // is the assertion that refuted the rename this replaced: a real Camoufox
-    // went on serving pages after its profile directory moved, but none of
-    // the cookies written afterwards reached disk.
     const widened = await callTool(
       server, "plow_browser_request", { session, origins: ["late.example"] }, AGENT,
     );
     expect(widened.isError, JSON.stringify(widened.payload)).toBe(false);
-    expect(await menuPageText()).toMatch(SIGNED_OUT); // nothing carried in
 
-    // The browser is still usable, and this Set-Cookie lands after the widen.
-    await act("goto", { url: site.url + "/" });
+    // The session is untouched by it: this login happens after the widening
+    // and the browser is still the same one, on the same jar.
     await act("fill", { selector: "#user", value: "jon@example.com" });
     await act("fill", { selector: "#pass", value: "pizza-time-99" });
     await act("click", { selector: "#login" });
     expect(await menuPageText()).toMatch(SIGNED_IN);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    // The widened grant finds that cookie, and it is the only one there was —
-    // so the writes went on landing in the jar, and the marker is what leads
-    // the widened grant back to it.
-    await openOn(wide);
-    expect(await menuPageText()).toMatch(SIGNED_IN);
+    // And it is gone. The grant it was filed under is the dangerous one — it
+    // is the one that never approved late.example.
+    await openOn(narrow);
+    expect(await menuPageText()).toMatch(SIGNED_OUT);
     await callTool(server, "plow_browser_close", { session }, AGENT);
   }, 300_000);
 });
