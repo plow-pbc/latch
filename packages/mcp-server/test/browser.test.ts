@@ -230,11 +230,13 @@ describe("browser tools (fake runtime)", () => {
       expect(widen.isError, JSON.stringify(widen.payload)).toBe(true);
       expect(JSON.stringify(widen.payload)).toContain("no 'origins' pattern can match a host");
     }
-    // An empty list is still its own message (the schema catches an omitted
-    // field before the handler sees it).
-    const absent = await callTool(server, "plow_browser_open", { origins: [] }, AGENT);
-    expect(absent.isError).toBe(true);
-    expect(JSON.stringify(absent.payload)).toContain("'origins' is empty");
+    // An omitted or empty list is the schema's to refuse, not the handler's —
+    // asserted here so the handler's silence on it stays justified.
+    for (const args of [{}, { origins: [] }]) {
+      const absent = await callTool(server, "plow_browser_open", args, AGENT);
+      expect(absent.isError, JSON.stringify(absent.payload)).toBe(true);
+      expect(JSON.stringify(absent.payload)).toContain("validation");
+    }
 
     // A real origin carrying one alongside it opens, with the junk dropped —
     // the card, the session bound and the profile all name the same set.

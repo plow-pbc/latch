@@ -411,6 +411,7 @@ export const TOOLS: ToolSpec[] = [
         origins: {
           type: "array",
           items: { type: "string" },
+          minItems: 1,
           description: "Host patterns: 'example.com' or '*.example.com'",
         },
         credentials_metadata: {
@@ -435,13 +436,10 @@ export const TOOLS: ToolSpec[] = [
       // may save, the session's bound and its profile all name one set — an
       // entry that bounds nothing would otherwise show as a blank on the card
       // and make the saved rule un-rematchable.
+      // Required and minItems:1 in the schema, so an absent or empty list is
+      // refused before this runs; what is left for requestedOrigins to catch
+      // is a list that was sent and bounds nothing.
       const origins = requestedOrigins(a.get("origins").arr);
-      // The schema has 'origins' required, so the handler only sees this when
-      // the agent sent an empty list — naming it "missing" would send it back
-      // with the same argument.
-      if (origins.length === 0) {
-        throw new ToolError("'origins' is empty — list the host patterns this task needs");
-      }
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });
