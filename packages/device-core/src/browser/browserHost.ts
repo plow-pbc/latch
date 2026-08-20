@@ -191,9 +191,12 @@ export class BrowserHost {
   }
 
   /**
-   * Give up the live profile, at the moment `extend()` widens the grant. From
-   * here nothing reopens it: the session goes on using it — Camoufox has it
-   * open and keeps writing — but once that browser stops, the jar is done.
+   * Give up the live profile, the moment it can be holding state for an origin
+   * its grant does not name — a widening, or an action that landed out of
+   * scope. From here nothing reopens it: the session goes on using it, since
+   * Camoufox has it open and keeps writing, but once that browser stops the
+   * jar is done. One way, and never undone: whether a contaminated jar is safe
+   * to hand back is a question with a subtle answer, so it is not asked.
    *
    * Why give it up rather than re-file it under the widened grant: a widening
    * leaves the jar holding cookies for an origin its grant omits, and the next
@@ -213,10 +216,9 @@ export class BrowserHost {
    * Camoufox goes on serving pages after its directory moves, but the cookies
    * written afterwards never reach disk.
    */
-  async abandonProfile(): Promise<() => Promise<void>> {
+  async abandonProfile(): Promise<void> {
     const dir = this.startedDir;
-    const key = this.startedKey;
-    if (!dir) return async () => undefined;
+    if (!dir) return;
     // Out of the page cache before this returns, because the cookies it
     // retires do not wait there: the browser's writes go through SQLite,
     // which fsyncs, while a plain writeFileSync sits for seconds. Lose power
@@ -245,22 +247,6 @@ export class BrowserHost {
     this.startedKey = null;
     this.profileKeyNow = null;
     this.cfg.audit?.("browser_profile_abandoned", { profile: path.basename(dir) });
-    // Undo, for a caller whose widening does not survive being recorded. The
-    // marker is durable by the time this returns, so a rollback has to be too:
-    // left behind, it retires a jar the owner is still entitled to and signs
-    // them out of that site for good, with nothing in the log to say why.
-    return async () => {
-      // Pointers and record first, durable work second: an fsync failure
-      // half-way through would otherwise leave the log asserting a retirement
-      // that had just been undone, which is the over-reporting this ordering
-      // exists to prevent — in the other direction.
-      this.startedDir = dir;
-      this.startedKey = key;
-      this.profileKeyNow = key;
-      this.cfg.audit?.("browser_profile_kept", { profile: path.basename(dir) });
-      await fsp.rm(file, { force: true });
-      await fsync(dir);
-    };
   }
 
   private profileDirForStart(): string | null {

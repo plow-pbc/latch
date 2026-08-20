@@ -272,28 +272,13 @@ export class BrowserSessions {
     // session's old bound, which is the safe end — a jar still answering to
     // the narrow grant while holding the widened origin's cookies is the
     // escape itself.
-    const keepProfile =
-      widened.length > s.origins.length ? await this.host.abandonProfile() : null;
-    try {
-      this.audit("browser_session_extended", {
-        intentId,
-        session: s.handle,
-        origins: widened,
-        items: itemList,
-      });
-    } catch (error: unknown) {
-      // The bound is not granted, so the jar must not be retired either — a
-      // widening that failed to be recorded would otherwise cost the owner
-      // that site's logins for good, silently. Swallowed if the undo itself
-      // fails: the audit append is the failure this path exists to report, and
-      // replacing it with an fsync error costs the caller the diagnosis.
-      try {
-        await keepProfile?.();
-      } catch {
-        /* the audit failure below is the one worth reporting */
-      }
-      throw error;
-    }
+    if (widened.length > s.origins.length) await this.host.abandonProfile();
+    this.audit("browser_session_extended", {
+      intentId,
+      session: s.handle,
+      origins: widened,
+      items: itemList,
+    });
     s.origins = widened;
     s.credentialItems = widenedItems;
     if (credentialMetadata) s.credentialMetadata = true;
@@ -523,6 +508,13 @@ export class BrowserSessions {
         action: String(action.action),
         origin,
       });
+      // The contamination boundary, and the earliest one there is: the scope
+      // check runs on where the action LANDED, so Camoufox has already made
+      // that request with whatever cookies it held and stored whatever came
+      // back. The jar holds this origin's state now, under a grant that does
+      // not name it, so it stops being reusable here — no widening required,
+      // and nothing gives it back.
+      await this.host.abandonProfile();
       out.out_of_scope = origin;
       out.note =
         `landed on ${origin}, outside the approved origins — page content is ` +

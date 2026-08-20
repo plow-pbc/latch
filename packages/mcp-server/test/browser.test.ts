@@ -348,6 +348,33 @@ describe("browser tools (fake runtime)", () => {
     expect(JSON.stringify(again.payload)).toContain("unknown session");
   });
 
+  it("a page that navigates out of scope retires the jar, with no widening at all", async () => {
+    // The scope check runs on where the action LANDED, so by the time it
+    // fires Camoufox has already made that request with whatever cookies it
+    // held and stored whatever came back. Nothing was widened and nothing was
+    // approved — the jar is contaminated all the same, and a later session on
+    // the grant it is filed under would send those cookies on its first
+    // redirect, ahead of the lock.
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const profiles = path.join(device.home, "device/browser/profiles");
+    const key = profileKeyForOrigins(["pizza.example", "*.pizza.example"]);
+
+    const session = await open(server, ["pizza.example", "*.pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/menu" });
+    expect(abandoned(profiles, key)).toBe(false);
+
+    // #offsite navigates the page to https://offsite.example/lander.
+    const strayed = await act(server, session, "click", { selector: "#offsite" });
+    expect(strayed.payload.out_of_scope).toBe("offsite.example");
+    expect(abandoned(profiles, key)).toBe(true);
+    expect(audited(device, "browser_profile_abandoned")).toEqual([key]);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+
+    // The grant it was filed under does not get it back.
+    await open(server, ["pizza.example", "*.pizza.example"]);
+    expect(fs.readdirSync(profiles).sort()).toEqual([key, `${key}-2`]);
+  });
+
   it("a widened session's jar is given up, and no later session opens it", async () => {
     // The escape this closes: state written for the widened origin sits in a
     // jar filed under the narrower grant, and the next session on that grant

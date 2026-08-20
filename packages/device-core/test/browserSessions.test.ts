@@ -413,18 +413,18 @@ describe("access the owner's log could not record is not granted", () => {
     expect(live.origins).toEqual(["pizza.example"]);
     expect(live.origins).not.toContain("paypal.example");
 
-    // And the jar must not have been retired for a widening that never
-    // happened — the owner would be signed out of that site for good, with
-    // nothing in the log to explain it.
+    // The jar is gone either way, and deliberately: abandonment happens at the
+    // moment the profile can start holding the wider origin's state, and it is
+    // never given back. Costing this grant its logins is the price of not
+    // having to decide whether a jar that was about to be widened is safe to
+    // reuse — a question with a subtle answer.
     const key = profileKeyForOrigins(["pizza.example"]);
-    const profile = path.join(ctx.dir, "profiles", key);
-    expect(fs.existsSync(path.join(profile, "domo-abandoned"))).toBe(false);
+    expect(fs.existsSync(path.join(ctx.dir, "profiles", key, "domo-abandoned"))).toBe(true);
     await sessions.closeAll("test");
 
-    // Reopening the same grant comes back to it rather than starting fresh.
     const again = jv(await sessions.open("int-3", AGENT, ["pizza.example"], true));
     expect(again.get("session").str).toBeTruthy();
-    expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([key]);
+    expect(fs.readdirSync(path.join(ctx.dir, "profiles")).sort()).toEqual([key, `${key}-2`]);
     await sessions.closeAll("test");
   });
 

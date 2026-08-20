@@ -156,10 +156,12 @@ down; it costs that grant its logins and nothing else. A store older than this c
 `device/browser/profile` beside `profiles/` with everything mixed together; nothing reads it any
 more, so delete it whenever.
 
-**Widening a live session signs it out for next time.** `plow_browser_request` with new origins
-leaves the jar holding cookies for an origin the grant it was filed under does not name — so that
-profile is given up on the spot (a `domo-abandoned` file inside it, `browser_profile_abandoned` in
-the log). The session goes on using it; nothing opens it again, and the next session on those
+**A session that reaches an unapproved origin signs itself out for next time.** Two ways in: a
+`plow_browser_request` that widens the grant, and a click or redirect that lands the page outside
+it — the scope check runs on where the action *landed*, so the browser has already made that
+request and stored whatever came back. Either way the jar now holds cookies for an origin the grant
+it was filed under does not name, so that profile is given up on the spot (a `domo-abandoned` file
+inside it, `browser_profile_abandoned` in the log), and it is never given back. The session goes on using it; nothing opens it again, and the next session on those
 origins gets an empty one at `<key>-2`. That is what an unexplained sign-out looks like now, and
 deleting an abandoned directory once its session has closed is always safe.
 
