@@ -117,6 +117,13 @@ class Handle:
         self.trace.append("handle.fill")
 
 
+class Hidden(RuntimeError):
+    """What a frame holding the field but refusing to show it answers with.
+
+    Its own type, so a scenario can say WHICH frame's failure came back.
+    """
+
+
 class Frame:
     """One frame, with as many nodes as a scenario needs.
 
@@ -127,8 +134,12 @@ class Frame:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False, document_token="doc-1"):
+                 partial_fill=False, document_token="doc-1", hides=False, detached=False):
         self.trace = trace
+        # A frame that HAS the field and will not show it, and one that went
+        # away: the two failures the fill path ranks against each other.
+        self.hides = hides
+        self.detached = detached
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
@@ -146,11 +157,16 @@ class Frame:
     def query_selector(self, selector):
         return self._node(selector)
 
+    def is_detached(self):
+        return self.detached
+
     def wait_for_selector(self, selector, timeout=None):
         self.trace.append("frame.wait_for_selector")
         node = self._node(selector)
         if node is None:
             raise RuntimeError("selector not found: %s" % selector)
+        if self.hides:
+            raise Hidden("%s never became visible" % selector)
         return node
 
     def fill(self, selector, value, timeout=None):
@@ -206,6 +222,21 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["value_kept"] = frame.handle.value == value
     out["ledgered"] = bool(session.masked)
     return out
+
+
+def ranked(server):
+    """A frame holding the field and refusing to show it, with a frame that went
+    away sorting after it. The answer has to be the one from the frame that had
+    the field -- a frame with nothing in it must not overwrite it."""
+    trace: list[str] = []
+    holder = Frame(trace, nodes={"#pass": Handle(trace)}, hides=True)
+    gone = Frame(trace, nodes={}, detached=True)
+    session = server.Session(Page(gone, extra_frames=[holder]))
+    try:
+        session.handle({"action": "fill", "selector": "#pass", "value": "x"}, "/tmp")
+    except Exception as exc:  # noqa: BLE001 — the scenario under test
+        return {"error": type(exc).__name__}
+    return {"error": None}
 
 
 def ledger(server, script):
@@ -319,6 +350,7 @@ def main() -> int:
         # A visible fill that fails: the node still holds whatever was in it,
         # which may be the last secret, so the mark must still be there.
         "plain_failed": run(server, base, detach_before_fill=True, marked=True),
+        "ranked": ranked(server),
     }
     fill_pass = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0, "mask": True}
     fill_addr_at_pass = {"action": "fill", "selector": "#pass", "value": "1 Elm St", "frame": 0}

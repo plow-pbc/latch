@@ -519,6 +519,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
           sibling_marked: boolean;
         };
       };
+      ranked: { error: string | null };
     }>(FILL_PROBE);
   })();
 
@@ -529,6 +530,12 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       "handle.fill",
     ]);
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
+  });
+
+  it("reports the frame that had the field, not one that went away after it", () => {
+    // Both answer `wait_for_selector` with a failure, and only one of them was
+    // ever going to be able to fill anything.
+    expect(probed.ranked.error).toBe("Hidden");
   });
 
   it("hands the device an identity to check the fill against", () => {
