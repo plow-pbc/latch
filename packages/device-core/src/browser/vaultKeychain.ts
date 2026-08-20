@@ -78,4 +78,9 @@ export function vaultStoreIdentity(branch?: string): string {
  *
  * A helper that does both around a "latch" call cannot work: by the time any
  * function could run inside `whenReady`, the name is already captured.
+ *
+ * EVERY Electron entry that can reach `safeStorage` has to do it — not just
+ * `main.ts`. Until the product was renamed to Plow Latch, an unbranded run from
+ * source got the right key without asking, because the app's default name
+ * happened to spell this constant; nothing spells it now.
  */
