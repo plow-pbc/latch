@@ -70,6 +70,9 @@ export class BrowserHost {
   private restartTimes: number[] = [];
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
+  /** Which browser is current. A dead one's reader stays open long enough to
+   * finish reading what it said, and stops the moment a new one starts. */
+  private generation = 0;
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
@@ -249,6 +252,7 @@ export class BrowserHost {
     });
 
     const rl = readline.createInterface({ input: child.stdout! });
+    const gen = ++this.generation;
 
     return new Promise<void>((resolve, reject) => {
       let ready = false;
@@ -266,6 +270,13 @@ export class BrowserHost {
       startTimer.unref?.();
 
       rl.on("line", (line) => {
+        // A browser that has been replaced says nothing anyone wants: its
+        // refusals belong to a session that is over, and prepending them to
+        // the live list would file one browser's traffic under another's.
+        if (gen !== this.generation) {
+          rl.close();
+          return;
+        }
         let msg: JSONValue;
         try {
           msg = JSON.parse(line) as JSONValue;
@@ -315,10 +326,9 @@ export class BrowserHost {
       });
 
       child.on("exit", (code, signal) => {
-        // Closed with the child it belongs to: a reader left alive past exit
-        // can hand the NEXT browser's list the dead one's refusals, and
-        // shutdown waits for the goodbye reply itself rather than for the pipe.
-        rl.close();
+        // The reader is NOT closed here — exit and the stdout read are separate
+        // poll events, so the goodbye can still be in the pipe. It closes
+        // itself when the stream ends, or when a new browser supersedes it.
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;

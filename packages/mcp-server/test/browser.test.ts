@@ -53,6 +53,7 @@ function writeVault(dir: string): string {
 
 function makeServer(
   delegate: PolicyDelegate = new HeadlessPolicy({ intent: "allow_once" }),
+  serverEnv: Record<string, string> = {},
 ): { server: DomoMcpServer; device: DeviceAgent; fillLog: string; argvLog: string } {
   const dir = tempDir();
   const fillLog = path.join(dir, "fills.log");
@@ -64,6 +65,7 @@ function makeServer(
       FAKE_BROKER_VAULT: writeVault(dir),
       FAKE_FILL_LOG: fillLog,
       FAKE_ARGV_LOG: argvLog,
+      ...serverEnv,
     },
     camoufoxInstallDir: null,
   };
@@ -199,6 +201,20 @@ describe("browser tools (fake runtime)", () => {
         url: "https://pizza.example/api/whoami", frame_url: "https://pizza.example/",
       },
     ]);
+  });
+
+  it("says what the page's requests did even when the answer is an error", async () => {
+    // A refused observation is still an answer the agent has to act on, and an
+    // error is a string here — anything not said in it is not said at all.
+    const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once" }), {
+      FAKE_REMASK_FAILS: "1",
+    });
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/" });
+    await act(server, session, "click", { selector: "#blocked" });
+    const refused = await act(server, session, "screenshot");
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.payload)).toContain("https://pizza.example/api/whoami");
   });
 
   it("denyKinds credential blocks fill grants while browsing still works", async () => {

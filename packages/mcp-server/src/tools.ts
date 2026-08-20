@@ -555,7 +555,16 @@ export const TOOLS: ToolSpec[] = [
 
       const response = await ctx.device.browserCommand(ctx.agent.agentId, session, params);
       const r = jv(response);
-      if (r.get("status").str === "error") throw new ToolError(r.get("error").str ?? "browser error");
+      if (r.get("status").str === "error") {
+        // An error is a string here, so anything the device attached to it has
+        // to be said IN that string or it is not said at all — and what the
+        // page's own requests did is usually the reason for the error.
+        const refused = r.get("failed_requests").arr;
+        throw new ToolError(
+          (r.get("error").str ?? "browser error") +
+            (refused === null ? "" : ` — the page's own requests were refused: ${canonicalJSON(refused)}`),
+        );
+      }
 
       // Screenshot becomes an MCP image block so the agent can SEE the page.
       // Built from the SAME cleaned result as every other action — only the
