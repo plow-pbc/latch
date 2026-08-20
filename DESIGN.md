@@ -377,13 +377,14 @@ both `frame_url` and the requested url before either reaches the agent or the
 audit log.
 
 **The owner's log gets every entry** — an out-of-scope page being refused is
-exactly what they are watching for, and whatever is still held when a session
-closes or the browser dies goes on the closing line. **The agent gets only the
-entries with both ends inside the approved origins**, judged per entry rather
-than by where the action landed: a refusal on the approved page still matters
-when a sign-in redirect has parked the session elsewhere, and an unapproved
-page must not get to choose the text it hands the agent by choosing what to
-fetch.
+exactly what they are watching for, and whatever the device is still holding
+when a session closes or the browser dies goes on the closing line (a browser
+that dies abruptly cannot report what it never got to send). **The agent gets
+only the entries with both ends inside the approved origins**, judged per
+entry rather than by where the action landed: a refusal on the approved page
+still matters when a sign-in redirect has parked the session elsewhere, and an
+unapproved page must not get to choose the text it hands the agent by choosing
+what to fetch.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

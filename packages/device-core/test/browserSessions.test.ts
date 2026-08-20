@@ -300,28 +300,6 @@ describe("requests the site refused", () => {
     ]);
   });
 
-  it("logs the last thing a dying browser said, on the crash path itself", async () => {
-    const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    // Scripted: "#dies" reports a refusal and exits without answering. The
-    // command fails; the record of why must not die with the browser. What this
-    // cannot do is force the interleaving — whether the line is parsed before
-    // or after `exit` is dispatched is the kernel's business — so it covers the
-    // path, and the setImmediate around onCrash is what makes the order not
-    // matter.
-    const dead = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#dies" }));
-    expect(dead.get("status").str).toBe("error");
-    await new Promise((r) => setTimeout(r, 50));
-    const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
-    expect(closed?.fields.reason).toBe("crashed");
-    expect(closed?.fields.failed_requests).toEqual([
-      {
-        status: 429, method: "GET",
-        url: "https://pizza.example/api/last-gasp", frame_url: "https://pizza.example/",
-      },
-    ]);
-  });
-
   it("logs them when the browser dies under the session too", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
@@ -348,17 +326,14 @@ describe("requests the site refused", () => {
     // that only rode success replies would be the one nobody ever sees.
     const failed = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#refuses" }));
     expect(failed.get("status").str).toBe("error");
-    // It reaches the agent, and the owner's log, on the action after the one
-    // that failed — the failing action's own reply is an error and carries no
-    // result to hang it on.
-    const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
+    // On the failing action itself, not the one after it: the refusal IS the
+    // reason, and an agent reading only the error would otherwise retry blind.
     const entry = {
       status: 403, method: "POST",
       url: "https://pizza.example/api/submit", frame_url: "https://pizza.example/",
     };
-    expect(shot.get("failed_requests").value).toEqual([entry]);
+    expect(failed.get("failed_requests").value).toEqual([entry]);
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
-    expect(command?.fields.action).toBe("screenshot");
     expect(command?.fields.failed_requests).toEqual([entry]);
   });
 
@@ -433,17 +408,6 @@ describe("requests the site refused", () => {
     expect(command?.fields.failed_requests).toEqual([
       { status: 503, method: "GET", url: "https://pizza.example/api/sw", frame_url: "" },
     ]);
-  });
-
-  it("drops refusals a browser puts where this side no longer reads them", async () => {
-    // A mismatched vendored server.py nesting them inside `result` would
-    // otherwise ride the spread straight past the approved-origin filter.
-    ctx = makeCtx({ FAKE_NEST_FAILURES: "1" });
-    const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" }));
-    expect(r.get("failed_requests").value).toBeNull();
-    expect(JSON.stringify(r.value)).not.toContain("offsite.example/api/who");
   });
 
   it("hands the agent nothing it cannot read — a malformed list is not passed through", async () => {

@@ -484,14 +484,17 @@ class Session:
             # afterwards for a page to navigate into and claim.
             self.goto_url = _strip_query(cmd["url"])
             try:
-                # 12s + 1s settle keeps the whole action under the device's 15s
-                # host cap and the relay's ~20s exchange ceiling; a genuinely
-                # slower page fails cleanly (the agent retries) rather than
-                # parking a torn 504.
+                # 12s keeps the whole action under the device's 15s host cap and
+                # the relay's ~20s exchange ceiling; a genuinely slower page
+                # fails cleanly (the agent retries) rather than parking a torn
+                # 504.
                 self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
-                self.page.wait_for_timeout(1000)
             finally:
                 self.goto_url = ""
+            # The settle sits OUTSIDE the window: a second of it with the url
+            # still believed is a second in which the page can navigate through
+            # that target and have what it chose called the agent's own.
+            self.page.wait_for_timeout(1000)
             return {"title": self.page.title()}
 
         if action == "pages":

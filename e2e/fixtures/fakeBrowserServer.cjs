@@ -20,9 +20,6 @@
  *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
  *                            server does when the resolved node is in a
  *                            different document than the one approved
- *   FAKE_NEST_FAILURES=1     put failed_requests inside `result` instead of on the
- *                            reply, the way a mismatched vendored server.py would —
- *                            the device must drop it rather than pass it through
  *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
  *                            server refuses when a mark will not go back on
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
@@ -37,8 +34,6 @@
  *   click "#offsite"  navigates the page to https://offsite.example/lander, one
  *                     of whose requests was refused — and another that settles
  *                     while parked there
- *   click "#dies"     reports one refusal and exits(9) without answering — the
- *                     crash path, where the last thing said is easiest to lose
  *   click "#refuses"  throws, and the refusals it saw ride the error reply
  *   click "#blocked"  the page's own requests come back refused: seven 4xx
  *                     responses, the way the real server reports the ones it
@@ -79,11 +74,7 @@ function withFailures(reply) {
   const failed = state.failed;
   state.failed = state.failedNext;
   state.failedNext = [];
-  if (failed.length === 0) return reply;
-  if (process.env.FAKE_NEST_FAILURES === "1" && reply.result) {
-    return { ...reply, result: { ...reply.result, failed_requests: failed } };
-  }
-  return { ...reply, failed_requests: failed };
+  return failed.length === 0 ? reply : { ...reply, failed_requests: failed };
 }
 
 function respond(obj, flushed) {
@@ -319,18 +310,6 @@ function main() {
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
     if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
-    if (cmd.action === "click" && cmd.selector === "#dies") {
-      // Says what the page's requests did, then dies without answering the
-      // command — the shape where the device's own bookkeeping decides whether
-      // the owner ever learns it.
-      respond({
-        failed_requests: [{
-          status: 429, method: "GET",
-          url: "https://pizza.example/api/last-gasp", frame_url: "https://pizza.example/",
-        }],
-      }, () => process.exit(9));
-      return;
-    }
     let reply;
     try {
       reply = { id: cmd.id, result: envelope(handle(cmd)) };

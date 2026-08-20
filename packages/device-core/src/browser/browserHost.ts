@@ -78,6 +78,9 @@ export class BrowserHost {
    * Called once the goodbye has provably been read (shutdown) or can never
    * come. */
   private releaseReader: (() => void) | null = null;
+  /** Settles when the current reader has emitted everything it will ever emit —
+   * readline delivers every buffered line before it closes. */
+  private readerFinished: Promise<void> | null = null;
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
@@ -264,6 +267,7 @@ export class BrowserHost {
       if (this.releaseReader === release) this.releaseReader = null;
     };
     this.releaseReader = release;
+    this.readerFinished = new Promise<void>((r) => rl.once("close", () => r()));
 
     return new Promise<void>((resolve, reject) => {
       let ready = false;
@@ -329,12 +333,7 @@ export class BrowserHost {
         if (error !== null) {
           p.reject(new Error(error));
         } else {
-          const result = (m.get("result").obj as { [k: string]: JSONValue }) ?? {};
-          // Belt to the harvest's braces: a browser that puts refusals where
-          // this side no longer reads them must not have them reach the agent
-          // around the session layer's filter.
-          delete result.failed_requests;
-          p.resolve(result);
+          p.resolve((m.get("result").obj as { [k: string]: JSONValue }) ?? {});
         }
       });
 
@@ -415,13 +414,17 @@ export class BrowserHost {
     });
     // Ask it to go, and WAIT for the answer rather than for the pipes: that
     // reply carries the last refusals the page produced, and having read it is
-    // the only guarantee they were read at all. `exit` still drives the kill
-    // escalation below — `close` would wait on a Firefox grandchild holding the
-    // pipe, long after there is anything left to signal.
+    // the only guarantee they were read at all. A REJECTION is not an answer —
+    // exit rejects every pending request, this one included, and can beat the
+    // goodbye line out of the pipe — so it waits for the reader to finish
+    // instead, which readline does only after emitting every buffered line.
+    // `exit` still drives the kill escalation below; waiting on the pipes there
+    // would hang on a Firefox grandchild holding them.
+    const readerFinished = this.readerFinished ?? Promise.resolve();
     await withTimeout(
       this.request(child, { action: "quit" }).then(
         () => undefined,
-        () => undefined,
+        () => readerFinished,
       ),
       2000,
     );

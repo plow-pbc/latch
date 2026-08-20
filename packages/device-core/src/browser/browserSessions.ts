@@ -272,6 +272,42 @@ export class BrowserSessions {
     }
   }
 
+  /**
+   * Take what the browser has reported, put ALL of it in the owner's log
+   * against this action, and answer with the part the agent may see.
+   *
+   * One place, called by an action that worked and by one that threw: an action
+   * fails BECAUSE its request was refused at least as often as it fails for any
+   * other reason, and a report only the success path makes is missing exactly
+   * then. The agent hears only about the origins it was approved for — judged
+   * per entry rather than by where the action landed, so a refusal on the
+   * approved page still arrives when a sign-in redirect has parked the session
+   * elsewhere. BOTH ends have to be approved: which of its requests were
+   * refused is an observation of the document that made them, and an unapproved
+   * one would otherwise choose the text it hands the agent by choosing what to
+   * fetch. An entry the browser could not attribute names no document and stays
+   * with the owner.
+   */
+  private reportRefusals(
+    s: Session,
+    action: string,
+    url: string,
+    extra: { [k: string]: JSONValue } = {},
+  ): JSONValue[] {
+    const failed = failedRequests(this.host.takeFailedRequests());
+    this.audit("browser_command", {
+      session: s.handle,
+      action,
+      url: stripQuery(url),
+      ...extra,
+      ...(failed.length ? { failed_requests: failed } : {}),
+    });
+    return failed.filter((entry) => {
+      const e = entry as { url: string; frame_url: string };
+      return this.approved(s, e.frame_url) && this.approved(s, e.url);
+    });
+  }
+
   /** Refusals the host is still holding — nothing follows to carry them out,
    * and the last few before an agent gives up are the ones worth having. */
   private leftoverRefusals(): { [k: string]: JSONValue } {
@@ -410,13 +446,14 @@ export class BrowserSessions {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.audit("browser_command", {
-        session: s.handle,
-        action,
-        url: stripQuery(s.lastUrl),
+      // One line for the action, carrying both why it failed and what the
+      // page's requests did — they are usually the same story.
+      const visible = this.reportRefusals(s, action, s.lastUrl, { error: message });
+      return {
+        status: "error",
         error: message,
-      });
-      return { status: "error", error: message };
+        ...(visible.length ? { failed_requests: visible } : {}),
+      };
     }
   }
 
@@ -438,28 +475,7 @@ export class BrowserSessions {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
-    // Taken on EVERY action, and all of it audited: an off-scope page being
-    // refused is exactly what the owner is watching for.
-    const failed = failedRequests(this.host.takeFailedRequests());
-    this.audit("browser_command", {
-      session: s.handle,
-      action: String(action.action),
-      url: stripQuery(url),
-      ...(failed.length ? { failed_requests: failed } : {}),
-    });
-
-    // The agent hears only about the origins it was approved for — judged per
-    // entry rather than by where this action happened to land, so a refusal on
-    // the approved page still arrives when a sign-in redirect has parked the
-    // session somewhere else. BOTH ends have to be approved: which of its
-    // requests were refused is an observation of the document that made them,
-    // and an unapproved one would otherwise be choosing the text it hands the
-    // agent by choosing what to fetch. An entry the browser could not attribute
-    // carries no document and stays with the owner.
-    const visible = failed.filter((entry) => {
-      const e = entry as { url: string; frame_url: string };
-      return this.approved(s, e.frame_url) && this.approved(s, e.url);
-    });
+    const visible = this.reportRefusals(s, String(action.action), url);
 
     // The browser puts the mark back on every concealed field before it lets
     // anything be observed, and says so when one of them would not take. It
