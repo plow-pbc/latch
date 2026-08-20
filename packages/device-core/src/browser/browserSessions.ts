@@ -74,6 +74,18 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  */
 const MAX_WAIT_SECONDS = 12;
 
+/**
+ * Bounds on a `click`'s caller-supplied `timeout_ms`, for the same reason. The
+ * ceiling is a second under the `wait` one because a click also pays the
+ * server's 1 s post-click settle, and overrunning the 15 s host cap does not
+ * fail the click — it tears the browser down. The floor exists because
+ * Playwright reads a zero timeout as *no* timeout, so an agent asking for 0
+ * would park the click until exactly that happened.
+ */
+const MIN_CLICK_TIMEOUT_MS = 500;
+/** Exported because the agent-facing copy quotes it; one number, one source. */
+export const MAX_CLICK_TIMEOUT_MS = (MAX_WAIT_SECONDS - 1) * 1000;
+
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
   origins: string[];
@@ -393,6 +405,18 @@ export class BrowserSessions {
 
     const p = jv(params);
     const action = p.get("action").str ?? "";
+    // A click may be given longer than the default for a page that is still
+    // settling, up to what the exchange can carry. Read here, before the
+    // command runs, because the clicks worth counting later are the ones that
+    // failed, and those are audited from the catch below.
+    const knobs: { timeout_ms?: number } = {};
+    const timeoutMs = action === "click" ? p.get("timeout_ms").num : null;
+    if (timeoutMs !== null) {
+      knobs.timeout_ms = Math.min(
+        Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
+        MAX_CLICK_TIMEOUT_MS,
+      );
+    }
 
     try {
       // Lockout: on an out-of-scope page, only way-back actions run.
@@ -440,7 +464,7 @@ export class BrowserSessions {
         }
         default: {
           // Pass-through actions; the server rejects unknown ones.
-          const forwarded: { [k: string]: JSONValue } = { action };
+          const forwarded: { [k: string]: JSONValue } = { action, ...knobs };
           for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
             const v = p.get(key).value;
             if (v !== null && v !== undefined) forwarded[key] = v;
@@ -451,7 +475,7 @@ export class BrowserSessions {
             const secs = p.get("seconds").num ?? 1;
             forwarded.seconds = Math.min(Math.max(secs, 0), MAX_WAIT_SECONDS);
           }
-          return await this.serverAction(s, forwarded);
+          return await this.serverAction(s, forwarded, knobs);
         }
       }
     } catch (error: unknown) {
@@ -460,6 +484,7 @@ export class BrowserSessions {
         session: s.handle,
         action,
         url: stripQuery(s.lastUrl),
+        ...knobs,
         error: message,
       });
       return { status: "error", error: message };
@@ -470,6 +495,7 @@ export class BrowserSessions {
   private async serverAction(
     s: Session,
     action: { [k: string]: JSONValue },
+    knobs: { [k: string]: JSONValue } = {},
   ): Promise<JSONValue> {
     const result = await s.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
@@ -488,6 +514,9 @@ export class BrowserSessions {
       session: s.handle,
       action: String(action.action),
       url: stripQuery(url),
+      // What the agent had to ask for, so the next look at a session that went
+      // wrong can count it the way this one counted `eval`.
+      ...knobs,
     });
 
     // The browser puts the mark back on every concealed field before it lets

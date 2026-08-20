@@ -47,6 +47,18 @@ if sys.platform == "darwin":
 
 MAX_ERROR_LEN = 500
 
+# How long one element action waits by default. Sized like the `goto` budget
+# above it: a single action has to answer inside the device's 15 s host cap and
+# the relay's ~20 s per-exchange ceiling, and a click that has not landed in
+# three seconds is usually telling the agent something -- so it fails fast and
+# the agent looks at the page. `click` takes a caller-supplied `timeout_ms`
+# instead when the agent knows the page is slow; the device clamps it.
+DEFAULT_ACTION_TIMEOUT_MS = 3000
+
+# How often a click re-scans the frames for its selector while waiting for it to
+# appear. The scan itself is instant; this is just how long it sleeps between.
+SCAN_INTERVAL_MS = 50
+
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -300,6 +312,18 @@ class Session:
             out["page_count"] = 0
         return out
 
+    def holds(self, frame, selector):
+        """Does this frame have the selector right now? Instant, never waits."""
+        try:
+            return frame.query_selector(selector) is not None
+        except Exception:  # noqa: BLE001 -- a frame that went away holds nothing
+            return False
+
+    def indexed_frames(self, cmd):
+        """`frames_for` with each frame's index on the page alongside it."""
+        base = int(cmd["frame"]) if "frame" in cmd else 0
+        return [(base + n, fr) for n, fr in enumerate(self.frames_for(cmd))]
+
     def frames_for(self, cmd):
         """Explicit frame index if given, else all frames (login forms hide in iframes)."""
         if "frame" in cmd:
@@ -393,12 +417,60 @@ class Session:
         if action in ("click", "fill"):
             sel = cmd["selector"]
             last = None
-            for i, fr in enumerate(self.page.frames):
-                if "frame" in cmd and i != int(cmd["frame"]):
-                    continue
+            frames = self.indexed_frames(cmd)
+            # A click that names no frame searches all of them, so a per-frame
+            # timeout would really be N x itself -- past the caps the number was
+            # chosen against. Its timeout is the budget for the WHOLE action,
+            # and the way to spend it is to find the frame first: since
+            # `query_selector` is instant, waiting for the selector to APPEAR is
+            # a scan of every frame at once rather than a wait carved up between
+            # them (which spends each frame's share blind to the others -- an
+            # element arriving in the first frame a moment after its share ran
+            # out was missed with most of the budget unspent). Whatever frame
+            # holds the selector gets what remains, and no frame holding it by
+            # the deadline is an honest "not found" rather than a timeout.
+            # The frames scanned are the ones the page had when the command
+            # arrived, and stay that way: re-reading them would let a frame
+            # injected DURING the wait be clicked, and the device approved
+            # origins for the page it could see, not for whatever arrives while
+            # it waits (issue #95, which is also where that capability comes
+            # back once frames carry an approved origin). The test holding this
+            # down lives in the Camoufox tier -- `just test-browser`, not
+            # `just test` -- so undoing it goes green in CI.
+            # A frame the caller NAMED skips the scan entirely and is simply
+            # waited in, which is what the click does anyway. `fill` is outside
+            # all of it: no budget reaches it, and it searches the frames on its
+            # own per-frame default, because a credential field is found by
+            # searching them and shortening the later ones would drop fills that
+            # work today.
+            if action == "click":
+                budget_ms = int(cmd.get("timeout_ms") or DEFAULT_ACTION_TIMEOUT_MS)
+                deadline = time.monotonic() + budget_ms / 1000.0
+                if "frame" not in cmd:
+                    while True:
+                        holding = [(i, fr) for i, fr in frames if self.holds(fr, sel)]
+                        if holding:
+                            frames = holding
+                            break
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(
+                                "no frame has %s after %dms" % (sel, budget_ms)
+                            )
+                        self.page.wait_for_timeout(SCAN_INTERVAL_MS)
+            for tried, (i, fr) in enumerate(frames):
                 try:
                     if action == "click":
-                        fr.click(sel, timeout=3000)
+                        left = int(
+                            (deadline - time.monotonic()) * 1000 / (len(frames) - tried)
+                        )
+                        if left <= 0:
+                            # Distinct from the not-found above: the selector IS
+                            # there, the budget went on waiting for it.
+                            last = last or RuntimeError(
+                                "found %s with no time left to click it" % sel
+                            )
+                            break
+                        fr.click(sel, timeout=left)
                     else:
                         # ONE resolved node for the whole fill. Resolving the
                         # selector a second time is the re-resolution failure
@@ -408,14 +480,9 @@ class Session:
                         # the handle and filling through the SAME handle makes
                         # that impossible -- a node that goes away raises here
                         # and the value is never typed.
-                        el = fr.wait_for_selector(sel, timeout=3000)
+                        el = fr.wait_for_selector(sel, timeout=DEFAULT_ACTION_TIMEOUT_MS)
                         if el is None:
                             raise RuntimeError("selector not found: %s" % sel)
-                        # The device checked an origin before it went away to
-                        # fetch the value. If the document behind this index is
-                        # no longer the one it checked, nothing here is what was
-                        # approved -- so nothing is marked, and nothing is
-                        # typed.
                         # The device checked an origin before it went away to
                         # fetch the value. If the node it resolved is in a
                         # different DOCUMENT than the one it checked, nothing
@@ -443,7 +510,7 @@ class Session:
                                 before.dispose()
                                 return {"ok": False, "mask": state, "frame": i}
                             try:
-                                el.fill(cmd["value"], timeout=3000)
+                                el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
                             except Exception:
                                 # Nothing landed: put the node back as it was
                                 # found. Something did: it is holding a value
@@ -463,7 +530,7 @@ class Session:
                         # in, never before: a fill that times out would
                         # otherwise leave the node holding the previous
                         # secret with nothing left to hide it.
-                        el.fill(cmd["value"], timeout=3000)
+                        el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
                         el.evaluate(UNMASK_JS)
                         self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
                     if action == "click":

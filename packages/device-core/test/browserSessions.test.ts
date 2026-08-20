@@ -22,6 +22,7 @@ interface Ctx {
   events: { event: string; fields: { [k: string]: JSONValue } }[];
   dir: string;
   fillLog: string;
+  cmdLog: string;
 }
 
 let ctx: Ctx;
@@ -29,6 +30,7 @@ let ctx: Ctx;
 function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bs-"));
   const fillLog = path.join(dir, "fills.log");
+  const cmdLog = path.join(dir, "commands.log");
   const vaultPath = path.join(dir, "vault.json");
   fs.writeFileSync(
     vaultPath,
@@ -68,7 +70,7 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
   // One browser per session, exactly as the app runs it.
   const browsers = {
     command: ["node", FAKE_SERVER],
-    env: { FAKE_FILL_LOG: fillLog, ...serverEnv },
+    env: { FAKE_FILL_LOG: fillLog, FAKE_CMD_LOG: cmdLog, ...serverEnv },
     screenshotsDir: path.join(dir, "shots"),
     profileDir: path.join(dir, "profiles"),
     audit,
@@ -78,7 +80,7 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
     env: { FAKE_BROKER_VAULT: vaultPath },
   });
   const sessions = new BrowserSessions(browsers, credentials, audit, 60_000);
-  return { sessions, browsers, events, dir, fillLog };
+  return { sessions, browsers, events, dir, fillLog, cmdLog };
 }
 
 beforeEach(() => {
@@ -213,6 +215,45 @@ describe("session lifecycle", () => {
     expect(r.get("seconds").num).toBe(12); // MAX_WAIT_SECONDS
     const ok = jv(await ctx.sessions.command(AGENT, s, { action: "wait", seconds: 3 }));
     expect(ok.get("seconds").num).toBe(3); // a reasonable wait passes through
+  });
+
+  it("lets a click ask for more time, bounded like a wait", async () => {
+    const s = await openSession(["pizza.example"]);
+    const clicks: [Record<string, JSONValue>, JSONValue | undefined][] = [
+      [{ timeout_ms: 8000 }, 8000],
+      [{ timeout_ms: 45_000 }, 11_000], // capped inside the exchange
+      // Playwright reads 0 as "no timeout" — the floor is what keeps a click
+      // from parking until the host cap kills the browser under it.
+      [{ timeout_ms: 0 }, 500],
+      [{}, undefined], // asked for nothing, told the browser nothing
+    ];
+    for (const [extra] of clicks) {
+      const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#go", ...extra }));
+      expect(r.get("status").str).toBe("completed");
+    }
+    // The knob belongs to no other action.
+    await ctx.sessions.command(AGENT, s, { action: "scroll", timeout_ms: 9000 });
+
+    const sent = fs
+      .readFileSync(ctx.cmdLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { action: string; timeout_ms?: number });
+    expect(sent.filter((c) => c.action === "click").map((c) => c.timeout_ms))
+      .toEqual(clicks.map(([, want]) => want));
+    expect(sent.find((c) => c.action === "scroll")!.timeout_ms).toBeUndefined();
+
+    // And the audit log says which clicks needed it — including, above all, the
+    // ones that failed, which are what a look at a bad session goes looking for.
+    const swallowed = jv(await ctx.sessions.command(AGENT, s, {
+      action: "click", selector: "#swallowed", timeout_ms: 6000,
+    }));
+    expect(swallowed.get("status").str).toBe("error");
+    const audited = ctx.events.filter((e) => e.event === "browser_command");
+    expect(audited.filter((e) => e.fields.timeout_ms === 11_000)).toHaveLength(1);
+    const failure = audited.at(-1)!.fields;
+    expect(failure.timeout_ms).toBe(6000);
+    expect(String(failure.error)).toContain("intercepts pointer events");
   });
 });
 
