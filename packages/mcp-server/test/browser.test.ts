@@ -390,7 +390,7 @@ describe("browser tools (fake runtime)", () => {
     const dir = path.join(profiles, key);
     fs.chmodSync(dir, 0o500); // the marker write fails EACCES; the audit log does not
     try {
-      const strayed = await act(server, session, "click", { selector: "#offsite" }, false);
+      const strayed = await act(server, session, "click", { selector: "#offsite" });
       expect(strayed.isError).toBe(true);
       expect(JSON.stringify(strayed.payload)).toContain("could not be retired");
       expect(strayed.payload.text).toBeUndefined();
@@ -408,7 +408,7 @@ describe("browser tools (fake runtime)", () => {
     expect(audited(device, "browser_session_closed", "reason").at(-1)).toBe(
       "profile could not be retired",
     );
-    const after = await act(server, session, "text", {}, false);
+    const after = await act(server, session, "text");
     expect(after.isError).toBe(true);
     expect(JSON.stringify(after.payload)).toContain("unknown session");
   });
