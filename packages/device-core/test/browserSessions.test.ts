@@ -18,7 +18,7 @@ const FAKE_BROKER = fileURLToPath(new URL("../../../e2e/fixtures/fakeVaultBroker
 
 interface Ctx {
   sessions: BrowserSessions;
-  browsers: BrowserHostConfig & { maxBrowsers?: number };
+  browsers: BrowserHostConfig & { legacyProfileDir?: string };
   events: { event: string; fields: { [k: string]: JSONValue } }[];
   dir: string;
   fillLog: string;
@@ -170,34 +170,39 @@ describe("session lifecycle", () => {
     const second = r.get("session").str!;
     expect(second).not.toBe(first);
     // Two sessions, two browsers, and the first one still works.
-    expect(ctx.sessions.count).toBe(2);
     expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("status").str)
       .toBe("completed");
   });
 
   it("says so plainly when the Mac is already running as many browsers as it will", async () => {
-    // The cap is a real limit — a Camoufox is a window and ~400MB — so it is
-    // stated rather than enforced by throwing somebody else out.
-    const small = new BrowserSessions(
-      {
-        command: ["node", FAKE_SERVER],
-        env: {},
-        screenshotsDir: path.join(ctx.dir, "capped"),
-        maxBrowsers: 1,
-      },
-      null,
-      () => {},
-      60_000,
-    );
-    const first = jv(await small.open("int-1", AGENT, ["pizza.example"], false));
-    expect(first.get("status").str).toBe("completed");
-    const second = jv(await small.open("int-2", "agent-2", ["a.example"], false));
-    expect(second.get("status").str).toBe("error");
-    expect(second.get("error").str).toContain("already running 1 browser —");
-    // And the one that was here first is untouched.
-    expect(jv(await small.command(AGENT, first.get("session").str!, { action: "url" })).get("status").str)
+    // The cap is a real limit — a Camoufox is a window and a few hundred MB —
+    // so it is stated rather than enforced by throwing somebody else out. It
+    // is tested at its real value: no knob, no seam.
+    const handles: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = jv(await ctx.sessions.open(`int-${i}`, `capped-${i}`, ["pizza.example"], false));
+      expect(r.get("status").str).toBe("completed");
+      handles.push(r.get("session").str!);
+    }
+    const tooMany = jv(await ctx.sessions.open("int-4", "capped-4", ["a.example"], false));
+    expect(tooMany.get("status").str).toBe("error");
+    expect(tooMany.get("error").str).toContain("already running 3 browsers");
+    // And the three that were here first are untouched.
+    for (const [i, h] of handles.entries()) {
+      expect(jv(await ctx.sessions.command(`capped-${i}`, h, { action: "url" })).get("status").str)
+        .toBe("completed");
+    }
+  });
+
+  it("hands an agent back to the browser it already has instead of opening a second", async () => {
+    // One profile has one writer: a second browser for the same agent would be
+    // the same profile opened twice, which Firefox locks against itself.
+    const first = await openSession(["pizza.example"]);
+    const again = jv(await ctx.sessions.open("int-2", AGENT, ["pizza.example"], false));
+    expect(again.get("status").str).toBe("error");
+    expect(again.get("error").str).toContain(first);
+    expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("status").str)
       .toBe("completed");
-    await small.closeAll("test");
   });
 
   it("open warms the browser up front (so no later action pays the cold start)", async () => {
@@ -578,6 +583,40 @@ describe("one profile per agent, and never a shared one", () => {
   });
 });
 
+describe("upgrading from the one shared profile", () => {
+  it("gives the old profile to the first agent, and a clean one to the next", async () => {
+    // Before browsers were per agent there was one profile with every login in
+    // it. Leaving it behind would sign the owner out of everything they had
+    // signed into, so the first agent to open adopts it.
+    const legacy = path.join(ctx.dir, "legacy-profile");
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, "cookies.sqlite"), "signed in everywhere");
+    const withLegacy = new BrowserSessions(
+      { ...ctx.browsers, profileDir: path.join(ctx.dir, "upgraded"), legacyProfileDir: legacy },
+      null,
+      () => {},
+      60_000,
+    );
+
+    const first = jv(await withLegacy.open("int-1", "first-agent", ["pizza.example"], false));
+    expect(first.get("status").str).toBe("completed");
+    const dirs = fs.readdirSync(path.join(ctx.dir, "upgraded"));
+    expect(dirs.length).toBe(1);
+    expect(fs.readFileSync(path.join(ctx.dir, "upgraded", dirs[0], "cookies.sqlite"), "utf8"))
+      .toBe("signed in everywhere");
+    expect(fs.existsSync(legacy)).toBe(false); // adopted, not copied
+
+    // The next agent starts clean — that is the isolation this is all for.
+    const second = jv(await withLegacy.open("int-2", "second-agent", ["pizza.example"], false));
+    expect(second.get("status").str).toBe("completed");
+    const both = fs.readdirSync(path.join(ctx.dir, "upgraded")).sort();
+    expect(both.length).toBe(2);
+    const other = both.find((d) => d !== dirs[0])!;
+    expect(fs.existsSync(path.join(ctx.dir, "upgraded", other, "cookies.sqlite"))).toBe(false);
+    await withLegacy.closeAll("test");
+  });
+});
+
 describe("three agents, three browsers, at once", () => {
   /**
    * The done condition: each agent drives its OWN browser in parallel, keeps
@@ -600,7 +639,6 @@ describe("three agents, three browsers, at once", () => {
       return r.get("session").str!;
     });
     expect(new Set(handles).size).toBe(3);
-    expect(ctx.sessions.count).toBe(3);
 
     // Driven in parallel, each to its own site.
     await Promise.all(
@@ -624,7 +662,6 @@ describe("three agents, three browsers, at once", () => {
 
     // Closing one leaves the other two browsing.
     await ctx.sessions.close(handles[0], "test");
-    expect(ctx.sessions.count).toBe(2);
     for (const i of [1, 2]) {
       const still = jv(await ctx.sessions.command(agents[i], handles[i], { action: "url" }));
       expect(still.get("url").str).toBe(`https://${sites[i]}/page`);

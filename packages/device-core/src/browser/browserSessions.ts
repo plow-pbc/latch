@@ -123,16 +123,16 @@ export class BrowserSessions {
   private readonly sessions = new Map<string, Session>();
 
   constructor(
-    private readonly browser: BrowserHostConfig & { maxBrowsers?: number },
+    private readonly browser: BrowserHostConfig & {
+      /** The one profile everything shared before browsers were per agent.
+       * The first agent to open adopts it, so an upgrade does not sign
+       * anybody out of the sites they were signed into. */
+      legacyProfileDir?: string;
+    },
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
   ) {}
-
-  /** How many browsers are open right now. */
-  get count(): number {
-    return this.sessions.size;
-  }
 
   /** True when a page URL is inside the session's approved origins.
    * Blank/initial pages have no host and are always in scope. */
@@ -163,38 +163,37 @@ export class BrowserSessions {
     credentialMetadata: boolean,
     headed?: boolean,
   ): Promise<JSONValue> {
-    // Nothing is taken from anybody: this session gets a browser of its own,
-    // and other agents keep theirs. The only limit is how many browsers this
-    // Mac will run at once, and that is said out loud rather than by evicting
-    // whoever was here first.
-    const max = this.browser.maxBrowsers ?? DEFAULT_MAX_BROWSERS;
-    if (this.sessions.size >= max) {
+    // The claim is made BEFORE anything is awaited. Registering after the
+    // browser is warm leaves a window several seconds wide in which the map
+    // says nothing is running: four concurrent opens all read a free slot and
+    // four browsers start, and two opens by the same agent both take the same
+    // profile directory, which Firefox then locks against itself. One record,
+    // taken first, owns the capacity and the profile alike.
+    if (this.sessions.size >= DEFAULT_MAX_BROWSERS) {
       return {
         status: "error",
         error:
-          `this Mac is already running ${max} browser${max === 1 ? "" : "s"} — ` +
+          `this Mac is already running ${DEFAULT_MAX_BROWSERS} browsers — ` +
           "close one with plow_browser_close before opening another",
       };
     }
-    const handle = crypto.randomUUID();
-    const host = this.newHost(agentId);
-
-    // A browser that dies takes its own session with it, and nobody else's.
-    host.onCrash = () => this.noteCrash(handle);
-
-    // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
-    // start (~30s) absorbs into the deferred handle; every later `browser`
-    // action is non-deferrable and must answer well inside the relay's ~20s
-    // per-exchange ceiling, which it can only do against an already-running
-    // browser. Failing here (no runtime, crash-looped) is an honest open error.
-    try {
-      await host.ensureReady(headed);
-    } catch (error: unknown) {
-      await this.stop(host);
-      const message = error instanceof Error ? error.message : String(error);
-      return { status: "error", error: `browser failed to start: ${message}` };
+    for (const live of this.sessions.values()) {
+      if (live.agentId !== agentId) continue;
+      // A profile has one writer. The session you already hold IS your browser
+      // — that is the point of passing its id — so a second one would be the
+      // same profile opened twice.
+      return {
+        status: "error",
+        error:
+          `you already have a browser open (session ${live.handle}) — pass that session id, ` +
+          "or close it with plow_browser_close first",
+      };
     }
 
+    const handle = crypto.randomUUID();
+    const host = this.newHost(agentId);
+    // A browser that dies takes its own session with it, and nobody else's.
+    host.onCrash = () => this.noteCrash(handle);
     const session: Session = {
       handle,
       host,
@@ -207,6 +206,31 @@ export class BrowserSessions {
       lastUrl: "",
       knownPageCount: 1,
     };
+    this.sessions.set(handle, session);
+
+    /** Give the claim back, whatever went wrong after taking it. */
+    const rollBack = async () => {
+      this.sessions.delete(handle);
+      try {
+        await this.stop(host);
+      } catch {
+        /* the browser is going away regardless; the failed open is the real error */
+      }
+    };
+
+    // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
+    // start (~30s) absorbs into the deferred handle; every later `browser`
+    // action is non-deferrable and must answer well inside the relay's ~20s
+    // per-exchange ceiling, which it can only do against an already-running
+    // browser. Failing here (no runtime, crash-looped) is an honest open error.
+    try {
+      await host.ensureReady(headed);
+    } catch (error: unknown) {
+      await rollBack();
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "error", error: `browser failed to start: ${message}` };
+    }
+
     // Same order as extend(), and for the same reason: a session the owner's
     // log has no event for is a browser they cannot see being used at all.
     try {
@@ -218,16 +242,9 @@ export class BrowserSessions {
         headed: host.headed,
       });
     } catch (error: unknown) {
-      // The browser is already warm — ensureReady ran above, and headed means a
-      // window is on screen. If the opening cannot be recorded there is no
-      // session to close it later, so put it away here: a running browser with
-      // no session and no audit line is precisely the invisible browser this
-      // path exists to prevent.
-      try {
-        await this.stop(host);
-      } catch {
-        /* the browser is going away regardless; the failed open is the real error */
-      }
+      // A running browser with no session and no audit line is precisely the
+      // invisible browser this path exists to prevent.
+      await rollBack();
       throw error;
     }
     this.sessions.set(session.handle, session);
@@ -295,13 +312,37 @@ export class BrowserSessions {
    */
   private newHost(agentId: string): BrowserHost {
     const dir = profileName(agentId);
-    if (this.browser.profileDir) fs.mkdirSync(path.join(this.browser.profileDir, dir), { recursive: true, mode: 0o700 });
+    if (this.browser.profileDir) this.ensureProfile(path.join(this.browser.profileDir, dir));
     return new BrowserHost({
       ...this.browser,
       screenshotsDir: path.join(this.browser.screenshotsDir, dir),
       ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, dir) } : {}),
       ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, dir) } : {}),
     });
+  }
+
+  /**
+   * This agent's profile directory, made if it is not there yet.
+   *
+   * The first one made adopts the profile every agent used to share, so a Mac
+   * that upgrades keeps the sites it was signed into rather than waking up
+   * signed out of all of them. Only the first: after that the old directory is
+   * gone, and every other agent starts clean, which is the isolation this is
+   * all for.
+   */
+  private ensureProfile(dir: string): void {
+    if (fs.existsSync(dir)) return;
+    const legacy = this.browser.legacyProfileDir;
+    fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
+    if (legacy && fs.existsSync(legacy)) {
+      try {
+        fs.renameSync(legacy, dir);
+        return;
+      } catch {
+        /* a rename across devices, or a race with another claim: start clean */
+      }
+    }
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
   /**

@@ -118,7 +118,7 @@ export class DeviceAgent {
   /** The owner's own way into the vault: no CLI, no port, no session on disk. */
   readonly vaultClient: VaultClient | null = null;
   /** How the sessions build a browser each: one config, many hosts. */
-  private readonly browserConfig: (BrowserHostConfig & { maxBrowsers?: number }) | null = null;
+  private readonly browserConfig: (BrowserHostConfig & { legacyProfileDir?: string }) | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
@@ -148,7 +148,11 @@ export class DeviceAgent {
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        profileDir: path.join(browserDir, "profile"),
+        // One profile per agent now, under a directory of their own; the
+        // single profile that came before is adopted by the first agent to
+        // open, rather than being left behind with all its logins in it.
+        profileDir: path.join(browserDir, "profiles"),
+        legacyProfileDir: path.join(browserDir, "profile"),
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the
