@@ -62,9 +62,10 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
 
   it("lets only the goto's own navigation answer for itself, in its own window", () => {
     // Three refusals arrive while a device goto is in flight, most recent
-    // first. Only the main frame's navigation is the device's asking; the
-    // subresource and the child frame's navigation are named by the document
-    // that asked — the page being left, which is what its frame still says.
+    // first. Only the main frame's navigation is the device's asking. The
+    // subresource is named by the page being left (what the main frame still
+    // says at that moment) and the child frame's navigation by that frame —
+    // which is also what says the initiator is read from the RESPONSE's frame.
     expect((probed.during_a_device_goto.failed_requests ?? [])
       .map((r) => [r.status, r.initiator])).toEqual([
       [404, "https://widget.example"],
