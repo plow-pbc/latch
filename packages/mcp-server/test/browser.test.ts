@@ -232,10 +232,16 @@ describe("browser tools (fake runtime)", () => {
     }
     // An omitted or empty list is the schema's to refuse, not the handler's —
     // asserted here so the handler's silence on it stays justified.
-    for (const args of [{}, { origins: [] }]) {
+    // Named per case: minItems is the only thing standing between an empty
+    // list and a card reading "Browse: ", so a generic "some validation ran"
+    // would stay green if it were dropped and any other constraint failed.
+    for (const [args, says] of [
+      [{}, "required property 'origins'"],
+      [{ origins: [] }, "fewer than 1 items"],
+    ] as [Record<string, unknown>, string][]) {
       const absent = await callTool(server, "plow_browser_open", args, AGENT);
       expect(absent.isError, JSON.stringify(absent.payload)).toBe(true);
-      expect(JSON.stringify(absent.payload)).toContain("validation");
+      expect(JSON.stringify(absent.payload)).toContain(says);
     }
 
     // A real origin carrying one alongside it opens, with the junk dropped —
