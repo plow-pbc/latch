@@ -161,7 +161,6 @@ describe("an edit", () => {
     // own, not a second reference to the same one.
     const reused = edit(["https://b.example", "", "https://b.example"]).login.uris;
     expect(reused[0]).toEqual(B);
-    expect(reused[1]).not.toBe(reused[0]);
     expect(reused[1].uri).not.toEqual(reused[0].uri);
     expect(reused[1].match).toBeNull();
 
