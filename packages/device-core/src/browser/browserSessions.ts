@@ -355,7 +355,6 @@ export class BrowserSessions {
     s.lastActivity = Date.now();
     return {
       status: "completed",
-      session: s.auditId,
       origins: s.origins,
       items: itemList,
     };

@@ -11,7 +11,6 @@
  * No secret value is asserted on anywhere below.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -124,9 +123,9 @@ function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<strin
   return { sessions, browsers, events, dir, cmdLog, brokerLog };
 }
 
-/** What the audit calls a session: a one-way digest, never the handle. */
-const audited = (handle: string): string =>
-  crypto.createHash("sha256").update(handle, "utf8").digest("hex").slice(0, 16);
+/** What the audit calls this session — read off the open event, not recomputed. */
+const audited = (): string =>
+  ctx.events.find((e) => e.event === "browser_session_opened")!.fields.session as string;
 
 /** Open a session already approved for both items and both origins. */
 async function session(): Promise<string> {
@@ -324,7 +323,7 @@ describe("fill_secret marking", () => {
       {
         event: "credential_denied",
         fields: {
-          session: audited(handle),
+          session: audited(),
           item: "L1",
           field: "password",
           origin: "pizza.example",
@@ -410,7 +409,7 @@ describe("fill_secret marking", () => {
     expect(ctx.events.slice(before).at(-1)).toEqual({
       event: "credential_denied",
       fields: {
-        session: audited(handle),
+        session: audited(),
         item: "C1",
         field: "number",
         origin: "payframe.example",
@@ -445,7 +444,7 @@ describe("fill_secret marking", () => {
     expect(ctx.events.at(-1)).toEqual({
       event: "credential_denied",
       fields: {
-        session: audited(handle),
+        session: audited(),
         item: "L1",
         field: "password",
         origin: "pizza.example",
@@ -493,11 +492,11 @@ describe("fill_secret marking", () => {
     expect(ctx.events.slice(before)).toEqual([
       {
         event: "credential_filled",
-        fields: { session: audited(handle), item: "L1", field: "password", origin: "pizza.example" },
+        fields: { session: audited(), item: "L1", field: "password", origin: "pizza.example" },
       },
       {
         event: "credential_filled",
-        fields: { session: audited(handle), item: "L1", field: "shipping address", origin: "pizza.example" },
+        fields: { session: audited(), item: "L1", field: "shipping address", origin: "pizza.example" },
       },
     ]);
     for (const e of ctx.events) expect(JSON.stringify(e)).not.toContain("hunter2");

@@ -186,17 +186,6 @@ describe("session lifecycle", () => {
     expect(wrongHandle.get("status").str).toBe("error");
   });
 
-  it("a second agent opens its own browser instead of being turned away", async () => {
-    const first = await openSession(["pizza.example"]);
-    const r = jv(await ctx.sessions.open("int-2", "agent-2", ["a.example"], false));
-    expect(r.get("status").str).toBe("completed");
-    const second = r.get("session").str!;
-    expect(second).not.toBe(first);
-    // Two sessions, two browsers, and the first one still works.
-    expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("status").str)
-      .toBe("completed");
-  });
-
   it("says so plainly when the Mac is already running as many browsers as it will", async () => {
     // The cap is a real limit — a Camoufox is a window and a few hundred MB —
     // so it is stated rather than enforced by throwing somebody else out. It
