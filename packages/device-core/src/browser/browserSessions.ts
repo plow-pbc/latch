@@ -315,8 +315,17 @@ export class BrowserSessions {
     if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    // What the device is already holding goes on the closing line: no action
+    // follows to carry it out, and the owner's log is promised every entry the
+    // device received. (What the browser had not sent yet dies with it — a
+    // browser being shut down cannot report what it never got to say.)
+    const left = failedRequests(this.host.takeFailedRequests());
     await this.stopBrowser();
-    this.audit("browser_session_closed", { session: handle, reason });
+    this.audit("browser_session_closed", {
+      session: handle,
+      reason,
+      ...(left.length ? { failed_requests: left } : {}),
+    });
     return { status: "completed" };
   }
 
@@ -330,7 +339,12 @@ export class BrowserSessions {
     if (!s) return;
     this.session = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
+    const left = failedRequests(this.host.takeFailedRequests());
+    this.audit("browser_session_closed", {
+      session: s.handle,
+      reason: "crashed",
+      ...(left.length ? { failed_requests: left } : {}),
+    });
   }
 
   /** Close whatever session an agent holds (revocation/disconnect path). */

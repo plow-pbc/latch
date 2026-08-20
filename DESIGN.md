@@ -343,13 +343,13 @@ and the owner's log recorded a plain click — the gap cost a 27-minute blind
 retry loop against a sign-in being rate-limited, and the only way to see the
 status was to hand-instrument `XMLHttpRequest` through `eval`, which is itself
 an automation signal. So the server keeps the last five 4xx/5xx per action
-(context-level, popups included) and every reply an action produces drains them
-— an error as much as a result, since a refusal that only rode success replies
-is the one nobody would ever see. Never a body: a body can echo a submitted
-credential. `BrowserHost` holds them until an agent action carries them out,
-because most of what asks the browser anything is the device itself (the ~1/s
-viewer poll, the popup sweep, a credential fill's `locate`) and whichever was
-in flight would otherwise consume a 429 and drop it.
+(context-level, popups included) and every reply an action produces drains
+them — an error as much as a result, since a refusal that only rode success
+replies is the one nobody would ever see. Never a body: a body can echo a
+submitted credential. `BrowserHost` holds them until an agent action carries
+them out, because most of what asks the browser anything is the device itself
+(the ~1/s viewer poll, the popup sweep, a credential fill's `locate`) and
+whichever was in flight would otherwise consume a 429 and drop it.
 
 **What a page asked for, not where the agent went.** A refused *top-level*
 navigation is the visible case — the agent goes somewhere, is refused, and the
@@ -362,16 +362,17 @@ whoever embedded it, since the frame is still blank when it asks.
 part of one but the origin can carry a secret — a query, userinfo, and a path
 as much as either, since `/reset/<token>` is a url sites really send. So an
 entry is the origin that refused, the origin that asked, the status and the
-method, and nothing else; the owner's log gets all of it, and the agent is told
-`{status, method, host}` (plus `Retry-After`/`Server` when sent) only when
-**both** origins are inside the session's. Destination alone would let a page
-the session is locked out of fetch a url it knows will fail on an approved host
-and pass that off as the approved page's own trouble. Who asked is read when the request is MADE, not when it is answered: a page
-that asks for something it knows will fail and then moves itself to an approved
-origin would otherwise have the refusal read as that origin's. A request the
-browser cannot attribute — a blank or blob: frame, a service worker, one it
-never saw asked — names nobody and is withheld from the agent while the owner
-still sees it.
+method, and nothing else; the owner's log gets all of it, and the agent is
+told `{status, method, host}` (plus `Retry-After`/`Server` when sent) only
+when **both** origins are inside the session's. Destination alone would let a
+page the session is locked out of fetch a url it knows will fail on an
+approved host and pass that off as the approved page's own trouble. Who asked
+is read when the request is MADE, not when it is answered: a page that asks
+for something it knows will fail and then moves itself to an approved origin
+would otherwise have the refusal read as that origin's. A request the browser
+cannot attribute — a blank or blob: frame, a service worker, one it never saw
+asked — names nobody and is withheld from the agent while the owner still sees
+it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —

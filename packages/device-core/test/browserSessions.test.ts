@@ -328,6 +328,24 @@ describe("requests the site refused", () => {
     expect(JSON.stringify(command?.fields.failed_requests)).not.toContain("token=SECRET");
   });
 
+  it("puts what the device is still holding on the closing line", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // Scripted: "#blocked-later" is a refusal that settles after the click
+    // answered, so it arrives on the viewer poll with no action left to carry
+    // it out. The owner's log is promised every entry the device received.
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked-later" });
+    expect(await ctx.host.viewFrame()).not.toBeNull();
+    await ctx.sessions.close(s, "agent");
+    const closed = ctx.events.filter((e) => e.event === "browser_session_closed").pop();
+    expect(closed?.fields.failed_requests).toEqual([
+      {
+        status: 401, method: "GET", origin: "https://pizza.example",
+        initiator: "https://pizza.example",
+      },
+    ]);
+  });
+
   it("says nothing when the page's requests were answered", async () => {
     const s = await openSession(["pizza.example"]);
     const r = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));

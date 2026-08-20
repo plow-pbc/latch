@@ -18,10 +18,11 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
   const probed = runProbe<{
     listens: string[];
     refused: Envelope;
-    page_navigating_itself: Envelope;
-    during_a_device_goto: Envelope;
-    flag_during: { goto: boolean; back: boolean };
-    flag_after: { goto: boolean; back: boolean };
+    navigations: Envelope;
+    frame_moved_first: Envelope;
+    blind_navigation: Envelope;
+    unremembered: Envelope;
+    forgets_the_answered: number;
     unattributable: Envelope;
     drained: Envelope;
     quiet: Envelope;
@@ -55,8 +56,17 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect((probed.navigations.failed_requests ?? []).map((r) => [r.status, r.initiator]))
       .toEqual([
         [404, "https://offsite.example"],
+        // A child that has already loaded and moves ITSELF is named by its own
+        // document, or an out-of-scope frame borrows its parent's name.
+        [410, "https://offsite.example"],
         [403, "https://pizza.example"],
       ]);
+  });
+
+  it("forgets a request the moment it comes back fine", () => {
+    // Otherwise completed traffic crowds a still-pending refusal out of the
+    // ledger, and the refusal arrives naming nobody.
+    expect(probed.forgets_the_answered).toBe(0);
   });
 
   it("reads who asked when the request was MADE, not when it was answered", () => {
@@ -65,6 +75,16 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.frame_moved_first.failed_requests?.[0]).toMatchObject({
       origin: "https://pizza.example",
       initiator: "https://offsite.example",
+    });
+  });
+
+  it("keeps a navigation whose frame will not answer rather than losing it", () => {
+    // The decision is made on the request, where an unanswerable frame already
+    // means "names nobody" — a second read on the answer path would have cost
+    // the whole entry instead.
+    expect(probed.blind_navigation.failed_requests?.[0]).toMatchObject({
+      status: 403,
+      initiator: "",
     });
   });
 

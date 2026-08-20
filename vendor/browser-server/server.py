@@ -355,13 +355,23 @@ class Session:
         an unremembered request simply names nobody.
         """
         try:
-            origin = ""
             try:
                 frame = request.frame
-                # A frame's own document load was asked for by whoever embedded
-                # it: at this moment the frame itself is still blank or gone.
-                asking = frame.parent_frame if request.is_navigation_request() else frame
-                origin = "" if asking is None else _origin(asking.url)
+                if not request.is_navigation_request():
+                    origin = _origin(frame.url)
+                elif frame.parent_frame is None:
+                    # The top frame: the one the agent sees for itself. Marked
+                    # here so the answer path never asks about the frame again —
+                    # a second read is a second thing that can raise, and there
+                    # it would cost the whole entry.
+                    origin = None
+                else:
+                    # A frame with a document of its own asked for itself; only
+                    # one that is still blank was asked for by whoever embedded
+                    # it. Crediting every child navigation to the parent would
+                    # let an out-of-scope frame that has already loaded borrow
+                    # its approved parent's name by navigating itself.
+                    origin = _origin(frame.url) or _origin(frame.parent_frame.url)
             except Exception:  # noqa: BLE001 — an unattributable request is still a request
                 origin = ""
             # Keyed on the request itself, and holding it: an id alone can be
@@ -383,20 +393,20 @@ class Session:
         refused SEES that -- the page is right there in its next screenshot. A
         frame's document load is not that; a payment or sign-in iframe coming
         back 403 is exactly the "it said ok and nothing worked" case this is
-        for, so it is kept and named by whoever embedded it.
+        for, so it is kept and named by whoever embedded it. Which of the two a
+        request was is decided when it is MADE, and remembered as the initiator
+        being None.
 
         Nothing here may raise -- this runs on Playwright's event thread, where
         an exception is nobody's to catch -- and nothing here reads a body.
         """
         try:
+            # Popped before anything else: a request that came back fine is
+            # done, and leaving it in would let completed traffic crowd out a
+            # refusal still waiting to be answered.
             request = response.request
-            # A TOP-LEVEL navigation only: that is the one the agent sees for
-            # itself, on its next screenshot. A frame's document load coming
-            # back 403 is exactly the "it said ok and nothing worked" case, so
-            # it stays.
-            if response.status < 400 or (
-                request.is_navigation_request() and request.frame.parent_frame is None
-            ):
+            initiator = self.asked_by.pop(request, "")
+            if response.status < 400 or initiator is None:
                 return
             entry = {
                 "status": response.status,
@@ -408,7 +418,7 @@ class Session:
                 # fail on an approved host and pass that off as the approved
                 # page's own trouble. An origin is all this is, so there is
                 # nothing here a page can write text into either.
-                "initiator": self.asked_by.pop(request, ""),
+                "initiator": initiator,
             }
             for name in FAILED_REQUEST_HEADERS:
                 value = response.headers.get(name)

@@ -44,12 +44,14 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
   - `--executable` uses camoufox's `executable_path` so the browser ships in
     our app payload and the shared `~/Library/Caches/camoufox` is never used.
   - SIGTERM, `quit`, and stdin EOF all close the Camoufox context cleanly.
-  - A context-level `response` listener keeps the last five 4xx/5xx the pages
-    saw for requests the PAGE made (status, method, the origin that refused, the
-    origin that asked, `Retry-After`, `Server`) and
+  - Context-level `request` + `response` listeners keep the last five 4xx/5xx
+    the pages saw, for everything a page asked for on its own account (a
+    top-level navigation is dropped — the agent sees that one for itself).
+    Each keeps status, method, the origin that refused and the origin that
+    asked, read when the REQUEST was made, plus `Retry-After` and `Server`;
     every reply an action produces drains them as `failed_requests`, an error
-    as much as a result. Upstream reports nothing about a page's own
-    traffic, so an action whose XHR came back 429 answered `{ok: true}`.
+    as much as a result. Upstream reports nothing about a page's own traffic,
+    so an action whose XHR came back 429 answered `{ok: true}`.
   - Fingerprint OS pinned to `macos` (upstream lets Camoufox pick randomly
     among macos/windows/linux). The device is a Mac, so this is the honest
     fingerprint — and it's what lets the packaged app drop Camoufox's bundled

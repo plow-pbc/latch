@@ -29,7 +29,11 @@ def load_server():
 
 class Request:
     """One request, and the document that made it — whose url the server reads
-    when the REQUEST is made, never when the response comes back."""
+    when the REQUEST is made, never when the response comes back.
+
+    Subclassed rather than mutated where a scenario needs the frame to raise, so
+    one scenario cannot change what the others see.
+    """
 
     def __init__(self, method, page, navigation=False, embedder=None):
         self.method = method
@@ -39,6 +43,18 @@ class Request:
 
     def is_navigation_request(self):
         return self._navigation
+
+
+class BlindRequest(Request):
+    """A request Playwright will not name a frame for."""
+
+    def __init__(self, method="GET", navigation=False):
+        self.method = method
+        self._navigation = navigation
+
+    @property
+    def frame(self):
+        raise RuntimeError("no frame for this request")
 
 
 class Response:
@@ -127,6 +143,12 @@ def main():
                  page="https://offsite.example/lander"),
         Response(403, "https://payframe.example/pay", navigation=True, page="about:blank",
                  embedder="https://pizza.example/checkout"),
+        # A child frame that has ALREADY loaded and navigates itself is named by
+        # its own document, not its parent's — otherwise an out-of-scope frame
+        # borrows an approved parent's name by moving.
+        Response(410, "https://pizza.example/api/z", navigation=True,
+                 page="https://offsite.example/embed",
+                 embedder="https://pizza.example/checkout"),
         Response(404, "https://pizza.example/api/x", page="https://offsite.example/lander"),
     ])
 
@@ -140,6 +162,26 @@ def main():
     session.note_response(moving)
     out["frame_moved_first"] = session.reply_with_failures({})
 
+    # A navigation whose frame will not answer is kept, not lost: the request
+    # path decides, and it treats an unanswerable frame as naming nobody rather
+    # than as the top frame.
+    session = server.Session(Page())
+    blind = Response(403, "https://pizza.example/frame", navigation=True, page="about:blank")
+    # The frame itself is what will not answer — Playwright raises for a request
+    # with none — so nothing can say whether this was the top frame.
+    blind.request = BlindRequest(navigation=True)
+    session.note_request(blind.request)
+    session.note_response(blind)
+    out["blind_navigation"] = session.reply_with_failures({})
+
+    # A request that came back fine is forgotten there and then, so completed
+    # traffic cannot crowd a still-pending refusal out of the ledger.
+    session = server.Session(Page())
+    fine = Response(200, "https://pizza.example/ok", page="https://pizza.example/")
+    session.note_request(fine.request)
+    session.note_response(fine)
+    out["forgets_the_answered"] = len(session.asked_by)
+
     # A request nobody remembers asking for names nobody.
     session = server.Session(Page())
     forgotten = Response(403, "https://pizza.example/api/y", page="https://pizza.example/")
@@ -151,9 +193,7 @@ def main():
     class NoFrame(Response):
         def __init__(self, *a, **kw):
             super().__init__(*a, **kw)
-            raising = type("Frame", (), {"url": property(
-                lambda _s: (_ for _ in ()).throw(RuntimeError("no frame")))})()
-            self.request.frame = raising
+            self.request = BlindRequest()
 
     # A response that will not answer about its headers is dropped whole: the
     # listener runs on the page's event thread, where the only safe answer to a
