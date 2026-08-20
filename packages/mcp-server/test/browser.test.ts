@@ -389,9 +389,14 @@ describe("browser tools (fake runtime)", () => {
     expect(abandoned(profiles, key)).toBe(false);
 
     // #popup opens a second page on https://popup.example/pay.
-    await act(server, session, "click", { selector: "#popup" });
+    const popped = await act(server, session, "click", { selector: "#popup" });
     expect(abandoned(profiles, key)).toBe(true);
     expect(audited(device, "browser_profile_abandoned")).toEqual([key]);
+
+    // And the agent is told, since the active page never left scope — without
+    // this it carries on unaware the saved cookies are gone.
+    expect(popped.payload.retired_store).toBe("popup.example");
+    expect(String(popped.payload.note)).toContain("signs in again");
   });
 
   it("a jar that cannot be retired takes the session down with it", async () => {

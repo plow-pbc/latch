@@ -522,6 +522,16 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
+    // A popup can stray while the active page stays in scope, so nothing below
+    // would mention it — and the agent would carry on unaware that this
+    // browser's saved cookies are gone. Say so where it can act on it.
+    if (strayed !== undefined && this.inScope(s, url)) {
+      out.retired_store = hostOf(strayed) ?? strayed;
+      out.note =
+        `a page reached ${hostOf(strayed) ?? strayed}, outside the approved origins — ` +
+        `its content is not readable and this browser's saved cookies have been given ` +
+        `up, so the owner signs in again next session`;
+    }
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
     if (!this.inScope(s, url)) {

@@ -389,8 +389,8 @@ describe("access the owner's log could not record is not granted", () => {
       ctx.host,
       null,
       (event: string) => {
-        if (event === failOn && !(once && fired)) {
-          fired = true; // once: fails a single time, so a retry can be observed
+        if (event === failOn && (!once || !fired)) {
+          fired = true; // read only under `once`, where it lets a retry be observed
           throw new Error("audit append failed");
         }
       },
