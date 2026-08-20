@@ -476,8 +476,20 @@ export class BrowserSessions {
     const strayed = [url, ...pages.map((p) => p.url)].find(
       (u) => u !== "" && !this.inScope(s, u),
     );
+    let strayedOrigin: string | null = null;
     if (strayed !== undefined) {
-      const refused = await this.retireProfile(s, hostOf(strayed) ?? strayed);
+      strayedOrigin = hostOf(strayed) ?? strayed;
+      // Recorded here, above every early return below: the paths that refuse
+      // the action — a retirement that failed, a mask that would not go back
+      // on — retire the jar just the same, and a viewer filtering on this
+      // event would otherwise see an abandoned profile with nothing explaining
+      // it. One append for the driven page and a popup alike.
+      this.audit("browser_scope_violation", {
+        session: s.handle,
+        action: String(action.action),
+        origin: strayedOrigin,
+      });
+      const refused = await this.retireProfile(s, strayedOrigin);
       if (refused) return refused;
     }
 
@@ -525,19 +537,10 @@ export class BrowserSessions {
     // A popup can stray while the active page stays in scope, so nothing below
     // would mention it — and the agent would carry on unaware that this
     // browser's saved cookies are gone. Say so where it can act on it.
-    if (strayed !== undefined && this.inScope(s, url)) {
-      const origin = hostOf(strayed) ?? strayed;
-      // The owner's log records a page reaching an unapproved origin whether or
-      // not it was the one being driven — the block below only fires when the
-      // ACTIVE page strayed, so a popup would otherwise leave no trace of it.
-      this.audit("browser_scope_violation", {
-        session: s.handle,
-        action: String(action.action),
-        origin,
-      });
-      out.retired_store = origin;
+    if (strayedOrigin !== null && this.inScope(s, url)) {
+      out.retired_store = strayedOrigin;
       out.note =
-        `a page reached ${origin}, outside the approved origins — ` +
+        `a page reached ${strayedOrigin}, outside the approved origins — ` +
         `its content is not readable and this browser's saved cookies have been given ` +
         `up, so the owner signs in again next session`;
     }
@@ -545,11 +548,6 @@ export class BrowserSessions {
     // agent should learn immediately, not on its next refused command.
     if (!this.inScope(s, url)) {
       const origin = hostOf(url) ?? url;
-      this.audit("browser_scope_violation", {
-        session: s.handle,
-        action: String(action.action),
-        origin,
-      });
       out.out_of_scope = origin;
       out.note =
         `landed on ${origin}, outside the approved origins — page content is ` +
