@@ -284,8 +284,14 @@ export class BrowserSessions {
     } catch (error: unknown) {
       // The bound is not granted, so the jar must not be retired either — a
       // widening that failed to be recorded would otherwise cost the owner
-      // that site's logins for good, silently.
-      await keepProfile?.();
+      // that site's logins for good, silently. Swallowed if the undo itself
+      // fails: the audit append is the failure this path exists to report, and
+      // replacing it with an fsync error costs the caller the diagnosis.
+      try {
+        await keepProfile?.();
+      } catch {
+        /* the audit failure below is the one worth reporting */
+      }
       throw error;
     }
     s.origins = widened;

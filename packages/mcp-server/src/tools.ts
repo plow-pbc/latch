@@ -652,7 +652,11 @@ export const TOOLS: ToolSpec[] = [
       const session = jv(args).get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
       progress.decided();
-      await ctx.device.browserCommand(ctx.agent.agentId, session, { action: "close" });
+      const r = await ctx.device.browserCommand(ctx.agent.agentId, session, { action: "close" });
+      // A stale or already-closed handle comes back as an error; reporting it
+      // as closed answers a different question than the one the agent asked.
+      const error = jv(r).get("error").str;
+      if (error !== null) throw new ToolError(error);
       return { closed: true };
     },
   },

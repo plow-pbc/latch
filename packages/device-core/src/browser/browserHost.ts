@@ -250,12 +250,16 @@ export class BrowserHost {
     // left behind, it retires a jar the owner is still entitled to and signs
     // them out of that site for good, with nothing in the log to say why.
     return async () => {
-      await fsp.rm(file, { force: true });
-      await fsync(dir);
+      // Pointers and record first, durable work second: an fsync failure
+      // half-way through would otherwise leave the log asserting a retirement
+      // that had just been undone, which is the over-reporting this ordering
+      // exists to prevent — in the other direction.
       this.startedDir = dir;
       this.startedKey = key;
       this.profileKeyNow = key;
       this.cfg.audit?.("browser_profile_kept", { profile: path.basename(dir) });
+      await fsp.rm(file, { force: true });
+      await fsync(dir);
     };
   }
 

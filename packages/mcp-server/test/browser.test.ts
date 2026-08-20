@@ -337,6 +337,17 @@ describe("browser tools (fake runtime)", () => {
     expect(bound.at(-1)).toEqual(["bank.example", "pizza.example", "shop.example"].sort());
   });
 
+  it("closing a handle that is not live says so rather than reporting success", async () => {
+    const { server } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const session = await open(server, ["pizza.example"]);
+    expect((await callTool(server, "plow_browser_close", { session }, AGENT)).isError).toBe(false);
+
+    // Twice, or with a stale handle: the agent asked whether it closed.
+    const again = await callTool(server, "plow_browser_close", { session }, AGENT);
+    expect(again.isError).toBe(true);
+    expect(JSON.stringify(again.payload)).toContain("unknown session");
+  });
+
   it("a widened session's jar is given up, and no later session opens it", async () => {
     // The escape this closes: state written for the widened origin sits in a
     // jar filed under the narrower grant, and the next session on that grant
