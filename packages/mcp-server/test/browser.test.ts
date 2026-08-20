@@ -341,9 +341,10 @@ describe("browser tools (fake runtime)", () => {
     // The escape this closes: state written for the widened origin sits in a
     // jar filed under the narrower grant, and the next session on that grant
     // would carry it to that origin on the first click or redirect, ahead of
-    // the post-action scope lock. This is also where the lifecycle queue's
-    // third interleaving lands — an open arriving inside a widening — since
-    // what that would break is the same thing asserted here.
+    // the post-action scope lock. The state the queue's third interleaving —
+    // an open arriving inside a widening — would corrupt is what this asserts,
+    // but sequentially: nothing here exercises that interleaving, which the
+    // queue prevents and the two races above are what pin.
     const { server, device, argvLog } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
     const opening = profileKeyForOrigins(["pizza.example"]);
