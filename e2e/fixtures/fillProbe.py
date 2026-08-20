@@ -74,6 +74,10 @@ class Handle:
         # Ordered most specific first: MASK_JS mentions setAttribute,
         # removeAttribute AND hasAttribute, so anything looser matches it by
         # accident and the scenario quietly tests nothing.
+        # Most specific first: DOC_WHERE_JS embeds DOC_TOKEN_JS, so a looser
+        # match on the token would answer for both and this would test nothing.
+        if "location.href" in js and "__domoDocumentToken" in js:
+            return {"url": self.document_url, "token": self.document_token}
         if "__domoDocumentToken" in js:
             return self.document_token
         if "=== previous" in js:
@@ -139,6 +143,8 @@ class Frame:
         return self.handle if self.nodes is None else self.nodes.get(selector)
 
     def evaluate(self, expression, *args, **kwargs):
+        if "location.href" in expression and "__domoDocumentToken" in expression:
+            return {"url": "https://pizza.example/login", "token": self.document_token}
         if "__domoDocumentToken" in expression:
             return self.document_token
         # The forms scanner, over no fields. It reads its document's own URL

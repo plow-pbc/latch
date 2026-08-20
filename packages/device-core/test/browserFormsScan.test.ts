@@ -35,15 +35,22 @@ function loadScanner(): (doc: unknown) => Field[] {
   if (!m) throw new Error("FIELD_JS literal not found in server.py");
   // The literal reads `location.href` alongside the fields so the two cannot
   // disagree; the stub supplies one and the scan's own answer is `.fields`.
-  const fn = new Function(
-    "document",
-    "location",
-    `return (${m[1]})().fields;`,
-  );
+  const fn = new Function("document", "location", `return (${m[1]})().fields;`);
   return ((doc: unknown) =>
     (fn as (d: unknown, l: unknown) => Field[])(doc, { href: "https://stub.example/" })) as (
     doc: unknown,
   ) => Field[];
+}
+
+/** The whole answer, not just its fields — see the contract test below. */
+function loadScanRaw(): (doc: unknown, loc: unknown) => { url: string; fields: Field[] } {
+  const src = fs.readFileSync(SERVER_PY, "utf8");
+  const m = /^FIELD_JS = """([\s\S]*?)"""$/m.exec(src);
+  if (!m) throw new Error("FIELD_JS literal not found in server.py");
+  return new Function("document", "location", `return (${m[1]})();`) as (
+    doc: unknown,
+    loc: unknown,
+  ) => { url: string; fields: Field[] };
 }
 
 interface Stub {
@@ -124,5 +131,18 @@ describe("forms field scan", () => {
     for (const s of SECRETS) expect(blob).not.toContain(s);
     expect(out.filter((f) => f.secret).map((f) => f.name)).toEqual(["pw", "cc-number", "cvc"]);
     expect(out.find((f) => f.name === "address1")?.value).toBe("1 Elm St");
+  });
+  it("answers with the document's own URL beside its fields", () => {
+    // The origin filter decides by this URL whether these fields may cross, so
+    // the two have to come from one evaluation. Read separately, a frame that
+    // navigated in between would put the old document's fields behind the new
+    // document's origin — and the filter would wave them through.
+    const scan = loadScanRaw();
+    const { url, fields } = scan(
+      page([{ tag: "input", name: "cvv", value: "123" }]),
+      { href: "https://pay.example/frame?tok=abc" },
+    );
+    expect(url).toBe("https://pay.example/frame?tok=abc");
+    expect(fields.map((f) => f.name)).toEqual(["cvv"]);
   });
 });

@@ -166,6 +166,12 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
+# Where a selector's document is AND which document it is, from one evaluation
+# in that document. Read separately, a frame that navigates in between answers
+# the new document's URL for the old document's element — and the URL is what
+# the device checks before releasing a credential into it.
+DOC_WHERE_JS = """() => ({ url: location.href, token: (%s)() })""" % DOC_TOKEN_JS
+
 # Whether a field still holds what it held a moment ago. The previous value
 # stays in the page as a handle and is compared there, so it is exact and never
 # crosses the wire. A hash was tried and is not good enough: "BB" and "Aa" share
@@ -579,8 +585,15 @@ class Session:
                 if el is not None:
                     # The url is what the device checks an origin against; the
                     # token is what says "still this document" when the value
-                    # comes back.
-                    return {"frame": i, "frame_url": fr.url, "frame_token": el.evaluate(DOC_TOKEN_JS)}
+                    # comes back. Both from one evaluation in that document, so
+                    # a navigation cannot put one document's element behind
+                    # another document's origin.
+                    where = el.evaluate(DOC_WHERE_JS)
+                    return {
+                        "frame": i,
+                        "frame_url": where["url"],
+                        "frame_token": where["token"],
+                    }
             raise RuntimeError("selector not found: %s" % sel)
 
         if action == "scroll":
