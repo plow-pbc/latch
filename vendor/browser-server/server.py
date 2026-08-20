@@ -624,10 +624,14 @@ class Session:
         last = None
         for tried, (i, fr) in enumerate(frames):
             left = int((deadline - time.monotonic()) * 1000 / (len(frames) - tried))
-            # Travel is spent inside the attempt, so a share that cannot cover it
-            # buys nothing: trying fewer frames with time to move beats trying
-            # all of them with the pointer still in flight when each expires.
-            if left <= HUMANIZE_MAX_SECONDS * 1000:
+            # Humanized pointer travel is spent inside each attempt, so a budget
+            # divided among several holders can expire with the cursor still in
+            # flight. The share is not compared against the cap: the cap is a
+            # ceiling on the journey, not its cost, and refusing to try a frame
+            # that might well have taken the click is the worse answer. The
+            # device's floor is what guarantees room to move in the single-frame
+            # case the scan usually narrows to.
+            if left <= 0:
                 # The selector IS somewhere -- the scan said so -- but the
                 # budget went on waiting for it. Saying "not found" here would
                 # be false and would send the agent looking elsewhere when what

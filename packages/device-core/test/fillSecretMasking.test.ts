@@ -922,6 +922,47 @@ function stubPage(
   };
 }
 
+describe("which nodes take typing", () => {
+  // The predicate itself, run as the page runs it — no python, no browser. What
+  // it decides is which nodes get keystrokes and which are assigned, and the
+  // whole hazard is on the false side: `type()` refuses nothing, so "yes" typed
+  // at a checkbox toggles nothing and answers ok, a <select> changes option by
+  // type-ahead, a date input takes the segments in locale order, a hidden input
+  // cannot even hold focus — so the keystrokes, on the credential path a
+  // secret's characters, land wherever focus already was.
+  const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => boolean;
+  const node = (tagName: string, extra: Record<string, unknown> = {}) => ({
+    tagName,
+    type: undefined,
+    disabled: false,
+    readOnly: false,
+    isContentEditable: false,
+    ...extra,
+  });
+
+  it.each([
+    { what: "a text input", el: node("INPUT", { type: "text" }), typed: true },
+    { what: "an input with no type at all", el: node("INPUT"), typed: true },
+    { what: "a password field", el: node("INPUT", { type: "password" }), typed: true },
+    { what: "an email field", el: node("INPUT", { type: "EMAIL" }), typed: true },
+    { what: "a one-time-code field, which is a text input", el: node("INPUT", { type: "tel" }), typed: true },
+    { what: "a textarea", el: node("TEXTAREA"), typed: true },
+    { what: "a contenteditable div", el: node("DIV", { isContentEditable: true }), typed: true },
+    { what: "a checkbox", el: node("INPUT", { type: "checkbox" }), typed: false },
+    { what: "a radio button", el: node("INPUT", { type: "radio" }), typed: false },
+    { what: "a file picker", el: node("INPUT", { type: "file" }), typed: false },
+    { what: "a submit button", el: node("INPUT", { type: "submit" }), typed: false },
+    { what: "a hidden input, which cannot take focus", el: node("INPUT", { type: "hidden" }), typed: false },
+    { what: "a date input Firefox lays out as segments", el: node("INPUT", { type: "date" }), typed: false },
+    { what: "a select", el: node("SELECT"), typed: false },
+    { what: "a plain div", el: node("DIV"), typed: false },
+    { what: "a read-only text field", el: node("INPUT", { type: "text", readOnly: true }), typed: false },
+    { what: "a disabled text field", el: node("INPUT", { type: "text", disabled: true }), typed: false },
+  ])("$what: typed=$typed", ({ el, typed }) => {
+    expect(typeable(el)).toBe(typed);
+  });
+});
+
 describe("the mark the page ends up carrying", () => {
   const mark = loadScript("MASK_JS") as (el: StubEl) => string;
   const unmark = loadScript("UNMASK_JS") as (el: StubEl) => boolean;

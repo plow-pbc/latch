@@ -30,7 +30,9 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     (issue #86). The cap is the budget: the travel is spent INSIDE a click's
     timeout and that timeout is divided among the frames holding the selector,
     so camoufox's own "up to 1.5 s" would eat budgets whole. The device's
-    `MIN_CLICK_TIMEOUT_MS` floor is set above this for the same reason.
+    `MIN_CLICK_TIMEOUT_MS` floor is set above this for the same reason — which
+    guarantees room to move in the single-frame case the scan usually narrows
+    to, not in a budget divided among several holders.
   - A fill TYPES its value — select-all, then a real key event per character
     (`_type_into`) — where upstream assigns `.value` through `fill()`. A field
     that goes from empty to complete having received no keydown is the cheapest
@@ -42,9 +44,12 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     keystrokes, and still has to empty the field), one past `MAX_TYPED_CHARS`,
     one holding a newline or a tab (`type()` sends those as Enter and Tab —
     submitting the form, or moving focus so the rest of a secret lands in the
-    next field), and any node `TYPEABLE_JS` says no to — a `<select>`, a
-    read-only or a disabled field, which `fill()` refuses loudly and `type()`
-    would silently accept.
+    next field), and any node `TYPEABLE_JS` says no to. That last is every node
+    `fill()` treats specially: only the text-carrying `<input>` types (plus a
+    textarea or a contenteditable) are typed, so a checkbox, a radio, a file
+    picker, a submit button, a hidden input, a date input and a `<select>` are
+    all assigned — which is where `fill()`'s loud refusal, or its value-setting,
+    lives. `type()` accepts every one of them silently.
   - Element actions default to a 3 s timeout (`DEFAULT_ACTION_TIMEOUT_MS`) for
     the same budget. `click` takes a caller-supplied `timeout_ms`, bounding the
     WHOLE action rather than each frame the loop tries — the device clamps it to
