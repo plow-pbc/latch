@@ -73,6 +73,63 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     return r;
   };
 
+  /**
+   * Three agents, three real browsers, at once — through the MCP tools, the
+   * way an agent reaches them. It fails if they collide: each session must
+   * read back its OWN page, and closing one must leave the others browsing.
+   */
+  it("gives three agents three browsers that cannot see each other's pages", async () => {
+    const agents = [1, 2, 3].map((n) => ({ agent_id: `parallel-${n}`, agent_name: `Agent ${n}`, scopes: ["relay:call"] }));
+    // The same page with a different query each: any of the three seeing
+    // another's query means they shared a browser.
+    const pages = agents.map((_, i) => `http://127.0.0.1:${site.port}/?agent=${i}`);
+    let handles: string[] = [];
+    try {
+      const opened = await Promise.all(
+        agents.map((a) =>
+          callTool(server, "plow_browser_open", { origins: ["127.0.0.1"], goal: "parallel browsing" }, a),
+        ),
+      );
+      handles = opened.map((r) => {
+        expect(r.isError, JSON.stringify(r.payload)).toBe(false);
+        return (r.payload as { session: string }).session;
+      });
+      expect(new Set(handles).size).toBe(3);
+
+      // Driven at the same time, each to its own page.
+      await Promise.all(
+        handles.map((session, i) =>
+          callTool(server, "plow_browser", { session, action: "goto", url: pages[i] }, agents[i]),
+        ),
+      );
+
+      // Each still sees its own page — not whatever was navigated last.
+      const seen = await Promise.all(
+        handles.map((session, i) => callTool(server, "plow_browser", { session, action: "url" }, agents[i])),
+      );
+      seen.forEach((r, i) => {
+        expect(r.isError).toBe(false);
+        expect((r.payload as { url: string }).url).toBe(pages[i]);
+      });
+
+      // A handle is not a licence to close somebody else's browser.
+      const stolen = await callTool(server, "plow_browser_close", { session: handles[1] }, agents[0]);
+      expect(JSON.stringify(stolen.payload)).toContain("different agent");
+
+      // Closing one's own leaves the others browsing.
+      await callTool(server, "plow_browser_close", { session: handles[0] }, agents[0]);
+      const survivor = await callTool(server, "plow_browser", { session: handles[1], action: "url" }, agents[1]);
+      expect(survivor.isError).toBe(false);
+      expect((survivor.payload as { url: string }).url).toBe(pages[1]);
+    } finally {
+      // However this ends, the Mac gets its browsers back — the next test
+      // needs room to open one.
+      for (const [i, session] of handles.entries()) {
+        await callTool(server, "plow_browser_close", { session }, agents[i]).catch(() => {});
+      }
+    }
+  }, 300_000);
+
   it("logs in, orders, pays in the iframe, confirms — secrets never cross MCP", async () => {
     const opened = await callTool(
       server, "plow_browser_open",

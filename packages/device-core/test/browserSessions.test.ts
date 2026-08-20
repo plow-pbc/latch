@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
-import { BrowserPool, BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-core";
+import { BrowserHostConfig, BrowserSessions, CredentialBroker } from "@domo/device-core";
 
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
@@ -18,7 +18,7 @@ const FAKE_BROKER = fileURLToPath(new URL("../../../e2e/fixtures/fakeVaultBroker
 
 interface Ctx {
   sessions: BrowserSessions;
-  browsers: BrowserPool;
+  browsers: BrowserHostConfig & { maxBrowsers?: number };
   events: { event: string; fields: { [k: string]: JSONValue } }[];
   dir: string;
   fillLog: string;
@@ -66,13 +66,13 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
   const audit = (event: string, fields: { [k: string]: JSONValue }) =>
     events.push({ event, fields });
   // One browser per session, exactly as the app runs it.
-  const browsers = new BrowserPool({
+  const browsers = {
     command: ["node", FAKE_SERVER],
     env: { FAKE_FILL_LOG: fillLog, ...serverEnv },
     screenshotsDir: path.join(dir, "shots"),
     profileDir: path.join(dir, "profiles"),
     audit,
-  });
+  };
   const credentials = new CredentialBroker({
     command: ["node", FAKE_BROKER],
     env: { FAKE_BROKER_VAULT: vaultPath },
@@ -168,7 +168,7 @@ describe("session lifecycle", () => {
     const second = r.get("session").str!;
     expect(second).not.toBe(first);
     // Two sessions, two browsers, and the first one still works.
-    expect(ctx.browsers.size).toBe(2);
+    expect(ctx.sessions.count).toBe(2);
     expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("status").str)
       .toBe("completed");
   });
@@ -177,12 +177,12 @@ describe("session lifecycle", () => {
     // The cap is a real limit — a Camoufox is a window and ~400MB — so it is
     // stated rather than enforced by throwing somebody else out.
     const small = new BrowserSessions(
-      new BrowserPool({
+      {
         command: ["node", FAKE_SERVER],
         env: {},
         screenshotsDir: path.join(ctx.dir, "capped"),
         maxBrowsers: 1,
-      }),
+      },
       null,
       () => {},
       60_000,
@@ -457,7 +457,7 @@ describe("access the owner's log could not record is not granted", () => {
     expect(sessions.current()).toBeNull();
     // ...and the browser itself must not be left running: open() warms it
     // before it audits, and headed means a window is already on screen.
-    expect(ctx.browsers.size).toBe(0);
+    expect(ctx.sessions.current()).toBeNull();
 
     // Nor may the cleanup latch the host shut. shutdown() sets `shuttingDown`
     // and only resetBreaker() clears it, so a retry could publish a session
@@ -481,7 +481,7 @@ describe("access the owner's log could not record is not granted", () => {
     // reset. close() is the everyday path, which makes this the likeliest way
     // to reach an unusable browser.
     let fired = false;
-    const browsers = new BrowserPool({
+    const browsers = {
       command: ["node", FAKE_SERVER],
       env: {},
       screenshotsDir: path.join(ctx.dir, "shots2"),
@@ -491,7 +491,7 @@ describe("access the owner's log could not record is not granted", () => {
           throw new Error("audit append failed");
         }
       },
-    });
+    };
     const sessions = new BrowserSessions(browsers, null, () => {}, 60_000);
     const handle = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true))
       .get("session")
@@ -508,7 +508,6 @@ describe("access the owner's log could not record is not granted", () => {
     );
     expect(r.get("status").str).toBe("completed");
     await sessions.closeAll("test");
-    await browsers.releaseAll();
   });
 });
 
@@ -534,7 +533,7 @@ describe("three agents, three browsers, at once", () => {
       return r.get("session").str!;
     });
     expect(new Set(handles).size).toBe(3);
-    expect(ctx.browsers.size).toBe(3);
+    expect(ctx.sessions.count).toBe(3);
 
     // Driven in parallel, each to its own site.
     await Promise.all(
@@ -558,7 +557,7 @@ describe("three agents, three browsers, at once", () => {
 
     // Closing one leaves the other two browsing.
     await ctx.sessions.close(handles[0], "test");
-    expect(ctx.browsers.size).toBe(2);
+    expect(ctx.sessions.count).toBe(2);
     for (const i of [1, 2]) {
       const still = jv(await ctx.sessions.command(agents[i], handles[i], { action: "url" }));
       expect(still.get("url").str).toBe(`https://${sites[i]}/page`);

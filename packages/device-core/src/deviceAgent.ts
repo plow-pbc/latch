@@ -14,8 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
-import { ViewerFrame } from "./browser/browserHost.js";
-import { BrowserPool } from "./browser/browserPool.js";
+import { BrowserHostConfig, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { VaultServer } from "./browser/vaultServer.js";
@@ -118,8 +117,8 @@ export class DeviceAgent {
   readonly vaultServer: VaultServer | null = null;
   /** The owner's own way into the vault: no CLI, no port, no session on disk. */
   readonly vaultClient: VaultClient | null = null;
-  /** One browser per session, so agents do not queue for the Mac. */
-  private readonly browsers: BrowserPool | null = null;
+  /** How the sessions build a browser each: one config, many hosts. */
+  private readonly browserConfig: (BrowserHostConfig & { maxBrowsers?: number }) | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
@@ -139,7 +138,7 @@ export class DeviceAgent {
       const browserDir = path.join(home, "device/browser");
       const auditFn = (event: string, fields: { [k: string]: JSONValue }) =>
         this.audit.record(event, fields);
-      this.browsers = new BrowserPool({
+      this.browserConfig = {
         command: browserRuntime.serverCommand,
         // Visible by default: the owner should be able to watch what is being
         // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
@@ -159,7 +158,7 @@ export class DeviceAgent {
         // plow_browser_open, so it does not need to fit this bound.
         actionTimeoutMs: 15_000,
         audit: auditFn,
-      });
+      };
       // Launched from Finder there is no environment to speak of, so the vault
       // and the broker agree on one identity for this machine rather than each
       // falling back to a different default.
@@ -221,7 +220,7 @@ export class DeviceAgent {
         fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;
-      this.browserSessions = new BrowserSessions(this.browsers, credentials, auditFn);
+      this.browserSessions = new BrowserSessions(this.browserConfig, credentials, auditFn);
     }
   }
 
@@ -266,7 +265,7 @@ export class DeviceAgent {
    * null when no browser is running (it is never started for a viewer poll).
    */
   async browserViewFrame(): Promise<ViewerFrame | null> {
-    return this.browsers?.viewFrame() ?? null;
+    return this.browserSessions?.viewFrame() ?? null;
   }
 
   /**
@@ -505,7 +504,7 @@ export class DeviceAgent {
       return { status: "error", error: "no browser runtime installed on this device" };
     }
     if (jv(params).get("action").str === "close") {
-      return this.browserSessions.close(session, "agent");
+      return this.browserSessions.close(session, "agent", agentId);
     }
     return this.browserSessions.command(agentId, session, params);
   }

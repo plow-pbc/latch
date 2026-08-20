@@ -21,9 +21,10 @@
  * what the agent observes/interacts with and where credentials get typed.
  */
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
-import { BrowserHost } from "./browserHost.js";
-import { BrowserPool } from "./browserPool.js";
+import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
@@ -83,6 +84,13 @@ export interface BrowserSessionInfo {
   inScope: boolean;
 }
 
+/** How many browsers this Mac will run at once. A Camoufox is a window and a
+ * few hundred MB, so the number is small and the limit is said out loud. */
+export const DEFAULT_MAX_BROWSERS = 3;
+
+/** Directories are named from an agent id, so it has to be safe to use. */
+const safeName = (id: string): string => id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "agent";
+
 export class BrowserSessions {
   /** Every live session, by handle. The handle IS the browser: an agent that
    * passes the same one gets the same browser back, and two agents passing
@@ -90,11 +98,16 @@ export class BrowserSessions {
   private readonly sessions = new Map<string, Session>();
 
   constructor(
-    private readonly pool: BrowserPool,
+    private readonly browser: BrowserHostConfig & { maxBrowsers?: number },
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
   ) {}
+
+  /** How many browsers are open right now. */
+  get count(): number {
+    return this.sessions.size;
+  }
 
   /** True when a page URL is inside the session's approved origins.
    * Blank/initial pages have no host and are always in scope. */
@@ -129,13 +142,17 @@ export class BrowserSessions {
     // and other agents keep theirs. The only limit is how many browsers this
     // Mac will run at once, and that is said out loud rather than by evicting
     // whoever was here first.
-    const handle = crypto.randomUUID();
-    let host: BrowserHost;
-    try {
-      host = this.pool.hostFor(handle);
-    } catch (error: unknown) {
-      return { status: "error", error: error instanceof Error ? error.message : String(error) };
+    const max = this.browser.maxBrowsers ?? DEFAULT_MAX_BROWSERS;
+    if (this.sessions.size >= max) {
+      return {
+        status: "error",
+        error:
+          `this Mac is already running ${max} browser${max === 1 ? "" : "s"} — ` +
+          "close one with plow_browser_close before opening another",
+      };
     }
+    const handle = crypto.randomUUID();
+    const host = this.newHost(agentId);
 
     // A browser that dies takes its own session with it, and nobody else's.
     host.onCrash = () => this.noteCrash(handle);
@@ -148,7 +165,7 @@ export class BrowserSessions {
     try {
       await host.ensureReady(headed);
     } catch (error: unknown) {
-      await this.pool.release(handle);
+      await this.stop(host);
       const message = error instanceof Error ? error.message : String(error);
       return { status: "error", error: `browser failed to start: ${message}` };
     }
@@ -182,7 +199,7 @@ export class BrowserSessions {
       // no session and no audit line is precisely the invisible browser this
       // path exists to prevent.
       try {
-        await this.pool.release(handle);
+        await this.stop(host);
       } catch {
         /* the browser is going away regardless; the failed open is the real error */
       }
@@ -242,6 +259,51 @@ export class BrowserSessions {
     };
   }
 
+  /**
+   * A browser for this agent.
+   *
+   * The profile is keyed to the AGENT, not to the session: an agent that opens,
+   * signs into a site, closes, and opens again tomorrow is still signed in —
+   * which is what the tool has always promised. Two agents never share one,
+   * so neither can see the other's cookies. Everything else (screenshots, the
+   * app-scoped $HOME) is per agent for the same reason.
+   */
+  private newHost(agentId: string): BrowserHost {
+    const dir = safeName(agentId);
+    if (this.browser.profileDir) fs.mkdirSync(path.join(this.browser.profileDir, dir), { recursive: true, mode: 0o700 });
+    return new BrowserHost({
+      ...this.browser,
+      screenshotsDir: path.join(this.browser.screenshotsDir, dir),
+      ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, dir) } : {}),
+      ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, dir) } : {}),
+    });
+  }
+
+  /**
+   * Stop one browser and clear its shutdown latch — one operation, never two.
+   * `shutdown()` sets `shuttingDown` and only `resetBreaker()` clears it, so a
+   * split pair can leave a host that starts, publishes a session, and then
+   * fails every command at the `sendAction()` guard.
+   */
+  private async stop(host: BrowserHost): Promise<void> {
+    try {
+      await host.shutdown();
+    } finally {
+      host.resetBreaker();
+    }
+  }
+
+  /**
+   * A frame from the browser the owner is watching — the same session
+   * `current()` describes, so the picture and the words underneath it are
+   * always about one browser. Two places choosing separately is how a frame
+   * ends up labelled with another session's origins.
+   */
+  async viewFrame(): Promise<ViewerFrame | null> {
+    const s = this.mostRecent();
+    return s ? s.host.viewFrame() : null;
+  }
+
   /** The session that acted last — what the owner's viewer follows. */
   private mostRecent(): Session | null {
     let latest: Session | null = null;
@@ -251,13 +313,23 @@ export class BrowserSessions {
     return latest;
   }
 
-  async close(handle: string, reason: string): Promise<JSONValue> {
+  /**
+   * Close a session. `agentId` is checked when given: a handle is a capability,
+   * and an agent holding somebody else's handle must not be able to shut their
+   * browser. The owner's own paths (idle, shutdown) pass no agent.
+   */
+  async close(handle: string, reason: string, agentId?: string): Promise<JSONValue> {
     const s = this.sessions.get(handle);
     if (!s) return { status: "error", error: "unknown session" };
+    if (agentId !== undefined && s.agentId !== agentId) {
+      return { status: "error", error: "session belongs to a different agent" };
+    }
     this.sessions.delete(handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
-    // Only this session's browser goes away; everyone else keeps theirs.
-    await this.pool.release(handle);
+    // Only this session's browser goes away; everyone else keeps theirs. The
+    // profile stays: it belongs to the agent, not to this session, which is
+    // what "your profile persists between sessions" means.
+    await this.stop(s.host);
     this.audit("browser_session_closed", { session: handle, reason });
     return { status: "completed" };
   }
@@ -272,15 +344,7 @@ export class BrowserSessions {
     if (!s) return;
     this.sessions.delete(handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
-    this.pool.forget(handle);
     this.audit("browser_session_closed", { session: s.handle, reason: "crashed" });
-  }
-
-  /** Close every session an agent holds (revocation/disconnect path). */
-  async closeForAgent(agentId: string, reason: string): Promise<void> {
-    for (const s of [...this.sessions.values()]) {
-      if (s.agentId === agentId) await this.close(s.handle, reason);
-    }
   }
 
   async closeAll(reason: string): Promise<void> {

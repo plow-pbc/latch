@@ -55,12 +55,6 @@ build:
     npx tsc -b
     node apps/desktop/scripts/copy-renderer.mjs
 
-# Three real Camoufox browsers at once, driven concurrently through the session
-# layer: the done condition for parallel sessions. DOMO_MAX_BROWSERS=1 is the
-# negative control — the same script must fail on a single-browser Mac.
-parallel-browsers: build
-    node e2e/parallelBrowsers.mjs
-
 # Run the full test suite.
 test:
     npx vitest run

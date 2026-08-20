@@ -104,7 +104,7 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
   // would be a promise this profile does not keep.
   it("plow_browser_open says why it beats a plain web fetch, without overselling", async () => {
     const d = await descriptions(makeServer());
-    expect(d.plow_browser_open).toMatch(/profile persists/);
+    expect(d.plow_browser_open).toMatch(/profile is yours and persists/);
     expect(d.plow_browser_open).toMatch(/vault/);
     // The Mac runs several browsers now, so the copy has to say what the agent
     // holds — its own session — rather than promising it is the only one.
