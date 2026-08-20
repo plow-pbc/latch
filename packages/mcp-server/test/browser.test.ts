@@ -232,16 +232,9 @@ describe("browser tools (fake runtime)", () => {
     }
     // An omitted or empty list is the schema's to refuse, not the handler's —
     // asserted here so the handler's silence on it stays justified.
-    // Named per case: minItems is the only thing standing between an empty
-    // list and a card reading "Browse: ", so a generic "some validation ran"
-    // would stay green if it were dropped and any other constraint failed.
-    for (const [args, says] of [
-      [{}, "required property 'origins'"],
-      [{ origins: [] }, "fewer than 1 items"],
-    ] as [Record<string, unknown>, string][]) {
+    for (const args of [{}, { origins: [] }]) {
       const absent = await callTool(server, "plow_browser_open", args, AGENT);
       expect(absent.isError, JSON.stringify(absent.payload)).toBe(true);
-      expect(JSON.stringify(absent.payload)).toContain(says);
     }
 
     // A real origin carrying one alongside it opens, with the junk dropped —
@@ -265,6 +258,10 @@ describe("browser tools (fake runtime)", () => {
     // Pinned at both ends: a leaked blank sorts first and would render
     // "Browse: , pizza.example", which a prefix match happily accepts.
     expect(asked.at(-1)).toContain('"Browse: pizza.example"');
+    // The guarantee, rather than whoever happens to enforce it: nothing in
+    // this test ever put a blank bound in front of the owner. Fails if
+    // minItems:1 or the usableOrigins filter is dropped, in any wording.
+    expect(asked.filter((a) => a.includes('"Browse: "'))).toEqual([]);
 
     // And the rule that open saved re-matches the clean list — the failure
     // this is really about: a rule keyed on a bound with a blank in it could
