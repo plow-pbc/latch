@@ -130,6 +130,9 @@ function handle(cmd) {
       failedNext = [{ status: 401, method: "GET", url: "https://pizza.example/api/whoami" }];
     }
     if (cmd.selector === "#blocked" || cmd.selector === "#refuses") {
+      // Prepended, not assigned: the real server appends into one ring and
+      // drains it reversed, so a late refusal still pending here keeps its
+      // place — after the newer pair, being older.
       failed = [
         {
           status: 429, method: "POST",
@@ -137,6 +140,7 @@ function handle(cmd) {
           retry_after: "30",
         },
         { status: 403, method: "GET", url: "https://tracker.example/beacon" },
+        ...failed,
       ];
       if (cmd.selector === "#refuses") throw new Error("locator.click: Timeout 3000ms exceeded.");
     }
