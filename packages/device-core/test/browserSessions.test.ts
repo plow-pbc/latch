@@ -360,6 +360,21 @@ describe("requests the site refused", () => {
     expect(JSON.stringify(ctx.events)).toContain("offsite.example/api/late");
   });
 
+  it("gives the agent the page's own refusal — the flagship case", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // A navigation refused by the site: url and frame_url are the same document,
+    // and it is the one the agent asked for.
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#refused-goto" }));
+    expect(r.get("failed_requests").value).toEqual([
+      {
+        status: 429, method: "GET",
+        url: "https://pizza.example/checkout", frame_url: "https://pizza.example/checkout",
+        retry_after: "",
+      },
+    ]);
+  });
+
   it("keeps an unattributable refusal for the owner and not for the agent", async () => {
     const s = await openSession(["pizza.example"]);
     await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });

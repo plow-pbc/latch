@@ -43,8 +43,9 @@ class Request:
 
 
 class Frame:
-    def __init__(self, url):
+    def __init__(self, url, parent_frame=None):
         self.url = url
+        self.parent_frame = parent_frame
 
 
 class Response:
@@ -56,12 +57,12 @@ class Response:
     """
 
     def __init__(self, status, url, method="GET", headers=None,
-                 page="https://pizza.example/checkout", navigation=False):
+                 page="https://pizza.example/checkout", navigation=False, embedder=None):
         self.status = status
         self.url = url
         self.request = Request(method, navigation)
         self.headers = headers or {}
-        self.frame = Frame(page)
+        self.frame = Frame(page, None if embedder is None else Frame(embedder))
 
     def body(self):
         raise AssertionError("the listener read a response body")
@@ -134,6 +135,14 @@ def main():
     feed(session, [Response(429, "https://pizza.example/checkout", page="https://pizza.example/cart",
                             navigation=True)])
     out["navigation"] = session.envelope({"ok": True})
+
+    # A SUBframe navigation belongs to whoever embedded it. Crediting it to
+    # itself would let an unapproved page point an iframe at an approved host
+    # and have the url it chose handed to the agent.
+    session = server.Session(Page())
+    feed(session, [Response(403, "https://pizza.example/anything-it-likes", navigation=True,
+                            embedder="https://offsite.example/lander")])
+    out["subframe_navigation"] = session.envelope({"ok": True})
 
     # A frame that will not answer -- a service worker's request, or a popup's
     # opening navigation before its frame exists. The entry is still kept, with

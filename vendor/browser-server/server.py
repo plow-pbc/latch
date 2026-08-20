@@ -70,19 +70,24 @@ MAX_FAILED_REQUEST_URL = 200
 def _asking_document(response):
     """The url of the document whose request this was.
 
-    A navigation response IS its own document: when its headers arrive the frame
-    has not committed the new url yet, so asking the frame would name the page
-    being left -- and a `goto` that comes back 429 would then be attributed to
-    the previous page and withheld from the agent that asked for it. A frame
-    that will not answer at all (a service worker's request, a popup's opening
-    navigation before its frame exists) leaves this empty rather than losing the
-    entry: the owner still sees it, and the agent is told nothing, which is the
-    safe direction.
+    A MAIN-frame navigation is its own document: when its headers arrive the
+    frame has not committed the new url yet, so asking the frame would name the
+    page being left -- and a `goto` that comes back 429 would then be attributed
+    to the previous page and withheld from the agent that asked for it. A
+    SUBframe navigation is not: the document that chose that url is the one that
+    embedded the frame, and crediting it to itself would let a page outside the
+    approved origins hand the agent any text it likes by pointing an iframe at
+    an approved host. A frame that will not answer at all (a service worker's
+    request, a popup whose frame does not exist yet) leaves this empty rather
+    than losing the entry: the owner still sees it, and the agent is told
+    nothing, which is the safe direction.
     """
     try:
+        frame = response.frame
         if response.request.is_navigation_request():
-            return response.url
-        return response.frame.url
+            parent = frame.parent_frame
+            return response.url if parent is None else parent.url
+        return frame.url
     except Exception:  # noqa: BLE001 — an unattributable refusal is still a refusal
         return ""
 

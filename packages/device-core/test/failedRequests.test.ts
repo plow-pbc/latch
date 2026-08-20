@@ -31,6 +31,7 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     refused: Envelope;
     drained: Envelope;
     navigation: Envelope;
+    subframe_navigation: Envelope;
     unattributable: Envelope;
     quiet: Envelope;
     bounded: Envelope;
@@ -67,6 +68,13 @@ describe.skipIf(!havePython())("the real response listener in server.py", () => 
     expect(probed.navigation.failed_requests?.[0]).toMatchObject({
       url: "https://pizza.example/checkout",
       frame_url: "https://pizza.example/checkout",
+    });
+  });
+
+  it("credits a subframe's navigation to whoever embedded it", () => {
+    expect(probed.subframe_navigation.failed_requests?.[0]).toMatchObject({
+      url: "https://pizza.example/anything-it-likes",
+      frame_url: "https://offsite.example/lander",
     });
   });
 

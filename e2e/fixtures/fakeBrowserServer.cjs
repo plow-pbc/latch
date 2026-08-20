@@ -37,6 +37,7 @@
  *                     saw during the action (already query-stripped there —
  *                     one here keeps its query, to prove the device strips too),
  *                     plus one that settles late and rides the next result
+ *   click "#refused-goto"  the navigation shape: the page itself came back 429
  *   click "#unattributed"  a refusal the browser could not attribute to a document
  *   click "#malformed"   a failed_requests the device cannot read: not a list
  *   click "#malformed-entries"  a list whose entries are not objects
@@ -170,6 +171,13 @@ function handle(cmd) {
           frame_url: "https://pizza.example/",
         },
       ];
+    } else if (cmd.selector === "#refused-goto") {
+      // A navigation is its own document, so url and frame_url are the same.
+      state.failed = [{
+        status: 429, method: "GET",
+        url: "https://pizza.example/checkout", frame_url: "https://pizza.example/checkout",
+        retry_after: "",
+      }];
     } else if (cmd.selector === "#unattributed") {
       state.failed = [{
         status: 503, method: "GET",
