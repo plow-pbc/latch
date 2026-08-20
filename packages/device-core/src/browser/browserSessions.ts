@@ -526,9 +526,18 @@ export class BrowserSessions {
     // would mention it — and the agent would carry on unaware that this
     // browser's saved cookies are gone. Say so where it can act on it.
     if (strayed !== undefined && this.inScope(s, url)) {
-      out.retired_store = hostOf(strayed) ?? strayed;
+      const origin = hostOf(strayed) ?? strayed;
+      // The owner's log records a page reaching an unapproved origin whether or
+      // not it was the one being driven — the block below only fires when the
+      // ACTIVE page strayed, so a popup would otherwise leave no trace of it.
+      this.audit("browser_scope_violation", {
+        session: s.handle,
+        action: String(action.action),
+        origin,
+      });
+      out.retired_store = origin;
       out.note =
-        `a page reached ${hostOf(strayed) ?? strayed}, outside the approved origins — ` +
+        `a page reached ${origin}, outside the approved origins — ` +
         `its content is not readable and this browser's saved cookies have been given ` +
         `up, so the owner signs in again next session`;
     }

@@ -397,6 +397,10 @@ describe("browser tools (fake runtime)", () => {
     // this it carries on unaware the saved cookies are gone.
     expect(popped.payload.retired_store).toBe("popup.example");
     expect(String(popped.payload.note)).toContain("signs in again");
+    // The owner's log carries it too, and the active page — which never left
+    // scope — keeps its content, unlike the branch where the driven page strays.
+    expect(audited(device, "browser_scope_violation", "origin")).toEqual(["popup.example"]);
+    expect(popped.payload.url).toBe("https://pizza.example/menu");
   });
 
   it("a jar that cannot be retired takes the session down with it", async () => {
