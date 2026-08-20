@@ -80,10 +80,11 @@ function failedRequests(value: JSONValue[]): JSONValue[] {
  * Both ends must be inside the approved origins: the host that refused, and the
  * document that asked. Destination alone would let a page the session is locked
  * out of fetch a url it knows will fail on an approved host and pass that off
- * as the approved page's own trouble. A document the browser could not name is
- * the device's own asking — a `goto` from a blank page, a service worker — and
- * passes. The initiator itself is never handed over; the agent gets the host
- * that refused, which is the diagnosis.
+ * as the approved page's own trouble — and an asker the browser could not name
+ * is exactly what such a page reaches for (a blank child frame, a service
+ * worker), so those are withheld too and kept only for the owner. The initiator
+ * itself is never handed over; the agent gets the host that refused, which is
+ * the diagnosis.
  */
 function forAgent(entries: JSONValue[], approved: (origin: string) => boolean): JSONValue[] {
   return entries.flatMap((entry) => {

@@ -309,11 +309,27 @@ describe("requests the site refused", () => {
     // what an unapproved page reaches for, so it fails closed.
     expect(JSON.stringify(r.value)).not.toContain("503");
 
-    // The owner sees all three, with who asked — nobody can mislead them by
-    // choosing a url, and an origin is all any of it is.
+    // The owner sees all four, with who asked — nobody can mislead them by
+    // choosing a url, and an origin is all any of it is. The entry is rebuilt
+    // from the fields this side knows, so the browser's stray url is not among
+    // them however durable the log is.
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
-    expect(command?.fields.failed_requests).toHaveLength(4);
-    expect(JSON.stringify(command?.fields.failed_requests)).toContain("offsite.example");
+    expect(command?.fields.failed_requests).toEqual([
+      {
+        status: 429, method: "POST", origin: "https://pizza.example",
+        initiator: "https://pizza.example", retry_after: "30",
+      },
+      {
+        status: 403, method: "GET", origin: "https://tracker.example",
+        initiator: "https://pizza.example",
+      },
+      {
+        status: 404, method: "GET", origin: "https://pizza.example",
+        initiator: "https://offsite.example",
+      },
+      { status: 503, method: "GET", origin: "https://pizza.example", initiator: "" },
+    ]);
+    expect(JSON.stringify(command?.fields.failed_requests)).not.toContain("token=SECRET");
   });
 
   it("says nothing when the page's requests were answered", async () => {

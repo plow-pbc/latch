@@ -371,7 +371,7 @@ class Session:
     def _initiator(self, response):
         """The origin of the document whose request this was, "" if unknowable.
 
-        A navigation the DEVICE asked for answers for itself: its frame has not
+        A navigation the DEVICE asked for (`goto`, `back`) answers for itself: its frame has not
         committed the new url yet, so asking the frame would name the page being
         left and a refused `goto` would look like somebody else's. Every other
         navigation is the page's own doing and is named by the document it is
@@ -489,7 +489,14 @@ class Session:
             # Neither history.back() nor page.go_back() actually moves a tab
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
-            self.page.go_back(timeout=12000, wait_until="domcontentloaded")
+            # Device-issued like `goto`, and the case that matters most: an
+            # agent backing out of a page it is locked out of would otherwise
+            # have the refusal attributed to that page and withheld.
+            self.in_goto = True
+            try:
+                self.page.go_back(timeout=12000, wait_until="domcontentloaded")
+            finally:
+                self.in_goto = False
             self.page.wait_for_timeout(1000)
             return {"title": self.page.title(), "moved": self.page.url != was}
 

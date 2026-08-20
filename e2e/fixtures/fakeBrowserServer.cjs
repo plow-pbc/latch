@@ -141,6 +141,10 @@ function handle(cmd) {
         {
           status: 429, method: "POST", origin: "https://pizza.example",
           initiator: "https://pizza.example", retry_after: "30",
+          // A field this side does not know: the device rebuilds each entry
+          // from what it does, so a vendored server that grew one cannot write
+          // it into the owner's durable log.
+          url: "https://pizza.example/cart?token=SECRET",
         },
         { status: 403, method: "GET", origin: "https://tracker.example",
           initiator: "https://pizza.example" },
