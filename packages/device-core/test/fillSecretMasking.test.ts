@@ -628,9 +628,11 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.type_calls).toBe(c.typed_chars);
     expect(run.key_timeout_max).toBeLessThan(c.typing_max_ms);
     // A per-key timeout hands out the same number every call. One deadline
-    // never hands out a larger one than the key before — and hands out more
-    // than one distinct number, which is the half that tells them apart
-    // without resting on how large a wall-clock delta happens to be.
+    // never hands out a larger one than the key before — which a constant
+    // satisfies too, by equality — and hands out a different one for every
+    // key, which is the half that tells them apart. The fixture spends a
+    // millisecond per key so that difference is something it causes rather
+    // than something the interpreter's own speed happens to produce.
     expect(run.key_timeouts_never_rise).toBe(true);
     expect(run.key_timeouts_distinct).toBeGreaterThan(1);
   });
