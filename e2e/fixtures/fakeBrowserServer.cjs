@@ -11,6 +11,8 @@
  *   CRASH_AFTER=n      exit(9) after n commands (crash/restart tests)
  *   NO_QUIT_ACK=1      exit on quit without answering it
  *   QUIT_TOUCHES=url   report `url` as touched on the quit answer itself
+ *   LATE_TOUCH=ms:url  answer `text` after `ms`, reporting `url` as touched —
+ *                      long enough that the action has already timed out
  *   VIEW_TOUCHES=url   report `url` as touched on the next `view` poll, which
  *                      the session layer never sees the response to
  *   GARBAGE=1          print a non-JSON line before every response
@@ -77,6 +79,7 @@ function handle(cmd) {
   }
   if (a === "goto") {
     current().url = cmd.url;
+    state.touched.push(cmd.url);
     current().title = "page at " + cmd.url;
     return { title: current().title };
   }
@@ -126,10 +129,11 @@ function handle(cmd) {
       );
     }
     if (cmd.selector === "#popup") {
-      state.touched.push("https://popup.example/pay");
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
+      state.touched.push("https://popup.example/pay");
     } else if (cmd.selector === "#offsite") {
       current().url = "https://offsite.example/lander";
+      state.touched.push("https://offsite.example/lander");
     }
     return { ok: true, frame: 0 };
   }
@@ -234,6 +238,15 @@ function main() {
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
     if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
+    // LATE_TOUCH: answer a `text` long after the caller has given up, still
+    // carrying the origin it saw. The touch is recorded now and drained by the
+    // envelope when the answer finally goes out.
+    if (process.env.LATE_TOUCH && cmd.action === "text") {
+      const [ms, ...rest] = process.env.LATE_TOUCH.split(":");
+      state.touched.push(rest.join(":"));
+      setTimeout(() => respond({ id: cmd.id, result: envelope({ text: "late" }) }), Number(ms));
+      return;
+    }
     try {
       respond({ id: cmd.id, result: envelope(handle(cmd)) });
     } catch (e) {

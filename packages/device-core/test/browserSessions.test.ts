@@ -480,36 +480,48 @@ describe("access the owner's log could not record is not granted", () => {
     expect(published(ctx.dir)).toEqual([profileKeyForOrigins(["pizza.example"])]);
   });
 
-  it("a browser that stops without answering the quit publishes nothing", async () => {
-    // Publication turns on the browser having ACKNOWLEDGED the quit, not on it
-    // having stopped soon after one was sent — a browser that died of its own
-    // accord inside the same few seconds is one whose last moments nobody saw.
-    const silent = makeCtx({ NO_QUIT_ACK: "1" });
-    const opened = jv(await silent.sessions.open("int-1", AGENT, ["pizza.example"], true));
-    await silent.sessions.command(AGENT, opened.get("session").str!, {
+  // Two ways a browser reaches its end without the jar becoming publishable,
+  // one row each: it never answered the quit — a browser that merely stopped
+  // inside the window is one whose last moments nobody saw — or it answered
+  // and the answer named an origin the grant does not.
+  it.each([
+    ["it never answers the quit", { NO_QUIT_ACK: "1" }],
+    ["the quit answer names an unapproved origin", { QUIT_TOUCHES: "https://last-moment.example/x" }],
+  ])("publishes nothing when %s", async (_name, env) => {
+    const ctx2 = makeCtx(env);
+    const opened = jv(await ctx2.sessions.open("int-1", AGENT, ["pizza.example"], true));
+    await ctx2.sessions.command(AGENT, opened.get("session").str!, {
       action: "goto",
       url: "https://pizza.example/",
     });
-    await silent.sessions.closeAll("test");
+    await ctx2.sessions.closeAll("test");
 
-    expect(published(silent.dir)).toEqual([]);
+    expect(published(ctx2.dir)).toEqual([]);
   });
 
-  it("classifies a popup seen after the last command, on the way to publishing", async () => {
-    // The case a drain cannot reach: nothing calls the session layer again
-    // between this poll and the publish, so a scope check that ran on the next
-    // command would never run at all and the jar would go back under its
-    // grant carrying an origin it never approved.
-    const watched = makeCtx({ QUIT_TOUCHES: "https://last-moment.example/x" });
-    const opened = jv(await watched.sessions.open("int-1", AGENT, ["pizza.example"], true));
-    await watched.sessions.command(AGENT, opened.get("session").str!, {
-      action: "goto",
-      url: "https://pizza.example/",
+  it("classifies an origin reported after the action gave up waiting", async () => {
+    // A response that arrives past its own timeout has no one waiting for it,
+    // but it is still evidence — the browser reached that origin and the jar
+    // holds what came back. Dropped with the unmatched frame, the jar would be
+    // published under a grant that never named it.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-late-"));
+    const host = new BrowserHost({
+      command: ["node", FAKE_SERVER],
+      env: { LATE_TOUCH: "400:https://after-the-fact.example/x" },
+      screenshotsDir: path.join(dir, "shots"),
+      profilesDir: path.join(dir, "profiles"),
+      actionTimeoutMs: 100, // the answer lands well past this
+      audit: () => {},
     });
-    // Reported on the quit answer itself — the last frame there is.
-    await watched.sessions.closeAll("test");
+    const sessions = new BrowserSessions(host, null, () => {}, 60_000);
+    const opened = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const handle = opened.get("session").str!;
+    // The host's own per-action cap is what this outlives.
+    await sessions.command(AGENT, handle, { action: "text" }).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 600));
+    await sessions.closeAll("test");
 
-    expect(published(watched.dir)).toEqual([]);
+    expect(published(dir)).toEqual([]);
   });
 
   it("classifies a popup the owner's viewer was the only thing to see", async () => {

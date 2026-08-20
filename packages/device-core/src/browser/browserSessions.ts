@@ -512,10 +512,11 @@ export class BrowserSessions {
     // `url` as well as the list: pageUrls() is best-effort and answers empty
     // when the browser will not say, and the active page is the one origin
     // that is never in doubt. A duplicate costs a comparison.
-    // The active page and any popup still open, through the same sink the
-    // host feeds: a fake runtime reports a landing without a navigation event,
-    // and `pages` names windows opened before this command.
-    for (const u of [url, ...pages.map((p) => p.url)]) this.noteStray(s, u, action);
+    // Popups opened before this command: the browser reports a top-level URL
+    // as it is shown, which covers everything this command reached, but a
+    // window already open when the session started has nothing left to report.
+    // The active page needs no second look — its navigation was reported too.
+    for (const p of pages) this.noteStray(s, p.url, action);
     const strayedOrigin = s.strayed;
 
     const navigated = url !== s.lastUrl;
@@ -608,23 +609,26 @@ export class BrowserSessions {
   private noteStray(s: Session, url: string, action?: { [k: string]: JSONValue }): void {
     if (url === "" || this.inScope(s, url)) return;
     const origin = hostOf(url) ?? url;
-    // Cannot fail: a flag on a directory no grant can name until the browser
-    // stops clean. Ahead of the record for that reason.
-    this.host.abandonProfile();
     if (s.strayed === null) s.strayed = origin;
     // The same origin reaches here from more than one place — the browser
     // reports the navigation, and the response names the page it left us on.
-    if (s.strayedSeen.has(origin)) return;
+    const first = !s.strayedSeen.has(origin);
     s.strayedSeen.add(origin);
+    // Every append below is inside the guard, abandonProfile()'s own included:
+    // this runs in the host's line reader, where a throw takes the process
+    // down — and it would be taking it down over a retirement that had
+    // already succeeded.
     try {
-      this.audit("browser_scope_violation", {
-        session: s.handle,
-        action: action ? String(action.action) : "",
-        origin,
-      });
+      this.host.abandonProfile();
+      if (first) {
+        this.audit("browser_scope_violation", {
+          session: s.handle,
+          action: action ? String(action.action) : "",
+          origin,
+        });
+      }
     } catch {
-      // This runs inside the host's line reader for a touch. Throwing there
-      // takes the process down; the retirement above is the part that matters.
+      /* the retirement is the act; the record is the nice-to-have */
     }
   }
 

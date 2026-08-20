@@ -618,8 +618,12 @@ ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
 // for. `frame` is null while the browser is busy or restarting — the renderer
 // keeps showing the frame it already has rather than flickering.
 ipcMain.handle("viewer:state", async () => {
+  const open = device?.browserSessions?.current() ?? null;
+  const frame = open ? await device!.browserViewFrame() : null;
+  // Re-read after the poll: the frame is newer than the snapshot that started
+  // it, and a redirect landing in between would otherwise be drawn with the
+  // new URL and the old verdict — an off-scope page labelled approved.
   const session = device?.browserSessions?.current() ?? null;
-  const frame = session ? await device!.browserViewFrame() : null;
   return {
     active: session !== null,
     origins: session?.origins ?? [],

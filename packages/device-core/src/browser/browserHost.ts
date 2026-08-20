@@ -121,6 +121,10 @@ export class BrowserHost {
    * the moment it stops being — a stray hop, a widening, an unexpected exit —
    * so null alone means "this jar is not going back under its grant". */
   private profile: { saved: string; live: string } | null = null;
+
+  private get actionTimeout(): number {
+    return this.cfg.actionTimeoutMs ?? 60_000;
+  }
   /** Grant the running browser opened for — null once it has been given up. */
   private startedKey: string | null = null;
 
@@ -141,13 +145,26 @@ export class BrowserHost {
   async sendAction(action: { [k: string]: JSONValue }): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown) throw new BrowserCrashedError("browser host is shut down");
     await this.ensureStarted();
+    return this.request(this.child!, action, this.actionTimeout);
+  }
+
+  /**
+   * One framed request and its answer. Shared with the quit, which cannot go
+   * through `sendAction` — that runs `ensureStarted()`, and ensureStarted can
+   * decide the live browser is on the wrong profile and call back into
+   * `shutdown()`.
+   */
+  private request(
+    child: ChildProcess,
+    action: { [k: string]: JSONValue },
+    timeoutMs: number,
+  ): Promise<{ [k: string]: JSONValue }> {
     const id = this.nextId++;
-    const child = this.child!;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new BrowserCrashedError("browser action timed out"));
-      }, this.cfg.actionTimeoutMs ?? 60_000);
+      }, timeoutMs);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
       child.stdin!.write(JSON.stringify({ id, ...action }) + "\n", (err) => {
@@ -427,12 +444,12 @@ export class BrowserHost {
           }
           return;
         }
-        const id = m.get("id").int;
-        if (id === null) return;
-        const p = this.pending.get(id);
-        if (!p) return;
-        this.pending.delete(id);
-        clearTimeout(p.timer);
+        // Before anything about who was waiting: a response that arrived after
+        // its action timed out has no pending entry left, and dropping it here
+        // would drop the origins it is reporting with it — after which the jar
+        // holding their cookies is published under a grant that never named
+        // them. Every frame is evidence, answered or not.
+        //
         // Successful frames carry it inside `result` (the server's envelope);
         // error frames carry it beside the message, since they have none.
         for (const src of [m.get("result").get("touched"), m.get("touched")]) {
@@ -440,6 +457,12 @@ export class BrowserHost {
             if (typeof u === "string") this.onTouched?.(u);
           }
         }
+        const id = m.get("id").int;
+        if (id === null) return;
+        const p = this.pending.get(id);
+        if (!p) return;
+        this.pending.delete(id);
+        clearTimeout(p.timer);
         const error = m.get("error").str;
         if (error !== null) {
           p.reject(new Error(error));
@@ -478,6 +501,12 @@ export class BrowserHost {
       child.on("error", (err) => {
         this.child = null;
         this.startedKey = null;
+        // Only when it never became ready: the live directory is then exactly
+        // the state the grant had before this attempt, so publishing it back
+        // beats orphaning the only copy of those logins for the next sweep.
+        // 'error' can also fire on a failed kill of a browser that DID run,
+        // and that jar has been browsing — it is not publishable on this path.
+        if (!ready && this.profile) this.publishProfile(this.profile);
         this.profile = null;
         if (!ready) {
           ready = true;
@@ -504,37 +533,16 @@ export class BrowserHost {
 
   /** Graceful quit, then SIGTERM the group, then SIGKILL. Idempotent. */
   /**
-   * Ask the browser to quit and wait for it to say so. Written straight to the
-   * child with its own pending entry rather than through `sendAction`, which
-   * would run `ensureStarted()` — and that can decide the live browser is on
-   * the wrong profile and call back into here.
+   * Ask the browser to quit and wait for it to say so — the acknowledgement is
+   * what makes its jar publishable, so a browser that merely stopped soon
+   * after does not qualify. The window is the action timeout when something is
+   * already in flight: server.py reads strictly in order, and a click can hold
+   * the loop for its whole timeout before the quit is even seen.
    */
   private requestQuit(child: ChildProcess): Promise<boolean> {
-    const id = this.nextId++;
-    return new Promise<boolean>((resolve) => {
-      // An action still in flight is read before the quit is — server.py's
-      // loop is strictly sequential, and a click may hold it for its whole
-      // timeout. Waiting only the bare window there would SIGTERM a healthy
-      // browser and throw away a jar it was about to hand back.
-      const window = this.pending.size > 0 ? this.cfg.actionTimeoutMs ?? 60_000 : QUIT_WINDOW_MS;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        resolve(false);
-      }, window);
-      timer.unref?.();
-      this.pending.set(id, {
-        resolve: () => resolve(true),
-        reject: () => resolve(false),
-        timer,
-      });
-      try {
-        child.stdin!.write(JSON.stringify({ id, action: "quit" }) + "\n");
-      } catch {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        resolve(false); // stdin already closed; it will not be answering
-      }
-    });
+    const inFlight = this.pending.size > 0;
+    return this.request(child, { action: "quit" }, inFlight ? this.actionTimeout : QUIT_WINDOW_MS)
+      .then(() => true, () => false);
   }
 
   async shutdown(): Promise<void> {
