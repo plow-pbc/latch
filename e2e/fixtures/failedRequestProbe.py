@@ -238,11 +238,15 @@ def main():
     out["frames_crowd_out"] = feed(session, [
         Response(403, "https://pizza.example/api/x", page="https://pizza.example/"),
     ] + [
-        # Loaded frames, not blank ones: a sub-frame navigation names nobody
-        # whatever the frame is showing, so the row cannot pass for the wrong
-        # reason if the frame reading ever came back.
+        # Loaded frames on the EMBEDDER's own origin: a sub-frame navigation
+        # names nobody whatever the frame is showing, and this shape says so
+        # against every reading this rule has had — a blank-url one, an
+        # embedder one, and an agreement one would each name pizza.example
+        # here and trip the assertion. (A third-party ad frame would be the
+        # more faithful scenario, but a cross-origin child agrees with nobody,
+        # so it would pass the agreement reading for the wrong reason.)
         Response(410 + i, "https://ads.example/f%d" % i, navigation=True,
-                 page="https://ads.example/loaded", embedder="https://pizza.example/")
+                 page="https://pizza.example/frame", embedder="https://pizza.example/")
         for i in range(5)
     ])
 
