@@ -28,6 +28,10 @@
  *                      reaches a log, a fixture's included.
  *
  * Scripted page behaviors:
+ *   click "#blocked"  the page's own requests come back refused — one from the
+ *                     approved page, one from elsewhere, and one whose url
+ *                     still carries a query, to prove the device strips too
+ *   click "#refuses"  refused AND fails, so the refusal has to ride an error
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
  *   click "#swallowed" fails the way a click something is covering does
@@ -35,6 +39,10 @@
 "use strict";
 const fs = require("node:fs");
 const readline = require("node:readline");
+
+/** Refusals waiting for the next reply, most recent first, exactly as
+ * server.py's reply_with_failures hands them over. */
+let failed = [];
 
 const state = {
   pages: [{ url: "about:blank", title: "blank" }],
@@ -48,6 +56,13 @@ function current() {
 
 function envelope(result) {
   return { ...result, url: current().url, page_count: state.pages.length };
+}
+
+/** Every reply carries what the page's requests did — a result or an error. */
+function withFailures(reply) {
+  const carried = failed;
+  failed = [];
+  return carried.length === 0 ? reply : { ...reply, failed_requests: carried };
 }
 
 function respond(obj) {
@@ -104,6 +119,17 @@ function handle(cmd) {
         `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
           `  - <div class="modal-backdrop show"></div> intercepts pointer events\n`,
       );
+    }
+    if (cmd.selector === "#blocked" || cmd.selector === "#refuses") {
+      failed = [
+        {
+          status: 429, method: "POST",
+          url: "https://pizza.example/api/order?tx=StateProperties=SECRET",
+          retry_after: "30",
+        },
+        { status: 403, method: "GET", url: "https://tracker.example/beacon" },
+      ];
+      if (cmd.selector === "#refuses") throw new Error("locator.click: Timeout 3000ms exceeded.");
     }
     if (cmd.selector === "#popup") {
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
@@ -208,11 +234,13 @@ function main() {
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
     if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
+    let reply;
     try {
-      respond({ id: cmd.id, result: envelope(handle(cmd)) });
+      reply = { id: cmd.id, result: envelope(handle(cmd)) };
     } catch (e) {
-      respond({ id: cmd.id, error: String(e.message || e).slice(0, 500) });
+      reply = { id: cmd.id, error: String(e.message || e).slice(0, 500) };
     }
+    respond(withFailures(reply));
   });
   rl.on("close", () => process.exit(0));
 }

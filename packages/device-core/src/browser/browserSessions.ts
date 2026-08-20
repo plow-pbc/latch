@@ -42,10 +42,47 @@ interface Session {
  * needs to find its way back. Nothing that observes or touches page content. */
 const LOCKOUT_ALLOWED = new Set(["url", "pages", "use_page", "goto"]);
 
-/** Strip query/fragment for audit lines — they carry tokens. */
+/** Strip query/fragment and any userinfo for audit lines — both carry secrets. */
 export function stripQuery(url: string): string {
   const i = url.search(/[?#]/);
-  return i === -1 ? url : url.slice(0, i);
+  const cut = i === -1 ? url : url.slice(0, i);
+  return cut.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, "$1");
+}
+
+/**
+ * Requests the site itself refused during an action, as the browser reported
+ * them — re-stripped here because they land in the owner's durable log and a
+ * token written there cannot be taken back.
+ */
+function failedRequests(value: JSONValue[]): JSONValue[] {
+  return value.flatMap((entry) => {
+    const e = jv(entry);
+    if (e.obj === null) return [];
+    return [{ ...e.obj, url: stripQuery(e.get("url").str ?? "") }];
+  });
+}
+
+/**
+ * What the AGENT is told about a refusal: the host, never the path. A page
+ * chooses the urls it fetches, so a path handed to the agent is text that page
+ * wrote; a host cannot be, since it is either one the session was approved for
+ * or it is dropped. That is also why this is the only filter needed.
+ */
+function forAgent(entries: JSONValue[], approved: (host: string) => boolean): JSONValue[] {
+  return entries.flatMap((entry) => {
+    const e = jv(entry);
+    const host = hostOf(e.get("url").str ?? "");
+    if (host === null || !approved(host)) return [];
+    const retryAfter = e.get("retry_after").str;
+    const server = e.get("server").str;
+    return [{
+      status: e.get("status").int ?? 0,
+      method: e.get("method").str ?? "",
+      host,
+      ...(retryAfter === null ? {} : { retry_after: retryAfter }),
+      ...(server === null ? {} : { server }),
+    }];
+  });
 }
 
 function hostOf(url: string): string | null {
@@ -344,13 +381,18 @@ export class BrowserSessions {
       }
 
       switch (action) {
-        case "fill_secret":
-          return await this.fillSecret(
+        case "fill_secret": {
+          // It builds its result by hand rather than through serverAction, and
+          // its own locate/fill round-trips are where the refusals arrive.
+          const filled = await this.fillSecret(
             s,
             p.get("selector").str ?? "",
             p.get("item").str ?? "",
             p.get("field").str ?? "",
           );
+          const refused = this.reportRefusals(s, action, s.lastUrl, knobs, false);
+          return refused.length ? { ...filled, failed_requests: refused } : filled;
+        }
         case "goto": {
           const target = p.get("url").str ?? "";
           const host = hostOf(target);
@@ -387,15 +429,43 @@ export class BrowserSessions {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.audit("browser_command", {
-        session: s.handle,
-        action,
-        url: stripQuery(s.lastUrl),
-        ...knobs,
+      const refused = this.reportRefusals(s, action, s.lastUrl, { ...knobs, error: message });
+      return {
+        status: "error",
         error: message,
-      });
-      return { status: "error", error: message };
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
     }
+  }
+
+  /**
+   * Take what the browser reported, put ALL of it in the owner's log against
+   * this action, and answer with what the agent may be told.
+   *
+   * One place, called by an action that worked and by one that threw: an action
+   * fails BECAUSE its request was refused at least as often as for any other
+   * reason, and a report only the success path makes is missing exactly then.
+   */
+  private reportRefusals(
+    s: Session,
+    action: string,
+    url: string,
+    extra: { [k: string]: JSONValue },
+    // fill_secret writes its own credential_* line for every outcome that
+    // reaches the browser, so it asks for a browser_command line only when
+    // there is a refusal to put on one.
+    alwaysAudit = true,
+  ): JSONValue[] {
+    const failed = failedRequests(this.host.takeFailedRequests());
+    if (!alwaysAudit && failed.length === 0) return [];
+    this.audit("browser_command", {
+      session: s.handle,
+      action,
+      url: stripQuery(url),
+      ...extra,
+      ...(failed.length ? { failed_requests: failed } : {}),
+    });
+    return forAgent(failed, (host) => originMatches(host, s.origins));
   }
 
   /** Send to the server, then observe where we landed and sweep popups. */
@@ -417,14 +487,9 @@ export class BrowserSessions {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
-    this.audit("browser_command", {
-      session: s.handle,
-      action: String(action.action),
-      url: stripQuery(url),
-      // What the agent had to ask for, so the next look at a session that went
-      // wrong can count it the way this one counted `eval`.
-      ...knobs,
-    });
+    // `knobs` is what the agent had to ask for, so the next look at a session
+    // that went wrong can count it the way this one counted `eval`.
+    const refused = this.reportRefusals(s, String(action.action), url, knobs);
 
     // The browser puts the mark back on every concealed field before it lets
     // anything be observed, and says so when one of them would not take. It
@@ -446,6 +511,7 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
+    if (refused.length) out.failed_requests = refused;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
     if (!this.inScope(s, url)) {
@@ -540,7 +606,7 @@ export class BrowserSessions {
     selector: string,
     itemId: string,
     field: string,
-  ): Promise<JSONValue> {
+  ): Promise<{ [k: string]: JSONValue }> {
     if (!this.credentials) return { status: "error", error: "credential broker not available" };
     if (selector === "" || itemId === "" || field === "") {
       return { status: "error", error: "fill_secret requires selector, item, field" };

@@ -18,8 +18,10 @@ Adapted from plow-pbc/camoufox-cli scripts/camoufox_cli.py (see UPSTREAM.md).
 
 import argparse
 import base64
+import collections
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -46,6 +48,27 @@ if sys.platform == "darwin":
         pass
 
 MAX_ERROR_LEN = 500
+
+# How many refused requests one reply can carry back, and how long a recorded
+# url may be. The relay buffers a whole exchange, so a chatty page must not be
+# able to park one; a handful of the most recent is what says "you are blocked".
+MAX_FAILED_REQUESTS = 5
+MAX_FAILED_REQUEST_URL = 200
+
+# Kept off a refused request beyond status/method/url. Never a body -- a body
+# can echo a submitted credential -- and never an arbitrary header: Set-Cookie
+# and friends live there. Retry-After says "wait" rather than "you are blocked",
+# and its ABSENCE on a 429 is diagnostic in itself; Server usually distinguishes
+# an origin rate-limiting us from a bot vendor refusing us.
+FAILED_REQUEST_HEADERS = ("retry-after", "server")
+
+
+def _strip_query(url):
+    """Query and fragment carry tokens -- B2C hangs tx=StateProperties= there --
+    and userinfo carries a password outright. Stripped where the url is
+    recorded, so nothing downstream is holding one."""
+    cut = url.split("?", 1)[0].split("#", 1)[0]
+    return re.sub(r"^([a-z][a-z0-9+.-]*://)[^/]*@", r"\1", cut, flags=re.I)
 
 # How long one element action waits by default. Sized like the `goto` budget
 # above it: a single action has to answer inside the device's 15 s host cap and
@@ -220,6 +243,13 @@ class Session:
         # navigation can be noticed however it happened and a route change
         # within one document is not mistaken for one.
         self.seen_document = {}
+        # Requests the site itself refused, oldest first, waiting for the next
+        # reply to carry them out. Subscribed on the CONTEXT rather than the
+        # page: a popup is where a checkout or a sign-in usually lands, and a
+        # per-page listener would be blind to exactly the ones worth seeing.
+        # Attached here so a Session cannot exist without it.
+        self.failed = collections.deque(maxlen=MAX_FAILED_REQUESTS)
+        page.context.on("response", self.note_response)
 
     def _forget_navigated(self):
         """A page showing a NEW DOCUMENT is not the page anything was filled on.
@@ -299,6 +329,44 @@ class Session:
     @property
     def pages(self):
         return self.page.context.pages
+
+    def note_response(self, response):
+        """Remember a request the site refused.
+
+        Only 4xx/5xx: a sign-in flow is mostly redirects, and keeping those
+        would push the one refusal that matters out of a short ring. Nothing
+        here may raise -- this runs on Playwright's event thread, where an
+        exception is nobody's to catch -- and nothing here reads a body.
+        """
+        try:
+            if response.status < 400:
+                return
+            headers = response.headers
+            entry = {
+                "status": response.status,
+                "method": response.request.method,
+                "url": _strip_query(response.url)[:MAX_FAILED_REQUEST_URL],
+            }
+            for name in FAILED_REQUEST_HEADERS:
+                value = headers.get(name)
+                if value:
+                    entry[name.replace("-", "_")] = str(value)[:100]
+            self.failed.append(entry)
+        except Exception:  # noqa: BLE001 — a listener that raises takes the page with it
+            pass
+
+    def reply_with_failures(self, reply):
+        """Add what the page's requests did to a reply, and forget it.
+
+        Every reply goes through here -- a result, an error, the answer to
+        `quit` -- because a refusal that arrives during the action that FAILED
+        is the one most worth having, and a seam only the success path passes
+        through is a seam that loses it. Most recent first, reported once.
+        """
+        if self.failed:
+            reply["failed_requests"] = list(reversed(self.failed))
+            self.failed.clear()
+        return reply
 
     def envelope(self, result):
         """Every response carries where we are, so the client can enforce scope
@@ -654,9 +722,10 @@ def main():
 
             try:
                 result = session.handle(cmd, args.screenshots_dir)
-                _respond({"id": rid, "result": session.envelope(result)})
+                reply = {"id": rid, "result": session.envelope(result)}
             except Exception as exc:  # noqa: BLE001 — every failure must answer
-                _respond({"id": rid, "error": str(exc)[:MAX_ERROR_LEN]})
+                reply = {"id": rid, "error": str(exc)[:MAX_ERROR_LEN]}
+            _respond(session.reply_with_failures(reply))
         # EOF on stdin: supervisor died — fall through and let the context close.
 
 

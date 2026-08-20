@@ -287,6 +287,56 @@ describe("origin scope", () => {
   });
 });
 
+describe("requests the site refused", () => {
+  const ORDER = { status: 429, method: "POST", host: "pizza.example", retry_after: "30" };
+
+  it("tells the agent the host, and the owner's log the whole url", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // Scripted: "#blocked" is a click whose XHRs the site answers 429, plus a
+    // third-party beacon that 403s.
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" }));
+    expect(r.get("status").str).toBe("completed");
+
+    // The agent gets the host and nothing a page could have written: no path,
+    // and nothing at all from an origin it was not approved for.
+    expect(r.get("failed_requests").value).toEqual([ORDER]);
+    expect(JSON.stringify(r.value)).not.toContain("tracker.example");
+    expect(JSON.stringify(r.value)).not.toContain("SECRET");
+
+    // The owner is the one person a page cannot mislead by choosing a url, so
+    // their log keeps both entries in full — query stripped.
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toEqual([
+      { status: 429, method: "POST", url: "https://pizza.example/api/order", retry_after: "30" },
+      { status: 403, method: "GET", url: "https://tracker.example/beacon" },
+    ]);
+  });
+
+  it("says nothing when the page's requests were answered", async () => {
+    const s = await openSession(["pizza.example"]);
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));
+    expect(r.get("failed_requests").value).toBeNull();
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toBeUndefined();
+  });
+
+  it("keeps what an action saw even when that action failed", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // The motivating shape: the click fails BECAUSE the site refused its
+    // request, so a report only the success path made would be missing exactly
+    // when it matters.
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#refuses" }));
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toContain("Timeout");
+    expect(r.get("failed_requests").value).toEqual([ORDER]);
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.error).toContain("Timeout");
+    expect(command?.fields.failed_requests).toHaveLength(2);
+  });
+});
+
 describe("credentials", () => {
   it("no longer answers vault questions — that moved to the vault tool", async () => {
     const s = await openSession(["pizza.example"]);

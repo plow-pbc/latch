@@ -336,6 +336,30 @@ SEES — screenshots and form reads — and cannot cover `eval`, which reads
 model: accidental exposure is what masking is for, and an agent that goes
 looking for a filled value with `eval` is outside it.
 
+**What the page's own requests did.** A browser action reports whether it
+worked; it used to say nothing about whether the *page* worked. A click whose
+XHR came back 401/403/429 answered `{ok: true}` on a page that had not moved,
+and the owner's log recorded a plain click — the gap cost a 27-minute blind
+retry loop against a sign-in being rate-limited, and the only way to see the
+status was to hand-instrument `XMLHttpRequest` through `eval`, which is itself
+an automation signal. So the server keeps the last five 4xx/5xx per action
+(context-level, popups included) and every reply drains them — results, errors
+and the answer to `quit` alike, since a refusal that only rode success replies
+is the one nobody would ever see. Never a body: a body can echo a submitted
+credential. `BrowserHost` holds them until an agent action carries them out,
+because most of what asks the browser anything is the device itself (the ~1/s
+viewer poll, the popup sweep, a credential fill's `locate`) and whichever was
+in flight would otherwise consume a 429 and drop it.
+
+**The owner's log gets the whole entry; the agent gets the host.** A page
+chooses the urls it fetches, so a path handed to the agent is text that page
+wrote — and an unapproved page must not get to write the agent's evidence.
+A host cannot be written that way: it is either one the session was approved
+for or it is not, which is also the whole filter. So the agent is told
+`{status, method, host}` (plus `Retry-After`/`Server` when sent) for approved
+origins only, while `audit.ndjson` keeps the query-stripped url in full for the
+owner, who is the one person a page cannot mislead by choosing it.
+
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —
 never values) or `access: "fill"` with item ids. The vendored
