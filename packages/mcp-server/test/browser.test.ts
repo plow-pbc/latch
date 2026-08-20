@@ -174,6 +174,30 @@ describe("browser tools (fake runtime)", () => {
     expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("hunter2");
   });
 
+  it("a refused request reaches the agent, on the action and on the screenshot after it", async () => {
+    const { server } = makeServer();
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/" });
+
+    // Scripted: "#blocked" is a click the site answers 429/403, with one more
+    // refusal settling after the action answered.
+    const clicked = await act(server, session, "click", { selector: "#blocked" });
+    const failed = clicked.payload.failed_requests as { status: number; url: string }[];
+    expect(failed[0]).toMatchObject({ status: 429, url: "https://pizza.example/api/order" });
+
+    // The screenshot branch replaces the result with an image + a meta block;
+    // the late refusal has to survive that, because a screenshot is what an
+    // agent takes after every action.
+    const shot = parse(await rpc(
+      server, "tools/call", { name: "plow_browser", arguments: { session, action: "screenshot" } }, AGENT,
+    ));
+    const blocks = shot.result!.content as { type: string; text?: string }[];
+    const meta = JSON.parse(blocks[1].text!) as { failed_requests?: { status: number }[] };
+    expect(meta.failed_requests).toEqual([
+      { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
+    ]);
+  });
+
   it("denyKinds credential blocks fill grants while browsing still works", async () => {
     const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once", denyKinds: ["credential"] }));
     const session = await open(server, ["pizza.example"], false);

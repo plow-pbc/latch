@@ -506,7 +506,9 @@ export const TOOLS: ToolSpec[] = [
       "'forms'; it does not cover 'eval', which reads a field's value straight out of the " +
       "page, so never inspect a field you filled that way. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
-      "page_count (watch it for popups; switch with use_page).",
+      "page_count (watch it for popups; switch with use_page), and 'failed_requests' when the " +
+      "page's own requests came back refused — a 401, 403 or 429 there is why an action that " +
+      "reported success changed nothing, so read it before retrying.",
     inputSchema: {
       type: "object",
       required: ["session", "action"],
@@ -558,7 +560,15 @@ export const TOOLS: ToolSpec[] = [
       // Screenshot becomes an MCP image block so the agent can SEE the page.
       const imageB64 = r.get("data_b64").str;
       if (action === "screenshot" && imageB64 !== null) {
-        const meta = { url: r.get("url").str ?? "", page_count: r.get("page_count").int ?? 1 };
+        // This branch replaces the result wholesale, so anything the agent
+        // needs has to be named here — a refusal dropped on the screenshot is
+        // dropped on the action an agent takes after every navigation.
+        const failed = r.get("failed_requests").value;
+        const meta = {
+          url: r.get("url").str ?? "",
+          page_count: r.get("page_count").int ?? 1,
+          ...(failed === null ? {} : { failed_requests: failed }),
+        };
         return {
           __mcpContent: [
             { type: "image", data: imageB64, mimeType: r.get("mime").str ?? "image/jpeg" },

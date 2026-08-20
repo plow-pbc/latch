@@ -55,6 +55,13 @@ url, title, links, forms, tables, pages.
   Write selectors from what you SEE, not from memory.
 - **\`back\` does not work in this browser** — it honestly reports \`moved: false\`. Navigate
   with \`goto\` instead; cookies and the session survive.
+- **An action that "worked" but changed nothing: read \`failed_requests\`.** A result carries
+  it when the page's own requests came back refused — most recent first, each
+  \`{status, method, url, bytes}\` plus \`retry_after\` when the site sent one. A 401 or 403
+  means the sign-in did not take; a 429 means you are being throttled or blocked, and a 429
+  with no \`retry_after\` is usually the latter, so waiting will not help. One can settle
+  after the action answered and ride the next result — the screenshot you take next.
+  Do not instrument the page with \`eval\` to find this out; this is that answer.
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after

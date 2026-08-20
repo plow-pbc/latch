@@ -34,7 +34,8 @@
  *   click "#blocked"  the page's own requests come back refused: seven 4xx
  *                     responses, the way the real server reports the ones it
  *                     saw during the action (already query-stripped there —
- *                     one here keeps its query, to prove the device strips too)
+ *                     one here keeps its query, to prove the device strips too),
+ *                     plus one that settles late and rides the next result
  */
 "use strict";
 const fs = require("node:fs");
@@ -45,8 +46,10 @@ const state = {
   active: 0,
   commands: 0,
   // Refused requests waiting for the next envelope, most recent first, exactly
-  // as the real server hands them over.
+  // as the real server hands them over. `failedNext` is one that settles after
+  // the action answered — a real XHR does, and it rides the result after.
   failed: [],
+  failedNext: [],
 };
 
 function current() {
@@ -55,7 +58,8 @@ function current() {
 
 function envelope(result) {
   const failed = state.failed;
-  state.failed = [];
+  state.failed = state.failedNext;
+  state.failedNext = [];
   return {
     ...result,
     url: current().url,
@@ -131,6 +135,9 @@ function handle(cmd) {
           method: "GET",
           url: `https://pizza.example/api/x${i}`,
         })),
+      ];
+      state.failedNext = [
+        { status: 401, method: "GET", url: "https://pizza.example/api/whoami" },
       ];
     }
     return { ok: true, frame: 0 };

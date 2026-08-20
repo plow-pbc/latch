@@ -336,6 +336,21 @@ SEES — screenshots and form reads — and cannot cover `eval`, which reads
 model: accidental exposure is what masking is for, and an agent that goes
 looking for a filled value with `eval` is outside it.
 
+**What the page's own requests did.** A browser action reports whether it
+worked; it used to say nothing about whether the *page* worked. A click whose
+XHR came back 401/403/429 answered `{ok: true}` on a page that had not moved,
+and the owner's log recorded a plain click — the gap cost a 27-minute blind
+retry loop against a sign-in that was being rate-limited, and the only way to
+see the status was to hand-instrument `XMLHttpRequest` through `eval`, which is
+itself an automation signal. So the server keeps the last five 4xx/5xx per
+action (context-level, popups included) and every result carries them as
+`failed_requests` — status, method, a **query-stripped** url (B2C hangs
+`tx=StateProperties=` there), size, `Retry-After` and `Server`. Never a body: a
+body can echo a submitted credential. Bounded because the relay buffers a whole
+exchange. `BrowserSessions` re-strips before the entries reach the agent or the
+audit log, and withholds them from the agent on an out-of-scope page like every
+other observation of that page.
+
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —
 never values) or `access: "fill"` with item ids. The vendored
