@@ -297,12 +297,19 @@ export class BrowserHost {
         if (error !== null) {
           p.reject(new Error(error));
         } else {
-          p.resolve((m.get("result").obj as { [k: string]: JSONValue }) ?? {});
+          const result = (m.get("result").obj as { [k: string]: JSONValue }) ?? {};
+          // Belt to the harvest's braces: a browser that puts refusals where
+          // this side no longer reads them must not have them reach the agent
+          // around the session layer's filter.
+          delete result.failed_requests;
+          p.resolve(result);
         }
       });
 
       child.on("exit", (code, signal) => {
-        rl.close();
+        // rl is deliberately NOT closed here — the stream ends on its own when
+        // the child's stdout does, and closing early truncates whatever it
+        // said on the way out.
         const wasReady = ready;
         this.child = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
@@ -354,8 +361,10 @@ export class BrowserHost {
     this.shuttingDown = true;
     const child = this.child;
     if (!child) return;
+    // `close`, not `exit`: the browser answers `quit` with the last refusals it
+    // saw, and exit fires before its stdout has necessarily been drained.
     const exited = new Promise<void>((resolve) => {
-      child.once("exit", () => resolve());
+      child.once("close", () => resolve());
     });
     try {
       child.stdin!.write(JSON.stringify({ id: this.nextId++, action: "quit" }) + "\n");

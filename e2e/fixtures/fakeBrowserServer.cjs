@@ -282,8 +282,13 @@ function main() {
       return;
     }
     if (cmd.action === "quit") {
-      respond(withFailures({ id: cmd.id, result: { ok: true } }));
-      process.exit(0);
+      // Exit only once the reply is actually out: stdout to a pipe is async on
+      // macOS, and exiting on top of the write discards it — the real server
+      // ends by falling out of its loop, so the fixture must not model a
+      // truncated goodbye.
+      const last = JSON.stringify(withFailures({ id: cmd.id, result: { ok: true } })) + "\n";
+      process.stdout.write(last, () => process.exit(0));
+      return;
     }
     if (process.env.FAKE_CMD_LOG) {
       // Redacted here, at the point of writing, so no reader has to remember to
