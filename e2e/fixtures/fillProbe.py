@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 
 
 def load_server():
@@ -173,6 +174,11 @@ class Handle:
         self.typed = (self.typed or "") + text
         self.type_calls += 1
         self.key_timeout_max = max(self.key_timeout_max or 0, timeout)
+        # Spend a little, so a budget drawn from a shared deadline is visibly
+        # under the whole of it rather than under it by however many
+        # microseconds the interpreter took to get here. Playwright spends the
+        # key's delay at this point.
+        time.sleep(0.001)
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which

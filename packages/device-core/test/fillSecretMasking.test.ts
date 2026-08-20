@@ -619,28 +619,21 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
   });
 
-  it("answers a fill inside the budget the device gives it", () => {
+  it("answers a frame-named fill inside the budget the device gives it", () => {
     // The device drops its pending entry at HOST_CAP_MS and tells this process
     // nothing, so a fill that ran past it would go on typing a credential into
-    // a page whose answer nobody is waiting for. The steps a fill can spend:
-    // resolve the node, assign the head, type the tail, and — when the keys
-    // were dropped — assign the whole value.
+    // a page whose answer nobody is waiting for. The TIMED steps a fill can
+    // spend: resolve the node, assign the head, type the tail, and — when the
+    // keys were dropped — assign the whole value. Two spends are outside this
+    // and neither is bounded: a caller that names no frame pays for the search
+    // (#96), and the `evaluate` calls take no timeout at all.
     const c = probed.constants;
-    // HOST_CAP_MS is server.py's copy of a number the device owns, so read the
-    // device's and make the copy answer for itself — a cap that drifted apart
-    // from the timer it names would leave the sum below nothing in particular.
-    const agent = fs.readFileSync(
-      fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
-      "utf8",
-    );
-    const declared = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
-    expect(declared).not.toBeNull();
-    expect(Number(declared![1].replace(/_/g, ""))).toBe(c.host_cap_ms);
     expect(c.action_timeout_ms * 3 + c.typing_max_ms).toBeLessThan(c.host_cap_ms);
     // And the tail draws on ONE budget, not one per key: handing each key the
     // tail's own would let them stack to TYPED_CHARS times it. A shared
     // deadline is already counting down by the first key, so no key is ever
     // handed the whole of it — which a per-key timeout hands out every time.
+    // The fixture spends a millisecond per key so that gap is one it causes.
     expect(probed.long_value.key_timeout_max).toBeLessThan(c.typing_max_ms);
   });
 
@@ -1023,6 +1016,25 @@ function stubPage(
     },
   };
 }
+
+describe("the cap the fill's budgets are measured against", () => {
+  // HOST_CAP_MS is server.py's copy of a number the device owns, so read the
+  // device's and make the copy answer for itself — a cap that drifted from the
+  // timer it names would leave the budget sum under nothing in particular.
+  // Two source texts and no Python, so it holds on a host without one.
+  it("is the timer the device actually arms", () => {
+    const server = fs.readFileSync(SERVER_PY, "utf8");
+    const agent = fs.readFileSync(
+      fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
+      "utf8",
+    );
+    const declared = /^HOST_CAP_MS = (\d+)$/m.exec(server);
+    const armed = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
+    expect(declared).not.toBeNull();
+    expect(armed).not.toBeNull();
+    expect(Number(declared![1])).toBe(Number(armed![1].replace(/_/g, "")));
+  });
+});
 
 describe("whether the keys landed", () => {
   // `KEYS_DROPPED_JS` decides whether a typed fill has to fall back to

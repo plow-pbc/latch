@@ -57,7 +57,13 @@ ACTION_TIMEOUT_MS = 3000
 # (`actionTimeoutMs` in deviceAgent.ts). Nothing here is told when that happens
 # -- the device drops its pending entry and sends this process nothing -- so a
 # fill that ran past it would go on typing a credential into a page whose
-# answer nobody is waiting for. Every budget below has to add up to less.
+# answer nobody is waiting for.
+#
+# The TIMED budgets below add up to less, which covers a fill that names its
+# frame on a page that runs script. Two spends are outside that sum and neither
+# is bounded: a caller that names no frame pays ACTION_TIMEOUT_MS per frame it
+# rules out (the loop, #96), and every fill makes `evaluate` calls that take no
+# timeout at all, so a page that will not run script hangs regardless.
 HOST_CAP_MS = 15000
 
 # What every action that moves the page gives it to settle afterwards, so the
@@ -74,8 +80,13 @@ SETTLE_MS = 1000
 # a one-time code, an API token -- is longer than this, so a credential is typed
 # whole and a message body still ends on real keys.
 KEY_DELAY_MS = 45
+# What a key may cost beyond its delay: the round trip that dispatches it and
+# the actionability check in front of it. A few milliseconds on a local page.
+# The tail's budget is derived from it rather than the other way around, so
+# that the number stating what a credential is stays free of latency.
+KEY_OVERHEAD_MS = 30
 TYPED_CHARS = 64
-TYPING_MAX_MS = 5000
+TYPING_MAX_MS = TYPED_CHARS * (KEY_DELAY_MS + KEY_OVERHEAD_MS)
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
