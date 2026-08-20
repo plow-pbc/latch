@@ -83,7 +83,7 @@ function failedRequests(value: JSONValue[]): JSONValue[] {
  * as the approved page's own trouble — and an asker the browser could not name
  * goes the same way, withheld from the agent and kept for the owner. That is
  * not only the exotic case (a service worker, a request nobody saw asked): it
- * is every frame's own document load, since nothing can say whether the frame
+ * is a sub-frame's own document load, since nothing can say whether the frame
  * moved itself or its embedder moved it. The initiator itself is never handed
  * over; the agent gets the host that refused, which is the diagnosis.
  */

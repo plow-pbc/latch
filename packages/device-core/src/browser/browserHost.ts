@@ -59,7 +59,13 @@ interface Pending {
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
-/** How many refused requests the host holds for the next agent action. */
+/** How many refused requests the host holds for the next agent action. This is
+ * the bound that bites: the browser's own ring is drained by every reply, most
+ * of which are the device's own, while these accumulate until an agent action
+ * takes them. One ring holds what the agent may see and what only the owner
+ * may, so a page with several failing frames can push an attributable refusal
+ * out of it — accepted, since the owner is the one who needs the whole picture
+ * and the agent's next action gets whatever comes next. */
 const MAX_FAILED_REQUESTS = 5;
 
 export class BrowserHost {

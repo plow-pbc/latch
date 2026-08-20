@@ -34,6 +34,8 @@
  *   click "#refuses"  refused AND fails, so the refusal has to ride an error
  *   click "#blocked-later"  the refusal settles after the click answered, so it
  *                     rides whatever reply comes next — a viewer poll, say
+ *   click "#frames-fail"  five frame loads the browser cannot attribute, on the
+ *                     next reply: enough to fill the host's ring
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
  *   click "#swallowed" fails the way a click something is covering does
@@ -125,6 +127,11 @@ function handle(cmd) {
         `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +
           `  - <div class="modal-backdrop show"></div> intercepts pointer events\n`,
       );
+    }
+    if (cmd.selector === "#frames-fail") {
+      failedNext = Array.from({ length: 5 }, (_, i) => ({
+        status: 410 + i, method: "GET", origin: "https://ads.example", initiator: "",
+      }));
     }
     if (cmd.selector === "#blocked-later") {
       failedNext = [{

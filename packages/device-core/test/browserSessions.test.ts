@@ -357,6 +357,23 @@ describe("requests the site refused", () => {
     ]);
   });
 
+  it("lets a page's failing frames crowd out the one the agent could have used", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // One attributable refusal, then five frame loads the browser cannot
+    // attribute, all arriving before the agent's next action. The device holds
+    // five; the owner is the one who needs the whole picture, and the agent's
+    // next action gets whatever comes next.
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked-later" });
+    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#frames-fail" });
+    expect(await ctx.host.viewFrame()).not.toBeNull();
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "url" }));
+    expect(r.get("failed_requests").value).toBeNull();
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect((command?.fields.failed_requests as { status: number }[]).map((e) => e.status))
+      .toEqual([410, 411, 412, 413, 414]);
+  });
+
   it("says nothing when the page's requests were answered", async () => {
     const s = await openSession(["pizza.example"]);
     const r = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));
