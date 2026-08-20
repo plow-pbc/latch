@@ -30,7 +30,7 @@
  * Scripted page behaviors:
  *   click "#popup"     opens a second page on https://popup.example/pay
  *   click "#offsite"   navigates the page to https://offsite.example/lander
- *   click "#swallowed" fails the way a forced click nothing received does
+ *   click "#swallowed" with force: fails the way one nothing received does
  */
 "use strict";
 const fs = require("node:fs");
@@ -100,7 +100,7 @@ function handle(cmd) {
   if (a === "click") {
     // What the real server answers when a forced click is swallowed: the click
     // was dispatched and nothing the agent aimed at received it.
-    if (cmd.selector === "#swallowed") {
+    if (cmd.selector === "#swallowed" && cmd.force) {
       throw new Error(
         `forced click on ${cmd.selector} was not received: div.modal-backdrop.show got it instead`,
       );

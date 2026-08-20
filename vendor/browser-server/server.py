@@ -55,8 +55,11 @@ MAX_ERROR_LEN = 500
 # instead when the agent knows the page is slow; the device clamps it.
 DEFAULT_ACTION_TIMEOUT_MS = 3000
 
-# The least a forced click is worth attempting with, once the element is in
-# hand. Borrowed from the rest of the action's budget, never added to it.
+# The least a forced click is worth attempting with once the element is in hand,
+# reserved out of the frame's slice rather than added to it: resolving a node
+# and then clicking it with the 1 ms that were left over fails on the clock
+# rather than on anything about the element, and the watcher never gets to say
+# what happened.
 CLICK_FLOOR_MS = 250
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
@@ -508,7 +511,9 @@ class Session:
                             # `attached` rather than the default `visible`,
                             # because skipping that wait is the point of force.
                             slice_end = time.monotonic() + left / 1000.0
-                            el = fr.wait_for_selector(sel, timeout=left, state="attached")
+                            el = fr.wait_for_selector(
+                                sel, timeout=max(left - CLICK_FLOOR_MS, 1), state="attached"
+                            )
                             if el is None:
                                 raise RuntimeError("selector not found: %s" % sel)
                             watch = fr.evaluate_handle(CLICK_WATCH_JS, el)
@@ -516,14 +521,11 @@ class Session:
                                 # This frame's slice, not the rest of the whole
                                 # budget: a node that resolves and then will not
                                 # take the click must not spend what the next
-                                # frame's attempt needs. The click may borrow a
-                                # little past the slice -- never past the whole
-                                # deadline -- so an element that resolves at the
-                                # end of one is not failed on a 1 ms timeout it
-                                # was never going to make.
-                                end = min(slice_end + CLICK_FLOOR_MS / 1000.0, deadline)
-                                rest = int((end - time.monotonic()) * 1000)
-                                el.click(timeout=max(rest, 1), force=True)
+                                # frame's attempt needs. The wait above gave the
+                                # click its floor back, so what is left here is
+                                # always worth attempting with.
+                                rest = int((slice_end - time.monotonic()) * 1000)
+                                el.click(timeout=max(rest, CLICK_FLOOR_MS), force=True)
                                 blocked = self.ask_watcher(watch, CLICK_LANDED_JS)
                             finally:
                                 self.drop_watcher(watch)
