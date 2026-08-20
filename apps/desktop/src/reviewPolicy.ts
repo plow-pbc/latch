@@ -103,6 +103,12 @@ export async function decideIntent(
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
   // the request and the final decision.
+  // Adversarial mode has no human in it, and the reviewer is told so rather
+  // than left to infer it from the owner's freeform purpose text. Ask mode is
+  // the other way round: the dialog is coming either way, so a reviewer that
+  // wants to defer is saying something the human will actually see.
+  const humanAvailable = mode !== "adversarial";
+
   const review = async () => {
     const history = agentHistory(deps.auditEntries(), intent.agentId);
     deps.record("adversarial_review_started", {
@@ -122,6 +128,7 @@ export async function decideIntent(
       // agent-reachable path can write what the prompt will label TRUSTED.
       agentPurpose: settings.agentPurpose ?? "",
       apiBaseUrl: deps.apiBaseUrl,
+      humanAvailable,
     });
     deps.record("adversarial_review_result", {
       intentId: intent.intentId,
@@ -163,6 +170,14 @@ export async function decideIntent(
     // of arriving here are an argument for access: the reviewer looked and
     // would not commit, or it never answered. Which of those it was is the
     // source, so a log tells a reviewer that hesitated from one that was down.
+    //
+    // `reviewer_undecided` is the hesitating half, and in this mode it is now
+    // unreachable by construction: `ask` is not in the schema the model answers
+    // into, and an `ask` that arrives anyway is refused at the parse and comes
+    // back as `unavailable`. It stays as the fail-closed default rather than
+    // being folded into the other, because what it labels — a reviewer that ran
+    // and declined to decide — is still a distinct thing to find in a log if a
+    // provider ever lets one through.
     return {
       decision: "deny",
       source:

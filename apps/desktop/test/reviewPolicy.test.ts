@@ -123,6 +123,64 @@ describe("the model reported is the model that runs", () => {
   });
 });
 
+/**
+ * Which mode is running is something the app KNOWS, so the reviewer is told
+ * rather than left to infer it from the owner's optional purpose text. It
+ * decides whether `ask` is even in the schema the model answers into.
+ */
+describe("the reviewer is told whether anyone is behind it", () => {
+  it("adversarial mode: nobody is", async () => {
+    const h = harness(
+      settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      { verdict: "allow" },
+    );
+    await h.run();
+    expect(h.reviewCalls[0].humanAvailable).toBe(false);
+  });
+
+  it("ask mode's hint: somebody is — the dialog is coming either way", async () => {
+    const h = harness(
+      settings({
+        approvalMode: "ask",
+        relayCredential: PLOW_CREDENTIAL,
+        showAgentSuggestions: true,
+      }),
+      { verdict: "ask" },
+    );
+    await h.run();
+    await h.dialogs[0];
+    expect(h.reviewCalls[0].humanAvailable).toBe(true);
+  });
+});
+
+/**
+ * The two denials wear the same `deny` and must stay tellable apart in the log:
+ * a reviewer that ran and would not commit is not a reviewer that never
+ * answered. With `ask` out of the schema, only the second is reachable.
+ */
+describe("a reviewer that could not answer is not a reviewer that hesitated", () => {
+  it("the internal non-verdict denies as reviewer_unavailable", async () => {
+    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
+      verdict: "ask",
+      reason: "reviewer timed out",
+      cause: "unavailable",
+    });
+    expect(await h.run()).toEqual({ decision: "deny", source: "reviewer_unavailable" });
+    expect((await h.run()).source).not.toBe("reviewer_undecided");
+  });
+
+  it("the audit record carries the cause, so the timeline shows which it was", async () => {
+    const h = harness(settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }), {
+      verdict: "ask",
+      reason: "reviewer timed out",
+      cause: "unavailable",
+    });
+    await h.run();
+    const result = h.records.find((r) => r.event === "adversarial_review_result");
+    expect(result?.fields).toMatchObject({ verdict: "ask", cause: "unavailable" });
+  });
+});
+
 describe("decideIntent — modes that never reach the reviewer", () => {
   it("approve auto-allows without reviewing or prompting", async () => {
     const h = harness(settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }));

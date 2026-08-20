@@ -85,12 +85,13 @@ const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
 let fetchMock: ReturnType<typeof vi.fn>;
 
 /** One review, through the only transport there is. */
-function review(credential = PLOW_CREDENTIAL) {
+function review(credential = PLOW_CREDENTIAL, humanAvailable = true) {
   return adversarialReview({
     intent: intent(),
     history: [],
     plowCredential: credential,
     apiBaseUrl: "https://api.plow.co",
+    humanAvailable,
   });
 }
 
@@ -148,6 +149,7 @@ describe("adversarialReview — clean verdicts flow through", () => {
       history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
+      humanAvailable: true,
     });
     const prompt = sentMessages()[1].content;
     expect(prompt).toContain("Requested capability bounds");
@@ -165,12 +167,105 @@ describe("adversarialReview — clean verdicts flow through", () => {
       history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
+      humanAvailable: true,
     });
     const prompt = sentMessages()[1].content;
     expect(prompt).toContain("Claude Code");
     expect(prompt).toContain("sess_alice");
   });
 
+});
+
+/**
+ * Adversarial mode has nobody behind it: the owner has said the reviewer
+ * decides, and no dialog will ever appear. An `ask` there is not a deferral, it
+ * is an automatic deny nobody is told about — which is how a perfectly ordinary
+ * "go to this site and sign in" became unreachable.
+ *
+ * So `ask` is removed from the schema the answer is generated against, rather
+ * than mapped away afterwards. These pin both halves: what the model is offered,
+ * and what happens if a provider hands one back anyway.
+ */
+describe("no human behind the reviewer — ask is not on the table", () => {
+  const noHuman = () => review(PLOW_CREDENTIAL, false);
+  const schemaSent = () =>
+    JSON.parse(fetchMock.mock.calls.at(-1)![1].body as string).response_format.json_schema.schema;
+
+  it("offers the model only allow and deny", async () => {
+    await noHuman();
+    expect(schemaSent().properties.decision.enum).toEqual(["allow", "deny"]);
+  });
+
+  it("still offers ask when a human IS going to be asked", async () => {
+    await review();
+    expect(schemaSent().properties.decision.enum).toEqual(["allow", "deny", "ask"]);
+  });
+
+  it("tells the reviewer so in the system channel, not by inference from the owner's prose", async () => {
+    await noHuman();
+    const [system, user] = sentMessages();
+    // The claim is made plainly, and it is made in the channel the agent cannot
+    // write into. The old prompt asked the model to infer it from the owner's
+    // optional freeform purpose text, which is usually empty.
+    expect(system.content).toContain('There is no "ask"');
+    expect(system.content).not.toContain("If the owner's description");
+    expect(system.content).toContain('"allow"|"deny", "reason"');
+    expect(user.content).toContain("Decide allow or deny.");
+    expect(user.content).not.toContain("ask");
+  });
+
+  it("stops steering credential fills toward ask, which was the deny in disguise", async () => {
+    await noHuman();
+    const system = sentMessages()[0].content;
+    // The sentence about the most sensitive grant in the system used to say
+    // "prefer ask over allow" — an instruction to pick the one verdict this
+    // mode turns into a silent denial.
+    expect(system).toContain("deny rather than allow when the item set is broad");
+    expect(system).not.toContain("prefer ask over allow");
+  });
+
+  it("refuses an ask a provider slips through, as unavailable rather than a verdict", async () => {
+    // `strict: true` should make this impossible; if it happens anyway it is a
+    // provider ignoring the schema, not a reviewer deferring. It must not land
+    // as a clean `ask`, which the caller reads as a reviewer that ran and
+    // hesitated (`reviewer_undecided`).
+    answersWith(verdictJson("ask", "ambiguous"));
+    expect(await noHuman()).toEqual({
+      verdict: "ask",
+      reason: "reviewer returned no usable verdict",
+      cause: "unavailable",
+    });
+  });
+
+  it("passes real verdicts through untouched", async () => {
+    answersWith(verdictJson("allow", "narrow fill on a matching origin"));
+    expect(await noHuman()).toEqual({
+      verdict: "allow",
+      reason: "narrow fill on a matching origin",
+    });
+    answersWith(verdictJson("deny", "unrelated origins"));
+    expect(await noHuman()).toEqual({ verdict: "deny", reason: "unrelated origins" });
+  });
+});
+
+/**
+ * The reviewer denied a mid-session credential fill as "significant scope
+ * widening" over an earlier metadata-only grant. Widening mid-session is the
+ * only way an agent CAN ask for more — it cannot widen anything itself — so
+ * reading the second request as an escalation attempt denies the designed flow.
+ */
+describe("mid-session widening is the designed flow, and the reviewer is told so", () => {
+  it("says it in the system channel, in both modes", async () => {
+    for (const humanAvailable of [true, false]) {
+      await review(PLOW_CREDENTIAL, humanAvailable);
+      const system = sentMessages()[0].content;
+      expect(system).toContain("Widening an open session is the DESIGNED flow");
+      expect(system).toContain("is not a ceiling");
+      expect(system).toContain("sign in as me");
+      // Still not a licence: scope that does not fit the task is still a signal.
+      expect(system).toContain("scope that does not FIT");
+    }
+  });
 });
 
 describe("adversarialReview — every failure falls back to ask, never allow", () => {
@@ -291,6 +386,7 @@ describe("the Plow provider", () => {
       history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
+      humanAvailable: true,
       ...overrides,
     });
 
@@ -760,6 +856,7 @@ describe("agent text cannot forge prompt structure", () => {
       history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
+      humanAvailable: true,
     });
     // The user message: the agent's text rides there, and the structure this
     // suite is about is the structure of that message.
@@ -820,6 +917,7 @@ describe("agent text cannot forge prompt structure", () => {
       history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
+      humanAvailable: true,
     });
     const [system] = sentMessages();
     expect(system.content).toContain("JSON-encoded string");
