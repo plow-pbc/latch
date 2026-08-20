@@ -107,10 +107,9 @@ describe("BrowserHost", () => {
     await vi.waitFor(() => expect(crashes).toBe(1));
     expect(events).toContain("browser_crashed");
     // Its last word — a 599 nothing else here emits — is there, and newest
-    // first. Whether the deferral was needed to get it there depends on which
-    // of exit and the stdout read the kernel dispatches first, so this covers
-    // the path rather than pinning the mechanism; the deferral is what makes
-    // the order stop mattering.
+    // first. Nothing here arranges the interleaving: the line is in the ring by
+    // the time exit is dispatched because that is what the kernel does, and
+    // every mechanism tried for guaranteeing it cost more than it saved.
     expect((heldAtCrash as { status: number }[])[0]).toMatchObject({ status: 599 });
     // Next action restarts a fresh server (state reset to about:blank), and a
     // new browser saw none of the dead one's traffic.

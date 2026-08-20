@@ -59,10 +59,6 @@ interface Pending {
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
-/** Longest the crash notice waits for the dying browser's last line — the pipes
- * ending is the signal, this is the backstop for a grandchild holding them. */
-const CRASH_NOTICE_GRACE_MS = 250;
-
 /** How many refused requests the host holds for the next agent action. This is
  * the bound that bites: the browser's own ring is drained by every reply, most
  * of which are the device's own, while these accumulate until an agent action
@@ -80,9 +76,6 @@ export class BrowserHost {
   private restartTimes: number[] = [];
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
-  /** A crash notice waiting for the dying browser's last line. Held so a
-   * restart can force it out rather than race it. */
-  private pendingCrashNotice: (() => void) | null = null;
   private shuttingDown = false;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
@@ -241,10 +234,6 @@ export class BrowserHost {
       stdio: ["pipe", "pipe", "pipe"],
       detached: true, // own process group, so shutdown can kill Firefox children
     });
-    // Before anything of this browser exists: a crash notice still waiting on
-    // the last one has to be delivered while its ring and its session are still
-    // the current ones.
-    this.pendingCrashNotice?.();
     this.child = child;
     this.stderrTail = [];
     // A new browser saw none of the old one's traffic.
@@ -324,29 +313,17 @@ export class BrowserHost {
         }
         this.pending.clear();
         if (wasReady && !this.shuttingDown) {
-          // Not here: exit fires before the child's stdout has necessarily been
-          // read, and the session closes its books inside onCrash — so the last
-          // thing the browser said would be lost. Whichever comes first, the
-          // pipes ending or a short grace: a Firefox grandchild can hold them
-          // open for as long as it likes, and a session left open against a
-          // dead browser is worse than a missed line. And not at all if a new
-          // browser has started meanwhile — its ring is not this one's.
-          let notified = false;
-          const grace = setTimeout(() => notify(), CRASH_NOTICE_GRACE_MS);
-          grace.unref?.();
-          const notify = () => {
-            if (notified) return;
-            notified = true;
-            clearTimeout(grace);
-            this.pendingCrashNotice = null;
-            this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
-            this.onCrash?.();
-          };
-          // Whichever comes first, and never dropped: a session left open
-          // against a dead browser is worse than a missed line, so a restart
-          // FORCES the notice out (see start()) rather than cancelling it.
-          this.pendingCrashNotice = notify;
-          child.once("close", notify);
+          // Here, in order with the exit that caused it. Waiting for the
+          // browser's last line first — for its pipes to end, for a grace
+          // period, for a restart to flush a held notice — bought a worse
+          // problem each time than the line it saved: a session left open
+          // against a dead browser, or an action quietly completing over a
+          // browser its session no longer owns. In practice the line is already
+          // in the ring; it is lost only if the kernel dispatched exit ahead of
+          // a pending read, which nothing here can arrange and no test could
+          // pin.
+          this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
+          this.onCrash?.();
         }
         if (!ready) {
           ready = true; // don't double-settle
