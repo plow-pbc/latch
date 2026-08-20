@@ -143,9 +143,25 @@ describe("audit grouping for browser sessions", () => {
     expect(cmd.state).toBe("bad");
   });
 
+  it("a live session being refused says so before it closes", () => {
+    // The badge an owner sees while it is still happening — the case the pane
+    // is open for. A refused session is amber the moment the refusal lands.
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "click", failed_requests: [
+        { status: 429, method: "POST", origin: "https://costco.com" },
+      ], ts: "2026-08-10T10:00:00Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Requests refused");
+    expect(acts[0]!.tone).toBe("amber");
+    expect(acts[0]!.category).toBe("failed");
+  });
+
   it("a session ended by a crash reads as Crashed, not Closed or Browsing", () => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      // A crash outranks what the session accumulated before it, so the badge
+      // is not the milder "Closed · scope blocks" this session also earned.
+      { event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:01Z" },
       // The crash line carries the browser's parting refusals, which is the
       // whole point of draining them there — so a crash that refused is still
       // a crash, and must not read as the milder "requests refused".

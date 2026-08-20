@@ -370,8 +370,15 @@ function classifyActivity(
     return { status: base, tone: "green", category: "approved" };
   }
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
+    const closed = entry("browser_session_closed");
+    // A crash outranks everything the session accumulated before it. Ranked
+    // any lower, a session that hit a scope block — or was refused by the site
+    // — and then died would wear the milder of two true badges.
+    if (jv(closed ?? null).get("reason").str === "crashed" || has("browser_crashed")) {
+      return { status: "Crashed", tone: "red", category: "failed" };
+    }
     if (has("credential_fill_failed")) {
-      return has("browser_session_closed")
+      return closed
         ? { status: "Closed · fill failed", tone: "amber", category: "failed" }
         : { status: "Fill failed", tone: "amber", category: "failed" };
     }
@@ -380,37 +387,28 @@ function classifyActivity(
     // failed fill: it means a credential of theirs is sitting legible on a page
     // their agent is working in.
     if (has("credential_mask_failed")) {
-      return has("browser_session_closed")
+      return closed
         ? { status: "Closed · mask failed", tone: "amber", category: "failed" }
         : { status: "Mask failed", tone: "amber", category: "failed" };
     }
-    const refusedAnywhere = events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0);
     if (has("credential_denied") || has("browser_scope_violation")) {
       // "failed", not "other": the cage refused the agent something, which is
       // the first thing an owner scanning for trouble filters for. The amber
       // badge already said so; the bucket disagreed, and the bucket is what
       // the filter reads.
-      return has("browser_session_closed")
+      return closed
         ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
         : { status: "Scope blocked", tone: "amber", category: "failed" };
     }
-    if (has("browser_session_closed")) {
-      const closed = entry("browser_session_closed")!;
-      if (jv(closed).get("reason").str === "crashed") {
-        return { status: "Crashed", tone: "red", category: "failed" };
-      }
-      if (refusedAnywhere) {
-        return { status: "Closed · requests refused", tone: "amber", category: "failed" };
-      }
-      return { status: "Closed", tone: "zinc", category: "other" };
+    // The page's own server refused what the agent asked it to do — ranked
+    // under a crash and a scope block, both stronger claims about the session,
+    // but well above "Browsing".
+    if (events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0)) {
+      return closed
+        ? { status: "Closed · requests refused", tone: "amber", category: "failed" }
+        : { status: "Requests refused", tone: "amber", category: "failed" };
     }
-    if (has("browser_crashed")) return { status: "Crashed", tone: "red", category: "failed" };
-    if (refusedAnywhere) {
-      // The page's own server refused what the agent asked it to do — ranked
-      // under a crash and a scope block, both of which are stronger claims
-      // about the session, but well above "Browsing".
-      return { status: "Requests refused", tone: "amber", category: "failed" };
-    }
+    if (closed) return { status: "Closed", tone: "zinc", category: "other" };
     return { status: "Browsing", tone: "green", category: "other" };
   }
   // A vault metadata read carries no intent and no session, so it stands
