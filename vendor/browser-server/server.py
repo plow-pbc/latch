@@ -130,28 +130,26 @@ TYPEABLE_JS = """(el) => {
     const tag = el.tagName.toLowerCase();
     if (tag !== "input" && tag !== "textarea") {
         // The node has to BE the editing host, not merely sit inside one.
-        // `isContentEditable` is the computed, inherited state, so everything in
+        // `isContentEditable` is the computed, INHERITED state, so everything in
         // a rich-text region answers true -- a <select> (typing picks an option
         // by type-ahead), an <iframe> (focus succeeds and the characters go into
         // the embedded document, where the mask cannot reach), a <style> or a
         // <template> (not rendered, so focus is a no-op and the characters land
         // wherever focus already was). Naming those was a list that could never
-        // be closed; the attribute is only ever on the host, so ask for it. A
-        // bare `contenteditable` and `="plaintext-only"` are hosts, `="false"`
-        // is not, and a custom editor that carries it is one like any other.
-        // `designMode = "on"` is the one host that carries no attribute: it makes
-        // the document's own body editable, which is the classic iframe editor.
+        // be closed. What only a host has is a DECLARED value: the attribute is
+        // enumerated, so anything outside its keywords -- a typo, or the
+        // "inherit" older guidance taught people to write -- means inherit, and
+        // a span carrying one is no more the host than its neighbours. Typing
+        // at it would select-all and replace the whole region's content.
+        //
+        // `designMode = "on"` is the one host that declares itself another way:
+        // it makes the document's own body editable, which is the classic
+        // iframe editor, with no attribute anywhere.
         const attr = el.getAttribute("contenteditable");
         if (attr === null) {
             const doc = el.ownerDocument;
             return tag === "body" && !!doc && doc.designMode === "on";
         }
-        // Carrying the attribute is not enough: it is enumerated, and anything
-        // outside its keywords -- "banana", or the "inherit" older guidance
-        // taught people to write -- means INHERIT, so a span in a rich-text
-        // region would answer non-null here and true below while not being the
-        // host at all. Typing at it would select-all and replace the whole
-        // region's content, not the span's.
         const value = attr.toLowerCase();
         return value === "" || value === "true" || value === "plaintext-only";
     }
