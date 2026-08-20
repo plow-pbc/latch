@@ -115,4 +115,28 @@ describe("real sandboxed execution", () => {
     // that is a normal ECONNREFUSED — the sandbox didn't block it).
     expect(allowed.output.toString()).toMatch(/ERR:ECONNREFUSED|OK/);
   });
+
+  // Why `execRefusal` exists: the profile allows process-exec, and the kernel
+  // refuses a setuid binary anyway. Nothing that can be written into the
+  // profile changes this, so the answer has to come before the approval.
+  it("cannot exec a setuid binary however the profile is written", async () => {
+    expect(fs.statSync("/bin/ps").mode & 0o4000).toBe(0o4000);
+    expect(SandboxProfile.generate({
+      readPaths: [],
+      writePaths: [],
+      network: false,
+      scratch: tempDir(),
+    })).toContain("(allow process-exec)");
+
+    const executor = new Executor(tempDir());
+    const result = await executor.run({
+      argv: ["/bin/ps", "-ax", "-o", "pid,command"],
+      readPaths: [],
+      writePaths: [],
+      network: false,
+      waitMs: 10_000,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output.toString()).toContain("Operation not permitted");
+  });
 });

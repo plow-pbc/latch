@@ -22,7 +22,12 @@ import {
   jv,
   makeIntent,
 } from "@domo/protocol";
-import { DeviceAgent, MAX_CLICK_TIMEOUT_MS, MAX_FILE_BYTES } from "@domo/device-core";
+import {
+  DeviceAgent,
+  execRefusal,
+  MAX_CLICK_TIMEOUT_MS,
+  MAX_FILE_BYTES,
+} from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 
@@ -280,8 +285,16 @@ export const TOOLS: ToolSpec[] = [
       const readPaths = await resolveAll(strings(a.get("read_paths").arr));
       const writePaths = await resolveAll(strings(a.get("write_paths").arr));
       const rawCwd = a.get("cwd").str;
+      const cwd = rawCwd === null ? undefined : await resolved(rawCwd);
+
+      // A command the sandbox cannot execute is refused here, before an intent
+      // exists — so the owner is never shown, and never approves, a command
+      // that was going to die at `execvp` regardless of what they answered.
+      const refusal = await execRefusal(argv, { cwd });
+      if (refusal !== null) throw new ToolError(`this Mac will not run this command: ${refusal}`);
+
       const capabilities: Capability[] = [
-        { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : await resolved(rawCwd) },
+        { kind: "process.exec", argv, cwd },
         { kind: "network", allowed: a.get("network").bool ?? false },
       ];
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });

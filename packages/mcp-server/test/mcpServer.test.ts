@@ -541,6 +541,41 @@ describe("review findings", () => {
       expect(approved).toEqual([canonicalize(realDir)]);
       expect(cwd).toBe(canonicalize(realDir));
     });
+
+    it("a command the sandbox cannot exec is refused before an intent exists", async () => {
+      // /bin/ps is setuid root, and seatbelt will not exec one. Approving it
+      // would show the owner a command that dies at execvp whatever they say.
+      expect(fs.statSync("/bin/ps").mode & 0o4000).toBe(0o4000);
+      const { server, device } = makeServer();
+
+      const { isError, payload } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["/bin/ps", "-ax", "-o", "pid,lstart,command"], goal: "find the browser" },
+        AGENT,
+      );
+
+      expect(isError).toBe(true);
+      // Device policy, named — not a raw sandbox-exec string the agent has to
+      // read as 'the command failed'.
+      expect(payload.error).toMatch(/this Mac will not run this command/);
+      expect(payload.error).toMatch(/setuid/);
+      expect(payload.error).not.toMatch(/execvp/);
+      // Nothing was asked of the owner and nothing ran.
+      expect(events(device)).toEqual([]);
+    });
+
+    it("an ordinary command still reaches the owner", async () => {
+      const { server, device } = makeServer();
+      const { isError } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["/bin/echo", "hi"], wait_ms: 3_000 },
+        AGENT,
+      );
+      expect(isError).toBe(false);
+      expect(events(device)).toContain("intent_decision");
+    });
   });
 
   // 5 — the wait_ms cap does not produce a direct job handle. Pin what really
