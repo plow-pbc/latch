@@ -682,6 +682,16 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.ledger.navigated.tracked).toEqual([]);
   });
 
+  it("answers a locate with the document its element is in, not its frame's", () => {
+    // The frame stub's address stays on pizza.example while the element's
+    // document is payframe.example — the disagreement a navigation between two
+    // reads produces. The URL here is what the device checks before releasing a
+    // credential, so it has to be the element's.
+    const out = probed.locate_reads_the_element;
+    expect(out.error).toBeNull();
+    expect(out.result).toMatchObject({ frame_url: "https://payframe.example/card" });
+  });
+
   it("keeps the marks across a route change inside one document", () => {
     // An SPA moving from /step1 to /step2 replaces neither the document nor the
     // fields on it. Treating that as a new page threw the record away, and a

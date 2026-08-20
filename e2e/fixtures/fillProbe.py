@@ -308,6 +308,15 @@ def main() -> int:
         # node, same token — nothing was replaced, so nothing is refused.
         "route_changed_during_lookup": run(server, {**base, "mask": True, **approved},
                                            document_url="https://pizza.example/login/step2"),
+        # Which document a selector is in, when the frame's own address and the
+        # element's disagree — a frame that navigated between the two reads the
+        # old code used to make. The answer has to be the element's, because it
+        # is what the device checks before releasing a credential into it.
+        "locate_reads_the_element": run(
+            server,
+            {"action": "locate", "selector": "#pass"},
+            document_url="https://payframe.example/card",
+        ),
         # The mark takes and the fill then times out, over a field that already
         # held something ordinary.
         "orphan_mark": run(server, {**base, "mask": True}, detach_before_fill=True,

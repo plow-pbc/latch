@@ -19,7 +19,9 @@ export function scriptSource(name: string): string {
   const src = fs.readFileSync(SERVER_PY, "utf8");
   const m = new RegExp(`^${name} = """([\\s\\S]*?)"""( % (\\w+))?$`, "m").exec(src);
   if (!m) throw new Error(`${name} literal not found in server.py`);
-  return m[3] === undefined ? m[1] : m[1].replace("%s", scriptSource(m[3]));
+  // A replacer function, not a replacement string: `$&` and friends are
+  // special in the latter, and the script being spliced in is arbitrary text.
+  return m[3] === undefined ? m[1] : m[1].replace("%s", () => scriptSource(m[3]));
 }
 
 /** The literal as the arrow it is — call it the way the server calls it. */
