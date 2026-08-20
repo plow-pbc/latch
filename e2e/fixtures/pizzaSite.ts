@@ -103,6 +103,10 @@ export function createPizzaSite(): Promise<PizzaSite> {
            <input type="hidden" name="pizza" value="${pizza}">
            <label>Card number <input id="card-number" name="number" type="text"></label>
            <label>CVV <input id="card-cvv" name="cvv" type="text"></label>
+           <!-- Only in this frame, and refuses to be filled: proves a fill
+                reports the frame that actually failed, not the outer frames
+                that simply do not have the field. -->
+           <label>Locked <input id="card-locked" type="text" readonly></label>
            <button id="pay" type="submit">Pay</button>
          </form>`,
       );

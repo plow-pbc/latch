@@ -59,6 +59,15 @@ DEFAULT_ACTION_TIMEOUT_MS = 3000
 # appear. The scan itself is instant; this is just how long it sleeps between.
 SCAN_INTERVAL_MS = 50
 
+
+class NotAttempted(RuntimeError):
+    """A candidate frame that never really got tried.
+
+    Only a click raises this, and only when its budget is already spent. It
+    exists so that failure cannot bury one from a frame that WAS tried and
+    failed for a reason worth reading -- not visible, detached, navigated away.
+    """
+
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
     if (el.labels && el.labels[0]) lab = el.labels[0].textContent.trim();
@@ -339,8 +348,13 @@ class Session:
 
         This is the whole of what `click` and `fill` have in common: candidates
         are tried in order, an answer ends it -- including a refusal a fill
-        returns rather than raises -- and when none answers the caller hears the
-        first failure rather than a generic one. `attempt` is handed the frame's
+        returns rather than raises -- and when none answers the caller hears a
+        real failure rather than a generic one: the last frame to fail for a
+        reason of its own, never a `NotAttempted` from one that did not get
+        that far. Position alone will not do -- a click's candidates have all
+        been narrowed to frames that hold the selector, while a fill walks
+        every frame on the page and the early ones fail with nothing more
+        interesting than "no such selector here". `attempt` is handed the frame's
         index on the page, the frame, and how many candidates are left counting
         it: a click divides what is left of its budget by that, a fill has no
         budget to divide and ignores it.
@@ -350,10 +364,8 @@ class Session:
             try:
                 return attempt(i, fr, len(frames) - tried)
             except Exception as exc:  # noqa: BLE001 -- re-raised below
-                # A candidate that never really got tried -- a click with no
-                # budget left -- must not bury one that did and failed for a
-                # reason worth reading: not visible, detached, navigated away.
-                last = last or exc
+                if not isinstance(exc, NotAttempted) or last is None:
+                    last = exc
         raise last or RuntimeError("selector not found: %s" % sel)
 
     def _click(self, cmd):
@@ -401,7 +413,7 @@ class Session:
             if left <= 0:
                 # Distinct from the not-found above: the selector IS there, and
                 # the budget went on waiting for it.
-                raise RuntimeError(
+                raise NotAttempted(
                     "found %s with no time left to click it" % sel
                 )
             fr.click(sel, timeout=left)

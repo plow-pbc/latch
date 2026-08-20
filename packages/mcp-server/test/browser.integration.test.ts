@@ -113,6 +113,13 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(refused.isError).toBe(true);
     expect(JSON.stringify(refused.payload)).toContain("refused");
 
+    // A fill searches every frame, so the outer ones fail first with nothing
+    // more interesting than "no such selector here". What comes back has to be
+    // the frame that actually held the field and refused.
+    const locked = await act("fill", { selector: "#card-locked", value: "x" }, false);
+    expect(locked.isError).toBe(true);
+    expect(JSON.stringify(locked.payload)).toContain("not editable");
+
     await act("fill_secret", { selector: "#card-number", item: "C1", field: "number" });
     await act("fill_secret", { selector: "#card-cvv", item: "C1", field: "cvv" });
     await act("click", { selector: "#pay" });
