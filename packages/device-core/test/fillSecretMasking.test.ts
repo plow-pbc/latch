@@ -368,6 +368,16 @@ describe("fill_secret marking", () => {
       expect(jv(result).get("forms").value ?? null).toBeNull();
     }
     expect(ctx.events.filter((e) => e.event === "credential_mask_failed").length).toBe(2);
+
+    // A refusal that settles into that refused observation is not lost with it:
+    // the observation is the device's to withhold, what the page's requests did
+    // is the agent's to know.
+    await ctx.sessions.command("agent-1", handle, { action: "click", selector: "#blocked-later" });
+    const refused = jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" }));
+    expect(refused.get("status").str).toBe("error");
+    expect(refused.get("failed_requests").value).toEqual([
+      { status: 401, method: "GET", host: "pizza.example" },
+    ]);
   });
 
   it("tells the browser which document it approved", async () => {
