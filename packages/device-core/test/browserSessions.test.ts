@@ -246,6 +246,53 @@ describe("origin scope", () => {
   });
 });
 
+describe("requests the site refused", () => {
+  it("tells the agent and the owner's log, with the query gone", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    // Scripted: "#blocked" is a click whose XHRs the site answers 429/403.
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" }));
+    expect(r.get("status").str).toBe("completed");
+
+    const failed = r.get("failed_requests").value as JSONValue[];
+    expect(failed[0]).toEqual({
+      status: 429,
+      method: "POST",
+      // The browser strips it too; the device does not take that on trust.
+      url: "https://pizza.example/api/order",
+      bytes: 1180,
+      retry_after: "30",
+    });
+    expect(JSON.stringify(failed)).not.toContain("SECRET");
+    // Bounded: a chatty page cannot park the relay's exchange budget.
+    expect(failed.length).toBe(5);
+
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toEqual(failed);
+  });
+
+  it("says nothing when the page's requests were answered", async () => {
+    const s = await openSession(["pizza.example"]);
+    const r = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));
+    expect(r.get("failed_requests").value).toBeNull();
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toBeUndefined();
+  });
+
+  it("withholds them from the agent off-scope, and keeps them for the owner", async () => {
+    const s = await openSession(["pizza.example"]);
+    // Scripted: "#offsite" lands off-scope having had a request refused. The
+    // agent is told nothing about that page; the owner's log still is.
+    const gone = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" }));
+    expect(gone.get("out_of_scope").str).toBe("offsite.example");
+    expect(gone.get("failed_requests").value).toBeNull();
+    const command = ctx.events.filter((e) => e.event === "browser_command").pop();
+    expect(command?.fields.failed_requests).toEqual([
+      { status: 403, method: "GET", url: "https://offsite.example/api/who" },
+    ]);
+  });
+});
+
 describe("credentials", () => {
   it("no longer answers vault questions — that moved to the vault tool", async () => {
     const s = await openSession(["pizza.example"]);

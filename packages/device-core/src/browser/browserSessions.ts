@@ -48,6 +48,21 @@ export function stripQuery(url: string): string {
   return i === -1 ? url : url.slice(0, i);
 }
 
+/**
+ * Requests the site itself refused during an action, as the browser reported
+ * them. The browser strips each url before it records one; this strips again
+ * rather than trusting that, because these land in the owner's log and a token
+ * written there cannot be taken back. Bounded here as well: what the agent gets
+ * has to fit in one relay exchange whatever the browser sends.
+ */
+function failedRequests(value: JSONValue | undefined): JSONValue[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_FAILED_REQUESTS).map((entry) => {
+    const e = jv(entry);
+    return { ...(e.obj ?? {}), url: stripQuery(e.get("url").str ?? "") };
+  });
+}
+
 function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname || null;
@@ -66,6 +81,9 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  * longer pause is expressed as several waits.
  */
 const MAX_WAIT_SECONDS = 12;
+
+/** How many refused requests one result may carry (server.py bounds its own). */
+const MAX_FAILED_REQUESTS = 5;
 
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
@@ -391,10 +409,12 @@ export class BrowserSessions {
       s.knownPageCount = pageCount;
       await this.sweepPages(s);
     }
+    const failed = failedRequests(result.failed_requests);
     this.audit("browser_command", {
       session: s.handle,
       action: String(action.action),
       url: stripQuery(url),
+      ...(failed.length ? { failed_requests: failed } : {}),
     });
 
     // The browser puts the mark back on every concealed field before it lets
@@ -417,6 +437,7 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
+    if (failed.length) out.failed_requests = failed;
     // If the action itself landed us out of scope, say so in the result — the
     // agent should learn immediately, not on its next refused command.
     if (!this.inScope(s, url)) {
@@ -438,6 +459,8 @@ export class BrowserSessions {
       delete out.forms;
       delete out.tables;
       delete out.title;
+      // What an unapproved origin's requests did is that page's business too.
+      delete out.failed_requests;
     }
     return out;
   }

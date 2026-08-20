@@ -29,7 +29,12 @@
  *
  * Scripted page behaviors:
  *   click "#popup"    opens a second page on https://popup.example/pay
- *   click "#offsite"  navigates the page to https://offsite.example/lander
+ *   click "#offsite"  navigates the page to https://offsite.example/lander,
+ *                     one of whose requests was refused
+ *   click "#blocked"  the page's own requests come back refused: seven 4xx
+ *                     responses, the way the real server reports the ones it
+ *                     saw during the action (already query-stripped there —
+ *                     one here keeps its query, to prove the device strips too)
  */
 "use strict";
 const fs = require("node:fs");
@@ -39,6 +44,9 @@ const state = {
   pages: [{ url: "about:blank", title: "blank" }],
   active: 0,
   commands: 0,
+  // Refused requests waiting for the next envelope, most recent first, exactly
+  // as the real server hands them over.
+  failed: [],
 };
 
 function current() {
@@ -46,7 +54,14 @@ function current() {
 }
 
 function envelope(result) {
-  return { ...result, url: current().url, page_count: state.pages.length };
+  const failed = state.failed;
+  state.failed = [];
+  return {
+    ...result,
+    url: current().url,
+    page_count: state.pages.length,
+    ...(failed.length ? { failed_requests: failed } : {}),
+  };
 }
 
 function respond(obj) {
@@ -101,6 +116,22 @@ function handle(cmd) {
       state.pages.push({ url: "https://popup.example/pay", title: "popup" });
     } else if (cmd.selector === "#offsite") {
       current().url = "https://offsite.example/lander";
+      state.failed = [{ status: 403, method: "GET", url: "https://offsite.example/api/who" }];
+    } else if (cmd.selector === "#blocked") {
+      state.failed = [
+        {
+          status: 429,
+          method: "POST",
+          url: "https://pizza.example/api/order?tx=StateProperties=SECRET",
+          bytes: 1180,
+          retry_after: "30",
+        },
+        ...Array.from({ length: 6 }, (_, i) => ({
+          status: 403,
+          method: "GET",
+          url: `https://pizza.example/api/x${i}`,
+        })),
+      ];
     }
     return { ok: true, frame: 0 };
   }
