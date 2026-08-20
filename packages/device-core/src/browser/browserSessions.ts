@@ -173,7 +173,7 @@ export interface BrowserSessionInfo {
 
 /** How many browsers this Mac will run at once. A Camoufox is a window and a
  * few hundred MB, so the number is small and the limit is said out loud. */
-export const DEFAULT_MAX_BROWSERS = 3;
+const DEFAULT_MAX_BROWSERS = 3;
 
 /**
  * A short one-way name for a session.
@@ -186,23 +186,6 @@ export const DEFAULT_MAX_BROWSERS = 3;
  */
 const digest = (id: string): string =>
   crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
-
-/**
- * When a profile's cookies were last written, or 0 for a profile with none.
- * Firefox writes the store and its journal, so the newest of the three is the
- * honest answer — the .sqlite alone can sit still for a whole session.
- */
-const cookieStamp = (dir: string): number => {
-  let newest = 0;
-  for (const name of ["cookies.sqlite", "cookies.sqlite-wal", "cookies.sqlite-shm"]) {
-    try {
-      newest = Math.max(newest, fs.statSync(path.join(dir, name)).mtimeMs);
-    } catch {
-      /* not there: nothing to weigh */
-    }
-  }
-  return newest;
-};
 
 export class BrowserSessions {
   /** Every live session, by handle. The handle IS the browser: an agent that
@@ -272,7 +255,7 @@ export class BrowserSessions {
     // Every session browses in a directory of its own, because Firefox locks a
     // profile against a second copy of itself — but it is a CLONE of the
     // user's own profile, so every browser opens signed in wherever they are.
-    // On close it goes back (see handBack). This Mac is one person's.
+    // The original is never written to; the clone goes when the session does.
     const profile = `session-${digest(handle)}`;
     const host = this.newHost(profile);
     // A browser that dies takes its own session with it, and nobody else's.
@@ -296,11 +279,16 @@ export class BrowserSessions {
 
     /** Give the claim back, whatever went wrong after taking it. */
     const rollBack = async () => {
-      this.finalize(session);
+      this.sessions.delete(handle);
       try {
-        await this.stop(host);
+        await host.shutdown();
       } catch {
         /* the browser is going away regardless; the failed open is the real error */
+      }
+      // Thrown away, never handed back: this clone never browsed, and the
+      // browser that held it is only now down.
+      if (this.browser.profileDir) {
+        fs.rmSync(path.join(this.browser.profileDir, profile), { recursive: true, force: true });
       }
     };
 
@@ -345,7 +333,6 @@ export class BrowserSessions {
   /** Widen an existing session (called only after an approved intent). */
   extend(
     intentId: string,
-    agentId: string,
     handle: string,
     origins: string[],
     items: string[],
@@ -401,9 +388,13 @@ export class BrowserSessions {
    * where they left off — signed in, with their history and their settings.
    *
    * `cp -c` is an APFS clone: a 300MB profile costs no time and no disk until
-   * something writes to it. Anything else (a non-APFS volume, another OS)
-   * falls back to a real copy. The lock files never come along — they belong
-   * to whichever Firefox held the profile, not to the copy.
+   * something writes to it. A volume that cannot clone fails the open out loud
+   * rather than quietly copying 300MB per browser. The lock files never come
+   * along — they belong to whichever Firefox held the profile, not to the copy.
+   *
+   * The user's own profile is only ever READ. What a session signs into lives
+   * in its clone and goes with it: two browsers open at once cannot undo each
+   * other's logins, and nothing a session does can sign the user out.
    */
   private seedProfile(dir: string): void {
     if (fs.existsSync(dir)) return;
@@ -413,63 +404,16 @@ export class BrowserSessions {
       return;
     }
     fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
-    try {
-      execFileSync("/bin/cp", ["-Rc", seed, dir]);
-    } catch {
-      // Timestamps come along: how fresh a copy is decides whether it is
-      // allowed to hand itself back as the user's profile.
-      fs.cpSync(seed, dir, { recursive: true, preserveTimestamps: true });
-    }
+    execFileSync("/bin/cp", ["-Rc", seed, dir]);
     for (const lock of [".parentlock", "parent.lock", "lock"]) {
       fs.rmSync(path.join(dir, lock), { force: true });
     }
   }
 
-  /**
-   * Give the profile back to the user, so what they signed into inside a
-   * session is still signed in the next time any browser opens.
-   *
-   * Only when this session's cookie store is newer than the one already
-   * there: a browser that sat idle must not put a stale copy over what another
-   * one just wrote, and an open that failed never browsed at all.
-   *
-   * ponytail: last writer wins. Two browsers signed into two different sites
-   * at once and only the last to close keeps its cookies. Upgrade path is
-   * merging the cookie stores rather than replacing the profile.
-   */
-  private handBack(s: Session): void {
+  /** The clone was this session's alone, so it goes when the session does. */
+  private releaseProfile(s: Session): void {
     if (!this.browser.profileDir) return;
-    const dir = path.join(this.browser.profileDir, s.profile);
-    const seed = this.browser.seedProfile;
-    if (!seed || !fs.existsSync(dir)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-      return;
-    }
-    if (cookieStamp(dir) <= cookieStamp(seed)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-      return;
-    }
-    // Renamed into place rather than written over: a failure here leaves the
-    // user with one whole profile, never with neither.
-    const parked = `${seed}.replaced`;
-    fs.rmSync(parked, { recursive: true, force: true });
-    if (fs.existsSync(seed)) fs.renameSync(seed, parked);
-    fs.renameSync(dir, seed);
-    fs.rmSync(parked, { recursive: true, force: true });
-  }
-
-  /**
-   * Stop one browser and clear its shutdown latch — one operation, never two.
-   * `shutdown()` sets `shuttingDown` and only `resetBreaker()` clears it, so a
-   * split pair can leave a host that starts, publishes a session, and then
-   * fails every command at the `sendAction()` guard.
-   */
-  private async stop(host: BrowserHost): Promise<void> {
-    try {
-      await host.shutdown();
-    } finally {
-      host.resetBreaker();
-    }
+    fs.rmSync(path.join(this.browser.profileDir, s.profile), { recursive: true, force: true });
   }
 
   /**
@@ -520,7 +464,7 @@ export class BrowserSessions {
     // when the last thing the page said is worth having.
     const teardown = (async () => {
       try {
-        await this.stop(s.host);
+        await s.host.shutdown();
       } finally {
         this.finalize(s, reason);
       }
@@ -541,15 +485,13 @@ export class BrowserSessions {
   }
 
   /**
-   * The end of a session, in one place, so every way one can end — a failed
-   * open, a close, a crash — leaves the same nothing behind. No reason means
-   * a rollback: that session was never published, so nothing is logged.
+   * The end of a session, in one place: the claim and the clock go, the
+   * profile goes back to the user, and the owner's log says it ended.
    */
-  private finalize(s: Session, reason?: string): void {
+  private finalize(s: Session, reason: string): void {
     this.sessions.delete(s.handle);
     if (s.idleTimer) clearTimeout(s.idleTimer);
-    this.handBack(s);
-    if (!reason) return;
+    this.releaseProfile(s);
     const left = failedRequests(s.host.takeFailedRequests());
     this.audit("browser_session_closed", {
       session: s.auditId,
@@ -605,7 +547,7 @@ export class BrowserSessions {
   }
 
   /** Execute one agent command inside an approved session. */
-  async command(agentId: string, handle: string, params: JSONValue): Promise<JSONValue> {
+  async command(handle: string, params: JSONValue): Promise<JSONValue> {
     const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
     s.lastActivity = Date.now();

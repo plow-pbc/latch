@@ -393,11 +393,6 @@ export class BrowserHost {
     this.cfg.audit?.("browser_stopped", {});
   }
 
-  /** Allow a new session to start again after the circuit breaker tripped. */
-  resetBreaker(): void {
-    this.restartTimes = [];
-    this.shuttingDown = false;
-  }
 }
 
 function withTimeout(p: Promise<void>, ms: number): Promise<boolean> {

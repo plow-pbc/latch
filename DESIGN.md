@@ -307,8 +307,12 @@ user**: local IP, local cookies, and local credentials that are typed into the
 page here rather than handed to the agent — which is driving that page, and can
 read it. Several browsers can run at once and they are all the user's: Firefox
 locks a profile to one process, so each session runs on a **clone** of the
-user's profile (APFS clonefile — no wait, no extra disk) and hands it back when
-it closes, so every browser opens signed in where they left off. The pieces:
+user's profile (APFS clonefile — no wait, no extra disk), so every browser opens
+signed in where they left off. The profile itself is only ever read: a clone
+lives as long as its session and goes with it, so two browsers cannot undo each
+other's logins and nothing an agent does signs the user out. The cost is that a
+sign-in made inside a session does not outlive it — the alternative, writing
+clones back, is a merge problem, not a copy. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an

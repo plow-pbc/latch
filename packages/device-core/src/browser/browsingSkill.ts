@@ -51,8 +51,9 @@ its own id, and when the Mac is already running as many as it will, the open say
 
 **You are the user, already signed in.** Every session starts on a copy of their own
 browser profile — their cookies, their logins — so check whether a site is already signed
-in before signing in again. What you sign into is theirs to keep: it goes back to their
-profile when the session closes. When you do have to sign in, use \`fill_secret\`.
+in before signing in again. The copy is yours for the session and goes when you close it:
+what you sign into does not outlive the session, and nothing you do reaches their own
+profile. When you do have to sign in, use \`fill_secret\`.
 
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,

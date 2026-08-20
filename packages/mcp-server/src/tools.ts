@@ -371,8 +371,9 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser_open",
     description:
       "Open a browser on the user's own Mac, as the user: it starts on a copy of their own "
-    + "profile, so it is already signed in wherever they are, and what you sign into during "
-    + "the session stays signed in for them afterwards. It can also "
+    + "profile, so it is already signed in wherever they are. That copy is yours for the "
+    + "session and goes when you close it — what you sign into does not outlive it, and "
+    + "nothing you do can sign them out of their own browser. It can also "
     + "fill passwords from their vault without returning them to you ('eval' is the exception: " +
       "it reads page values directly, and must not be pointed at a field you filled) — so use " +
       "it for sites that " +
@@ -563,7 +564,7 @@ export const TOOLS: ToolSpec[] = [
       const maxChars = a.get("max_chars").int;
       if (maxChars !== null) params.max = maxChars;
 
-      const response = await ctx.device.browserCommand(ctx.agent.agentId, session, params);
+      const response = await ctx.device.browserCommand(session, params);
       const r = jv(response);
       if (r.get("status").str === "error") {
         // An error is a string here, so anything the device attached to it has
@@ -645,7 +646,7 @@ export const TOOLS: ToolSpec[] = [
       // A handle is a capability, not a licence over somebody else's browser:
       // the device refuses a close from another agent, and saying "closed"
       // anyway would tell the caller it worked.
-      const result = jv(await ctx.device.browserCommand(ctx.agent.agentId, session, { action: "close" }));
+      const result = jv(await ctx.device.browserCommand(session, { action: "close" }));
       const error = result.get("error").str;
       if (error !== null) throw new ToolError(error);
       return { closed: true };

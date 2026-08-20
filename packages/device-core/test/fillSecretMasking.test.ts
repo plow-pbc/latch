@@ -131,8 +131,8 @@ const audited = (): string =>
 async function session(): Promise<string> {
   const opened = await ctx.sessions.open("i1", "agent-1", ["pizza.example", "payframe.example"], false);
   const handle = (opened as { session: string }).session;
-  ctx.sessions.extend("i2", "agent-1", handle, [], ["L1", "C1", "I1"], false);
-  await ctx.sessions.command("agent-1", handle, {
+  ctx.sessions.extend("i2", handle, [], ["L1", "C1", "I1"], false);
+  await ctx.sessions.command(handle, {
     action: "goto",
     url: "https://pizza.example/login",
   });
@@ -172,7 +172,7 @@ afterEach(async () => {
 describe("fill_secret marking", () => {
   it("asks the browser to mark a field the vault masks", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -184,7 +184,7 @@ describe("fill_secret marking", () => {
 
   it("adds nothing to the page for a field the vault does not mask", async () => {
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#addr",
       item: "L1",
@@ -202,7 +202,7 @@ describe("fill_secret marking", () => {
       ["#card-cvc", "code"],
       ["#card-name", "cardholder name"],
     ]) {
-      await ctx.sessions.command("agent-1", handle, {
+      await ctx.sessions.command(handle, {
         action: "fill_secret",
         selector,
         item: "C1",
@@ -214,7 +214,7 @@ describe("fill_secret marking", () => {
 
   it("refuses a field the vault does not offer instead of masking it", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -242,10 +242,10 @@ describe("fill_secret marking", () => {
     );
     const opened = await sessions.open("i1", "agent-1", ["pizza.example"], false);
     const h = (opened as { session: string }).session;
-    sessions.extend("i2", "agent-1", h, [], ["L1"], false);
-    await sessions.command("agent-1", h, { action: "goto", url: "https://pizza.example/login" });
+    sessions.extend("i2", h, [], ["L1"], false);
+    await sessions.command(h, { action: "goto", url: "https://pizza.example/login" });
     const before = fills().length;
-    const result = await sessions.command("agent-1", h, {
+    const result = await sessions.command(h, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -262,7 +262,7 @@ describe("fill_secret marking", () => {
     // question to cache the answer to and no describe in the release path.
     const handle = await session();
     for (const selector of ["#pass", "#pass2", "#pass3"]) {
-      await ctx.sessions.command("agent-1", handle, {
+      await ctx.sessions.command(handle, {
         action: "fill_secret",
         selector,
         item: "L1",
@@ -285,7 +285,7 @@ describe("fill_secret marking", () => {
       ["#city", "city"],
     ];
     for (const [selector, field] of wanted) {
-      const result = await ctx.sessions.command("agent-1", handle, {
+      const result = await ctx.sessions.command(handle, {
         action: "fill_secret",
         selector,
         item: "I1",
@@ -311,7 +311,7 @@ describe("fill_secret marking", () => {
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -344,7 +344,7 @@ describe("fill_secret marking", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#addr",
       item: "L1",
@@ -360,11 +360,11 @@ describe("fill_secret marking", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_REMASK_FAILS: "1" });
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#pass", item: "L1", field: "password",
     });
     for (const action of ["screenshot", "forms"]) {
-      const result = await ctx.sessions.command("agent-1", handle, { action });
+      const result = await ctx.sessions.command(handle, { action });
       expect(jv(result).get("status").str, action).toBe("error");
       expect(jv(result).get("error").str).toContain("will not let it be hidden on screen");
       // No picture, no field list — nothing of the page comes back.
@@ -376,8 +376,8 @@ describe("fill_secret marking", () => {
     // A refusal that settles into that refused observation is not lost with it:
     // the observation is the device's to withhold, what the page's requests did
     // is the agent's to know.
-    await ctx.sessions.command("agent-1", handle, { action: "click", selector: "#blocked-later" });
-    const refused = jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" }));
+    await ctx.sessions.command(handle, { action: "click", selector: "#blocked-later" });
+    const refused = jv(await ctx.sessions.command(handle, { action: "screenshot" }));
     expect(refused.get("status").str).toBe("error");
     expect(refused.get("failed_requests").value).toEqual([
       { status: 401, method: "GET", host: "pizza.example" },
@@ -386,7 +386,7 @@ describe("fill_secret marking", () => {
 
   it("tells the browser which document it approved", async () => {
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
     });
     // The fill carries the document's token, not just the frame index — an
@@ -401,7 +401,7 @@ describe("fill_secret marking", () => {
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
     });
     expect(jv(result).get("status").str).toBe("error");
@@ -427,7 +427,7 @@ describe("fill_secret marking", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({}, { FAKE_BROKER_DELAY_MS: "600" });
     const handle = await session();
-    const inFlight = ctx.sessions.command("agent-1", handle, {
+    const inFlight = ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#pass", item: "L1", field: "password",
     });
     await new Promise((r) => setTimeout(r, 150));
@@ -457,7 +457,7 @@ describe("fill_secret marking", () => {
 
   it("keeps the filled value out of the fixture's own command log", async () => {
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -473,13 +473,13 @@ describe("fill_secret marking", () => {
   it("leaves the result and the audit record exactly as they were", async () => {
     const handle = await session();
     const before = ctx.events.length;
-    const masked = await ctx.sessions.command("agent-1", handle, {
+    const masked = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
       field: "password",
     });
-    const plain = await ctx.sessions.command("agent-1", handle, {
+    const plain = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#addr",
       item: "L1",

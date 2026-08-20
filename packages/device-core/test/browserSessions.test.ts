@@ -101,8 +101,8 @@ const LATE_REFUSAL = {
 
 /** Leave that refusal in the device, held for whatever comes next. */
 async function holdLateRefusal(sessions: BrowserSessions, handle: string) {
-  await sessions.command(AGENT, handle, { action: "goto", url: "https://pizza.example/" });
-  await sessions.command(AGENT, handle, { action: "click", selector: "#blocked-later" });
+  await sessions.command(handle, { action: "goto", url: "https://pizza.example/" });
+  await sessions.command(handle, { action: "click", selector: "#blocked-later" });
   // The browser is up: the viewer can see the session that just acted.
   expect(await sessions.viewFrame()).not.toBeNull();
 }
@@ -120,7 +120,7 @@ function eventNames(): string[] {
 describe("session lifecycle", () => {
   it("open → command → close, audited", async () => {
     const s = await openSession(["pizza.example"]);
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/menu" }));
+    const r = jv(await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/menu" }));
     expect(r.get("status").str).toBe("completed");
     await ctx.sessions.close(s, "agent");
     expect(eventNames()).toEqual(
@@ -152,7 +152,7 @@ describe("session lifecycle", () => {
     expect(closed?.fields.failed_requests).toEqual([LATE_REFUSAL]);
     expect(ctx.sessions.current()).toBeNull();
     // The handle died with the browser.
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "url" }));
+    const r = jv(await ctx.sessions.command(s, { action: "url" }));
     expect(r.get("status").str).toBe("error");
   });
 
@@ -167,8 +167,8 @@ describe("session lifecycle", () => {
     });
 
     // A click that wanders off-scope flips the viewer's inScope flag.
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" });
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(s, { action: "click", selector: "#offsite" });
     expect(ctx.sessions.current()).toMatchObject({
       lastUrl: "https://offsite.example/lander",
       inScope: false,
@@ -180,7 +180,7 @@ describe("session lifecycle", () => {
 
   it("rejects a command for a session that is not open", async () => {
     await openSession(["pizza.example"]);
-    const wrongHandle = jv(await ctx.sessions.command(AGENT, "nope", { action: "url" }));
+    const wrongHandle = jv(await ctx.sessions.command("nope", { action: "url" }));
     expect(wrongHandle.get("status").str).toBe("error");
   });
 
@@ -199,7 +199,7 @@ describe("session lifecycle", () => {
     expect(tooMany.get("error").str).toContain("already running 3 browsers");
     // And the three that were here first are untouched.
     for (const [i, h] of handles.entries()) {
-      expect(jv(await ctx.sessions.command(`capped-${i}`, h, { action: "url" })).get("status").str)
+      expect(jv(await ctx.sessions.command(h, { action: "url" })).get("status").str)
         .toBe("completed");
     }
   });
@@ -216,11 +216,11 @@ describe("session lifecycle", () => {
     expect(second).not.toBe(first);
 
     // Each drives its own page; neither moves the other's.
-    await ctx.sessions.command(AGENT, first, { action: "goto", url: "https://pizza.example/one" });
-    await ctx.sessions.command(AGENT, second, { action: "goto", url: "https://b.example/two" });
-    expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("url").str)
+    await ctx.sessions.command(first, { action: "goto", url: "https://pizza.example/one" });
+    await ctx.sessions.command(second, { action: "goto", url: "https://b.example/two" });
+    expect(jv(await ctx.sessions.command(first, { action: "url" })).get("url").str)
       .toBe("https://pizza.example/one");
-    expect(jv(await ctx.sessions.command(AGENT, second, { action: "url" })).get("url").str)
+    expect(jv(await ctx.sessions.command(second, { action: "url" })).get("url").str)
       .toBe("https://b.example/two");
 
     // Two live sessions on one credential never share a profile directory:
@@ -235,7 +235,7 @@ describe("session lifecycle", () => {
     // Closing one leaves the other browsing, and takes only its own profile.
     await ctx.sessions.close(second, "test");
     expect(fs.readdirSync(path.join(ctx.dir, "profiles")).length).toBe(1);
-    expect(jv(await ctx.sessions.command(AGENT, first, { action: "url" })).get("url").str)
+    expect(jv(await ctx.sessions.command(first, { action: "url" })).get("url").str)
       .toBe("https://pizza.example/one");
   });
 
@@ -249,10 +249,10 @@ describe("session lifecycle", () => {
 
   it("clamps an over-long wait so one exchange can't outrun the relay ceiling", async () => {
     const s = await openSession(["pizza.example"]);
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "wait", seconds: 45 }));
+    const r = jv(await ctx.sessions.command(s, { action: "wait", seconds: 45 }));
     expect(r.get("status").str).toBe("completed");
     expect(r.get("seconds").num).toBe(12); // MAX_WAIT_SECONDS
-    const ok = jv(await ctx.sessions.command(AGENT, s, { action: "wait", seconds: 3 }));
+    const ok = jv(await ctx.sessions.command(s, { action: "wait", seconds: 3 }));
     expect(ok.get("seconds").num).toBe(3); // a reasonable wait passes through
   });
 
@@ -267,11 +267,11 @@ describe("session lifecycle", () => {
       [{}, undefined], // asked for nothing, told the browser nothing
     ];
     for (const [extra] of clicks) {
-      const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#go", ...extra }));
+      const r = jv(await ctx.sessions.command(s, { action: "click", selector: "#go", ...extra }));
       expect(r.get("status").str).toBe("completed");
     }
     // The knob belongs to no other action.
-    await ctx.sessions.command(AGENT, s, { action: "scroll", timeout_ms: 9000 });
+    await ctx.sessions.command(s, { action: "scroll", timeout_ms: 9000 });
 
     const sent = fs
       .readFileSync(ctx.cmdLog, "utf8")
@@ -284,7 +284,7 @@ describe("session lifecycle", () => {
 
     // And the audit log says which clicks needed it — including, above all, the
     // ones that failed, which are what a look at a bad session goes looking for.
-    const swallowed = jv(await ctx.sessions.command(AGENT, s, {
+    const swallowed = jv(await ctx.sessions.command(s, {
       action: "click", selector: "#swallowed", timeout_ms: 6000,
     }));
     expect(swallowed.get("status").str).toBe("error");
@@ -299,61 +299,61 @@ describe("session lifecycle", () => {
 describe("origin scope", () => {
   it("refuses goto outside the approved origins before navigating", async () => {
     const s = await openSession(["pizza.example"]);
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://evil.example/" }));
+    const r = jv(await ctx.sessions.command(s, { action: "goto", url: "https://evil.example/" }));
     expect(r.get("status").str).toBe("error");
     expect(r.get("error").str).toContain("outside the approved origins");
     expect(eventNames()).toContain("browser_scope_violation");
     // The browser never navigated: current url is still blank.
-    const u = jv(await ctx.sessions.command(AGENT, s, { action: "url" }));
+    const u = jv(await ctx.sessions.command(s, { action: "url" }));
     expect(u.get("url").str).toBe("about:blank");
   });
 
   it("wildcards match subdomains", async () => {
     const s = await openSession(["*.pizza.example", "pizza.example"]);
     const r = jv(
-      await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://www.pizza.example/x" }),
+      await ctx.sessions.command(s, { action: "goto", url: "https://www.pizza.example/x" }),
     );
     expect(r.get("status").str).toBe("completed");
   });
 
   it("locks content actions after a click lands out of scope, and strips content from the landing result", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
     // Scripted: "#offsite" navigates to https://offsite.example/lander.
-    const clicked = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#offsite" }));
+    const clicked = jv(await ctx.sessions.command(s, { action: "click", selector: "#offsite" }));
     expect(clicked.get("status").str).toBe("completed");
     expect(clicked.get("out_of_scope").str).toBe("offsite.example");
 
-    const text = jv(await ctx.sessions.command(AGENT, s, { action: "text" }));
+    const text = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(text.get("status").str).toBe("error");
     expect(text.get("error").str).toContain("offsite.example");
-    const shot = jv(await ctx.sessions.command(AGENT, s, { action: "screenshot" }));
+    const shot = jv(await ctx.sessions.command(s, { action: "screenshot" }));
     expect(shot.get("status").str).toBe("error");
 
     // Way back is allowed.
     const back = jv(
-      await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }),
+      await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" }),
     );
     expect(back.get("status").str).toBe("completed");
-    const text2 = jv(await ctx.sessions.command(AGENT, s, { action: "text" }));
+    const text2 = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(text2.get("status").str).toBe("completed");
   });
 
   it("audits popups and allows use_page + extend to reach them", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
-    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#popup" });
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(s, { action: "click", selector: "#popup" });
     const navs = ctx.events.filter((e) => e.event === "browser_navigated");
     expect(JSON.stringify(navs)).toContain("popup.example");
 
     // Switch to the popup: content locked until scope is widened.
-    await ctx.sessions.command(AGENT, s, { action: "use_page", index: 1 });
-    const locked = jv(await ctx.sessions.command(AGENT, s, { action: "text" }));
+    await ctx.sessions.command(s, { action: "use_page", index: 1 });
+    const locked = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(locked.get("status").str).toBe("error");
 
-    const ext = jv(ctx.sessions.extend("int-2", AGENT, s, ["popup.example"], [], false));
+    const ext = jv(ctx.sessions.extend("int-2", s, ["popup.example"], [], false));
     expect(ext.get("status").str).toBe("completed");
-    const text = jv(await ctx.sessions.command(AGENT, s, { action: "text" }));
+    const text = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(text.get("status").str).toBe("completed");
     expect(eventNames()).toContain("browser_session_extended");
   });
@@ -364,10 +364,10 @@ describe("requests the site refused", () => {
 
   it("tells the agent the host, and only when both ends were approved", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
     // Scripted: "#blocked" is a click whose XHRs the site answers 429, plus a
     // third-party beacon that 403s.
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#blocked" }));
+    const r = jv(await ctx.sessions.command(s, { action: "click", selector: "#blocked" }));
     expect(r.get("status").str).toBe("completed");
 
     // The agent hears about the approved page's own trouble and nothing else:
@@ -412,14 +412,14 @@ describe("requests the site refused", () => {
 
   it("lets a page's failing frames crowd out the one the agent could have used", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
     // Six on one reply — five frame loads the browser cannot attribute and, as
     // the oldest, the one refusal the agent could have used. The device holds
     // five, so that one is what falls out: the owner is the one who needs the
     // whole picture, and the agent's next action gets whatever comes next.
-    await ctx.sessions.command(AGENT, s, { action: "click", selector: "#frames-fail" });
+    await ctx.sessions.command(s, { action: "click", selector: "#frames-fail" });
     expect(await ctx.sessions.viewFrame()).not.toBeNull();
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "url" }));
+    const r = jv(await ctx.sessions.command(s, { action: "url" }));
     expect(r.get("failed_requests").value).toBeNull();
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
     expect((command?.fields.failed_requests as { status: number }[]).map((e) => e.status))
@@ -428,7 +428,7 @@ describe("requests the site refused", () => {
 
   it("says nothing when the page's requests were answered", async () => {
     const s = await openSession(["pizza.example"]);
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" }));
+    const r = jv(await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" }));
     expect(r.get("failed_requests").value).toBeNull();
     const command = ctx.events.filter((e) => e.event === "browser_command").pop();
     expect(command?.fields.failed_requests).toBeUndefined();
@@ -436,11 +436,11 @@ describe("requests the site refused", () => {
 
   it("keeps what an action saw even when that action failed", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
     // The motivating shape: the click fails BECAUSE the site refused its
     // request, so a report only the success path made would be missing exactly
     // when it matters.
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "click", selector: "#refuses" }));
+    const r = jv(await ctx.sessions.command(s, { action: "click", selector: "#refuses" }));
     expect(r.get("status").str).toBe("error");
     expect(r.get("error").str).toContain("Timeout");
     expect(r.get("failed_requests").value).toEqual([ORDER]);
@@ -453,15 +453,15 @@ describe("requests the site refused", () => {
 describe("credentials", () => {
   it("no longer answers vault questions — that moved to the vault tool", async () => {
     const s = await openSession(["pizza.example"]);
-    const r = jv(await ctx.sessions.command(AGENT, s, { action: "credentials" }));
+    const r = jv(await ctx.sessions.command(s, { action: "credentials" }));
     expect(r.get("status").str).toBe("error");
   });
 
   it("fill_secret refuses items not approved for the session", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
-      await ctx.sessions.command(AGENT, s, {
+      await ctx.sessions.command(s, {
         action: "fill_secret",
         selector: "#pass",
         item: "L1",
@@ -479,10 +479,10 @@ describe("credentials", () => {
     // reaches the agent, the secret is in model context, transcripts and any
     // provider that sees them.
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-3", AGENT, s, [], ["L1"], false);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
+    ctx.sessions.extend("int-3", s, [], ["L1"], false);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
-      await ctx.sessions.command(AGENT, s, {
+      await ctx.sessions.command(s, {
         action: "fill_secret",
         selector: "#nofill",
         item: "L1",
@@ -499,10 +499,10 @@ describe("credentials", () => {
 
   it("fill_secret types the value on-device and never returns it", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", AGENT, s, [], ["L1"], false);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
+    ctx.sessions.extend("int-2", s, [], ["L1"], false);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
-      await ctx.sessions.command(AGENT, s, {
+      await ctx.sessions.command(s, {
         action: "fill_secret",
         selector: "#pass",
         item: "L1",
@@ -522,10 +522,10 @@ describe("credentials", () => {
 
   it("fill_secret is refused when the item belongs to another site (op origin check)", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", AGENT, s, [], ["X1"], false);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/login" });
+    ctx.sessions.extend("int-2", s, [], ["X1"], false);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
-      await ctx.sessions.command(AGENT, s, {
+      await ctx.sessions.command(s, {
         action: "fill_secret",
         selector: "#pass",
         item: "X1",
@@ -541,11 +541,11 @@ describe("credentials", () => {
 
   it("fill_secret refuses frames outside the session scope, allows approved card frames", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", AGENT, s, [], ["C1"], false);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/checkout" });
+    ctx.sessions.extend("int-2", s, [], ["C1"], false);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/checkout" });
     // Scripted: "#card*" selectors live in a frame on payframe.example.
     const denied = jv(
-      await ctx.sessions.command(AGENT, s, {
+      await ctx.sessions.command(s, {
         action: "fill_secret",
         selector: "#card-number",
         item: "C1",
@@ -555,9 +555,9 @@ describe("credentials", () => {
     expect(denied.get("status").str).toBe("error");
     expect(denied.get("error").str).toContain("payframe.example");
 
-    ctx.sessions.extend("int-3", AGENT, s, ["payframe.example"], [], false);
+    ctx.sessions.extend("int-3", s, ["payframe.example"], [], false);
     const ok = jv(
-      await ctx.sessions.command(AGENT, s, {
+      await ctx.sessions.command(s, {
         action: "fill_secret",
         selector: "#card-number",
         item: "C1",
@@ -573,7 +573,7 @@ describe("credentials", () => {
 describe("audit hygiene", () => {
   it("strips query strings from audited URLs", async () => {
     const s = await openSession(["pizza.example"]);
-    await ctx.sessions.command(AGENT, s, {
+    await ctx.sessions.command(s, {
       action: "goto",
       url: "https://pizza.example/cb?token=SECRETTOKEN#frag",
     });
@@ -607,7 +607,7 @@ describe("access the owner's log could not record is not granted", () => {
     const handle = opened.get("session").str!;
 
     expect(() =>
-      sessions.extend("int-2", AGENT, handle, ["paypal.example"], ["L1"], true),
+      sessions.extend("int-2", handle, ["paypal.example"], ["L1"], true),
     ).toThrow(/audit append failed/);
 
     // The agent must not be left holding origins and credential items that the
@@ -637,7 +637,7 @@ describe("access the owner's log could not record is not granted", () => {
     const retry = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
     expect(retry.get("status").str).toBe("completed");
     const r = jv(
-      await sessions.command(AGENT, retry.get("session").str!, {
+      await sessions.command(retry.get("session").str!, {
         action: "goto",
         url: "https://pizza.example/",
       }),
@@ -679,7 +679,7 @@ describe("access the owner's log could not record is not granted", () => {
     const retry = jv(await sessions.open("int-2", AGENT, ["pizza.example"], true));
     expect(retry.get("status").str).toBe("completed");
     const r = jv(
-      await sessions.command(AGENT, retry.get("session").str!, {
+      await sessions.command(retry.get("session").str!, {
         action: "goto",
         url: "https://pizza.example/",
       }),
@@ -695,9 +695,9 @@ describe("the handle is a capability, so the log never carries it", () => {
     // and serialised into the reviewer prompt that leaves this Mac. A handle
     // there is a browser anybody who reads it can drive.
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", AGENT, s, ["b.example"], ["L1"], true);
-    await ctx.sessions.command(AGENT, s, { action: "goto", url: "https://pizza.example/menu" });
-    await ctx.sessions.command(AGENT, s, { action: "eval", expression: "1" });
+    ctx.sessions.extend("int-2", s, ["b.example"], ["L1"], true);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/menu" });
+    await ctx.sessions.command(s, { action: "eval", expression: "1" });
     await ctx.sessions.close(s, "test");
 
     expect(JSON.stringify(ctx.events)).not.toContain(s);
@@ -747,19 +747,16 @@ describe("every browser opens as the user, already signed in", () => {
     await sessions.closeAll("test");
   });
 
-  it("hands back what the session signed into, and does not clobber it with a stale copy", async () => {
+  it("keeps the user's own profile out of it: the clone goes, the original does not change", async () => {
+    // The clone is the session's alone. Nothing an agent does inside one can
+    // sign the user out of their own browser or undo another session's login.
     const { sessions, seed, profiles } = signedIn();
-    const first = jv(await sessions.open("int-1", AGENT, ["pizza.example"], false)).get("session").str!;
-    const firstDir = path.join(profiles, fs.readdirSync(profiles)[0]);
-    const idle = jv(await sessions.open("int-2", AGENT, ["pizza.example"], false)).get("session").str!;
-    // One browser signs into something new; the other one just sat there.
-    fs.writeFileSync(path.join(firstDir, "cookies.sqlite"), "his logins + the new one");
+    const handle = jv(await sessions.open("int-1", AGENT, ["pizza.example"], false)).get("session").str!;
+    const dir = path.join(profiles, fs.readdirSync(profiles)[0]);
+    fs.writeFileSync(path.join(dir, "cookies.sqlite"), "signed out of everything");
 
-    await sessions.close(first, "agent");
-    expect(fs.readFileSync(path.join(seed, "cookies.sqlite"), "utf8")).toBe("his logins + the new one");
-    await sessions.close(idle, "agent");
-    // The idle browser's copy was older, so it did not overwrite the new login.
-    expect(fs.readFileSync(path.join(seed, "cookies.sqlite"), "utf8")).toBe("his logins + the new one");
+    await sessions.close(handle, "agent");
+    expect(fs.readFileSync(path.join(seed, "cookies.sqlite"), "utf8")).toBe("his logins");
     expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
@@ -861,13 +858,13 @@ describe("three agents, three browsers, at once", () => {
     // Driven in parallel, each to its own site.
     await Promise.all(
       handles.map((h, i) =>
-        ctx.sessions.command(agents[i], h, { action: "goto", url: `https://${sites[i]}/page` }),
+        ctx.sessions.command(h, { action: "goto", url: `https://${sites[i]}/page` }),
       ),
     );
 
     // Each reports ITS page — not the last one anybody navigated.
     const urls = await Promise.all(
-      handles.map((h, i) => ctx.sessions.command(agents[i], h, { action: "url" }).then((r) => jv(r))),
+      handles.map((h, i) => ctx.sessions.command(h, { action: "url" }).then((r) => jv(r))),
     );
     urls.forEach((r, i) => {
       expect(r.get("status").str).toBe("completed");
@@ -881,7 +878,7 @@ describe("three agents, three browsers, at once", () => {
     // Closing one leaves the other two browsing.
     await ctx.sessions.close(handles[0], "test");
     for (const i of [1, 2]) {
-      const still = jv(await ctx.sessions.command(agents[i], handles[i], { action: "url" }));
+      const still = jv(await ctx.sessions.command(handles[i], { action: "url" }));
       expect(still.get("url").str).toBe(`https://${sites[i]}/page`);
     }
   });

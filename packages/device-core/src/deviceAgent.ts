@@ -481,7 +481,6 @@ export class DeviceAgent {
     if (session !== null) {
       return this.browserSessions.extend(
         intent.intentId,
-        intent.agentId,
         session,
         origins,
         items,
@@ -509,14 +508,14 @@ export class DeviceAgent {
    * grant — no new intent, no approval — exactly like getOutput binds to an
    * already-approved run. Called in-process by the mcp-server's `browser` tool.
    */
-  async browserCommand(agentId: string, session: string, params: JSONValue): Promise<JSONValue> {
+  async browserCommand(session: string, params: JSONValue): Promise<JSONValue> {
     if (!this.browserSessions) {
       return { status: "error", error: "no browser runtime installed on this device" };
     }
     if (jv(params).get("action").str === "close") {
       return this.browserSessions.close(session, "agent");
     }
-    return this.browserSessions.command(agentId, session, params);
+    return this.browserSessions.command(session, params);
   }
 
   getOutput(handle: string, since = 0): JSONValue {
