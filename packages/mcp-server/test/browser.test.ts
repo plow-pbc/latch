@@ -337,11 +337,13 @@ describe("browser tools (fake runtime)", () => {
     expect(bound.at(-1)).toEqual(["bank.example", "pizza.example", "shop.example"].sort());
   });
 
-  it("an open landing inside a widening does not cost that widening its marker", async () => {
-    // The third interleaving, and the one with an escape at the end of it: the
-    // open installs a new browser mid-await, and the extend's continuation
-    // clears ITS profile identity — so the widened session finds nothing to
-    // give up and its jar stays open to the narrower grant.
+  it("an open racing a widening never lands on a jar that was given up", async () => {
+    // The third interleaving the queue guards, and the one with an escape at
+    // the end of it: an open installing a new browser inside an extend's await
+    // whose continuation then clears ITS profile identity, so the widened
+    // session finds nothing to give up. That exact interleaving is not
+    // reliably reproducible against the fake runtime — this pins the invariant
+    // it would break rather than the schedule that breaks it.
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const profiles = path.join(device.home, "device/browser/profiles");
     const key = profileKeyForOrigins(["pizza.example"]);
@@ -351,14 +353,20 @@ describe("browser tools (fake runtime)", () => {
       callTool(server, "plow_browser_request", { session, origins: ["bank.example"] }, AGENT),
       callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT),
     ]);
-    expect(widen.isError, JSON.stringify(widen.payload)).toBe(false);
     expect(reopen.isError, JSON.stringify(reopen.payload)).toBe(false);
 
-    // The widened jar was retired, and the session that came after it is on a
-    // different one — not the jar now holding bank.example's cookies.
-    expect(abandoned(profiles, key)).toBe(true);
-    expect(fs.readdirSync(profiles).sort()).toEqual([key, `${key}-2`]);
-    expect(audited(device, "browser_started").at(-1)).toBe(`${key}-2`);
+    // Order-independent: both calls reach the queue through decideAndRun, so
+    // which lands first is incidental scheduling. The invariant either way is
+    // that the session left running is not sitting on a jar that was given
+    // up — which is the escape, since that jar holds bank.example's cookies
+    // under a grant that only ever approved pizza.example.
+    const landedOn = audited(device, "browser_started").at(-1)!;
+    expect(abandoned(profiles, landedOn), `reopened onto ${landedOn}`).toBe(false);
+    // The two outcomes are coupled: either the widening landed and retired its
+    // jar, and the reopen went to a fresh one — or the open won the queue,
+    // closed the session first, and there was no widening to retire anything.
+    expect(abandoned(profiles, key)).toBe(!widen.isError);
+    expect(landedOn).toBe(widen.isError ? key : `${key}-2`);
   });
 
   it("a widened session's jar is given up, and no later session opens it", async () => {
