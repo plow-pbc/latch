@@ -174,6 +174,21 @@ describe("browser tools (fake runtime)", () => {
     expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("hunter2");
   });
 
+  it("an action that failed tells the agent what its own requests did", async () => {
+    // End to end, because an error crosses MCP as a string: a refusal not said
+    // IN that string is not said at all, and it is usually the reason.
+    const { server } = makeServer();
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/" });
+    const failed = await act(server, session, "click", { selector: "#refuses" });
+    expect(failed.isError).toBe(true);
+    const text = JSON.stringify(failed.payload);
+    expect(text).toContain("Timeout 3000ms exceeded");
+    expect(text).toContain("the page's own requests were refused");
+    expect(text).toContain("pizza.example");
+    expect(text).not.toContain("api/order");
+  });
+
   it("denyKinds credential blocks fill grants while browsing still works", async () => {
     const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once", denyKinds: ["credential"] }));
     const session = await open(server, ["pizza.example"], false);

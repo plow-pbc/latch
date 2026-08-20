@@ -113,6 +113,26 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(refused.isError).toBe(true);
     expect(JSON.stringify(refused.payload)).toContain("refused");
 
+    // A fill searches every frame, so the outer ones fail first with nothing
+    // more interesting than "no such selector here". What comes back has to be
+    // the frame that actually held the field and refused.
+    const locked = await act("fill", { selector: "#card-locked", value: "x" }, false);
+    expect(locked.isError).toBe(true);
+    expect(JSON.stringify(locked.payload)).toContain("not editable");
+
+    // Same rule for a frame that HAS the field and will not hand it over: a
+    // hidden one times out exactly like a frame that hasn't got it, and only
+    // the second of those is worth burying.
+    const hidden = await act("fill", { selector: "#card-hidden", value: "x" }, false);
+    expect(hidden.isError).toBe(true);
+    // The stable half, then the discriminating half: a frame that simply hasn't
+    // got the field also times out, but resolves nothing — and the selector's
+    // own name appears either way, so it cannot be the discriminator.
+    // "resolved to" is Playwright call-log wording; it tracks the pin in
+    // runtime.lock.json.
+    expect(JSON.stringify(hidden.payload)).toContain("Timeout");
+    expect(JSON.stringify(hidden.payload)).toContain("resolved to");
+
     await act("fill_secret", { selector: "#card-number", item: "C1", field: "number" });
     await act("fill_secret", { selector: "#card-cvv", item: "C1", field: "cvv" });
     await act("click", { selector: "#pay" });

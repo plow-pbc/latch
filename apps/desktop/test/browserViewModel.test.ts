@@ -123,14 +123,106 @@ describe("audit grouping for browser sessions", () => {
     expect(filled.text).not.toContain("password: "); // never a value
   });
 
-  it("a session ended by a crash reads as Crashed, not Closed or Browsing", () => {
+  // The reported bug's owner half: a session where every action returned ok
+  // while the site answered 429 was green in the pane, so the one place the
+  // refusals were recorded never showed them. Both while it is still open —
+  // the case the pane is watched for — and after it closes.
+  it.each([
+    { when: "still open", close: [], status: "Requests refused", closeText: null },
+    {
+      when: "closed",
+      // What the browser had not reported yet is drained onto the closing
+      // line, which is what the device half of this branch exists to
+      // guarantee; this is the only place a human ever sees it.
+      close: [{ event: "browser_session_closed", session: "S", reason: "agent", failed_requests: [
+        { status: 503, method: "GET", origin: "https://costco.com" },
+      ], ts: "2026-08-10T10:00:05Z" }],
+      status: "Closed · requests refused",
+      closeText: "Browser session closed (agent) — refused: 503 GET https://costco.com",
+    },
+  ])("a session whose page was refused reads as failed while $when, and says by whom", ({ close, status, closeText }) => {
+    const browser = auditActivities([
+      { event: "browser_command", session: "S", action: "click", url: "https://costco.com/cart", failed_requests: [
+        { status: 429, method: "POST", origin: "https://costco.com" },
+        { status: 403, method: "GET", origin: "https://cdn.costco.com" },
+      ], ts: "2026-08-10T10:00:00Z" },
+      ...close,
+    ]).find((a) => a.id === "browser:S")!;
+    expect(browser.status).toBe(status);
+    expect(browser.tone).toBe("amber");
+    expect(browser.category).toBe("failed");
+    const cmd = browser.timeline.find((t) => t.text.startsWith("Browser: click"))!;
+    expect(cmd.text).toContain("429 POST https://costco.com");
+    expect(cmd.text).toContain("(+1 more)");
+    expect(cmd.state).toBe("bad");
+    if (closeText !== null) {
+      const closeRow = browser.timeline.find((t) => t.text.includes("session closed"))!;
+      expect(closeRow.text).toBe(closeText);
+      expect(closeRow.state).toBe("bad");
+    }
+  });
+
+  // How a session's close reads, from both ends of the same verdict. A crash
+  // outranks what the session accumulated before it, so the badge is not the
+  // milder "Closed · scope blocks" this session also earned — and the parting
+  // refusals drained onto the crash line do not soften it either. An ordinary
+  // close is the inverse, and it is the row that keeps every other row honest:
+  // without it, marking every close bad would go unnoticed.
+  it.each([
+    {
+      when: "a crash with a parting refusal", reason: "crashed", scopeViolation: true,
+      failed_requests: [{ status: 599, method: "GET", origin: "https://dominos.com" }],
+      status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+      closeText: "Browser session closed (crashed) — refused: 599 GET https://dominos.com",
+    },
+    {
+      when: "a crash with nothing left to say", reason: "crashed", scopeViolation: true, failed_requests: [],
+      status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+      closeText: "Browser session closed (crashed)",
+    },
+    {
+      when: "an ordinary close", reason: "agent", scopeViolation: false, failed_requests: [],
+      status: "Closed", tone: "zinc", category: "other", closeState: "neutral",
+      closeText: "Browser session closed (agent)",
+    },
+  ])("$when reads as $status", ({ reason, scopeViolation, failed_requests, status, tone, category, closeState, closeText }) => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
-      { event: "browser_session_closed", session: "S", reason: "crashed", ts: "2026-08-10T10:00:05Z" },
+      ...(scopeViolation
+        ? [{ event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:01Z" }]
+        : []),
+      { event: "browser_session_closed", session: "S", reason, failed_requests, ts: "2026-08-10T10:00:05Z" },
     ]);
-    expect(acts[0]!.status).toBe("Crashed");
-    expect(acts[0]!.tone).toBe("red");
-    expect(acts[0]!.category).toBe("failed");
+    expect(acts[0]!.status).toBe(status);
+    expect(acts[0]!.tone).toBe(tone);
+    // The bucket, not only the badge: they disagreed once already, and the
+    // bucket is what an owner scanning for trouble actually filters on.
+    expect(acts[0]!.category).toBe(category);
+    const closeRow = acts[0]!.timeline.find((t) => t.text.includes("session closed"))!;
+    expect(closeRow.state).toBe(closeState);
+    // Which makes each row's name a claim the test reads: the parting refusal
+    // is on the line, or there was nothing to put there.
+    expect(closeRow.text).toBe(closeText);
+  });
+
+  it("a browser death stands beside the session it took down, not inside it", () => {
+    // What production writes when a browser dies under a live session: the
+    // session closes as crashed, and BrowserHost separately audits the death
+    // with only a code — no session, no intent — so it can join nothing. Both
+    // rows are the owner's, and the crash is not absorbed into the session's.
+    const acts = auditActivities([
+      { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
+      { event: "browser_crashed", code: 9, ts: "2026-08-10T10:00:05Z" },
+      { event: "browser_session_closed", session: "S", reason: "crashed", failed_requests: [], ts: "2026-08-10T10:00:05Z" },
+    ]);
+    expect(acts.map((a) => a.id).sort()).toEqual(["browser:S", "browser_crashed:1"]);
+    const crash = acts.find((a) => a.id === "browser_crashed:1")!;
+    expect(crash.status).toBe("Crashed");
+    expect(crash.tone).toBe("red");
+    expect(crash.category).toBe("failed");
+    // The code is the only thing the host has to say about how it died.
+    expect(crash.timeline[0]!.text).toBe("Browser crashed (code 9)");
+    expect(crash.timeline[0]!.state).toBe("bad");
   });
 
   it("a session-scoped metadata read stays with its session, not a row of its own", () => {

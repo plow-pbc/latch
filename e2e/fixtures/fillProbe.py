@@ -199,6 +199,18 @@ class Handle:
             raise RuntimeError("Element is not attached to the DOM")
 
 
+class Hidden(RuntimeError):
+    """What a frame holding the field but refusing to show it answers with.
+
+    Its own type, so a scenario can say WHICH frame's failure came back — the
+    generic "selector not found" the loop falls back to is a RuntimeError too.
+    """
+
+
+class Detached(RuntimeError):
+    """What a frame that went away answers with. Its own type for the same reason."""
+
+
 class Frame:
     """One frame, with as many nodes as a scenario needs.
 
@@ -210,8 +222,13 @@ class Frame:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
-                 typeable=True, drops_keys=False, assign_fails=False):
+                 typeable=True, drops_keys=False, assign_fails=False,
+                 hides=False, detached=False):
         self.trace = trace
+        # A frame that HAS the field and will not show it, and one that went
+        # away: the two failures the fill path ranks against each other.
+        self.hides = hides
+        self.detached = detached
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
@@ -230,11 +247,18 @@ class Frame:
     def query_selector(self, selector):
         return self._node(selector)
 
+    def is_detached(self):
+        return self.detached
+
     def wait_for_selector(self, selector, timeout=None):
         self.trace.append("frame.wait_for_selector")
+        if self.detached:
+            raise Detached("frame was detached")
         node = self._node(selector)
         if node is None:
             raise RuntimeError("selector not found: %s" % selector)
+        if self.hides:
+            raise Hidden("%s never became visible" % selector)
         return node
 
 
@@ -250,6 +274,10 @@ class Page:
 
         class _Context:
             pages = [self]
+
+            # Session subscribes its response listener here at construction.
+            def on(self, _event, _handler):
+                pass
 
         self.context = _Context()
 
@@ -331,6 +359,30 @@ def two_frames(server):
     out["second_len"] = len(second.handle.value or "")
     out["first_changed"] = first.handle.value != "1 Elm St"
     out["trace"] = trace
+    return out
+
+
+def ranked(server, with_holder=True, holder_first=True):
+    """Which frame's failure comes back.
+
+    A frame that went away must not overwrite the answer from one that held the
+    field and refused to show it, and must still be heard when it is the only
+    thing that happened. Order does not decide it: a frames list is DOM order,
+    and an advert frame sits above the payment one as often as below. The main
+    frame comes after the siblings and has nothing.
+    """
+    trace: list[str] = []
+    holder = Frame(trace, nodes={"#pass": Handle(trace)}, hides=True) if with_holder else None
+    gone = Frame(trace, nodes={}, detached=True)
+    siblings = [fr for fr in ([holder, gone] if holder_first else [gone, holder])
+                if fr is not None]
+    session = server.Session(Page(Frame(trace, nodes={}), extra_frames=siblings))
+    out = {"error": None, "tried": 0}
+    try:
+        session.handle({"action": "fill", "selector": "#pass", "value": "x"}, "/tmp")
+    except Exception as exc:  # noqa: BLE001 — the scenario under test
+        out["error"] = type(exc).__name__
+    out["tried"] = trace.count("frame.wait_for_selector")
     return out
 
 
@@ -480,6 +532,9 @@ def main() -> int:
         # A visible fill that fails: the node still holds whatever was in it,
         # which may be the last secret, so the mark must still be there.
         "plain_failed": run(server, base, detach_before_fill=True, marked=True),
+        "ranked": ranked(server),
+        "ranked_only_gone": ranked(server, with_holder=False),
+        "ranked_gone_first": ranked(server, holder_first=False),
     }
     fill_pass = {"action": "fill", "selector": "#pass", "value": "hunter2", "frame": 0, "mask": True}
     fill_addr_at_pass = {"action": "fill", "selector": "#pass", "value": "1 Elm St", "frame": 0}

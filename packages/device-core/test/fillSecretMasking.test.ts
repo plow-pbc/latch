@@ -368,6 +368,16 @@ describe("fill_secret marking", () => {
       expect(jv(result).get("forms").value ?? null).toBeNull();
     }
     expect(ctx.events.filter((e) => e.event === "credential_mask_failed").length).toBe(2);
+
+    // A refusal that settles into that refused observation is not lost with it:
+    // the observation is the device's to withhold, what the page's requests did
+    // is the agent's to know.
+    await ctx.sessions.command("agent-1", handle, { action: "click", selector: "#blocked-later" });
+    const refused = jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" }));
+    expect(refused.get("status").str).toBe("error");
+    expect(refused.get("failed_requests").value).toEqual([
+      { status: 401, method: "GET", host: "pizza.example" },
+    ]);
   });
 
   it("tells the browser which document it approved", async () => {
@@ -538,6 +548,9 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
           sibling_marked: boolean;
         };
       };
+      ranked: { error: string | null; tried: number };
+      ranked_only_gone: { error: string | null; tried: number };
+      ranked_gone_first: { error: string | null; tried: number };
     }>(FILL_PROBE);
   })();
 
@@ -695,6 +708,19 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.plain.typed_len).toBe(probed.plain.asked_len);
     expect(probed.plain.node_len).toBe(probed.plain.asked_len);
     expect(probed.long_value.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("reports the frame that had the field, wherever the one that went away sits", () => {
+    // Both answer `wait_for_selector` with a failure, and only one of them was
+    // ever going to be able to fill anything. Every frame is tried either way.
+    expect(probed.ranked).toEqual({ error: "Hidden", tried: 3 });
+    // A frames list is DOM order, so the frame that went away sits above the
+    // payment one as often as below it. The answer is the same either way.
+    expect(probed.ranked_gone_first).toEqual({ error: "Hidden", tried: 3 });
+  });
+
+  it("still hears the frame that went away when nothing else spoke", () => {
+    expect(probed.ranked_only_gone).toEqual({ error: "Detached", tried: 2 });
   });
 
   it("hands the device an identity to check the fill against", () => {
