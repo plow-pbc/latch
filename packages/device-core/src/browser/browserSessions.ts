@@ -489,7 +489,11 @@ export class BrowserSessions {
         }
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
+      const raw = error instanceof Error ? error.message : String(error);
+      // The same redaction the answer gets: a browser failure quotes the URL
+      // it was navigating to, and that is the one place a token is likeliest
+      // to be — this reaches both the agent and the owner's log.
+      const message = this.redactFor(s, raw) as string;
       this.audit("browser_command", {
         session: s.handle,
         action,
@@ -570,36 +574,10 @@ export class BrowserSessions {
     }
 
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
-    // Every URL leaving here keeps its query only if this session is approved
-    // for it: a redirect the owner never granted can carry a token in its
-    // query or fragment — `.../callback?code=SECRET`.
-    //
-    // Applied to the whole answer rather than to named fields, because naming
-    // them is what kept failing. `touched` was closed, and `url` leaked; `url`
-    // was closed, and `pages[].url` leaked; then `forms[].frame_url`. There is
-    // no list of URL-shaped fields that stays complete, so this walks what is
-    // being returned. Page content is exempt — the agent is entitled to it on
-    // an approved page, and it is already stripped on one that is not.
+    // Everything leaving here goes through one redaction — see redactFor.
     const contentKeys = new Set(["text", "data_b64", "result", "note"]);
-    const redact = (v: JSONValue): JSONValue => {
-      if (typeof v === "string") {
-        if (hostOf(v) !== null) return !this.inScope(s, v) ? stripQuery(v) : v;
-        // A sentence is not a URL, but a browser error quotes the URL it was
-        // navigating to — so the same rule applies to what is embedded in one.
-        return v.replace(/https?:\/\/[^\s"'<>]+/g, (u) =>
-          this.inScope(s, u) ? u : stripQuery(u),
-        );
-      }
-      if (Array.isArray(v)) return v.map((x) => redact(x ?? null));
-      if (v !== null && typeof v === "object") {
-        return Object.fromEntries(
-          Object.entries(v).map(([k, x]) => [k, contentKeys.has(k) ? x : redact(x ?? null)]),
-        );
-      }
-      return v;
-    };
     for (const [k, v] of Object.entries(out)) {
-      if (!contentKeys.has(k)) out[k] = redact(v);
+      if (!contentKeys.has(k)) out[k] = this.redactFor(s, v);
     }
     // A page listing names windows this session never approved — the title is
     // that page's own content, which is deleted at the top level for exactly
@@ -648,6 +626,38 @@ export class BrowserSessions {
       delete out.title;
     }
     return out;
+  }
+
+  /**
+   * Mask what this session was never approved to see: any string that is, or
+   * quotes, a URL for an unapproved origin loses its query and fragment.
+   *
+   * By rule rather than by field, because naming them is what kept failing —
+   * `touched` was closed and `url` leaked, `url` was closed and `pages[].url`
+   * leaked, then `forms[].frame_url`. There is no list of URL-shaped fields
+   * that stays complete. A redirect the owner never granted carries tokens in
+   * exactly that part: `.../callback?code=SECRET`.
+   *
+   * Every exit from this layer runs through here — the answer to an action,
+   * the message when one fails, and the owner's log line for it, which has
+   * always been written stripped for the same reason.
+   */
+  private redactFor(s: Session, v: JSONValue): JSONValue {
+    if (typeof v === "string") {
+      if (hostOf(v) !== null) return this.inScope(s, v) ? v : stripQuery(v);
+      // A sentence is not a URL, but a browser error quotes the one it was
+      // navigating to, token and all.
+      return v.replace(/https?:\/\/[^\s"'<>]+/g, (u) =>
+        this.inScope(s, u) ? u : stripQuery(u),
+      );
+    }
+    if (Array.isArray(v)) return v.map((x) => this.redactFor(s, x ?? null));
+    if (v !== null && typeof v === "object") {
+      return Object.fromEntries(
+        Object.entries(v).map(([k, x]) => [k, this.redactFor(s, x ?? null)]),
+      );
+    }
+    return v;
   }
 
   /**

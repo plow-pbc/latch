@@ -39,6 +39,7 @@
  *   click "#flash"     touches https://flash.example/collect and closes it again
  *   click "#offsite"   navigates to https://offsite.example/lander?code=SECRET-TOKEN
  *   click "#swallowed" fails the way a click something is covering does
+ *   click "#token-error" fails with an error quoting a token-bearing URL
  */
 "use strict";
 const fs = require("node:fs");
@@ -123,6 +124,14 @@ function handle(cmd) {
       return { ok: true };
     }
     // The shape a real click failure has: the browser names what was over it.
+    if (cmd.selector === "#token-error") {
+      // A browser failure quoting the URL it was navigating to — the one place
+      // a token is likeliest to appear in an error string.
+      throw new Error(
+        "Frame.click: Timeout 3000ms exceeded navigating to " +
+          "https://offsite.example/callback?code=SECRET-IN-ERROR",
+      );
+    }
     if (cmd.selector === "#swallowed") {
       throw new Error(
         `Frame.click: Timeout ${cmd.timeout_ms ?? 3000}ms exceeded.\nCall log:\n` +

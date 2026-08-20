@@ -352,7 +352,7 @@ describe("browser tools (fake runtime)", () => {
     // Three fields have leaked in turn — `touched`, then `url`, then a popup
     // in `pages` — so this asserts the rule rather than the field: nothing
     // URL-shaped for an unapproved origin keeps its query, wherever it sits.
-    const { server } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const session = await open(server, ["pizza.example", "*.pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/menu" });
     await act(server, session, "click", { selector: "#popup" });
@@ -375,6 +375,17 @@ describe("browser tools (fake runtime)", () => {
     await act(server, session, "goto", { url: "https://pizza.example/menu?table=7" });
     const approved = await act(server, session, "forms");
     expect(JSON.stringify(approved.payload)).toContain("table=7");
+
+    // And the failure path, which leaves by a different door: a browser error
+    // quotes the URL it was navigating to, and that reaches the agent AND the
+    // owner's log.
+    const failed = await callTool(
+      server, "plow_browser", { session, action: "click", selector: "#token-error" }, AGENT,
+    );
+    expect(failed.isError).toBe(true);
+    expect(JSON.stringify(failed.payload)).not.toContain("SECRET-IN-ERROR");
+    expect(JSON.stringify(failed.payload)).toContain("offsite.example/callback");
+    expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("SECRET-IN-ERROR");
   });
 
   it("a page that navigates out of scope retires the jar, with no widening at all", async () => {
