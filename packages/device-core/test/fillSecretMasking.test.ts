@@ -958,11 +958,16 @@ describe("which nodes take typing", () => {
     tagName: "INPUT", type, disabled: false, readOnly: false, isContentEditable: false,
     getAttribute: (k: string) => (k === "type" ? type : null), ...extra,
   });
+  // `type` is not the input's alone: a textarea answers "textarea" and a select
+  // "select-one", so a predicate that dropped the tag check and asked `el.type`
+  // by itself would send every textarea back to assignment — and a stub that
+  // answered undefined would not notice.
   const textarea = (extra: Record<string, unknown> = {}) => ({
-    tagName: "TEXTAREA", disabled: false, readOnly: false, isContentEditable: false, ...extra,
+    tagName: "TEXTAREA", type: "textarea", disabled: false, readOnly: false,
+    isContentEditable: false, getAttribute: () => null, ...extra,
   });
   const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
-    tagName, isContentEditable: false, ...extra,
+    tagName, isContentEditable: false, getAttribute: () => null, ...extra,
   });
 
   it.each([
@@ -979,7 +984,7 @@ describe("which nodes take typing", () => {
     // property answers "text" where `getAttribute` answers null, so a predicate
     // rewritten to read the attribute — as every other literal in this file does
     // — would send every one of them back to assignment.
-    { what: "an input with no type attribute", el: { ...input("text"), getAttribute: () => null }, typed: true },
+    { what: "an input with no type attribute", el: input("text", { getAttribute: () => null }), typed: true },
     { what: "a textarea", el: textarea(), typed: true },
     { what: "a contenteditable div, which has no disabled or readOnly at all", el: element("DIV", { isContentEditable: true }), typed: true },
     { what: "a checkbox", el: input("checkbox"), typed: false },
@@ -991,7 +996,7 @@ describe("which nodes take typing", () => {
     { what: "a range slider", el: input("range"), typed: false },
     { what: "a read-only textarea", el: textarea({ readOnly: true }), typed: false },
     { what: "a disabled textarea", el: textarea({ disabled: true }), typed: false },
-    { what: "a select, which has disabled but no readOnly", el: element("SELECT", { disabled: false }), typed: false },
+    { what: "a select, which has disabled but no readOnly", el: element("SELECT", { type: "select-one", disabled: false }), typed: false },
     { what: "a plain div", el: element("DIV"), typed: false },
     { what: "a read-only text field", el: input("text", { readOnly: true }), typed: false },
     { what: "a disabled text field", el: input("text", { disabled: true }), typed: false },
