@@ -125,14 +125,16 @@ export class BrowserSessions {
   constructor(
     private readonly browser: BrowserHostConfig & {
       /** The one profile everything shared before browsers were per agent.
-       * The first agent to open adopts it, so an upgrade does not sign
-       * anybody out of the sites they were signed into. */
+       * Nobody inherits it: it is moved aside on the first run, because its
+       * cookies belong to whichever agents used it before. */
       legacyProfileDir?: string;
     },
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
-  ) {}
+  ) {
+    this.quarantineSharedProfile();
+  }
 
   /** True when a page URL is inside the session's approved origins.
    * Blank/initial pages have no host and are always in scope. */
@@ -324,24 +326,40 @@ export class BrowserSessions {
   /**
    * This agent's profile directory, made if it is not there yet.
    *
-   * The first one made adopts the profile every agent used to share, so a Mac
-   * that upgrades keeps the sites it was signed into rather than waking up
-   * signed out of all of them. Only the first: after that the old directory is
-   * gone, and every other agent starts clean, which is the isolation this is
-   * all for.
+   * Always clean when it is new. The single profile every agent shared before
+   * this change is NOT adopted by anybody: it holds whatever cookies and
+   * signed-in sessions the agents that came before left in it, so handing it
+   * to the next agent that happens to open would be one agent inheriting
+   * another's logins — the leak this whole change exists to close. It is moved
+   * aside instead (see `quarantineSharedProfile`), which costs the owner one
+   * round of signing in and costs nobody their isolation.
    */
   private ensureProfile(dir: string): void {
     if (fs.existsSync(dir)) return;
-    const legacy = this.browser.legacyProfileDir;
-    fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
-    if (legacy && fs.existsSync(legacy)) {
-      // Loudly, like the app's home migration: a rename that fails and is
-      // swallowed hands the owner a clean profile and no reason why, which
-      // reads as "Domo signed me out of everything".
-      fs.renameSync(legacy, dir);
-      return;
-    }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+
+  /**
+   * Put the pre-parallel shared profile out of reach, once.
+   *
+   * Not deleted: it is the owner's data, and a signed-in session they may want
+   * back is not ours to throw away. Renamed, so no agent can be given it and
+   * the owner can still find it.
+   */
+  private quarantineSharedProfile(): void {
+    const legacy = this.browser.legacyProfileDir;
+    if (!legacy || !fs.existsSync(legacy)) return;
+    const parked = `${legacy}.shared-before-per-agent`;
+    try {
+      if (fs.existsSync(parked)) {
+        fs.rmSync(legacy, { recursive: true, force: true }); // already parked once
+      } else {
+        fs.renameSync(legacy, parked);
+      }
+      this.audit("browser_shared_profile_retired", { moved_to: parked });
+    } catch {
+      /* it stays where it is — unreachable either way, since nothing reads it */
+    }
   }
 
   /**

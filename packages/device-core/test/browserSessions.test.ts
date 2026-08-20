@@ -584,36 +584,39 @@ describe("one profile per agent, and never a shared one", () => {
 });
 
 describe("upgrading from the one shared profile", () => {
-  it("gives the old profile to the first agent, and a clean one to the next", async () => {
-    // Before browsers were per agent there was one profile with every login in
-    // it. Leaving it behind would sign the owner out of everything they had
-    // signed into, so the first agent to open adopts it.
+  it("gives that profile to nobody, and parks it where the owner can find it", async () => {
+    // Before this change every agent drove one browser with one profile, so
+    // its cookies belong to whichever agents used it. Handing it to the first
+    // agent that opens after the upgrade would be one agent inheriting
+    // another's logins — the leak this change exists to close.
     const legacy = path.join(ctx.dir, "legacy-profile");
     fs.mkdirSync(legacy, { recursive: true });
-    fs.writeFileSync(path.join(legacy, "cookies.sqlite"), "signed in everywhere");
-    const withLegacy = new BrowserSessions(
+    fs.writeFileSync(path.join(legacy, "cookies.sqlite"), "somebody else's logins");
+    const events: { event: string; fields: { [k: string]: JSONValue } }[] = [];
+    const upgraded = new BrowserSessions(
       { ...ctx.browsers, profileDir: path.join(ctx.dir, "upgraded"), legacyProfileDir: legacy },
       null,
-      () => {},
+      (event, fields) => events.push({ event, fields }),
       60_000,
     );
 
-    const first = jv(await withLegacy.open("int-1", "first-agent", ["pizza.example"], false));
-    expect(first.get("status").str).toBe("completed");
-    const dirs = fs.readdirSync(path.join(ctx.dir, "upgraded"));
-    expect(dirs.length).toBe(1);
-    expect(fs.readFileSync(path.join(ctx.dir, "upgraded", dirs[0], "cookies.sqlite"), "utf8"))
-      .toBe("signed in everywhere");
-    expect(fs.existsSync(legacy)).toBe(false); // adopted, not copied
+    // Moved aside at once — before any agent could be given it.
+    expect(fs.existsSync(legacy)).toBe(false);
+    const parked = `${legacy}.shared-before-per-agent`;
+    expect(fs.readFileSync(path.join(parked, "cookies.sqlite"), "utf8")).toBe("somebody else's logins");
+    expect(events.map((e) => e.event)).toContain("browser_shared_profile_retired");
 
-    // The next agent starts clean — that is the isolation this is all for.
-    const second = jv(await withLegacy.open("int-2", "second-agent", ["pizza.example"], false));
-    expect(second.get("status").str).toBe("completed");
-    const both = fs.readdirSync(path.join(ctx.dir, "upgraded")).sort();
-    expect(both.length).toBe(2);
-    const other = both.find((d) => d !== dirs[0])!;
-    expect(fs.existsSync(path.join(ctx.dir, "upgraded", other, "cookies.sqlite"))).toBe(false);
-    await withLegacy.closeAll("test");
+    // Two agents open: both start clean, neither inherits anything.
+    for (const agent of ["first-agent", "second-agent"]) {
+      const r = jv(await upgraded.open(`int-${agent}`, agent, ["pizza.example"], false));
+      expect(r.get("status").str).toBe("completed");
+    }
+    const dirs = fs.readdirSync(path.join(ctx.dir, "upgraded"));
+    expect(dirs.length).toBe(2);
+    for (const dir of dirs) {
+      expect(fs.existsSync(path.join(ctx.dir, "upgraded", dir, "cookies.sqlite"))).toBe(false);
+    }
+    await upgraded.closeAll("test");
   });
 });
 

@@ -148,9 +148,10 @@ export class DeviceAgent {
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        // One profile per agent now, under a directory of their own; the
-        // single profile that came before is adopted by the first agent to
-        // open, rather than being left behind with all its logins in it.
+        // One profile per agent now, under a directory of their own. The
+        // single profile that came before is moved aside rather than given to
+        // anybody: its cookies belong to whichever agents used it, so handing
+        // it to the next one to open would leak logins between them.
         profileDir: path.join(browserDir, "profiles"),
         legacyProfileDir: path.join(browserDir, "profile"),
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,

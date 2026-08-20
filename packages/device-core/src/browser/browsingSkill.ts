@@ -50,7 +50,9 @@ call and you keep the same window, profile and cookies. Other agents drive their
 browsers at the same time: yours is never taken from you, theirs is never visible to
 you, and when the Mac is already running as many as it will, the open says so. Closing
 is yours alone — another agent holding your id cannot close your browser. Your cookies
-and logins outlive the session: the profile belongs to you, not to one open.
+and logins outlive the session: the profile belongs to you, not to one open. On a Mac
+that has just upgraded to per-agent browsers everyone starts signed out once — the old
+shared profile is retired rather than handed to whoever opens first.
 
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
