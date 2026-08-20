@@ -149,20 +149,26 @@ sqlite3 "$HOME_DIR/device/browser/profiles/<key>/cookies.sqlite" \
 `$DOMO_HOME` is set by the `just` recipes, not in your shell, so spell the home out — the packaged
 install's is the unsuffixed `~/Library/Application Support/Plow-Latch`.
 
-The directory name is a hash of the approved origins, so there is no reading it off the site name.
-`browser_session_opened` in the audit log gives you the origins; hash the same list to find the
-directory (`ls -lt` is a weak guide — a rename carries the old mtime with it). Deleting a profile
-directory is safe with the app shut down; it costs that grant its logins and nothing else. A store
-older than this change has a single `device/browser/profile` beside `profiles/` with everything
-mixed together; nothing reads it any more, so delete it whenever.
+Which grant a profile answers to is written inside it, in `domo-grant` — the directory *name* is
+only the grant it was first opened for, so read the file rather than the name:
 
-Widening a live session (`plow_browser_request` with new origins) moves its profile to the key for
-the widened set, right then — otherwise the jar would end up holding cookies for an origin its key
-does not name, and the next session on the narrower grant would send them. If a profile for the
-widened set already existed, that one stays and the session's lands beside it as `<key>.superseded`,
-which nothing reopens, and which is safe to delete once the session that produced it has closed —
-while that session runs it is the live browser's own profile. `browser_profile_rekeyed` records the
-move, naming the directory it actually wrote.
+```bash
+grep -r . "$HOME_DIR/device/browser/profiles/"*/domo-grant
+```
+
+Deleting a profile directory is safe with the app shut down; it costs that grant its logins and
+nothing else. A store older than this change has a single `device/browser/profile` beside
+`profiles/` with everything mixed together; nothing reads it any more, so delete it whenever.
+
+Widening a live session (`plow_browser_request` with new origins) rewrites that profile's
+`domo-grant` to the widened set, right then — otherwise the jar would end the session holding
+cookies for an origin its grant omits, and the next session on the narrower grant would open it and
+send them. The *directory* deliberately does not move: renaming it under a running Camoufox was
+tried, and every cookie written afterwards was lost (`cookies.sqlite` came back with no `-wal` and
+none of the session's cookies), which the integration tier now guards. If a profile already answers
+to the widened set, that one keeps it and this one is left answering to nothing — an empty
+`domo-grant`, which no grant can match. `browser_profile_regranted` records it. A profile answering
+to nothing is dead once its session closes and can be deleted then.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:

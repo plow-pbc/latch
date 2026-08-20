@@ -62,6 +62,9 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
+/** File inside a profile naming the grant its contents answer to. */
+const GRANT_MARKER = "domo-grant";
+
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 3;
 
@@ -84,7 +87,9 @@ export class BrowserHost {
   private headedNow: boolean;
   /** Profile the next browser opens, one per approved origin set. */
   private profileKeyNow: string | null = null;
-  /** Profile the browser that is actually running opened. */
+  /** Profile directory the running browser opened. */
+  private startedDir: string | null = null;
+  /** Grant that profile answers to — follows a widening, see markProfileGrant. */
   private startedKey: string | null = null;
 
   constructor(private readonly cfg: BrowserHostConfig) {
@@ -169,63 +174,87 @@ export class BrowserHost {
   }
 
   /**
-   * Move the live profile to the key its contents now answer to, at the moment
-   * `extend()` widens the grant — not at close, so the guarantee survives a
-   * quit, a `kill -9` and power loss, none of which reach a close-time move;
-   * that one would leave the jar under the narrow key it opened with and hand
-   * the widened origin's cookies to the next narrow session.
+   * Record that the live profile now answers to a wider grant, at the moment
+   * `extend()` widens it — not at close, so the guarantee survives a quit, a
+   * `kill -9` and power loss, none of which reach a close-time hook. Left
+   * alone, the jar would end the session holding cookies for an origin its
+   * grant omits, and the next session on the narrower grant would open it and
+   * send them on the first click or redirect, ahead of the scope lock.
    *
-   * What a rename under a live Firefox costs: the cookie db and its `-wal` are
-   * open fds and keep being written, which is why the jar arrives intact — but
-   * anything Firefox creates BY PATH afterwards lands on a name that no longer
-   * exists (`sessionstore-backups`, `prefs.js` at quit, new `cache2` entries).
-   * The integration tier drives a real widen and keeps browsing after it; the
-   * fake runtime cannot tell you any of this.
+   * It is a marker write and NOT a rename of the directory, which was tried
+   * and refuted: a real Camoufox goes on serving pages afterwards, but the
+   * cookies written after the move never reach disk — the moved jar came back
+   * with `cookies.sqlite`, no `-wal`, and none of the session's cookies in it.
+   * The integration tier drives a real widen and reopens on the widened grant,
+   * which is the assertion that caught it.
    *
-   * A jar already on the destination is the established one for that grant and
-   * outlives any single session, so it stays; this one only has to stop
-   * answering to the key it opened under. The name it lands on carries a dot,
-   * which no key can spell, so nothing reopens it.
+   * A profile already answering to this grant is the established one and
+   * outlives any single session, so it keeps the claim and this jar is left
+   * answering to nothing — no key is empty, so nothing reopens it.
+   *
+   * Returns the marker now on this profile, or null if it did not change.
    */
-  rekeyProfile(fromKey: string, toKey: string): void {
+  markProfileGrant(dir: string, key: string): string | null {
     const root = this.cfg.profilesDir;
-    if (!root || fromKey === toKey) return;
-    const from = path.join(root, fromKey);
-    if (!fs.existsSync(from)) return;
-    const to = path.join(root, toKey);
-    const superseded = fs.existsSync(to);
-    const target = superseded ? `${to}.superseded` : to;
-    if (superseded) fs.rmSync(target, { recursive: true, force: true });
-    fs.renameSync(from, target);
-    // Both sides of the reuse guard follow the move: the running browser is on
-    // the new directory now, and moving only one of them would make the very
-    // next action read a mismatch and restart the live session's browser.
-    if (this.startedKey === fromKey) {
-      this.startedKey = path.basename(target);
+    if (!root || this.grantOf(dir) === key) return null;
+    const taken = this.profileDirs(root).some(
+      (d) => d !== dir && this.grantOf(d) === key,
+    );
+    const mark = taken ? "" : key;
+    fs.writeFileSync(path.join(dir, GRANT_MARKER), mark);
+    // Both sides of the reuse guard follow the live profile's new grant, or
+    // the very next action reads a mismatch and restarts the browser out from
+    // under the session that just widened.
+    if (dir === this.startedDir) {
+      this.startedKey = mark || null;
       this.profileKeyNow = this.startedKey;
     }
-    // The name actually written: the doc tells an owner to hash the origins to
-    // find a profile, and on a collision that is not where this one went.
-    this.cfg.audit?.("browser_profile_rekeyed", {
-      from: fromKey,
-      to: path.basename(target),
-      superseded,
+    this.cfg.audit?.("browser_profile_regranted", {
+      profile: path.basename(dir),
+      grant: key,
+      superseded: taken,
     });
+    return mark;
   }
 
-  /**
-   * Where the next browser keeps its cookies, localStorage and cache: one
-   * directory per approved origin set, so what a session leaves behind is
-   * reachable only by a session the owner approved for the same origins. Null
-   * — no key, or no profiles dir — leaves `--profile-dir` off the command line
-   * and the browser runs with nothing persisted.
-   */
+  /** Absolute paths of every profile under `root`. */
+  private profileDirs(root: string): string[] {
+    try {
+      return fs.readdirSync(root).map((d) => path.join(root, d));
+    } catch {
+      return []; // not created yet
+    }
+  }
+
+  /** The grant a profile answers to, or null for none (a superseded jar). */
+  private grantOf(dir: string): string | null {
+    try {
+      return fs.readFileSync(path.join(dir, GRANT_MARKER), "utf8").trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
   private profileDirForStart(): string | null {
     const root = this.cfg.profilesDir;
-    if (!root || !this.profileKeyNow) return null;
-    const dir = path.join(root, this.profileKeyNow);
+    const key = this.profileKeyNow;
+    if (!root || !key) return null;
+    fs.mkdirSync(root, { recursive: true });
+    const found = this.profileDirs(root).find((d) => this.grantOf(d) === key);
+    if (found) return found;
+    // Named for the grant that opened it, which is what makes the store
+    // readable — but a widened profile keeps its name while answering to
+    // another grant, so a fresh one may have to sit beside it.
+    let dir = path.join(root, key);
+    for (let n = 2; fs.existsSync(dir); n++) dir = path.join(root, `${key}-${n}`);
     fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, GRANT_MARKER), key);
     return dir;
+  }
+
+  /** The profile the running browser is on, or null when it has none. */
+  get profileDir(): string | null {
+    return this.startedDir;
   }
 
   private async ensureStarted(): Promise<void> {
@@ -279,6 +308,7 @@ export class BrowserHost {
       extraEnv.HOME = home;
     }
     const profileDir = this.profileDirForStart();
+    this.startedDir = profileDir;
     this.startedKey = this.profileKeyNow;
     const argv = [
       ...this.cfg.command,
@@ -357,6 +387,7 @@ export class BrowserHost {
         rl.close();
         const wasReady = ready;
         this.child = null;
+        this.startedDir = null;
         this.startedKey = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
@@ -379,6 +410,7 @@ export class BrowserHost {
 
       child.on("error", (err) => {
         this.child = null;
+        this.startedDir = null;
         this.startedKey = null;
         if (!ready) {
           ready = true;

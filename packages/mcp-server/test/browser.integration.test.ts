@@ -210,47 +210,54 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     });
   }, 300_000);
 
-  it("survives having its profile renamed under it when the grant is widened", async () => {
+  it("keeps writing to its jar after a widening, and the widened grant finds it", async () => {
     // Widening moves the live profile directory so the jar stops answering to
     // the key it opened under. Firefox keeps writing the cookie db through its
     // open fds, but anything it creates by path under the old name does not
     // exist any more — so the claim is only worth what a real browser does
     // after the move, which no fake runtime can tell us.
-    const opened = await callTool(
-      server, "plow_browser_open", { origins: ["127.0.0.1"], headed: false }, AGENT,
-    );
-    expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
-    session = opened.payload.session as string;
+    // An origin set no other test in this file uses, so the jar cannot start
+    // out holding somebody else's sid — the fixture keeps every session it
+    // ever issued valid, so a borrowed cookie would satisfy every assertion
+    // below without a single post-rename byte reaching disk.
+    const narrow = ["127.0.0.1", "widen-only.example"];
+    const wide = [...narrow, "late.example"];
+    const openOn = async (origins: string[]) => {
+      const r = await callTool(server, "plow_browser_open", { origins, headed: false }, AGENT);
+      expect(r.isError, JSON.stringify(r.payload)).toBe(false);
+      session = r.payload.session as string;
+    };
+    const menu = async () => {
+      await act("goto", { url: site.url + "/menu" });
+      return (await act("text")).payload.text as string;
+    };
 
+    await openOn(narrow);
     await act("goto", { url: site.url + "/" });
 
-    // Widen FIRST, so every cookie in this session is written after the move.
-    // Logging in first would only prove that a jar which already existed
-    // survives being renamed — the claim that matters is that Firefox keeps
-    // writing into it through its open fds once the path is gone.
+    // Widen FIRST, so every cookie in this session is written after it. This
+    // is the assertion that refuted the rename this replaced: a real Camoufox
+    // went on serving pages after its profile directory moved, but none of
+    // the cookies written afterwards reached disk.
     const widened = await callTool(
       server, "plow_browser_request", { session, origins: ["late.example"] }, AGENT,
     );
     expect(widened.isError, JSON.stringify(widened.payload)).toBe(false);
+    expect(await menu()).toMatch(/Log in/); // nothing carried in
 
     // The browser is still usable, and this Set-Cookie lands post-rename.
+    await act("goto", { url: site.url + "/" });
     await act("fill", { selector: "#user", value: "jon@example.com" });
     await act("fill", { selector: "#pass", value: "pizza-time-99" });
     await act("click", { selector: "#login" });
-    await act("goto", { url: site.url + "/menu" });
-    expect((await act("text")).payload.text as string).toMatch(/Menu/);
+    expect(await menu()).toMatch(/Menu/);
     await callTool(server, "plow_browser_close", { session }, AGENT);
 
-    // The widened grant finds that cookie — so the write went into the jar
-    // the move took with it, not to the name that stopped existing.
-    const reopened = await callTool(
-      server, "plow_browser_open",
-      { origins: ["127.0.0.1", "late.example"], headed: false }, AGENT,
-    );
-    expect(reopened.isError, JSON.stringify(reopened.payload)).toBe(false);
-    session = reopened.payload.session as string;
-    await act("goto", { url: site.url + "/menu" });
-    expect((await act("text")).payload.text as string).toMatch(/Menu/);
+    // The widened grant finds that cookie, and it is the only one there was —
+    // so the write went into the jar the move took with it, not to the name
+    // that stopped existing.
+    await openOn(wide);
+    expect(await menu()).toMatch(/Menu/);
     await callTool(server, "plow_browser_close", { session }, AGENT);
   }, 300_000);
 });
