@@ -62,19 +62,21 @@ describe("BrowserHost", () => {
   it("answers the exit itself when the browser dies before saying hello", async () => {
     // A camoufox that cannot launch — missing binary, locked profile — exits
     // before the ready line. That has to answer as its own failure, not by
-    // parking the caller until the start timeout. Whether the browser's own
-    // stderr reaches that message is a poll race, tracked in
-    // plow-pbc/domo-desktop#98, and deliberately not asserted here.
+    // parking the caller until the start timeout.
     const { host } = makeHost({ EXIT_BEFORE_READY: "1" });
     // The exit itself is what this pins. Whether the browser's own stderr made
     // it into the message depends on which poll event lands first — asserting
-    // that would be asserting a race, and the caller's answer does not need it.
+    // that would be asserting a race; making it reliable is
+    // plow-pbc/domo-desktop#98.
     await expect(host.ensureReady()).rejects.toThrow(/exited \(code=9/);
   });
 
-  it("answers a spawn that never happened, and leaves nothing stale behind", async () => {
+  it("answers a spawn that never happened, twice in a row", async () => {
     // ENOENT on the browser binary: `error` fires and `exit` never does, so
-    // this is the one settle path that has to let go on its own.
+    // this is the one settle path that has to let go on its own. What the test
+    // pins is the answer, not the letting go — nothing here can observe a
+    // destroyed descriptor, so the release() call in that branch stays a
+    // reasoned invariant rather than a checked one.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-host-"));
     const host = new BrowserHost({
       command: [path.join(dir, "nonexistent-camoufox")],
