@@ -650,6 +650,18 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
+  it("assigns a value carrying a tab, which no key can put in the field", () => {
+    // The one character normalization cannot rescue: `type()` sends it as the
+    // Tab KEY, which moves focus rather than adding anything, so "a\tb" would
+    // land as "ab" — a gap mid-value, which KEYS_DROPPED_JS only recognises as a
+    // prefix, so nothing repairs it and the fill reports a value the node never
+    // held. An assignment carries a tab, so that is the path it takes.
+    const run = probed.tab_value;
+    expect(run.trace).not.toContain("handle.type");
+    expect(run.typed_len).toBeNull();
+    expect(run.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("assigns the value outright when the keys did not compose it", () => {
     // A field can take the keys and sanitise some of them away — a number
     // input handed something that is not a number does exactly that. Reporting
@@ -1218,8 +1230,8 @@ describe("which nodes take typing", () => {
   // secret's characters, land wherever focus already was.
   //
   // It answers a KIND rather than a boolean because one more question rides on
-  // the same call: whether a newline belongs in this node's value. Only a
-  // textarea holds one as a character.
+  // the same call: whether the node holds a line break. A textarea holds one as
+  // a character; an <input>'s value sanitization strips it.
   const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => string;
   // Each stub carries what the predicate READS of that shape, and nothing more:
   // a property no branch reaches reads as coverage while pinning nothing. For an
@@ -1227,8 +1239,7 @@ describe("which nodes take typing", () => {
   // and it is the only thing standing between a read-only field and a credential
   // typed at it. For an input it is also `type`, an enumerated reflection:
   // always lowercase, and "text" for an attribute that is missing or
-  // unrecognised, which is why `getAttribute` is here to disagree with it. For
-  // everything else it is `contenteditable` and the document's design mode.
+  // unrecognised, which is why `getAttribute` is here to disagree with it.
   const input = (type: string, extra: Record<string, unknown> = {}) => ({
     tagName: "INPUT", type, disabled: false, readOnly: false,
     getAttribute: (k: string) => (k === "type" ? type : null), ...extra,
@@ -1241,20 +1252,10 @@ describe("which nodes take typing", () => {
     tagName: "TEXTAREA", type: "textarea", disabled: false, readOnly: false,
     getAttribute: () => null, ...extra,
   });
-  // Any other element: it carries no `contenteditable`, which is what every
-  // node inside a rich-text region has in common with every node outside one.
+  // Anything else, whatever it declares about itself.
   const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
     tagName, getAttribute: () => null, ...extra,
   });
-  // One that declares itself an editor, with whatever value.
-  const host = (tagName: string, attr: string = "", extra: Record<string, unknown> = {}) =>
-    element(tagName, {
-      getAttribute: (k: string) => (k === "contenteditable" ? attr : null), ...extra,
-    });
-  // A document put wholly into edit mode, which declares its own body and
-  // nothing else.
-  const inDesignMode = (tagName: string) =>
-    element(tagName, { ownerDocument: { designMode: "on" } });
 
   it.each([
     // Every type on the list, because dropping one silently sends that field
@@ -1274,16 +1275,9 @@ describe("which nodes take typing", () => {
     // The attribute is case-insensitive and the property is not: ordinary
     // markup where the two disagree on more than presence.
     { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), kind: "single-line" },
-    // The nodes that can hold a line break — a textarea as a character, an
-    // editing host as markup — which is the only reason this predicate answers
-    // a kind rather than a boolean. An <input> is the one that cannot.
+    // The node that holds a line break as a character, which is the only reason
+    // this predicate answers a kind rather than a boolean.
     { what: "a textarea", el: textarea(), kind: "multiline" },
-    { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), kind: "multiline" },
-    { what: "a div marked contenteditable=true", el: host("DIV", "true"), kind: "multiline" },
-    // The attribute is ASCII case-insensitive; capitalised markup is ordinary.
-    { what: "a div marked contenteditable=TRUE", el: host("DIV", "TRUE"), kind: "multiline" },
-    { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), kind: "multiline" },
-    { what: "a custom element that carries the attribute", el: host("X-EDITOR"), kind: "multiline" },
     { what: "a checkbox", el: input("checkbox"), kind: "" },
     { what: "a radio button", el: input("radio"), kind: "" },
     { what: "a file picker", el: input("file"), kind: "" },
@@ -1295,64 +1289,24 @@ describe("which nodes take typing", () => {
     { what: "a disabled input", el: input("password", { disabled: true }), kind: "" },
     { what: "a read-only textarea", el: textarea({ readOnly: true }), kind: "" },
     { what: "a disabled textarea", el: textarea({ disabled: true }), kind: "" },
-    // Nodes that declare nothing. Inside a rich-text region every one of them
-    // inherits the editable state — the control where typing picks an option by
-    // type-ahead, the embedded document the mask cannot reach, the ordinary span
-    // where the keys would replace the whole region — and none of them is the
-    // host, which is the only thing the predicate asks about.
-    { what: "a select, which carries a value of its own", el: element("SELECT", { value: "" }), kind: "" },
+    // Everything else is assigned, whatever it says about itself. Typing is not
+    // extended to arbitrary editing hosts: the credential submits this exists
+    // for are <input>, and admitting them cost a second editability taxonomy —
+    // which declared values count, which embedded and non-rendered tags to
+    // refuse before reading the attribute — for a case no machine here reaches.
+    { what: "a select", el: element("SELECT", { value: "" }), kind: "" },
     { what: "an iframe", el: element("IFRAME"), kind: "" },
     { what: "a span", el: element("SPAN"), kind: "" },
-    { what: "an editor explicitly turned off", el: host("DIV", "false"), kind: "" },
-    // `contenteditable` is enumerated, so anything outside its keywords means
-    // inherit: carrying the attribute is not declaring a host. These are the
-    // nodes that would otherwise be typed into on the strength of the attribute
-    // alone.
-    { what: "an unrecognised contenteditable value", el: host("SPAN", "banana"), kind: "" },
-    { what: "the contenteditable=inherit older guidance taught", el: host("DIV", "inherit"), kind: "" },
-    // Embedded and non-rendered nodes, DECLARING themselves hosts with a value
-    // the attribute accepts. The markup is page-controlled, so the declared case
-    // is reachable by anything the browser is pointed at: focus on an <iframe>
-    // delegates into the document inside it, where a secret's characters land
-    // beyond the reach of the mark on the outer node, and a <style> or
-    // <template> is not rendered at all, so focus is a no-op and the keys go
-    // wherever focus already was.
-    { what: "an iframe declaring itself an editor", el: host("IFRAME", "true"), kind: "" },
-    { what: "an image declaring itself an editor", el: host("IMG", "true"), kind: "" },
-    { what: "a canvas declaring itself an editor", el: host("CANVAS", "true"), kind: "" },
-    { what: "a video declaring itself an editor", el: host("VIDEO", "true"), kind: "" },
-    { what: "an audio element declaring itself an editor", el: host("AUDIO", "true"), kind: "" },
-    { what: "a meter declaring itself an editor", el: host("METER", "true", { value: 0 }), kind: "" },
-    { what: "a frame declaring itself an editor", el: host("FRAME", "true"), kind: "" },
-    { what: "a script declaring itself an editor", el: host("SCRIPT", "true"), kind: "" },
-    { what: "a title declaring itself an editor", el: host("TITLE", "true"), kind: "" },
-    // Form controls declaring themselves hosts. Each carries its text in a
-    // string `value`, so the read-back could never recognise the typed
-    // characters — and typing at a <select> drives option type-ahead instead of
-    // composing anything.
-    { what: "a select declaring itself an editor", el: host("SELECT", "true", { value: "" }), kind: "" },
-    { what: "a button declaring itself an editor", el: host("BUTTON", "true", { value: "" }), kind: "" },
-    { what: "an option declaring itself an editor", el: host("OPTION", "true", { value: "" }), kind: "" },
-    // A NUMERIC value is not text held elsewhere: an <li> keeps its in
-    // textContent, and <li contenteditable> is ordinary rich-text markup, so
-    // asking for mere presence of `value` would send it back to assignment.
-    { what: "a list item declaring itself an editor", el: host("LI", "true", { value: 0 }), kind: "multiline" },
-    // <progress> and <meter> render a widget; their contents are legacy fallback
-    // and are never painted, so they belong with <img> and <canvas> above rather
-    // than with <li>, whatever their value's type.
-    { what: "a progress element declaring itself an editor", el: host("PROGRESS", "true", { value: 0 }), kind: "" },
-    { what: "an object declaring itself an editor", el: host("OBJECT", "true"), kind: "" },
-    { what: "an embed declaring itself an editor", el: host("EMBED", "true"), kind: "" },
-    { what: "a style tag declaring itself an editor", el: host("STYLE", "true"), kind: "" },
-    { what: "a template declaring itself an editor", el: host("TEMPLATE", "true"), kind: "" },
-    { what: "an iframe carrying an invalid value", el: host("IFRAME", "banana"), kind: "" },
-    // designMode declares the body and nothing else: a control in such a
-    // document is no more the editing host than one in a region.
-    { what: "the body of a document in designMode", el: inDesignMode("BODY"), kind: "multiline" },
-    { what: "a select in a document in designMode",
-      el: element("SELECT", { value: "", ownerDocument: { designMode: "on" } }), kind: "" },
-    { what: "a div in a document in designMode", el: inDesignMode("DIV"), kind: "" },
-    { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), kind: "" },
+    {
+      what: "a contenteditable div, which is assigned as it was before typing",
+      el: element("DIV", { getAttribute: (k: string) => (k === "contenteditable" ? "true" : null) }),
+      kind: "",
+    },
+    {
+      what: "the body of a document in designMode",
+      el: element("BODY", { ownerDocument: { designMode: "on" } }),
+      kind: "",
+    },
   ])("$what: kind=$kind", ({ el, kind }) => {
     expect(typeable(el)).toBe(kind);
   });

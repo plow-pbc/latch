@@ -246,64 +246,22 @@ DOC_TOKEN_JS = """() => {
 # which is exactly what it got before there was typing: the same value where
 # `fill()` sets one, the same loud refusal where it will not.
 #
-# The two kinds differ on ONE question, which is why this is a kind and not a
-# boolean: whether this node can hold a line break at all. A <textarea> holds it
-# as a character and a declared editing host holds it as markup -- both keep it,
-# so both are "multiline". An <input> is the one that cannot: its value
-# sanitization strips CR and LF, so a break there is deleted by the browser
-# whatever put it in, and pretending otherwise would only mean typing an Enter
-# that submits the form with half a value in it.
+# Only the two nodes that carry their text in a `value` are typed at. An editing
+# host -- contenteditable, a designMode body -- is deliberately NOT one: the
+# credential submits this exists for are <input>, and admitting arbitrary hosts
+# cost a second editability taxonomy (which declared attribute values count,
+# which embedded and non-rendered tags to refuse before reading it) for a case
+# no machine here reaches. Such a node is assigned, as it was before typing.
+#
+# The two kinds differ on whether the node holds a line break: a <textarea>
+# holds one as a character, an <input>'s value sanitization strips it.
 TYPEABLE_JS = """(el) => {
-    const typed = ["text", "email", "password", "search", "tel", "url", "number"];
     const tag = el.tagName.toLowerCase();
     if (tag === "textarea") return el.disabled || el.readOnly ? "" : "multiline";
-    if (tag === "input") {
-        if (!typed.includes(el.type)) return "";
-        return el.disabled || el.readOnly ? "" : "single-line";
-    }
-    // A declared host has to hold its text the way the read-back reads it, which
-    // for anything down here is `textContent`. A node carrying its text in a
-    // STRING `value` does not: a <select> answers the chosen option, a <button>
-    // its attribute. Typing at one drives option type-ahead instead of composing
-    // the value, and because the read-back is then not a PREFIX of what was
-    // asked, KEYS_DROPPED_JS sees no drop, no repair runs, and a value the node
-    // never held is reported as landed. Asking for a string excludes every form
-    // control by construction rather than by a list that cannot be closed -- and
-    // asking for mere presence would over-reach, because <li> carries a NUMERIC
-    // `value` (a long) while holding its text in textContent, and an
-    // <li contenteditable> is ordinary editor markup. <output> and <data> go
-    // the other way: their `value` is a DOMString, so they are refused here --
-    // an accepted loss, since a declared editor is not what either is for.
-    if (typeof el.value === "string") return "";
-    // What is left with no `value` and no text of its own: embedded documents
-    // and nodes that are not rendered. None of them puts the characters where
-    // the mark on the outer node can reach -- focus on an <iframe> delegates
-    // into the document inside it, and a <style> or <template> is not rendered
-    // at all, so focus is a no-op and the keys go wherever focus already was.
-    // This markup is page-controlled, so it cannot be left to the attribute to
-    // be honest about.
-    if (["iframe", "frame", "object", "embed", "style", "template", "script", "title",
-         "img", "video", "audio", "canvas", "progress", "meter"].includes(tag)) {
-        return "";
-    }
-    // The node has to BE the editing host, not merely sit inside one.
-    // `isContentEditable` is the computed, INHERITED state, so everything in a
-    // rich-text region answers true -- and leaning on the `fill()` in front does
-    // not close that either, because Playwright's gate reads the inherited state
-    // too, so a <span> inside a region passes it. What only a host has is a
-    // DECLARED value: the attribute is enumerated, so anything outside its
-    // keywords -- a typo, or the "inherit" older guidance taught -- means
-    // inherit, and a span carrying one is no more the host than its neighbours.
-    //
-    // `designMode = "on"` is the one host that declares itself another way: it
-    // makes the document's own body editable, which is the classic iframe
-    // editor, with no attribute anywhere.
-    const attr = el.getAttribute("contenteditable");
-    if (attr === null) {
-        return tag === "body" && el.ownerDocument.designMode === "on" ? "multiline" : "";
-    }
-    const value = attr.toLowerCase();
-    return value === "" || value === "true" || value === "plaintext-only" ? "multiline" : "";
+    if (tag !== "input") return "";
+    const typed = ["text", "email", "password", "search", "tel", "url", "number"];
+    if (!typed.includes(el.type)) return "";
+    return el.disabled || el.readOnly ? "" : "single-line";
 }"""
 
 # How a node holds its text: `value` for an input, `textContent` for a
@@ -359,10 +317,9 @@ def _respond(payload):
 def _type_value(el, value):
     """Put `value` into a resolved node so that the field ends on real keys.
 
-    A node is first asked what KIND of typing it takes -- whether it is a
-    text-carrying input, a textarea, or an element that DECLARES itself an
-    editing host. One that answers "" is assigned whole, exactly as this always
-    did.
+    A node is first asked what KIND of typing it takes -- a text-carrying input
+    or a textarea, and nothing else. One that answers "" is assigned whole,
+    exactly as this always did, and so is a value whose typed tail carries a tab.
 
     The rest have their value normalized to what that node can HOLD before head
     and tail are split: one LF per break where the node keeps breaks at all, and
@@ -402,10 +359,8 @@ def _type_value(el, value):
     # not. Each has to speak the string the node will actually HOLD, or it
     # answers about a value that never existed anywhere.
     #
-    # `type()` sends CR and LF alike as Enter, and a node that keeps the break
-    # keeps exactly one per Enter -- a textarea's API value normalizes CR and
-    # CRLF to a single LF, and an editing host makes one piece of markup. So CR
-    # and CRLF collapse to LF for those, and an un-normalized CRLF can no longer
+    # `type()` sends CR and LF alike as Enter, and a textarea's API value
+    # normalizes CR and CRLF to a single LF -- so an un-normalized CRLF would
     # press Enter twice where the node holds one break.
     #
     # An <input> keeps no break at all: its value sanitization strips CR and LF,
@@ -416,6 +371,15 @@ def _type_value(el, value):
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     if kind != "multiline":
         value = value.replace("\n", "")
+    # A tab is the one character no normalization can rescue. `type()` sends it
+    # as the Tab KEY, which moves focus instead of adding a character, so the
+    # node ends up holding the value with the tab missing -- and that gap is
+    # mid-value, which KEYS_DROPPED_JS only recognises as a prefix, so nothing
+    # would repair it and the fill would report a value the node never held. An
+    # assignment carries a tab, so such a value takes the path it always had.
+    if "\t" in value[-TYPED_CHARS:]:
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
     # the tail's own budget would let TYPED_CHARS of them stack up to that many
