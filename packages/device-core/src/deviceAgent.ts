@@ -161,7 +161,7 @@ export class DeviceAgent {
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the
-        // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
+        // relay's per-exchange ceiling; cap the per-action wait below it so
         // a hung page/eval returns an error in time instead of a torn 504. The
         // cold start is separate (startTimeoutMs) and paid by the deferrable
         // plow_browser_open, so it does not need to fit this bound.
@@ -222,7 +222,7 @@ export class DeviceAgent {
           : undefined,
         beforeRun: vault ? () => vault.start() : undefined,
         auditPath: path.join(browserDir, "credential-audit.log"),
-        // The relay gives up around 20s and every browser action is capped at
+        // The relay gives up first and every browser action is capped at
         // 15s, so the broker has to fail inside that or the session dies.
         timeoutMs: 12_000,
         person: vaultPerson,

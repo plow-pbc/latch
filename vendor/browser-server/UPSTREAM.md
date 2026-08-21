@@ -21,9 +21,9 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
   `pages`/`use_page`, honest `back` reporting `moved`) and the
   field/links/tables JS extractors. Changed:
   - `goto`/`back` page-load timeout cut from 30 s to 12 s (+1 s settle) so a
-    single action answers inside Domo's 15 s host cap and the relay's ~20 s
-    per-exchange ceiling; a genuinely slower page fails cleanly and the agent
-    retries rather than parking a torn 504.
+    single action answers inside Domo's host cap and the relay's per-exchange
+    ceiling; a genuinely slower page fails cleanly and the agent retries rather
+    than parking a torn 504.
   - Element actions default to a 3 s timeout (`DEFAULT_ACTION_TIMEOUT_MS`) for
     the same budget. `click` takes a caller-supplied `timeout_ms`, bounding the
     WHOLE action rather than each frame the loop tries — the device clamps it to

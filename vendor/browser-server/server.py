@@ -84,7 +84,7 @@ def _origin(url):
 
 # How long one element action waits by default. Sized like the `goto` budget
 # above it: a single action has to answer inside the device's 15 s host cap and
-# the relay's ~20 s per-exchange ceiling, and a click that has not landed in
+# the relay's per-exchange ceiling, and a click that has not landed in
 # three seconds is usually telling the agent something -- so it fails fast and
 # the agent looks at the page. `click` takes a caller-supplied `timeout_ms`
 # instead when the agent knows the page is slow; the device clamps it.
@@ -833,7 +833,7 @@ class Session:
 
         if action == "goto":
             # 12s + 1s settle keeps the whole action under the device's 15s host
-            # cap and the relay's ~20s exchange ceiling; a genuinely slower page
+            # cap and the relay's exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
             self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
             self.page.wait_for_timeout(SETTLE_MS)
