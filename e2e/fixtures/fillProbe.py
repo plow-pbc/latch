@@ -134,8 +134,8 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
-        if "held:" in js:
-            return {"held": len(self.value or ""), "cap": self._cap()}
+        if "match(" in js:
+            return sum(1 for c in (self.value or "") if c.isalnum())
         if "maxLength" in js:
             return self._cap()
             # The real script reports a cap only for the element kinds
@@ -660,6 +660,17 @@ def main() -> int:
         # input stripping punctuation down to ten digits. Its last key changed
         # what the field holds, so the field took it -- an unchanged value with
         # room to spare is an edit absorbed, not a key rejected.
+        # A stored value with a trailing space, into a card input that renders 16
+        # digits as "4111 1111 1111 1111" and caps at exactly that. Every digit
+        # lands and the space is absorbed, so a length comparison would have
+        # called a correct fill a refusal and wiped it.
+        "trailing_space_at_cap": run(
+            server, {**base, "value": "4111111111111111 "},
+            max_length=19, reformats="group"),
+        # The same shape on a stripping control: the space goes, the digits stay.
+        "trailing_space_stripped": run(
+            server, {**base, "value": "555-123-4567 "},
+            max_length=20, max_length_after=10, reformats="strip"),
         "reformatting_field_shrinks": run(
             server, {**base, "value": "555-123-4567"},
             max_length=20, max_length_after=10, reformats="strip"),

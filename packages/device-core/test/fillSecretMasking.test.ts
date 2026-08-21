@@ -703,13 +703,22 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // value we sent against the cap it states — those are different
   // representations. It is asked whether it TOOK the last key instead, which
   // separates the two cases that matter.
-  it("does not refuse a field that shrinks what it was given", () => {
-    // A phone input stripping punctuation to ten digits: its last key changed
-    // what the field holds, so the field took it. An unchanged value with room
-    // to spare is an edit absorbed, not a key rejected — and refusing here
-    // would break a fill that works today.
-    expect(probed.reformatting_field_shrinks.result).toEqual({ ok: true, frame: 0 });
-    expect(probed.reformatting_field_shrinks.node_len).toBe(10);
+  // The other side of that question, and the one that matters more: refusing
+  // any of these would wipe a fill that works today. What separates them from
+  // the clipped one is not which key was absorbed but whether anything is
+  // MISSING — counted over characters a reformatter neither adds nor removes.
+  it.each([
+    // Reshaped, nothing lost: punctuation stripped to ten digits.
+    { what: "shrinks what it was given", scenario: "reformatting_field_shrinks", left: 10 },
+    // A stored value with a trailing space, into a card input capped at exactly
+    // the width it renders. Every digit lands and the space is absorbed, so the
+    // field sits at its cap having taken everything — indistinguishable from a
+    // rejection by length alone, which is why length is not the question.
+    { what: "absorbs a trailing space at its cap", scenario: "trailing_space_at_cap", left: 19 },
+    { what: "strips a trailing space", scenario: "trailing_space_stripped", left: 10 },
+  ])("does not refuse a field that $what", ({ scenario, left }) => {
+    expect(probed[scenario].result).toEqual({ ok: true, frame: 0 });
+    expect(probed[scenario].node_len).toBe(left);
   });
 
   it("still repairs dropped keys when the cap did not move", () => {
