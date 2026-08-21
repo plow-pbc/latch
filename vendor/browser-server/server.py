@@ -372,29 +372,16 @@ def _type_value(el, value):
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     if kind != "multiline":
         value = value.replace("\n", "")
-    # A tab is the one character no normalization can rescue. `type()` sends it
-    # as the Tab KEY -- a browser claim, like the Enter one above, and it stays
-    # a manual one -- which moves focus instead of adding a character, so the
-    # node ends up holding the value with the tab missing. That gap is
-    # mid-value, which KEYS_DROPPED_JS only recognises as a prefix, so nothing
-    # would repair it and the fill would report a value the node never held.
+    # A tab is the one character no normalization can rescue: `type()` sends it
+    # as the Tab KEY, which moves focus instead of adding one, so the keys can
+    # never carry this value. It is assigned instead -- the path it always had.
     #
-    # So such a value takes the path it always had -- which is not the same as
-    # that path carrying the tab. A type whose value sanitization will not hold
-    # leading or trailing whitespace (`email`, `url`, `number`) drops an edge tab
-    # on ASSIGNMENT, and that is true of whichever assignment ran: this guard's
-    # whole-value one, or the head assignment below, which a value longer than
-    # TYPED_CHARS reaches without this branch firing at all. The prefix test does
-    # not catch it on either -- a value that lost its LEADING character is not a
-    # prefix of what was wanted, so KEYS_DROPPED_JS answers false, and for a
-    # trailing one the repair is another `el.fill()` the browser sanitizes the
-    # same way. The loss belongs to the sanitization, not to this branch: it is
-    # `fill()`'s own behavior, older than any of the typing. Typing a leading tab
-    # instead would move focus off the field, which is worse.
-    #
-    # The browser claims this paragraph rests on are listed in
+    # That is not a claim that the assignment CARRIES it. Some input types will
+    # not hold an edge tab at all, and drop it whichever assignment ran, with no
+    # prefix test able to see the loss. Those behaviors are recorded once, in
     # docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on" --
-    # nothing in the suite can see them.
+    # nothing in the suite can reach them, and restating them here is what put
+    # the two copies out of step twice.
     if "\t" in value[-TYPED_CHARS:]:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return

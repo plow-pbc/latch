@@ -528,8 +528,9 @@ def main() -> int:
         # CRLF at a textarea. `type()` sends CR and LF alike as Enter, so the
         # pair would press it twice where the node holds one break -- the server
         # normalizes before it splits head from tail, so the keys carry no CR and
-        # the length is the one the node will hold. That Enter inserts a newline
-        # at all is a browser claim, and stays a manual one.
+        # normalizes CR and CRLF to a single LF. That Enter inserts a newline at
+        # all is a browser claim this fake cannot model -- see
+        # docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on".
         "crlf_multiline": run(server, {**base, "value": "one\r\ntwo"},
                               typeable="multiline"),
         # A date widget: its value is composed from something other than the

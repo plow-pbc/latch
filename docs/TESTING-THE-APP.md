@@ -75,12 +75,22 @@ hand, against the bundled Camoufox, or not at all:
 - **`type()` sends a tab as the Tab key**, which moves focus rather than adding
   a character. No normalization rescues that, so a value whose typed tail holds
   one is assigned instead.
-- **An `<input>` runs a value sanitization algorithm on assignment.** Every type
-  strips CR and LF; `email`, `url` and `number` will not hold leading or
-  trailing whitespace either, a tab included. So an edge tab on a value for one
-  of those is dropped by the browser on whichever assignment ran — the
-  whole-value one, or the head of a split fill — and reported ok. That is
-  `fill()`'s own behavior, older than any of the typing work.
+- **An `<input>` runs a value sanitization algorithm on assignment**, and it
+  differs by type. `text`, `search`, `password`, `tel` strip CR and LF. `email`
+  and `url` strip those *and* leading and trailing ASCII whitespace, a tab
+  included. `number` is not a stripper at all: its algorithm blanks the whole
+  value when it is not a valid floating-point number, so `"1\r2"` does not come
+  back as `"12"` — it comes back empty (and Playwright's `fill` rejects a
+  non-numeric value before assigning rather than trimming it).
+
+  The consequence for the fill path: an edge tab on a value for `email`, `url`
+  or `number` is gone whichever assignment ran — the whole-value one the tab
+  guard takes, or the head of a split fill, which a value longer than
+  `TYPED_CHARS` reaches without that guard firing. No prefix test sees it: a
+  value that lost its *leading* character is not a prefix of what was wanted, so
+  `KEYS_DROPPED_JS` answers false. The fill reports ok. That is `fill()`'s own
+  behavior, older than any of the typing work — but it is the thing to check
+  first if a credential ever lands one character short.
 
 If you change the fill path, re-check the one you touched against a real page
 before trusting a green suite.
