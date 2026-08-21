@@ -839,6 +839,25 @@ app.whenReady().then(async () => {
     }));
     const reselectingVaultKeepsTheForm = !resel.asked && resel.kept;
 
+    // A leave question already in flight must be SHARED, not answered twice and
+    // never treated as consent by a second teardown path arriving behind it.
+    // The row above is still open, still dirty, and still holds the seat.
+    let replies = 0;
+    const countReply = () => { replies += 1; };
+    ipcMain.on("ui:confirmLeaveReply", countReply);
+    win.webContents.send("ui:confirmLeave");
+    win.webContents.send("ui:confirmLeave"); // a second path, same pending question
+    await waitAsking();
+    const oneDialogForTwoAskers = await js(() =>
+      document.querySelectorAll(".vaultui .confirm-overlay").length === 1);
+    await click(KEEP);
+    await waitAnswered();
+    const refusalIsReported = await waitForNode(() => replies >= 1, "the renderer's refusal")
+      .then(() => true).catch(() => false);
+    ipcMain.removeListener("ui:confirmLeaveReply", countReply);
+    const refusedCloseKeepsTheForm = await js(() =>
+      document.querySelector(".vaultui .vitem.open input[data-name='1']")?.value === "dirty-again");
+
     // Closing the window asks the same question main-side (Cmd-W and Quit both
     // route through it). Drive the renderer's half of that conversation.
     let closeAnswer = null;
@@ -856,6 +875,7 @@ app.whenReady().then(async () => {
       dirtyRowAsksOnCollapse, rowStaysOpenOnKeep, dirtyBlocksTabSwitch, discardAllowsTabSwitch,
       secondEditorAsks, refusedSecondEditorKeepsRow, windowCloseAsks, windowCloseAnswersMain,
       reselectingVaultKeepsTheForm,
+      oneDialogForTwoAskers, refusalIsReported, refusedCloseKeepsTheForm,
     };
   })();
 
@@ -947,6 +967,9 @@ app.whenReady().then(async () => {
     vaultUnsaved.windowCloseAsks &&
     vaultUnsaved.windowCloseAnswersMain &&
     vaultUnsaved.reselectingVaultKeepsTheForm &&
+    vaultUnsaved.oneDialogForTwoAskers &&
+    vaultUnsaved.refusalIsReported &&
+    vaultUnsaved.refusedCloseKeepsTheForm &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

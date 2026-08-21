@@ -318,11 +318,20 @@ function vreleaseEditor(who) {
   if (editor === who) editor = null;
 }
 
-/** Asked by main.js before it switches tabs out from under an open form. */
-export async function vaultConfirmLeave() {
-  const ok = await vmayDiscard();
-  if (ok) editor = null; // the pane, and every form on it, is about to go
-  return ok;
+/**
+ * Asked before anything replaces this pane — a tab switch, or main tearing the
+ * window down. One question at a time whoever asks: a tab switch and a Cmd-W
+ * can genuinely overlap, and two stacked dialogs over one form is nonsense.
+ */
+let leaveAsked = null;
+export function vaultConfirmLeave() {
+  leaveAsked ??= vmayDiscard()
+    .then((ok) => {
+      if (ok) editor = null; // the pane, and every form on it, is about to go
+      return ok;
+    })
+    .finally(() => { leaveAsked = null; });
+  return leaveAsked;
 }
 
 /** One saved item: her row, and the form it opens into. */

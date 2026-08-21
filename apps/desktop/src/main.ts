@@ -324,13 +324,15 @@ function createMainWindow(): void {
   mainWindow.on("resized", persist);
   mainWindow.on("moved", persist);
   // Cmd-W destroys the form as surely as Quit does, so it asks the same
-  // question. `allowClose` is what lets the second, answered close through.
+  // question. `allowClose` is what lets the second, answered close through, and
+  // `cleanedUp` is the quit that already asked — NOT `quitting`, which only
+  // means a quit is in progress and may still be waiting on its answer.
   let allowClose = false;
   mainWindow.on("close", (event) => {
     persist();
-    if (allowClose || quitting) return;
+    if (allowClose || cleanedUp) return;
     event.preventDefault();
-    void confirmRendererLeave(win).then((mayLeave) => {
+    void mayLeaveMain(win).then((mayLeave) => {
       if (!mayLeave || win.isDestroyed()) return;
       allowClose = true;
       win.close();
@@ -790,14 +792,17 @@ const gate = new WindowGate({
   isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
   openMain: () => createMainWindow(),
   openSetup: () => openOnboardingWindow(),
-  // Drop the reference before closing, so `isMainOpen`/`isSetupOpen` answer
-  // truthfully straight away: 'closed' is not guaranteed to have fired by the
-  // time `close()` returns.
+  // The main window is NOT dropped here: `close()` can now be held open by the
+  // leave question, and a cancelled close must leave the window tracked or
+  // signing in would open a second one on top of it. `isMainOpen` reads
+  // `isDestroyed()`, which is already true the moment a real close lands, so
+  // dropping the reference early never bought anything.
   closeMain: () => {
     const win = mainWindow;
-    mainWindow = null;
     if (win && !win.isDestroyed()) win.close();
   },
+  // Setup has no form to lose, so its close is immediate and the early drop
+  // still buys a truthful `isSetupOpen` before 'closed' arrives.
   closeSetup: () => {
     const win = onboardingWindow;
     onboardingWindow = null;
@@ -1011,28 +1016,32 @@ app.whenReady().then(async () => {
 });
 
 /**
- * Ask the main window whether it is willing to lose what is typed into it.
+ * The one gate every teardown of the main window goes through — Cmd-W, Quit,
+ * and the relay gate's closeMain() all end here, and nothing else may destroy
+ * that window.
  *
- * Resolves true when there is nothing to lose, when there is no window to ask,
- * or when the owner chose to discard. The timeout is deliberate: a renderer
- * that is wedged or gone must not be able to make the app unquittable.
+ * One question at a time: a second path arriving while it is up waits on the
+ * same answer instead of stacking a dialog or — the bug this shape exists to
+ * make unrepresentable — reading "a question is pending" as a yes.
+ *
+ * There is no timeout and no assumed answer. A person reading the question is
+ * not a renderer that failed to reply, and no timer can tell them apart, so
+ * silence keeps the window; Force Quit is still there for a wedged one.
  */
-function confirmRendererLeave(win: BrowserWindow | null): Promise<boolean> {
+let leaveInFlight: Promise<boolean> | null = null;
+function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const done = (ok: boolean) => {
+  leaveInFlight ??= new Promise<boolean>((resolve) => {
+    const onReply = (_e: unknown, ok: boolean) => {
       ipcMain.removeListener("ui:confirmLeaveReply", onReply);
-      resolve(ok);
+      resolve(!!ok);
     };
-    const onReply = (_e: unknown, ok: boolean) => done(!!ok);
     ipcMain.on("ui:confirmLeaveReply", onReply);
-    // No timeout, and no assumed answer: a person reading the question is not a
-    // renderer that failed to reply, and five seconds cannot tell them apart.
-    // Silence keeps the window — Force Quit is still there for a wedged one.
     // The question is drawn IN the window, so it has to be on screen to be seen.
     if (!win.isVisible()) win.show();
     win.webContents.send("ui:confirmLeave");
-  });
+  }).finally(() => { leaveInFlight = null; });
+  return leaveInFlight;
 }
 
 let quitting = false;
@@ -1046,7 +1055,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitting) return;
   quitting = true;
-  void confirmRendererLeave(mainWindow).then((mayLeave) => {
+  void mayLeaveMain(mainWindow).then((mayLeave) => {
     if (!mayLeave) {
       quitting = false; // they went back to their form; this quit never happened
       return;
