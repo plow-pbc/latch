@@ -718,6 +718,12 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     { what: "a field that drops punctuation from a secret",
       scenario: "punctuation_dropped_from_secret",
       cap: 8, fits: true, left: 0, marked: false, ledgered: false },
+    // And the same for a value that is not a secret and not a grouped number:
+    // a cardholder name losing its space. Nothing in "Jon Doe" is being
+    // grouped, so the space is content — folding it away is what would let a
+    // changed value report success.
+    { what: "a field that drops a space from a name", scenario: "name_loses_its_space",
+      cap: 20, fits: true, left: 0, marked: false, ledgered: false },
   ])("refuses $what when the page lowers the cap mid-fill", (row) => {
     const probe = probed[row.scenario];
     expect(probe.result).toEqual({
@@ -1534,7 +1540,7 @@ describe("which nodes take typing", () => {
 // script the browser actually runs rather than through a stub that answers for
 // it. `maxLength` REFLECTS the attribute everywhere; only some kinds enforce it.
 describe("which fields report a cap", () => {
-  const rule = loadScript("FIELD_RULE_JS") as (el: unknown) => { cap: number; exact: boolean };
+  const rule = loadScript("FIELD_RULE_JS") as (el: unknown) => { cap: number; password: boolean };
   // `type` is an enumerated reflection: always a lowercase string on the
   // elements that have one — "text" for a missing or unrecognised attribute,
   // "textarea" on a textarea, "select-one" on a select — so a row gives what
@@ -1564,7 +1570,9 @@ describe("which fields report a cap", () => {
     { what: "a url input", el: node("INPUT", "url", 20), reports: 20 },
     { what: "a tel input", el: node("INPUT", "tel", 10), reports: 10 },
     { what: "an email input", el: node("INPUT", "email", 8), reports: 8 },
-    { what: "a password input", el: node("INPUT", "password", 16), reports: 16 },
+    // The other half of the rule rides the same row: a password never folds
+    // its separators, because nothing it holds is shaping — it renders dots.
+    { what: "a password input", el: node("INPUT", "password", 16), reports: 16, password: true },
     // The script compares `el.type` raw, which only holds because the property
     // is the canonical keyword however the attribute was written. Pinned here
     // the way the typeable table pins it, so a rewrite that read the ATTRIBUTE
@@ -1574,7 +1582,7 @@ describe("which fields report a cap", () => {
       el: node("INPUT", "password", 16, {
         getAttribute: (k: string) => (k === "type" ? "Password" : null),
       }),
-      reports: 16,
+      reports: 16, password: true,
     },
     { what: "a textarea", el: node("TEXTAREA", "textarea", 40), reports: 40 },
     // Everything below carries the attribute and is not governed by it. Reading
@@ -1589,23 +1597,10 @@ describe("which fields report a cap", () => {
     // must pass through as itself — a `|| -1` tidy would read it as uncapped.
     { what: "an uncapped text input", el: node("INPUT", "text", -1), reports: -1 },
     { what: "a field capped at zero", el: node("INPUT", "text", 0), reports: 0 },
-  ])("reports $what as $reports", ({ el, reports }) => {
-    expect(rule(el).cap).toBe(reports);
+  ])("reports $what as $reports", ({ el, reports, password = false }) => {
+    expect(rule(el)).toEqual({ cap: reports, password });
   });
 
-  // The other half of the same rule: which fields have to match EXACTLY. Not a
-  // special case so much as the absence of one — separators are tolerated
-  // because formatting controls insert and strip them, and a password input is
-  // never a formatting control, so a dash in a password is content.
-  it.each([
-    { what: "a password input", el: node("INPUT", "password", 16), exact: true },
-    { what: "a text input", el: node("INPUT", "text", 16), exact: false },
-    { what: "a tel input", el: node("INPUT", "tel", 10), exact: false },
-    { what: "a textarea", el: node("TEXTAREA", "textarea", 40), exact: false },
-    { what: "a select", el: node("SELECT", "select-one", 4), exact: false },
-  ])("requires $what to match exactly: $exact", ({ el, exact }) => {
-    expect(rule(el).exact).toBe(exact);
-  });
 });
 
 describe("the mark the page ends up carrying", () => {

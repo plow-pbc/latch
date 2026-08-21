@@ -149,7 +149,7 @@ class Handle:
             # The real script reports a cap only for the element kinds
             # `maxlength` governs; a node standing in for one of those answers
             # its cap, and -1 is "uncapped" exactly as it is in the page.
-            return {"cap": self._cap(), "exact": self.field_type == "password"}
+            return {"cap": self._cap(), "password": self.field_type == "password"}
         if "tagName" in js:
             return self.typeable
         if "startsWith(now)" in js:
@@ -707,6 +707,11 @@ def main() -> int:
         # measure, and a password's dash is not shaping.
         "secret_fits_only_if_dash_is_shaping": run(
             server, {**base, "value": "hunt-er2"}, max_length=7, field_type="password"),
+        # A cardholder name whose field drops the space. Nothing is grouped
+        # here -- the value has letters in it -- so the space is content and
+        # "JonDoe" is not what was asked for, however ordinary the character.
+        "name_loses_its_space": run(
+            server, {**base, "value": "Jon Doe"}, max_length=20, reformats="strip"),
         "punctuation_dropped_from_secret": run(
             server, {**base, "value": "hunt-er2"}, max_length=8, reformats="strip",
             field_type="password"),

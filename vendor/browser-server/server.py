@@ -342,16 +342,13 @@ FIELD_RULE_JS = """(el) => {
     // into a refusal of a fill that lands intact today. Only the kinds it
     // actually governs report a cap; everything else is uncapped.
     //
-    // `exact` is the password case, and it is not a special case so much as the
-    // absence of one: separators are tolerated because FORMATTING controls
-    // insert and strip them, and a password input is never a formatting control
-    // -- it renders dots. So a dash in a password is content, where a dash in a
-    // card or phone field is shaping, and only here can the two be told apart.
+    // `password` is one half of whether what the field holds has to match
+    // exactly; the other half is the value, and `_folds` puts them together.
     const tag = (el.tagName || "").toLowerCase();
-    if (tag === "textarea") return { cap: el.maxLength, exact: false };
-    if (tag !== "input") return { cap: -1, exact: false };
+    if (tag === "textarea") return { cap: el.maxLength, password: false };
+    if (tag !== "input") return { cap: -1, password: false };
     const capped = ["text", "search", "url", "tel", "email", "password"].includes(el.type);
-    return { cap: capped ? el.maxLength : -1, exact: el.type === "password" };
+    return { cap: capped ? el.maxLength : -1, password: el.type === "password" };
 }"""
 
 
@@ -365,6 +362,26 @@ _SEPARATORS = " \t\r\n-()./"
 def _bare(value):
     """The value with the shaping stripped out -- what every representation shares."""
     return "".join(c for c in value if c not in _SEPARATORS)
+
+
+def _folds(value, password):
+    """May this field's separators be treated as the field's to rearrange?
+
+    Only for a value that is a GROUPED NUMBER -- a card, a phone, a date. Those
+    are what reformatting controls exist for, and the spaces and dashes in one
+    are shaping: a card input renders "4111 1111 1111 1111" for the digits it
+    was given, and refusing that would break every such fill.
+
+    Anything with a letter in it is not being grouped, it is being altered.
+    "Jon Doe" becoming "JonDoe" is a changed value however ordinary the
+    character that went missing, and a password is never folded at all -- it
+    renders dots, so nothing in it is shaping, not even in a numeric PIN.
+
+    Deciding on the VALUE rather than the element is what makes this answerable:
+    a card field and a name field are both `type="text"` and no attribute tells
+    them apart, while what they are being given does.
+    """
+    return not password and _bare(value).isdigit()
 
 
 def _units(value):
@@ -452,13 +469,12 @@ def _refuse_if_impossible(el, value):
     """
     rule = el.evaluate(FIELD_RULE_JS)
     cap = rule["cap"]
-    # A field that must match exactly is measured on the whole value: none of it
-    # is shaping the field is entitled to drop.
-    # Line breaks are dropped on the way into any field that is not multiline,
-    # and an exact field never is, so counting them here would refuse a value
-    # that fits.
-    needs = _units(value.replace("\r", "").replace("\n", "")) if rule["exact"] \
-        else _bare_units(value)
+    # A value whose separators are not the field's to rearrange is measured
+    # whole: none of it is shaping. Line breaks are the exception -- they are
+    # dropped on the way into any field that is not multiline, so counting them
+    # would refuse a value that fits.
+    needs = _bare_units(value) if _folds(value, rule["password"]) \
+        else _units(value.replace("\r", "").replace("\n", ""))
     if cap >= 0 and needs > cap:
         raise _FieldTooShort(cap)
 
@@ -472,7 +488,7 @@ def _refuse_unless_kept(el, value):
     prefix test sees the loss.
     """
     rule = el.evaluate(FIELD_RULE_JS)
-    if not el.evaluate(HOLDS_ALL_JS, [value, rule["exact"]]):
+    if not el.evaluate(HOLDS_ALL_JS, [value, not _folds(value, rule["password"])]):
         # It fit -- the capacity question already said so -- and the field
         # dropped some of it regardless.
         _clear_and_refuse(el, rule["cap"], fits=True)
