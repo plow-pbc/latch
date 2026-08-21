@@ -184,8 +184,9 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_write_file",
     description:
       "Write a file on the user's own Mac — use this when the file is for them to open or keep, " +
-      "not for your own working files. They may be asked to approve, so this can return a " +
-      "pending handle.",
+      "not for your own working files. The directory must already exist: what is approved here is " +
+      "the file, so this never creates the directories on the way to one. " +
+      "They may be asked to approve, so this can return a pending handle.",
     inputSchema: {
       type: "object",
       required: ["path", "content"],

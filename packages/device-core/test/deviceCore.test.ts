@@ -150,11 +150,31 @@ describe("FileOps bounds", () => {
     await expect(FileOps.read(link, [root], DEVICE_HOME)).rejects.toThrow(/approved scope/);
   });
 
-  it("writes within scope and creates parent dirs", async () => {
+  /**
+   * The roots are `[target]`, which is what `plow_write_file` actually grants:
+   * the approval names the FILE. A test that passed the containing directory
+   * was approving something the tool never asks for, and it hid both halves of
+   * this — that a new file writes, and that the path to it is not ours to
+   * build.
+   */
+  it("creates a new file the approval named, inside a directory that exists", async () => {
+    const dir = tempDir();
+    const target = path.join(dir, "out.txt");
+    await FileOps.write(target, Buffer.from("hi"), [target], DEVICE_HOME);
+    expect(fs.readFileSync(target, "utf8")).toBe("hi");
+    // And overwrites it, wholly — a shorter second write leaves no tail.
+    await FileOps.write(target, Buffer.from("no"), [target], DEVICE_HOME);
+    expect(fs.readFileSync(target, "utf8")).toBe("no");
+  });
+
+  it("refuses an absent directory instead of building the path to the file", async () => {
     const dir = tempDir();
     const target = path.join(dir, "nested/deep/out.txt");
-    await FileOps.write(target, Buffer.from("hi"), [dir], DEVICE_HOME);
-    expect(fs.readFileSync(target, "utf8")).toBe("hi");
+    await expect(
+      FileOps.write(target, Buffer.from("hi"), [target], DEVICE_HOME),
+    ).rejects.toThrow(/does not exist.*create the directory first/s);
+    // Nothing on the way to it, either: an approval named one file.
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 
   it("refuses a read over the single-call size ceiling", async () => {

@@ -114,24 +114,48 @@ describe("a path that changes between the check and the open", () => {
   });
 
   /**
-   * The same window, but with nothing at the destination yet.
+   * The same window, with nothing at the destination yet — and with the roots
+   * `plow_write_file` actually grants: `[target]`, the file itself.
    *
-   * This is the one `mkdir(…, {recursive: true})` lost: it resolved the whole
-   * path itself and created as it went, so a swap mid-walk left real
-   * directories — and then an `O_CREAT` zero-length file — inside Plow Latch's
-   * own home, and the refusal that followed was already too late.
+   * This is what `mkdir(…, {recursive: true})` lost. It resolved the whole path
+   * itself and created as it went, so a swap mid-walk left real directories —
+   * and then a zero-length file — inside Plow Latch's own home, with the
+   * refusal arriving afterwards. Nothing creates a directory here now, at any
+   * depth, so there is no walk left to redirect.
+   *
+   * The residual is stated rather than hidden: Node has no `openat`, so a
+   * parent swapped between its proof and the leaf's open can still take the
+   * `O_EXCL` create with it. What that can leave is an EMPTY file with a name
+   * the agent chose. It cannot land on an existing file, no bytes are written,
+   * and the operation refuses — and this asserts each of those.
    */
-  it("creates nothing at all when the destination is absent and the path moves", async () => {
+  it("creates no directory, writes no byte, and touches nothing that already exists", async () => {
     const { approved, plowHome, settings, dir } = stage();
+    const target = path.join(dir, "absent.txt");
+    await expect(
+      FileOps.write(target, Buffer.from("agent wrote this"), [target], plowHome),
+    ).rejects.toThrow();
+
+    const home = path.join(plowHome, "app");
+    for (const entry of fs.readdirSync(home)) {
+      const info = fs.lstatSync(path.join(home, entry));
+      // No directory of ours, and nothing carrying content.
+      expect(info.isDirectory()).toBe(false);
+      if (entry !== "settings.json") expect(info.size).toBe(0);
+    }
+    expect(fs.readFileSync(settings, "utf8")).toBe(SECRET);
+    expect(fs.existsSync(path.join(approved, "absent.txt"))).toBe(false);
+  });
+
+  it("refuses a directory it would have had to build, and builds none", async () => {
+    const { approved, plowHome, dir } = stage();
     const target = path.join(dir, "new/deeper/written.txt");
     await expect(
-      FileOps.write(target, Buffer.from("agent wrote this"), [approved], plowHome),
-    ).rejects.toThrow();
-    // Nothing of ours anywhere inside the app's own home…
+      FileOps.write(target, Buffer.from("agent wrote this"), [target], plowHome),
+    ).rejects.toThrow(/does not exist/);
     expect(fs.readdirSync(path.join(plowHome, "app")).sort()).toEqual(["settings.json"]);
-    expect(fs.readFileSync(settings, "utf8")).toBe(SECRET);
-    // …and nothing left behind at the approved end either.
     expect(fs.existsSync(path.join(dir + ".moved", "new"))).toBe(false);
+    expect(fs.existsSync(path.join(approved, "new"))).toBe(false);
   });
 
   it("is refused rather than written, and nothing is truncated on the way", async () => {

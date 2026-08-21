@@ -239,13 +239,24 @@ be redirected once it exists; the descriptor is then proved to be the checked
 file (`O_NOFOLLOW`, the name re-resolving to the same canonical path, and the
 descriptor's device/inode matching the name's). A write opens without
 truncating, because an open that empties the wrong file before it verifies has
-already done the damage — and it walks down to the parent one level at a time,
-opening and proving each component and re-running the scope and home checks
-there, rather than handing the whole path to `mkdir -p`. Node has no
-`openat`/`mkdirat`, so this cannot be atomic; what it can be is **ordered**, and
-anything the call created is removed again when a later level refuses — never
-by a path that has since moved, because cleaning up must not become its own way
-of deleting somebody's file. The test opens the window deliberately rather than
+already done the damage.
+
+**And it does not build the path.** `plow_write_file` approves ONE file — the
+capability's `paths` is the target, never the directories above it — so an
+absent parent is refused with a sentence the agent can act on, and no directory
+is created at any depth. That was also the only part that could not be made
+safe: every level would have to be created through a descriptor for a swap not
+to redirect it, Node has no `mkdirat`, and the pathname version left real
+directories, then a zero-length file, somewhere nobody approved. The leaf is
+still named — Node has no `openat` either — so it is created inside a parent
+proved immediately before and re-proved immediately after, with `O_EXCL` so a
+create can never land on an existing file. What a lost race can leave is an
+empty file with a name the agent chose, in a directory it already had to be
+able to swap; no bytes are written, nothing existing is touched, and the
+operation refuses. Nothing tidies that file up, deliberately: removing it means
+deleting by the same pathname that has just been shown to be untrustworthy.
+
+The test opens the window deliberately rather than
 racing for it — a wall-clock race passed against the unfixed code by never
 landing in a window microseconds wide.
 
