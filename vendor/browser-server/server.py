@@ -360,8 +360,8 @@ def _type_value(el, value):
     # not. Each has to speak the string the node will actually HOLD, or it
     # answers about a value that never existed anywhere.
     #
-    # CR and CRLF collapse to one LF, and a node that keeps no break loses it
-    # here rather than at the browser. That is what lets a break-bearing value
+    # CR and CRLF collapse to one LF, and a node whose kind is not "multiline"
+    # loses the break here. That is what lets a break-bearing value
     # still go in as real keys, and why the tail can never press Enter at a form
     # -- by construction, rather than by a branch that gives the keystrokes up.
     # The browser behavior underneath is in docs/TESTING-THE-APP.md.

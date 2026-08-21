@@ -74,21 +74,27 @@ What the code assumes:
 
 - **`type()` sends a newline as the Enter key**, and at a `<textarea>` that
   inserts one line break. This is why a textarea keeps its breaks and every
-  other node has them normalized away before anything is typed.
+  other node that gets TYPED has them normalized away first. A node the
+  predicate turns down never reaches that — it is assigned, unchanged.
 - **`type()` sends a tab as the Tab key**, which moves focus rather than adding
   a character. Nothing rescues that, so a value whose typed tail holds one is
   assigned whole instead.
 - **An `<input>` sanitizes its value on assignment, and what it does differs by
-  type.** CR and LF do not survive. Some types will not hold a leading or
-  trailing tab either. `number` does not sanitize by stripping at all — an
-  invalid value goes empty rather than getting trimmed.
+  type.** CR and LF do not survive anywhere. `email` and `url` are believed not
+  to hold a leading or trailing tab either. `number` does not sanitize by
+  stripping at all — an invalid value goes empty rather than getting trimmed,
+  so it will not carry an edge tab by a different route. Those three are the
+  ones to suspect; the type names have been wrong here twice, so confirm
+  against the field rather than against this list.
 
 The consequence worth knowing before you debug one: **an assignment is not a
 guarantee the node kept the value.** Where the browser drops an edge character,
 it is dropped whichever assignment ran — the whole-value one the tab guard
-takes, or the head of a split fill — and `KEYS_DROPPED_JS` does not catch it,
-because a value that lost its *leading* character is not a prefix of what was
-wanted. The fill answers ok. That is `fill()`'s own behavior and older than any
+takes, or the head of a split fill — and nothing downstream catches it. On the
+guard's path `KEYS_DROPPED_JS` is never asked at all: that branch assigns and
+returns. On the split path it is asked and answers false, because a value that
+lost its *leading* character is not a prefix of what was wanted. Either way the
+fill answers ok. That is `fill()`'s own behavior and older than any
 of the typing work, but it is the first thing to check if a credential ever
 lands one character short.
 
@@ -96,6 +102,8 @@ lands one character short.
 page you control, and read the field back with `document.querySelector(...).value`
 rather than trusting the `{"ok": true}`. Re-check the one you touched whenever
 you change the fill path.
+
+---
 
 ## What still runs headless
 
