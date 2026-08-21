@@ -623,17 +623,16 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.newline_fits_once_dropped.result).toEqual({ ok: true, frame: 0 });
   });
 
-  it("lets an over-cap value stand when the field itself accepted it whole", () => {
-    // The other side of the shortest-form measure. A textarea KEEPS its breaks,
-    // so "one\ntwo" under-counts to six, passes the gate, and is typed — the
-    // keys clip at the cap, the repair assigns, and an assignment ignores
-    // `maxlength`, so the field ends up holding all seven characters past its
-    // own cap. Nothing is reported because nothing differs: what was sent is
-    // what is there. What the page does with that on submit is the page's
-    // business, and the fill said honestly what went in.
-    expect(probed.over_cap_textarea_keeps_its_breaks.result).toEqual({ ok: true, frame: 0 });
-    expect(probed.over_cap_textarea_keeps_its_breaks.node_len)
-      .toBe(probed.over_cap_textarea_keeps_its_breaks.asked_len);
+  it("refuses the same value at a textarea, which keeps its breaks", () => {
+    // One value, two answers, both correct: "one\ntwo" arrives at an <input>
+    // as six because the break is dropped, and at a <textarea> as seven because
+    // it is not. The measure asks the node what it will receive rather than
+    // assuming either way — guessing short would let an over-cap value into a
+    // textarea, guessing long would refuse one that fits an input.
+    expect(probed.over_cap_textarea_keeps_its_breaks.result).toEqual({
+      ok: false, mask: "too_long", cap: 6, frame: 0,
+    });
+    expect(probed.over_cap_textarea_keeps_its_breaks.trace).toEqual(["frame.wait_for_selector"]);
   });
 
   it("fills a value exactly as long as the field's cap", () => {
@@ -648,7 +647,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   it.each([
     { what: "groups the digits it was given", scenario: "grouped_by_the_field" },
     { what: "strips a space out of a name", scenario: "stripped_by_the_field" },
-    { what: "clips what it was given", scenario: "clipped_by_the_field" },
+    { what: "truncates what it was given", scenario: "truncated_by_the_field" },
   ])("reports, without refusing, a field that $what", ({ scenario }) => {
     expect(probed[scenario].result).toEqual({ ok: true, frame: 0, altered: true });
   });

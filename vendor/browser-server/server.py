@@ -352,15 +352,16 @@ def _collapse_breaks(value):
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _least_it_can_arrive_as(value):
-    """The fewest units this value can reach a field as.
+def _arrives_as(value, kind):
+    """The value as this node will receive it, in units.
 
     A node that is not multiline drops the breaks entirely, so a value carrying
-    one arrives shorter than it was given. Measuring the shortest form is what
-    keeps the refusal to values that cannot fit HOWEVER the field takes them --
-    anything else is reported rather than refused, which is the whole split.
+    one arrives shorter than it was given. Asked of the kind rather than assumed
+    either way: guessing short would let an over-cap value into a textarea and
+    guessing long would refuse one that fits an input.
     """
-    return _utf16_units(_collapse_breaks(value).replace("\n", ""))
+    arriving = _collapse_breaks(value)
+    return _utf16_units(arriving if kind == "multiline" else arriving.replace("\n", ""))
 
 
 def _utf16_units(value):
@@ -388,15 +389,16 @@ def _kept(el, attempted):
     return {} if el.evaluate(HELD_MATCHES_JS, attempted) else {"altered": True}
 
 
-def _type_value(el, value):
+def _type_value(el, value, kind):
     """Put `value` into a resolved node so that the field ends on real keys.
 
     Returns the string it actually attempted, which is not always the one it was
     given: a single-line node cannot take a break, so the caller comparing what
     the field kept has to compare against this rather than against `value`.
 
-    A node is first asked what KIND of typing it takes -- a text-carrying input
-    or a textarea, and nothing else. One that answers "" is assigned whole,
+    The node's KIND -- a text-carrying input, a textarea, or neither -- is asked
+    for by the caller, which needs it to measure the cap, and handed in rather
+    than asked again. One that answers "" is assigned whole,
     exactly as this always did, and so is a value whose typed tail carries a tab.
 
     The rest have their value normalized to what that node can HOLD before head
@@ -428,7 +430,6 @@ def _type_value(el, value):
     A node that has gone away raises out of the first question asked of it, and
     every path from here on leaves the caller's failure handling to unwind it.
     """
-    kind = el.evaluate(TYPEABLE_JS)
     if not kind:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return value
@@ -854,8 +855,9 @@ class Session:
             # the page is left exactly as it was found -- and refused only on
             # this, because "will it fit" needs no idea what the value MEANS,
             # where "was the field entitled to change it" does.
+            kind = el.evaluate(TYPEABLE_JS)
             cap = el.evaluate(FIELD_CAP_JS)
-            if cap >= 0 and _least_it_can_arrive_as(cmd["value"]) > cap:
+            if cap >= 0 and _arrives_as(cmd["value"], kind) > cap:
                 return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
             if cmd.get("mask"):
                 # Marked first, and only typed once the mark is known to have
@@ -872,7 +874,7 @@ class Session:
                     before.dispose()
                     return {"ok": False, "mask": state, "frame": i}
                 try:
-                    attempted = _type_value(el, cmd["value"])
+                    attempted = _type_value(el, cmd["value"], kind)
                 except Exception:
                     # Nothing landed: put the node back as it was found.
                     # Something did: it is holding a value nobody can account
@@ -891,7 +893,7 @@ class Session:
             # Not a secret. The mark comes off AFTER the value is in, never
             # before: a fill that times out would otherwise leave the node
             # holding the previous secret with nothing left to hide it.
-            attempted = _type_value(el, cmd["value"])
+            attempted = _type_value(el, cmd["value"], kind)
             el.evaluate(UNMASK_JS)
             self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
             return {"ok": True, "frame": i, **_kept(el, attempted)}

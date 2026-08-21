@@ -208,12 +208,9 @@ class Handle:
         landed = (self.value or "") + text
         if self.rewrites is not None:
             landed = self.rewrites(landed)
-        # Typed keys are clipped at the cap; an ASSIGNMENT is not, which is the
-        # whole reason a fill could put an over-cap value in a field. Counted in
-        # UTF-16 units, the way `maxlength` counts.
-        if self.max_length >= 0:
-            landed = landed.encode("utf-16-le")[:self.max_length * 2].decode(
-                "utf-16-le", errors="ignore")
+        # No cap clipping here: an over-cap value never reaches the keys, because
+        # the cap is measured against what this node will actually receive and
+        # refused before the node is touched.
         self.value = landed
         if self.partial_fill and self.type_calls > 1:
             # Some of it went in and then the field went away. It takes more
@@ -548,9 +545,9 @@ def main() -> int:
         "stripped_by_the_field_masked": run(
             server, {**base, "mask": True, "value": "Jon Doe"},
             rewrites=lambda t: t.replace(" ", "")),
-        # Clipped rather than rewritten: the same report, since the field is
-        # holding something other than what went in either way.
-        "clipped_by_the_field": run(
+        # A page script truncating what it was given -- the field declares no
+        # cap, it just keeps less than it took.
+        "truncated_by_the_field": run(
             server, {**base, "value": "hunter2"}, rewrites=lambda t: t[:4]),
         # A value carrying a newline, at a single-line field. The node could not
         # hold the break anyway -- an <input> strips it in value sanitization --
@@ -563,13 +560,10 @@ def main() -> int:
         # was never too long.
         "newline_fits_once_dropped": run(
             server, {**base, "value": "one\ntwo"}, max_length=6),
-        # The other side of that measure: a TEXTAREA keeps its breaks, so the
-        # shortest form under-counts and the value is not refused. The keys are
-        # clipped at the cap, the repair assigns -- and an assignment ignores
-        # `maxlength`, so the field ends up holding the whole value past its own
-        # cap, exactly as it was sent. Nothing is reported because nothing about
-        # it differs; what the page does with an over-cap value on submit is the
-        # page's business, and this said honestly what went in.
+        # The same value at a TEXTAREA, which KEEPS its breaks -- so it arrives
+        # as seven and does not fit, where the input two rows up took it as six
+        # and did. One value, two answers, and both correct: the measure asks
+        # the node what it will receive rather than assuming either way.
         "over_cap_textarea_keeps_its_breaks": run(
             server, {**base, "value": "one\ntwo"}, max_length=6, typeable="multiline"),
         # The same at a single-line field, spelled with CR. This is what pins the
