@@ -321,8 +321,8 @@ describe("the deferred-result contract (§4.3)", () => {
   });
 
   it("§4.3's numbers are pinned, not merely bounded", () => {
-    // Pinned, not just bounded: the point of the number is that a human gets
-    // the whole fifteen seconds to answer inside the original call. Whether it
+    // The point of the number is that a human gets the whole fifteen seconds
+    // to answer inside the original call. Whether it
     // still leaves the relay room to deliver is checked at the seam that owns
     // the relay's ceiling — `relay-client/test/wire.test.ts`.
     expect(CALL_BUDGET_MS).toBe(15_000);
