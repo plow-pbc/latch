@@ -129,10 +129,11 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 
 - **Signing:** the intent carries none. It is never *received* over the wire —
   it is built on this Mac from an authenticated agent's tool call — so there is
-  no third party's signature to verify. That is not a data-locality claim: in a
-  reviewer mode its contents go OUTBOUND, formatted into a prompt with recent
-  audit history and posted to Plow's chat-completion endpoint
-  (`adversarialAgent.ts`). What *is* signed is the **Grant**: the device's
+  no third party's signature to verify. That is not a data-locality claim: its
+  contents go OUTBOUND whenever a reviewer runs — adversarial mode always, and
+  the default `ask` mode whenever suggestions are on, which they are on a
+  signed-in Mac — formatted into a prompt with recent audit history and posted
+  to Plow's chat-completion endpoint (`adversarialAgent.ts`). What *is* signed is the **Grant**: the device's
   Ed25519 signature over canonical JSON (sorted keys, ISO-8601 dates), the Mac
   attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
@@ -231,17 +232,16 @@ networked transport is a drop-in below `LineRPC`. The step-by-step plan to build
 the network and security layers was **`docs/network-security-runbook.md`**, now
 marked superseded — it plans the removed broker and must not be executed.
 
-**Status (remote milestone):** runbook Phases 1–6 are implemented and tested
-(`Tests/DomoNetworkTests`): WebSocket transport (`WebSocketConnection`), SPKI
-certificate pinning (self-signed, no public CA), enrollment + connect-time
-challenge/response, an end-to-end encrypted `E2EChannel` (X25519+Ed25519+HKDF+
-ChaCha20-Poly1305 — CryptoKit, no external dep) that makes the broker a blind
-relay, agent revocation (broker-refuses-routing + device-authoritative), and a
-hosted `wss://` deploy (`scripts/gen-broker-cert.sh`, `just broker-wss`). The one
-piece not yet flipped on in the *running daemon* is relocating intent
-construction/signing from the broker to the agent endpoint so the live channel is
-end-to-end (the `E2EChannel` and its enforcement are complete and tested; see the
-runbook's Phase 4 note). Phase 7 (iOS approval app) is out of scope for now.
+**Status (remote milestone) — historical; this records the broker-era security
+model, which was removed with the broker.** Runbook Phases 1–6 were implemented
+and tested (`Tests/DomoNetworkTests`): WebSocket transport
+(`WebSocketConnection`), SPKI certificate pinning (self-signed, no public CA),
+enrollment + connect-time challenge/response, an end-to-end encrypted
+`E2EChannel` (X25519+Ed25519+HKDF+ChaCha20-Poly1305 — CryptoKit, no external
+dep) that makes the broker a blind relay, agent revocation
+(broker-refuses-routing + device-authoritative), and a hosted `wss://` deploy
+(`scripts/gen-broker-cert.sh`, `just broker-wss`). All of it went with the
+Swift sources; none of it ships.
 
 ## 9. On-disk layout
 
