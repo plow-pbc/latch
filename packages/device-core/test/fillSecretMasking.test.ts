@@ -1421,9 +1421,11 @@ describe("which nodes take typing", () => {
 // it. `maxLength` REFLECTS the attribute everywhere; only some kinds enforce it.
 describe("which fields report a cap", () => {
   const cap = loadScript("FIELD_CAP_JS") as (el: unknown) => number;
-  // `type` is an enumerated reflection: always a lowercase string, "text" for a
-  // missing or unrecognised attribute, so no row models it as absent.
-  const node = (tagName: string, type: string | null, maxLength: number) =>
+  // `type` is an enumerated reflection: always a lowercase string on the
+  // elements that have one — "text" for a missing or unrecognised attribute,
+  // "textarea" on a textarea, "select-one" on a select — so a row gives what
+  // the IDL gives, and only an element with no `type` at all omits it.
+  const node = (tagName: string, type: string | undefined, maxLength: number) =>
     ({ tagName, type, maxLength });
 
   it.each([
@@ -1435,14 +1437,14 @@ describe("which fields report a cap", () => {
     { what: "a tel input", el: node("INPUT", "tel", 10), reports: 10 },
     { what: "an email input", el: node("INPUT", "email", 8), reports: 8 },
     { what: "a password input", el: node("INPUT", "password", 16), reports: 16 },
-    { what: "a textarea", el: node("TEXTAREA", null, 40), reports: 40 },
+    { what: "a textarea", el: node("TEXTAREA", "textarea", 40), reports: 40 },
     // Everything below carries the attribute and is not governed by it. Reading
     // one here would turn an authoring mistake into a fill that never lands.
     { what: "a number input carrying a stray maxlength", el: node("INPUT", "number", 4), reports: -1 },
     { what: "a date input carrying one", el: node("INPUT", "date", 4), reports: -1 },
     { what: "a checkbox carrying one", el: node("INPUT", "checkbox", 4), reports: -1 },
-    { what: "a contenteditable host", el: node("DIV", null, 4), reports: -1 },
-    { what: "a select", el: node("SELECT", null, 4), reports: -1 },
+    { what: "a contenteditable host", el: node("DIV", undefined, 4), reports: -1 },
+    { what: "a select", el: node("SELECT", "select-one", 4), reports: -1 },
     // -1 is what an uncapped field reports, and what the parser coerces an
     // invalid attribute value to. 0 is a real cap that holds nothing, so it
     // must pass through as itself — a `|| -1` tidy would read it as uncapped.

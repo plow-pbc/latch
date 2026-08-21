@@ -317,13 +317,13 @@ FIELD_CAP_JS = """(el) => {
     // authoring mistake -- and reading one there would turn a stray attribute
     // into a refusal of a fill that lands intact today. Only the kinds it
     // actually governs report a cap; everything else is uncapped.
-    const tag = (el.tagName || "").toLowerCase();
+    const tag = el.tagName.toLowerCase();
     if (tag === "textarea") return el.maxLength;
     if (tag !== "input") return -1;
-    // `type` is an enumerated reflection -- always a string, "text" when the
-    // attribute is missing or unrecognised -- and only an input reaches here.
-    const kind = el.type.toLowerCase();
-    return ["text", "search", "url", "tel", "email", "password"].includes(kind)
+    // `type` is an enumerated reflection -- always a lowercase string, "text"
+    // when the attribute is missing or unrecognised -- so it is compared raw,
+    // the way TYPEABLE_JS above compares it.
+    return ["text", "search", "url", "tel", "email", "password"].includes(el.type)
         ? el.maxLength
         : -1;
 }"""
