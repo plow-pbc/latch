@@ -132,13 +132,11 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   no third party's signature to verify. That is not a data-locality claim:
   whenever the adversarial reviewer runs, the intent is formatted into a prompt
   with recent audit history and posted to Plow's chat-completion endpoint
-  (`apps/desktop/src/adversarialAgent.ts`), so its contents leave the Mac. WHEN
-  the reviewer runs is §5's — the approval mode, the suggestion setting, the
-  relay credential, and the always-allow rule that short-circuits ahead of all
-  of them each decide it, and restating them here is how this sentence was
-  wrong four times. What *is* signed is the **Grant**: the device's Ed25519
-  signature over canonical JSON (sorted keys, ISO-8601 dates), the Mac
-  attesting to its own decision.
+  (`apps/desktop/src/adversarialAgent.ts`), so its contents leave the Mac.
+  WHETHER it runs is decided in `apps/desktop/src/reviewPolicy.ts` — restating
+  those conditions here is how this sentence was wrong four times. What *is*
+  signed is the **Grant**: the device's Ed25519 signature over canonical JSON
+  (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 
