@@ -17,7 +17,7 @@ architectural tradeoff.
 **Stage:** pre-PMF, and mid-rebuild. The old in-repo broker has been removed; a
 Mac now dials *out* to the Plow relay. Both halves of this side exist
 (`@domo/mcp-server`, `@domo/relay-client`), and **so does the relay** — it lives
-in the `plow6` repo (`api/plow/relay/`: the MCP endpoint, the device WebSocket,
+in the `plow-pbc/plow` repo (`api/plow/relay/`: the MCP endpoint, the device WebSocket,
 an OAuth flow, covered by `api/tests/relay/`). This line said it was "not built"
 long after it was; check that repo rather than this sentence.
 

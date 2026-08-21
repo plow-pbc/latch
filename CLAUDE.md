@@ -37,7 +37,7 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 connection-string/pinning concepts and pairing flow) has been removed. A Mac
 dials *out* to the Plow relay, which authenticates the calling agent and forwards
 MCP to `@domo/mcp-server`. Both halves of this side exist. **So does the relay**,
-in the `plow6` repository — `api/plow/relay/` serves the MCP endpoint, the device
+in the `plow-pbc/plow` repository — `api/plow/relay/` serves the MCP endpoint, the device
 WebSocket and an OAuth flow, covered by `api/tests/relay/`. This line used to say
 it was "not built", which was true when written and cost a later reader a wrong
 assumption; check that repo rather than this sentence. The in-repo stand-in that
