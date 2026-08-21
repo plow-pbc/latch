@@ -45,6 +45,16 @@ the page; that is the one way round it, and it is not one you have any reason to
 
 ## Acting: always screenshot first
 
+**Your session id says which browser.** Pass the one \`plow_browser_open\` gave you on
+every call and you keep the same window; several browsers can be open at once, each with
+its own id, and when the Mac is already running as many as it will, the open says so.
+
+**You are the user, already signed in.** Every session starts on a copy of their own
+browser profile — their cookies, their logins — so check whether a site is already signed
+in before signing in again. What you sign into is merged back into their profile when the
+session closes, so it is still signed in for the next browser — and browsers open at the
+same time do not overwrite each other. When you do have to sign in, use \`fill_secret\`.
+
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
 url, title, links, forms, tables, pages.

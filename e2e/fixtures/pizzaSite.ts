@@ -9,7 +9,7 @@ import http from "node:http";
 import { AddressInfo } from "node:net";
 
 export interface PizzaSiteState {
-  loginAttempts: { user: string; pass: string }[];
+  loginAttempts: { user: string; pass: string; userKeys: number; passKeys: number }[];
   orders: { pizza: string; cardNumber: string; cvv: string }[];
 }
 
@@ -54,14 +54,38 @@ export function createPizzaSite(): Promise<PizzaSite> {
          <form method="POST" action="/login">
            <label>Email <input id="user" name="user" type="text"></label>
            <label>Password <input id="pass" name="pass" type="password"></label>
+           <input id="userKeys" name="userKeys" type="hidden" value="0">
+           <input id="passKeys" name="passKeys" type="hidden" value="0">
            <button id="login" type="submit">Log in</button>
-         </form>`,
+         </form>
+         <script>
+           // What a bot defense counts, counted here: character key events the
+           // browser itself produced. \`isTrusted\` is false for anything a page
+           // synthesizes, and the single-character check keeps the count to
+           // characters rather than the named keys. An assignment fires no key
+           // event at all — which is why the answer was zero before there was
+           // typing. Each field keeps its own count, so the visible fill and the
+           // credential fill are separate evidence.
+           for (const id of ["user", "pass"]) {
+             const count = document.getElementById(id + "Keys");
+             document.getElementById(id).addEventListener("keydown", (e) => {
+               if (e.isTrusted && e.key.length === 1) {
+                 count.value = String(Number(count.value) + 1);
+               }
+             });
+           }
+         </script>`,
       );
     } else if (req.method === "POST" && url.pathname === "/login") {
       readBody((params) => {
         const user = params.get("user") ?? "";
         const pass = params.get("pass") ?? "";
-        state.loginAttempts.push({ user, pass });
+        state.loginAttempts.push({
+          user,
+          pass,
+          userKeys: Number(params.get("userKeys") ?? "0"),
+          passKeys: Number(params.get("passKeys") ?? "0"),
+        });
         if (user === "jon@example.com" && pass === "pizza-time-99") {
           const sid = `s${Math.random().toString(36).slice(2)}`;
           sessions.add(sid);

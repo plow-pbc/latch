@@ -14,7 +14,6 @@ import {
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
 } from "@domo/device-core";
 import {
-  agentHistory,
   REVIEWER_MODEL,
   ReviewArgs,
   ReviewFailureCause,
@@ -109,7 +108,6 @@ export async function decideIntent(
   const humanAvailable = mode !== "adversarial";
 
   const review = async () => {
-    const history = agentHistory(deps.auditEntries(), intent.agentId);
     deps.record("adversarial_review_started", {
       intentId: intent.intentId,
       agent: intent.agentId,
@@ -119,7 +117,10 @@ export async function decideIntent(
     });
     const r = await deps.review({
       intent,
-      history,
+      // Nothing about the past. The reviewer reasoned from a growing pile of
+      // earlier operations rather than from the request, and each denial fed
+      // the next; it now sees this operation and nothing else.
+      history: [],
       // A SECRET. It reaches the Authorization header of the Plow request and
       // nothing else — never the audit record below, never the renderer.
       plowCredential: (settings.relayCredential ?? "").trim(),

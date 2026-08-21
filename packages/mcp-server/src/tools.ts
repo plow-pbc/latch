@@ -418,12 +418,18 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser_open",
     title: "Open a browser on the user's Mac",
     description:
-      "Open a browser on the user's own Mac — use this for reading the live web, not your own " +
-      "fetch. It runs on their network rather than a datacenter address many sites refuse, it " +
-      "renders JavaScript, its profile persists between sessions, and it can " +
-      "fill passwords from their vault without returning them to you ('eval' is the exception: " +
-      "it reads page values directly, and must not be pointed at a field you filled). " +
-      "One session at a time. It is a supervised anti-detection browser, scoped to the listed " +
+      "Open a browser on the user's own Mac, as the user — use this for reading the live web, "
+    + "not your own fetch. It runs on their network rather than a datacenter address many "
+    + "sites refuse, it renders JavaScript, and it starts on a copy of their own profile, so "
+    + "it is already signed in wherever they are. What you sign into is merged back into their "
+    + "profile when the session closes — including when several browsers are open at once. It "
+    + "can also "
+    + "fill passwords from their vault without returning them to you ('eval' is the exception: "
+    + "it reads page values directly, and must not be pointed at a field you filled). "
+    + "The session id you get back says WHICH browser: pass it on every call and you keep the "
+    + "same window. The Mac runs a few at once — every one of them the user's — and says so "
+    + "plainly when it is full. "
+    + "It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
       "permission to list the owner's vault item names (never values). The browser window is " +
@@ -537,6 +543,10 @@ export const TOOLS: ToolSpec[] = [
         { session },
       );
       const r = jv(response);
+      // A widen the device refused is an error to the caller, not a reply with
+      // empty fields: "your browser is closing" must not read as "widened".
+      const failed = r.get("error").str;
+      if (failed !== null) throw new ToolError(failed);
       return { session, origins: r.get("origins").value ?? null, items: r.get("items").value ?? null };
     },
   },
@@ -569,7 +579,7 @@ export const TOOLS: ToolSpec[] = [
       type: "object",
       required: ["session", "action"],
       properties: {
-        session: { type: "string" },
+        session: { type: "string", description: "Your browser, from plow_browser_open. Pass the same one to keep the same window; it is a secret — do not share or log it." },
         action: {
           type: "string",
           enum: [
@@ -611,7 +621,7 @@ export const TOOLS: ToolSpec[] = [
       const maxChars = a.get("max_chars").int;
       if (maxChars !== null) params.max = maxChars;
 
-      const response = await ctx.device.browserCommand(ctx.agent.agentId, session, params);
+      const response = await ctx.device.browserCommand(session, params);
       const r = jv(response);
       if (r.get("status").str === "error") {
         // An error is a string here, so anything the device attached to it has
@@ -694,7 +704,11 @@ export const TOOLS: ToolSpec[] = [
     async run(args, ctx) {
       const session = jv(args).get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
-      await ctx.device.browserCommand(ctx.agent.agentId, session, { action: "close" });
+      // The device answers with an error for a handle it does not know, and
+      // saying "closed" anyway would tell the caller it worked.
+      const result = jv(await ctx.device.browserCommand(session, { action: "close" }));
+      const error = result.get("error").str;
+      if (error !== null) throw new ToolError(error);
       return { closed: true };
     },
   },

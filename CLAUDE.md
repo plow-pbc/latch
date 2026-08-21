@@ -73,6 +73,10 @@ wire-contract checks plus the socket lifecycle against a fake connection. See [d
 - **`agent_id` is the isolation key; `agent_name` is display-only.** Jobs,
   deferred handles and always-allow rules key on the id. The name is nullable
   and not unique — two credentials can share one — so it identifies nothing.
+  Browser sessions are the exception, and deliberately: several of the owner's
+  agents reach this Mac through ONE credential, so keying a session on the id
+  made two of them one browser. A session keys on its unguessable handle, and
+  the Mac is one person's — every browser on it is theirs.
 - **Resolve a path before the human sees it.** The approval dialog's whole value
   is that the human sees what will actually happen, so a supplied path is
   canonicalised before it becomes a capability — never after.

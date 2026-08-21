@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 
 
 def load_server():
@@ -57,10 +58,31 @@ class Handle:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
-                 document_token="doc-1"):
+                 document_token="doc-1", type_fails=False, typeable="single-line",
+                 drops_keys=False, assign_fails=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
+        # The keystrokes fail before the first one lands, so the node is left
+        # holding what the clear left it: nothing.
+        self.type_fails = type_fails
+        # What TYPEABLE_JS answers for this node: "" is a date, colour or range
+        # widget -- assigned rather than typed, because its value is not the
+        # characters it is handed. "multiline" is the textarea, the node that
+        # KEEPS a line break as a character, so it is the kind whose value is
+        # typed with the break still in it.
+        self.typeable = typeable
+        # A field that says it takes characters and then sanitises away every
+        # one it will not hold -- a number input handed something that is not a
+        # number. The keys are simply not applied, so the node keeps what the
+        # leading assignment left it: nothing, for a value short enough to type
+        # whole, and the assigned head for one that is not. Either way it is the
+        # NODE that holds it, so every question asked afterwards sees the same
+        # thing the real one would.
+        self.drops_keys = drops_keys
+        # And one that will not take the value by assignment either, which is
+        # the loud failure the keystroke path must never swallow.
+        self.assign_fails = assign_fails
         self.mask_result = mask_result
         self.marked = marked
         # Which document this node is in, and what it currently holds. A fill
@@ -68,6 +90,20 @@ class Handle:
         self.document_url = document_url
         self.document_token = document_token
         self.value = value
+        # What per-key delay the keystrokes carried, and the text they carried.
+        # Only the LENGTH of that text is ever reported out of this file.
+        self.typed_delay = None
+        self.typed = None
+        # The largest and smallest budget any key was handed -- the first key's
+        # and the last's. They share one deadline, so the gap between them is
+        # what the tail spent; a per-key timeout hands out the same number every
+        # time and leaves no gap at all.
+        self.key_timeout_max = None
+        self.key_timeout_min = None
+        # How many separate calls that text arrived in. One per character is
+        # the property the segmented-code fix turns on: a key sent through the
+        # handle lands in the node the mark is on, wherever focus has wandered.
+        self.type_calls = 0
 
     def evaluate(self, js, *args):
         # Recorded as a fact about the script, not its text: which one it is.
@@ -76,9 +112,16 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
+        if "tagName" in js:
+            return self.typeable
+        if "startsWith(now)" in js:
+            wanted = args[0] if args else None
+            now = self.value or ""
+            return now != wanted and (wanted or "").startswith(now)
         if "=== previous" in js:
             previous = args[0].value if args and isinstance(args[0], _Handle) else (args[0] if args else None)
-            return (self.value or "") == previous
+            now = self.value or ""
+            return now == "" or now == previous
         if "el.value" in js:
             return self.value or ""
         if "setAttribute" in js and "data-domo-secret" in js:
@@ -101,20 +144,62 @@ class Handle:
         return _Handle(self.evaluate(js, *args))
 
     def fill(self, value, timeout=None):
-        # A failed fill is traced too, and distinctly: "did it try" and "did it
-        # land" are different questions, and what happens after a fill that did
-        # not land is the whole point of one of these scenarios.
-        if self.partial_fill:
-            # Some of it went in and then the field went away: the node is
-            # holding something nobody can account for.
-            self.value = value
-            self.trace.append("handle.fill-failed")
-            raise RuntimeError("Element is not attached to the DOM")
+        """The assignment that opens a fill: everything ahead of the typed tail,
+        which for a value short enough to type whole is the empty string.
+
+        A node that has gone away fails HERE, which is the point of doing it
+        first: nothing is typed into a field nobody can find.
+        """
         if self.detach_before_fill:
-            self.trace.append("handle.fill-failed")
+            self.trace.append("handle.assign-failed")
             raise RuntimeError("Element is not attached to the DOM")
+        if self.assign_fails and self.typed is not None:
+            # The fallback, after the keys were dropped: the field will not take
+            # this value at all. Nothing landed and the caller has to hear so.
+            self.trace.append("handle.assign-failed")
+            raise RuntimeError("Cannot type text into input[type=number]")
         self.value = value
-        self.trace.append("handle.fill")
+        self.trace.append("handle.assign")
+
+    def type(self, text, delay=None, timeout=None):
+        """The keystrokes. A failure is traced distinctly from a success:
+        "did it try" and "did it land" are different questions, and what happens
+        after a fill that did not land is the whole point of one of these
+        scenarios."""
+        self.typed_delay = delay
+        # One entry per contiguous run of keys, not per key: the trace records
+        # the SHAPE of the fill, and `type_calls` carries the count.
+        if self.trace[-1:] != ["handle.type"]:
+            self.trace.append("handle.type")
+        if self.type_fails:
+            # Not one key arrived: nothing is counted as typed, and the node
+            # holds what the assignment left it.
+            self.trace[-1] = "handle.type-failed"
+            raise RuntimeError("Element is not attached to the DOM")
+        self.typed = (self.typed or "") + text
+        self.type_calls += 1
+        # A millisecond per key, wherever in this body it falls: `timeout` is
+        # already fixed by the time this runs, so what the spend moves is the
+        # NEXT key's budget, which the caller computes from the same deadline.
+        # Over a tail that is a gap this fixture caused rather than however many
+        # microseconds the interpreter took between two statements. Playwright
+        # spends the key's delay here.
+        time.sleep(0.001)
+        if self.key_timeout_max is None or timeout > self.key_timeout_max:
+            self.key_timeout_max = timeout
+        if self.key_timeout_min is None or timeout < self.key_timeout_min:
+            self.key_timeout_min = timeout
+        if self.drops_keys:
+            return
+        # Keys land ON what the assignment left, never instead of it -- which
+        # is the only way a scenario can tell the head was assigned at all.
+        self.value = (self.value or "") + text
+        if self.partial_fill and self.type_calls > 1:
+            # Some of it went in and then the field went away. It takes more
+            # than one key for that to be interesting: what the node is left
+            # holding has to be something a comparison could get wrong.
+            self.trace[-1] = "handle.type-failed"
+            raise RuntimeError("Element is not attached to the DOM")
 
 
 class Hidden(RuntimeError):
@@ -139,7 +224,9 @@ class Frame:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False, document_token="doc-1", hides=False, detached=False):
+                 partial_fill=False, document_token="doc-1", type_fails=False,
+                 typeable="single-line", drops_keys=False, assign_fails=False,
+                 hides=False, detached=False):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -148,7 +235,8 @@ class Frame:
         self.url = "https://pizza.example/login"
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token)
+                             partial_fill, document_token, type_fails, typeable, drops_keys,
+                             assign_fails)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -175,12 +263,6 @@ class Frame:
         if self.hides:
             raise Hidden("%s never became visible" % selector)
         return node
-
-    def fill(self, selector, value, timeout=None):
-        self.trace.append("frame.fill")
-
-    def click(self, selector, timeout=None):
-        self.trace.append("frame.click")
 
 
 class Page:
@@ -214,11 +296,15 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1"):
+        document_token="doc-1", type_fails=False, typeable="single-line", drops_keys=False,
+        assign_fails=False):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
-                  value=value, partial_fill=partial_fill, document_token=document_token)
-    session = server.Session(Page(frame))
+                  value=value, partial_fill=partial_fill, document_token=document_token,
+                  type_fails=type_fails, typeable=typeable, drops_keys=drops_keys,
+                  assign_fails=assign_fails)
+    page = Page(frame)
+    session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
            "ledgered": False}
     try:
@@ -232,6 +318,53 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     out["marked"] = frame.handle.marked
     out["value_kept"] = frame.handle.value == value
     out["ledgered"] = bool(session.masked)
+    # The delay between keystrokes, which is what makes them keystrokes rather
+    # than an assignment. A number, never anything derived from a value.
+    out["typed_delay"] = frame.handle.typed_delay
+    # How long a value was asked for, how many characters went in as keys, and
+    # how many the node ended up holding. Lengths, never values.
+    out["asked_len"] = len(cmd.get("value", "") or "")
+    out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
+    # Whether a carriage return reached the keys. A boolean, never the text: the
+    # typed string is the value, and nothing here may carry one out.
+    out["typed_has_cr"] = frame.handle.typed is not None and "\r" in frame.handle.typed
+    # One call per character is what keeps a key out of an unmarked sibling.
+    out["type_calls"] = frame.handle.type_calls
+    # The largest and smallest budget any key was handed -- the first key's and
+    # the last's. A shared deadline is already counting down by the first, so
+    # even that one is under the tail's whole budget, and the gap to the last is
+    # what the tail spent. A per-key timeout hands out exactly the whole budget
+    # every time: at the ceiling, and no gap.
+    out["key_timeout_max"] = frame.handle.key_timeout_max
+    out["key_timeout_min"] = frame.handle.key_timeout_min
+    out["node_len"] = len(frame.handle.value or "")
+    return out
+
+
+def two_frames(server):
+    """A fill that fails AFTER changing a node, on a page where the selector
+    resolves in a later frame too.
+
+    The caller named no frame, so the search walks them — and the question is
+    whether a failure in the first one is allowed to become a success in the
+    second. It must not: that leaves two fields holding something and reports
+    the identity of the one that happened to work.
+    """
+    trace: list[str] = []
+    first = Frame(trace, partial_fill=True, value="1 Elm St", document_token="doc-a")
+    second = Frame(trace, document_token="doc-b")
+    page = Page(second, extra_frames=[first])
+    session = server.Session(page)
+    out = {"error": None, "result": None}
+    try:
+        out["result"] = session.handle(
+            {"action": "fill", "selector": "#pass", "value": "hunter2", "mask": True}, "/tmp")
+    except Exception as exc:  # noqa: BLE001 — the scenario under test
+        out["error"] = type(exc).__name__
+    # Whether the frame BEHIND the failure was touched. A length, never a value.
+    out["second_len"] = len(second.handle.value or "")
+    out["first_changed"] = first.handle.value != "1 Elm St"
+    out["trace"] = trace
     return out
 
 
@@ -364,6 +497,77 @@ def main() -> int:
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
                                      marked=True, value="hunter2"),
         "plain": run(server, base),
+        # A value carrying a newline, at a single-line field. The node could not
+        # hold the break anyway -- an <input> strips it in value sanitization --
+        # so it is normalized away and the rest still goes in as real keys, and
+        # no Enter is ever sent at a form.
+        "newline_single_line": run(server, {**base, "value": "one\ntwo"}),
+        # The same at a single-line field, spelled with CR. This is what pins the
+        # ORDER of the normalization: CR becomes LF before the strip removes it,
+        # so no Enter is sent. Reversed, `type()` would press Enter mid-value and
+        # submit the form with half a credential in it.
+        "cr_single_line": run(server, {**base, "value": "one\rtwo"}),
+        # A tab, which `type()` sends as the Tab key -- focus moves and no
+        # character lands, so the keys can never carry this value. That is a
+        # browser claim this fake cannot model; it and its siblings are listed
+        # in docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on".
+        "tab_value": run(server, {**base, "value": "one\ttwo"}),
+        # And one whose tab sits in the assigned head. The guard is scoped to the
+        # tail, which is all that gets typed, so this still ends on real keys --
+        # widening it to the whole value would send every long tab-bearing value
+        # to a bare assignment.
+        "tab_outside_tail": run(server, {**base, "value": "one\t" + "x" * 2000}),
+        # A break at a textarea, the node that keeps it as a character: it keeps
+        # its keystrokes too.
+        "newline_multiline": run(server, {**base, "value": "one\ntwo"},
+                                 typeable="multiline"),
+        # The rule is scoped to the TAIL, which is all that gets typed: a long
+        # value whose newline sits in the head still ends on real keys, because
+        # the head is assigned anyway.
+        "newline_outside_tail": run(server, {**base, "value": "one\n" + "x" * 2000}),
+        # CRLF at a textarea. `type()` sends CR and LF alike as Enter, so the
+        # pair would press it twice where the node holds one break -- the server
+        # normalizes before it splits head from tail, so the keys carry no CR and
+        # normalizes CR and CRLF to a single LF. That Enter inserts a newline at
+        # all is a browser claim this fake cannot model -- see
+        # docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on".
+        "crlf_multiline": run(server, {**base, "value": "one\r\ntwo"},
+                              typeable="multiline"),
+        # A date widget: its value is composed from something other than the
+        # characters, so keystrokes land the wrong day or nothing at all.
+        "not_typeable": run(server, {**base, "value": "2026-08-19"}, typeable=""),
+        # The same widget holding something the vault masks. The question is
+        # asked AFTER the mark goes on, which is a call site that did not exist
+        # before the widget branch did.
+        "not_typeable_masked": run(server, {**base, "mask": True, "value": "2026-08-19"},
+                                   typeable=""),
+        # A field that took the keys and then sanitised some of them away, so
+        # the node does not hold what was asked for. Reporting that as a fill
+        # would tell the caller a credential landed when it did not.
+        "keys_dropped": run(server, {**base, "value": "hunter2"}, drops_keys=True),
+        # And the field will not take it by assignment either. This is the loud
+        # end of the path: nothing landed anywhere, so the caller hears about it
+        # and the mark comes back off a field that is holding nothing.
+        "keys_dropped_unfillable": run(server, {**base, "mask": True, "value": "hunter2"},
+                                       drops_keys=True, assign_fails=True),
+        # A credential right at the TYPED_CHARS boundary, typed whole. A
+        # seven-character password passes at any value of that constant down to
+        # seven, so the number is pinned by one the size it was chosen for.
+        # `long_value` covers the other side: over-length, head assigned.
+        "credential": run(server, {**base, "value": "k" * 64}),
+        # Prose, not a credential: too long to type inside the budget. The bulk
+        # is assigned and the field still ends on real keys.
+        "long_value": run(server, {**base, "value": "x" * 2000}),
+        # A long SECRET whose head was assigned and whose tail then broke off
+        # partway: the node holds real credential content, so the mark stays and
+        # it is ledgered. The short-value shape assigned nothing and cannot show
+        # this.
+        "orphan_mark_long": run(server, {**base, "mask": True, "value": "s" * 2000},
+                                partial_fill=True, value="1 Elm St"),
+        # The clear landed and then not one key did, so the node holds nothing.
+        # A field holding nothing has nothing to conceal.
+        "typing_never_started": run(server, {**base, "mask": True}, type_fails=True,
+                                    value="1 Elm St"),
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.
         "mask_blocked": run(server, {**base, "mask": True}, mask_result="unmasked"),
@@ -382,6 +586,7 @@ def main() -> int:
     ledger_fill = {**fill_pass, "frame": 1}
     ledger_overwrite = {**fill_addr_at_pass, "frame": 1}
     observe = {"action": "forms"}
+    result["two_frames"] = two_frames(server)
     result["ledger"] = {
         "kept": ledger(server, [{"cmd": ledger_fill}, {"cmd": observe}]),
         "visible_overwrite": ledger(server, [
@@ -419,6 +624,13 @@ def main() -> int:
             {"rerender": "#pass"},
             {"cmd": observe},
         ]),
+    }
+    # How much of a value the server types, so a test asserting the split reads
+    # the number from the server rather than restating it.
+    result["constants"] = {
+        "typed_chars": server.TYPED_CHARS,
+        "action_timeout_ms": server.DEFAULT_ACTION_TIMEOUT_MS,
+        "typing_max_ms": server.TYPING_MAX_MS,
     }
     out.write(json.dumps(result))
     out.flush()

@@ -136,15 +136,18 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_run_command.indexOf("own Mac")).toBeLessThan(d.plow_run_command.indexOf("sandbox"));
   });
 
-  // The differentiator that was missing entirely: a persistent profile and
-  // vault fills. Stated as what it is — NOT as "already signed in", which
-  // would be a promise this profile does not keep.
-  it("plow_browser_open says why it beats a plain web fetch, without overselling", async () => {
+  // The differentiator: it browses AS the user — their profile, their logins —
+  // and can fill from their vault. Both are things a plain web fetch cannot do.
+  it("plow_browser_open says why it beats a plain web fetch", async () => {
     const d = await descriptions(makeServer());
-    expect(d.plow_browser_open).toMatch(/profile persists/);
+    // The Mac is one person's, and a session opens on a copy of their profile,
+    // so "already signed in" is now the honest promise rather than an oversell.
+    expect(d.plow_browser_open).toMatch(/already signed in/i);
     expect(d.plow_browser_open).toMatch(/vault/);
-    expect(d.plow_browser_open).toMatch(/one session at a time/i);
-    expect(d.plow_browser_open).not.toMatch(/already signed in/i);
+    // Several browsers run at once, so the copy says which one the agent holds
+    // rather than promising it is the only one.
+    expect(d.plow_browser_open).toMatch(/session id you get back says WHICH browser/i);
+    expect(d.plow_browser_open).not.toMatch(/one session at a time/i);
   });
 });
 
@@ -361,6 +364,12 @@ describe("what the agent-facing copy must and must not say", () => {
    * `open` and `shortcuts` were removed from the tooling copy alongside
    * `osascript`, but only `shortcuts` is pinned here: `open` is far too common
    * an English word to assert against a prose corpus without false positives.
+   *
+   * An "already signed in" row lived here and is GONE, deliberately. It was
+   * written when a session opened on a persistent-but-shared profile, where the
+   * phrase promised something no particular site kept. Sessions now start on a
+   * copy of the user's own profile, so it is the honest description — and
+   * `plow_browser_open` is asserted to make it, above.
    */
   const FORBIDDEN: { what: string; why: string; offends: (text: string) => boolean }[] = [
     {
@@ -375,11 +384,6 @@ describe("what the agent-facing copy must and must not say", () => {
       what: "prescribes tooling the sandbox denies",
       why: "(deny default) grants no appleevent-send and the app ships no automation entitlement",
       offends: (text) => /osascript|screencapture|shortcuts/i.test(text),
-    },
-    {
-      what: "oversells the browser profile",
-      why: "a persistent profile promises nothing about any particular site",
-      offends: (text) => /already signed in/i.test(text),
     },
     {
       what: "names a tool without its plow_ prefix",

@@ -35,6 +35,15 @@ export interface BrowserHostConfig {
   env?: Record<string, string>;
   screenshotsDir: string;
   profileDir?: string;
+  /** The user's own browser profile. Every session opens on a clone of it, so
+   * every browser is signed in wherever they are, and merges what it signed
+   * into back on close. Unset means sessions start on an empty profile. */
+  seedProfile?: string;
+  /** Argv that reconciles a session's cookies into the user's, before its
+   * three paths: the user's profile, the session's clone, and the baseline
+   * that clone started from. Comes from the runtime, so a machine pointed at
+   * its own install runs that install's program. */
+  mergeCookiesCommand?: string[];
   /** Camoufox install dir (config.json + browsers/). When set, the server is
    * spawned with an app-scoped $HOME whose Library/Caches/camoufox symlinks
    * to it — camoufox finds a ready install, the user's shared cache is never
@@ -146,9 +155,11 @@ export class BrowserHost {
    * One screenshot frame for the owner's viewer window. Strictly best-effort:
    * returns null when the browser isn't running (and never starts it — a
    * viewer poll must not be able to launch Camoufox), and null on any failure
-   * (frame mid-navigation, action timeout, crash). Deliberately NOT routed
-   * through BrowserSessions: the frame is for the device owner's own eyes, so
-   * session scope does not apply, and a ~1/s poll must not flood the audit log.
+   * (frame mid-navigation, action timeout, crash). `BrowserSessions.viewFrame()`
+   * picks WHICH host to ask — the session the owner is watching — but the frame
+   * it returns deliberately bypasses session SCOPE and the audit: it is for the
+   * device owner's own eyes, so an out-of-scope page is exactly what they
+   * should see, and a ~1/s poll must not flood the log.
    */
   async viewFrame(): Promise<ViewerFrame | null> {
     if (!this.child || this.shuttingDown) return null;
@@ -387,11 +398,6 @@ export class BrowserHost {
     this.cfg.audit?.("browser_stopped", {});
   }
 
-  /** Allow a new session to start again after the circuit breaker tripped. */
-  resetBreaker(): void {
-    this.restartTimes = [];
-    this.shuttingDown = false;
-  }
 }
 
 function withTimeout(p: Promise<void>, ms: number): Promise<boolean> {

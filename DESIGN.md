@@ -305,7 +305,16 @@ Playwright through a vendored Python server — `vendor/browser-server/`,
 provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
 user**: local IP, local cookies, and local credentials that are typed into the
 page here rather than handed to the agent — which is driving that page, and can
-read it. The pieces:
+read it. Several browsers can run at once and they are all the user's: Firefox
+locks a profile to one process, so each session runs on a **clone** of the
+user's profile (APFS clonefile — no wait, no extra disk), so every browser opens
+signed in where they left off. On close the clone's cookies are MERGED into
+that profile — row by row, keeping whichever was used last — so a sign-in made
+inside a session sticks, and two browsers signed into two different sites both
+keep theirs. Replacing the profile wholesale, which is the obvious version of
+this, would let the last browser to close decide what the user is signed into.
+Ceiling: cookies only, so a site that keeps its session in localStorage still
+signs out with the clone. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an
@@ -313,8 +322,10 @@ unbounded rule. Instead one signed intent opens a **session** whose capability
 is the enforceable bound — a `browser` capability with an origin allowlist
 (`origins: ["dominos.com", "*.dominos.com"]`, explicit patterns, no PSL
 logic) and optionally `credential` capabilities. Subsequent commands ride the
-session handle over the `browser_command` RPC with no new intent — the same
-trust model as `get_output`. Widening scope mid-session (a checkout popup
+session handle over the `browser_command` RPC with no new intent. The handle
+says WHICH browser, not whose: unlike `get_output`, which is checked against
+the agent that started the job, this Mac is one person's and every browser on
+it is theirs, so whoever holds a handle can drive that browser. Widening scope mid-session (a checkout popup
 lands on a payment provider) is a new intent with the identical capability
 shape, so always-allow rules are meaningful and reusable; a fully-ruled task
 runs unattended end to end (the e2e suite asserts a second session is decided
@@ -400,11 +411,15 @@ titles would be spoofable).
 **The owner's live view.** While a browsing session is open, the audit
 screen's detail pane shows a small near-live mirror of what Camoufox is
 showing, pinned in the pane's bottom-right corner outside the timeline scroll
-(~1 frame/s, a `view` server action that never touches disk). Frames ride
-`BrowserHost.viewFrame()` — deliberately *outside* `BrowserSessions`: session
-scope bounds what the **agent** observes, and the owner watching an
-out-of-scope page is exactly the oversight the view exists for (the caption
-flags "Out of approved scope"). `viewFrame` is strictly best-effort — it never
+(~1 frame/s, a `view` server action that never touches disk). With a browser per
+session, `BrowserSessions.viewFrame()` chooses which one the owner is watching
+— the session that acted last, the same one `current()` describes, so the
+picture and the words under it are always about one browser. The frame itself
+still comes from that session's `BrowserHost.viewFrame()`, which is
+deliberately outside session SCOPE: scope bounds what the **agent** observes,
+and the owner watching an out-of-scope page is exactly the oversight the view
+exists for (the caption flags "Out of approved scope"), and a ~1/s poll must
+not flood the audit log. `viewFrame` is strictly best-effort — it never
 starts the browser, never throws, and a ~1/s poll writes nothing to the audit
 log. The thumbnail appears only while a session is active and disappears when
 it closes.

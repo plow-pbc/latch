@@ -6,6 +6,7 @@ import {
   APPROVAL_MODES,
   PURPOSE_CAVEATS,
   PURPOSE_LABEL,
+  PURPOSE_PLACEHOLDER,
 } from "./approvals.js";
 
 import { el, icon } from "./dom.js";
@@ -705,7 +706,10 @@ async function renderAgents() {
   // The purpose statement, and the two things that have to be said beside it.
   // Device-owner text: it is read and written through the settings IPC pair and
   // nowhere else, and it reaches no rule key, grant, or sandbox profile.
-  const purposeInput = el("textarea", { class: "text" });
+  const purposeInput = el("textarea", {
+    class: "text",
+    attrs: { placeholder: PURPOSE_PLACEHOLDER },
+  });
   purposeInput.value = await window.domo.agentPurposeGet();
   // On commit only — blur or Enter: an `input` handler would persist every
   // half-written sentence on the way to the real one. The stored value is

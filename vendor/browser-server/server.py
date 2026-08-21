@@ -94,6 +94,50 @@ DEFAULT_ACTION_TIMEOUT_MS = 3000
 # appear. The scan itself is instant; this is just how long it sleeps between.
 SCAN_INTERVAL_MS = 50
 
+# What every action that moves the page gives it to settle afterwards, so the
+# answer describes where the page ended up rather than where it was mid-flight.
+SETTLE_MS = 1000
+
+# A fill TYPES its value wherever it can rather than assigning it: a field that
+# goes from empty to complete with no keydown/keypress/keyup at all is the
+# cheapest signal an interrogating defense has. `_type_value` owns which nodes
+# and which values that holds for, and `TYPEABLE_JS` below owns why a given
+# node takes no keys. Typing costs a delay per character and an agent may fill
+# a field with prose, so only the last TYPED_CHARS go through `el.type` and the
+# bulk ahead of them is assigned. That number is a statement about credentials
+# rather than a latency derivation: an ordinary password, a card number or a
+# one-time code is shorter than this and is typed whole. Nothing enforces that
+# a released value fits -- a long API key or a JWT does not -- and one that
+# does not lands with its head assigned and its last TYPED_CHARS typed, which
+# still puts the field's last characters through the keyboard.
+#
+# What each character's `el.type(ch, delay=...)` call is given. It is handed one
+# character at a time, so it is spent inside that call rather than between two
+# of them -- the per-call cost is KEY_OVERHEAD_MS below. What Playwright then
+# does with it, and whether the character produces key events at all, is a
+# browser assumption the suite cannot see: docs/TESTING-THE-APP.md.
+KEY_DELAY_MS = 45
+# What a key may cost beyond its delay: the round trip that dispatches it and
+# the actionability check in front of it. A few milliseconds on a local page.
+KEY_OVERHEAD_MS = 30
+# A fill's TIMED cost is DEFAULT_ACTION_TIMEOUT_MS three times (resolve, assign,
+# and the assignment a dropped-keys fallback makes) plus TYPING_MAX_MS, and that
+# has to stay under what the device gives a browser action before it gives up on
+# it -- `actionTimeoutMs` in deviceAgent.ts, which fillSecretMasking.test.ts
+# reads there and asserts this sum against, in "keeps the timed budgets under
+# the cap the device arms". TYPING_MAX_MS is derived from TYPED_CHARS, so
+# raising the credential length has to answer to that cap. Nothing here is told
+# when the device does give up -- it drops its pending entry and sends this
+# process nothing -- so a fill that ran past it would go on typing a credential
+# into a page whose answer nobody is waiting for. A fill searches the frames on
+# its own per-frame default, so that sum covers one that names its frame on a
+# page that runs script; two spends are outside it and neither is bounded: a
+# caller that names no frame pays DEFAULT_ACTION_TIMEOUT_MS per frame it rules
+# out (#96), and every fill makes `evaluate` calls that take no timeout at all,
+# so a page that will not run script hangs regardless.
+TYPED_CHARS = 64
+TYPING_MAX_MS = TYPED_CHARS * (KEY_DELAY_MS + KEY_OVERHEAD_MS)
+
 
 FIELD_JS = """() => Array.from(document.querySelectorAll("input,select,textarea")).slice(0,40).map(el => {
     let lab = "";
@@ -197,13 +241,69 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
-# Whether a field still holds what it held a moment ago. The previous value
-# stays in the page as a handle and is compared there, so it is exact and never
-# crosses the wire. A hash was tried and is not good enough: "BB" and "Aa" share
-# one, and a partial fill that collided would look unchanged and have its mark
-# taken off, which is the one outcome this must never produce.
-VALUE_SNAPSHOT_JS = """(el) => el.value || ''"""
-VALUE_UNCHANGED_JS = """(el, previous) => (el.value || '') === previous"""
+# What KIND of typing this node takes, or "" for none. `type()` refuses nothing
+# -- it focuses whatever it is given and sends the keys -- so every node
+# `fill()` treats specially has to be recognised here instead. The empty answer
+# is the whole hazard: "yes" typed at a checkbox toggles nothing and answers ok,
+# a <select> changes option by type-ahead, a date input takes its segments in
+# whatever order the locale puts them (typing "2026-08-19" lands 6081-02-02,
+# silently), a colour or a range refuses keys outright, and a hidden input
+# cannot hold focus at all -- so the characters, on the credential path a
+# secret's, land wherever focus already was. Everything answered "" is ASSIGNED,
+# which is exactly what it got before there was typing: the same value where
+# `fill()` sets one, the same loud refusal where it will not.
+#
+# Only a <textarea> and an <input> of a text-carrying type are typed at. An
+# editing host -- contenteditable, a designMode body -- is deliberately neither:
+# the credential submits this exists for are <input>, and admitting arbitrary
+# hosts cost a second editability taxonomy (which declared attribute values
+# count, which embedded and non-rendered tags to refuse before reading it) for a
+# case no machine here reaches. Such a node is assigned, as it was before typing.
+#
+# The two kinds differ on whether the node holds a line break: a <textarea>
+# holds one as a character, an <input>'s value sanitization strips it.
+TYPEABLE_JS = """(el) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "textarea") return el.disabled || el.readOnly ? "" : "multiline";
+    if (tag !== "input") return "";
+    const typed = ["text", "email", "password", "search", "tel", "url", "number"];
+    if (!typed.includes(el.type)) return "";
+    return el.disabled || el.readOnly ? "" : "single-line";
+}"""
+
+# How a node holds its text: `value` for an input or a textarea, `textContent`
+# for anything else. Typing only reaches the first two, but every node reaches
+# the ASSIGNMENT path -- so the snapshot and nothing-landed questions below are
+# still asked about a contenteditable. Asking an input for its textContent, or a
+# contenteditable for its value, reads the node as empty, which would call every
+# fill dropped and every failed fill harmless, so all of them ask through this.
+_HELD = "(typeof el.value === 'string' ? el.value : (el.textContent || ''))"
+
+# What a node is holding, captured before a fill so a failure has something
+# exact to be compared against. It stays in the page as a handle and is compared
+# there, so it never crosses the wire. A hash was tried and is not good enough:
+# "BB" and "Aa" share one, and a partial fill that collided would look unchanged
+# and have its mark taken off, which is the one outcome that must never happen.
+VALUE_SNAPSHOT_JS = f"""(el) => {_HELD}"""
+
+# Whether the keys failed to land, in the only two shapes an assignment could
+# repair: the field took none of them, or it took a prefix and stopped. A number
+# input sanitises away anything it will not hold; a maxlength truncates. A field
+# that REFORMATS what it was given -- a card number, a phone -- took every key
+# and holds something else on purpose, so it is not a prefix and is left alone.
+KEYS_DROPPED_JS = f"""(el, wanted) => {{
+    const now = {_HELD};
+    return now !== wanted && wanted.startsWith(now);
+}}"""
+
+# Whether a fill that failed left anything behind. Unchanged is one way to hold
+# nothing unaccounted for; empty is the other -- a fill assigns before it types,
+# so a failure at the first key leaves the node holding nothing, and a node
+# holding nothing has nothing to conceal.
+NOTHING_LANDED_JS = f"""(el, previous) => {{
+    const now = {_HELD};
+    return now === '' || now === previous;
+}}"""
 
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
@@ -220,6 +320,87 @@ UNMASK_JS = """(el) => {
 def _respond(payload):
     _RESP.write(json.dumps(payload, ensure_ascii=False) + "\n")
     _RESP.flush()
+
+
+def _type_value(el, value):
+    """Put `value` into a resolved node so that the field ends on real keys.
+
+    A node is first asked what KIND of typing it takes -- a text-carrying input
+    or a textarea, and nothing else. One that answers "" is assigned whole,
+    exactly as this always did, and so is a value whose typed tail carries a tab.
+
+    The rest have their value normalized to what that node can HOLD before head
+    and tail are split: one LF per break where the node keeps breaks at all, and
+    none at an <input>, whose value sanitization strips them anyway. Every
+    comparison below then speaks the string the node ends up with, and the tail
+    cannot press Enter at a form by construction rather than by a branch.
+
+    Of that normalized value, everything before the last TYPED_CHARS is assigned
+    in one go -- that is the `el.fill()` the rest of this exists to avoid, used
+    deliberately, because a field an agent filled with prose cannot be typed key
+    by key inside the budget. What a defense samples is that keys arrived at the
+    field at all, and they do: the tail is always typed, and a credential is
+    shorter than the tail. That leading assignment doubles as the clear.
+
+    The tail goes in one key at a time THROUGH THE HANDLE, which refocuses the
+    marked node before each. A segmented one-time-code control moves focus to
+    the next box on every `input` event, and one `el.type(tail)` call sends its
+    remaining keys wherever focus went -- five digits of a live code into five
+    sibling fields the mark was never put on, readable from `forms` and from a
+    screenshot. Refocusing per key keeps every character in the node the device
+    approved, and a node that goes away raises rather than typing on. What it
+    does NOT do is fill such a control: box one refuses every key after the
+    first, so the fallback below assigns the whole code into it (an assignment
+    ignores `maxlength`) and the form is left unsubmittable. That is the
+    deliberate trade -- the credential stays in the node the owner approved, and
+    a segmented control takes one fill per box.
+
+    A node that has gone away raises out of the first question asked of it, and
+    every path from here on leaves the caller's failure handling to unwind it.
+    """
+    kind = el.evaluate(TYPEABLE_JS)
+    if not kind:
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        return
+    # Everything below compares against `value` -- the prefix test that decides
+    # whether the keys landed, and the assignment that repairs them when they did
+    # not. Each has to speak the string the node will actually HOLD, or it
+    # answers about a value that never existed anywhere.
+    #
+    # CR and CRLF collapse to one LF, and a node whose kind is not "multiline"
+    # loses the break here. That is what lets a break-bearing value
+    # still go in as real keys, and why the tail can never press Enter at a form
+    # -- by construction, rather than by a branch that gives the keystrokes up.
+    # The browser behavior underneath is in docs/TESTING-THE-APP.md.
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    if kind != "multiline":
+        value = value.replace("\n", "")
+    # A tab is the one character no normalization can rescue -- the keys cannot
+    # carry it -- so a value holding one in the part that WOULD be typed is
+    # assigned whole instead, the path it always had. One in the head is not
+    # this branch's business: the head is assigned either way.
+    #
+    # Assigning is not the same as the node keeping it. What an input does with
+    # an edge tab, and which types drop one, is in docs/TESTING-THE-APP.md --
+    # stated once there because restating it here put the copies out of step.
+    if "\t" in value[-TYPED_CHARS:]:
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        return
+    el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
+    # The whole tail draws on ONE budget, not one per key: a per-key timeout of
+    # the tail's own budget would let TYPED_CHARS of them stack up to that many
+    # times what a single call could ever spend, and past the device's cap.
+    deadline = time.monotonic() + TYPING_MAX_MS / 1000
+    for ch in value[-TYPED_CHARS:]:
+        left = (deadline - time.monotonic()) * 1000
+        if left <= 0:
+            raise RuntimeError("typing outran its budget")
+        el.type(ch, delay=KEY_DELAY_MS, timeout=left)
+    if el.evaluate(KEYS_DROPPED_JS, value):
+        # The field did not take the keys. Assign it, which is what this did
+        # before there were keystrokes at all: it either lands the value or it
+        # raises. What it must never do is report a value that is not there.
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
 
 
 def _parse_args():
@@ -539,7 +720,7 @@ class Session:
                 break
             try:
                 fr.click(sel, timeout=left)
-                self.page.wait_for_timeout(1000)
+                self.page.wait_for_timeout(SETTLE_MS)
                 return {"ok": True, "frame": i}
             except Exception as exc:  # noqa: BLE001 -- re-raised below
                 last = exc
@@ -581,56 +762,59 @@ class Session:
                 continue
             if el is None:
                 continue
-            try:
-                # The device checked an origin before it went away to fetch the
-                # value. If the node it resolved is in a different DOCUMENT than
-                # the one it checked, nothing here is what was approved -- so
-                # nothing is marked and nothing is typed. The token, not the URL:
-                # an SPA rewriting its address bar mid-lookup has not replaced
-                # anything, and refusing that is a fill the owner has to do by hand
-                # for no reason.
-                expected = cmd.get("frame_token")
-                if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
-                    return {"ok": False, "mask": "moved", "frame": i}
-                if cmd.get("mask"):
-                    # Marked first, and only typed once the mark is known to have
-                    # taken. An unmasked answer means the page defeated it, and the
-                    # value is not typed at all -- the caller turns that into its
-                    # own refusal. Marking and filling are one step or neither: a
-                    # mark that goes on and a fill that then times out would leave
-                    # an ordinary field tagged and withheld from `forms` for the
-                    # life of the page.
-                    was_marked = el.evaluate(WAS_MARKED_JS)
-                    before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
-                    state = el.evaluate(MASK_JS)
-                    if state == "unmasked":
-                        before.dispose()
-                        return {"ok": False, "mask": state, "frame": i}
-                    try:
-                        el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
-                    except Exception:
-                        # Nothing landed: put the node back as it was found.
-                        # Something did: it is holding a value nobody can account
-                        # for, so the mark stays and the ledger learns about it.
-                        if el.evaluate(VALUE_UNCHANGED_JS, before):
-                            if not was_marked:
-                                el.evaluate(UNMASK_JS)
-                        else:
-                            self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                        raise
-                    finally:
-                        before.dispose()
-                    self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                    return {"ok": True, "mask": state, "frame": i}
-                # Not a secret. The mark comes off AFTER the value is in, never
-                # before: a fill that times out would otherwise leave the node
-                # holding the previous secret with nothing left to hide it.
-                el.fill(cmd["value"], timeout=DEFAULT_ACTION_TIMEOUT_MS)
-                el.evaluate(UNMASK_JS)
-                self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                return {"ok": True, "frame": i}
-            except Exception as exc:  # noqa: BLE001 -- re-raised below
-                last = exc
+            # Only the SEARCH may move on to the next frame. Once a node
+            # resolves, whatever happens to it is this fill's answer: a failure
+            # that had already changed it, swallowed here and retried in the
+            # frame below, leaves two fields holding something and reports the
+            # success of the second one.
+            #
+            # The device checked an origin before it went away to fetch the
+            # value. If the node it resolved is in a different DOCUMENT than
+            # the one it checked, nothing here is what was approved -- so
+            # nothing is marked and nothing is typed. The token, not the URL:
+            # an SPA rewriting its address bar mid-lookup has not replaced
+            # anything, and refusing that is a fill the owner has to do by hand
+            # for no reason.
+            expected = cmd.get("frame_token")
+            if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
+                return {"ok": False, "mask": "moved", "frame": i}
+            if cmd.get("mask"):
+                # Marked first, and only typed once the mark is known to have
+                # taken. An unmasked answer means the page defeated it, and the
+                # value is not typed at all -- the caller turns that into its
+                # own refusal. Marking and filling are one step or neither: a
+                # mark that goes on and a fill that then times out would leave
+                # an ordinary field tagged and withheld from `forms` for the
+                # life of the page.
+                was_marked = el.evaluate(WAS_MARKED_JS)
+                before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
+                state = el.evaluate(MASK_JS)
+                if state == "unmasked":
+                    before.dispose()
+                    return {"ok": False, "mask": state, "frame": i}
+                try:
+                    _type_value(el, cmd["value"])
+                except Exception:
+                    # Nothing landed: put the node back as it was found.
+                    # Something did: it is holding a value nobody can account
+                    # for, so the mark stays and the ledger learns about it.
+                    if el.evaluate(NOTHING_LANDED_JS, before):
+                        if not was_marked:
+                            el.evaluate(UNMASK_JS)
+                    else:
+                        self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                    raise
+                finally:
+                    before.dispose()
+                self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                return {"ok": True, "mask": state, "frame": i}
+            # Not a secret. The mark comes off AFTER the value is in, never
+            # before: a fill that times out would otherwise leave the node
+            # holding the previous secret with nothing left to hide it.
+            _type_value(el, cmd["value"])
+            el.evaluate(UNMASK_JS)
+            self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
+            return {"ok": True, "frame": i}
         raise last or RuntimeError("selector not found: %s" % sel)
 
     def handle(self, cmd, screenshots_dir):
@@ -652,7 +836,7 @@ class Session:
             # cap and the relay's ~20s exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
             self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(SETTLE_MS)
             return {"title": self.page.title()}
 
         if action == "pages":
@@ -677,7 +861,7 @@ class Session:
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
             self.page.go_back(timeout=12000, wait_until="domcontentloaded")
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(SETTLE_MS)
             return {"title": self.page.title(), "moved": self.page.url != was}
 
         if action == "view":
@@ -745,7 +929,7 @@ class Session:
                 "top": "window.scrollTo(0,0)",
             }
             self.page.evaluate(js_map.get(d, js_map["down"]))
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(SETTLE_MS)
             return {"ok": True}
 
         if action == "wait":
