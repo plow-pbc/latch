@@ -287,6 +287,9 @@ function approvalId(request: ApprovalRequest): string {
 }
 
 function createMainWindow(): void {
+  // Shutting down: a window opened now would be an editable Vault nobody will
+  // ask about again, restorable from the tray or the Dock mid-quit.
+  if (quitting) return;
   if (mainWindow) {
     mainWindow.show();
     return;
@@ -1077,6 +1080,11 @@ app.on("before-quit", (event) => {
       quitting = false; // they went back to their form; this quit never happened
       return;
     }
+    // Take the window away before cleanup, not after. The answer covered what
+    // was on screen at THAT moment, and shutting the browsers down takes
+    // seconds — seconds in which another editor could be opened and typed into,
+    // and destroyed by the quit below without ever being asked about.
+    mainWindow?.destroy();
     // Kill any live Camoufox session/process group so Firefox children don't
     // outlive us. Every step is timeout-bounded, so this waits seconds, not forever.
     void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
