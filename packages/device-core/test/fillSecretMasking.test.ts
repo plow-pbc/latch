@@ -396,6 +396,39 @@ describe("fill_secret marking", () => {
     expect(fill.frame_token).toBe("doc-card");
   });
 
+  // The vault fills unconcealed fields too — an address, a username — and those
+  // took the same path. Both must name the cap rather than send the agent back
+  // to check a selector that was right.
+  it.each([
+    { what: "a concealed field", selector: "#card-number", item: "C1", field: "number",
+      origin: "payframe.example" },
+    { what: "a field the vault does not conceal", selector: "#card-name", item: "C1",
+      field: "cardholder name", origin: "payframe.example" },
+  ])("tells the agent the cap when $what will not hold the value", async ({
+    selector, item, field, origin,
+  }) => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_TOO_LONG: "16" });
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector, item, field,
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    // The cap, not "check the selector" — the selector was right.
+    expect(jv(result).get("error").str).toContain("holds only 16 characters");
+    expect(jv(result).get("error").str).not.toContain("check the selector");
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_denied",
+      fields: {
+        session: audited(), item, field, origin, selector,
+        reason: "the field holds only 16 characters",
+      },
+    });
+    // The value's length is the one thing that does not travel.
+    expect(JSON.stringify(result)).not.toContain("4111");
+  });
+
   it("refuses when the browser says the frame moved", async () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
@@ -580,6 +613,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     { what: "a value whose emoji are two code units each", scenario: "astral_over_cap" },
   ])("refuses $what and does not touch the node", ({ scenario }) => {
     const probe = probed[scenario];
+    expect(probe.result).toMatchObject({ ok: false, mask: "too_long" });
     // Resolved, and nothing after it: no fill, no mark to strip, nothing
     // half-written for a later screenshot to catch.
     expect(probe.trace).toEqual(["frame.wait_for_selector"]);
@@ -598,8 +632,13 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.capped_secret.error).toBeNull();
   });
 
-  it("fails a visible fill loudly, since its message is forwarded", () => {
-    expect(probed.capped_plain.error).toBe("RuntimeError");
+  it("answers an unconcealed fill with the same shape", () => {
+    // The vault fills unconcealed fields through the same path, and their text
+    // is swallowed the same way, so there is one answer rather than two.
+    expect(probed.capped_plain.result).toEqual({
+      ok: false, mask: "too_long", cap: 4, frame: 0,
+    });
+    expect(probed.capped_plain.error).toBeNull();
   });
 
   it("fills a value exactly as long as the field's cap", () => {

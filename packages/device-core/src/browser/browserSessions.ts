@@ -811,6 +811,19 @@ export class BrowserSessions {
     // anything be observed, and says so when one of them would not take. It
     // sends no picture and no field list in that case, and neither does this:
     // an observation that cannot be made safely is not made.
+    // A field that will not hold the value, refused before anything was typed.
+    // The agent is told the cap because the alternative is re-issuing a fill
+    // that cannot ever land; the cap is the page's own attribute, and the
+    // value's length is not part of it.
+    if (result.ok === false && result.mask === "too_long") {
+      return {
+        status: "error",
+        error:
+          `${String(action.action)} was refused: that field holds only ` +
+          `${jv(result).get("cap").num} characters and the value is longer, so nothing was typed.`,
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
+    }
     if (result.ok === false && result.mask === "unmasked") {
       this.audit("credential_mask_failed", {
         session: s.auditId,

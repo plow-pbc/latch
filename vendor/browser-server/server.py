@@ -806,17 +806,13 @@ class Session:
             # cap that holds nothing, so it is not an escape hatch.
             cap = el.evaluate(FIELD_CAP_JS)
             if cap is not None and cap >= 0 and _utf16_units(cmd["value"]) > cap:
-                # How this is reported differs because how it is HEARD does. A
-                # visible fill's failure text reaches the agent, so it can say
-                # so plainly. A secret's never does -- the device writes its own
-                # message, because Playwright's would quote the value -- and
-                # "check the selector" is the wrong thing to tell an agent whose
-                # selector was right, so the cap comes back as a shape the
-                # device can read, the way a moved frame does.
-                if cmd.get("mask"):
-                    return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
-                raise RuntimeError(
-                    "field holds %d characters and the value is longer -- not filled" % cap)
+                # A shape rather than a raise, the way a moved frame is: a
+                # vault fill's failure text never reaches the agent -- the
+                # device writes its own, because Playwright's would quote the
+                # value -- and "check the selector" is exactly wrong for a
+                # selector that was right. Masked or not, the same answer: the
+                # vault fills unconcealed fields too.
+                return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
             if cmd.get("mask"):
                 # Marked first, and only typed once the mark is known to have
                 # taken. An unmasked answer means the page defeated it, and the

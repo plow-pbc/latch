@@ -17,6 +17,8 @@
  *   FAKE_CSP_BLOCKS_MASK=1   answer every masked fill "unmasked" and type
  *                            nothing, the way a page whose style-src omits
  *                            'unsafe-inline' defeats the mask
+ *   FAKE_TOO_LONG=n          answer every fill "too_long" with cap n, the way the
+ *                            real server does for a field that cannot hold it
  *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
  *                            server does when the resolved node is in a
  *                            different document than the one approved
@@ -194,6 +196,11 @@ function handle(cmd) {
       return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
     }
     // The frame behind the index is no longer the document the device approved.
+    // A field whose maxlength is shorter than the value: the real server
+    // refuses before it touches the node, masked or not.
+    if (process.env.FAKE_TOO_LONG) {
+      return { ok: false, mask: "too_long", cap: Number(process.env.FAKE_TOO_LONG), frame: 0 };
+    }
     if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_token) {
       return { ok: false, mask: "moved", frame: cmd.frame ?? 0 };
     }
