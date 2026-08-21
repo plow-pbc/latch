@@ -1428,7 +1428,14 @@ describe("which fields report a cap", () => {
   const node = (
     tagName: string, type: string | undefined, maxLength: number,
     extra: Record<string, unknown> = {},
-  ) => ({ tagName, type, maxLength, ...extra });
+  ) => ({
+    tagName, type, maxLength,
+    // Every stub answers attributes, so a rewrite reading the ATTRIBUTE rather
+    // than the IDL property fails on the assertion for the whole table instead
+    // of throwing on the eleven rows that never carried the method.
+    getAttribute: (k: string) => (k === "type" ? type ?? null : null),
+    ...extra,
+  });
 
   it.each([
     // Every kind on the allowlist, because dropping one silently sends that
