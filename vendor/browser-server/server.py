@@ -98,25 +98,24 @@ SCAN_INTERVAL_MS = 50
 # answer describes where the page ended up rather than where it was mid-flight.
 SETTLE_MS = 1000
 
-# A fill ends on real keys wherever it can: a field that goes from empty to
-# complete with no keydown/keypress/keyup at all is the cheapest signal an
-# interrogating defense has. `_type_value` owns which nodes and which values
-# that holds for, and `TYPEABLE_JS` below owns why a given node takes no keys.
-# Keystrokes cost a delay each and an agent may fill a field with prose, so
-# only the last TYPED_CHARS are typed and the bulk ahead of them is assigned.
-# That number is a statement about credentials rather than a latency
-# derivation: an ordinary password, a card number or a one-time code is shorter
-# than this and is typed whole. Nothing enforces that a released value fits --
-# a long API key or a JWT does not -- and one that does not lands with its head
-# assigned and its last TYPED_CHARS typed, which still ends the field on real
-# keys.
+# A fill TYPES its value wherever it can rather than assigning it: a field that
+# goes from empty to complete with no keydown/keypress/keyup at all is the
+# cheapest signal an interrogating defense has. `_type_value` owns which nodes
+# and which values that holds for, and `TYPEABLE_JS` below owns why a given
+# node takes no keys. Typing costs a delay per character and an agent may fill
+# a field with prose, so only the last TYPED_CHARS go through `el.type` and the
+# bulk ahead of them is assigned. That number is a statement about credentials
+# rather than a latency derivation: an ordinary password, a card number or a
+# one-time code is shorter than this and is typed whole. Nothing enforces that
+# a released value fits -- a long API key or a JWT does not -- and one that
+# does not lands with its head assigned and its last TYPED_CHARS typed, which
+# still puts the field's last characters through the keyboard.
 #
-# What each key's press is given, handed to `el.type(ch, delay=...)` one
-# character at a time -- so it is spent WITHIN a key rather than between one key
-# and the next, which is KEY_OVERHEAD_MS below. Exactly how Playwright spends it
-# depends on whether the character is on its key map at all, and that is a
-# browser assumption rather than something the suite can see: see
-# docs/TESTING-THE-APP.md.
+# What each character's `el.type(ch, delay=...)` call is given. It is handed one
+# character at a time, so it is spent inside that call rather than between two
+# of them -- the per-call cost is KEY_OVERHEAD_MS below. What Playwright then
+# does with it, and whether the character produces key events at all, is a
+# browser assumption the suite cannot see: docs/TESTING-THE-APP.md.
 KEY_DELAY_MS = 45
 # What a key may cost beyond its delay: the round trip that dispatches it and
 # the actionability check in front of it. A few milliseconds on a local page.

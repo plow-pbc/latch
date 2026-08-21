@@ -79,7 +79,9 @@ Three of them, in the order the code reaches them:
    More generally, what `type()` does with a character depends on whether it is
    on Playwright's key map — one that is not may arrive as inserted text with no
    key events at all, which is the outcome the whole typing path exists to
-   avoid. `KEY_DELAY_MS` is spent inside a key press either way.
+   avoid. So a value going through `el.type` is the code asking for key events,
+   not a guarantee it got them; `KEY_DELAY_MS` is spent inside that call either
+   way.
 3. An `<input>` **sanitizes an assigned value**, and differently per type. CR
    and LF never survive. Some types will not keep a leading or trailing tab.
 
