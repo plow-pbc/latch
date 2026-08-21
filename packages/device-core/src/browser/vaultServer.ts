@@ -12,6 +12,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import tls from "node:tls";
 import path from "node:path";
 import { ensureVaultAccount, vaultAccount, vaultAccountExists } from "./vaultBootstrap.js";
 import { settlePendingChange } from "./vaultCredentials.js";
@@ -30,9 +31,32 @@ export interface VaultServerConfig {
   startTimeoutMs?: number;
 }
 
+/**
+ * Does whatever is listening on this loopback port present THIS certificate?
+ *
+ * Exported because it is the whole identity check: the port being open says
+ * nothing about whose vault is behind it, and the certificate is the only
+ * thing that does.
+ */
+export function servesCertificate(port: number, certPath: string, timeoutMs = 1_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ca = fs.readFileSync(certPath);
+    const done = (ok: boolean) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    const sock = tls.connect(
+      { host: "127.0.0.1", port, ca, servername: "127.0.0.1", timeout: timeoutMs },
+      () => done(sock.authorized),
+    );
+    sock.once("error", () => done(false));
+    sock.once("timeout", () => done(false));
+  });
+}
+
 export class VaultServer {
   private child: ChildProcess | null = null;
-  private readonly port: number;
+  private port: number;
   readonly dataDir: string;
 
   constructor(private readonly cfg: VaultServerConfig) {
@@ -71,6 +95,22 @@ export class VaultServer {
     return { cert, key };
   }
 
+  /**
+   * Is the thing answering on this port OUR vault?
+   *
+   * A vault server outlives a hard quit — it is spawned in its own process
+   * group so the app can kill the group, and a killed app never gets to. So
+   * the port being open says nothing about WHOSE vault is behind it: an old
+   * install's server, still holding 8222, will answer and then refuse our
+   * certificate, which reaches the owner as "self signed certificate".
+   *
+   * The certificate is the identity: ours is the only one signed by the key in
+   * this data directory.
+   */
+  private oursOnPort(): Promise<boolean> {
+    return servesCertificate(this.port, this.certPath);
+  }
+
   private portOpen(): Promise<boolean> {
     return new Promise((resolve) => {
       const sock = net.connect({ host: "127.0.0.1", port: this.port });
@@ -84,11 +124,62 @@ export class VaultServer {
     });
   }
 
-  /** Start it and wait until the port answers. Idempotent. */
-  async start(): Promise<void> {
-    if (this.child) return;
+  /**
+   * Start it and wait until the port answers. Idempotent — and idempotent for
+   * CALLERS TOO: everyone awaits the same startup, rather than the second
+   * caller returning early on a process that is still booting and then talking
+   * to a port nobody is listening on yet.
+   */
+  start(): Promise<void> {
+    if (!this.starting) {
+      // Cleared whatever happens: a startup that failed must be retryable, and
+      // a vault that exits later must be startable again. `startOnce` returns
+      // immediately when the process is already up, so dropping the memo costs
+      // nothing.
+      this.starting = this.startOnce().finally(() => {
+        this.starting = null;
+      });
+    }
+    return this.starting;
+  }
+
+  private starting: Promise<void> | null = null;
+
+  /**
+   * Settle on a port to serve on: this one, or the next one nobody else is
+   * holding. True when our own vault is already up on it, false when it is free
+   * for us to spawn on.
+   *
+   * Refusing to start because someone else has 8222 would leave the owner with
+   * a vault they cannot open and nothing to do about it. Everything that talks
+   * to the vault reads `url` from here, so moving is invisible.
+   */
+  private async selectPort(): Promise<boolean> {
+    const first = this.port;
+    for (let i = 0; i < 20; i++) {
+      this.port = first + i;
+      if (!(await this.portOpen())) return false;
+      if (await this.oursOnPort()) return true; // our own server, already up
+    }
+    this.port = first;
+    throw new Error(`nothing is free between ${first} and ${first + 19} for this Mac's vault`);
+  }
+
+  private async startOnce(): Promise<void> {
+    // Running, but perhaps not finished: a bootstrap that failed transiently
+    // left a live process with no account, and returning here would keep the
+    // vault looking empty until something restarted it. Bootstrapping is a
+    // file read when there is nothing to do, so retrying it costs nothing.
+    if (this.child) return this.bootstrap();
     fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const { cert, key } = this.ensureCert();
+    // Whose server is on the port matters more than whether one is: see
+    // `oursOnPort`. If ours is already up we join it; if a stranger is there,
+    // we serve beside it rather than talking to it.
+    if (await this.selectPort()) {
+      await this.bootstrap();
+      return;
+    }
 
     this.child = spawn(this.cfg.binary, [], {
       env: {

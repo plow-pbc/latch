@@ -54,6 +54,44 @@ app.whenReady().then(async () => {
   const image = await win.webContents.capturePage();
   fs.writeFileSync(out, image.toPNG());
   const text = await win.webContents.executeJavaScript("document.body.innerText");
-  console.log("SHOT:" + JSON.stringify({ out, namesAgent: text.includes("Claude Code"), showsId: text.includes("sess_01HZX9K4M2QP") }));
-  app.exit(text.includes("Claude Code") ? 0 : 1);
+
+  // Did the ENFORCED block lose content to the window's fixed height?
+  //
+  // This check outlived the feature that produced it. An owner-purpose row
+  // once sat below the block and starved it; the row is gone, but the shape of
+  // the failure is not — `.fine` is the flexible item in a fixed 460x560
+  // window, so anything that grows beside it takes space from the one part of
+  // this card that is a promise about what will happen, and at that size there
+  // is no scrollbar to admit it. `styles.css` now floors the block, and this is
+  // what proves the floor still holds.
+  //
+  // The obvious signal — are the buttons still on screen — is kept only to show
+  // why it was never enough: the actions row is last, so it holds its place and
+  // reports healthy while the block above it collapses.
+  const metrics = await win.webContents.executeJavaScript(
+    `(() => {
+       const fine = document.querySelector(".fine");
+       const actions = document.querySelector(".actions");
+       return {
+         enforcedClipped: fine.scrollHeight > fine.clientHeight,
+         enforcedHeight: Math.round(fine.getBoundingClientRect().height),
+         enforcedContentHeight: fine.scrollHeight,
+         actionsOnScreen:
+           actions.getBoundingClientRect().bottom <= window.innerHeight &&
+           actions.getBoundingClientRect().top >= 0,
+       };
+     })()`,
+  );
+
+  console.log("SHOT:" + JSON.stringify({
+    out,
+    namesAgent: text.includes("Claude Code"),
+    showsId: text.includes("sess_01HZX9K4M2QP"),
+    ...metrics,
+  }));
+  // A clipped enforced block FAILS the run rather than being noted in passing.
+  // The capability list is this window's entire reason to exist, so a build
+  // that hides part of it is a broken build — and this is the only check that
+  // sees the real window at its real size.
+  app.exit(text.includes("Claude Code") && !metrics.enforcedClipped ? 0 : 1);
 });

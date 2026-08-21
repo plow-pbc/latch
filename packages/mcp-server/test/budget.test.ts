@@ -65,7 +65,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const { canonicalizeAsync } = await import("@domo/protocol");
 const { DeviceAgent, FileOps, HeadlessPolicy } = await import("@domo/device-core");
 const { createDomoMcpServer, DeferredResults } = await import("@domo/mcp-server");
-const { callTool } = await import("./client.js");
+const { callTool, pollUntil } = await import("./client.js");
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
 
@@ -84,7 +84,7 @@ function tempDir(): string {
 }
 
 describe("the budget fires while a slow path resolution is still in flight", () => {
-  it("read_file defers instead of returning late", async () => {
+  it("plow_read_file defers instead of returning late", async () => {
     // Sanity: the stub really is in the path resolution used by the tools.
     const probe = canonicalizeAsync("/tmp");
     await entered;
@@ -102,7 +102,7 @@ describe("the budget fires while a slow path resolution is still in flight", () 
     const file = path.join(dir, "hello.txt");
     fs.writeFileSync(file, "hello mac");
 
-    const call = callTool(server, "read_file", { path: file }, AGENT);
+    const call = callTool(server, "plow_read_file", { path: file }, AGENT);
     // Resolution has begun and is stuck.
     await entered;
     expect(realpathCalls).toBeGreaterThan(0);
@@ -116,16 +116,17 @@ describe("the budget fires while a slow path resolution is still in flight", () 
 
     // Only now let resolution complete; the work then runs to a real result.
     openGate();
-    let poll = payload;
-    for (let i = 0; i < 80 && poll.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "get_result", { handle }, AGENT)).payload;
-    }
+    const poll = (
+      await pollUntil(
+        () => callTool(server, "plow_get_result", { handle }, AGENT),
+        (r) => r.payload.status !== "pending",
+      )
+    ).payload;
     expect(poll.status).toBe("ready");
     expect(poll.result.content).toBe("hello mac");
   });
 
-  it("run_command defers while its declared bounds are still resolving", async () => {
+  it("plow_run_command defers while its declared bounds are still resolving", async () => {
     const home = tempDir();
     const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
     const server = createDomoMcpServer(device, { budgetMs: 30 });
@@ -134,7 +135,7 @@ describe("the budget fires while a slow path resolution is still in flight", () 
 
     const call = callTool(
       server,
-      "run_command",
+      "plow_run_command",
       { argv: ["/bin/echo", "x"], read_paths: [dir], cwd: dir, wait_ms: 5_000 },
       AGENT,
     );

@@ -12,28 +12,29 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
-  GoalsLibrary,
   PolicyDelegate,
-  changeCredentials,
-  readCredentials,
   readCredentialsState,
   resolveBrowserRuntime,
+  VaultItemInput,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { probeFullDiskAccess } from "./fullDiskAccess.js";
+import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
+import { migrateLegacyHome } from "./migrateHome.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
@@ -41,27 +42,34 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient, isRosterId } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
-import { adversarialReview, REVIEWER_INFO } from "./adversarialAgent.js";
+import { adversarialReview } from "./adversarialAgent.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
+  readAgentPurpose,
   readInference,
-  setAnthropicApiKey,
+  setAgentPurpose,
   revokeAndSignOut,
   setApprovalMode,
-  setInferenceProvider,
   signOutOfPlow,
 } from "./settingsActions.js";
 
 // One folder per instance (paths.ts): the home carries everything, including
 // Chromium's userData/sessionData at <home>/electron — never a second
-// name-keyed "Plow*" folder. Two instances sharing one userData
+// name-keyed "Plow Latch*" folder. Two instances sharing one userData
 // contend on Chromium's LevelDB locks, so per-branch homes also keep
 // from-source runs from tripping over each other or the packaged install.
 // All of it must be set before the app is ready: the name so the macOS app
-// menu, About/Hide/Quit items, and dock title read "Plow" instead of
+// menu, About/Hide/Quit items, and dock title read "Plow Latch" instead of
 // "Electron", the paths so Chromium never opens the default locations.
 const instance = resolveInstancePaths({ env: process.env, appData: app.getPath("appData") });
+// A pre-rename "Domo…" home is moved to the new name here, before Chromium
+// opens anything under it (migrateHome.ts explains why a rename is the whole
+// migration). A failed move ABORTS startup — deliberately uncaught: see
+// migrateHome.ts for why continuing would strand the old home for good.
+if (migrateLegacyHome(instance.home)) {
+  console.log(`[app] moved legacy home into ${instance.home}`);
+}
 // THE NAME SET HERE IS THE ONE THE KEYCHAIN SEES. Chromium captures the string
 // it derives `<name> Safe Storage` from at startup, BEFORE `app.whenReady`, and
 // a later `setName` does not move it (measured: an item is created under the
@@ -81,7 +89,7 @@ const rendererDir = path.join(dirname, "renderer");
 // package`); a from-source run has neither and says so.
 const pkg = createRequire(import.meta.url)("../package.json") as { gitCommit?: string };
 console.log(
-  `[app] Plow ${app.getVersion()}${app.isPackaged ? ` (${pkg.gitCommit ?? "no commit stamp"})` : " (from source)"}`,
+  `[app] Plow Latch ${app.getVersion()}${app.isPackaged ? ` (${pkg.gitCommit ?? "no commit stamp"})` : " (from source)"}`,
 );
 
 // setName above rebrands the menus and dock title, but a from-source run is
@@ -126,7 +134,6 @@ const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let device: DeviceAgent | null = null;
-let goals: GoalsLibrary | null = null;
 let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
@@ -203,7 +210,7 @@ function openApprovalWindow(
         height: 560,
         resizable: false,
         fullscreenable: false,
-        title: "Plow — Approve",
+        title: "Plow Latch — Approve",
         webPreferences: {
           preload: path.join(dirname, "preload.cjs"),
           contextIsolation: true,
@@ -290,7 +297,7 @@ function createMainWindow(): void {
     height: bounds?.height ?? 620,
     x: bounds?.x,
     y: bounds?.y,
-    title: "Plow",
+    title: "Plow Latch",
     titleBarStyle: "hiddenInset",
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
@@ -341,7 +348,7 @@ function restorableBounds(saved: WindowBounds | undefined): WindowBounds | null 
   return onScreen ? saved : null;
 }
 
-// MARK: IPC for the main window (audit / goals / rules / settings / status)
+// MARK: IPC for the main window (audit / rules / settings / status)
 
 ipcMain.handle("audit:list", async () => device?.audit.entries() ?? []);
 // Group events into logical activities in the main process, so the sandboxed
@@ -363,16 +370,6 @@ ipcMain.handle("audit:clear", async () => {
   device.audit.clear();
   return true;
 });
-ipcMain.handle("goals:list", async () => goals?.all() ?? []);
-ipcMain.handle("goals:add", async (_e, title: string, text: string) => {
-  goals?.add({ title, text });
-  return goals?.all() ?? [];
-});
-ipcMain.handle("goals:remove", async (_e, id: string) => {
-  goals?.remove(id);
-  return goals?.all() ?? [];
-});
-ipcMain.handle("goals:restoreDefaults", async () => goals?.restoreDefaults() ?? []);
 // Approvals still awaiting an answer, so the UI can show what is outstanding
 // rather than relying on a window that may have been closed.
 ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
@@ -466,26 +463,42 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 // re-reads on every change notification, so a getter that notifies is an
 // unbroken re-render loop.
 /**
- * Deep links into a client's "add a custom MCP connector" screen.
+ * Every web page the renderer may ask to open, in one table.
  *
- * The renderer names a CLIENT, never a URL. `openExternal` is pinned to URLs
- * the app composed itself — the `sms:` one and this table — because a renderer
- * that can hand main an arbitrary URL to open is a renderer that can open
- * anything. An unknown key opens nothing.
+ * The renderer names a KEY, never a URL. `openExternal` is pinned to URLs the
+ * app composed itself — the `sms:` one, the vault's own address, and this
+ * table — because a renderer that can hand main an arbitrary URL to open is a
+ * renderer that can open anything. An unknown key opens nothing.
  *
- * One entry, on purpose. A card earns its place by landing the user where they
- * paste the URL, and Claude's link opens the add-custom-connector modal
- * directly. ChatGPT has no equivalent deep link — the nearest target is a help
- * article about enabling developer mode — so it gets no card rather than a card
- * that promises one click and delivers a document. The step's own copy stays
- * client-agnostic, so this table growing is the only change a new client needs.
+ * `claude` deep-links into that client's "add a custom MCP connector" screen,
+ * and is the only client entry on purpose. A connect card earns its place by
+ * landing the user where they paste the URL, and Claude's link opens the
+ * add-custom-connector modal directly. ChatGPT has no equivalent deep link —
+ * the nearest target is a help article about enabling developer mode — so it
+ * gets no card rather than a card that promises one click and delivers a
+ * document. The connect step's own copy stays client-agnostic, so this table
+ * growing is the only change a new client needs.
+ *
+ * `discord` and `website` are Settings' Support section; `account` is the
+ * Plow web console, Settings' View Account button. It follows the build's API
+ * origin so a `DOMO_API_BASE_URL` run opens the environment it signed into.
+ *
+ * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
+ * Access pane. macOS has no API an app can call to request that permission —
+ * sending the person to the switch IS the whole grant flow (see
+ * fullDiskAccess.ts), so the deep link belongs in this table like any other
+ * page the app may open.
  */
-const CLIENT_CONNECTOR_URLS: Readonly<Record<string, string>> = Object.freeze({
+const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
+  account: `${apiBaseUrl}/app/`,
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
+  discord: "https://watchmepivot.com/discord",
+  website: "https://watchmepivot.com/",
+  fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
-ipcMain.handle("connect:openClient", async (_e, client: string) => {
-  const url = CLIENT_CONNECTOR_URLS[client];
+ipcMain.handle("external:open", async (_e, key: string) => {
+  const url = EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
   return true;
@@ -557,41 +570,68 @@ ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
   settings.showAgentSuggestions = !!on;
   saveSettings(home, settings);
 });
-ipcMain.handle("settings:getApiKey", async () => loadSettings(home).anthropicApiKey ?? "");
-ipcMain.handle("settings:setApiKey", async (_e, key: string) => setAnthropicApiKey(home, key));
+// What the owner says agents are for. This pair is the only way the text is
+// written or read on the renderer's behalf; nothing an agent can reach touches
+// it, which is what makes it trusted context for the reviewer.
+ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
+ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
+  setAgentPurpose(home, purpose),
+);
 /**
- * Everything the renderer is allowed to know about inference: the selection,
- * which providers are usable, and the active model. Deliberately booleans and
- * not credentials — the relay credential never crosses this bridge.
+ * Everything the renderer is allowed to know about inference: whether the
+ * reviewer can run, what it runs, and the stored mode. Deliberately booleans
+ * and display strings — the relay credential never crosses this bridge.
  */
 ipcMain.handle("settings:getInference", async () => readInference(home));
-ipcMain.handle("settings:setInference", async (_e, provider: string) =>
-  setInferenceProvider(home, provider),
-);
-ipcMain.handle("settings:getReviewerInfo", async () => REVIEWER_INFO);
-// The vault's own account: the owner reads it here to sign in on the vault's
-// page, and can replace either half with something of their own choosing.
-ipcMain.handle("vault:get", async () => {
-  const vault = device?.vaultServer;
-  // No vault in this build, or it has not started: genuinely nothing to show.
-  if (!vault) return { status: "empty" };
-  return readCredentialsState(vault.url, vault.dataDir);
+// The vault's contents, for the owner's own eyes and hands. This is the whole
+// point of the tab: the vault's web page is the only other way in, and reaching
+// it means a browser warning about a certificate the app issued to itself.
+ipcMain.handle("vault:items", async () => {
+  const vault = device?.vaultClient;
+  const server = device?.vaultServer;
+  if (!vault || !server) return null;
+  // Locked and empty are different facts and the screen says different words.
+  // An account that is on disk and will not open must never be reported as a
+  // vault that has not started — that sent people to debug a running server.
+  // Read BEFORE starting: a locked account is the very case where the vault's
+  // own bootstrap cannot finish, and the explanation has to survive that.
+  const locked = readCredentialsState(server.dataDir);
+  if (locked.status === "locked") return { locked: true, reason: locked.reason };
+  // Started, not merely launched: the account is written by the vault's first
+  // run, so reading its state before that finishes reports an empty vault.
+  await server.start();
+  if (readCredentialsState(server.dataDir).status !== "ok") return null;
+  // Every type, not only logins: a card and a note are things the owner keeps
+  // here too, and the tab is where they are kept.
+  return vault.list();
 });
 
-// A renderer anchor cannot open a browser from inside Electron, so the main
-// process does it — and only ever for this machine's own vault address.
-ipcMain.handle("vault:open", async () => {
-  const vault = device?.vaultServer;
-  if (!vault) return false;
-  await shell.openExternal(vault.url);
-  return true;
+// One item to fill an edit form with — never a secret value; those are asked
+// for one at a time, below.
+ipcMain.handle("vault:item", async (_e, itemId: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.read(String(itemId));
 });
 
-ipcMain.handle("vault:set", async (_e, email: string, password: string) => {
-  const vault = device?.vaultServer;
-  if (!vault) throw new Error("this build has no vault");
-  await changeCredentials(vault.url, vault.dataDir, { email, password }, vault.certPath);
-  return readCredentials(vault.url, vault.dataDir);
+// A value the OWNER asked to see, in the app window. It never touches a page,
+// and the vault's audit records it as the owner's own reading.
+ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.reveal(String(itemId), field);
+});
+
+ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.remove(String(itemId));
+});
+
+ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.save(input);
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like
@@ -616,6 +656,56 @@ ipcMain.handle("status:get", async () => ({
   name: device?.identity.name ?? "",
   connected: connected,
 }));
+// macOS permission ceilings on the app itself — today just Full Disk Access.
+// A fresh probe per read, because the answer changes outside the app (in
+// System Settings) and there is no event to invalidate a cache on.
+ipcMain.handle("capabilities:get", async () => ({
+  fullDiskAccess: await probeFullDiskAccess(),
+}));
+
+// Launch at Login. macOS owns the bit and loginItem.ts owns the rules (fresh
+// OS read per get, packaged-only writes); this is only the seam that hands it
+// the real Electron API.
+const loginItems: LoginItemApi = {
+  get: () => app.getLoginItemSettings(),
+  set: (settings) => app.setLoginItemSettings(settings),
+};
+ipcMain.handle("launch:get", async () => launchAtLoginState(app.isPackaged, loginItems));
+ipcMain.handle("launch:set", async (_e, on: boolean) =>
+  setLaunchAtLogin(app.isPackaged, loginItems, on),
+);
+
+/**
+ * The one-time first-run default: a user who just set this Mac up wants it
+ * reachable, so launch at login turns ON the moment setup hands over to the
+ * app — and never again after that (`Settings.launchAtLoginDefaulted`), so
+ * turning it off in Settings sticks.
+ *
+ * "Pending" is read entirely off disk: a credential with the marker still
+ * false can only mean a completed setup whose default has not landed —
+ * `finishWithSession` writes both fields, a home signed in from before the
+ * marker existed reads as already defaulted (`loadSettings`), and sign-out
+ * keeps the marker. So someone reopening the setup window from Settings never
+ * trips this, no in-memory "signed in this session" flag is needed, and the
+ * hook is idempotent — which is why it runs at BOTH the hand-over (the setup
+ * window's closed handler) and startup: a crash between setup and the
+ * hand-over leaves the default pending on disk, and the next launch opens the
+ * main window directly, never closing a setup window.
+ *
+ * The attempt is the shot: if the OS declines the write we do not come back on
+ * every launch — the Settings toggle is the recourse. A from-source run is the
+ * one case that does NOT burn it (`supported` false writes nothing), so no dev
+ * checkout enrolls the stock Electron binary and a packaged install's real
+ * first run still gets its default.
+ */
+function applyFirstRunLaunchAtLogin(): void {
+  const settings = loadSettings(home);
+  if (settings.launchAtLoginDefaulted || !settings.relayCredential.trim()) return;
+  if (setLaunchAtLogin(app.isPackaged, loginItems, true).supported) {
+    settings.launchAtLoginDefaulted = true;
+    saveSettings(home, settings);
+  }
+}
 
 // MARK: IPC for software updates (banner + Software Updates settings section).
 // One whole-state shape per read, renderer-side composition-free. In a
@@ -677,7 +767,7 @@ function openOnboardingWindow(): void {
     height: 560,
     resizable: false,
     fullscreenable: false,
-    title: "Plow — Set Up",
+    title: "Plow Latch — Set Up",
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
       contextIsolation: true,
@@ -689,6 +779,10 @@ function openOnboardingWindow(): void {
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
+    // Every hand-over from a completed setup to the main window closes this
+    // window — Continue, the close box, the tray — so this is the one place
+    // the first-run launch-at-login default lands.
+    applyFirstRunLaunchAtLogin();
     // Closing the gate quits; closing the confirmation behind it hands over to
     // the app, the same as Continue. See WindowGate.setupClosed.
     gate.setupClosed();
@@ -793,25 +887,43 @@ app.whenReady().then(async () => {
     home,
     hostName(),
     approvals,
-    undefined,
     resolveBrowserRuntime(process.resourcesPath),
   );
+  // Same tick as the store's construction (see onAbandoned): an approval that
+  // was pending when the app last quit gets closed out in the audit log too,
+  // not only in the approvals directory.
+  approvals.onAbandoned = (record) =>
+    device?.audit.record("approval_abandoned", { intentId: record.intentId });
+  // An item the vault marked "ask again" is not opened on the strength of the
+  // app being unlocked. There is no master password to ask for here — the vault
+  // account is a random string this app generated — so the Mac asks who is at
+  // the keyboard instead, and refuses when it cannot.
+  if (device.vaultClient) {
+    device.vaultClient.onReprompt = async () => {
+      if (!systemPreferences.canPromptTouchID()) return false;
+      try {
+        await systemPreferences.promptTouchID("show a vault item that asks for you");
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  }
   // Say, once, whether this Mac can open its vault account. It is the one fact
   // about the vault that a log is good at: no secret, no noise, and it turns
   // "the vault screen looks wrong" into a one-line answer. `locked` means the
   // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
   if (device.vaultServer) {
-    const vaultState = readCredentialsState(device.vaultServer.url, device.vaultServer.dataDir);
+    const vaultState = readCredentialsState(device.vaultServer.dataDir);
     console.log(
       `[vault] account: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
-  goals = new GoalsLibrary(path.join(home, "device/goals.json"));
-
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
-  mcp = createDomoMcpServer(device);
+  // The version rides the MCP handshake, so it has to be the app's real one.
+  mcp = createDomoMcpServer(device, { version: app.getVersion() });
   await startRelay();
 
   onboarding = new Onboarding({
@@ -819,7 +931,7 @@ app.whenReady().then(async () => {
     home,
     startRelay,
     isConnected: () => connected,
-    deviceName: `Plow (${hostName()})`,
+    deviceName: `Plow Latch (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.
@@ -892,6 +1004,11 @@ app.whenReady().then(async () => {
       (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
     );
   }
+  // A crash between setup saving the credential and the hand-over would leave
+  // the first-run default pending on disk with no setup window left to close —
+  // and this launch goes straight to the main window, so the hand-over hook
+  // never runs. Settle it here; every already-settled home returns early.
+  applyFirstRunLaunchAtLogin();
   // The gate decides what opens. A Mac with no credential cannot do anything
   // until it has one, so it gets the setup window and nothing else — not the
   // main window with a setup window floating beside it.
@@ -904,21 +1021,40 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
-  void relay?.stop();
+let quitting = false;
+let cleanedUp = false;
+app.on("before-quit", (event) => {
+  // The only quit that goes through is the one this handler asks for, once the
+  // browsers are down and their profiles are back where they belong. Everybody
+  // else waits — including somebody hitting Quit again because the first one
+  // seemed slow, which used to take the app out mid-teardown.
+  if (cleanedUp) return;
+  event.preventDefault();
+  if (quitting) return;
+  quitting = true;
   // Kill any live Camoufox session/process group so Firefox children don't outlive us.
-  void device?.shutdown();
+  // Every step of it is timeout-bounded, so this waits seconds, not forever.
+  void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
+    cleanedUp = true;
+    app.quit();
+  });
 });
 
 app.on("window-all-closed", () => {
-  // Stay resident in the tray — Plow is a menu-bar agent, not a document app.
+  // Stay resident in the tray — Plow Latch is a menu-bar agent, not a document app.
 });
 
 // Block any attempt to navigate to remote content or open external windows —
-// the approval surface must never load anything but our local files.
+// the approval surface must never load anything but our local files. "Any
+// file://" is not narrow enough: the preload bridge survives a navigation, and
+// it now reaches the vault, so a local HTML file an attacker can write would
+// inherit it. Only the documents we ship are allowed.
+const OUR_DOCUMENTS = ["index.html", "onboarding.html", "approval.html"].map((f) =>
+  pathToFileURL(path.join(rendererDir, f)).href,
+);
 app.on("web-contents-created", (_e, contents) => {
   contents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("file://")) event.preventDefault();
+    if (!OUR_DOCUMENTS.includes(url.split("?")[0].split("#")[0])) event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
@@ -939,7 +1075,7 @@ function refreshTray(): void {
   const menu = Menu.buildFromTemplate([
     // Through the gate, so the tray cannot hand back a main window this Mac is
     // not entitled to.
-    { label: "Open Plow", click: () => gate.sync() },
+    { label: "Open Plow Latch", click: () => gate.sync() },
     // Update items only when an updater exists (packaged runs) — a dead menu
     // item in a from-source run would just be a lie.
     ...(updates
@@ -953,7 +1089,7 @@ function refreshTray(): void {
         ]
       : []),
     { type: "separator" },
-    { label: "Quit Plow", click: () => app.quit() },
+    { label: "Quit Plow Latch", click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
 }
@@ -976,8 +1112,9 @@ function checkForUpdatesFromMenu(): void {
 
 /**
  * The macOS application menu. Replacing the default menu costs the stock
- * items, so the standard roles (Edit for clipboard, Window) are declared
- * explicitly — a sandboxed renderer still needs working Cmd-C/V. The View
+ * items, so the standard roles (File for Close, Edit for clipboard, Window)
+ * are declared explicitly — a sandboxed renderer still needs working
+ * Cmd-C/V. The View
  * menu (reload, devtools) is dev-only noise and ships only from source.
  */
 function setupAppMenu(): void {
@@ -998,6 +1135,20 @@ function setupAppMenu(): void {
         { role: "unhide" },
         { type: "separator" },
         { role: "quit" },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [
+        // Through the gate, so this cannot hand back a main window a Mac
+        // that is not signed in is not entitled to. Not Cmd-0 — the dev-only
+        // View menu's "Actual Size" (resetZoom) already claims that.
+        { label: "Show Main Window", accelerator: "CmdOrCtrl+1", click: () => gate.sync() },
+        { type: "separator" },
+        // Close (Cmd-W) lives in File on macOS; windowMenu omits it there, so
+        // without this item the accelerator binds to nothing app-wide. Closing
+        // an approval window without deciding is already a denial (fail safe).
+        { role: "close" },
       ],
     },
     { role: "editMenu" },

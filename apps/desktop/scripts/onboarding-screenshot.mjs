@@ -9,10 +9,11 @@
 // The main process owns the onboarding state machine and the window renders
 // whatever `onboarding:get` returns, so stubbing that one handler is enough to
 // drive every screen — the same trick approval-screenshot.mjs uses.
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -60,9 +61,11 @@ const SCREENS = [
       // Whoever texts the code gets the account, and the server cannot tell.
       "This code is a credential",
       "don't share it or post a screenshot",
-      "Open Messages",
+      "Open Messages…",
       "Use a phone code instead",
     ],
+    // The blue button answers Return: nothing to type here, so it holds focus.
+    expectFocus: "Open Messages",
   },
   {
     name: "waiting",
@@ -75,6 +78,7 @@ const SCREENS = [
       "Listening for 4:",
       "Get a New Code",
     ],
+    expectFocus: "Get a New Code",
   },
   {
     name: "waiting-gave-up",
@@ -90,12 +94,15 @@ const SCREENS = [
     // The one failure the user gets no other signal about: a wrong prefix is
     // answered with silence on both channels.
     expect: ["Still nothing", "it has to start with", "Plow Activate:", "Get a New Code"],
+    expectFocus: "Get a New Code",
   },
   {
     name: "phone",
     state: { ...newUser, step: "phone", phone: "" },
     // The lede has to promise a text, not claim one was sent.
     expect: ["Sign in to Plow", "We'll text you a code", "Send Code"],
+    // A screen WITH a field focuses the field — its Enter handler submits.
+    expectFocus: "+1 555 123 4567",
   },
   {
     name: "code",
@@ -108,6 +115,7 @@ const SCREENS = [
       codeExpiresAt: Date.now() + 4 * 60_000 + 30_000,
     },
     expect: ["Check your phone", "If +1 555 123 4567 is on a Plow account", "Expires in 4:", "Resend"],
+    expectFocus: "12345678",
   },
   {
     // The end of the wizard, and the door into the app: past this button the
@@ -116,6 +124,7 @@ const SCREENS = [
     name: "connected",
     state: { ...base, step: "connected" },
     expect: ["This Mac is connected", "u_7Qk2p9", "under Agents", "Continue"],
+    expectFocus: "Continue",
   },
 ];
 
@@ -127,39 +136,21 @@ ipcMain.handle("onboarding:begin", async () => current);
 
 // Without this a thrown write (a missing OUT_DIR, say) leaves the app running
 // with no output and no exit code — a hang that reads like a broken screen.
-process.on("unhandledRejection", (error) => {
-  console.error("SHOT-FAILED:", error);
-  app.exit(1);
-});
+failLoudly();
 
 app.whenReady().then(async () => {
-  fs.mkdirSync(outDir, { recursive: true });
-  const win = new BrowserWindow({
-    width: 460,
-    height: 560,
-    show: false,
-    webPreferences: {
-      preload: path.join(dist, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+  const win = shotWindow(dist, { width: 460, height: 560 });
+  const failures = await shootScreens({
+    win,
+    outDir,
+    prefix: "onboarding",
+    screens: SCREENS,
+    // A reload re-runs the renderer's boot, which pulls the stubbed state.
+    load: async (screen) => {
+      current = screen.state;
+      await win.loadFile(path.join(dist, "renderer/onboarding.html"));
+      await new Promise((r) => setTimeout(r, 400));
     },
   });
-
-  let failures = 0;
-  for (const screen of SCREENS) {
-    current = screen.state;
-    // A reload re-runs the renderer's boot, which pulls the stubbed state.
-    await win.loadFile(path.join(dist, "renderer/onboarding.html"));
-    await new Promise((r) => setTimeout(r, 400));
-
-    const out = path.join(outDir, `onboarding-${screen.name}.png`);
-    fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
-
-    const text = await win.webContents.executeJavaScript("document.body.innerText");
-    const missing = screen.expect.filter((needle) => !text.includes(needle));
-    if (missing.length) failures += 1;
-    console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing }));
-  }
-  app.exit(failures === 0 ? 0 : 1);
+  app.exit(failures ? 1 : 0);
 });

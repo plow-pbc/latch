@@ -6,9 +6,11 @@
 # directory itself and needs no help here.
 #
 # What it removes (all keyed on the normalized branch name):
-#   ~/Library/Application Support/Domo-<branch>          (via `just clean`)
-#   ~/Library/Application Support/Domo-<branch>-local    (the DOMO_API_BASE_URL home)
-#   /tmp/domo-<branch>                                   (evidence screenshots)
+#   ~/Library/Application Support/Plow-Latch-<branch>        (via `just clean`)
+#   ~/Library/Application Support/Plow-Latch-<branch>-local  (the DOMO_API_BASE_URL home)
+#   ~/Library/Application Support/Domo-<branch>{,-local}    (pre-rename homes the
+#                                                            app never migrated)
+#   /tmp/plow-latch-<branch> (and pre-rename /tmp/domo-<branch>)  (evidence screenshots)
 #
 # What it cannot do: revoke this worktree's relay credential. Sign-out only
 # forgets the credential locally — revocation needs the account's own key
@@ -18,7 +20,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Worktrees only. On the main checkout `just clean` would wipe Domo-main —
+# Worktrees only. On the main checkout `just clean` would wipe Plow-Latch-main —
 # the main checkout's identity, rules, audit log and relay credential.
 name=$(sh scripts/worktree-name.sh)
 if [[ -z "$name" ]]; then
@@ -31,16 +33,19 @@ branch=$(sh scripts/worktree-name.sh --branch)
 appsupport="$HOME/Library/Application Support"
 echo "cleaning up worktree '$name'…"
 
-# The production-facing home ("Domo-<branch>"). Unset the overrides so `clean`
-# resolves to this branch's default home, not wherever the caller's
+# The production-facing home ("Plow-Latch-<branch>"). Unset the overrides so
+# `clean` resolves to this branch's default home, not wherever the caller's
 # environment happens to point.
 DOMO_HOME= DOMO_API_BASE_URL= just clean
 
-# The local-relay home ("Domo-<branch>-local") and the screenshot dir.
-rm -rf "$appsupport/Domo-$branch-local"
-rm -rf "/tmp/domo-$branch"
-echo "wiped $appsupport/Domo-$branch-local"
-echo "wiped /tmp/domo-$branch"
+# The local-relay home ("Plow-Latch-<branch>-local"), the pre-rename "Domo…"
+# homes (still there if the app never ran to migrate them), and the
+# screenshot dir.
+rm -rf "$appsupport/Plow-Latch-$branch-local"
+rm -rf "$appsupport/Domo-$branch" "$appsupport/Domo-$branch-local"
+rm -rf "/tmp/plow-latch-$branch" "/tmp/domo-$branch"
+echo "wiped $appsupport/Plow-Latch-$branch-local"
+echo "wiped /tmp/plow-latch-$branch"
 
 echo ""
 echo "Worktree '$name' state is gone. If this worktree had signed in, its"

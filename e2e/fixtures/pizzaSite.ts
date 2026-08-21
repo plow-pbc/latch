@@ -9,7 +9,7 @@ import http from "node:http";
 import { AddressInfo } from "node:net";
 
 export interface PizzaSiteState {
-  loginAttempts: { user: string; pass: string }[];
+  loginAttempts: { user: string; pass: string; userKeys: number; passKeys: number }[];
   orders: { pizza: string; cardNumber: string; cvv: string }[];
 }
 
@@ -54,14 +54,38 @@ export function createPizzaSite(): Promise<PizzaSite> {
          <form method="POST" action="/login">
            <label>Email <input id="user" name="user" type="text"></label>
            <label>Password <input id="pass" name="pass" type="password"></label>
+           <input id="userKeys" name="userKeys" type="hidden" value="0">
+           <input id="passKeys" name="passKeys" type="hidden" value="0">
            <button id="login" type="submit">Log in</button>
-         </form>`,
+         </form>
+         <script>
+           // What a bot defense counts, counted here: character key events the
+           // browser itself produced. \`isTrusted\` is false for anything a page
+           // synthesizes, and the single-character check keeps the count to
+           // characters rather than the named keys. An assignment fires no key
+           // event at all — which is why the answer was zero before there was
+           // typing. Each field keeps its own count, so the visible fill and the
+           // credential fill are separate evidence.
+           for (const id of ["user", "pass"]) {
+             const count = document.getElementById(id + "Keys");
+             document.getElementById(id).addEventListener("keydown", (e) => {
+               if (e.isTrusted && e.key.length === 1) {
+                 count.value = String(Number(count.value) + 1);
+               }
+             });
+           }
+         </script>`,
       );
     } else if (req.method === "POST" && url.pathname === "/login") {
       readBody((params) => {
         const user = params.get("user") ?? "";
         const pass = params.get("pass") ?? "";
-        state.loginAttempts.push({ user, pass });
+        state.loginAttempts.push({
+          user,
+          pass,
+          userKeys: Number(params.get("userKeys") ?? "0"),
+          passKeys: Number(params.get("passKeys") ?? "0"),
+        });
         if (user === "jon@example.com" && pass === "pizza-time-99") {
           const sid = `s${Math.random().toString(36).slice(2)}`;
           sessions.add(sid);
@@ -93,7 +117,10 @@ export function createPizzaSite(): Promise<PizzaSite> {
       html(
         "Checkout",
         `<h1>Checkout — ${pizza}</h1>
-         <iframe id="payframe" src="/payframe?pizza=${encodeURIComponent(pizza)}" width="400" height="300"></iframe>`,
+         <iframe id="payframe" src="/payframe?pizza=${encodeURIComponent(pizza)}" width="400" height="300"></iframe>
+         <!-- After the payment frame on purpose: the frame holding a field is
+              not the last one on a real checkout page. -->
+         <iframe id="tracker" src="/tracker" width="10" height="10"></iframe>`,
       );
     } else if (req.method === "GET" && url.pathname === "/payframe") {
       const pizza = url.searchParams.get("pizza") ?? "";
@@ -103,6 +130,11 @@ export function createPizzaSite(): Promise<PizzaSite> {
            <input type="hidden" name="pizza" value="${pizza}">
            <label>Card number <input id="card-number" name="number" type="text"></label>
            <label>CVV <input id="card-cvv" name="cvv" type="text"></label>
+           <!-- Only in this frame, and refuses to be filled: proves a fill
+                reports the frame that actually failed, not the outer frames
+                that simply do not have the field. -->
+           <label>Locked <input id="card-locked" type="text" readonly></label>
+           <input id="card-hidden" type="text" style="display:none">
            <button id="pay" type="submit">Pay</button>
          </form>`,
       );
@@ -115,6 +147,46 @@ export function createPizzaSite(): Promise<PizzaSite> {
         });
         redirect(`/confirm?n=${nextOrder++}`);
       });
+    } else if (req.method === "GET" && url.pathname === "/blocked") {
+      // The shape the Costco IdP had (issue #88): a real, visible, enabled
+      // button with a backdrop over it swallowing pointer events, and a control
+      // that dismisses it. The handler reports whether the event the page got
+      // was a real one.
+      html(
+        "Blocked",
+        `<h1>Verify</h1>
+         <button id="continue" type="button">Update</button>
+         <div class="modal-backdrop show"
+              style="position:fixed;inset:0;background:rgba(0,0,0,.5)"></div>
+         <button id="dismiss" type="button"
+                 style="position:fixed;top:0;right:0">Close</button>
+         <!-- The ad-laden shape a click budget has to survive: the element is
+              in one frame and the page has several. -->
+         <iframe src="/payframe" width="10" height="10"></iframe>
+         <iframe src="/payframe" width="10" height="10"></iframe>
+         <iframe src="/payframe" width="10" height="10"></iframe>
+         <p id="result">no click yet</p>
+         <script>
+           document.getElementById("continue").addEventListener("click", (e) => {
+             document.getElementById("result").textContent =
+               "clicked isTrusted=" + e.isTrusted;
+           });
+           // Dismissable, like the modal it stands in for: the way through is
+           // the control that closes it, which a real click reaches.
+           document.getElementById("dismiss").addEventListener("click", () => {
+             document.querySelector(".modal-backdrop").remove();
+           });
+         </script>`,
+      );
+    } else if (req.method === "GET" && url.pathname === "/tracker") {
+      // Inert, and only ever embedded: somewhere for a frame to be that has
+      // nothing an action could resolve.
+      html("Tracker", `<p>tracking</p>`);
+    } else if (req.method === "GET" && url.pathname === "/late") {
+      // A frame that did not exist when the click was asked for. The owner
+      // approved origins for the page the device could see, so this must NOT
+      // become clickable mid-wait — it is embedded to prove it doesn't.
+      html("Late", `<button id="late" type="button">Late</button>`);
     } else if (req.method === "GET" && url.pathname === "/confirm") {
       html("Confirmed", `<h1 id="confirmed">Order confirmed #${url.searchParams.get("n")}</h1>`);
     } else {

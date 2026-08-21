@@ -1,6 +1,6 @@
 {
   "name": "@domo/desktop",
-  "productName": "Domo Desktop",
+  "productName": "Plow Latch",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,12 +10,11 @@
     "start": "electron ."
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.68.0",
-    "electron-updater": "^6.6.2",
     "@domo/device-core": "*",
     "@domo/mcp-server": "*",
     "@domo/protocol": "*",
-    "@domo/relay-client": "*"
+    "@domo/relay-client": "*",
+    "electron-updater": "^6.6.2"
   },
   "devDependencies": {
     "electron": "33.4.11",

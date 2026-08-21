@@ -24,6 +24,13 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     single action answers inside Domo's 15 s host cap and the relay's ~20 s
     per-exchange ceiling; a genuinely slower page fails cleanly and the agent
     retries rather than parking a torn 504.
+  - Element actions default to a 3 s timeout (`DEFAULT_ACTION_TIMEOUT_MS`) for
+    the same budget. `click` takes a caller-supplied `timeout_ms`, bounding the
+    WHOLE action rather than each frame the loop tries — the device clamps it to
+    11 s (a second under the `wait` ceiling, for the 1 s post-click settle) so N
+    frames still answer inside the caps. It exists so a click on a page that is
+    still settling has an answer other than `eval`, whose synthesized clicks
+    carry `isTrusted: false` and are what gets a session flagged.
   - Started directly by the Domo device supervisor — no CLI, no `os.fork`, no
     fixed 4 s sleep, no `.state.json`, no Unix socket.
   - JSON lines over **stdio** with request ids; original stdout is dup'ed as
@@ -37,6 +44,35 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
   - `--executable` uses camoufox's `executable_path` so the browser ships in
     our app payload and the shared `~/Library/Caches/camoufox` is never used.
   - SIGTERM, `quit`, and stdin EOF all close the Camoufox context cleanly.
+  - Context-level `request` + `response` listeners keep the last five 4xx/5xx
+    the pages saw, for everything a page asked for on its own account (a
+    top-level navigation is dropped — the agent sees that one for itself).
+    Each keeps status, method, the origin that refused and the origin that
+    asked, read when the REQUEST was made, plus `Retry-After` and `Server`;
+    every reply an action produces drains them as `failed_requests`, an error
+    as much as a result. Upstream reports nothing about a page's own traffic,
+    so an action whose XHR came back 429 answered `{ok: true}`.
+  - `fill` types the value in rather than assigning it where it can: everything
+    before the last `TYPED_CHARS` is assigned and the tail is passed to
+    `el.type` one character at a time, with `_type_value` owning which nodes
+    and which values that holds for and `TYPEABLE_JS` owning why a given node
+    takes no keys. Upstream's `el.fill()` sets `.value` and fires a single
+    `input`, so a password box goes from empty to complete with no
+    keydown/keypress/keyup at all, which is what interrogation-style bot
+    defenses (Kasada, Akamai Bot Manager) sample — Costco's sign-in answered
+    every credential submit with a 429 (issue #86). The split keeps a long
+    value inside the relay budget.
+  - **`humanize` is deliberately NOT passed, and the pointer still teleports.**
+    This is the other half of #86 and it does not have a fix here. Camoufox's
+    humanized cursor hangs this browser build (`official/152.0.4-beta.28`,
+    `camoufox==0.5.4`): `page.mouse.move` never returns when the walk is short
+    and near the top-left of the viewport — clicking an element in that corner
+    hangs, headed and headless alike, and there is no timeout on a mouse
+    operation to bound it. `frame.click(selector)` is worse still: with the
+    humanized cursor on it never dispatches a click AT ALL, at any geometry,
+    because Playwright's hit-target interceptor and the moving pointer deadlock
+    (verified out to 40 s). A cursor path is worth having and this is the wrong
+    build to get it from; the fix lives in `runtime.lock.json`, not here.
   - Fingerprint OS pinned to `macos` (upstream lets Camoufox pick randomly
     among macos/windows/linux). The device is a Mac, so this is the honest
     fingerprint — and it's what lets the packaged app drop Camoufox's bundled

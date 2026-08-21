@@ -4,7 +4,40 @@
    enforceable "fine print" is the capability set (what the sandbox is built
    from); the goal/request are shown as unverifiable context. */
 
+import { InputArming } from "./arming.js";
+
 const root = document.getElementById("root");
+
+// The window may take key focus while the human is typing elsewhere, so input
+// only counts once the window has been quietly focused for a moment AND the
+// press began after that (see arming.js). Press starts are recorded at capture
+// phase so they're seen before any click handler consults mayActivate().
+const arming = new InputArming({ now: () => performance.now() });
+window.addEventListener("keydown", (e) => arming.pressStarted("key", { repeat: e.repeat }), true);
+window.addEventListener("mousedown", () => arming.pressStarted("mouse"), true);
+
+/* Disable the action buttons until the mouse arming delay elapses. Arming is
+   ONE-SHOT, at show: an agent is actively driving this Mac, so window focus
+   shifts under the user constantly — re-arming on focus made the buttons fade
+   out and revoke themselves mid-read. Once enabled they stay enabled; the
+   press-start rule in arming.js still rejects input that began elsewhere.
+   Keyboard arms later than mouse, so `focusTarget` only gets keyboard focus
+   at that later moment; until then a stray Return has nothing to land on, and
+   the gate in button() covers the rest. */
+function armActions(buttons, focusTarget) {
+  const setEnabled = (on) => buttons.forEach((b) => (b.disabled = !on));
+  arming.arm();
+  setEnabled(false);
+  setTimeout(() => setEnabled(true), arming.remainingMs("mouse"));
+  // The default focus must YIELD: buttons are Tab-focusable from the moment
+  // they enable, and stealing focus from a button the human already chose
+  // (Deny, say) would aim their next armed Return at Allow Once instead —
+  // the exact accident this file exists to prevent. Renderer-only wiring no
+  // vitest case can pin, so don't "simplify" the guard away.
+  setTimeout(() => {
+    if (!buttons.includes(document.activeElement)) focusTarget.focus();
+  }, arming.remainingMs("key"));
+}
 
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
@@ -25,6 +58,8 @@ async function render() {
   const req = await window.domo.approvalGet();
 
   if (req.kind === "access") {
+    const deny = button("Deny", "btn", () => decide(`access:${req.agentId}`, "deny"));
+    const allow = button("Allow", "btn primary", () => decide(`access:${req.agentId}`, "allow_once"));
     root.replaceChildren(
       el("div", { class: "who" }, [el("span", { class: "name", text: req.agentDisplay })]),
       el("div", { class: "faint mono", text: req.agentId }),
@@ -33,11 +68,9 @@ async function render() {
         el("div", { class: "lbl", text: "Stated goals (unverified)" }),
         el("div", { text: req.goals || "—" }),
       ]),
-      el("div", { class: "actions" }, [
-        button("Deny", "btn", () => decide(`access:${req.agentId}`, "deny")),
-        button("Allow", "btn primary", () => decide(`access:${req.agentId}`, "allow_once")),
-      ]),
+      el("div", { class: "actions" }, [deny, allow]),
     );
+    armActions([deny, allow], allow);
     return;
   }
 
@@ -93,7 +126,8 @@ async function render() {
     el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
   );
   if (reviewing) document.body.appendChild(reviewing);
-  allowOnce.focus(); // keyboard default: Return activates Allow Once
+  // Keyboard default: Return activates Allow Once — but only once armed.
+  armActions([deny, alwaysAllow, allowOnce], allowOnce);
 
   // When the adversarial agent responds, clear the indicator and (if it made a
   // recommendation) highlight the button it suggests. A null decision means it
@@ -111,7 +145,7 @@ async function render() {
     // the capability set and nothing written here may look like part of it.
     if (data.reason) {
       reviewerNote.replaceChildren(
-        el("span", { class: "lbl", text: "Adversarial agent (advice only)" }),
+        el("span", { class: "lbl", text: "AI Reviewer (advice only)" }),
         el("span", { text: data.reason }),
       );
     }
@@ -124,7 +158,13 @@ async function render() {
 
 function button(label, cls, onClick) {
   const b = el("button", { class: cls, text: label });
-  b.addEventListener("click", onClick);
+  // Every action goes through the arming gate: the disabled attribute blocks
+  // clicks before the delay, but only the gate knows whether the press that
+  // produced this click STARTED after arming (keydown/mousedown time, not
+  // click time — see arming.js).
+  b.addEventListener("click", () => {
+    if (arming.mayActivate()) onClick();
+  });
   return b;
 }
 

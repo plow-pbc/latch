@@ -1,0 +1,230 @@
+/* The Vault tab, from Mary's design (vault.html) — her rules, kept as she
+   wrote them and scoped to `.vaultui` so no other screen changes.
+
+   Her palette is not here. Every colour below is an app-wide token from
+   styles.css, read directly — the one exception is the modal scrim, which the
+   app has no token for. So this tab follows light and dark with every other
+   screen: the layout is hers, the colours are the app's, and the scheme she
+   drew ships nowhere yet.
+
+   The fonts are hers too, vendored beside this file: a packaged app has no
+   network, and a design that falls back to the system face is not the design.
+*/
+/* One file, five weights: DM Sans ships as a variable font, so the same
+   binary answers for every weight the design asks for. */
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("fonts/DMSans.woff2") format("woff2");
+}
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/DMSans.woff2") format("woff2");
+}
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/DMSans.woff2") format("woff2");
+}
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/DMSans.woff2") format("woff2");
+}
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/DMSans.woff2") format("woff2");
+}
+@font-face {
+  font-family: "DM Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/DMMono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "DM Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/DMMono-500.woff2") format("woff2");
+}
+
+/* The pane itself: her content surface, filling the tab. Her two faces are the
+   only thing this file still declares. */
+.vaultui {
+  --sans: 'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --mono: 'DM Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  background: var(--bg); color: var(--fg);
+  font-family: var(--sans); padding: 26px 30px 40px;
+}
+
+.vaultui .masthead {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 18px;
+    padding-bottom: 20px; margin-bottom: 22px; border-bottom: 1px solid var(--border); position: relative;
+  }
+.vaultui .masthead::before { content: ""; position: absolute; inset: -26px -30px auto -30px; height: 120px; pointer-events: none;
+    background: radial-gradient(520px 150px at 80% -20%, var(--sel), transparent 70%); }
+.vaultui .masthead h1 { margin: 9px 0 8px; font-size: 27px; font-weight: 600; letter-spacing: -.02em; }
+.vaultui .trust .lk { color: var(--blue-fg); }
+.vaultui .col { max-width: 760px; }
+.vaultui .list-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 15px; }
+.vaultui .list-head .lt { font-family: var(--mono); text-transform: uppercase; font-size: 9.5px; font-weight: 500; letter-spacing: .16em; color: var(--muted); }
+.vaultui .list-head .lc { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.vaultui .vlist { display: flex; flex-direction: column; gap: 11px; }
+.vaultui .vitem { border: 1px solid var(--border); border-radius: 13px; background: var(--card); overflow: hidden; transition: border-color .16s, background .16s; }
+.vaultui .vitem:hover { border-color: var(--border-strong); }
+.vaultui .vitem.open { border-color: var(--border-strong); background: var(--hover); }
+.vaultui .vrow { display: flex; align-items: center; gap: 15px; width: 100%; text-align: left; cursor: pointer;
+    background: none; border: 0; color: inherit; font-family: var(--sans); padding: 17px 18px; }
+.vaultui .vicon { width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center;
+    background: var(--hover); color: var(--muted); }
+.vaultui .vicon svg { width: 17px; height: 17px; }
+.vaultui .vitem[data-type="card"]     .vicon { color: var(--blue-fg); }
+.vaultui .vitem[data-type="identity"] .vicon { color: var(--amber-fg); }
+.vaultui .vitem[data-type="note"]     .vicon { color: var(--green-fg); }
+.vaultui .vmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.vaultui .vtitle { font-size: 14px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; }
+.vaultui .vctx { font-size: 12px; font-weight: 300; color: var(--muted); font-family: var(--mono); letter-spacing: .01em; line-height: 1.45;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vaultui .vtag { flex: none; align-self: center; font-family: var(--mono); text-transform: uppercase; font-size: 8.5px; font-weight: 500; letter-spacing: .13em;
+    padding: 5px 9px; border-radius: 6px; color: var(--zinc-fg); background: var(--zinc-bg); border: 1px solid var(--zinc-bd); }
+.vaultui .vitem[data-type="card"]     .vtag { color: var(--blue-fg); background: var(--blue-bg); border-color: var(--blue-bd); }
+.vaultui .vitem[data-type="identity"] .vtag { color: var(--amber-fg); background: var(--amber-bg); border-color: var(--amber-bd); }
+.vaultui .vitem[data-type="note"]     .vtag { color: var(--green-fg); background: var(--green-bg); border-color: var(--green-bd); }
+.vaultui .vchev { flex: none; color: var(--muted); transition: transform .2s ease, color .14s; }
+.vaultui .vchev svg { width: 16px; height: 16px; display: block; }
+.vaultui .vitem.open .vchev { transform: rotate(180deg); color: var(--blue-fg); }
+.vaultui .vbody { display: none; padding: 2px 18px 20px; border-top: 1px solid var(--border); margin-top: -1px; }
+.vaultui .vitem.open .vbody { display: block; animation: bodyIn .22s ease; }
+@keyframes bodyIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.vaultui .vbody-inner { padding-top: 18px; }
+.vaultui .group { margin-bottom: 24px; }
+.vaultui .group:last-of-type { margin-bottom: 0; }
+.vaultui .group-h { font-family: var(--mono); text-transform: uppercase; font-size: 9px; font-weight: 500; letter-spacing: .16em; color: var(--blue-fg); margin: 0 0 15px; opacity: .85; }
+.vaultui .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px 14px; }
+.vaultui .grid2 .span2 { grid-column: 1 / -1; }
+.vaultui .field { margin-bottom: 15px; }
+.vaultui .field:last-child { margin-bottom: 0; }
+.vaultui .grid2 .field { margin-bottom: 0; }
+.vaultui .field > label { display: block; font-family: var(--mono); text-transform: uppercase; font-size: 8.5px; font-weight: 500; letter-spacing: .14em; color: var(--muted); margin: 0 0 8px; line-height: 1.3; }
+.vaultui .field > label .req { color: var(--red-fg); margin-left: 3px; }
+.vaultui .inwrap { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--bg); padding: 4px 5px 4px 12px; transition: border-color .14s, background .14s; }
+.vaultui .inwrap:focus-within { border-color: var(--focus); background: var(--hover); }
+.vaultui .inp { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--fg);
+    font-family: var(--sans); font-size: 13px; padding: 9px 0; letter-spacing: .01em; line-height: 1.4; }
+.vaultui .inp::placeholder { color: var(--faint); }
+.vaultui .field.secret .inp { font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; }
+.vaultui textarea.inp { resize: vertical; min-height: 68px; line-height: 1.6; font-size: 12.5px; padding-top: 10px; }
+.vaultui .gen-hint { font-size: 11px; font-weight: 300; color: var(--muted); margin: 8px 0 0; line-height: 1.5; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: color .14s; }
+.vaultui .gen-hint:hover { color: var(--blue-fg); }
+.vaultui .gen-hint svg { width: 12px; height: 12px; }
+.vaultui .add-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; font-weight: 600; color: var(--blue-fg); cursor: pointer; background: none; border: 0; padding: 0; transition: color .14s; }
+.vaultui .add-link:hover { color: var(--blue-fg); }
+.vaultui .add-link svg { width: 13px; height: 13px; }
+/* Nothing to remove, when there is only one site left to remove. */
+.vaultui .url-rows > .field:only-child .drop { display: none; }
+.vaultui .mini { flex: none; width: 28px; height: 28px; border-radius: 7px; border: 0; background: none; cursor: pointer;
+    color: var(--muted); display: grid; place-items: center; transition: background .13s, color .13s; }
+.vaultui .mini svg { width: 14px; height: 14px; }
+.vaultui .mini:hover { background: var(--hover); color: var(--fg); }
+.vaultui .vfoot { display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--border); }
+.vaultui .use-note { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); }
+.vaultui .use-note svg { width: 13px; height: 13px; color: var(--blue-fg); opacity: .8; }
+.vaultui .vfoot .acts { display: flex; align-items: center; gap: 9px; }
+.vaultui .btn { font-family: var(--sans); font-size: 12.5px; font-weight: 600; cursor: pointer; border-radius: 9px; padding: 8px 15px; border: 1px solid var(--border-strong); background: var(--hover); color: var(--fg); transition: background .14s, color .14s, border-color .14s, transform .06s; }
+.vaultui .btn:hover { background: var(--hover); color: var(--fg); }
+.vaultui .btn:active { transform: translateY(.5px); }
+.vaultui .btn.save { background: var(--blue-fg); border-color: var(--blue-fg); color: var(--card); box-shadow: 0 4px 14px -6px var(--blue-bd); }
+.vaultui .btn.save:hover { filter: brightness(1.06); background: var(--blue-fg); color: var(--card); }
+.vaultui .btn.danger { background: transparent; border-color: var(--red-bd); color: var(--red-fg); }
+.vaultui .btn.danger:hover { background: var(--red-bg); color: var(--red-fg); }
+/* Scrim: zinc-950, the neutral both palettes are built from, so it dims the
+   window behind without tinting it. The app has no token for one. */
+.vaultui .overlay { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; padding: 28px 24px;
+    background: rgba(9, 9, 11, 0.55); backdrop-filter: blur(5px); }
+.vaultui .overlay.show { display: flex; animation: fade .16s ease; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.vaultui .sheet { width: 100%; max-width: 520px; max-height: 88vh; display: flex; flex-direction: column;
+    background: var(--card); border: 1px solid var(--border-strong); border-radius: 16px;
+    box-shadow: var(--shadow); animation: rise .2s ease; position: relative; overflow: hidden; }
+.vaultui .sheet::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .04; mix-blend-mode: screen; z-index: 3;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+.vaultui .sheet-top { flex: none; display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--border); position: relative; z-index: 4; }
+.vaultui .sheet-back { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--bg); color: var(--muted);
+    cursor: pointer; display: grid; place-items: center; transition: background .13s, color .13s; }
+.vaultui .sheet-back svg { width: 15px; height: 15px; }
+.vaultui .sheet-back:hover { background: var(--hover); color: var(--fg); }
+.vaultui .sheet-titlewrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.vaultui .sheet-top h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.vaultui .sheet-top .htag { font-family: var(--mono); text-transform: uppercase; font-size: 8px; font-weight: 500; letter-spacing: .13em; color: var(--blue-fg); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 5px; padding: 3px 7px; }
+.vaultui .sheet-x { flex: none; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--bg); color: var(--muted);
+    cursor: pointer; display: grid; place-items: center; transition: background .13s, color .13s; }
+.vaultui .sheet-x svg { width: 14px; height: 14px; }
+.vaultui .sheet-x:hover { background: var(--hover); color: var(--fg); }
+.vaultui .sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; position: relative; z-index: 2; }
+.vaultui .sheet-body::-webkit-scrollbar { width: 10px; }
+.vaultui .sheet-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 3px solid var(--card); }
+.vaultui .picker-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.vaultui .ptype { display: flex; align-items: flex-start; gap: 12px; text-align: left; cursor: pointer; padding: 15px 15px;
+    border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg); color: inherit; font-family: var(--sans);
+    transition: border-color .14s, background .14s, transform .06s; }
+.vaultui .ptype:hover { border-color: var(--focus); background: var(--hover); }
+.vaultui .ptype:active { transform: translateY(.5px); }
+.vaultui .ptype .pi { width: 32px; height: 32px; border-radius: 9px; flex: none; display: grid; place-items: center; background: var(--hover); color: var(--muted); }
+.vaultui .ptype .pi svg { width: 17px; height: 17px; }
+.vaultui .ptype[data-new="card"]     .pi { color: var(--blue-fg); }
+.vaultui .ptype[data-new="identity"] .pi { color: var(--amber-fg); }
+.vaultui .ptype[data-new="note"]     .pi { color: var(--green-fg); }
+.vaultui .ptype > span:last-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.vaultui .ptype .pn { display: block; font-size: 13.5px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; }
+.vaultui .ptype .pd { display: block; font-size: 11px; font-weight: 300; color: var(--muted); line-height: 1.5; }
+.vaultui .sheet-foot { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 15px 20px; border-top: 1px solid var(--border); position: relative; z-index: 4; }
+.vaultui .sheet-back[hidden],
+.vaultui .sheet-foot[hidden],
+.vaultui .htag[hidden] { display: none !important; }
+.vaultui .sheet-foot .btn.ghost { background: transparent; }
+.vaultui .btn.save[disabled] { opacity: .4; cursor: not-allowed; box-shadow: none; filter: none; }
+.vaultui .btn.save[disabled]:hover { filter: none; }
+.vaultui .req-note { margin-right: auto; font-size: 11px; font-weight: 300; color: var(--muted); }
+.vaultui .req-note .req { color: var(--red-fg); }
+.vaultui .confirm-card { width: 100%; max-width: 372px; background: var(--card); border: 1px solid var(--border-strong); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 22px; animation: rise .18s ease; position: relative; }
+.vaultui .confirm-h { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.vaultui .confirm-acts { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+.vaultui .toast { position: fixed; bottom: 28px; left: 50%; transform: translate(-50%, 20px); background: var(--blue-fg); color: var(--card);
+    font-family: var(--mono); text-transform: uppercase; font-size: 10.5px; letter-spacing: .08em; font-weight: 500;
+    padding: 11px 16px; border-radius: 10px; box-shadow: var(--shadow); opacity: 0; pointer-events: none;
+    transition: opacity .2s, transform .2s; z-index: 100; }
+.vaultui .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* Her masthead button, back-link, trust line and sheet copy. */
+.vaultui .trust { max-width: 560px; font-size: 12.5px; font-weight: 300; color: var(--muted); line-height: 1.55; margin: 0; }
+.vaultui .btn-primary {
+    font-family: var(--sans); font-size: 13px; font-weight: 700; cursor: pointer;
+    background: var(--blue-fg); color: var(--card); border: 1px solid var(--blue-fg); border-radius: 10px;
+    padding: 9px 15px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+    box-shadow: 0 6px 18px -8px var(--blue-bd); transition: filter .15s, box-shadow .15s, transform .06s;
+  }
+.vaultui .btn-primary svg { width: 15px; height: 15px; }
+.vaultui .btn-primary:hover { filter: brightness(1.06); box-shadow: 0 8px 22px -8px var(--blue-bd); }
+.vaultui .btn-primary:active { transform: translateY(.5px); }
+.vaultui .sheet-sub { font-size: 12.5px; font-weight: 300; color: var(--muted); margin: 0 0 16px; }
+.vaultui .confirm-overlay { z-index: 90; }
+.vaultui .confirm-p { font-size: 12.5px; font-weight: 300; color: var(--muted); line-height: 1.55; margin: 9px 0 20px; }

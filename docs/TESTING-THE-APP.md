@@ -28,7 +28,7 @@ What went, and what it did:
 | Deleted | What it did |
 |---|---|
 | `packages/relay-client/test/fakeRelay.ts` | The stand-in relay: plow's channel handshake, tunnelled HTTP exchanges. |
-| `packages/relay-client/test/relayClient.test.ts` | The relay client's integration tests, which stood one up. |
+| `packages/relay-client/test/relayClient.test.ts` | The relay client's integration tests, which stood one up. (Its lifecycle checks survive against a fake connection in `lifecycle.test.ts` / `liveness.test.ts`.) |
 | `e2e/relay-gate/gate.ts` | The relay + MCP end-to-end gate against a live plow variant stack. |
 | `e2e/transcripts.test.ts` | Ran the transcript scripts under vitest. (The rest of `e2e/` stays: the worktree-naming test and the browser fixtures the package tests import.) |
 | `apps/desktop/scripts/first-run-drive.mjs` | Drove the whole first run with real key and mouse events. |
@@ -36,11 +36,13 @@ What went, and what it did:
 | `apps/desktop/scripts/slow-approval-transcript.mjs` | The slow-approval / long-command round trip with timings. |
 | `apps/desktop/scripts/approve-drive.mjs` | The app half of an acceptance run: seeded credential, real clicks. |
 
-**What this costs, so nobody rediscovers it the hard way:** `@domo/relay-client` keeps only pure
-wire-contract tests (`test/wire.test.ts` — `stripHopByHop`, `Host` preservation, frame validation).
-Nothing in `npx vitest run` opens a socket, sends the auth frame, reconnects, or tunnels an MCP
-call, and nothing in CI does either. Those paths are verified **by hand**, by running the app
-against a locally running plow API and watching what happens.
+**What this costs, so nobody rediscovers it the hard way:** nothing in `npx vitest run` or in CI
+opens a socket to a *real* relay or tunnels an MCP call end to end. That path is verified **by
+hand**, by running the app against a locally running plow API and watching what happens.
+
+What `@domo/relay-client` still covers in process — the wire contract, and the socket lifecycle
+against a fake connection — is enumerated in [README-ts.md](../README-ts.md#integration-coverage)
+§ Integration coverage, which owns that list. Read it before calling a relay-leg gap untestable.
 
 ---
 
@@ -58,6 +60,46 @@ mousedown and mouseup on the *same* element.
 
 Nothing that manipulates the DOM directly can see that. Only real input can. So when you drive the
 app by hand, drive it by hand — keyboard and mouse, not the inspector.
+
+---
+
+## Browser behaviors the fill path rests on
+
+`_type_value` in `vendor/browser-server/server.py` decides what it can send as
+keystrokes from assumptions about what a real browser does with a key and with
+an assigned value. **The suite cannot check any of them** — `fillProbe.py`
+drives fake nodes that answer a `typeable=` knob and read back exactly what was
+typed, so a scenario is green whether the assumption holds or not.
+
+Three of them, in the order the code reaches them:
+
+1. `type()` sends a newline as **Enter**, which a `<textarea>` takes as one line
+   break. Every other typed node has breaks normalized away before anything is
+   sent.
+2. `type()` sends a tab as **Tab**, which moves focus instead of adding a
+   character. A value holding one in its typed tail is assigned whole instead.
+   More generally, what `type()` does with a character depends on whether it is
+   on Playwright's key map — one that is not may arrive as inserted text with no
+   key events at all, which is the outcome the whole typing path exists to
+   avoid. So a value going through `el.type` is the code asking for key events,
+   not a guarantee it got them; `KEY_DELAY_MS` is spent inside that call either
+   way.
+3. An `<input>` **sanitizes an assigned value**, and differently per type. CR
+   and LF never survive. Some types will not keep a leading or trailing tab.
+
+The one that bites: **an assignment is not a guarantee the node kept the value,
+and nothing downstream reports the difference** — the tab guard's branch returns
+without asking `KEYS_DROPPED_JS` at all, and on the split path a value that lost
+its *leading* character is not a prefix of what was wanted, so the check answers
+false. The fill answers ok either way. This is `fill()`'s own behavior, older
+than the typing work, and it is the first thing to suspect if a credential lands
+short.
+
+Do not trust the specifics above — the per-type details have been written down
+wrong here more than once. **Confirm against the field**: drive the real fill
+through the MCP server against a page you control, then read the value back the
+same way the page would and compare it to what you asked for. Re-check whichever
+assumption you touched whenever you change the fill path.
 
 ---
 
@@ -87,40 +129,40 @@ production** (`https://api.plow.co`), including a run from source, so targeting 
 deliberate act:
 
 ```bash
-just app                                          # production, ~/Library/Application Support/Domo-<branch>
-DOMO_API_BASE_URL=http://localhost:4242 just app  # that relay, …/Domo-<branch>-local
-DOMO_HOME=/tmp/domo-x just app                    # an explicit home always wins
+just app                                          # production, ~/Library/Application Support/Plow-Latch-<branch>
+DOMO_API_BASE_URL=http://localhost:4242 just app  # that relay, …/Plow-Latch-<branch>-local
+DOMO_HOME=/tmp/plow-latch-x just app                    # an explicit home always wins
 ```
 
 There is no local default and no flag — you export the URL you want.
 
 `<branch>` is this checkout's normalized branch name (`scripts/worktree-name.sh --branch`), so every
 checkout — main included — has its own home, and none of them is the packaged install's unsuffixed
-`~/Library/Application Support/Domo`.
+`~/Library/Application Support/Plow-Latch`.
 
-**Setting the override moves the home too**, to `…/Domo-<branch>-local`, unless you set `DOMO_HOME`
+**Setting the override moves the home too**, to `…/Plow-Latch-<branch>-local`, unless you set `DOMO_HOME`
 yourself. A credential is only valid against the environment that minted it, so a local one landing
 in the production-facing home would overwrite the credential there and cost you a re-onboarding.
-Plain `just app` against production still uses `…/Domo-<branch>`.
+Plain `just app` against production still uses `…/Plow-Latch-<branch>`.
 
 Outside `just`, nothing moves the home for you. Set both, or you are running a local relay against
 production-facing state:
 
 ```bash
-DOMO_HOME=/tmp/domo-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
+DOMO_HOME=/tmp/plow-latch-local DOMO_API_BASE_URL=http://localhost:4242 npx electron apps/desktop
 ```
 
 **Reset to first-run state.** State lives under `DOMO_HOME` (default
-`~/Library/Application Support/Domo-<branch>` under `just`). With no `relayCredential` in
+`~/Library/Application Support/Plow-Latch-<branch>` under `just`). With no `relayCredential` in
 `app/settings.json` the app is behind the login gate: the Set Up window is the only window there
 is, and there is no main window until the wizard's last button hands over:
 
 ```bash
 DOMO_HOME=$(mktemp -d) just app                                    # a clean first run, your real state untouched
-rm ~/Library/Application\ Support/Domo-<branch>/app/settings.json  # or reset the real one
+rm ~/Library/Application\ Support/Plow-Latch-<branch>/app/settings.json  # or reset the real one
 ```
 
-`just` recipes default `DOMO_HOME` to this checkout's `Domo-<branch>` home — your *real* dev one.
+`just` recipes default `DOMO_HOME` to this checkout's `Plow-Latch-<branch>` home — your *real* dev one.
 Always pass a throwaway to anything that writes state.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
@@ -155,7 +197,7 @@ flag**, and do not use `HeadlessPolicy` for a run that is supposed to prove the 
 false greens by construction.
 
 The product's own escape hatch is the answer. The dialog is its own `BrowserWindow`, title
-`Domo — Approve`, buttons `["Deny", "Always Allow", "Allow Once"]`. Click **Always Allow** once and
+`Plow Latch — Approve`, buttons `["Deny", "Always Allow", "Allow Once"]`. Click **Always Allow** once and
 later identical calls need nobody — the rule persists to `${DOMO_HOME}/device/rules.json` under
 
 ```

@@ -1,127 +1,30 @@
 /**
- * The owner's control over their own vault account: read what it is, and change
- * it to whatever they want.
+ * Whether this machine can open its own vault account — the one fact the vault
+ * screen needs before it can show anything.
  *
- * The account key never changes — it is unwrapped with the old password and
- * re-wrapped with the new one, so everything already in the vault stays
- * readable. Only the machine's copy of the password changes with it.
+ * Changing the account belonged here too, back when a screen offered it. That
+ * screen is gone: the owner edits the vault's CONTENTS in the app now and never
+ * signs in on the vault's own page, so nothing asks for the account itself.
  */
-import { VaultSecretStore, VaultAccount, VaultSecretState } from "./vaultSecretStore.js";
-import { encString, httpCa, masterKeyAndHash, send, signIn, KDF_ITERATIONS, VaultHttp } from "./vaultCrypto.js";
+import { VaultSecretStore, VaultSecretState } from "./vaultSecretStore.js";
+import { httpCa, signIn, VaultHttp } from "./vaultCrypto.js";
 
-export interface VaultCredentialsView {
-  url: string;
-  email: string;
-  password: string;
-}
-
-/** What the owner needs to sign in on the vault's own page. */
-export function readCredentials(url: string, storeDir: string): VaultCredentialsView | null {
-  const account = new VaultSecretStore(storeDir).read();
-  return account ? { url, email: account.email, password: account.password } : null;
-}
-
-/** What the vault screen shows: the credentials, nothing yet, or a locked account. */
+/** What the vault screen shows: a usable account, nothing yet, or a locked one. */
 export type VaultCredentialsState =
   | { status: "empty" }
   | { status: "locked"; reason: "no-storage" | "undecryptable" }
-  | { status: "ok"; credentials: VaultCredentialsView };
+  | { status: "ok" };
 
 /**
- * The same read, with the locked case kept intact all the way to the screen.
- * `readCredentials` flattens it to null, which is right for callers that only
- * want a usable account and wrong for the one that has to explain itself.
+ * The account's state, with the locked case kept intact all the way to the
+ * screen — "locked" and "empty" are different facts and get different words.
+ * The account itself is deliberately NOT returned: nothing needs it but the
+ * code that signs in, which reads the store directly.
  */
-export function readCredentialsState(url: string, storeDir: string): VaultCredentialsState {
+export function readCredentialsState(storeDir: string): VaultCredentialsState {
   const state: VaultSecretState = new VaultSecretStore(storeDir).readState();
-  if (state.status === "ok") {
-    return {
-      status: "ok",
-      credentials: { url, email: state.account.email, password: state.account.password },
-    };
-  }
+  if (state.status === "ok") return { status: "ok" };
   return state.status === "locked" ? { status: "locked", reason: state.reason } : { status: "empty" };
-}
-
-/**
- * Change the email, the password, or both. Anything left blank stays as it is.
- * The vault is updated first; the machine's copy only moves once the vault has
- * accepted, so a failure leaves a working account rather than a stranded one.
- */
-export async function changeCredentials(
-  url: string,
-  storeDir: string,
-  next: { email?: string; password?: string },
-  caPath?: string,
-): Promise<VaultAccount> {
-  const store = new VaultSecretStore(storeDir);
-  const current = store.read();
-  if (!current) throw new Error("this machine has no vault account yet");
-
-  const email = next.email?.trim() || current.email;
-  const password = next.password || current.password;
-  if (email === current.email && password === current.password) return current;
-
-  // Written before the vault is touched, keeping the pair that still works.
-  // If this process dies mid-change, the old credentials are still on disk and
-  // the vault is still holding one of the two — neither is lost.
-  store.write({ email: current.email, password: current.password, pending: { email, password } });
-
-  const http: VaultHttp = { url, ca: httpCa(caPath) };
-  const { userKey, passwordHash } = await signIn(http, current.email, current.password);
-  // The same account key, re-wrapped under whatever the owner chose.
-  const target = masterKeyAndHash(email, password);
-  const rewrapped = encString(userKey, target.stretchedEnc, target.stretchedMac);
-
-  if (email !== current.email) {
-    // Ask for the change first: without mail configured the vault does not
-    // check the token it would have sent, but it still wants the request.
-    const asked = await send(
-      http,
-      "POST",
-      "/api/accounts/email-token",
-      JSON.stringify({ masterPasswordHash: passwordHash, newEmail: email }),
-    );
-    if (asked.status < 200 || asked.status >= 300) {
-      throw new Error(`vault refused the new address (HTTP ${asked.status})`);
-    }
-    const done = await send(
-      http,
-      "POST",
-      "/api/accounts/email",
-      JSON.stringify({
-        masterPasswordHash: passwordHash,
-        newEmail: email,
-        newMasterPasswordHash: target.hash,
-        key: rewrapped,
-        token: "",
-      }),
-    );
-    if (done.status < 200 || done.status >= 300) {
-      throw new Error(`vault refused the new address (HTTP ${done.status})`);
-    }
-  } else if (password !== current.password) {
-    const done = await send(
-      http,
-      "POST",
-      "/api/accounts/password",
-      JSON.stringify({
-        masterPasswordHash: passwordHash,
-        newMasterPasswordHash: target.hash,
-        masterPasswordHint: null,
-        key: rewrapped,
-      }),
-    );
-    if (done.status < 200 || done.status >= 300) {
-      throw new Error(`vault refused the new password (HTTP ${done.status})`);
-    }
-  }
-
-  // The vault has accepted, so the new pair is the one that works and the old
-  // one is dropped.
-  const account = { email, password };
-  store.write(account);
-  return account;
 }
 
 /**
@@ -147,4 +50,3 @@ export async function settlePendingChange(
   store.write({ email: account.email, password: account.password });
 }
 
-export { KDF_ITERATIONS };

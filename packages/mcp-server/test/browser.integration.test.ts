@@ -36,12 +36,15 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       JSON.stringify([
         { id: "L1", title: "Slice of Test", category: "LOGIN", username: "jon@example.com",
           urls: [`http://127.0.0.1:${site.port}/`],
-          fields: { username: "jon@example.com", password: "pizza-time-99" } },
+          descriptors: [{ label: "username", hidden: false, custom: false, alias: false }, { label: "password", hidden: true, custom: false, alias: false }],
+          values: { username: "jon@example.com", password: "pizza-time-99" } },
         { id: "C1", title: "Visa", category: "CREDIT_CARD", username: "", urls: [],
-          fields: { number: "4111111111111111", cvv: "123" } },
+          descriptors: [{ label: "number", hidden: true, custom: false, alias: false }, { label: "cvv", hidden: true, custom: false, alias: true }],
+          values: { number: "4111111111111111", cvv: "123" } },
         { id: "X1", title: "Elsewhere", category: "LOGIN", username: "x",
           urls: ["https://elsewhere.example/"],
-          fields: { password: "do-not-release" } },
+          descriptors: [{ label: "password", hidden: true, custom: false, alias: false }],
+          values: { password: "do-not-release" } },
       ]),
     );
 
@@ -54,8 +57,11 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       credentialBrokerCommand: [path.join(fixtures, "fake-broker", "seed-vault-broker")],
       env: { ...base.env, FAKE_BROKER_VAULT: vaultPath },
     };
-    device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), undefined, runtime);
-    server = createDomoMcpServer(device);
+    device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), runtime);
+    // Three real Camoufoxes take longer to start than a tunnelled call's 8s
+    // budget, and a deferred open answers with a pending envelope and no
+    // session — a clock this test is not about. Give it room.
+    server = createDomoMcpServer(device, { budgetMs: 120_000 });
   }, 60_000);
 
   afterAll(async () => {
@@ -65,14 +71,73 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
   });
 
   const act = async (action: string, extra: Record<string, unknown> = {}, expectOk = true) => {
-    const r = await callTool(server, "browser", { session, action, ...extra }, AGENT);
+    const r = await callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
     if (expectOk) expect(r.isError, `${action}: ${JSON.stringify(r.payload)}`).toBe(false);
     return r;
   };
 
+  /**
+   * Three agents, three real browsers, at once — through the MCP tools, the
+   * way an agent reaches them. It fails if they collide: each session must
+   * read back its OWN page, and closing one must leave the others browsing.
+   */
+  /**
+   * Three browsers at once — the live failure this fixes. Several of the
+   * owner's agents reach this Mac through a single Plow credential, so keying
+   * a session on it made them one agent: the second open was refused, told to
+   * reuse the first's session, and drove it.
+   *
+   * Fails if they collide: each session must read back its own page, and
+   * closing one must leave the others browsing.
+   */
+  it("gives three callers three browsers of their own", async () => {
+    const other: RelayAuth = { agent_id: "other-credential", agent_name: "Other", scopes: ["relay:call"] };
+    const callers = [AGENT, AGENT, other];
+    const pages = callers.map((_, i) => `http://127.0.0.1:${site.port}/?caller=${i}`);
+    let open: { session: string; caller: RelayAuth }[] = [];
+    try {
+      const opened = await Promise.all(
+        callers.map((caller) =>
+          callTool(server, "plow_browser_open", { origins: ["127.0.0.1"], goal: "parallel browsing" }, caller),
+        ),
+      );
+      open = opened.map((r, i) => {
+        expect(r.isError, JSON.stringify(r.payload)).toBe(false);
+        return { session: (r.payload as { session: string }).session, caller: callers[i] };
+      });
+      expect(new Set(open.map((o) => o.session)).size).toBe(3);
+
+      // Driven at the same time, each to its own page.
+      await Promise.all(
+        open.map(({ session, caller }, i) =>
+          callTool(server, "plow_browser", { session, action: "goto", url: pages[i] }, caller),
+        ),
+      );
+      for (const [i, { session, caller }] of open.entries()) {
+        const r = await callTool(server, "plow_browser", { session, action: "url" }, caller);
+        expect(r.isError, `caller ${i}: ${JSON.stringify(r.payload)}`).toBe(false);
+        expect((r.payload as { url: string }).url).toBe(pages[i]);
+      }
+
+      // Closing one leaves the others browsing.
+      await callTool(server, "plow_browser_close", { session: open[0].session }, open[0].caller);
+      open = open.slice(1);
+      for (const [i, { session, caller }] of open.entries()) {
+        const r = await callTool(server, "plow_browser", { session, action: "url" }, caller);
+        expect((r.payload as { url: string }).url).toBe(pages[i + 1]);
+      }
+    } finally {
+      // However this ends, the Mac gets its browsers back — the next test
+      // needs room to open one.
+      for (const { session, caller } of open) {
+        await callTool(server, "plow_browser_close", { session }, caller).catch(() => {});
+      }
+    }
+  }, 300_000);
+
   it("logs in, orders, pays in the iframe, confirms — secrets never cross MCP", async () => {
     const opened = await callTool(
-      server, "browser_open",
+      server, "plow_browser_open",
       { origins: ["127.0.0.1"], credentials_metadata: true, goal: "order a pizza on the test site" },
       AGENT,
     );
@@ -82,21 +147,37 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await act("goto", { url: site.url + "/" });
 
     // The vault answers on its own tool, with no session involved.
-    const creds = await callTool(server, "vault", { action: "list" }, AGENT);
+    const creds = await callTool(server, "plow_vault", { action: "list" }, AGENT);
     const login = (creds.payload.items as { id: string }[]).find((i) => i.id === "L1")!;
     expect(login).toBeTruthy();
     expect(JSON.stringify(creds.payload)).not.toContain("pizza-time-99");
 
-    const described = await callTool(server, "vault", { action: "describe", item: "L1" }, AGENT);
-    expect(described.payload.fields).toContain("password");
+    const described = await callTool(server, "plow_vault", { action: "describe", item: "L1" }, AGENT);
+    expect(described.payload.fields).toContainEqual({ label: "password", hidden: true, custom: false, alias: false });
 
-    await callTool(server, "browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
+    await callTool(server, "plow_browser_request", { session, credential_items: ["L1", "C1", "X1"], goal: "log in and pay" }, AGENT);
 
     await act("fill", { selector: "#user", value: "jon@example.com" });
     await act("fill_secret", { selector: "#pass", item: "L1", field: "password" });
     await act("click", { selector: "#login" });
     expect((await act("text")).payload.text).toContain("Menu");
-    expect(site.state.loginAttempts.at(-1)).toEqual({ user: "jon@example.com", pass: "pizza-time-99" });
+    // Issue #86, on the wire: browser-produced character key events reached
+    // each credential field — one per character, counted by the page itself.
+    // That the landed value came from those keys is a different claim, and the
+    // `keys_dropped` probe assertion is what holds it: a keydown fires whether
+    // or not the character is inserted. `fill()` would have assigned .value
+    // and fired a single input event, and the page — like the defense in
+    // front of a real sign-in — would have counted none at all. The two fields
+    // are counted separately, so neither can cover for the other. Both values
+    // are shorter than TYPED_CHARS, so the count is the whole length rather
+    // than the typed tail — a longer fixture credential would land its head as
+    // an assignment and read here as a typing regression.
+    expect(site.state.loginAttempts.at(-1)).toEqual({
+      user: "jon@example.com",
+      pass: "pizza-time-99",
+      userKeys: "jon@example.com".length,
+      passKeys: "pizza-time-99".length,
+    });
 
     await act("click", { selector: "#pepperoni" });
     await act("click", { selector: "#order" });
@@ -110,6 +191,26 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(refused.isError).toBe(true);
     expect(JSON.stringify(refused.payload)).toContain("refused");
 
+    // A fill searches every frame, so the outer ones fail first with nothing
+    // more interesting than "no such selector here". What comes back has to be
+    // the frame that actually held the field and refused.
+    const locked = await act("fill", { selector: "#card-locked", value: "x" }, false);
+    expect(locked.isError).toBe(true);
+    expect(JSON.stringify(locked.payload)).toContain("not editable");
+
+    // Same rule for a frame that HAS the field and will not hand it over: a
+    // hidden one times out exactly like a frame that hasn't got it, and only
+    // the second of those is worth burying.
+    const hidden = await act("fill", { selector: "#card-hidden", value: "x" }, false);
+    expect(hidden.isError).toBe(true);
+    // The stable half, then the discriminating half: a frame that simply hasn't
+    // got the field also times out, but resolves nothing — and the selector's
+    // own name appears either way, so it cannot be the discriminator.
+    // "resolved to" is Playwright call-log wording; it tracks the pin in
+    // runtime.lock.json.
+    expect(JSON.stringify(hidden.payload)).toContain("Timeout");
+    expect(JSON.stringify(hidden.payload)).toContain("resolved to");
+
     await act("fill_secret", { selector: "#card-number", item: "C1", field: "number" });
     await act("fill_secret", { selector: "#card-cvv", item: "C1", field: "cvv" });
     await act("click", { selector: "#pay" });
@@ -117,7 +218,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(site.state.orders.at(-1)).toMatchObject({ pizza: "pepperoni", cardNumber: "4111111111111111", cvv: "123" });
 
     // A real screenshot arrives as an image block.
-    const shot = parse(await rpc(server, "tools/call", { name: "browser", arguments: { session, action: "screenshot" } }, AGENT));
+    const shot = parse(await rpc(server, "tools/call", { name: "plow_browser", arguments: { session, action: "screenshot" } }, AGENT));
     const blocks = shot.result!.content as { type: string; data?: string }[];
     expect(blocks[0].type).toBe("image");
     expect(Buffer.from(blocks[0].data ?? "", "base64").length).toBeGreaterThan(5000);
@@ -128,7 +229,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     expect(frame!.mime).toBe("image/jpeg");
     expect(Buffer.from(frame!.dataB64, "base64").length).toBeGreaterThan(5000);
 
-    await callTool(server, "browser_close", { session }, AGENT);
+    await callTool(server, "plow_browser_close", { session }, AGENT);
 
     // …and never resurrects a browser the session close shut down.
     expect(await device.browserViewFrame()).toBeNull();
@@ -142,5 +243,96 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     const opAudit = fs.readFileSync(path.join(device.home, "device/browser/credential-audit.log"), "utf8");
     expect(opAudit).toContain("RELEASED");
     expect(opAudit).not.toContain("pizza-time-99");
+  }, 300_000);
+
+  // Issue #88. The claim that cannot be faked and is the whole point: a click
+  // Playwright dispatches is trusted, and one synthesized in `eval` is not.
+  it("clicks a page a stuck agent would have reached for eval on", async () => {
+    const opened = await callTool(
+      server, "plow_browser_open",
+      { origins: ["127.0.0.1"], headed: false, goal: "get past a modal backdrop" },
+      AGENT,
+    );
+    expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
+    session = opened.payload.session as string;
+    const text = async () => (await act("text")).payload.text as string;
+
+    // Three ways a click arrives too early, one row each. The page has four
+    // frames and a click's budget covers the whole action, so what is really
+    // under test is that the budget goes on watching every frame for the thing
+    // to become clickable — not on waiting in each frame in turn, which spends
+    // a quarter of it blind to the other three.
+    const clearBackdrop = "document.querySelector('.modal-backdrop').remove();";
+    const cover = (ms: number) =>
+      "const c = document.createElement('div');" +
+      "c.style.cssText = 'position:fixed;inset:0';" +
+      `document.body.appendChild(c); setTimeout(() => c.remove(), ${ms})`;
+    const arrivals = [
+      // A cover that clears at 1.2 s — already past the quarter a naive split
+      // would give the frame that matters.
+      { label: "cover clears at 1.2s", selector: "#continue", timeout: undefined,
+        setup: cover(1200) },
+      // …and one that clears at 4 s, past the 3 s the tool allowed at all
+      // before this change. This is the recovery `timeout_ms` exists for.
+      { label: "cover clears at 4s, timeout_ms 6000", selector: "#continue", timeout: 6000,
+        setup: cover(4000) },
+      // The element itself arriving late, rather than being uncovered.
+      { label: "element returns at 1s", selector: "#continue", timeout: undefined,
+        setup: "const b = document.getElementById('continue'); b.remove();" +
+               "setTimeout(() => document.body.appendChild(b), 1000)" },
+    ];
+    for (const { label, selector, timeout, setup } of arrivals) {
+      await act("goto", { url: site.url + "/blocked" });
+      await act("eval", { expression: clearBackdrop + setup });
+      await act("click", { selector, ...(timeout === undefined ? {} : { timeout_ms: timeout }) });
+      expect(await text(), label).toContain("clicked isTrusted=true");
+    }
+
+    // The other side of that: a frame injected while the click waits is NOT
+    // eligible. The owner approved origins for the page the device could see,
+    // and a page that knows a click is in flight could otherwise race a frame
+    // carrying the same selector into the DOM (issue #95). What has to hold is
+    // that the frame arrives AFTER the click has taken its list — 2 s in,
+    // against a 5 s budget, so neither end of that ordering is marginal.
+    await act("goto", { url: site.url + "/blocked" });
+    await act("eval", {
+      expression:
+        clearBackdrop +
+        "setTimeout(() => {" +
+        "  const f = document.createElement('iframe');" +
+        "  f.src = '/late'; document.body.appendChild(f);" +
+        "}, 2000)",
+    });
+    const injected = await act("click", { selector: "#late", timeout_ms: 5000 }, false);
+    expect(injected.isError).toBe(true);
+    expect(JSON.stringify(injected.payload)).toContain("no frame has #late");
+    // …and the same click once the frame is part of the page the command sees.
+    // Without this the refusal above would read identically if the injection
+    // had never happened at all — a renamed route, a typo, a 404. Note what it
+    // pins: the freeze is per COMMAND, so a frame that arrived mid-wait is
+    // ordinary on the next one. If #95 ever makes eligibility origin-scoped,
+    // this line is expected to change rather than being a contract to defend.
+    await act("click", { selector: "#late" });
+
+    await act("goto", { url: site.url + "/blocked" });
+
+    // The shape the Costco log has: visible, enabled, stable — and unclickable.
+    // No click gets through a backdrop; the failure names it, which is what the
+    // agent needs to know instead of reaching for `eval`.
+    const blocked = await act("click", { selector: "#continue", timeout_ms: 1000 }, false);
+    expect(blocked.isError).toBe(true);
+    expect(JSON.stringify(blocked.payload)).toContain("intercepts pointer events");
+    expect(await text()).toContain("no click yet");
+
+    // The way through: deal with what is in the way, with a real click.
+    await act("click", { selector: "#dismiss" });
+    await act("click", { selector: "#continue" });
+    expect(await text()).toContain("clicked isTrusted=true");
+
+    // And the fallback all of this exists to replace: the page can tell.
+    await act("eval", { expression: "document.querySelector('#continue').click()" });
+    expect(await text()).toContain("clicked isTrusted=false");
+
+    await callTool(server, "plow_browser_close", { session }, AGENT);
   }, 300_000);
 });

@@ -56,7 +56,11 @@ export function approvalViewModel(
       const names = credentialItems.map((i) =>
         i.title !== null ? `'${i.title}' (${i.category ?? "?"})` : `${i.id} (unknown item)`,
       );
-      return `Credentials: fill ${names.join(", ")} into approved sites (values never leave this Mac)`;
+      // What the owner is actually granting: the value is typed here and never
+      // handed back to the agent — but the agent is driving the page it lands
+      // in, and can read that page. Saying "never leaves this Mac" would have
+      // them approve against a promise the browser does not keep.
+      return `Credentials: fill ${names.join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
     }
     return capabilityDisplay(c);
   };
@@ -119,14 +123,21 @@ export interface AuditActivity {
 export function decidedByLabel(source: string | null): string | null {
   switch (source) {
     case "approve": return "Auto-approved";
-    case "adversarial": return "Adversarial Agent";
+    case "adversarial": return "AI Reviewer";
     case "rule": return "Always-allow rule";
     case "policy": return "Policy (deny mode)";
-    // Not an internal label in the human's view: the operation was denied
-    // because the reviewer could not be paid for, not because anyone chose.
-    case "no_credits": return "Adversarial Agent (out of credits)";
+    // Not internal labels in the human's view: the operation was denied because
+    // the reviewer could not run, not because anyone chose. One cannot be paid
+    // for; the other was never configured.
+    case "no_credits": return "AI Reviewer (out of credits)";
+    case "no_reviewer": return "AI Reviewer (not configured)";
+    case "reviewer_undecided": return "AI Reviewer (would not decide)";
+    case "reviewer_unavailable": return "AI Reviewer (no usable verdict)";
     case "ask":
     case "prompt": return "You (asked)";
+    // The deadline, not a person — see APPROVAL_SOURCE_EXPIRED.
+    case "expired": return "No one (timed out)";
+    case "error": return "Error while asking";
     default: return source;
   }
 }
@@ -141,6 +152,7 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
   const order: string[] = [];
   const map = new Map<string, JSONValue[]>();
   const pendingAccess = new Map<string, string>(); // agent -> activity id
+  const requests = new Map<string, JSONValue>(); // intentId -> its intent_received
   let counter = 0;
   const push = (id: string, e: JSONValue) => {
     if (!map.has(id)) {
@@ -153,11 +165,39 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
   for (const e of events) {
     const ev = jv(e);
     const event = ev.get("event").str ?? "";
-    // "Device started" is noise — never surface it as an activity.
-    if (event === "device_started") continue;
+    // Lifecycle noise, never a row of its own: the device starting, and the
+    // browser runtime starting/stopping under a session whose activity already
+    // tells that story. (A crash IS surfaced, as its own activity.)
+    if (event === "device_started" || event === "browser_started" || event === "browser_stopped")
+      continue;
     const intentId = ev.get("intentId").str;
     const session = ev.get("session").str;
-    if (intentId !== null) {
+    if (event === "intent_received" && intentId !== null) requests.set(intentId, e);
+    if (
+      (event === "browser_session_opened" || event === "browser_session_extended") &&
+      intentId !== null &&
+      session !== null
+    ) {
+      // The open belongs to both stories: the intent row says how the session
+      // was decided, and the session row must exist — and say "Browsing" —
+      // from the moment the browser opens, not from its first command.
+      //
+      // A widening (`browser_session_extended`) belongs to both for the same
+      // reason: the origins and items it added are part of what this session
+      // was allowed to do, and reading them only off the opening intent
+      // understates the session's actual bound to the owner.
+      push(`intent:${intentId}`, e);
+      // ...and the session row carries the request that authorised it, so it
+      // can say WHO drove the browser and WHAT they were allowed to reach.
+      // That was the reported bug: the row naming the agent held no browsing,
+      // and the row holding the browsing named nobody. The decision is
+      // deliberately NOT copied — it outranks the browser branch in
+      // classifyActivity, and would replace the session's live status with
+      // "Allowed once".
+      const request = requests.get(intentId);
+      if (request !== undefined) push(`browser:${session}`, request);
+      push(`browser:${session}`, e);
+    } else if (intentId !== null) {
       push(`intent:${intentId}`, e);
     } else if (session !== null) {
       // One activity per browser session, not one per command.
@@ -197,7 +237,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
   };
 
   const title = activityTitle(events, has, value);
-  const { status, tone } = activityStatus(events, has, entry);
+  const { status, tone, category } = classifyActivity(events, has, entry);
   return {
     id,
     time: dayTime(jv(events[0]).get("ts").str ?? ""),
@@ -205,7 +245,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     status,
     title,
     kind: activityKind(events, has, value),
-    category: activityCategory(has, entry),
+    category,
     command: activityCommand(entry, value),
     agentId:
       value("intent_received", "agent") ??
@@ -222,9 +262,19 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
       value("agent_spawned", "goal"),
     intentId: jv(events[0]).get("intentId").str,
     exitCode: entry("exec_end") ? jv(entry("exec_end")!).get("exit_code").int : null,
-    capabilities: (jv(entry("intent_received") ?? null).get("capabilities").arr ?? []).filter(
-      (c): c is string => typeof c === "string",
-    ),
+    // Every request in this row, not just the first: a session that was
+    // widened carries the opening intent AND each `browser_request` that
+    // extended it, and showing only the first understates to the owner what
+    // their browser was actually allowed to reach.
+    capabilities: [
+      ...new Set(
+        events
+          .filter((e) => jv(e).get("event").str === "intent_received")
+          .flatMap((e) =>
+            (jv(e).get("capabilities").arr ?? []).filter((c): c is string => typeof c === "string"),
+          ),
+      ),
+    ],
     decidedBy: decidedByLabel(value("intent_decision", "source")),
     timeline: events.map(describeStep),
   };
@@ -236,72 +286,157 @@ function activityTitle(
   value: (e: string, k: string) => string | null,
 ): string {
   const request = value("intent_received", "request");
-  if (request !== null) return request;
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
-    const lastNav = [...events]
+    // Where the browser actually went, not what was asked for — and never the
+    // blank staging page every session opens on, which titled real sessions
+    // "Browsing — about:blank" and told the owner nothing.
+    const url = [...events]
       .reverse()
-      .find((e) => jv(e).get("event").str === "browser_navigated");
-    const url = lastNav ? (jv(lastNav).get("url").str ?? "") : "";
-    return url ? `Browsing — ${url}` : "Browser session";
+      .map((e) => (jv(e).get("event").str === "browser_navigated" ? jv(e).get("url").str : null))
+      .find((u): u is string => u !== null && u !== "" && u !== "about:blank");
+    if (url !== undefined) return `Browsing — ${url}`;
+    return request ?? "Browser session";
+  }
+  if (request !== null) return request;
+  if (has("credential_metadata") && value("credential_metadata", "session") === null) {
+    const item = value("credential_metadata", "item");
+    return item !== null ? `Credential fields read — ${item}` : "Credential list read";
   }
   if (has("access_request") || has("access_decision")) {
     return `Access — ${value("access_request", "display") ?? "agent"}`;
   }
   if (has("agent_spawned")) return "Agent spawned";
-  if (has("device_started")) return "Device started";
+  if (has("exec_end")) return "Command finished";
   return jv(events[0]).get("event").str ?? "Activity";
 }
 
-/** Combined status of the whole operation (decision + outcome), color-coded. */
-function activityStatus(
+/**
+ * Combined status of the whole operation (decision + outcome), color-coded,
+ * plus the coarse filter bucket — one tree, so the badge and the chip cannot
+ * drift apart. The buckets:
+ *   - denied:   refused at the approval gate (a person, device, or deadline)
+ *   - failed:   ran but didn't cleanly succeed — sandbox-blocked, errored,
+ *               crashed, or a non-zero exit
+ *   - approved: permitted and completed cleanly
+ *   - other:    pending / spawned / live / uncategorized
+ */
+function classifyActivity(
   events: JSONValue[],
   has: (e: string) => boolean,
   entry: (e: string) => JSONValue | null,
-): { status: string; tone: BadgeTone } {
-  if (entry("intent_rejected")) return { status: "Rejected", tone: "red" };
+): { status: string; tone: BadgeTone; category: string } {
+  if (entry("intent_rejected")) return { status: "Rejected", tone: "red", category: "denied" };
   if (has("access_request") || has("access_decision")) {
     const d = entry("access_decision");
     if (d) {
       const ok = jv(d).get("approved").bool ?? false;
-      return ok ? { status: "Granted", tone: "green" } : { status: "Denied", tone: "red" };
+      return ok
+        ? { status: "Granted", tone: "green", category: "approved" }
+        : { status: "Denied", tone: "red", category: "denied" };
     }
-    return { status: "Pending", tone: "zinc" };
+    return { status: "Pending", tone: "zinc", category: "other" };
   }
-  if (has("device_started")) return { status: "Info", tone: "zinc" };
-  if (has("agent_spawned")) return { status: "Spawned", tone: "blue" };
-  if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
-    if (has("credential_fill_failed")) {
-      return has("browser_session_closed")
-        ? { status: "Closed · fill failed", tone: "amber" }
-        : { status: "Fill failed", tone: "amber" };
-    }
-    if (has("credential_denied") || has("browser_scope_violation")) {
-      return has("browser_session_closed")
-        ? { status: "Closed · scope blocks", tone: "amber" }
-        : { status: "Scope blocked", tone: "amber" };
-    }
-    if (has("browser_session_closed")) return { status: "Closed", tone: "zinc" };
-    if (has("browser_crashed")) return { status: "Crashed", tone: "red" };
-    return { status: "Browsing", tone: "green" };
-  }
+  if (has("agent_spawned")) return { status: "Spawned", tone: "blue", category: "other" };
+  // The decision outranks any browser events riding in the intent's group: a
+  // browser_open/browser_request row says how it was decided, and the live
+  // browsing state belongs to the session's own activity.
   const dec = entry("intent_decision");
   if (dec) {
     const decision = jv(dec).get("decision").str ?? "";
-    if (decision === "deny") return { status: "Denied", tone: "red" };
+    if (decision === "deny") {
+      // The deadline denying is a timeout, not a refusal (approvalStore.ts) —
+      // the audit must not dress it up as one.
+      if (jv(dec).get("source").str === "expired") {
+        return { status: "Timed out", tone: "amber", category: "denied" };
+      }
+      return { status: "Denied", tone: "red", category: "denied" };
+    }
     const base = decision === "always_allow" ? "Always allowed" : "Allowed once";
     // Failures/blocks keep their suffix; plain successes show just the base
     // (no "· done"/"· finished").
-    if (entry("denied_operation")) return { status: `${base} · blocked`, tone: "red" };
-    if (has("exec_error") || has("tool_error")) return { status: `${base} · error`, tone: "red" };
+    if (entry("denied_operation")) {
+      return { status: `${base} · blocked`, tone: "red", category: "failed" };
+    }
+    if (has("exec_error") || has("tool_error")) {
+      return { status: `${base} · error`, tone: "red", category: "failed" };
+    }
     const ee = entry("exec_end");
     if (ee) {
       const code = jv(ee).get("exit_code").int ?? -1;
-      if (code !== 0) return { status: `${base} · failed (exit ${code})`, tone: "amber" };
+      if (code !== 0) {
+        return { status: `${base} · failed (exit ${code})`, tone: "amber", category: "failed" };
+      }
     }
-    return { status: base, tone: "green" };
+    return { status: base, tone: "green", category: "approved" };
   }
-  if (entry("denied_operation")) return { status: "Blocked", tone: "red" };
-  return { status: "Pending", tone: "zinc" };
+  if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
+    const closed = entry("browser_session_closed");
+    // A crash outranks everything the session accumulated before it. Ranked
+    // any lower, a session that hit a scope block — or was refused by the site
+    // — and then died would wear the milder of two true badges.
+    if (jv(closed ?? null).get("reason").str === "crashed" || has("browser_crashed")) {
+      return { status: "Crashed", tone: "red", category: "failed" };
+    }
+    if (has("browser_cookie_merge_failed")) {
+      return { status: "Closed · sign-ins not saved", tone: "amber", category: "failed" };
+    }
+    if (has("credential_fill_failed")) {
+      return closed
+        ? { status: "Closed · fill failed", tone: "amber", category: "failed" }
+        : { status: "Fill failed", tone: "amber", category: "failed" };
+    }
+    // The page would not let a filled secret stay hidden on screen, so the
+    // agent was refused a look at it. The owner should see that as plainly as a
+    // failed fill: it means a credential of theirs is sitting legible on a page
+    // their agent is working in.
+    if (has("credential_mask_failed")) {
+      return closed
+        ? { status: "Closed · mask failed", tone: "amber", category: "failed" }
+        : { status: "Mask failed", tone: "amber", category: "failed" };
+    }
+    if (has("credential_denied") || has("browser_scope_violation")) {
+      // "failed", not "other": the cage refused the agent something, which is
+      // the first thing an owner scanning for trouble filters for. The amber
+      // badge already said so; the bucket disagreed, and the bucket is what
+      // the filter reads.
+      return closed
+        ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
+        : { status: "Scope blocked", tone: "amber", category: "failed" };
+    }
+    // The page's own server refused what the agent asked it to do — ranked
+    // under a crash and a scope block, both stronger claims about the session,
+    // but well above "Browsing".
+    if (events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0)) {
+      return closed
+        ? { status: "Closed · requests refused", tone: "amber", category: "failed" }
+        : { status: "Requests refused", tone: "amber", category: "failed" };
+    }
+    if (closed) return { status: "Closed", tone: "zinc", category: "other" };
+    return { status: "Browsing", tone: "green", category: "other" };
+  }
+  // A vault metadata read carries no intent and no session, so it stands
+  // alone — and it is recorded only after the broker answered, so by the time
+  // it is on disk the operation is already over. (The session-scoped twin of
+  // this event is handled with its browser session above.)
+  const vaultRead = entry("credential_metadata");
+  if (vaultRead && jv(vaultRead).get("session").str === null) {
+    return { status: "Completed", tone: "green", category: "approved" };
+  }
+  if (entry("denied_operation")) return { status: "Blocked", tone: "red", category: "failed" };
+  // A handle-only exec_end from an old log: a deferred run's end recorded
+  // without its intent. The exit code is the whole story.
+  const ee = entry("exec_end");
+  if (ee) {
+    const code = jv(ee).get("exit_code").int ?? -1;
+    return code === 0
+      ? { status: "Finished", tone: "green", category: "approved" }
+      : { status: `Failed (exit ${code})`, tone: "amber", category: "failed" };
+  }
+  if (has("approval_abandoned")) return { status: "Not answered", tone: "zinc", category: "other" };
+  // Only an undecided intent is genuinely pending; anything else unrecognized
+  // is a record, not an operation in flight.
+  if (has("intent_received")) return { status: "Pending", tone: "zinc", category: "other" };
+  return { status: "Info", tone: "zinc", category: "other" };
 }
 
 function activityKind(
@@ -309,7 +444,6 @@ function activityKind(
   has: (e: string) => boolean,
   value: (e: string, k: string) => string | null,
 ): string {
-  if (has("device_started")) return "info";
   if (has("agent_spawned")) return "agent";
   if (has("access_request") || has("access_decision")) return "access";
   if (
@@ -333,37 +467,6 @@ function activityKind(
   return "command";
 }
 
-/**
- * Coarse filter bucket, derived from the events (not the status string):
- *   - denied:   refused at the approval gate (a person/device said no)
- *   - failed:   ran but didn't cleanly succeed — sandbox-blocked, errored, or a
- *               non-zero exit (this absorbs the old "blocked" bucket)
- *   - approved: permitted and completed cleanly
- *   - other:    pending / spawned / uncategorized
- */
-function activityCategory(
-  has: (e: string) => boolean,
-  entry: (e: string) => JSONValue | null,
-): string {
-  if (entry("intent_rejected")) return "denied";
-  if (has("access_request") || has("access_decision")) {
-    const d = entry("access_decision");
-    if (d) return jv(d).get("approved").bool ? "approved" : "denied";
-    return "other"; // pending
-  }
-  const dec = entry("intent_decision");
-  if (dec) {
-    if (jv(dec).get("decision").str === "deny") return "denied";
-    if (entry("denied_operation")) return "failed"; // sandbox/scope block
-    if (has("exec_error") || has("tool_error")) return "failed";
-    const ee = entry("exec_end");
-    if (ee && (jv(ee).get("exit_code").int ?? 0) !== 0) return "failed";
-    return "approved";
-  }
-  if (has("credential_fill_failed") || entry("denied_operation")) return "failed";
-  return "other";
-}
-
 function activityCommand(
   entry: (e: string) => JSONValue | null,
   value: (e: string, k: string) => string | null,
@@ -373,6 +476,21 @@ function activityCommand(
     return argv.filter((a): a is string => typeof a === "string").join(" ");
   }
   return value("intent_received", "request");
+}
+
+/**
+ * What the page's own requests did, for the owner's timeline.
+ *
+ * The audit log carries the whole entry; this is the part a human scanning a
+ * session needs — which host refused what, and how many. Empty when the page's
+ * requests were answered, which is the ordinary case.
+ */
+function refusedSuffix(ev: ReturnType<typeof jv>): string {
+  const refused = ev.get("failed_requests").arr ?? [];
+  if (refused.length === 0) return "";
+  const first = jv(refused[0]);
+  const rest = refused.length > 1 ? ` (+${refused.length - 1} more)` : "";
+  return ` — refused: ${first.get("status").int ?? 0} ${first.get("method").str ?? ""} ${first.get("origin").str ?? ""}${rest}`;
 }
 
 /** One-line human description of a single raw event (used in the timeline). */
@@ -391,23 +509,33 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     case "agent_spawned": text = `Agent spawned — ${ev.get("goal").str ?? ""}`; break;
     case "intent_received": text = `Request: ${ev.get("request").str ?? ""}`; break;
-    case "adversarial_review_started": text = "Adversarial agent started reviewing…"; break;
+    case "adversarial_review_started": text = "AI Reviewer started reviewing…"; break;
     case "adversarial_review_result": {
       const verdict = ev.get("verdict").str ?? "";
       const reason = ev.get("reason").str ?? "";
       const cause = ev.get("cause").str;
-      // "defer to you" is only true when the agent ran and chose not to decide.
-      // A review that could not run at all defers to nobody — saying it did
-      // would misdescribe who decided the operation that follows.
+      // The event does not know which mode it was reviewed under, and an
+      // abstention means different things in each: in Ask mode a human takes
+      // it, in adversarial mode nobody does and the operation is denied. So
+      // the wording describes only the reviewer's own act, which is the same
+      // either way. ANY cause means no verdict came back, and defers to nobody.
+      //
+      // Only `no_credits` says the reviewer never ran, because only that one
+      // knows: the account cannot pay for inference, so there was no call. The
+      // rest is a bag of outages, refusals and unparseable answers that nothing
+      // here can tell apart, and saying "could not run" of a reviewer that ran
+      // and refused is a false account of the failure.
       const label =
-        cause === "no_credits"
-          ? "could not run"
+        cause
+          ? cause === "no_credits"
+            ? "could not run"
+            : "no usable verdict"
           : verdict === "allow"
             ? "allow"
             : verdict === "deny"
               ? "deny"
-              : "defer to you";
-      text = `Adversarial agent: ${label}${reason ? ` — ${reason}` : ""}`;
+              : "would not decide";
+      text = `AI Reviewer: ${label}${reason ? ` — ${reason}` : ""}`;
       state = verdict === "deny" || cause ? "bad" : verdict === "allow" ? "ok" : "neutral";
       break;
     }
@@ -416,6 +544,9 @@ function describeStep(e: JSONValue): AuditStep {
       state = ev.get("decision").str === "deny" ? "bad" : "ok";
       break;
     case "intent_rejected": text = `Rejected: ${ev.get("reason").str ?? ""}`; state = "bad"; break;
+    case "approval_abandoned":
+      text = "Never answered — the app closed while the approval was pending";
+      break;
     case "exec_start": text = `Run started: ${argv()}`; break;
     case "exec_end":
       text = `Run finished (exit ${ev.get("exit_code").int ?? -1})`;
@@ -435,11 +566,23 @@ function describeStep(e: JSONValue): AuditStep {
       text = `Session widened — origins: ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ") || "—"}; items: ${(ev.get("items").arr ?? []).filter((i): i is string => typeof i === "string").join(", ") || "—"}`;
       state = "ok";
       break;
-    case "browser_session_closed": text = `Browser session closed (${ev.get("reason").str ?? ""})`; break;
-    case "browser_command":
-      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}`;
-      state = ev.get("error").str ? "bad" : "neutral";
+    case "browser_cookie_merge_failed":
+      text = `Sign-ins from this session could not be saved (${ev.get("error").str ?? "merge failed"}) — kept in ${ev.get("profile").str ?? "the session profile"}`;
+      state = "bad";
       break;
+    case "browser_session_closed": {
+      const reason = ev.get("reason").str ?? "";
+      const refused = refusedSuffix(ev);
+      text = `Browser session closed (${reason})${refused}`;
+      if (refused || reason === "crashed") state = "bad";
+      break;
+    }
+    case "browser_command": {
+      const refused = refusedSuffix(ev);
+      text = `Browser: ${ev.get("action").str ?? ""}${ev.get("url").str ? ` — ${ev.get("url").str}` : ""}${ev.get("error").str ? ` — ${ev.get("error").str}` : ""}${refused}`;
+      state = ev.get("error").str || refused ? "bad" : "neutral";
+      break;
+    }
     case "browser_navigated": text = `Page: ${ev.get("url").str ?? ""}`; break;
     case "browser_scope_violation":
       text = `Out of scope: ${ev.get("origin").str ?? ""} (${ev.get("action").str ?? ""}) — content locked`;
@@ -464,9 +607,15 @@ function describeStep(e: JSONValue): AuditStep {
       text = `Credential refused: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} — ${ev.get("reason").str ?? ""}`;
       state = "bad";
       break;
-    case "browser_started": text = "Browser launched"; break;
-    case "browser_stopped": text = "Browser stopped"; break;
-    case "browser_crashed": text = "Browser crashed"; state = "bad"; break;
+    case "credential_mask_failed":
+      text = `Page not shown to the agent: a filled credential on ${ev.get("url").str ?? ""} `
+        + `could not be kept hidden on screen, so ${ev.get("action").str ?? "the view"} was refused`;
+      state = "bad";
+      break;
+    case "browser_crashed":
+      text = `Browser crashed (code ${ev.get("code").int ?? -1})`;
+      state = "bad";
+      break;
     default: text = event;
   }
   return { time: clock(ev.get("ts").str ?? ""), text, state };

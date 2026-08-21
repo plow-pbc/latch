@@ -16,15 +16,15 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   (`Connection`/`ConnectionDialer`) and the WebSocket (`ws`) **client** half.
   This Mac only ever dials out, so there is no listener.
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
-  `FileOps`, `Executor` (+ generated seatbelt profile), `BlessedToolRegistry`,
-  `AuditLog`, `GoalsLibrary`, identity/key store; `src/browser/` is the local
+  `FileOps`, `Executor` (+ generated seatbelt profile), `SkillRegistry`,
+  `AuditLog`, identity/key store; `src/browser/` is the local
   browsing subsystem (session grants, origin enforcement, credential gate —
   DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
   Camoufox server + 1Password broker (pins in `runtime.lock.json`;
   `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
   tests use fake servers and need no Python).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
-  (revision 2026-07-28): the reduced tool surface (including the `browser_*`
+  (revision 2026-07-28): the reduced tool surface (including the `plow_browser_*`
   tools), capability construction from tool arguments, and the deferred-result
   contract. Binds no port; takes a `Request`, returns a `Response`.
 - `packages/relay-client` (`@domo/relay-client`) — dials the Plow relay, speaks
@@ -36,14 +36,17 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 **Being rebuilt.** The broker (its rendezvous service, MCP subset, stdio shim,
 connection-string/pinning concepts and pairing flow) has been removed. A Mac
 dials *out* to the Plow relay, which authenticates the calling agent and forwards
-MCP to `@domo/mcp-server`. Both halves of this side exist. **The relay itself
-does not** — different repository, not built — and the in-repo stand-in that
+MCP to `@domo/mcp-server`. Both halves of this side exist. **So does the relay**,
+in the `plow-pbc/plow` repository — `api/plow/relay/` serves the MCP endpoint, the device
+WebSocket and an OAuth flow, covered by `api/tests/relay/`. This line used to say
+it was "not built", which was true when written and cost a later reader a wrong
+assumption; check that repo rather than this sentence. The in-repo stand-in that
 used to verify this side against the wire contract has been deleted (head
 chef's call: a locally running plow API simulates plow). The scripts that drove
 a *live* stack went with it, so there is **no automated live-stack path either**
 — not here, not in CI. The relay leg is verified **by hand**: bring up a plow
-stack, run the app against it, drive it. `packages/relay-client/test` keeps only
-the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+stack, run the app against it, drive it. `packages/relay-client/test` keeps the
+wire-contract checks plus the socket lifecycle against a fake connection. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's
@@ -62,14 +65,18 @@ the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-AP
   derives the capabilities the policy engine and the sandbox will enforce. Goal
   text rides along for the human to read and never influences the bound.
 - **Nothing may block past the call budget.** The relay's pending future times
-  out at **20 seconds**, so a tunnelled call has to answer well inside that. Any
-  tool that cannot returns a deferred handle and keeps working; `get_result`
+  out at **25 seconds**, so a tunnelled call has to answer well inside that. Any
+  tool that cannot returns a deferred handle and keeps working; `plow_get_result`
   retrieves it. A handle belongs to the `agent_id` that created it. This is why
   file operations are async and size-capped: synchronous work blocks the event
   loop and the budget timer never fires.
 - **`agent_id` is the isolation key; `agent_name` is display-only.** Jobs,
   deferred handles and always-allow rules key on the id. The name is nullable
   and not unique — two credentials can share one — so it identifies nothing.
+  Browser sessions are the exception, and deliberately: several of the owner's
+  agents reach this Mac through ONE credential, so keying a session on the id
+  made two of them one browser. A session keys on its unguessable handle, and
+  the Mac is one person's — every browser on it is theirs.
 - **Resolve a path before the human sees it.** The approval dialog's whole value
   is that the human sees what will actually happen, so a supplied path is
   canonicalised before it becomes a capability — never after.
@@ -145,10 +152,10 @@ Use `just` (run `just` to list recipes):
 runtime from the main checkout (APFS clones, no re-download), then installs and
 builds. All per-checkout state is keyed on the normalized branch name
 (`scripts/worktree-name.sh --branch`) — for **every** checkout, main included:
-one folder per instance, `~/Library/Application Support/Domo-<branch>`, which
+one folder per instance, `~/Library/Application Support/Plow-Latch-<branch>`, which
 holds everything including Electron's userData (`<home>/electron`); the app
 name gains a `(<branch>)` suffix on screen. Only the packaged install uses the
-unsuffixed `Domo` home, so no from-source run can touch its state. Each
+unsuffixed `Plow-Latch` home, so no from-source run can touch its state. Each
 checkout signs in for its own relay credential — never copy
 `settings.json` between homes (the relay does not support two devices on one
 credential). `just package` refuses to run from a worktree; package from main

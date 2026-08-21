@@ -1,6 +1,6 @@
 /**
  * How an operation intent gets decided — the branching between approval mode,
- * inference provider, credential availability, and the human dialog.
+ * credential availability, and the human dialog.
  *
  * This lives outside the Electron entry on purpose (same reason as
  * `viewModel.ts` and `spawnAgent.ts`): it is the security-relevant decision
@@ -8,18 +8,18 @@
  * device. `main.ts` keeps only the Electron-shaped adapter around it.
  */
 import { Intent, JSONValue } from "@domo/protocol";
-import { DENIAL_SOURCE_NO_CREDITS } from "@domo/device-core";
 import {
-  agentHistory,
-  PLOW_REVIEWER_INFO,
-  PLOW_REVIEWER_MODEL,
-  REVIEWER_INFO,
+  DENIAL_SOURCE_NO_CREDITS,
+  DENIAL_SOURCE_NO_REVIEWER,
+  DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
+} from "@domo/device-core";
+import {
   REVIEWER_MODEL,
   ReviewArgs,
   ReviewFailureCause,
   Verdict,
 } from "./adversarialAgent.js";
-import { INFERENCE_PROVIDERS, InferenceProvider, Settings } from "./settings.js";
+import { Settings } from "./settings.js";
 
 export type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
@@ -37,88 +37,32 @@ export interface ReviewHint {
   reason: string;
 }
 
-/** Which providers this Mac currently holds a credential for. */
-export type ProviderAvailability = Record<InferenceProvider, boolean>;
-
 /**
- * What the renderer is allowed to know about inference: the selection, which
- * providers are usable, and what the active one runs. **No credentials** — not
- * the relay credential, not the Anthropic key, not a prefix of either.
+ * What the renderer is allowed to know about inference: whether the reviewer
+ * can run. **No credentials** — not the relay credential, not a prefix of one.
  */
 export interface InferenceStatus {
-  provider: InferenceProvider;
-  /** Keyed by provider, so a caller never has to know their names to read it. */
-  available: ProviderAvailability;
-  /** Model + limits of the *active* provider, for display. */
-  info: string;
+  /** Whether this Mac holds the credential the reviewer needs. */
+  available: boolean;
   /**
-   * The stored approval mode, in the SAME snapshot. It is decided by the same
-   * write that takes a credential away — `update` re-applies the interlock —
-   * so reading it separately gave the renderer two async views of one decision
-   * and a window where they disagreed.
+   * The stored approval mode, in the SAME snapshot as availability. Reading the
+   * two separately gave the renderer two async views of one settings file, and
+   * a window where they disagreed.
    */
   approvalMode: Settings["approvalMode"];
 }
 
-/**
- * The stored selection, defaulting to Plow. An absent field reads as `plow`, and
- * so does anything unrecognised — a hand-edited settings.json must not be able
- * to put the reviewer into an undefined state.
- */
-export function activeProvider(settings: Pick<Settings, "inferenceProvider">): InferenceProvider {
-  const stored = settings.inferenceProvider;
-  return INFERENCE_PROVIDERS.includes(stored as InferenceProvider)
-    ? (stored as InferenceProvider)
-    : "plow";
-}
-
-/** A provider is usable exactly when its credential is present. */
-export function providerAvailability(
-  settings: Pick<Settings, "relayCredential" | "anthropicApiKey">,
-): ProviderAvailability {
-  return {
-    plow: !!(settings.relayCredential ?? "").trim(),
-    anthropic: !!(settings.anthropicApiKey ?? "").trim(),
-  };
-}
-
-/** The model the given provider actually runs. Audited, and shown in Settings. */
-export function reviewerModel(provider: InferenceProvider): string {
-  return provider === "plow" ? PLOW_REVIEWER_MODEL : REVIEWER_MODEL;
-}
-
-export function reviewerInfo(provider: InferenceProvider): string {
-  return provider === "plow" ? PLOW_REVIEWER_INFO : REVIEWER_INFO;
-}
-
 /** The renderer-facing shape. Built here so there is one definition of "safe". */
 export function inferenceStatus(settings: Settings): InferenceStatus {
-  const provider = activeProvider(settings);
   return {
-    provider,
-    available: providerAvailability(settings),
-    info: reviewerInfo(provider),
+    available: reviewerAvailable(settings),
     approvalMode: settings.approvalMode ?? "ask",
   };
 }
 
-/** Can the reviewer run at all right now? */
+/** Can the reviewer run at all right now? Exactly: is this Mac signed in. */
 export function reviewerAvailable(settings: Settings): boolean {
-  return providerAvailability(settings)[activeProvider(settings)];
-}
-
-/**
- * Adversarial mode is only meaningful with a working reviewer. When the active
- * provider has no credential — the key was cleared, the Mac was signed out, the
- * provider was switched — the mode falls back to Ask, exactly as it always has
- * when the Anthropic key was cleared.
- *
- * Returns the mode to store, so the caller decides whether to persist.
- */
-export function modeAfterAvailabilityChange(settings: Settings): Settings["approvalMode"] {
-  const mode = settings.approvalMode ?? "ask";
-  if (mode === "adversarial" && !reviewerAvailable(settings)) return "ask";
-  return mode;
+  return !!(settings.relayCredential ?? "").trim();
 }
 
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
@@ -140,8 +84,9 @@ export interface DecideDeps {
  * Decide one intent. The returned `source` records HOW it was decided, for the
  * audit log.
  *
- * The adversarial-agent features need a credential for the selected provider;
- * without one, adversarial mode falls back to Ask and suggestions are skipped.
+ * The adversarial-agent features need a Plow credential; without one,
+ * adversarial mode denies (`DENIAL_SOURCE_NO_REVIEWER`) and Ask
+ * mode's suggestions are skipped.
  */
 export async function decideIntent(
   intent: Intent,
@@ -153,32 +98,37 @@ export async function decideIntent(
   if (mode === "approve") return { decision: "allow_once", source: "approve" };
   if (mode === "deny") return { decision: "deny", source: "policy" };
 
-  const provider = activeProvider(settings);
-  const available = providerAvailability(settings)[provider];
-
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
   // the request and the final decision.
+  // Adversarial mode has no human in it, and the reviewer is told so rather
+  // than left to infer it from the owner's freeform purpose text. Ask mode is
+  // the other way round: the dialog is coming either way, so a reviewer that
+  // wants to defer is saying something the human will actually see.
+  const humanAvailable = mode !== "adversarial";
+
   const review = async () => {
-    const history = agentHistory(deps.auditEntries(), intent.agentId);
     deps.record("adversarial_review_started", {
       intentId: intent.intentId,
       agent: intent.agentId,
-      // The provider that actually ran, and the model it actually used — the
-      // audit log is the test oracle, so it must not name a model that never
-      // saw this intent.
-      provider,
-      model: reviewerModel(provider),
+      // The model that actually ran — the audit log is the test oracle, so it
+      // must not name one that never saw this intent.
+      model: REVIEWER_MODEL,
     });
     const r = await deps.review({
       intent,
-      history,
-      provider,
-      apiKey: (settings.anthropicApiKey ?? "").trim(),
+      // Nothing about the past. The reviewer reasoned from a growing pile of
+      // earlier operations rather than from the request, and each denial fed
+      // the next; it now sees this operation and nothing else.
+      history: [],
       // A SECRET. It reaches the Authorization header of the Plow request and
       // nothing else — never the audit record below, never the renderer.
       plowCredential: (settings.relayCredential ?? "").trim(),
+      // Device-side and human-authored: it comes from the settings file, so no
+      // agent-reachable path can write what the prompt will label TRUSTED.
+      agentPurpose: settings.agentPurpose ?? "",
       apiBaseUrl: deps.apiBaseUrl,
+      humanAvailable,
     });
     deps.record("adversarial_review_result", {
       intentId: intent.intentId,
@@ -192,30 +142,52 @@ export async function decideIntent(
     return r;
   };
 
-  if (mode === "adversarial" && available) {
+  if (mode === "adversarial") {
+    // Decide this BEFORE `review()`, which opens the timeline with "adversarial
+    // agent started" and names the model it is about to use. With no credential
+    // there is no call and no model, so recording one would put a reviewer that
+    // never ran into the audit log — and the audit log is the oracle.
+    if (!reviewerAvailable(settings)) {
+      return { decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER };
+    }
     const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
-    // The account cannot pay for inference, so the reviewer the user chose can
-    // never run. Deny — and say why, in a form the calling agent can read.
+    // The account cannot pay for inference, so the reviewer can never run.
+    // Deny — and say why, in a form the calling agent can read.
     // Quietly reverting to prompting a human would change the mode the user
     // configured, and would hide a standing condition behind one more dialog.
     if (cause === "no_credits") {
       return { decision: "deny", source: DENIAL_SOURCE_NO_CREDITS };
     }
-    // Any other "ask" — the reviewer could not decide; hand it to the human,
-    // telling them what it said rather than prompting them out of nowhere.
-    return {
-      decision: await deps.openApproval(Promise.resolve({ decision: null, reason })),
-      source: "ask",
-    };
+    // Any other "ask". This mode has no human in it — the owner chose "the
+    // reviewer decides", and a modal here contradicts the setting: it appears
+    // on a Mac whose owner has said they are not answering, waits out its
+    // fifteen minutes, and holds every request behind it while it does, because
+    // approvals are serialized. So the fallback is a verdict.
+    //
+    // Deny, because it is the fail-closed answer and because nothing that
+    // arrives here is an argument for access: the reviewer never reached a
+    // verdict.
+    //
+    // One source, not two. There used to be a second — a reviewer that ran and
+    // declined to decide — but `ask` is no longer in the schema the model
+    // answers into, and an `ask` that arrives anyway is refused at the parse
+    // and comes back carrying `unavailable`. Nothing can reach this line
+    // without that cause, so a branch on it would be picking between a live
+    // source and a dead one.
+    return { decision: "deny", source: DENIAL_SOURCE_REVIEWER_UNAVAILABLE };
   }
 
-  // Ask mode (or adversarial with no credential): show the dialog, optionally
-  // with the reviewer's hint when both the toggle and a credential are present.
-  // A 402 here costs only the hint — the human was always the decider.
+  // Ask mode: show the dialog, optionally with the reviewer's hint when both
+  // the toggle and a credential are present. A 402 here costs only the hint —
+  // the human was always the decider.
+  //
+  // A hint is a nicety, so it is skipped when there is no credential:
+  // running a review that cannot run would buy an audit pair and a null
+  // suggestion. Not a gate — nothing the human chose is refused by it.
   const hint =
-    settings.showAgentSuggestions && available
+    settings.showAgentSuggestions && reviewerAvailable(settings)
       ? review().then((r) => ({
           decision:
             r.verdict === "allow"

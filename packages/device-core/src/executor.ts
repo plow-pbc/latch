@@ -45,6 +45,15 @@ export const SandboxProfile = {
       "(allow signal (target children))",
       "(allow sysctl-read)",
       // TODO(v1.x): tighten to the specific services processes need.
+      //
+      // Before you do: the MCP manifest names specific macOS tools it promises
+      // an agent can run, and every one of them resolves a service through
+      // THIS line. `MACOS_TOOLING` in mcp-server/src/tools.ts is the single
+      // list; today it is mdfind, sips and pbcopy/pbpaste, each verified
+      // to exit 0 under this profile as written. An allowlist that misses what
+      // they need turns that copy into a guaranteed denial — the exact bug the
+      // copy was rewritten to remove — so tightening here means re-running them
+      // under the new profile and editing that constant in the same commit.
       "(allow mach-lookup)",
       "(allow file-read-metadata)",
       "(allow file-ioctl)",
@@ -147,11 +156,19 @@ class OutputBuffer {
       });
     });
   }
+
+  onExit(cb: (exitCode: number) => void): void {
+    if (this.exitCode !== null) {
+      cb(this.exitCode);
+      return;
+    }
+    this.waiters.push(() => cb(this.exitCode ?? -1));
+  }
 }
 
 /**
  * Runs approved commands under /usr/bin/sandbox-exec with a per-run generated
- * profile, buffering merged stdout+stderr for the get_output streaming path.
+ * profile, buffering merged stdout+stderr for the plow_get_output streaming path.
  */
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
@@ -222,6 +239,13 @@ export class Executor {
       output: snap.output,
       outputLength: snap.total,
     };
+  }
+
+  /** Invoke cb when the run exits — immediately if it already has. */
+  onExit(handle: string, cb: (exitCode: number) => void): void {
+    const buffer = this.buffers.get(handle);
+    if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
+    buffer.onExit(cb);
   }
 
   output(handle: string, since: number): ExecResult {

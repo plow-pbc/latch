@@ -17,11 +17,12 @@
 // settings the way it does in the app, and the credential in the copy-once
 // block was really minted by `ConnectClient` — from a fake mint, but through
 // the real path.
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -33,6 +34,9 @@ const MCP_URL = "https://api.plow.co/v1/relay/devices/u_7Qk2p9/mcp";
 // fake mint hands back, so the copy-once block has something to show.
 const DEVICE_TOKEN = "plow_EXAMPLEdeviceNOTreal_00000";
 const CLIENT_TOKEN = "plow_EXAMPLEclientNOTreal_00000";
+
+// The roster below the connect card. Display rows, which is all the renderer
+// is ever given — no token, no key prefix, no scopes — one of each kind.
 const ROSTER_ROWS = [
   {
     id: 101,
@@ -62,40 +66,49 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 // Nothing is imported or registered at the top level: Electron does not emit
 // `ready` until this entry module finishes evaluating, and a top-level await
 // makes that a race nobody wants to debug. `setUp` runs inside whenReady.
-const DEVICE_SETTINGS = { relayCredential: DEVICE_TOKEN, accountUid: "u_7Qk2p9", mcpUrl: MCP_URL };
+const DEVICE_SETTINGS = {
+  relayCredential: DEVICE_TOKEN,
+  accountUid: "u_7Qk2p9",
+  mcpUrl: MCP_URL,
+  // The Approvals card shares this tab, and its interesting state is the one
+  // with a reviewer running and a purpose written for it to read.
+  approvalMode: "adversarial",
+  agentPurpose: "Help with grocery orders and calendar. Never touch code or SSH keys.",
+};
 
 async function setUp() {
   const { ConnectClient } = await import(path.join(dist, "connectClient.js"));
   const { saveSettings, loadSettings } = await import(path.join(dist, "settings.js"));
+  // The Agents tab carries the Approvals card too, so this screen now needs the
+  // reviewer's state and the purpose statement. Real actions against the same
+  // throwaway home, for the reason the connect handlers are real.
+  const { readAgentPurpose, readInference, setAgentPurpose, setApprovalMode } = await import(
+    path.join(dist, "settingsActions.js")
+  );
 
   // A Mac that has been through login: a device credential and an endpoint.
   saveSettings(home, { ...loadSettings(home), ...DEVICE_SETTINGS });
 
-  /** Plow, stood in for. Chunk 4 consumes display rows, so the roster calls
-      exist only to satisfy the real Chunk 3 controller when it refreshes. */
+  /** Plow, stood in for — the one call this screen can make. */
   const api = {
     async createAgent(token, name) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
       return { token: CLIENT_TOKEN, keyPrefix: CLIENT_TOKEN.slice(5, 13), name };
     },
-    async listApiKeys(token) {
-      if (token !== DEVICE_TOKEN) throw new Error("the list must use the device credential");
-      return [];
-    },
-    async revokeApiKey(token, id) {
-      if (token !== DEVICE_TOKEN) throw new Error("the revoke must use the device credential");
-      return { status: "revoked", id };
-    },
   };
 
   const connect = new ConnectClient({ api, home, isConnected: () => true });
+
+  // The roster half of the state, stubbed. `ConnectClient` would reach Plow to
+  // fill it, and this screen stands Plow in — so the rows are set here and the
+  // rest of the state is the real one.
   let roster = ROSTER_ROWS;
   let rosterError = null;
   let revokeError = null;
   const state = () => ({ ...connect.state(), roster, rosterError, revokeError });
 
-  // The main window's renderer contract, with Chunk 3's state/revoke surface
-  // stubbed explicitly so this harness remains owned by the UI chunk.
+  // The main window's IPC surface, as far as this screen reaches. `connect:*`
+  // are the real handlers from main.ts, pointed at the same class.
   ipcMain.handle("connect:get", async () => state());
   ipcMain.handle("connect:create", async (_e, name) => {
     await connect.createCredential(name);
@@ -111,6 +124,14 @@ async function setUp() {
     return state();
   });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
+  ipcMain.handle("settings:getInference", async () => readInference(home));
+  ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
+  // The Approvals card reads this for its suggestions checkbox. A missing
+  // handler rejects, and the pane throws before it paints anything.
+  ipcMain.handle("settings:getShowSuggestions", async () => true);
+  ipcMain.handle("settings:setShowSuggestions", async () => {});
+  ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
+  ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(home, purpose));
   ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});
   // The main window's boot also asks for the update banner's state; without a
@@ -137,11 +158,27 @@ async function setUp() {
   };
 }
 
+/** Assertions a picture cannot carry: what must NOT be on screen, and what the
+ * DOM must look like. `shootScreens` checks `expect`; these run beside it. */
+const extra = [];
+function checking(screen) {
+  const { reject = [], verify } = screen;
+  screen.after = async (win) => {
+    const text = await win.webContents.executeJavaScript("document.body.innerText");
+    const unexpected = reject.filter((needle) => text.includes(needle));
+    const failed = verify ? await verify(win) : [];
+    if (unexpected.length || failed.length) {
+      extra.push(screen.name);
+      console.log("SHOT:" + JSON.stringify({ screen: screen.name, unexpected, failedAssertions: failed }));
+    }
+  };
+  return screen;
+}
+
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
   {
-    name: "roster",
-    before: ({ setRoster }) => setRoster(ROSTER_ROWS),
+    name: "oauth",
     prepare: async () => {},
     expect: [
       "Connect an MCP client",
@@ -152,8 +189,20 @@ const SCREENS = [
       "signs in with OAuth the first time it connects",
       "no token to copy, store, or rotate",
       // The shortcut to where the URL gets pasted.
-      "Claude",
+      "Open Claude",
       "Can't use OAuth? Create a static credential",
+      // Approvals moved onto this tab with the clients it governs.
+      "Approvals",
+      "What happens when an agent asks to do something on this Mac.",
+      "AI Reviewer decides",
+      "What are agents for?",
+      // The purpose describes the errand, and an errand widens the job as
+      // readily as it narrows it. This line used to pin the opposite promise.
+      "it can widen what gets approved as easily as narrow it",
+      "Requests that fit may be approved without asking you.",
+      // The suggestions toggle, re-homed onto this card from Settings.
+      "Let the reviewer suggest an answer when an approval window opens",
+      // The roster, between the clients and what they may do.
       "AGENTS WITH ACCESS",
       "Claude Code",
       "claude.ai",
@@ -169,7 +218,7 @@ const SCREENS = [
     prepare: async () => {},
     expect: ["Connect an MCP client", "AGENTS WITH ACCESS", "No agents have access to this Mac yet."],
   },
-  {
+  checking({
     name: "roster-error",
     before: ({ setRoster }) => setRoster(ROSTER_ROWS, "Plow is unavailable."),
     prepare: async () => {},
@@ -182,8 +231,8 @@ const SCREENS = [
       )()`);
       return ok ? [] : ["list error did not retain roster rows"];
     },
-  },
-  {
+  }),
+  checking({
     name: "roster-revoke-error",
     before: ({ setRoster }) => setRoster(ROSTER_ROWS, null, "Plow refused the revoke."),
     prepare: async () => {},
@@ -198,7 +247,7 @@ const SCREENS = [
       )()`);
       return ok ? [] : ["revoke error was not distinct beside roster rows"];
     },
-  },
+  }),
   {
     name: "roster-confirm",
     before: ({ setRoster }) => setRoster(ROSTER_ROWS),
@@ -257,21 +306,6 @@ async function clickRowAction(win, rowName, label) {
   await new Promise((r) => setTimeout(r, 250));
 }
 
-/** Click by visible label, the way a person picks a button out of the page. */
-async function clickText(win, label) {
-  const found = await win.webContents.executeJavaScript(`
-    (() => {
-      const el = [...document.querySelectorAll("button")]
-        .find((b) => b.textContent.includes(${JSON.stringify(label)}));
-      if (!el) return false;
-      el.click();
-      return true;
-    })()
-  `);
-  if (!found) throw new Error(`no button labelled ${label}`);
-  await new Promise((r) => setTimeout(r, 250));
-}
-
 async function type(win, selector, text) {
   const found = await win.webContents.executeJavaScript(`
     (() => {
@@ -284,68 +318,53 @@ async function type(win, selector, text) {
   if (!found) throw new Error(`no field matching ${selector}`);
 }
 
-process.on("unhandledRejection", (error) => {
-  console.error("SHOT-FAILED:", error);
-  app.exit(1);
-});
+failLoudly();
 
 app.whenReady().then(async () => {
   const harness = await setUp();
-  fs.mkdirSync(outDir, { recursive: true });
-  const win = new BrowserWindow({
-    width: 940,
-    height: 620,
-    show: false,
-    webPreferences: {
-      preload: path.join(dist, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
+  const { connect } = harness;
+  const win = shotWindow(dist);
 
-  let failures = 0;
-  for (const screen of SCREENS) {
-    await screen.before?.(harness);
+  // Copy-once is a claim about the app, so the run checks it rather than
+  // leaving it to the picture: once dismissed, the config is gone for good.
+  SCREENS.find((s) => s.name === "static-shown").after = async () => {
+    connect.dismissCredential();
+    if (JSON.stringify(connect.state()).includes(CLIENT_TOKEN)) {
+      extra.push("copy-once");
+      console.log("SHOT:" + JSON.stringify({ screen: "copy-once", missing: ["credential survived dismissal"] }));
+    }
+  };
+
+  const failures = await shootScreens({
+    win,
+    outDir,
+    prefix: "connect",
+    screens: SCREENS,
     // A reload re-runs the renderer's boot, which restores the Agents tab — and
     // drops any modal left standing by the screen before it.
-    await win.loadFile(path.join(dist, "renderer/index.html"));
-    await new Promise((r) => setTimeout(r, 400));
-    await screen.prepare(win);
-    if (screen.scrollToRoster) {
-      await win.webContents.executeJavaScript(
-        `(() => { const p = document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
-      );
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    if (screen.scrollToBottom) {
-      await win.webContents.executeJavaScript(
+    load: async (screen) => {
+      // Before the load, so the pane paints the state this screen is about.
+      await screen.before?.(harness);
+      await win.loadFile(path.join(dist, "renderer/index.html"));
+      await new Promise((r) => setTimeout(r, 400));
+    },
+    beforeShot: async (w, screen) => {
+      if (screen.scrollToRoster) {
+        await w.webContents.executeJavaScript(
+          `(() => { const p = document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
+        );
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      if (!screen.scrollToBottom) return;
+      // The credential and its button can sit below the fold in a 620pt window,
+      // and the modal scrolls itself — so that is what gets scrolled when it is up.
+      await w.webContents.executeJavaScript(
         `(() => { const p = document.querySelector(".modal") ?? document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
       );
       await new Promise((r) => setTimeout(r, 200));
-    }
+    },
+  });
 
-    const out = path.join(outDir, `connect-${screen.name}.png`);
-    fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());
-
-    const text = await win.webContents.executeJavaScript("document.body.innerText");
-    const missing = screen.expect.filter((needle) => !text.includes(needle));
-    const unexpected = (screen.reject ?? []).filter((needle) => text.includes(needle));
-    const failedAssertions = screen.verify ? await screen.verify(win) : [];
-    if (missing.length || unexpected.length || failedAssertions.length) failures += 1;
-    console.log("SHOT:" + JSON.stringify({ screen: screen.name, out, missing, unexpected, failedAssertions }));
-
-    // Copy-once is a claim about the app, so the run checks it rather than
-    // leaving it to the picture: once dismissed, the config is gone for good.
-    if (screen.name === "static-shown") {
-      harness.connect.dismissCredential();
-      const after = JSON.stringify(harness.connect.state());
-      if (after.includes(CLIENT_TOKEN)) {
-        failures += 1;
-        console.log("SHOT:" + JSON.stringify({ screen: "copy-once", missing: ["credential survived dismissal"] }));
-      }
-    }
-  }
   fs.rmSync(home, { recursive: true, force: true });
-  app.exit(failures === 0 ? 0 : 1);
+  app.exit(failures + extra.length === 0 ? 0 : 1);
 });

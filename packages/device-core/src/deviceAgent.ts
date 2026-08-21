@@ -14,11 +14,11 @@ import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
-import { BlessedToolRegistry } from "./blessedTools.js";
-import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
+import { BrowserHostConfig, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { VaultServer } from "./browser/vaultServer.js";
+import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { Executor } from "./executor.js";
@@ -33,6 +33,31 @@ import { SkillRegistry } from "./skills.js";
  * that already exists rather than widening the frozen `Grant`.
  */
 export const DENIAL_SOURCE_NO_CREDITS = "no_credits";
+
+/**
+ * A delegate that denies because the reviewer it was told to use does not
+ * exist — this Mac holds no Plow credential. Same channel as
+ * `no_credits`, and the same reasoning: a standing condition the caller can
+ * act on, so it says so instead of looking like a decision someone made.
+ */
+export const DENIAL_SOURCE_NO_REVIEWER = "no_reviewer";
+
+/**
+ * Denied because the reviewer looked and would not commit — it answered `ask`,
+ * in a mode where there is nobody to ask. Distinct from the source below, and
+ * the distinction is the whole point: this is a reviewer that ran.
+ */
+export const DENIAL_SOURCE_REVIEWER_UNDECIDED = "reviewer_undecided";
+
+/**
+ * Denied because the reviewer never reached a verdict at all — it timed out,
+ * the provider errored or rate-limited, it declined to assess, or the answer
+ * did not parse. Not a decision, wearing the same `deny` as one, so it says
+ * which it was. It does not say WHY there was no verdict: the reviewer may have
+ * been unreachable or may have run and produced nothing usable, and nothing
+ * here can tell the two apart, so nothing here claims to.
+ */
+export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
 
 /**
  * Denial sources whose reason is worth telling the calling agent, and the exact
@@ -59,6 +84,18 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   // Mac, then try again" — following it, the user clicks a dead prompt, nothing
   // runs, and the retry's dialog (queued behind that window) appears as if they
   // had been asked twice. That is the loop, driven by our own copy.
+  [DENIAL_SOURCE_REVIEWER_UNDECIDED]:
+    "the reviewer would not decide this one, and this Mac is set to let the " +
+    "reviewer decide — so there is no one to escalate to and it was denied " +
+    "rather than left waiting. Narrow the request and try again",
+  [DENIAL_SOURCE_REVIEWER_UNAVAILABLE]:
+    "the reviewer produced no usable verdict — it did not answer, or answered " +
+    "with something that was not one — and this Mac is set to let the reviewer " +
+    "decide, so it was denied rather than left waiting. Trying again may work",
+  [DENIAL_SOURCE_NO_REVIEWER]:
+    "inference unavailable: Adversarial mode is selected but this Mac has no " +
+    "credential for Plow, so the reviewer could not run and the operation was " +
+    "denied",
   [APPROVAL_SOURCE_EXPIRED]:
     "no one answered in time, so the request expired and was denied — a timeout, " +
     "not a refusal. Try again to raise a fresh request; any prompt still on the " +
@@ -69,9 +106,8 @@ export class DeviceAgent {
   readonly identity: DeviceIdentity;
   readonly audit: AuditLog;
   readonly policy: PolicyEngine;
-  readonly blessedTools: BlessedToolRegistry;
   readonly executor: Executor;
-  /** Owner-published skills (how-to guides), surfaced via list_tools/read_skill. */
+  /** Owner-published skills (how-to guides), surfaced via plow_list_skills/plow_read_skill. */
   readonly skills: SkillRegistry;
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
@@ -79,21 +115,22 @@ export class DeviceAgent {
   readonly credentialBroker: CredentialBroker | null = null;
   /** The vault this machine runs, when this build ships one. */
   readonly vaultServer: VaultServer | null = null;
-  private readonly browserHost: BrowserHost | null = null;
+  /** The owner's own way into the vault: no CLI, no port, no session on disk. */
+  readonly vaultClient: VaultClient | null = null;
+  /** How the sessions build a browser each: one config, many hosts. */
+  private readonly browserConfig: BrowserHostConfig | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
     public readonly home: string,
     name: string,
     private readonly delegate: PolicyDelegate,
-    blessedTools?: BlessedToolRegistry,
     browserRuntime?: ResolvedBrowserRuntime | null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
-    this.blessedTools = blessedTools ?? BlessedToolRegistry.standard();
     this.skills = new SkillRegistry();
     this.skills.loadDir(path.join(home, "device/skills"));
     if (browserRuntime) {
@@ -101,27 +138,34 @@ export class DeviceAgent {
       const browserDir = path.join(home, "device/browser");
       const auditFn = (event: string, fields: { [k: string]: JSONValue }) =>
         this.audit.record(event, fields);
-      this.browserHost = new BrowserHost({
+      this.browserConfig = {
         command: browserRuntime.serverCommand,
-        // Visible by default: the owner should be able to watch what is being
-        // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
-        // which is what the test tiers and any unattended run want. This is only
-        // the default — browser_open carries the agent's per-session choice, so
-        // the owner can ask for the background (or to watch) in the moment.
-        headed: process.env.DOMO_BROWSER_HEADED !== "0",
+        // Hidden by default: a browser that takes over the screen is the
+        // exception, not the shipped behaviour — the test tiers and every
+        // unattended run want the background, and the audit log is what says
+        // what was done with the owner's credentials. Set DOMO_BROWSER_HEADED=1
+        // to get a window back for the whole app. This is only the default —
+        // plow_browser_open carries the agent's per-session choice, so the owner
+        // can ask to watch (or to hide it) in the moment.
+        headed: process.env.DOMO_BROWSER_HEADED === "1",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        profileDir: path.join(browserDir, "profile"),
+        // Sessions run in here, each on a clone of the user's own profile
+        // below — Firefox locks a profile to one process, so several browsers
+        // at once need a directory each — and hand it back when they close.
+        profileDir: path.join(browserDir, "profiles"),
+        seedProfile: path.join(browserDir, "profile"),
+        mergeCookiesCommand: browserRuntime.mergeCookiesCommand,
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the
         // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
         // a hung page/eval returns an error in time instead of a torn 504. The
         // cold start is separate (startTimeoutMs) and paid by the deferrable
-        // browser_open, so it does not need to fit this bound.
+        // plow_browser_open, so it does not need to fit this bound.
         actionTimeoutMs: 15_000,
         audit: auditFn,
-      });
+      };
       // Launched from Finder there is no environment to speak of, so the vault
       // and the broker agree on one identity for this machine rather than each
       // falling back to a different default.
@@ -138,9 +182,14 @@ export class DeviceAgent {
           })
         : null;
       this.vaultServer = vault;
-      // Up with the app, not on first use: the owner has to be able to open
-      // the vault's own page whenever Domo is running, not only after an agent
-      // happens to ask for a credential.
+      // What the Vault tab talks to. The broker below stays for the AGENT,
+      // where a release is bound to the page on screen; this is the owner's.
+      this.vaultClient = vault
+        ? new VaultClient(vault, path.join(browserDir, "credential-audit.log"))
+        : null;
+      // Up with the app, not on first use: the Vault tab has to be able to show
+      // the owner their own items whenever Domo is running, not only after an
+      // agent happens to ask for a credential.
       void vault
         ?.start()
         .then(() => this.credentialBroker?.warm())
@@ -178,7 +227,7 @@ export class DeviceAgent {
         fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;
-      this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
+      this.browserSessions = new BrowserSessions(this.browserConfig, credentials, auditFn);
     }
   }
 
@@ -214,8 +263,14 @@ export class DeviceAgent {
 
   /** Close any live browser session, and the vault if we are running one. */
   async shutdown(): Promise<void> {
-    await this.browserSessions?.closeAll("shutdown");
-    this.vaultServer?.stop();
+    // The vault runs as a detached child, so it outlives us unless we stop it:
+    // a browser cleanup that throws must not be what leaves it running after
+    // the app is gone. The failure still reaches the caller.
+    try {
+      await this.browserSessions?.closeAll("shutdown");
+    } finally {
+      this.vaultServer?.stop();
+    }
   }
 
   /**
@@ -223,7 +278,7 @@ export class DeviceAgent {
    * null when no browser is running (it is never started for a viewer poll).
    */
   async browserViewFrame(): Promise<ViewerFrame | null> {
-    return this.browserHost?.viewFrame() ?? null;
+    return this.browserSessions?.viewFrame() ?? null;
   }
 
   /**
@@ -293,8 +348,6 @@ export class DeviceAgent {
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
-    const toolCap = intent.capabilities.find((c) => c.kind === "tool");
-    if (toolCap) return this.executeTool(intent, toolCap, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -375,6 +428,25 @@ export class DeviceAgent {
           intentId: intent.intentId,
           exit_code: result.exitCode ?? -1,
         });
+      } else {
+        // A deferred run's end is recorded when it actually ends, keyed to the
+        // intent — never from the polling path, which may run many times or
+        // not at all.
+        this.executor.onExit(result.handle, (exitCode) => {
+          // Fires from the child's exit event, possibly mid-shutdown; a failed
+          // append must not become an uncaught exception in the event loop.
+          try {
+            this.audit.record("exec_end", {
+              intentId: intent.intentId,
+              handle: result.handle,
+              exit_code: exitCode,
+            });
+          } catch (error) {
+            // Nowhere durable left to write it — the durable sink is what
+            // failed — but the loss should at least be visible in a terminal.
+            console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
+          }
+        });
       }
       const response: { [k: string]: JSONValue } = {
         status: result.running ? "running" : "completed",
@@ -387,25 +459,6 @@ export class DeviceAgent {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-      return { status: "error", error: message };
-    }
-  }
-
-  private async executeTool(
-    intent: Intent,
-    toolCap: { tool?: string },
-    payload: JSONValue,
-  ): Promise<JSONValue> {
-    const name = toolCap.tool;
-    const tool = name !== undefined ? this.blessedTools.tool(name) : null;
-    if (!tool || name === undefined) return { status: "error", error: "unknown tool" };
-    try {
-      const result = await tool.invoke(jv(payload).get("args").value ?? null);
-      this.audit.record("tool_invoked", { intentId: intent.intentId, tool: name });
-      return { status: "completed", result };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: message });
       return { status: "error", error: message };
     }
   }
@@ -431,7 +484,6 @@ export class DeviceAgent {
     if (session !== null) {
       return this.browserSessions.extend(
         intent.intentId,
-        intent.agentId,
         session,
         origins,
         items,
@@ -439,7 +491,7 @@ export class DeviceAgent {
       );
     }
     if (origins.length === 0) {
-      return { status: "error", error: "browser_open requires at least one origin" };
+      return { status: "error", error: "plow_browser_open requires at least one origin" };
     }
     // Window mode is delivery detail too: it changes nothing about what the
     // owner approved, so it rides the payload and leaves the capability set —
@@ -459,21 +511,18 @@ export class DeviceAgent {
    * grant — no new intent, no approval — exactly like getOutput binds to an
    * already-approved run. Called in-process by the mcp-server's `browser` tool.
    */
-  async browserCommand(agentId: string, session: string, params: JSONValue): Promise<JSONValue> {
+  async browserCommand(session: string, params: JSONValue): Promise<JSONValue> {
     if (!this.browserSessions) {
       return { status: "error", error: "no browser runtime installed on this device" };
     }
     if (jv(params).get("action").str === "close") {
       return this.browserSessions.close(session, "agent");
     }
-    return this.browserSessions.command(agentId, session, params);
+    return this.browserSessions.command(session, params);
   }
 
   getOutput(handle: string, since = 0): JSONValue {
     const result = this.executor.output(handle, since);
-    if (!result.running && result.exitCode !== null) {
-      this.audit.record("exec_end", { handle, exit_code: result.exitCode });
-    }
     const response: { [k: string]: JSONValue } = {
       status: result.running ? "running" : "completed",
       output: result.output.toString("utf8"),

@@ -4,8 +4,8 @@
 **Audience:** Domo developers and agents working on this codebase.
 
 Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a person's
-Mac — read and write files, run CLI commands with streaming output, and invoke
-"blessed" tools built for our applications — through an **intent-based request
+Mac — read and write files, run CLI commands with streaming output, and drive a
+real browser on their machine — through an **intent-based request
 system**: every operation is a structured, signed intent that a human (later, an
 adversarial reviewer agent plus a human escalation path) can inspect and approve
 before it executes inside an on-the-fly sandbox derived from exactly the approved
@@ -67,29 +67,34 @@ redesigning.
 
 ## 3. Agent-facing protocol: MCP
 
-One MCP endpoint (the broker), device-addressed tools. Agents connect once and
-reach every Mac they hold grants for. Claude Code connects via the `domo-mcp`
-stdio shim (auth token + socket path via env; pure pipe thereafter).
-
-| Tool | Purpose |
-|---|---|
-| `list_devices()` | Devices visible to this agent: id, name, online, granted |
-| `request_device_access(device, goals)` | Ask the owner for access |
-| `read_file(device, path, goal?)` | Read a file (returned base64 for binary safety) |
-| `write_file(device, path, content, goal?)` | Write a file |
-| `run_command(device, argv, cwd?, read_paths?, write_paths?, network?, wait_ms?, goal?)` | Run a CLI command in the sandbox; returns full output or a handle |
-| `get_output(device, handle, since?)` | Incremental output of a running command |
-| `list_device_tools(device)` | That Mac's blessed tools with JSON schemas |
-| `use_tool(device, tool, args, goal?)` | Invoke a blessed tool |
+**Superseded.** This section described one MCP endpoint (the broker) serving
+device-addressed tools, so that an agent connected once and reached every Mac it
+held grants for. There is no broker: a Mac dials the Plow relay and serves its
+own tools, addressed by its own URL, so no tool takes a `device` argument and
+there is nothing to enumerate. The table that stood here listed
+`list_devices`, `request_device_access` and `device`-first signatures for
+tools that have since been renamed — it was a second, hand-maintained copy of a
+contract that lives in code, and it drifted, as the second copy always does.
+**The current surface is in [README-ts.md](README-ts.md); `TOOLS` in
+`packages/mcp-server/src/tools.ts` is authoritative.**
 
 Design points:
 
-- **Blessed tools are per-device and discovered dynamically** via
-  `list_device_tools` rather than flattened into the global MCP tool list —
-  different Macs have different tools, and devices come and go mid-session.
-- **Streaming:** MCP tool calls are request/response, so `run_command` waits up
-  to `wait_ms` (default 10 s); if the command is still running it returns a
-  `handle` plus output-so-far, and the agent polls `get_output(handle, since)`
+- **Blessed tools are gone (cut 2026-08-17).** They were per-device tools
+  discovered dynamically rather than flattened into the global MCP tool list,
+  because different Macs had different tools and devices came and went
+  mid-session. That was a *fleet* argument, and it died with the broker: one Mac
+  addressed by its own URL has one tool list. The registry never shipped
+  anything but a single demo tool (`mac_info`), and nothing but a rebuild could
+  add to it — while the same job is one `plow_run_command` away. The capability
+  kind `tool` survives in the protocol because it is frozen into
+  `fixtures/rulekeys.json`; nothing on this Mac constructs one any more.
+- **Skills are the surviving discovery surface.** `plow_list_skills` names what
+  this Mac publishes and `plow_read_skill` fetches the body, so a long operator
+  manual (`camoufox-browsing`) costs no manifest tokens until an agent asks.
+- **Streaming:** MCP tool calls are request/response, so `plow_run_command`
+  waits up to `wait_ms` (default 10 s); if the command is still running it
+  returns a `handle` plus output-so-far, and the agent polls `plow_get_output`
   for incremental bytes. stdout and stderr are merged into one stream.
 - **`goal`:** each mutating tool accepts an optional goal/justification string,
   displayed to the approver. Session-level goals (from the access request or
@@ -99,7 +104,7 @@ Design points:
 
 ## 4. The intent object
 
-Every operation (file read/write, command, blessed tool) becomes one signed
+Every operation (file read/write, command, browser session) becomes one signed
 intent — the single artifact that the approval UI renders, the sandbox is
 derived from, the audit log stores, and the future adversarial reviewer
 evaluates.
@@ -160,10 +165,10 @@ Decisions: **Always allow / Allow once / Deny.**
 
 ## 6. Execution & sandbox
 
-**Minimize what needs sandboxing.** `read_file`, `write_file`, and blessed
-tools execute *in-process* in the device app — trusted code, bounds-checked
-against the approved paths (canonicalized, symlink- and `..`-safe), inherently
-audited. Only `run_command` runs third-party code, and only it gets the cage.
+**Minimize what needs sandboxing.** `plow_read_file` and `plow_write_file`
+execute *in-process* in the device app — trusted code, bounds-checked against
+the approved paths (canonicalized, symlink- and `..`-safe), inherently audited.
+Only `plow_run_command` runs third-party code, and only it gets the cage.
 
 **Seatbelt (`sandbox-exec`) with a generated profile.** The profile is not
 authored by anyone — it is *mechanically derived* from the approved capability
@@ -239,7 +244,7 @@ runbook's Phase 4 note). Phase 7 (iOS approval app) is out of scope for now.
 ## 9. On-disk layout
 
 ```
-$DOMO_HOME (default ~/Library/Application Support/Domo)
+$DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
 ├── run/agent.sock, run/device.sock      # 0700 dir
 ├── broker/agents.json                   # agent identities, tokens, grants
 ├── broker/devices.json                  # enrolled devices
@@ -247,7 +252,6 @@ $DOMO_HOME (default ~/Library/Application Support/Domo)
 ├── device/known_agents.json             # pinned agent pubkeys
 ├── device/rules.json                    # always-allow rules
 ├── device/audit.ndjson                  # append-only audit log
-├── device/goals.json                    # goals library
 └── device/scratch/…                     # per-run sandbox scratch dirs
 ```
 
@@ -272,7 +276,7 @@ repo can prove they broke nothing.
   `domo-broker` process, real `domo-device` process, a real MCP client speaking
   JSON-RPC over the agent socket — and drives full scenarios: enrollment →
   discovery → access request → file ops → sandboxed exec → streaming via
-  `get_output` → blessed tools → always-allow rule reuse (asserted via audit
+  `plow_get_output` → always-allow rule reuse (asserted via audit
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
@@ -299,8 +303,18 @@ repo can prove they broke nothing.
 The device can host a real anti-detection Firefox (Camoufox, driven by
 Playwright through a vendored Python server — `vendor/browser-server/`,
 provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
-user**: local IP, local cookies, and local credentials that never leave the
-Mac. The pieces:
+user**: local IP, local cookies, and local credentials that are typed into the
+page here rather than handed to the agent — which is driving that page, and can
+read it. Several browsers can run at once and they are all the user's: Firefox
+locks a profile to one process, so each session runs on a **clone** of the
+user's profile (APFS clonefile — no wait, no extra disk), so every browser opens
+signed in where they left off. On close the clone's cookies are MERGED into
+that profile — row by row, keeping whichever was used last — so a sign-in made
+inside a session sticks, and two browsers signed into two different sites both
+keep theirs. Replacing the profile wholesale, which is the obvious version of
+this, would let the last browser to close decide what the user is signed into.
+Ceiling: cookies only, so a site that keeps its session in localStorage still
+signs out with the clone. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an
@@ -308,8 +322,10 @@ unbounded rule. Instead one signed intent opens a **session** whose capability
 is the enforceable bound — a `browser` capability with an origin allowlist
 (`origins: ["dominos.com", "*.dominos.com"]`, explicit patterns, no PSL
 logic) and optionally `credential` capabilities. Subsequent commands ride the
-session handle over the `browser_command` RPC with no new intent — the same
-trust model as `get_output`. Widening scope mid-session (a checkout popup
+session handle over the `browser_command` RPC with no new intent. The handle
+says WHICH browser, not whose: unlike `get_output`, which is checked against
+the agent that started the job, this Mac is one person's and every browser on
+it is theirs, so whoever holds a handle can drive that browser. Widening scope mid-session (a checkout popup
 lands on a payment provider) is a new intent with the identical capability
 shape, so always-allow rules are meaningful and reusable; a fully-ruled task
 runs unattended end to end (the e2e suite asserts a second session is decided
@@ -323,9 +339,54 @@ and audited; on an out-of-scope page the session locks — nothing can be
 observed or interacted with except finding the way back. **Stated limit:** the
 origin bound governs what the agent observes/interacts with and where
 credentials get typed. It is *not* network egress control — page JS (the
-site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted:
-eval can't exfiltrate anything `screenshot`/`text` couldn't already carry over
-MCP.
+site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted.
+It used to be argued that eval carries nothing `screenshot`/`text` could not
+already carry; that is no longer true. Masking (§11a-ii) covers what the agent
+SEES — screenshots and form reads — and cannot cover `eval`, which reads
+`input.value` directly. The residual is deliberate and bounded by the threat
+model: accidental exposure is what masking is for, and an agent that goes
+looking for a filled value with `eval` is outside it.
+
+**What the page's own requests did.** A browser action reports whether it
+worked; it used to say nothing about whether the *page* worked. A click whose
+XHR came back 401/403/429 answered `{ok: true}` on a page that had not moved,
+and the owner's log recorded a plain click — the gap cost a 27-minute blind
+retry loop against a sign-in being rate-limited, and the only way to see the
+status was to hand-instrument `XMLHttpRequest` through `eval`, which is itself
+an automation signal. So the server keeps the last five 4xx/5xx per action
+(context-level, popups included) and every reply an action produces drains
+them — an error as much as a result, since a refusal that only rode success
+replies is the one nobody would ever see. Never a body: a body can echo a
+submitted credential. `BrowserHost` holds them until an agent action carries
+them out, because most of what asks the browser anything is the device itself
+(the ~1/s viewer poll, the popup sweep, a credential fill's `locate`) and
+whichever was in flight would otherwise consume a 429 and drop it.
+
+**What a page asked for, not where the agent went.** A refused *top-level*
+navigation is the visible case — the agent goes somewhere, is refused, and the
+page is right there in its next screenshot. Everything else a page asks for on
+its own account is invisible, a payment or sign-in iframe that will not load
+included, and that is what is kept. A frame's own document load names nobody:
+nothing can say whether the frame moved itself or its embedder moved it, and
+blanking a frame makes either look like the other. So the owner's log keeps
+those and the agent does not see them — it learns of a frame that will not
+load from what that frame asks for once it has, which is attributable.
+
+**Origins, and both ends of them.** A url is the page's to choose, and every
+part of one but the origin can carry a secret — a query, userinfo, and a path
+as much as either, since `/reset/<token>` is a url sites really send. So an
+entry is the origin that refused, the origin that asked, the status and the
+method, and nothing else; the owner's log gets all of it, and the agent is
+told `{status, method, host}` (plus `Retry-After`/`Server` when sent) only
+when **both** origins are inside the session's. Destination alone would let a
+page the session is locked out of fetch a url it knows will fail on an
+approved host and pass that off as the approved page's own trouble. Who asked
+is read when the request is MADE, not when it is answered: a page that asks
+for something it knows will fail and then moves itself to an approved origin
+would otherwise have the refusal read as that origin's. A request the browser
+cannot attribute — a sub-frame's own document load, a service worker's
+request, one it never saw asked — names nobody and is withheld from the agent
+while the owner still sees it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
 approval card: `access: "metadata"` (list vault item names/field labels —
@@ -337,25 +398,35 @@ to its owning frame → the frame's origin ∈ session scope → `seed-vault-bro
 get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
 check applies; credit cards deliberately pass — they are meant for any
 merchant) → a frame-targeted fill → the value is dropped. Secret values never
-traverse MCP, never appear in results, and never appear in either audit log.
+traverse MCP, never appear in the results these tools return, and never appear
+in either audit log. **Scope of that guarantee:** it covers what `plow_vault`
+and `fill_secret` hand back, and — through masking (§11a-ii) — what a
+screenshot or `forms` shows. It does not cover `eval`, which reads
+`input.value` directly; that is the documented residual, accepted because the
+threat model is accidental exposure and an agent reaching for `eval` is
+outside it.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
 **The owner's live view.** While a browsing session is open, the audit
 screen's detail pane shows a small near-live mirror of what Camoufox is
 showing, pinned in the pane's bottom-right corner outside the timeline scroll
-(~1 frame/s, a `view` server action that never touches disk). Frames ride
-`BrowserHost.viewFrame()` — deliberately *outside* `BrowserSessions`: session
-scope bounds what the **agent** observes, and the owner watching an
-out-of-scope page is exactly the oversight the view exists for (the caption
-flags "Out of approved scope"). `viewFrame` is strictly best-effort — it never
+(~1 frame/s, a `view` server action that never touches disk). With a browser per
+session, `BrowserSessions.viewFrame()` chooses which one the owner is watching
+— the session that acted last, the same one `current()` describes, so the
+picture and the words under it are always about one browser. The frame itself
+still comes from that session's `BrowserHost.viewFrame()`, which is
+deliberately outside session SCOPE: scope bounds what the **agent** observes,
+and the owner watching an out-of-scope page is exactly the oversight the view
+exists for (the caption flags "Out of approved scope"), and a ~1/s poll must
+not flood the audit log. `viewFrame` is strictly best-effort — it never
 starts the browser, never throws, and a ~1/s poll writes nothing to the audit
 log. The thumbnail appears only while a session is active and disappears when
 it closes.
 
 **Skills.** Devices publish skills (name/description/markdown body,
-`SkillRegistry`) in their register manifest; agents discover them via
-`list_device_tools` and read them with `read_skill`. The built-in
+`SkillRegistry`); agents discover them via `plow_list_skills` and read them
+with `plow_read_skill`. The built-in
 `camoufox-browsing` skill is the operator manual for this tool surface.
 
 **Runtime & packaging.** The stack ships inside the app: a relocated
@@ -429,15 +500,49 @@ Two rejected alternatives, recorded so they are not re-proposed:
   the only copy of their credentials.
 
 There is no recovery for a genuinely lost key, and the UI must not invent one:
-`changeCredentials` refuses outright when the account cannot be read, and signing
-in on the vault's own page needs the very password that state cannot produce. The
-copy says so — the account is on disk, nothing is deleted, and if the key is gone
-the vault has to be set up again.
+an account that cannot be decrypted cannot be signed in with, here or anywhere,
+because the password it would need is the thing that is unreadable. The copy says
+so — the account is on disk, nothing is deleted, and if the key is gone the vault
+has to be set up again.
+
+The owner reaches the vault's CONTENTS in the app, never on the vault's own page:
+`VaultClient` signs in with the account this Mac already holds and reads and
+writes items over the vault's API, so there is no CLI process, no local port and
+no session key on disk. The tab shows the locked state from
+`readCredentialsState()` and nothing else about the account.
 
 A locked vault must also never be reported as an empty one. `readState()`
 distinguishes empty / locked / ok, because a Keychain reset or a Mac restored
 from backup lands in exactly this state, and "The vault has not started yet"
 sends people to debug a server that is running fine.
+
+### 11a-ii. A filled secret is masked from what the agent sees
+
+`fill_secret` types a vault value into a page, and the value then sits in
+`input.value` where the agent could read it straight back — as pixels from
+`screenshot`, and as characters from `forms`. That is how it was found: a card
+number and CVC plainly legible in a returned screenshot.
+
+**A field is masked from the agent if and only if the vault itself masks it.**
+The classification is Bitwarden's, and thereby the human's who made the item —
+a password, a card number and code, an ssn, a Hidden custom field. Addresses
+and names stay legible on purpose: the agent has to be able to check a shipping
+address before submitting a form. One deliberate exception: a generated TOTP
+code is masked although the client shows it, because an agent fills it and
+never needs to read it, and it is a live credential for its half-minute.
+
+The mark is one `data-domo-secret` attribute plus one injected stylesheet rule,
+applied to the resolved node at fill time and verified against the computed
+style before the value is typed — a page whose CSP blocks the stylesheet gets
+no value at all rather than a legible one. `forms` reports a marked field as
+present without its characters, and never returns a `type="password"` value at
+all. Full design, including the alternatives rejected and why, in
+`docs/superpowers/specs/2026-08-18-secret-masking-design.md`.
+
+**What it does not cover: `eval`.** It reads `input.value` directly and no mark
+changes that. Accepted residual: the threat model is accidental exposure — a
+well-behaved agent looking at a page in the ordinary course of its work — and
+an agent reaching for `eval` to read a field it just filled is outside it.
 
 ## 11b. Software updates
 
@@ -453,7 +558,7 @@ Decisions and their reasons:
 - **Only the packaged install updates.** `main.ts` constructs the
   `UpdateController` behind `app.isPackaged`, so from-source/worktree runs
   never poll the feed. This composes with the worktree state model (§13): only
-  the packaged install uses the unsuffixed `Domo` home.
+  the packaged install uses the unsuffixed `Plow-Latch` home.
 - **Nothing about updates is modal.** Downloads are automatic and silent; a
   staged update surfaces as a passive banner in the main window, a tray item
   ("Restart to Update"), and the Software Updates settings section — never a
@@ -610,7 +715,7 @@ Monorepo mirroring the current module seams one-to-one:
 | `@domo/protocol` | `DomoProtocol` | canonical JSON, identities, Capability/Intent/Grant, rule keys |
 | `@domo/transport` | `DomoTransport` | NDJSON framing, LineRPC, UDS, WebSocket (`ws`), E2EChannel |
 | `@domo/broker-core` | `DomoBrokerCore` | Broker, BrokerStore, MCP surface via `@modelcontextprotocol/sdk` |
-| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, BlessedTools, GoalsLibrary |
+| `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, SkillRegistry |
 | `apps/broker` | `domo-broker` | Linux deploy target; TLS in-process or behind a reverse proxy per the runbook |
 | `apps/mcp` | `domo-mcp` | stdio shim on the official SDK |
 | `apps/desktop` | `DomoApp` | Electron: device-core in the main process; tray, approval windows, Goals/Rules/Audit |

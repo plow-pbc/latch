@@ -2,7 +2,7 @@ name: App release
 
 # Fires when a draft GitHub Release (created by build-release-candidate.yml) is
 # published. Copies the versioned S3 artifacts onto the stable keys installed
-# apps poll (domo/latest-mac.yml + zip, domo/Plow.dmg) — publishing the
+# apps poll (domo/latest-mac.yml + zip, domo/Plow-Latch.dmg) — publishing the
 # draft IS the approval to ship.
 
 on:
@@ -16,20 +16,43 @@ permissions:
 jobs:
   promote:
     # Only app release tags (v<version>-build.<build>) — ignore anything else.
+    # A cheap skip filter; the parse step below enforces the full grammar.
     if: ${{ startsWith(github.event.release.tag_name, 'v') && contains(github.event.release.tag_name, '-build.') }}
+    # OP_SERVICE_ACCOUNT_TOKEN lives in the release environment (not repo
+    # secrets), so a workflow outside the environment's gates can't read it.
+    # Cost: publishing the draft ALSO needs an environment-reviewer approval
+    # on this run — a second click, and defense-in-depth against tag-shaped
+    # attacks (the workflow file itself runs from the tagged commit).
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Promotions write shared stable keys (DMG + checksum + feed); interleaved
+    # runs could mix artifacts across releases. One at a time.
+    concurrency: domo-release-promotion
 
     steps:
+      # The promotion script must come from a trusted ref, not from whatever
+      # commit the release tag points at — a tag is writable by any collaborator
+      # and this job holds AWS credentials.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Parse version from tag
         id: parse
+        # The tag name is collaborator-controlled: it reaches the shell only via
+        # env (never ${{ }}-interpolated into the script) and must match the
+        # exact grammar build-release-candidate.yml mints.
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          # v0.1.0-build.202608121504 → version=0.1.0, build=202608121504
-          VERSION="$(echo "$TAG" | sed -E 's|^v([^-]+)-build\..*|\1|')"
-          BUILD="$(echo "$TAG" | sed -E 's|^v[^-]+-build\.||')"
+          # v0.1.202608121504-build.202608121504 → version + build
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-build\.([0-9]+)$ ]]; then
+            echo "error: release tag does not match v<version>-build.<build>: $TAG" >&2
+            exit 1
+          fi
+          VERSION="${BASH_REMATCH[1]}"
+          BUILD="${BASH_REMATCH[2]}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "Promoting: version=$VERSION build=$BUILD"
@@ -49,8 +72,11 @@ jobs:
           aws-region: us-west-2
 
       - name: Promote release
+        env:
+          VERSION: ${{ steps.parse.outputs.version }}
+          BUILD: ${{ steps.parse.outputs.build }}
         run: |
           bash scripts/release-promote.sh \
-            --version "${{ steps.parse.outputs.version }}" \
-            --build "${{ steps.parse.outputs.build }}" \
+            --version "$VERSION" \
+            --build "$BUILD" \
             --profile ""

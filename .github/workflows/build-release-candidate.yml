@@ -11,7 +11,12 @@ run-name: Manual build — ${{ github.ref_name }}@${{ github.sha }}
 # verified against a stand-in, so releases are cut deliberately, not on a timer.
 #
 # Setup this workflow assumes (shared with Plow's release pipeline):
-#   - repo secret OP_SERVICE_ACCOUNT_TOKEN for the 1Password service account
+#   - a "release" environment with required reviewers, a deployment policy of
+#     main + v*-build.* tags, and the OP_SERVICE_ACCOUNT_TOKEN secret for the
+#     1Password service account — the environment is what stops a dispatch
+#     against an arbitrary branch from reaching the secret, since a branch
+#     controls its own copy of this file (the ref guard below only fails
+#     honest mistakes early)
 #   - the "GitHub Actions Release Secrets" 1Password item (same cert + notary
 #     credentials — both apps sign as The Plow Collective, 3559PD337Z)
 #   - AWS_RELEASE_ROLE_ARN's OIDC trust policy extended to THIS repository,
@@ -26,8 +31,16 @@ permissions:
 
 jobs:
   macOS:
+    # Releases are cut from main only. GitHub enforces this via the release
+    # environment's deployment branch policy; this guard just says so sooner.
+    if: ${{ github.ref == 'refs/heads/main' }}
+    environment: release
     runs-on: macos-26
     timeout-minutes: 90
+    # Serialize builds: the version stamp (`just package`) has minute
+    # resolution, so two overlapping runs could mint the same version, overwrite
+    # each other's S3 prefix, and race to push the same tag.
+    concurrency: domo-release-candidate
 
     steps:
       - uses: actions/checkout@v4
@@ -125,7 +138,7 @@ jobs:
       - name: Read version and build from the packaged app
         id: version
         run: |
-          APP_BUNDLE="apps/desktop/release/mac-universal/Plow.app"
+          APP_BUNDLE="apps/desktop/release/mac-universal/Plow Latch.app"
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_BUNDLE/Contents/Info.plist")
           BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_BUNDLE/Contents/Info.plist")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -140,15 +153,15 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
           BUILD="${{ steps.version.outputs.build }}"
-          DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Plow-${VERSION}.dmg"
+          DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Plow-Latch-${VERSION}.dmg"
 
           git tag "$TAG"
           git push origin "$TAG"
 
           RELEASE_URL=$(gh release create "$TAG" \
             --draft \
-            --title "Plow ${VERSION} (${BUILD})" \
-            --notes "**Download:** [Plow-${VERSION}.dmg](${DMG_URL})
+            --title "Plow Latch ${VERSION} (${BUILD})" \
+            --notes "**Download:** [Plow-Latch-${VERSION}.dmg](${DMG_URL})
 
           Built from \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`")
 
@@ -162,9 +175,9 @@ jobs:
           BUILD="${{ steps.version.outputs.build }}"
           RELEASE_URL="${{ steps.draft_release.outputs.release_url }}"
           if [[ -n "$VERSION" && -n "$BUILD" ]]; then
-            DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Plow-${VERSION}.dmg"
+            DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Plow-Latch-${VERSION}.dmg"
             {
-              echo "### Plow ${VERSION} (${BUILD})"
+              echo "### Plow Latch ${VERSION} (${BUILD})"
               echo ""
               echo "- [Download DMG](${DMG_URL})"
               if [[ -n "$RELEASE_URL" ]]; then
@@ -175,7 +188,7 @@ jobs:
                 echo "1. Open the [release draft](${RELEASE_URL}) and review it."
                 echo "2. Confirm **Set as the latest release** is checked, then **Publish release**."
                 echo ""
-                echo "Publishing triggers \`promote-app.yml\`, which copies the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Plow.dmg\` keys — that's the moment installed apps start updating."
+                echo "Publishing triggers \`promote-app.yml\`, which copies the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Plow-Latch.dmg\` keys — that's the moment installed apps start updating."
               fi
             } >> "$GITHUB_STEP_SUMMARY"
           fi
