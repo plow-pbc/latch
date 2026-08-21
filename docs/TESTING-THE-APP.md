@@ -76,10 +76,11 @@ hand, against the bundled Camoufox, or not at all:
   a character. No normalization rescues that, so a value whose typed tail holds
   one is assigned instead.
 - **An `<input>` runs a value sanitization algorithm on assignment.** Every type
-  strips CR and LF; `email` and `url` additionally strip leading and trailing
-  ASCII whitespace, a tab included. So an edge tab on a value for one of those
-  is dropped by the browser on the assign path and reported ok — `fill()`'s own
-  behavior, and older than any of the typing work.
+  strips CR and LF; `email`, `url` and `number` will not hold leading or
+  trailing whitespace either, a tab included. So an edge tab on a value for one
+  of those is dropped by the browser on whichever assignment ran — the
+  whole-value one, or the head of a split fill — and reported ok. That is
+  `fill()`'s own behavior, older than any of the typing work.
 
 If you change the fill path, re-check the one you touched against a real page
 before trusting a green suite.

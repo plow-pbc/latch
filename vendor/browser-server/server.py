@@ -379,15 +379,18 @@ def _type_value(el, value):
     # mid-value, which KEYS_DROPPED_JS only recognises as a prefix, so nothing
     # would repair it and the fill would report a value the node never held.
     #
-    # So such a value takes the path it always had. That is not the same as the
-    # assignment carrying it: an `email` or a `url` input sanitizes leading and
-    # trailing ASCII whitespace away, a tab included, and the assign path is
-    # never asked KEYS_DROPPED_JS -- so a tab on either end of a value for one
-    # of those is dropped by the browser and reported ok -- and the split path
-    # is no better, because the prefix test is blind to a stripped LEADING
-    # character too. Both are `fill()`'s own behavior, unchanged here and older
-    # than any of this; typing a leading tab instead would move focus off the
-    # field, which is worse than what the browser already does with it.
+    # So such a value takes the path it always had -- which is not the same as
+    # that path carrying the tab. A type whose value sanitization will not hold
+    # leading or trailing whitespace (`email`, `url`, `number`) drops an edge tab
+    # on ASSIGNMENT, and that is true of whichever assignment ran: this guard's
+    # whole-value one, or the head assignment below, which a value longer than
+    # TYPED_CHARS reaches without this branch firing at all. The prefix test does
+    # not catch it on either -- a value that lost its LEADING character is not a
+    # prefix of what was wanted, so KEYS_DROPPED_JS answers false, and for a
+    # trailing one the repair is another `el.fill()` the browser sanitizes the
+    # same way. The loss belongs to the sanitization, not to this branch: it is
+    # `fill()`'s own behavior, older than any of the typing. Typing a leading tab
+    # instead would move focus off the field, which is worse.
     #
     # The browser claims this paragraph rests on are listed in
     # docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on" --
