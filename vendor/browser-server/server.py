@@ -351,8 +351,8 @@ class _FieldTooShort(RuntimeError):
 
     - Refused before the node is touched: the field still holds whatever it
       held -- a prefilled value, a prior fill, the owner's own typing.
-    - Refused after the keys have gone in, when the page moved the cap under a
-      fill already in progress: the head assignment has already destroyed what
+    - Refused by the repair that follows dropped keys, when the page moved the
+      cap under a fill already in progress: the head assignment has destroyed what
       was there and the keys left a prefix of the value, so that path clears the
       field. Best effort -- a node the page detached or froze may keep the
       prefix, and this refusal still comes back rather than being replaced by
@@ -369,11 +369,12 @@ class _FieldTooShort(RuntimeError):
 def _refuse_if_capped(el, value):
     """Refuse a value the field's own cap will not admit, wherever we are.
 
-    Asked again at every point the whole value is about to go in, rather than
-    once before the fill starts, because a cap can move under a fill in
-    progress: a card-number field commonly LOWERS its `maxlength` once the
-    first digits identify the brand -- 15 for Amex against 16 for the rest --
-    so a value the fill was admitted with stops fitting halfway through it.
+    Asked twice: before the node is touched, and again from the repair that
+    follows dropped keys. A cap can move under a fill in progress -- a
+    card-number field LOWERS its `maxlength` once the first digits identify the
+    brand -- so a value the fill was admitted with can stop fitting halfway
+    through it. Only where the field kept what it was given, though: see the
+    call site for why a reformatting one cannot be measured this way.
     """
     cap = el.evaluate(FIELD_CAP_JS)
     if cap >= 0 and _utf16_units(value) > cap:
@@ -451,7 +452,7 @@ def _type_value(el, value):
     # A value over the cap the field DECLARED when the fill was admitted never
     # reaches here. What follows is about a field that took the value and then
     # made its own decisions about it -- including moving that cap, which the
-    # assignments below re-read rather than trust.
+    # repair below re-reads rather than trusts.
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     if kind != "multiline":
         value = value.replace("\n", "")
@@ -476,34 +477,37 @@ def _type_value(el, value):
         if left <= 0:
             raise RuntimeError("typing outran its budget")
         el.type(ch, delay=KEY_DELAY_MS, timeout=left)
-    # Ask the field once more, now that it has seen the keys -- HERE rather than
-    # inside the repair below, which is the branch a reformatting field never
-    # reaches: `KEYS_DROPPED_JS` answers false for one on purpose, because a
-    # field that rewrites what it was given took every key. A card input that
-    # inserts spaces AND lowers its cap does both at once, so a check living in
-    # the repair would watch it clip the value and report success.
-    try:
-        _refuse_if_capped(el, value)
-    except _FieldTooShort:
-        # The head assignment already destroyed whatever the field held, and
-        # what the keys left is a PREFIX OF THE VALUE -- on an unconcealed vault
-        # fill, a legible partial credential under an answer saying it was not
-        # filled. So leave nothing.
-        #
-        # Best effort, and the refusal outlives it: the same page script that
-        # moves a cap can detach or freeze the node, and that failure replacing
-        # this one would cost the caller the cap and drop it back on "check the
-        # selector", the message this path exists to stop producing.
-        try:
-            el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
-        except Exception:  # noqa: BLE001 -- the refusal is the answer
-            pass
-        raise
+    # Asked again only where the field did NOT rewrite what it was given, which
+    # is what `KEYS_DROPPED_JS` being true means. A reformatting field cannot be
+    # checked this way at all: it declares its cap in ITS OWN representation,
+    # and the value we hold is in ours. A space-inserting card input carries
+    # maxlength 17 for an Amex it renders as "3714 496353 98431", so 16 digits
+    # measure under it and the clip goes unseen; a phone input that strips
+    # dashes down to 10 would have "555-123-4567" measure over its cap and be
+    # refused though it landed whole. Both directions wrong, so the check stays
+    # where the two units are the same one.
     if el.evaluate(KEYS_DROPPED_JS, value):
+        try:
+            _refuse_if_capped(el, value)
+        except _FieldTooShort:
+            # The head assignment already destroyed whatever the field held, and
+            # what the keys left is a PREFIX OF THE VALUE -- on an unconcealed
+            # vault fill, a legible partial credential under an answer saying it
+            # was not filled. So leave nothing.
+            #
+            # Best effort, and the refusal outlives it: the same page script
+            # that moves a cap can detach or freeze the node, and that failure
+            # replacing this one would cost the caller the cap and drop it back
+            # on "check the selector", the message this path exists to stop
+            # producing.
+            try:
+                el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
+            except Exception:  # noqa: BLE001 -- the refusal is the answer
+                pass
+            raise
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
-        # The cap was just re-read, so this assignment needs no check of its own.
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
 
 
@@ -891,8 +895,8 @@ class Session:
             # path leaves in the page is on `_FieldTooShort`. Lengths only: the
             # value reaches neither this message nor the audit log.
             # A cap refusal is one answer however it is reached: before the
-            # node is touched, or from an assignment inside `_type_value` after
-            # the page moved the cap under a fill in progress. Answered as a
+            # node is touched, or from the repair inside `_type_value` after the
+            # page moved the cap under a fill in progress. Answered as a
             # shape rather than a raise, the way a moved frame is -- a vault
             # fill's failure text never reaches the agent, because Playwright's
             # would quote the value, and "check the selector" is exactly wrong

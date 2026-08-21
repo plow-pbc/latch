@@ -638,14 +638,20 @@ def main() -> int:
         # exactly where the unconcealed one keeps it.
         "cap_lowered_clear_fails_masked": run(server, {**base, "mask": True, "value": "hunter2"},
                                               max_length=20, max_length_after=4, clear_fails=True),
-        # The case a check living in the repair could never see: a card field
-        # that grows spaces as it is typed AND drops its cap to 15 when the
-        # brand turns out to be Amex. What it holds is not a prefix of what was
-        # sent, so KEYS_DROPPED_JS answers false by design and the repair never
-        # runs -- the field clipped the number and the fill used to say ok.
-        "reformatting_field_lowers_cap": run(
+        # A reformatting field states its cap in ITS OWN representation, so this
+        # one is NOT refused and cannot be: a space-inserting card input carries
+        # maxlength 17 for an Amex it renders as "3714 496353 98431", and the 16
+        # digits sent measure under that. Pinned rather than left invisible --
+        # the clip goes unseen, and the units are why.
+        "reformatting_field_clips_unseen": run(
             server, {**base, "value": "4111111111111111"},
-            max_length=19, max_length_after=15, reformats=True),
+            max_length=19, max_length_after=17, reformats=True),
+        # The other direction, and the one that would BREAK a working fill: a
+        # phone input stripping punctuation down to ten digits. Measuring the
+        # sent value against that cap would refuse a fill that landed whole.
+        "reformatting_field_shrinks": run(
+            server, {**base, "value": "555-123-4567"},
+            max_length=20, max_length_after=10, reformats=True),
         # maxlength="0" is valid HTML and holds nothing. -1 is the only value
         # that means uncapped, so 0 must refuse rather than read as "no cap".
         "zero_cap": run(server, {**base, "value": "x"}, max_length=0),
