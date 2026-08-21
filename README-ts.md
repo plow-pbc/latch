@@ -11,8 +11,9 @@ the architecture and the reasoning behind each decision).
 > outbound client in `packages/relay-client` that dials the relay and serves
 > what it tunnels. The relay is a different repository, and it is **built and
 > serving** — agents reach Macs through this app today. There is no in-repo
-> stand-in for it any more, so the relay leg is verified by hand rather than in
-> the suite; see [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+> stand-in for it any more, so the leg against a real relay is verified by hand
+> rather than in the suite; see
+> [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Layout
 
@@ -263,7 +264,7 @@ against a stand-in relay built to the wire contract — and that stand-in has no
 been deleted too, along with the drivers and the relay+MCP gate that ran against
 it (head chef's call: a locally running plow API already simulates plow).
 
-So there is **no automated integration coverage of the relay leg at all** today,
+So there is **no automated coverage against a real relay** today,
 and no automated live-stack path either — the two scripts that drove a real plow
 stack (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
 deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket, sends

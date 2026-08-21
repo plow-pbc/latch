@@ -6,8 +6,8 @@
 Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a person's
 Mac — read and write files, run CLI commands with streaming output, and drive a
 real browser on their machine — through an **intent-based request
-system**: every operation is a structured, signed intent that a human (later, an
-adversarial reviewer agent plus a human escalation path) can inspect and approve
+system**: every operation is a structured, signed intent that an adversarial
+reviewer agent and a human can inspect and approve
 before it executes inside an on-the-fly sandbox derived from exactly the approved
 capabilities.
 
@@ -618,8 +618,10 @@ if update size becomes a problem.
 3. **Remote:** cloud broker (same wire contract), WebSocket transport, pairing
    codes, revocation; iOS approval app.
 4. **Multi-user:** spaces, capability ceilings, cross-owner approvals.
-5. **Adversarial reviewer:** an agent consuming the same intent + audit stream,
-   sitting between policy and prompt as an additional gate.
+5. **Adversarial reviewer** — *landed.* An agent consuming the same intent +
+   audit stream, sitting between policy and prompt as an additional gate:
+   `apps/desktop/src/adversarialAgent.ts`, wired into the approval path at
+   `main.ts`.
 
 The remote milestone is where the **TypeScript re-platform (§13)** lands: the
 hosted broker ships as the first TS component, and the rest of the system

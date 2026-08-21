@@ -36,10 +36,12 @@ What went, and what it did:
 | `apps/desktop/scripts/slow-approval-transcript.mjs` | The slow-approval / long-command round trip with timings. |
 | `apps/desktop/scripts/approve-drive.mjs` | The app half of an acceptance run: seeded credential, real clicks. |
 
-**What this costs, so nobody rediscovers it the hard way:** `@domo/relay-client` keeps only pure
-wire-contract tests (`test/wire.test.ts` — `stripHopByHop`, `Host` preservation, frame validation).
-Nothing in `npx vitest run` opens a socket, sends the auth frame, reconnects, or tunnels an MCP
-call, and nothing in CI does either. Those paths are verified **by hand**, by running the app
+**What this costs, so nobody rediscovers it the hard way:** `@domo/relay-client` does carry
+automated tests — `test/wire.test.ts` for the pure wire contract, and `test/liveness.test.ts` /
+`test/lifecycle.test.ts` driving the client over a `FakeConn` through the auth handshake, the
+heartbeat, reconnect-with-backoff, and a dial that resolves after `stop()`. What none of them do is
+open a socket or tunnel an MCP call: no test in `npx vitest run` talks to a real relay, and nothing
+in CI does either. Those paths are verified **by hand**, by running the app
 against a locally running plow API and watching what happens.
 
 ---

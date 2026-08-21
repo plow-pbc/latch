@@ -42,9 +42,12 @@ reach Macs through this app today.** What is gone is the in-repo stand-in that
 used to verify this side against the wire contract (head chef's call: a locally
 running plow API simulates plow). The scripts that drove a *live* stack went
 with it, so there is **no automated live-stack path** — not here, not in CI.
-The relay leg is verified **by hand**: bring up a plow stack, run the app
-against it, drive it. `packages/relay-client/test` keeps only the pure
-wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+What is manual is the leg against a REAL relay: bring up a plow stack, run the
+app against it, drive it. `packages/relay-client/test` does cover the client's
+protocol behavior over a fake connection — the auth handshake, liveness,
+reconnect and stop/dial cancellation — plus the pure wire checks; what it never
+does is open a socket or tunnel an MCP call. See
+[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's

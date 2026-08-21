@@ -26,8 +26,9 @@ touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
 > serving. So the policy engine, the capability-derived sandbox, file
 > operations, the audit log, the approval UI and the adversarial reviewer are
 > not just covered by the test suite: they are the live path a real caller
-> drives. The relay leg itself has no automated test here and is verified by
-> hand — see [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+> drives. The relay client's own protocol behavior is covered over a fake
+> connection; the leg against a real relay is verified by hand — see
+> [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Quickstart with `just`
 
