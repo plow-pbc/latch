@@ -27,8 +27,8 @@ touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
 > file operations, the audit log, the approval UI and the adversarial
 > reviewer are not just covered by the test suite: they are the live path a
 > real caller drives. What the relay leg's automated coverage does and does
-> not reach is owned by [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md);
-> the rest of that leg is verified by hand.
+> not reach is owned by [README-ts.md](README-ts.md#integration-coverage) §
+> Integration coverage; the rest of that leg is verified by hand.
 
 ## Quickstart with `just`
 
