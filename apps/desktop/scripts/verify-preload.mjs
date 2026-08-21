@@ -507,6 +507,9 @@ app.whenReady().then(async () => {
       inAgentsPane: !!pane.querySelector(".panel.agents"),
       // The stored text, in the field, and the two things said beside it.
       showsStoredPurpose: !!field && field.checkVisibility() && field.value === "Groceries and calendar only.",
+      purposeExampleHasBoundary: field?.placeholder.endsWith(
+        "You have no business with anything else on this computer — no files, no other sites.",
+      ) ?? false,
       labelled: pane.innerText.includes("What are agents for?"),
       // The purpose is the ERRAND, and an errand widens as readily as it
       // narrows: an owner who writes "Manage my SSH keys" has just made those
@@ -840,6 +843,7 @@ app.whenReady().then(async () => {
       "Ask me every time,AI Reviewer decides,Approve everything,Deny everything" &&
     approvalsReviewer.inAgentsPane &&
     approvalsReviewer.showsStoredPurpose &&
+    approvalsReviewer.purposeExampleHasBoundary &&
     approvalsReviewer.labelled &&
     approvalsReviewer.saysItCanWiden &&
     approvalsReviewer.noOnlyNarrowsClaim &&

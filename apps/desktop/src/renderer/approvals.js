@@ -54,6 +54,10 @@ export const APPROVAL_MODES = [
 export const PURPOSE_LABEL =
   "What are agents for? The reviewer checks each request it sees against this.";
 
+/** An example that demonstrates both the work to allow and the boundary around it. */
+export const PURPOSE_PLACEHOLDER =
+  "For example: You manage DoorDash ordering and delivery tracking on my behalf, for any number of people, with no limit on how many orders you place or how often you check their status. You also read and reply to comments on my Product Hunt launches, with no limit on how many. Signing in to doordash.com and producthunt.com with my saved logins is part of the job. You have no business with anything else on this computer — no files, no other sites.";
+
 /**
  * What has to be said next to that field, both halves of it.
  *

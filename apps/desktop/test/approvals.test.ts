@@ -9,7 +9,12 @@
  * reviewer is the only thing that reads the text.
  */
 import { describe, expect, it } from "vitest";
-import { APPROVAL_MODES, PURPOSE_CAVEATS, PURPOSE_LABEL } from "../src/renderer/approvals.js";
+import {
+  APPROVAL_MODES,
+  PURPOSE_CAVEATS,
+  PURPOSE_LABEL,
+  PURPOSE_PLACEHOLDER,
+} from "../src/renderer/approvals.js";
 
 interface Mode {
   value: string;
@@ -74,6 +79,14 @@ describe("approvals card", () => {
     );
     expect(PURPOSE_CAVEATS.join(" ")).not.toContain("only narrow");
     expect(PURPOSE_CAVEATS).toContain("Requests that fit may be approved without asking you.");
+  });
+
+  it("models an explicit boundary in the purpose example", () => {
+    expect(PURPOSE_PLACEHOLDER).toContain("DoorDash ordering and delivery tracking");
+    expect(PURPOSE_PLACEHOLDER).toContain("Product Hunt launches");
+    expect(PURPOSE_PLACEHOLDER).toMatch(
+      /You have no business with anything else on this computer — no files, no other sites\.$/,
+    );
   });
 
   it("points Ask mode at the suggestions toggle in its own card", () => {
