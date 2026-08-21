@@ -261,13 +261,24 @@ TYPEABLE_JS = """(el) => {
         if (!typed.includes(el.type)) return "";
         return el.disabled || el.readOnly ? "" : "single-line";
     }
-    // Embedded and non-rendered nodes are never editing hosts, whatever they
-    // DECLARE: focus on an <iframe> delegates to the document inside it, so a
-    // secret's characters land where the mark on the outer node cannot reach,
-    // and a <style> or <template> is not rendered, so focus is a no-op and the
-    // keys go wherever focus already was. This markup is page-controlled, so it
-    // cannot be left to the attribute to be honest about.
-    if (["iframe", "frame", "object", "embed", "style", "template", "script", "title"].includes(tag)) {
+    // A declared host has to hold its text the way the read-back reads it, which
+    // for anything down here is `textContent`. A node with a `value` of its own
+    // does not: a <select> answers the chosen option, a <button> its attribute.
+    // Typing at one drives option type-ahead instead of composing the value, and
+    // because the read-back is then not a PREFIX of what was asked, KEYS_DROPPED_JS
+    // sees no drop, no repair runs, and a value the node never held is reported
+    // as landed. Asking for the absence of `value` excludes every form control
+    // by construction rather than by a list that cannot be closed.
+    if (el.value !== undefined) return "";
+    // What is left with no `value` and no text of its own: embedded documents
+    // and nodes that are not rendered. None of them puts the characters where
+    // the mark on the outer node can reach -- focus on an <iframe> delegates
+    // into the document inside it, and a <style> or <template> is not rendered
+    // at all, so focus is a no-op and the keys go wherever focus already was.
+    // This markup is page-controlled, so it cannot be left to the attribute to
+    // be honest about.
+    if (["iframe", "frame", "object", "embed", "style", "template", "script", "title",
+         "img", "video", "audio", "canvas"].includes(tag)) {
         return "";
     }
     // The node has to BE the editing host, not merely sit inside one.
@@ -378,8 +389,13 @@ def _type_value(el, value):
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
     # Only the tail is typed, so only the tail can press Enter -- and one answer
-    # already says whether this node holds a newline as a character.
-    if kind != "multiline" and any(c in value[-TYPED_CHARS:] for c in ("\n", "\r")):
+    # already says whether this node holds a newline as a character. A textarea
+    # is that node, but for LF alone: its API value normalizes CR and CRLF to
+    # LF, so a tail carrying CR could not be held verbatim there either, and the
+    # shortfall is mid-value rather than a prefix, which KEYS_DROPPED_JS cannot
+    # see.
+    unsendable = ("\r",) if kind == "multiline" else ("\n", "\r")
+    if any(c in value[-TYPED_CHARS:] for c in unsendable):
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)

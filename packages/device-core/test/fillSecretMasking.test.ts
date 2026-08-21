@@ -615,10 +615,13 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // `type()` sends a newline as the Enter key, which submits the form from a
     // single-line field with only part of the value in it. `fill()` could never
     // do that, so typing must not introduce it: the whole value is assigned.
+    // What the probe can honestly answer is that no key was sent and the assign
+    // path ran. Not that the node holds the value verbatim: a real single-line
+    // input runs the value sanitization algorithm on assignment and strips
+    // CR/LF, which the fake's plain assignment cannot model.
     const run = probed.newline_single_line;
     expect(run.trace).not.toContain("handle.type");
     expect(run.typed_len).toBeNull();
-    expect(run.node_len).toBe(run.asked_len);
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
@@ -630,6 +633,25 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.trace).toContain("handle.type");
     expect(run.typed_len).toBe(run.asked_len);
     expect(run.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("types the tail of a long value whose newline is in the assigned head", () => {
+    // The rule is about what gets TYPED, which is the tail alone. Widening it to
+    // the whole value would send every long value carrying an early newline back
+    // to assignment, and the field would end on no keys at all — the one
+    // property issue #86 exists for.
+    const run = probed.newline_outside_tail;
+    expect(run.trace).toContain("handle.type");
+    expect(run.typed_len).toBe(probed.constants.typed_chars);
+  });
+
+  it("assigns a carriage return even where a newline would be typed", () => {
+    // A textarea's API value normalizes CR and CRLF to LF, so a tail carrying
+    // CR cannot be held verbatim there either — and the shortfall lands
+    // mid-value, which KEYS_DROPPED_JS only recognises as a prefix.
+    const run = probed.carriage_return_multiline;
+    expect(run.trace).not.toContain("handle.type");
+    expect(run.typed_len).toBeNull();
   });
 
   it("assigns the value outright when the keys did not compose it", () => {
@@ -1229,8 +1251,10 @@ describe("which nodes take typing", () => {
     tagName, getAttribute: () => null, ...extra,
   });
   // One that declares itself an editor, with whatever value.
-  const host = (tagName: string, attr: string = "") =>
-    element(tagName, { getAttribute: (k: string) => (k === "contenteditable" ? attr : null) });
+  const host = (tagName: string, attr: string = "", extra: Record<string, unknown> = {}) =>
+    element(tagName, {
+      getAttribute: (k: string) => (k === "contenteditable" ? attr : null), ...extra,
+    });
   // A document put wholly into edit mode, which declares its own body and
   // nothing else.
   const inDesignMode = (tagName: string) =>
@@ -1279,7 +1303,7 @@ describe("which nodes take typing", () => {
     // type-ahead, the embedded document the mask cannot reach, the ordinary span
     // where the keys would replace the whole region — and none of them is the
     // host, which is the only thing the predicate asks about.
-    { what: "a select", el: element("SELECT"), kind: "" },
+    { what: "a select, which carries a value of its own", el: element("SELECT", { value: "" }), kind: "" },
     { what: "an iframe", el: element("IFRAME"), kind: "" },
     { what: "a span", el: element("SPAN"), kind: "" },
     { what: "an editor explicitly turned off", el: host("DIV", "false"), kind: "" },
@@ -1296,7 +1320,15 @@ describe("which nodes take typing", () => {
     // beyond the reach of the mark on the outer node, and a <style> or
     // <template> is not rendered at all, so focus is a no-op and the keys go
     // wherever focus already was.
+    // Form controls declaring themselves hosts. Each has a `value` of its own,
+    // so the read-back could never recognise the typed characters — and typing
+    // at a <select> drives option type-ahead instead of composing anything.
+    { what: "a select declaring itself an editor", el: host("SELECT", "true", { value: "" }), kind: "" },
+    { what: "a button declaring itself an editor", el: host("BUTTON", "true", { value: "" }), kind: "" },
+    { what: "an option declaring itself an editor", el: host("OPTION", "true", { value: "" }), kind: "" },
     { what: "an iframe declaring itself an editor", el: host("IFRAME", "true"), kind: "" },
+    { what: "an image declaring itself an editor", el: host("IMG", "true"), kind: "" },
+    { what: "a canvas declaring itself an editor", el: host("CANVAS", "true"), kind: "" },
     { what: "an object declaring itself an editor", el: host("OBJECT", "true"), kind: "" },
     { what: "an embed declaring itself an editor", el: host("EMBED", "true"), kind: "" },
     { what: "a style tag declaring itself an editor", el: host("STYLE", "true"), kind: "" },
@@ -1305,7 +1337,8 @@ describe("which nodes take typing", () => {
     // designMode declares the body and nothing else: a control in such a
     // document is no more the editing host than one in a region.
     { what: "the body of a document in designMode", el: inDesignMode("BODY"), kind: "single-line" },
-    { what: "a select in a document in designMode", el: inDesignMode("SELECT"), kind: "" },
+    { what: "a select in a document in designMode",
+      el: element("SELECT", { value: "", ownerDocument: { designMode: "on" } }), kind: "" },
     { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), kind: "" },
   ])("$what: kind=$kind", ({ el, kind }) => {
     expect(typeable(el)).toBe(kind);

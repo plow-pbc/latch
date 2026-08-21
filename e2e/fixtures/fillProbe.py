@@ -502,6 +502,14 @@ def main() -> int:
         # newline as a character: it keeps its keystrokes.
         "newline_multiline": run(server, {**base, "value": "one\ntwo"},
                                  typeable="multiline"),
+        # The rule is scoped to the TAIL, which is all that gets typed: a long
+        # value whose newline sits in the head still ends on real keys, because
+        # the head is assigned anyway.
+        "newline_outside_tail": run(server, {**base, "value": "one\n" + "x" * 2000}),
+        # A textarea holds LF as a character but not CR -- its API value
+        # normalizes CR and CRLF to LF, so those are assigned like anywhere else.
+        "carriage_return_multiline": run(server, {**base, "value": "one\rtwo"},
+                                         typeable="multiline"),
         # A date widget: its value is composed from something other than the
         # characters, so keystrokes land the wrong day or nothing at all.
         "not_typeable": run(server, {**base, "value": "2026-08-19"}, typeable=""),

@@ -103,9 +103,9 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // each credential field — one per character, counted by the page itself.
     // That the landed value came from those keys is a different claim, and the
     // `keys_dropped` probe assertion is what holds it: a keydown fires whether
-    // or not the character is inserted. `fill()` would have assigned .value and fired a single input
-    // event, and the page — like the defense in front of a real sign-in — would
-    // have counted none at all. The two fields are counted separately, so
+    // or not the character is inserted. `fill()` would have assigned .value and
+    // fired a single input event, and the page — like the defense in front of a
+    // real sign-in — would have counted none at all. The two fields are counted separately, so
     // neither can cover for the other. Both values are shorter than
     // TYPED_CHARS, so the count is the whole length rather than the typed
     // tail — a longer fixture credential would land its head as an assignment
