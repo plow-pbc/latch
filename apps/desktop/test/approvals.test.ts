@@ -82,8 +82,9 @@ describe("approvals card", () => {
   });
 
   it("models an explicit boundary in the purpose example", () => {
-    expect(PURPOSE_PLACEHOLDER).toContain("DoorDash ordering and delivery tracking");
-    expect(PURPOSE_PLACEHOLDER).toContain("Product Hunt launches");
+    expect(PURPOSE_PLACEHOLDER).toContain("Instacart grocery ordering and delivery tracking");
+    expect(PURPOSE_PLACEHOLDER).toContain("signing in to instacart.com with my saved login");
+    expect(PURPOSE_PLACEHOLDER).not.toMatch(/DoorDash|Product Hunt/);
     expect(PURPOSE_PLACEHOLDER).toMatch(
       /You have no business with anything else on this computer — no files, no other sites\.$/,
     );
