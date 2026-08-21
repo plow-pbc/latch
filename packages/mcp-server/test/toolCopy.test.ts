@@ -17,6 +17,7 @@ import { BROWSING_SKILL, DeviceAgent, HeadlessPolicy } from "@domo/device-core";
 import {
   createDomoMcpServer,
   DomoMcpServer,
+  MACOS_TOOLING,
   SERVER_IDENTITY,
   SERVER_INSTRUCTIONS,
   TOOLS,
@@ -323,9 +324,20 @@ describe("nothing on the surface sends the live web back to the agent's own tool
     expect(SERVER_INSTRUCTIONS).toMatch(/reddit/i);
   });
 
-  it("the instructions name macOS tooling the agent's own workspace lacks", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/mdfind/);
-    expect(SERVER_INSTRUCTIONS).toMatch(/sips/);
+  /**
+   * Pins the SEAM, not the words. Grepping the instructions for /mdfind/ was
+   * the obvious assertion and it stopped meaning anything the moment one
+   * constant fed both strings: dropping `${MACOS_TOOLING}` from
+   * plow_run_command's description — the plausible edit when the mach-lookup
+   * TODO forces a rewrite — would have shipped green while the tool that
+   * actually runs the commands named no tooling at all.
+   */
+  it("both copy homes interpolate the one tooling list", async () => {
+    expect(SERVER_INSTRUCTIONS).toContain(MACOS_TOOLING);
+    expect((await descriptions(makeServer())).plow_run_command).toContain(MACOS_TOOLING);
+    // And the list itself still names tools verified to run under the profile.
+    expect(MACOS_TOOLING).toMatch(/mdfind/);
+    expect(MACOS_TOOLING).toMatch(/sips/);
   });
 
   /**
