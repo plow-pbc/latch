@@ -21,8 +21,8 @@ the architecture and [README-ts.md](README-ts.md) for the package/app layout.
 > sandbox, file operations, the audit log, the approval UI and the adversarial
 > reviewer build, run and are covered by the test suite. What the relay leg's
 > automated coverage does and does not reach is owned by
-> [README-ts.md](README-ts.md#integration-coverage) § Integration coverage; the rest of that leg is
-> verified by hand.
+> [README-ts.md](README-ts.md#integration-coverage) § Integration coverage;
+> the rest of that leg is verified by hand.
 
 ## Quickstart with `just`
 

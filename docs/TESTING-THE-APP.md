@@ -41,8 +41,9 @@ opens a socket to a *real* relay or tunnels an MCP call end to end. That path is
 hand**, by running the app against a locally running plow API and watching what happens.
 
 What `@domo/relay-client` still covers in process — the wire contract, and the socket lifecycle
-against a fake connection — is enumerated in [README-ts.md](../README-ts.md#integration-coverage) § Integration
-coverage, which owns that list. Read it before calling a relay-leg gap untestable.
+against a fake connection — is enumerated in
+[README-ts.md](../README-ts.md#integration-coverage) § Integration coverage, which owns that
+list. Read it before calling a relay-leg gap untestable.
 
 ---
 
