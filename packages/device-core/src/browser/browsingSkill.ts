@@ -46,10 +46,10 @@ the page; that is the one way round it, and it is not one you have any reason to
 - \`plow_browser_open {origins: ["dominos.com", "*.dominos.com"], credentials_metadata: true, goal}\`
   asks the owner to approve a browsing session bound to those site origins. List every
   domain you expect up front — the apex and the wildcard are separate entries.
-- The window is **visible by default** — the owner watches what is done with their
-  credentials. If they ask for it in the background ("don't take over my screen", "run it
-  headless"), open with \`headed: false\`; if they ask to watch, say nothing or pass
-  \`headed: true\`. Your screenshots are identical either way — only their view changes.
+- The window is **hidden by default** — the browser runs in the background and does not
+  take over the owner's screen. If they ask to watch it ("show me", "open it where I can
+  see it"), open with \`headed: true\`; otherwise say nothing or pass \`headed: false\`.
+  Your screenshots are identical either way — only their view changes.
   The choice lasts the session; a new mode means a new \`plow_browser_open\`.
 - Every \`plow_browser\` action is checked against the approved origins. If a click or popup
   lands outside them, page content locks: you can only \`url\`, \`pages\`, \`use_page\`, or
