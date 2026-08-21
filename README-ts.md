@@ -271,11 +271,9 @@ tunnels an MCP call. That path is verified **manually**: bring up a plow stack,
 run the app against it, drive it by hand. The procedure is in
 [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
-What `packages/relay-client/test` does hold: `wire.test.ts` for the pure wire
-contract — `stripHopByHop`, `Host` preservation, frame validation — plus
-`liveness.test.ts` and `lifecycle.test.ts`, which drive the client over a
-`FakeConn` through the auth handshake, the heartbeat, reconnect-with-backoff,
-and a dial that resolves after `stop()`.
+`packages/relay-client/test` does hold automated coverage of the client's own
+protocol behavior over a fake connection; `docs/TESTING-THE-APP.md` enumerates
+what, and is the one place that does.
 
 ## Running the desktop app
 

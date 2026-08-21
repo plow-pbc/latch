@@ -6,10 +6,10 @@
 Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a
 person's Mac — read and write files, run CLI commands with streaming output,
 and drive a real browser on their machine — through an **intent-based request
-system**: every operation is a structured, signed intent that a human, an
-adversarial reviewer agent, or both — depending on the configured approval mode
-— can inspect and approve before it executes inside an on-the-fly sandbox
-derived from exactly the approved capabilities.
+system**: every operation is a structured intent that a human and an
+adversarial reviewer agent can inspect and approve, with the configured
+approval mode deciding which of them is consulted, before it executes inside an
+on-the-fly sandbox derived from exactly the approved capabilities.
 
 v1 runs entirely on one Mac, but every flow — enrollment, discovery, access
 requests, intents, approvals, revocation — goes through the same protocol a
@@ -104,16 +104,14 @@ Design points:
 
 ## 4. The intent object
 
-Every operation (file read/write, command, browser session) becomes one signed
-intent — the single artifact that the approval UI renders, the sandbox is
-derived from, the audit log stores, and the adversarial reviewer
-evaluates.
+Every operation (file read/write, command, browser session) becomes one intent
+— the single artifact that the approval UI renders, the sandbox is derived
+from, the audit log stores, and the adversarial reviewer evaluates.
 
 ```json
 {
   "intentId": "uuid",
   "agentId": "fingerprint", "agentDisplay": "Family Coordinator",
-  "agentPublicKey": "base64-ed25519",
   "deviceId": "target-device",
   "goal": "Resize last month's photos for the shared album",
   "planContext": "Session goals from access request / spin-up",
