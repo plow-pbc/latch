@@ -30,7 +30,7 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { approvalViewModel, auditActivities } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
@@ -43,7 +43,12 @@ import { ConnectClient } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
-import { credentialFillFacts } from "./reviewFacts.js";
+import {
+  CredentialReview,
+  credentialFillFacts,
+  credentialTitles,
+  resolveCredentialReview,
+} from "./reviewFacts.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
@@ -156,51 +161,35 @@ class ElectronPolicy implements PolicyDelegate {
     payload?: JSONValue,
   ): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
+    // ONE reading of the vault for this decision, whoever ends up asking: the
+    // reviewer's facts and the owner's card are two projections of it, and
+    // resolving twice let them disagree about what an id is. Lazy, because most
+    // intents have no credential in them and must not pay a vault trip.
+    let review: Promise<CredentialReview | null> | null = null;
+    const resolved = () =>
+      (review ??= resolveCredentialReview(intent, payload ?? null, {
+        session: (handle) => device?.browserSessions?.describe(handle) ?? null,
+        vault: device?.credentialBroker
+          ? (url) => device!.credentialBroker!.whatsHere(url)
+          : null,
+      }));
     return decideIntent(intent, {
       settings: loadSettings(home),
       apiBaseUrl,
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
-      deviceFacts: () =>
-        credentialFillFacts(intent, payload ?? null, {
-          session: (handle) => device?.browserSessions?.describe(handle) ?? null,
-          vault: device?.credentialBroker
-            ? (url) => device!.credentialBroker!.whatsHere(url)
-            : null,
-        }),
+      deviceFacts: async () => credentialFillFacts(await resolved()),
       openApproval: async (hint) =>
         openApprovalWindow(
-          { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
+          {
+            kind: "intent",
+            view: approvalViewModel(intent, credentialTitles(intent, await resolved())),
+          },
           hint,
         ),
     });
   }
-}
-
-/**
- * Resolve credential item ids to titles via the LOCAL vault broker so the
- * approval card can show what the ids actually are. Never taken from the
- * intent — agent-supplied titles would be spoofable. Unresolvable ids render
- * as raw ids flagged "unknown item" (a deny signal for the human).
- */
-async function resolveCredentialTitles(intent: Intent): Promise<CredentialTitles> {
-  const titles: CredentialTitles = new Map();
-  const broker = device?.credentialBroker;
-  if (!broker) return titles;
-  const items =
-    intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
-  await Promise.all(
-    items.map(async (id) => {
-      try {
-        const item = await broker.describeItem(id);
-        titles.set(id, { title: item.title, category: item.category });
-      } catch {
-        /* unresolved — the card shows the raw id */
-      }
-    }),
-  );
-  return titles;
 }
 
 type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewModel> };

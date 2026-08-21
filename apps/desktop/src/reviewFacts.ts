@@ -1,10 +1,18 @@
 /**
- * The facts this Mac can establish about a credential fill, for the reviewer.
+ * The facts this Mac can establish about a credential fill — for the reviewer,
+ * and for the card the owner reads.
  *
  * Outside the Electron entry for the same reason `viewModel.ts` and
  * `reviewPolicy.ts` are: it is on the security-relevant decision path, so it
  * has to be reachable by `npx vitest run` with no display, no vault and no
  * browser. `main.ts` supplies the two device-shaped lookups and nothing else.
+ *
+ * ONE reading of the vault, two projections of it. The human's card and the
+ * reviewer's facts are two views of the same question — what are these item ids
+ * — and they were resolving it down two seams, with their own timeouts, their
+ * own failure behaviour and their own idea of what an unresolvable id means. A
+ * card that said "Chase" beside a reviewer that could not resolve anything is a
+ * disagreement the owner has no way to see.
  */
 import { Intent, JSONValue, jv } from "@domo/protocol";
 import type { BrowserSessionInfo, CredentialItemSummary } from "@domo/device-core";
@@ -72,21 +80,80 @@ const FACT_TIMEOUT_MS = 5_000;
  * says SO: "could not be resolved" must not read as "no match", which is the
  * one misreading that would turn a missing fact into a reason to allow.
  */
-export async function credentialFillFacts(
+export interface CredentialReview {
+  /** The live session being widened, or null when it could not be identified. */
+  session: BrowserSessionInfo | null;
+  /**
+   * The vault's answer for each REQUESTED id, in the order requested. `null`
+   * where the id is not in the vault; the whole array is null when the vault
+   * could not be read at all, which is a different thing and is said so.
+   */
+  items: (CredentialItemSummary | null)[] | null;
+  /** Why the vault could not be read, when it could not. */
+  unresolved?: string;
+}
+
+/** One reading of the device's own state, for both the card and the prompt. */
+export async function resolveCredentialReview(
   intent: Intent,
   payload: JSONValue,
   sources: FactSources,
-): Promise<string[]> {
-  const items =
+): Promise<CredentialReview | null> {
+  const requested =
     intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
-  if (items.length === 0) return [];
+  if (requested.length === 0) return null;
 
-  const facts: string[] = [];
   // Delivery detail, resolved to what it MEANS. The handle itself is a
   // capability — whoever holds it drives that browser — and it never goes into
   // a prompt.
   const handle = jv(payload).get("session").str;
   const session = handle !== null ? sources.session(handle) : null;
+
+  const vault = sources.vault;
+  if (!vault) return { session, items: null, unresolved: "the vault is unavailable" };
+  type Answer = { items: CredentialItemSummary[] } | { unresolved: string };
+  const answer = await Promise.race<Answer>([
+    vault(session?.lastUrl || undefined).then(
+      (items) => ({ items }),
+      () => ({ unresolved: "the vault could not be read" }),
+    ),
+    new Promise<Answer>((r) => {
+      setTimeout(
+        () => r({ unresolved: "the vault did not answer in time" }),
+        sources.timeoutMs ?? FACT_TIMEOUT_MS,
+      ).unref?.();
+    }),
+  ]);
+  if ("unresolved" in answer) return { session, items: null, unresolved: answer.unresolved };
+  return {
+    session,
+    items: requested.map((id) => answer.items.find((i) => i.id === id) ?? null),
+  };
+}
+
+/**
+ * The card's half: id → what the vault calls it. An id the vault does not hold
+ * is simply absent, and the card renders the raw id flagged "unknown item" —
+ * a deny signal for the human.
+ */
+export function credentialTitles(
+  intent: Intent,
+  review: CredentialReview | null,
+): Map<string, { title: string; category: string }> {
+  const titles = new Map<string, { title: string; category: string }>();
+  const requested =
+    intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+  review?.items?.forEach((item, index) => {
+    if (item) titles.set(requested[index], { title: item.title, category: item.category });
+  });
+  return titles;
+}
+
+/** The reviewer's half. */
+export function credentialFillFacts(review: CredentialReview | null): string[] {
+  if (review === null) return [];
+  const { session } = review;
+  const facts: string[] = [];
   if (session === null) {
     facts.push("this Mac could not identify the browser session this would widen");
   } else {
@@ -102,41 +169,22 @@ export async function credentialFillFacts(
     );
   }
 
-  const vault = sources.vault;
-  if (!vault) {
-    facts.push("the vault is unavailable, so these item ids could not be resolved at all");
-    return facts;
-  }
-  type Answer = { items: CredentialItemSummary[] } | { unresolved: string };
-  const answer = await Promise.race<Answer>([
-    vault(session?.lastUrl || undefined).then(
-      (items) => ({ items }),
-      () => ({ unresolved: "the vault could not be read" }),
-    ),
-    new Promise<Answer>((r) => {
-      setTimeout(
-        () => r({ unresolved: "the vault did not answer in time" }),
-        sources.timeoutMs ?? FACT_TIMEOUT_MS,
-      ).unref?.();
-    }),
-  ]);
-  if ("unresolved" in answer) {
+  if (review.items === null) {
     // Said as a gap, not as a silence. "no match found" is what a missing
     // answer looks like if it is left out, and that is the one misreading that
     // would turn not knowing into a reason to allow.
     facts.push(
-      `${answer.unresolved}, so these item ids are UNRESOLVED — that is missing ` +
+      `${review.unresolved}, so these item ids are UNRESOLVED — that is missing ` +
         `information, not a match and not a mismatch`,
     );
     return facts;
   }
-  const known = answer.items;
+  const items = review.items;
   facts.push(
     `the fill requests ${items.length} vault ${items.length === 1 ? "item" : "items"}, ` +
       `numbered below in the order they appear on the capability line above`,
   );
-  items.forEach((id, index) => {
-    const item = known.find((i) => i.id === id);
+  items.forEach((item, index) => {
     const label = `requested item ${index + 1}`;
     if (!item) {
       facts.push(`${label} is not in this vault`);
