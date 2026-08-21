@@ -54,6 +54,8 @@ afterEach(async () => {
   closeGate();
 });
 
+const DEVICE_HOME = "/domo-nonexistent-device-home";
+
 function tempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-fsasync-"));
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -90,7 +92,7 @@ describe("FileOps does not block the event loop", () => {
     cleanups.push(() => clearInterval(interval));
 
     let done = false;
-    const read = FileOps.read(file, [dir]).then((buf) => {
+    const read = FileOps.read(file, [dir], DEVICE_HOME).then((buf) => {
       done = true;
       return buf;
     });

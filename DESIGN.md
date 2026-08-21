@@ -269,6 +269,36 @@ execute *in-process* in the device app — trusted code, bounds-checked against
 the approved paths (canonicalized, symlink- and `..`-safe), inherently audited.
 Only `plow_run_command` runs third-party code, and only it gets the cage.
 
+**Plow Latch's own home is under every capability, not beside them.**
+`settings.json` under `DOMO_HOME` holds the relay credential and
+`agentPurpose` — the text the reviewer is handed as the owner's own words about
+what agents are for. An agent that can read that file has the credential; one
+that can write it sets its own errand, and every later review is judged against
+a purpose the agent composed for itself. No approval grants that, so it is not
+a capability at all: it is a floor under them, enforced on **both** paths, since
+they are different mechanisms.
+
+- **`plow_run_command`** runs under seatbelt, and the profile grants a broad
+  read of the user's home so installed tools resolve — which covers
+  `~/Library/Application Support/Plow-Latch-*`. Every generated profile now ends
+  with `(deny file-read* …)` + `(deny file-write* …)` on `DOMO_HOME`, followed
+  by a re-allow of that run's scratch directory, which lives inside it.
+  `file-read*`/`file-write*` rather than `file*` **measured, not assumed**: with
+  `(deny file* …)` the earlier operation-specific allow still won and
+  `cat settings.json` printed the credential. Seatbelt does not resolve this by
+  position alone, so the tests run the sandbox rather than asserting on profile
+  text. **This changed the bytes in `fixtures/sbpl.json` — a deliberate,
+  declared protocol break (2026-08-21). It tightens; it never loosens.**
+- **`plow_read_file` / `plow_write_file`** never touch seatbelt — they are
+  in-process — so `FileOps` refuses the same directory itself, before the
+  capability scope check, on canonicalized paths so a symlink or `..` cannot
+  spell around it.
+
+This is not the enumerated-sensitive-paths list §5a declines. That list was a
+reviewer being told to recognise other people's secrets by name. This is one
+component refusing to let anything edit its own configuration, it knows its own
+home for certain, and it holds whatever an approval said.
+
 **Seatbelt (`sandbox-exec`) with a generated profile.** The profile is not
 authored by anyone — it is *mechanically derived* from the approved capability
 set:

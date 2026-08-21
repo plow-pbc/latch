@@ -130,7 +130,7 @@ export class DeviceAgent {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
-    this.executor = new Executor(path.join(home, "device/scratch"));
+    this.executor = new Executor(path.join(home, "device/scratch"), home);
     this.skills = new SkillRegistry();
     this.skills.loadDir(path.join(home, "device/skills"));
     if (browserRuntime) {
@@ -360,7 +360,7 @@ export class DeviceAgent {
     const p = cap.paths?.[0];
     if (p === undefined) return { status: "error", error: "missing path" };
     try {
-      const data = await FileOps.read(p, cap.paths ?? []);
+      const data = await FileOps.read(p, cap.paths ?? [], this.home);
       this.audit.record("file_read", {
         intentId: intent.intentId,
         path: p,
@@ -389,7 +389,7 @@ export class DeviceAgent {
     if (contentBase64 === null) return { status: "error", error: "missing content" };
     const data = Buffer.from(contentBase64, "base64");
     try {
-      await FileOps.write(p, data, cap.paths ?? []);
+      await FileOps.write(p, data, cap.paths ?? [], this.home);
       this.audit.record("file_write", {
         intentId: intent.intentId,
         path: p,

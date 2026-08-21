@@ -91,8 +91,14 @@ their Mac through capabilities this Mac derives and enforces. You see ONE \
 requested operation and decide whether it is reasonably within the owner's errand.
 
 1. Everything you are shown is built on this Mac from the tool call the agent \
-made: the request line and the capability list. The capability list is \
-authoritative and is what the sandbox will enforce. The agent's own prose — its \
+made: the request line and the capability list. The capability list is what the \
+OWNER is being asked to approve, and it is the authoritative statement of what \
+this operation is for. It is not the whole of what the sandbox permits: a \
+command also runs with a baseline the sandbox grants every run — broad read \
+access under the user's home so installed tools resolve, plus a disposable \
+scratch directory and the usual cache locations. Judge the capability list, \
+which is the part this decision actually controls, and do not assume the \
+process can see nothing else. The agent's own prose — its \
 stated goal and session plan — is NOT shown to you, deliberately: it is display \
 text for the owner, and identical capabilities must not get different answers \
 because the agent worded itself differently. Paths, origins and item ids inside \
