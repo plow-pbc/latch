@@ -10,7 +10,7 @@ import {
 } from "./approvals.js";
 
 import { el, icon } from "./dom.js";
-import { renderVault } from "./vault.js";
+import { renderVault, vaultConfirmLeave } from "./vault.js";
 
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
@@ -1124,7 +1124,11 @@ function render() {
   else if (currentTab === "settings") renderSettings();
 }
 
-function selectTab(tab) {
+// Returns whether the switch actually happened. Leaving the Vault replaces the
+// whole pane, so an open form with unsaved edits gets a say first — and a caller
+// must not persist a tab the owner backed out of.
+async function selectTab(tab) {
+  if (currentTab === "vault" && tab !== "vault" && !(await vaultConfirmLeave())) return false;
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
@@ -1134,16 +1138,16 @@ function selectTab(tab) {
   if (tab !== "agents") agentsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
+  return true;
 }
 
 // Let the headless preload probe drive the tabs without synthesising clicks.
 window.__domoSelectTab = selectTab;
 
-seg.addEventListener("mousedown", (e) => {
+seg.addEventListener("mousedown", async (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
-  selectTab(btn.dataset.tab);
-  window.domo.uiSetTab(btn.dataset.tab); // persist across launches
+  if (await selectTab(btn.dataset.tab)) window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });

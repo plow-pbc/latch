@@ -257,11 +257,14 @@ function vpayload(type, ctx) {
 }
 
 /** Her confirm card, for the one action that cannot be undone here. */
-function vconfirm(title, body, confirmLabel, onConfirm) {
+function vconfirm(title, body, confirmLabel, onConfirm, onCancel) {
   const overlay = el("div", { class: "overlay confirm-overlay show" });
   const close = () => overlay.remove();
+  // Backing out is an answer too — a guard has to hear it to leave the form
+  // standing. Delete passes no onCancel, so its behaviour is unchanged.
+  const dismiss = () => { close(); onCancel?.(); };
   const keep = el("button", { class: "btn ghost", attrs: { type: "button" }, text: "Cancel" });
-  keep.addEventListener("click", close);
+  keep.addEventListener("click", dismiss);
   const go = el("button", { class: "btn danger", attrs: { type: "button" }, text: confirmLabel });
   go.addEventListener("click", async () => {
     go.disabled = true;
@@ -273,8 +276,44 @@ function vconfirm(title, body, confirmLabel, onConfirm) {
     el("p", { class: "confirm-p", text: body }),
     el("div", { class: "confirm-acts" }, [keep, go]),
   ]));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) dismiss(); });
   document.querySelector(".vaultui").appendChild(overlay);
+}
+
+/*
+ * Unsaved edits.
+ *
+ * vformBody() already fires ctx.onChange from every place a form can change —
+ * typing, generating a password, adding or dropping a website — so a flag on
+ * that hook IS the dirty check. A value-diff is not an option anyway: the vault
+ * never hands a stored secret over, so there is nothing to compare a secret
+ * box against. That makes this "touched", not "different", which is the same
+ * bargain every browser makes with beforeunload.
+ *
+ * Each open form registers its own check here, so leaving the Vault TAB — which
+ * replaces the whole pane, forms and all — can ask on their behalf.
+ */
+const dirtyForms = new Set();
+
+/** Resolves true when it is safe to throw the form away. */
+function vaskDiscard(dirty) {
+  if (!dirty()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    vconfirm(
+      "Discard your changes?",
+      "What you typed here has not been saved to the vault. Leaving throws it away.",
+      "Discard",
+      () => resolve(true),
+      () => resolve(false),
+    );
+  });
+}
+
+/** Asked by main.js before it switches tabs out from under an open form. */
+export async function vaultConfirmLeave() {
+  const ok = await vaskDiscard(() => [...dirtyForms].some((f) => f()));
+  if (ok) dirtyForms.clear(); // the pane, and every form on it, is about to go
+  return ok;
 }
 
 /** One saved item: her row, and the form it opens into. */
@@ -296,22 +335,33 @@ function vitem(summary, reload) {
   const body = el("div", { class: "vbody" }, [inner]);
 
   let loaded = false;
+  let touched = false;
+  const dirty = () => touched;
+  const shut = () => {
+    // Closing throws the form away, revealed values included. Keeping it
+    // would let a second look at a protected item skip the check the first
+    // one had to pass.
+    article.classList.remove("open");
+    inner.replaceChildren();
+    dirtyForms.delete(dirty);
+    loaded = false;
+    touched = false;
+  };
   row.addEventListener("click", async () => {
-    article.classList.toggle("open");
-    if (!article.classList.contains("open")) {
-      // Closing throws the form away, revealed values included. Keeping it
-      // would let a second look at a protected item skip the check the first
-      // one had to pass.
-      inner.replaceChildren();
-      loaded = false;
+    if (article.classList.contains("open")) {
+      // Ask BEFORE anything is torn down, so backing out leaves the form —
+      // and whatever was typed into it — exactly as it stood.
+      if (await vaskDiscard(dirty)) shut();
       return;
     }
+    article.classList.add("open");
     if (loaded) return;
     loaded = true;
     inner.replaceChildren(el("p", { class: "use-note", text: "Opening…" }));
     try {
       const item = await window.domo.vaultItem(summary.id);
-      const { nodes, ctx } = vformBody(type, item);
+      const { nodes, ctx } = vformBody(type, item, () => { touched = true; });
+      dirtyForms.add(dirty);
       const del = el("button", { class: "btn danger", attrs: { type: "button" }, text: "Delete" });
       del.addEventListener("click", () =>
         vconfirm(
@@ -321,6 +371,7 @@ function vitem(summary, reload) {
           async () => {
             try {
               await window.domo.vaultDeleteItem(item.id);
+              touched = false; // it is gone; do not ask about edits to it
               vtoast("Deleted");
               await reload();
             } catch (err) {
@@ -334,6 +385,7 @@ function vitem(summary, reload) {
         save.disabled = true;
         try {
           await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id, revision: item.revision });
+          touched = false; // stored now — the reload below must not ask about it
           vtoast("Saved");
           await reload();
           return;
@@ -359,17 +411,22 @@ function vitem(summary, reload) {
 /** Her sheet: pick a type, fill that type's form, save. */
 function vsheet(reload) {
   const overlay = el("div", { class: "overlay show" });
-  const close = () => overlay.remove();
+  let touched = false;
+  const dirty = () => touched;
+  dirtyForms.add(dirty);
+  const close = () => { dirtyForms.delete(dirty); overlay.remove(); };
+  /** Every way out except a successful save, which has nothing to discard. */
+  const leave = async () => { if (await vaskDiscard(dirty)) close(); };
 
   const title = el("h2", { text: "New item" });
   const tag = el("span", { class: "htag", attrs: { hidden: "" } });
   const back = el("button", { class: "sheet-back", attrs: { type: "button", title: "Back", hidden: "" } }, [icon("chevron", { class: "vico", strokeWidth: "2.2" })]);
   const x = el("button", { class: "sheet-x", attrs: { type: "button", title: "Close" } }, [icon("close", { class: "vico", strokeWidth: "2.2" })]);
-  x.addEventListener("click", close);
+  x.addEventListener("click", leave);
 
   const bodyEl = el("div", { class: "sheet-body" });
   const cancel = el("button", { class: "btn ghost", attrs: { type: "button" }, text: "Cancel" });
-  cancel.addEventListener("click", close);
+  cancel.addEventListener("click", leave);
   const save = el("button", { class: "btn save", attrs: { type: "button" }, text: "Save" });
   const foot = el("div", { class: "sheet-foot", attrs: { hidden: "" } }, [
     el("span", { class: "req-note" }, [el("span", { class: "req", text: "*" }), el("span", { text: " Required" })]),
@@ -378,6 +435,7 @@ function vsheet(reload) {
   ]);
 
   const picker = () => {
+    touched = false; // the picker itself holds nothing to lose
     title.textContent = "New item";
     tag.setAttribute("hidden", "");
     back.setAttribute("hidden", "");
@@ -404,7 +462,8 @@ function vsheet(reload) {
     tag.removeAttribute("hidden");
     back.removeAttribute("hidden");
     foot.removeAttribute("hidden");
-    const { nodes, ctx } = vformBody(type, null);
+    touched = false;
+    const { nodes, ctx } = vformBody(type, null, () => { touched = true; });
     bodyEl.replaceChildren(el("form", { class: "sheet-form", attrs: { autocomplete: "off" } }, nodes));
     save.onclick = async () => {
       save.disabled = true;
@@ -420,14 +479,14 @@ function vsheet(reload) {
       save.disabled = false;
     };
   };
-  back.addEventListener("click", picker);
+  back.addEventListener("click", async () => { if (await vaskDiscard(dirty)) picker(); });
 
   overlay.appendChild(el("div", { class: "sheet", attrs: { role: "dialog", "aria-modal": "true" } }, [
     el("div", { class: "sheet-top" }, [back, el("div", { class: "sheet-titlewrap" }, [title, tag]), x]),
     bodyEl,
     foot,
   ]));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) leave(); });
   picker();
   document.querySelector(".vaultui").appendChild(overlay);
 }
@@ -443,6 +502,11 @@ const PTYPE_BLURB = {
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
   const renderVaultIn = () => renderVault(view, isCurrent);
+  // A redraw detaches every form on the pane, so their unsaved-edit checks go
+  // with them — otherwise a row left open during a save on some OTHER item
+  // would still be voting, and the tab switch would ask about a form that is
+  // no longer on screen.
+  dirtyForms.clear();
   // Everything the vault holds, edited here. This is why the tab exists: the
   // only other way in is the vault's own web page, and reaching it means a
   // browser warning about the certificate the app issued to itself.

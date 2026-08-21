@@ -103,7 +103,23 @@ ipcMain.handle("updates:get", async () => ({
 // A vault whose key has moved: the account is on disk and cannot be opened.
 // This is what a Keychain reset, a restore from backup, or an app rename leaves
 // behind, and it must not be reported as an empty vault.
-ipcMain.handle("vault:items", async () => ({ locked: true, reason: "undecryptable" }));
+// Switchable, because the unsaved-edits checks further down need a vault with
+// something in it — the locked reply above has no list and no forms.
+let vaultItemsReply = { locked: true, reason: "undecryptable" };
+ipcMain.handle("vault:items", async () => vaultItemsReply);
+ipcMain.handle("vault:item", async () => ({
+  id: "itm1",
+  type: "login",
+  name: "Notion",
+  revision: 1,
+  fields: { username: "owner@probe" },
+  secrets: ["password"],
+  urls: ["https://notion.so"],
+  notes: "",
+}));
+ipcMain.handle("vault:reveal", async () => "revealed-secret");
+ipcMain.handle("vault:saveItem", async () => ({ id: "itm1" }));
+ipcMain.handle("vault:deleteItem", async () => true);
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 // No browsing session: the audit screen's live thumbnail stays hidden.
 ipcMain.handle("viewer:state", async () => ({
@@ -712,6 +728,92 @@ app.whenReady().then(async () => {
   }})()`);
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
   await captureAfterPaint(win, vaultShot);
+
+  // Unsaved edits must not vanish without a word. The vault is the only screen
+  // that holds a form open behind a Save button, so it is the only one where
+  // leaving can throw typing away — by closing the sheet, by collapsing a row,
+  // or by switching tab out from under it.
+  const vaultUnsaved = await (async () => {
+    vaultItemsReply = [{ id: "itm1", type: "login", title: "Notion", subtitle: "owner@probe", urls: ["https://notion.so"] }];
+    const js = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
+    const click = (sel) => win.webContents.executeJavaScript(
+      `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false; n.click(); return true; })()`);
+    // A real keystroke, not an assignment: the dirty flag rides the input event.
+    const type = (sel, value) => win.webContents.executeJavaScript(
+      `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false;
+         n.value = ${JSON.stringify(value)}; n.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
+    const asking = () => js(() => !!document.querySelector(".vaultui .confirm-overlay"));
+    const settle = () => new Promise((r) => setTimeout(r, 120));
+
+    const SHEET = ".vaultui .overlay.show:not(.confirm-overlay)";
+    const NAME = ".vaultui .sheet input[data-name='1']";
+    const KEEP = ".vaultui .confirm-overlay .btn.ghost";
+    const DISCARD = ".vaultui .confirm-overlay .btn.danger";
+
+    await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list to render");
+
+    // An untouched sheet closes without a question.
+    await click(".vaultui .btn-primary");
+    await waitFor(win, `document.querySelector("${SHEET}")`, "the new-item sheet");
+    await click(".vaultui .ptype[data-new='login']");
+    await settle();
+    await click(".vaultui .sheet-foot .btn.ghost");
+    await settle();
+    const cleanSheetClosesFreely = !(await asking()) && !(await js(() => !!document.querySelector(".vaultui .overlay.show")));
+
+    // A filled sheet asks, and backing out leaves the typing where it was.
+    await click(".vaultui .btn-primary");
+    await waitFor(win, `document.querySelector("${SHEET}")`, "the sheet again");
+    await click(".vaultui .ptype[data-new='login']");
+    await settle();
+    await type(NAME, "half-typed");
+    await click(".vaultui .sheet-foot .btn.ghost");
+    await settle();
+    const dirtySheetAsks = await asking();
+    await click(KEEP);
+    await settle();
+    const keepKeepsTheTyping = await win.webContents.executeJavaScript(
+      `document.querySelector("${NAME}")?.value === "half-typed"`);
+
+    // Discard is the other answer, and it does close.
+    await click(".vaultui .sheet-foot .btn.ghost");
+    await settle();
+    await click(DISCARD);
+    await settle();
+    const discardClosesSheet = await js(() => !document.querySelector(".vaultui .overlay.show"));
+
+    // Collapsing an edited row is the same loss through a different door.
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row's form");
+    await type(".vaultui .vitem.open input[data-name='1']", "renamed");
+    await click(".vaultui .vitem .vrow");
+    await settle();
+    const dirtyRowAsksOnCollapse = await asking();
+    await click(KEEP);
+    await settle();
+    const rowStaysOpenOnKeep = await js(() => !!document.querySelector(".vaultui .vitem.open"));
+
+    // And so is walking off the tab entirely. Fire-and-forget on purpose:
+    // selectTab's promise stays pending until the confirm is answered, so
+    // awaiting it here would deadlock against the click that answers it.
+    const leaveTab = (tab) => win.webContents.executeJavaScript(
+      `(() => { window.__domoSelectTab(${JSON.stringify(tab)}); return true; })()`);
+    await leaveTab("rules");
+    await settle();
+    const dirtyBlocksTabSwitch =
+      (await asking()) && (await js(() => document.querySelector("#seg button.active")?.dataset.tab === "vault"));
+    await click(DISCARD);
+    await settle();
+    const discardAllowsTabSwitch = await js(() => document.querySelector("#seg button.active")?.dataset.tab === "rules");
+
+    vaultItemsReply = { locked: true, reason: "undecryptable" };
+    return {
+      cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
+      dirtyRowAsksOnCollapse, rowStaysOpenOnKeep, dirtyBlocksTabSwitch, discardAllowsTabSwitch,
+    };
+  })();
+
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane to come back");
 
@@ -787,6 +889,14 @@ app.whenReady().then(async () => {
     agentsOpen.noInlineForm &&
     agentsOpen.paneInert &&
     agentsOpen.focusInModal &&
+    vaultUnsaved.cleanSheetClosesFreely &&
+    vaultUnsaved.dirtySheetAsks &&
+    vaultUnsaved.keepKeepsTheTyping &&
+    vaultUnsaved.discardClosesSheet &&
+    vaultUnsaved.dirtyRowAsksOnCollapse &&
+    vaultUnsaved.rowStaysOpenOnKeep &&
+    vaultUnsaved.dirtyBlocksTabSwitch &&
+    vaultUnsaved.discardAllowsTabSwitch &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&
@@ -883,7 +993,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
