@@ -954,15 +954,19 @@ try {
       // bundled (and therefore what gets the Developer ID signature).
       fetchBrowser("arm64");
       fetchBrowser("x86_64");
+      // Before the fuse: it requires the two trees to be byte-identical outside
+      // Mach-O, and patching only one of them (the other cached from an earlier
+      // run) is a diff. The universal tree is dittoed from arm64, so it inherits
+      // the patch rather than needing its own.
+      patchCamoufoxDockPolicies();
       mergeCamoufoxUniversal();
       builtArches.push("universal");
     } else {
       fetchBrowser(hostArch);
+      patchCamoufoxDockPolicies();
       builtArches.push(hostArch);
     }
   }
-  // After the fetch/merge so freshly extracted trees are covered too.
-  patchCamoufoxDockPolicies();
 
   // Signing is its own pass, cache-independent: a `just package` on an already
   // built tree must still produce Developer ID signatures, or notarization
