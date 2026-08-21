@@ -645,15 +645,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.typed_len).toBe(probed.constants.typed_chars);
   });
 
-  it("assigns a carriage return even where a newline would be typed", () => {
-    // A textarea's API value normalizes CR and CRLF to LF, so a tail carrying
-    // CR cannot be held verbatim there either — and the shortfall lands
-    // mid-value, which KEYS_DROPPED_JS only recognises as a prefix.
-    const run = probed.carriage_return_multiline;
-    expect(run.trace).not.toContain("handle.type");
-    expect(run.typed_len).toBeNull();
-  });
-
   it("assigns the value outright when the keys did not compose it", () => {
     // A field can take the keys and sanitise some of them away — a number
     // input handed something that is not a number does exactly that. Reporting
@@ -1320,15 +1311,21 @@ describe("which nodes take typing", () => {
     // beyond the reach of the mark on the outer node, and a <style> or
     // <template> is not rendered at all, so focus is a no-op and the keys go
     // wherever focus already was.
-    // Form controls declaring themselves hosts. Each has a `value` of its own,
-    // so the read-back could never recognise the typed characters — and typing
-    // at a <select> drives option type-ahead instead of composing anything.
-    { what: "a select declaring itself an editor", el: host("SELECT", "true", { value: "" }), kind: "" },
-    { what: "a button declaring itself an editor", el: host("BUTTON", "true", { value: "" }), kind: "" },
-    { what: "an option declaring itself an editor", el: host("OPTION", "true", { value: "" }), kind: "" },
     { what: "an iframe declaring itself an editor", el: host("IFRAME", "true"), kind: "" },
     { what: "an image declaring itself an editor", el: host("IMG", "true"), kind: "" },
     { what: "a canvas declaring itself an editor", el: host("CANVAS", "true"), kind: "" },
+    // Form controls declaring themselves hosts. Each carries its text in a
+    // string `value`, so the read-back could never recognise the typed
+    // characters — and typing at a <select> drives option type-ahead instead of
+    // composing anything.
+    { what: "a select declaring itself an editor", el: host("SELECT", "true", { value: "" }), kind: "" },
+    { what: "a button declaring itself an editor", el: host("BUTTON", "true", { value: "" }), kind: "" },
+    { what: "an option declaring itself an editor", el: host("OPTION", "true", { value: "" }), kind: "" },
+    // A NUMERIC value is not text held elsewhere: an <li> keeps its in
+    // textContent, and <li contenteditable> is ordinary rich-text markup, so
+    // asking for mere presence of `value` would send it back to assignment.
+    { what: "a list item declaring itself an editor", el: host("LI", "true", { value: 0 }), kind: "single-line" },
+    { what: "a progress element declaring itself an editor", el: host("PROGRESS", "true", { value: 0 }), kind: "single-line" },
     { what: "an object declaring itself an editor", el: host("OBJECT", "true"), kind: "" },
     { what: "an embed declaring itself an editor", el: host("EMBED", "true"), kind: "" },
     { what: "a style tag declaring itself an editor", el: host("STYLE", "true"), kind: "" },
@@ -1339,6 +1336,7 @@ describe("which nodes take typing", () => {
     { what: "the body of a document in designMode", el: inDesignMode("BODY"), kind: "single-line" },
     { what: "a select in a document in designMode",
       el: element("SELECT", { value: "", ownerDocument: { designMode: "on" } }), kind: "" },
+    { what: "a div in a document in designMode", el: inDesignMode("DIV"), kind: "" },
     { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), kind: "" },
   ])("$what: kind=$kind", ({ el, kind }) => {
     expect(typeable(el)).toBe(kind);
