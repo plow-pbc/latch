@@ -75,12 +75,15 @@ module.exports = async function afterPack(context) {
   // `server` carries no Mach-O, so nothing below signs it — but it is what the
   // browser host actually execs, so its absence is the same dead browsing.
   const server = path.join(runtime, "server");
-  const missing = [runtime, framework, sitePackages, server, camoufox, vaultCli, vaultServer]
-    .filter((d) => !fs.existsSync(d))
-    .map((d) => path.basename(d));
+  // A missing runtime explains all six children, so it is named on its own.
+  const missing = fs.existsSync(runtime)
+    ? [framework, sitePackages, server, camoufox, vaultCli, vaultServer]
+        .filter((d) => !fs.existsSync(d))
+        .map((d) => path.basename(d))
+    : ["browser-runtime"];
   if (missing.length > 0) {
     throw new Error(
-      `[afterPack] browser-runtime is missing ${missing.join(", ")} — ` +
+      `[afterPack] the packed app is missing ${missing.join(", ")} — ` +
         "package with `just package` or `just package-unnotarized`",
     );
   }
@@ -161,6 +164,11 @@ module.exports = async function afterPack(context) {
     if (!info.includes("Authority=Developer ID Application")) problems.push([f, "no Developer ID"]);
     else if (!/\bTimestamp=/.test(info)) problems.push([f, "no secure timestamp"]);
     else if (!/flags=.*runtime/.test(info)) problems.push([f, "no hardened runtime"]);
+  }
+  if (apps === 0) {
+    throw new Error(
+      "[afterPack] the camoufox payload holds no Camoufox.app — a fuse that did not finish",
+    );
   }
   if (problems.length > 0) {
     const lines = problems
