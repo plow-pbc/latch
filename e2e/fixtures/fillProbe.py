@@ -134,14 +134,15 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
-        if "match(" in js:
-            return sum(1 for c in (self.value or "") if c.isalnum())
+        if "bare(" in js:
+            seps = " \t\r\n-()./"
+            bare = lambda t: "".join(c for c in t if c not in seps)  # noqa: E731
+            return bare(self.value or "") == bare(args[0] if args else "")
         if "maxLength" in js:
-            return self._cap()
             # The real script reports a cap only for the element kinds
             # `maxlength` governs; a node standing in for one of those answers
             # its cap, and -1 is "uncapped" exactly as it is in the page.
-            return self.max_length
+            return self._cap()
         if "tagName" in js:
             return self.typeable
         if "startsWith(now)" in js:
@@ -241,13 +242,25 @@ class Handle:
         elif self.reformats:
             bare = landed.replace(" ", "")
             landed = " ".join(bare[i:i + 4] for i in range(0, len(bare), 4))
-        self.value = landed[:cap] if cap >= 0 else landed
+        self.value = _clip(landed, cap)
         if self.partial_fill and self.type_calls > 1:
             # Some of it went in and then the field went away. It takes more
             # than one key for that to be interesting: what the node is left
             # holding has to be something a comparison could get wrong.
             self.trace[-1] = "handle.type-failed"
             raise RuntimeError("Element is not attached to the DOM")
+
+
+def _clip(text, cap):
+    """Clip the way a field does: `maxlength` counts UTF-16 code units.
+
+    Slicing by code points instead would keep four emoji under a cap of four,
+    where a browser keeps two -- and the fixture would then show a value landing
+    whole that a real field had halved.
+    """
+    if cap < 0:
+        return text
+    return text.encode("utf-16-le")[:cap * 2].decode("utf-16-le", errors="ignore")
 
 
 class Hidden(RuntimeError):
@@ -675,6 +688,13 @@ def main() -> int:
         # and a `\w`-based JS class would not, so the field would have read as
         # partly missing and been wiped.
         "non_ascii_value": run(server, {**base, "value": "Jos\u00e9-1234"}, max_length=20),
+        # A phone input declaring its TRUE cap up front -- 10, the digits it
+        # keeps -- given 12 characters of punctuation it strips. Comparing the
+        # sent length against that cap refused this before the node was even
+        # touched; the digits are what cannot be reformatted away, and there are
+        # exactly ten of them.
+        "strips_declared_cap_upfront": run(
+            server, {**base, "value": "555-123-4567"}, max_length=10, reformats="strip"),
         "reformatting_field_shrinks": run(
             server, {**base, "value": "555-123-4567"},
             max_length=20, max_length_after=10, reformats="strip"),

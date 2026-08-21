@@ -311,14 +311,21 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 
 # A field's own cap on what it will hold. -1 when it does not set one, which is
 # what an element with no maxlength reports and what a non-input answers.
-# How much of what it was given the field still has, counted over characters a
-# reformatter neither adds nor removes. Separators are exactly what one inserts
-# and strips, so counting those would compare representations again; counting
-# the rest asks the only question that survives the rewrite -- is any of it gone.
-# `\\w` is ASCII even under /u, so it counts short against Python's `isalnum`
-# and a value carrying an accented letter would read as partly missing and be
-# wiped. Letter-or-number properties are what both sides actually mean.
-HELD_ALNUM_JS = f"""(el) => (({_HELD}).match(/[\\p{{L}}\\p{{N}}]/gu) || []).length"""
+# Is the field still holding everything it was given, whatever it did to the
+# shape of it? A control that rewrites a value only ever adds separators or
+# takes them away -- a card input grows spaces, a phone input drops dashes -- so
+# strip those from both sides and what is left has to match exactly. Compared IN
+# THE PAGE, the way the prefix test above is: the value goes in, a boolean comes
+# back, and nothing of it crosses the wire.
+#
+# Equality rather than a count, because a count answers wrongly for anything
+# that is not a letter or digit: an emoji, or the punctuation in a password, is
+# content a field cannot reformat away, and counting alphanumerics alone would
+# call losing it no loss at all.
+HOLDS_ALL_JS = f"""(el, wanted) => {{
+    const bare = (t) => t.replace(/[\\s\\-()./]/gu, "");
+    return bare({_HELD}) === bare(wanted);
+}}"""
 
 FIELD_CAP_JS = """(el) => {
     // `maxLength` reflects the attribute even on elements the browser does not
@@ -338,18 +345,30 @@ FIELD_CAP_JS = """(el) => {
 }"""
 
 
-def _utf16_units(value):
-    """What `maxlength` counts: UTF-16 code units, not code points.
+# What a control adds or removes to shape a value, and nothing else. Narrow on
+# purpose: every character outside this set is content the field has to keep, so
+# a password's punctuation counts and only grouping marks do not. `HOLDS_ALL_JS`
+# strips the same set on the page side.
+_SEPARATORS = " \t\r\n-()./"
 
-    An astral character -- an emoji, some CJK extensions -- is one code point
-    and two units, so counting code points under-measures exactly at the
-    boundary this guards and lets through a value the browser will clip.
+
+def _bare(value):
+    """The value with the shaping stripped out -- what every representation shares."""
+    return "".join(c for c in value if c not in _SEPARATORS)
+
+
+def _bare_units(value):
+    """The bare value measured the way `maxlength` measures: UTF-16 code units.
+
+    Only the capacity question needs a measure at all -- whether the field could
+    hold this in any representation. Whether it DID keep it is an equality, and
+    equality needs no units. An astral character is one code point and two
+    units, so counting code points here would call four emoji a fit for a field
+    that holds two. `surrogatepass` because a lone surrogate makes a plain
+    encode raise, and that exception lands in the catch whose message this
+    refusal exists to stop producing.
     """
-    # surrogatepass because a lone surrogate -- reachable from a \udXXX escape in
-    # a stored value -- makes a plain encode raise, and that exception lands in
-    # the catch whose message this refusal exists to stop producing. It is also
-    # the one unit the browser counts it as.
-    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+    return len(_bare(value).encode("utf-16-le", errors="surrogatepass")) // 2
 
 
 class _FieldTooShort(RuntimeError):
@@ -395,19 +414,30 @@ def _clear_and_refuse(el, cap):
     raise _FieldTooShort(cap)
 
 
-def _refuse_if_capped(el, value):
-    """Refuse a value the field's own cap will not admit, wherever we are.
+def _refuse_if_impossible(el, value):
+    """Refuse a value the field could not hold in ANY representation.
 
-    Asked twice: before the node is touched, and again from the repair that
-    follows dropped keys. A cap can move under a fill in progress -- a
-    card-number field LOWERS its `maxlength` once the first digits identify the
-    brand -- so a value the fill was admitted with can stop fitting halfway
-    through it. Only where the field kept what it was given, though: see the
-    call site for why a reformatting one cannot be measured this way.
+    Even stripped to nothing but its letters and digits it would not fit, so no
+    amount of reformatting saves it and there is nothing to learn by trying.
+    Asked before the node is touched, and again after an assignment -- an
+    assignment ignores `maxlength`, so it is the one way an over-cap value can
+    be sitting in a field that says it cannot hold one.
     """
     cap = el.evaluate(FIELD_CAP_JS)
-    if cap >= 0 and _utf16_units(value) > cap:
+    if cap >= 0 and _bare_units(value) > cap:
         raise _FieldTooShort(cap)
+
+
+def _refuse_unless_kept(el, value):
+    """Refuse when the field is not holding all of what it was given.
+
+    The same quantity from the other side: whatever the field did to the shape
+    of it, every letter and digit has to still be there. This is what catches a
+    control that reformats AND clips -- it took every key it accepted, so no
+    prefix test sees the loss.
+    """
+    if not el.evaluate(HOLDS_ALL_JS, value):
+        _clear_and_refuse(el, el.evaluate(FIELD_CAP_JS))
 
 
 UNMASK_JS = """(el) => {
@@ -516,26 +546,23 @@ def _type_value(el, value):
     # refused though it landed whole. Both directions wrong, so the check stays
     # where the two units are the same one.
     if el.evaluate(KEYS_DROPPED_JS, value):
+        # Asked BEFORE assigning, not after: an assignment ignores `maxlength`,
+        # so assigning first would put the whole value into a field known not to
+        # hold it -- and if the clear then failed, the field would be left
+        # holding all of a credential rather than the clipped part of one. The
+        # cap is re-read because it can have moved while the keys were going in.
         try:
-            _refuse_if_capped(el, value)
+            _refuse_if_impossible(el, value)
         except _FieldTooShort as short:
             _clear_and_refuse(el, short.cap)
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-    # Last question, and the only one that survives a control rewriting what it
-    # was given: is any of it MISSING? Counted over characters a reformatter
-    # neither adds nor removes, so a card input growing spaces and a phone input
-    # dropping them both answer honestly -- 14 of 16 digits for one that clipped,
-    # 10 of 10 for one that only reshaped. Asked after the repair has had its
-    # chance, so keys that simply did not land are not mistaken for a field that
-    # would not hold them. It needs no guess about which key was absorbable,
-    # which is the guess a length comparison could not make: a value ending in a
-    # space the field drops looks exactly like one the field refused.
-    cap = el.evaluate(FIELD_CAP_JS)
-    if cap >= 0 and el.evaluate(HELD_ALNUM_JS) < sum(1 for c in value if c.isalnum()):
-        _clear_and_refuse(el, cap)
+    # And whatever it did to the shape, it has to still be holding all of it.
+    # Asked after the repair has had its chance, so keys that simply did not
+    # land are not mistaken for a field that would not hold them.
+    _refuse_unless_kept(el, value)
 
 
 def _parse_args():
@@ -929,7 +956,7 @@ class Session:
             # would quote the value, and "check the selector" is exactly wrong
             # for a selector that was right.
             try:
-                _refuse_if_capped(el, cmd["value"])
+                _refuse_if_impossible(el, cmd["value"])
                 if cmd.get("mask"):
                     # Marked first, and only typed once the mark is known to have
                     # taken. An unmasked answer means the page defeated it, and the

@@ -721,6 +721,11 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // script's own class is what had to change, and this pins that such a value
     // fills at all.
     { what: "holds a non-ASCII letter", scenario: "non_ascii_value", left: 9 },
+    // A phone input declaring its TRUE cap up front — ten, the digits it keeps
+    // — given twelve characters of punctuation it strips. Comparing the length
+    // sent against that cap refused this before the node was even touched; the
+    // shaping is exactly what the field is entitled to remove.
+    { what: "declares the cap of what it keeps", scenario: "strips_declared_cap_upfront", left: 10 },
   ])("does not refuse a field that $what", ({ scenario, left }) => {
     expect(probed[scenario].result).toEqual({ ok: true, frame: 0 });
     expect(probed[scenario].node_len).toBe(left);
