@@ -17,6 +17,7 @@ import { httpCa, send, signIn, VaultHttp } from "./vaultCrypto.js";
 import {
   Cipher,
   checkedUrls,
+  staleEdit,
   decryptField,
   decryptItem,
   decryptSummary,
@@ -153,12 +154,17 @@ export class VaultClient {
     if (existing && !TYPE_NAME[type]) {
       throw new Error(`this app cannot change item type ${type}; use the vault's own page for it`);
     }
+    // A form sends the revision it was opened on. If the vault has written the
+    // item since, this save was composed against fields the owner can no
+    // longer see — every one of them, not only the URLs — so it is refused
+    // rather than allowed to overwrite whatever arrived in between.
+    if (staleEdit(existing, input.revision)) {
+      throw new Error("this item changed somewhere else while you had it open; reopen it and make the change again");
+    }
     // Every URL the form showed is checked, because every one of them is a URL
     // the owner just looked at; a login with none can never be filled.
     if (type === 1 && input.urls !== undefined) {
-      // Blank rows are the owner emptying a box, not a URL to check; they are
-      // dropped when the item is rebuilt, once every position has been matched
-      // against the entry that held it.
+      // A blank is an emptied row holding its position, not a URL to check.
       const typed = checkedUrls(input.urls.filter((u) => u.trim() !== ""));
       let at = 0;
       input = { ...input, urls: input.urls.map((u) => (u.trim() === "" ? "" : typed[at++])) };
@@ -170,10 +176,16 @@ export class VaultClient {
     }
 
     const cipher = encryptCipher(input, existing, key);
+    // The check above is the fast path, and the sentence the owner reads. This
+    // is the guarantee: two saves can both fetch the same revision and both
+    // pass a check made here, so an edit also tells the vault which version it
+    // was built on. The vault compares that against the row it is about to
+    // overwrite, inside the write, and refuses whichever one loses the race.
+    const body = input.itemId ? { ...cipher, lastKnownRevisionDate: input.revision } : cipher;
     const saved = JSON.parse(
       input.itemId
-        ? await this.call("PUT", `/api/ciphers/${encodeURIComponent(input.itemId)}`, JSON.stringify(cipher))
-        : await this.call("POST", "/api/ciphers", JSON.stringify(cipher)),
+        ? await this.call("PUT", `/api/ciphers/${encodeURIComponent(input.itemId)}`, JSON.stringify(body))
+        : await this.call("POST", "/api/ciphers", JSON.stringify(body)),
     ) as Cipher;
     this.audit(String(saved.id ?? ""), "(item)", input.itemId ? "UPDATED" : "CREATED");
     return { id: String(saved.id ?? ""), title: String(input.name ?? "") };

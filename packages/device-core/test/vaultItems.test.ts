@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   checkedUrls,
+  staleEdit,
   decryptField,
   decryptItem,
   decryptSummary,
@@ -106,7 +107,7 @@ describe("an edit", () => {
     });
   });
 
-  it("writes only the URL positions that changed, and drops the ones emptied", () => {
+  it("writes only the rows that changed, and drops the ones emptied", () => {
     const many = encryptCipher(
       { type: "login", name: "GitHub", password: "x",
         urls: ["https://a.example", "https://b.example", "https://c.example"] },
@@ -116,24 +117,58 @@ describe("an edit", () => {
     // The stored entries carry match rules the form never shows.
     many.login.uris = many.login.uris.map((u, i) => ({ ...u, match: i }));
     const stored = { ...many, id: "item-1" };
-    const edit = (urls) => encryptCipher({ itemId: "item-1", ...(urls ? { urls } : { username: "new" }) }, stored, account);
+    const [A, B, C] = many.login.uris;
+    const edit = (urls) =>
+      encryptCipher({ itemId: "item-1", ...(urls ? { urls } : { username: "new" }) }, stored, account);
 
-    // Changed: only the first is written anew; the others are the objects they were.
+    // Changed: only the row that changed is written anew; the others are the
+    // objects they were, match rule and all.
     const changed = edit(["https://a.example/login", "https://b.example", "https://c.example"]);
-    expect(changed.login.uris.slice(1)).toEqual(many.login.uris.slice(1));
+    expect(changed.login.uris.slice(1)).toEqual([B, C]);
     expect(changed.login.uris[0].match).toBeNull();
 
-    // Emptied: the middle position still travels, so the third reconciles
-    // against its own entry rather than the one above it.
-    const dropped = edit(["https://a.example", "", "https://c.example"]);
-    expect(dropped.login.uris).toEqual([many.login.uris[0], many.login.uris[2]]);
-    expect(decryptItem({ ...dropped, id: "item-1" }, account).urls).toEqual([
-      "https://a.example",
-      "https://c.example",
-    ]);
+    // Removed: the emptied row travels as a blank holding its place, so the
+    // rows below it still line up with the entries that belong to them.
+    expect(edit(["https://a.example", "", "https://c.example"]).login.uris).toEqual([A, C]);
 
     // Omitted: an edit that mentions no URL changes none of them.
     expect(edit(null).login.uris).toEqual(many.login.uris);
+  });
+
+  it("tells two identical addresses apart by the row they came from", () => {
+    // The web vault can store one address twice under different match rules;
+    // the form shows two boxes that look the same. Which row the owner removed
+    // is the only thing that says which rule survives, and an address alone
+    // cannot carry that.
+    const url = "https://a.example";
+    const both = encryptCipher({ type: "login", name: "n", password: "x", urls: [url, url] }, null, account);
+    both.login.uris = both.login.uris.map((u, i) => ({ ...u, match: i }));
+    const stored = { ...both, id: "item-1" };
+    const rules = (c) => c.login.uris.map((u) => u.match);
+
+    // Removed the first row: the second row's rule is the one that survives.
+    expect(rules(encryptCipher({ itemId: "item-1", urls: ["", url] }, stored, account))).toEqual([1]);
+    // Removed the second: the first's.
+    expect(rules(encryptCipher({ itemId: "item-1", urls: [url, ""] }, stored, account))).toEqual([0]);
+    // Neither removed: both keep their own, and neither entry is used twice.
+    expect(encryptCipher({ itemId: "item-1", urls: [url, url] }, stored, account).login.uris)
+      .toEqual(both.login.uris);
+  });
+
+  it("refuses a save composed on a version of the item that is gone", () => {
+    const opened = { ...encryptCipher({ type: "login", name: "n", password: "x", urls: ["https://a.example"] }, null, account), id: "item-1", revisionDate: "2026-08-20T04:00:00Z" };
+    // Someone else wrote the item while the form sat open.
+    const now = { ...opened, revisionDate: "2026-08-20T04:05:00Z" };
+
+    // It is not given the fields at all: what moved is the item, so every
+    // field the form is showing is suspect, not only the URL list.
+    expect(staleEdit(now, "2026-08-20T04:00:00Z")).toBe(true);
+    // Still the version the form was opened on: nothing to refuse.
+    expect(staleEdit(now, "2026-08-20T04:05:00Z")).toBe(false);
+    // An edit that names no revision made no claim about what it saw, which is
+    // no better a position; only a new item is exempt.
+    expect(staleEdit(now, undefined)).toBe(true);
+    expect(staleEdit(null, undefined)).toBe(false);
   });
 
   it("stores every URL with the checksum other clients verify", () => {

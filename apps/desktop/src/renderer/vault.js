@@ -8,12 +8,6 @@ import { el, icon } from "./dom.js";
    Everything here is fed by the real vault: the list, the values, and the
    secrets that are fetched only when the owner asks for one. */
 
-/* ---- The Vault tab, built to Mary's design (vault.html) ----------------
-   Her markup and her class names; the styling lives in vault.css, scoped to
-   `.vaultui` so no other screen changes. Everything here is fed by the real
-   vault: the list, the values, and the secrets that are fetched only when the
-   owner asks to see one. */
-
 /* The four types, laid out as her forms lay them out. `secret` is a value the
    vault never hands over with the item — it is fetched one at a time, which is
    what the eye button does. */
@@ -87,7 +81,12 @@ const VAULT_TYPES = {
 };
 
 function errText(err) {
-  return err && err.message ? String(err.message).replace(/^Error: /, "") : String(err);
+  // A throw from the main process arrives wrapped: "Error invoking remote
+  // method 'vault:saveItem': Error: the sentence we wrote". The owner should
+  // read the sentence, not the plumbing that carried it.
+  return (err && err.message ? String(err.message) : String(err))
+    .replace(/^Error invoking remote method '[^']*':\s*/, "")
+    .replace(/^Error:\s*/, "");
 }
 
 /** Her toast: one line, bottom of the pane, gone on its own. */
@@ -176,14 +175,30 @@ function vfield(spec, ctx) {
     [label, el("div", { class: "inwrap" }, [input, ...buttons]), hint].filter(Boolean));
 }
 
-/** The website group: one box per URL the item has, and her "Add website". */
+/** The website group: one box per URL the item has, her "Add website", and a
+    way back off each one. */
 function vurls(ctx) {
-  const rows = el("div", {});
+  // The last remaining site cannot be removed: a login with no URL can never be
+  // filled, and the save refuses it — so the form never offers that dead end.
+  // That is a fact about this list, and vault.css reads it off :only-child
+  // rather than anything here keeping a second copy of it in step.
+  const rows = el("div", { class: "url-rows" });
   const add = () => {
     const input = el("input", { class: "inp", attrs: { type: "text", spellcheck: "false", placeholder: "https://" } });
     input.addEventListener("input", () => ctx.onChange?.());
     ctx.urlInputs.push(input);
-    rows.appendChild(el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input])]));
+    const drop = el("button", { class: "mini drop", attrs: { type: "button", title: "Remove this website", "aria-label": "Remove this website" } },
+      [icon("close", { class: "vico", strokeWidth: "1.8" })]);
+    const row = el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input, drop])]);
+    drop.addEventListener("click", () => {
+      // Emptied in place, not spliced out of urlInputs: the box's position is
+      // what tells the save which stored entry this row was drawn from, and
+      // two rows can hold the same address.
+      input.value = "";
+      row.remove();
+      ctx.onChange?.();
+    });
+    rows.appendChild(row);
     return input;
   };
   const existing = ctx.item ? ctx.item.urls || [] : [];
@@ -226,8 +241,6 @@ function vpayload(type, ctx) {
   const payload = { type, name: ctx.inputs.name.value.trim() };
   for (const group of VAULT_TYPES[type].groups) {
     if (group.urls) {
-      // Positions are kept, blanks included: dropping them here would shift
-      // every later URL onto another one's stored entry.
       payload.urls = ctx.urlInputs.map((i) => i.value.trim());
       continue;
     }
@@ -320,7 +333,7 @@ function vitem(summary, reload) {
       save.addEventListener("click", async () => {
         save.disabled = true;
         try {
-          await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id });
+          await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id, revision: item.revision });
           vtoast("Saved");
           await reload();
           return;

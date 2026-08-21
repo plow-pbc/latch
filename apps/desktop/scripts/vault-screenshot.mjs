@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
 import {
   checkedUrls,
+  staleEdit,
   decryptField,
   decryptItem,
   decryptSummary,
@@ -38,9 +39,15 @@ const account = splitKey(crypto.randomBytes(64));
 const ciphers = new Map();
 let nextId = 1;
 
+/** The URL list the form last sent, straight out of the renderer. */
+let sentUrls = null;
+
+/** The revision the form last sent with it. */
+let sentRevision = null;
+
 function seed(input) {
   const id = `item-${nextId++}`;
-  ciphers.set(id, { ...encryptCipher(input, null, account), id });
+  ciphers.set(id, { ...encryptCipher(input, null, account), id, revisionDate: "2026-08-20T04:00:00Z" });
 }
 
 // Two items that were already there, of two different types, so the list shows
@@ -50,7 +57,8 @@ seed({
   name: "Product Hunt",
   username: "daniel@plow.co",
   password: "already-stored",
-  urls: ["https://www.producthunt.com"],
+  // Three, because one site proves nothing about removing the right one.
+  urls: ["https://www.producthunt.com", "https://ph.co", "https://api.producthunt.com"],
 });
 seed({
   type: "card",
@@ -74,7 +82,12 @@ async function setUp() {
     decryptField(ciphers.get(itemId), account, field),
   );
   ipcMain.handle("vault:saveItem", async (_e, input) => {
+    sentUrls = input.urls ?? null;
+    sentRevision = input.revision ?? null;
     const existing = input.itemId ? ciphers.get(input.itemId) : null;
+    if (staleEdit(existing ?? null, input.revision)) {
+      throw new Error("this item changed somewhere else while you had it open; reopen it and make the change again");
+    }
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
     const given =
       type === 1 && !existing ? { ...input, urls: checkedUrls(input.urls ?? []) } : input;
@@ -163,7 +176,88 @@ const SCREENS = [
     // anywhere in that loop.
     expect: ["GitHub", "Product Hunt", "Amex", "3 items"],
   },
+  {
+    name: "dropped-url",
+    prepare: async (win) => {
+      await clickText(win, "Product Hunt");
+      await settle(win);
+      await removable(win, 3, "before the removal");
+      await dropUrl(win, 1);
+      await settle(win);
+    },
+    // The middle box is gone from the form; the two it kept are still there.
+    expectValues: ["https://www.producthunt.com", "https://api.producthunt.com"],
+    after: async (win) => {
+      await clickText(win, "Save");
+      await settle(win);
+      // The renderer's half of the contract: the emptied row travels as a
+      // blank holding its place. Splice it out instead and two rows holding
+      // the same address become indistinguishable to the save.
+      const wantSent = ["https://www.producthunt.com", "", "https://api.producthunt.com"];
+      if (JSON.stringify(sentUrls) !== JSON.stringify(wantSent)) {
+        throw new Error(`form sent ${JSON.stringify(sentUrls)}, wanted the blank kept at its position: ${JSON.stringify(wantSent)}`);
+      }
+      const urls = decryptItem(ciphers.get("item-1"), account).urls;
+      const want = ["https://www.producthunt.com", "https://api.producthunt.com"];
+      if (JSON.stringify(urls) !== JSON.stringify(want)) {
+        throw new Error(`removed site not dropped: stored ${JSON.stringify(urls)}, wanted ${JSON.stringify(want)}`);
+      }
+      // GitHub has the one site it was saved with, and no way to remove it: a
+      // login with no URL can never be filled, so the form never offers that.
+      await clickText(win, "GitHub");
+      await settle(win);
+      await removable(win, 0, "on a login with a single site");
+    },
+  },
+  {
+    name: "stale-form",
+    prepare: async (win) => {
+      await clickText(win, "Amex");
+      await settle(win);
+      // While the form sits open, the item is written somewhere else.
+      ciphers.set("item-2", { ...ciphers.get("item-2"), revisionDate: "2026-08-20T05:30:00Z" });
+      await type(win, "Cardholder name", "Someone Else");
+      await clickText(win, "Save");
+      await settle(win);
+    },
+    // The owner is told, and the save did not land. This edit never went near
+    // a URL: what went stale is the item, not its website list.
+    expect: ["changed somewhere else while you had it open"],
+    after: async () => {
+      if (sentRevision !== "2026-08-20T04:00:00Z") {
+        throw new Error(`form sent revision ${JSON.stringify(sentRevision)}, wanted the one it was opened on`);
+      }
+      const name = decryptField(ciphers.get("item-2"), account, "cardholderName");
+      if (name !== "Daniel Delattre") {
+        throw new Error(`a stale save overwrote the item: cardholder is now ${JSON.stringify(name)}`);
+      }
+    },
+  },
 ];
+
+/** How many websites can be removed right now, and how many should be. */
+async function removable(win, n, when) {
+  const shown = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".vaultui .mini.drop")].filter((b) => getComputedStyle(b).display !== "none").length`,
+  );
+  if (shown !== n) throw new Error(`${shown} remove buttons ${when}, wanted ${n}`);
+}
+
+/** Click the remove button on the nth website box, the way a person does —
+    scrolling to it first, which is also what leaves the group in the frame:
+    the website boxes sit below the fold in this window. */
+async function dropUrl(win, nth) {
+  const found = await win.webContents.executeJavaScript(
+    `(() => {
+      const b = document.querySelectorAll(".vaultui .mini.drop")[${nth}];
+      if (!b) return false;
+      b.scrollIntoView({ block: "center" });
+      b.click();
+      return true;
+    })()`,
+  );
+  if (!found) throw new Error(`no remove button on website box ${nth}`);
+}
 
 /** The first eye button on screen — how a person asks to see a stored secret. */
 async function clickEye(win) {
