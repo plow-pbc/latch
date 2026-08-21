@@ -899,13 +899,20 @@ db.commit()`,
 
   it("keeps a first sign-in on a Mac whose owner has no profile yet", async () => {
     // Nothing to merge into is the one case where returning early would lose
-    // the login outright — and it is every machine's first session.
+    // the login outright — and it is every machine's first session. Two of
+    // them can also be open at once, on the same site: the first close makes
+    // the profile, and the second must not put its older token over the newer.
     const { sessions, seed, profiles } = signedIn({ has: [] });
-    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
-    cookieStore(path.join(only(profiles), "cookies.sqlite"), ["first.example"]);
+    const newer = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const newerDir = only(profiles);
+    const older = jv(await sessions.open("int-2", AGENT, ["a.example"], false)).get("session").str!;
+    const olderDir = path.join(profiles, fs.readdirSync(profiles).find((d) => path.join(profiles, d) !== newerDir)!);
+    cookieStore(path.join(newerDir, "cookies.sqlite"), ["first.example=new-token"], 90);
+    cookieStore(path.join(olderDir, "cookies.sqlite"), ["first.example=old-token"], 10);
 
-    await sessions.close(handle, "agent");
-    expect(signedInto(seed)).toEqual(["first.example"]);
+    await sessions.close(newer, "agent");
+    await sessions.close(older, "agent");
+    expect(signedInto(seed, true)).toEqual(["first.example=new-token"]);
   });
 
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {

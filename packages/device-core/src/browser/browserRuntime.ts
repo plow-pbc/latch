@@ -12,7 +12,8 @@ export interface ResolvedBrowserRuntime {
   serverCommand: string[];
   /** Argv that runs the vault credential broker (before its subcommand). */
   credentialBrokerCommand: string[];
-  /** Argv that merges one cookie store into another (before the two paths). */
+  /** Argv that reconciles a session's cookies into the user's (before its
+   * three paths: profile, clone, and the baseline the clone started from). */
   mergeCookiesCommand: string[];
   /** Extra environment for both. */
   env: Record<string, string>;

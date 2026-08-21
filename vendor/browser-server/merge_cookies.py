@@ -34,6 +34,8 @@ READ_ONLY_COLUMN = "lastAccessed"
 
 
 def main(into: str, extra: str, baseline: str) -> None:
+    """`into` the user's profile, `extra` the session's clone, `baseline` what
+    that clone started from — absent only on a profile with no cookie store."""
     db = sqlite3.connect(into, timeout=10)
     try:
         db.execute("ATTACH ? AS extra", (extra,))
@@ -48,47 +50,39 @@ def main(into: str, extra: str, baseline: str) -> None:
             # IS, not =: a NULL column matches a NULL column.
             return " AND ".join("%s.%s IS %s.%s" % (left, c, right, c) for c in cols)
 
-        if not os.path.exists(baseline):
-            # No baseline: nothing to compare against, so everything the clone
-            # holds is what the user gets. Only reachable on a profile that had
-            # no cookie store when the session opened.
-            db.execute(
-                "INSERT OR REPLACE INTO main.moz_cookies (%s) SELECT %s FROM extra.moz_cookies" % (names, names)
-            )
-            db.commit()
-            return
+        # A session that changed the same cookie more recently already won:
+        # true with a baseline and without one, which is why it is the only
+        # condition two sessions racing on a brand-new profile have.
+        conditions = [
+            "NOT EXISTS (SELECT 1 FROM main.moz_cookies AS mine WHERE %s "
+            "AND mine.lastAccessed >= theirs.lastAccessed)" % match("mine", "theirs", keys)
+        ]
 
-        db.execute("ATTACH ? AS base", (baseline,))
-        # Signed out here: gone from the clone, and the profile still holds
-        # exactly what this session started from.
-        db.execute(
-            "DELETE FROM main.moz_cookies WHERE EXISTS ("
-            "  SELECT 1 FROM base.moz_cookies AS was WHERE %s AND %s"
-            ") AND NOT EXISTS ("
-            "  SELECT 1 FROM extra.moz_cookies AS theirs WHERE %s"
-            ")"
-            % (
-                match("was", "moz_cookies", keys),
-                match("was", "moz_cookies", state),
-                match("theirs", "moz_cookies", keys),
+        if os.path.exists(baseline):
+            db.execute("ATTACH ? AS base", (baseline,))
+            # Signed out here: gone from the clone, and the profile still holds
+            # exactly what this session started from.
+            db.execute(
+                "DELETE FROM main.moz_cookies WHERE EXISTS ("
+                "  SELECT 1 FROM base.moz_cookies AS was WHERE %s AND %s"
+                ") AND NOT EXISTS ("
+                "  SELECT 1 FROM extra.moz_cookies AS theirs WHERE %s"
+                ")"
+                % (
+                    match("was", "moz_cookies", keys),
+                    match("was", "moz_cookies", state),
+                    match("theirs", "moz_cookies", keys),
+                )
             )
-        )
-        # Changed here: any state column differs from the baseline. A session
-        # that changed the same cookie later still wins.
-        db.execute(
-            "INSERT OR REPLACE INTO main.moz_cookies (%s) SELECT %s FROM extra.moz_cookies AS theirs "
-            "WHERE NOT EXISTS ("
-            "  SELECT 1 FROM base.moz_cookies AS was WHERE %s AND %s"
-            ") AND NOT EXISTS ("
-            "  SELECT 1 FROM main.moz_cookies AS mine WHERE %s AND mine.lastAccessed >= theirs.lastAccessed"
-            ")"
-            % (
-                names,
-                names,
-                match("was", "theirs", keys),
-                match("was", "theirs", state),
-                match("mine", "theirs", keys),
+            # Changed here: some state column differs from what it started as.
+            conditions.append(
+                "NOT EXISTS (SELECT 1 FROM base.moz_cookies AS was WHERE %s AND %s)"
+                % (match("was", "theirs", keys), match("was", "theirs", state))
             )
+
+        db.execute(
+            "INSERT OR REPLACE INTO main.moz_cookies (%s) SELECT %s FROM extra.moz_cookies AS theirs WHERE %s"
+            % (names, names, " AND ".join(conditions))
         )
         db.commit()
     finally:

@@ -39,9 +39,10 @@ export interface BrowserHostConfig {
    * every browser is signed in wherever they are, and merges what it signed
    * into back on close. Unset means sessions start on an empty profile. */
   seedProfile?: string;
-  /** Argv that merges one cookie store into another, before the two paths.
-   * Comes from the runtime, so a machine pointed at its own install runs its
-   * own program rather than one guessed from the server command. */
+  /** Argv that reconciles a session's cookies into the user's, before its
+   * three paths: the user's profile, the session's clone, and the baseline
+   * that clone started from. Comes from the runtime, so a machine pointed at
+   * its own install runs that install's program. */
   mergeCookiesCommand?: string[];
   /** Camoufox install dir (config.json + browsers/). When set, the server is
    * spawned with an app-scoped $HOME whose Library/Caches/camoufox symlinks

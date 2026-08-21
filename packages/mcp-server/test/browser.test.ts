@@ -59,6 +59,7 @@ function makeServer(
   const argvLog = path.join(dir, "argv.log");
   const runtime: ResolvedBrowserRuntime = {
     serverCommand: ["node", FAKE_SERVER],
+    mergeCookiesCommand: [],
     credentialBrokerCommand: ["node", FAKE_BROKER],
     env: {
       FAKE_BROKER_VAULT: writeVault(dir),

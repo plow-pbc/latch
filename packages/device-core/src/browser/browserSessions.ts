@@ -440,10 +440,9 @@ export class BrowserSessions {
    *
    * Merged, not handed back: replacing the profile means the last browser to
    * close decides what the user is signed into, which loses the other one's
-   * login and can even undo a logout. Cookies are copied row by row, and only
-   * where this session's row is the more recently used one, so two browsers
-   * signed into two different sites both keep their sign-in and neither
-   * overwrites the other.
+   * login and can even undo a logout. What this session did to its cookies —
+   * changes and sign-outs both — is reconciled into the profile against the
+   * baseline it started from; `merge_cookies.py` holds that contract.
    *
    * ponytail: cookies only. A site that keeps its session in localStorage or
    * IndexedDB still signs out with the clone, and a logout inside a session
