@@ -671,6 +671,10 @@ def main() -> int:
         "trailing_space_stripped": run(
             server, {**base, "value": "555-123-4567 "},
             max_length=20, max_length_after=10, reformats="strip"),
+        # A value carrying a letter outside ASCII. Python's `isalnum` counts it
+        # and a `\w`-based JS class would not, so the field would have read as
+        # partly missing and been wiped.
+        "non_ascii_value": run(server, {**base, "value": "Jos\u00e9-1234"}, max_length=20),
         "reformatting_field_shrinks": run(
             server, {**base, "value": "555-123-4567"},
             max_length=20, max_length_after=10, reformats="strip"),

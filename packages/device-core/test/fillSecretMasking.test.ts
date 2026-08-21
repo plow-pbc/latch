@@ -716,6 +716,11 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // rejection by length alone, which is why length is not the question.
     { what: "absorbs a trailing space at its cap", scenario: "trailing_space_at_cap", left: 19 },
     { what: "strips a trailing space", scenario: "trailing_space_stripped", left: 10 },
+    // A value carrying a letter outside ASCII. The fixture counts both sides in
+    // Python, so this row cannot catch a JS/Python divergence by itself — the
+    // script's own class is what had to change, and this pins that such a value
+    // fills at all.
+    { what: "holds a non-ASCII letter", scenario: "non_ascii_value", left: 9 },
   ])("does not refuse a field that $what", ({ scenario, left }) => {
     expect(probed[scenario].result).toEqual({ ok: true, frame: 0 });
     expect(probed[scenario].node_len).toBe(left);

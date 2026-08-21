@@ -315,7 +315,10 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 # reformatter neither adds nor removes. Separators are exactly what one inserts
 # and strips, so counting those would compare representations again; counting
 # the rest asks the only question that survives the rewrite -- is any of it gone.
-HELD_ALNUM_JS = f"""(el) => (({_HELD}).match(/[^\\W_]/gu) || []).length"""
+# `\\w` is ASCII even under /u, so it counts short against Python's `isalnum`
+# and a value carrying an accented letter would read as partly missing and be
+# wiped. Letter-or-number properties are what both sides actually mean.
+HELD_ALNUM_JS = f"""(el) => (({_HELD}).match(/[\\p{{L}}\\p{{N}}]/gu) || []).length"""
 
 FIELD_CAP_JS = """(el) => {
     // `maxLength` reflects the attribute even on elements the browser does not
