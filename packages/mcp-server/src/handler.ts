@@ -128,14 +128,22 @@ The user approves the operations these tools perform on their machine — readin
  * `icons` is deliberately absent. A server reachable only through a relay has
  * no public URL to serve an icon from, so it would have to ride every
  * handshake as a data: URI — real bytes, on every initialize, for decoration.
+ *
+ * `description` says operations stay within the APPROVED SCOPE, not that every
+ * one appears on screen. The stronger sentence was here and was false in three
+ * ordinary states: a `plow_browser` command rides an already-approved session
+ * and builds no intent, a stored always-allow rule is answered by the policy
+ * engine without waking the delegate, and Approve mode decides without a
+ * dialog. Promising a prompt that does not come is worse than promising less —
+ * the same rule the instructions block above follows for the vault carve-out.
  */
 export const SERVER_IDENTITY = {
   name: "plow-latch",
   title: "Plow Latch — Mac Desktop Manager",
   description:
     "Operate this person's own Mac: read and write their files, run shell and macOS " +
-    "tooling, and drive a real browser on their own network. Every operation appears " +
-    "on their screen for approval.",
+    "tooling, and drive a real browser on their own network. Operations stay within " +
+    "the scope the owner approved.",
   websiteUrl: "https://watchmepivot.com/",
 } as const;
 
