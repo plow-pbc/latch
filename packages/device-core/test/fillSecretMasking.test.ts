@@ -657,57 +657,45 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // comes back as a shape the device reads and turns into its own message.
   // A cap can move under a fill already in progress — a card-number input
   // lowers `maxlength` once the first digits identify the brand, 15 for Amex
-  // against 16 for the rest — so the value is admitted, the keys are clipped,
-  // and the repair that assigns has to ask the field again rather than trust
-  // the answer the fill was admitted on.
+  // against 16 for the rest. The value is admitted, the keys are clipped, and
+  // the field is asked again after they have gone in. One contract, so one
+  // table: what varies is what the refusal is left able to clean up.
   it.each([
-    { what: "an ordinary fill", scenario: "cap_lowered_mid_fill" },
-    { what: "a concealed fill", scenario: "cap_lowered_mid_fill_masked" },
-    { what: "an ordinary fill whose clipped keys landed", scenario: "cap_lowered_keys_landed" },
-    { what: "a concealed fill whose clipped keys landed", scenario: "cap_lowered_keys_landed_masked" },
-  ])("refuses $what when the page lowers the cap mid-fill", ({ scenario }) => {
-    expect(probed[scenario].result).toEqual({
-      ok: false, mask: "too_long", cap: 4, frame: 0,
-    });
-    // The refusal leaves NOTHING in the page. By the time the cap moves, the
-    // head assignment has already destroyed what the field held and the keys
-    // that landed are a prefix of the secret — on an unconcealed vault fill
-    // that would be a legible partial credential sitting under a result that
-    // says the field was not filled.
-    expect(probed[scenario].node_len).toBe(0);
-    // And with nothing there, nothing stays concealed or tracked.
-    expect(probed[scenario].marked).toBe(false);
-    expect(probed[scenario].ledgered).toBe(false);
-  });
-
-  it("keeps the cap answer when the field cannot even be cleared", () => {
-    // The page that moved the cap can detach the node along with it. The
-    // clear's own failure must not replace the refusal on the way out — the
-    // caller would lose the cap and fall back on "check the selector", which is
-    // the message this whole path exists to stop producing.
-    expect(probed.cap_lowered_clear_fails.result).toEqual({
-      ok: false, mask: "too_long", cap: 4, frame: 0,
-    });
-    // And the clipped prefix really is still there: the honest outcome, and the
-    // reason no message about this refusal claims what the field holds.
-    expect(probed.cap_lowered_clear_fails.node_len).toBe(4);
-    // Left visible, because an unconcealed vault fill has no mark to keep.
-    expect(probed.cap_lowered_clear_fails.marked).toBe(false);
-  });
-
-  it("keeps a prefix it could not clear concealed and tracked", () => {
-    // Same failure on a concealed fill, and the mask bookkeeping between the
-    // clear and the answer asks the node questions of its own — none of which
-    // may replace the refusal either.
-    expect(probed.cap_lowered_clear_fails_masked.result).toEqual({
-      ok: false, mask: "too_long", cap: 4, frame: 0,
-    });
-    // A prefix of a credential is in the field and could not be removed, so it
-    // stays covered and the ledger knows about it. This is the one path where
-    // something of the value survives, and it is the one that hides it.
-    expect(probed.cap_lowered_clear_fails_masked.node_len).toBe(4);
-    expect(probed.cap_lowered_clear_fails_masked.marked).toBe(true);
-    expect(probed.cap_lowered_clear_fails_masked.ledgered).toBe(true);
+    // Nothing landed, so nothing is left to conceal or track.
+    { what: "an ordinary fill", scenario: "cap_lowered_mid_fill",
+      cap: 4, left: 0, marked: false, ledgered: false },
+    { what: "a concealed fill", scenario: "cap_lowered_mid_fill_masked",
+      cap: 4, left: 0, marked: false, ledgered: false },
+    // Clipped keys landed and were cleared.
+    { what: "an ordinary fill whose clipped keys landed", scenario: "cap_lowered_keys_landed",
+      cap: 4, left: 0, marked: false, ledgered: false },
+    { what: "a concealed fill whose clipped keys landed", scenario: "cap_lowered_keys_landed_masked",
+      cap: 4, left: 0, marked: false, ledgered: false },
+    // The page that moved the cap detached the node, so the clear cannot land
+    // either. The refusal still has to come back carrying the cap — replaced by
+    // the clear's own failure it would fall to "check the selector", the
+    // message this path exists to stop producing — and the prefix really is
+    // still there, which is why no message claims what the field holds.
+    // Unconcealed has no mark to keep it under; concealed keeps it covered AND
+    // ledgered, so the one path where part of the value survives hides it.
+    { what: "an ordinary fill whose field cannot be cleared", scenario: "cap_lowered_clear_fails",
+      cap: 4, left: 4, marked: false, ledgered: false },
+    { what: "a concealed fill whose field cannot be cleared",
+      scenario: "cap_lowered_clear_fails_masked",
+      cap: 4, left: 4, marked: true, ledgered: true },
+    // The one a check living in the repair could never see: a card field that
+    // grows spaces as it is typed holds something that is not a prefix of what
+    // was sent, so `KEYS_DROPPED_JS` answers false by design and the repair
+    // never runs. Asking after the keys rather than inside the repair is what
+    // catches it.
+    { what: "a field that reformats what it is given", scenario: "reformatting_field_lowers_cap",
+      cap: 15, left: 0, marked: false, ledgered: false },
+  ])("refuses $what when the page lowers the cap mid-fill", (row) => {
+    const probe = probed[row.scenario];
+    expect(probe.result).toEqual({ ok: false, mask: "too_long", cap: row.cap, frame: 0 });
+    expect(probe.node_len).toBe(row.left);
+    expect(probe.marked).toBe(row.marked);
+    expect(probe.ledgered).toBe(row.ledgered);
   });
 
   it("still repairs dropped keys when the cap did not move", () => {

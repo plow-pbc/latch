@@ -60,7 +60,7 @@ class Handle:
                  document_url="https://pizza.example/login", value="", partial_fill=False,
                  document_token="doc-1", type_fails=False, typeable="single-line",
                  drops_keys=False, assign_fails=False, max_length=-1,
-                 max_length_after=None, clear_fails=False):
+                 max_length_after=None, clear_fails=False, reformats=False):
         self.trace = trace
         # What the field itself will hold. -1 is "no cap", which is what an
         # element without a maxlength reports.
@@ -90,6 +90,10 @@ class Handle:
         # The node the page detached or froze along with moving the cap: the
         # clear that follows a mid-fill refusal cannot land on it.
         self.clear_fails = clear_fails
+        # A field that REWRITES what it is given -- a card number growing spaces
+        # as it is typed. What it holds is not a prefix of what was sent, which
+        # is exactly what KEYS_DROPPED_JS treats as "took every key".
+        self.reformats = reformats
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
         self.assign_fails = assign_fails
@@ -223,6 +227,9 @@ class Handle:
             self.max_length_after is not None and self.typed is not None
         ) else self.max_length
         landed = (self.value or "") + text
+        if self.reformats:
+            bare = landed.replace(" ", "")
+            landed = " ".join(bare[i:i + 4] for i in range(0, len(bare), 4))
         self.value = landed[:cap] if cap >= 0 else landed
         if self.partial_fill and self.type_calls > 1:
             # Some of it went in and then the field went away. It takes more
@@ -252,12 +259,8 @@ class Frame:
     ledger scenarios name their nodes and can take one away.
     """
 
-    def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
-                 nodes=None, document_url="https://pizza.example/login", value="",
-                 partial_fill=False, document_token="doc-1", type_fails=False,
-                 typeable="single-line", drops_keys=False, assign_fails=False,
-                 hides=False, detached=False, max_length=-1, max_length_after=None,
-                 clear_fails=False):
+    def __init__(self, trace, nodes=None, document_token="doc-1", hides=False, detached=False,
+                 handle=None, **node):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -265,9 +268,11 @@ class Frame:
         self.detached = detached
         self.url = "https://pizza.example/login"
         self.document_token = document_token
-        self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
-                             partial_fill, document_token, type_fails, typeable, drops_keys,
-                             assign_fails, max_length, max_length_after, clear_fails)
+        # The node's own behaviour is the node's. A frame that relayed every one
+        # of those knobs made three signatures that had to be edited together
+        # for each new one, which is churn the seam caused rather than the
+        # scenarios needing it.
+        self.handle = handle or Handle(trace, document_token=document_token, **node)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -325,17 +330,10 @@ class Page:
         return ""
 
 
-def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
-        document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1", type_fails=False, typeable="single-line", drops_keys=False,
-        assign_fails=False, max_length=-1, max_length_after=None, clear_fails=False):
+def run(server, cmd, document_token="doc-1", **node):
+    """One command against one frame holding one node. `node` is the Handle's."""
     trace: list[str] = []
-    frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
-                  value=value, partial_fill=partial_fill, document_token=document_token,
-                  type_fails=type_fails, typeable=typeable, drops_keys=drops_keys,
-                  assign_fails=assign_fails,
-                  max_length=max_length, max_length_after=max_length_after,
-                  clear_fails=clear_fails)
+    frame = Frame(trace, document_token=document_token, **node)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -349,7 +347,7 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     except Exception as exc:  # noqa: BLE001 — the scenario under test
         out["error"] = type(exc).__name__
     out["marked"] = frame.handle.marked
-    out["value_kept"] = frame.handle.value == value
+    out["value_kept"] = frame.handle.value == node.get("value", "")
     out["ledgered"] = bool(session.masked)
     # The delay between keystrokes, which is what makes them keystrokes rather
     # than an assignment. A number, never anything derived from a value.
@@ -640,6 +638,14 @@ def main() -> int:
         # exactly where the unconcealed one keeps it.
         "cap_lowered_clear_fails_masked": run(server, {**base, "mask": True, "value": "hunter2"},
                                               max_length=20, max_length_after=4, clear_fails=True),
+        # The case a check living in the repair could never see: a card field
+        # that grows spaces as it is typed AND drops its cap to 15 when the
+        # brand turns out to be Amex. What it holds is not a prefix of what was
+        # sent, so KEYS_DROPPED_JS answers false by design and the repair never
+        # runs -- the field clipped the number and the fill used to say ok.
+        "reformatting_field_lowers_cap": run(
+            server, {**base, "value": "4111111111111111"},
+            max_length=19, max_length_after=15, reformats=True),
         # maxlength="0" is valid HTML and holds nothing. -1 is the only value
         # that means uncapped, so 0 must refuse rather than read as "no cap".
         "zero_cap": run(server, {**base, "value": "x"}, max_length=0),

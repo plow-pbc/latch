@@ -598,7 +598,11 @@ function describeStep(e: JSONValue): AuditStep {
       state = "ok";
       break;
     case "credential_fill_failed":
-      text = `Credential not typed: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} into `
+      // "fill failed", not "not typed": the same event now covers a field whose
+      // cap moved under a fill, where keys DID go in and the browser could not
+      // always clear them again. What is true of every case is that the fill
+      // did not succeed; what the field is left holding varies.
+      text = `Credential fill failed: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} into `
         + `${ev.get("selector").str ?? ""} on ${ev.get("origin").str ?? ""} — `
         + `${ev.get("reason").str ?? ""}`;
       state = "bad";

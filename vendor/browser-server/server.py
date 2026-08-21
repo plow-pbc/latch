@@ -349,16 +349,14 @@ class _FieldTooShort(RuntimeError):
     WHAT THE PAGE IS LEFT HOLDING, stated here because it differs by path and
     every site that answers this refusal needs it:
 
-    - Refused before the node is touched (the ordinary case, and the two
-      assign-whole sites that run before anything is written): the field still
-      holds whatever it held -- a prefilled value, a prior fill, the owner's own
-      typing.
-    - Refused by the repair that follows dropped keys, when the page moved the
-      cap under a fill already in progress: the head assignment has already
-      destroyed what was there and the keys left a prefix of the value, so that
-      site clears the field. Best effort -- a node the page detached or froze
-      may keep the prefix, and this refusal still comes back rather than being
-      replaced by the clear's own failure.
+    - Refused before the node is touched: the field still holds whatever it
+      held -- a prefilled value, a prior fill, the owner's own typing.
+    - Refused after the keys have gone in, when the page moved the cap under a
+      fill already in progress: the head assignment has already destroyed what
+      was there and the keys left a prefix of the value, so that path clears the
+      field. Best effort -- a node the page detached or froze may keep the
+      prefix, and this refusal still comes back rather than being replaced by
+      the clear's own failure.
 
     So no message about this refusal may claim what the field contains.
     """
@@ -381,15 +379,6 @@ def _refuse_if_capped(el, value):
     if cap >= 0 and _utf16_units(value) > cap:
         raise _FieldTooShort(cap)
 
-
-def _assign_whole(el, value):
-    """Put the whole value in, or refuse it. The only way a whole value lands.
-
-    Every site that assigns rather than types goes through here, so the cap is
-    re-read on all of them instead of on whichever one a bug was noticed at.
-    """
-    _refuse_if_capped(el, value)
-    el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
 
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
@@ -444,7 +433,10 @@ def _type_value(el, value):
     """
     kind = el.evaluate(TYPEABLE_JS)
     if not kind:
-        _assign_whole(el, value)
+        # No cap check of its own: `_fill` refused an over-cap value immediately
+        # before this call, and nothing has gone into the page since for a cap
+        # to have reacted to.
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
     # Everything below compares against `value` -- the prefix test that decides
     # whether the keys landed, and the assignment that repairs them when they did
@@ -472,7 +464,7 @@ def _type_value(el, value):
     # an edge tab, and which types drop one, is in docs/TESTING-THE-APP.md --
     # stated once there because restating it here put the copies out of step.
     if "\t" in value[-TYPED_CHARS:]:
-        _assign_whole(el, value)
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
@@ -484,30 +476,35 @@ def _type_value(el, value):
         if left <= 0:
             raise RuntimeError("typing outran its budget")
         el.type(ch, delay=KEY_DELAY_MS, timeout=left)
+    # Ask the field once more, now that it has seen the keys -- HERE rather than
+    # inside the repair below, which is the branch a reformatting field never
+    # reaches: `KEYS_DROPPED_JS` answers false for one on purpose, because a
+    # field that rewrites what it was given took every key. A card input that
+    # inserts spaces AND lowers its cap does both at once, so a check living in
+    # the repair would watch it clip the value and report success.
+    try:
+        _refuse_if_capped(el, value)
+    except _FieldTooShort:
+        # The head assignment already destroyed whatever the field held, and
+        # what the keys left is a PREFIX OF THE VALUE -- on an unconcealed vault
+        # fill, a legible partial credential under an answer saying it was not
+        # filled. So leave nothing.
+        #
+        # Best effort, and the refusal outlives it: the same page script that
+        # moves a cap can detach or freeze the node, and that failure replacing
+        # this one would cost the caller the cap and drop it back on "check the
+        # selector", the message this path exists to stop producing.
+        try:
+            el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        except Exception:  # noqa: BLE001 -- the refusal is the answer
+            pass
+        raise
     if el.evaluate(KEYS_DROPPED_JS, value):
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
-        try:
-            _assign_whole(el, value)
-        except _FieldTooShort:
-            # The cap moved under the fill. The head assignment already
-            # destroyed whatever the field held, and what the keys left behind
-            # is a PREFIX OF THE SECRET -- on an unconcealed vault fill that is
-            # a legible partial credential sitting in the page, answered by a
-            # result that says nothing was filled. So leave nothing: this is
-            # the one place that knows the node was written to.
-            #
-            # Best effort, and the refusal outlives it either way: the same page
-            # script that moved the cap can detach or freeze the node, and if
-            # that failure replaced this one the caller would lose the cap
-            # answer entirely and fall back on "check the selector" -- the
-            # message this whole path exists to stop producing.
-            try:
-                el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
-            except Exception:  # noqa: BLE001 -- the refusal below is the answer
-                pass
-            raise
+        # The cap was just re-read, so this assignment needs no check of its own.
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
 
 
 def _parse_args():
