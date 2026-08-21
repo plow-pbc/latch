@@ -271,10 +271,9 @@ TYPEABLE_JS = """(el) => {
     // control by construction rather than by a list that cannot be closed -- and
     // asking for mere presence would over-reach, because <li> carries a NUMERIC
     // `value` (a long) while holding its text in textContent, and an
-    // <li contenteditable> is ordinary editor markup. <output> and <data> go the
-    // other way: their `value` is a
-    // DOMString, so they are refused here -- an accepted loss, since a declared
-    // editor is not what either element is for.
+    // <li contenteditable> is ordinary editor markup. <output> and <data> go
+    // the other way: their `value` is a DOMString, so they are refused here --
+    // an accepted loss, since a declared editor is not what either is for.
     if (typeof el.value === "string") return "";
     // What is left with no `value` and no text of its own: embedded documents
     // and nodes that are not rendered. None of them puts the characters where
@@ -363,9 +362,12 @@ def _type_value(el, value):
     A node is first asked what KIND of typing it takes -- whether it is a
     text-carrying input, a textarea, or an element that DECLARES itself an
     editing host. One that answers "" is assigned whole, exactly as this always
-    did. So is a value whose tail carries a newline, unless the node is the one
-    kind that holds a newline as a character: `type()` sends it as the Enter
-    key, which submits the form from an input and inserts markup in a host.
+    did.
+
+    The rest have their value normalized to what that node will HOLD before head
+    and tail are split: LF at a textarea, no line break anywhere else. Every
+    comparison below then speaks the string the node ends up with, and the tail
+    cannot press Enter at a form by construction rather than by a branch.
 
     For the rest, everything before the last TYPED_CHARS is assigned in one go
     -- that is the `el.fill()` the rest of this exists to avoid, used

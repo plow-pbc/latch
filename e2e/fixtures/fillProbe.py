@@ -502,6 +502,11 @@ def main() -> int:
         # so it is normalized away and the rest still goes in as real keys, and
         # no Enter is ever sent at a form.
         "newline_single_line": run(server, {**base, "value": "one\ntwo"}),
+        # The same at a single-line field, spelled with CR. This is what pins the
+        # ORDER of the normalization: CR becomes LF before the strip removes it,
+        # so no Enter is sent. Reversed, `type()` would press Enter mid-value and
+        # submit the form with half a credential in it.
+        "cr_single_line": run(server, {**base, "value": "one\rtwo"}),
         # The same value at a textarea, which is the one node that holds a
         # newline as a character: it keeps its keystrokes.
         "newline_multiline": run(server, {**base, "value": "one\ntwo"},

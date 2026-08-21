@@ -634,6 +634,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
+  it("never sends Enter at a form, however the break was spelled", () => {
+    // The order is the whole property: CR becomes LF first, and the strip then
+    // removes it. Reversed, the CR would survive to `type()`, which sends it as
+    // Enter — submitting the form with half a credential in the field.
+    const run = probed.cr_single_line;
+    expect(run.trace).toContain("handle.type");
+    expect(run.typed_has_cr).toBe(false);
+    expect(run.typed_len).toBe("onetwo".length);
+    expect(run.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("types the tail of a long value whose newline is in the assigned head", () => {
     // The rule is about what gets TYPED, which is the tail alone. Widening it to
     // the whole value would send every long value carrying an early newline back
@@ -1329,6 +1340,9 @@ describe("which nodes take typing", () => {
     { what: "a video declaring itself an editor", el: host("VIDEO", "true"), kind: "" },
     { what: "an audio element declaring itself an editor", el: host("AUDIO", "true"), kind: "" },
     { what: "a meter declaring itself an editor", el: host("METER", "true", { value: 0 }), kind: "" },
+    { what: "a frame declaring itself an editor", el: host("FRAME", "true"), kind: "" },
+    { what: "a script declaring itself an editor", el: host("SCRIPT", "true"), kind: "" },
+    { what: "a title declaring itself an editor", el: host("TITLE", "true"), kind: "" },
     // Form controls declaring themselves hosts. Each carries its text in a
     // string `value`, so the read-back could never recognise the typed
     // characters — and typing at a <select> drives option type-ahead instead of
