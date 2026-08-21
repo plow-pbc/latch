@@ -677,8 +677,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     ]);
     // A field that took the keys pays for no fallback — neither the ordinary
     // one nor the one whose head was assigned and tail typed. Which fields
-    // count as having taken them, including the reshaping and contenteditable
-    // cases, is the table over KEYS_DROPPED_JS further down.
+    // count as having taken them, including the reshaping case, is the table
+    // over KEYS_DROPPED_JS further down.
     expect(probed.plain.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
     expect(probed.long_value.trace.filter((t) => t === "handle.assign")).toHaveLength(1);
   });
@@ -1155,8 +1155,12 @@ describe("whether the keys landed", () => {
       wanted: "hunter2",
       fallback: false,
     },
-    // A contenteditable holds its text somewhere else entirely. Reading it as
-    // an input reads it as empty, which calls every such fill dropped.
+    // These two pin `_HELD`'s shared shape rather than a fill outcome: typing
+    // only ever reaches an <input> or a <textarea> now, so KEYS_DROPPED_JS is
+    // never asked about a contenteditable. `_HELD` is still asked — the
+    // snapshot and nothing-landed questions run on the assignment path, where
+    // one is reachable — and reading its text as an input's value reads it as
+    // empty, which would call every such fill dropped.
     {
       what: "a contenteditable holding the value",
       el: { textContent: "hunter2" },

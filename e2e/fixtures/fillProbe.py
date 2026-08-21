@@ -510,7 +510,7 @@ def main() -> int:
         # A tab, which `type()` sends as the Tab key -- focus moves and no
         # character lands, so the keys can never carry this value.
         "tab_value": run(server, {**base, "value": "one\ttwo"}),
-        # The same value at a textarea, the node that keeps the break: it keeps
+        # A break at a textarea, the node that keeps it as a character: it keeps
         # its keystrokes too.
         "newline_multiline": run(server, {**base, "value": "one\ntwo"},
                                  typeable="multiline"),

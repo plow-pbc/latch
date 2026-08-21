@@ -246,8 +246,8 @@ DOC_TOKEN_JS = """() => {
 # which is exactly what it got before there was typing: the same value where
 # `fill()` sets one, the same loud refusal where it will not.
 #
-# Only the two nodes that carry their text in a `value` are typed at. An editing
-# host -- contenteditable, a designMode body -- is deliberately NOT one: the
+# Only a <textarea> and an <input> of a text-carrying type are typed at. An
+# editing host -- contenteditable, a designMode body -- is deliberately not: the
 # credential submits this exists for are <input>, and admitting arbitrary hosts
 # cost a second editability taxonomy (which declared attribute values count,
 # which embedded and non-rendered tags to refuse before reading it) for a case
