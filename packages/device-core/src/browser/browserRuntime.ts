@@ -12,6 +12,9 @@ export interface ResolvedBrowserRuntime {
   serverCommand: string[];
   /** Argv that runs the vault credential broker (before its subcommand). */
   credentialBrokerCommand: string[];
+  /** Argv that reconciles a session's cookies into the user's (before its
+   * three paths: profile, clone, and the baseline the clone started from). */
+  mergeCookiesCommand: string[];
   /** Extra environment for both. */
   env: Record<string, string>;
   /** The vault this machine runs for itself, when one ships in this build. */
@@ -105,6 +108,7 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   return {
     serverCommand: [py, server],
     credentialBrokerCommand: [py, "-m", "seed_vault_broker"],
+    mergeCookiesCommand: [py, path.join(layout.serverDir, "merge_cookies.py")],
     env: {
       PYTHONPATH: `${sitePackages}:${layout.serverDir}`,
       PYTHONDONTWRITEBYTECODE: "1",
@@ -135,6 +139,22 @@ function repoVendorDir(): string | null {
  * Null when nothing is installed; browser tools then report "not available"
  * rather than failing device startup.
  */
+/**
+ * The merger that goes with a hand-written DOMO_BROWSER_CMD.
+ *
+ * Required, not optional: a runtime with no merger cannot write what a session
+ * signed into back to the user's profile, and the quiet version of that is a
+ * lost login. Better to say so when the seam is set up than at the first close.
+ */
+function mergerFromEnv(): string[] {
+  const cmd = process.env.DOMO_MERGE_COOKIES_CMD;
+  const argv = cmd ? (JSON.parse(cmd) as string[]) : [];
+  if (!argv.length) {
+    throw new Error("DOMO_BROWSER_CMD needs DOMO_MERGE_COOKIES_CMD (JSON argv) beside it");
+  }
+  return argv;
+}
+
 export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRuntime | null {
   const cmdEnv = process.env.DOMO_BROWSER_CMD;
   if (cmdEnv) {
@@ -148,6 +168,7 @@ export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRun
     return {
       serverCommand: argv,
       credentialBrokerCommand: brokerCmd ? (JSON.parse(brokerCmd) as string[]) : argv,
+      mergeCookiesCommand: mergerFromEnv(),
       env: {},
       vaultServer: null,
       camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? null,

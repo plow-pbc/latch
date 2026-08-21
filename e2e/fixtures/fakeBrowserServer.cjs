@@ -268,6 +268,13 @@ function main() {
     }
     if (cmd.action === "quit") {
       respond({ id: cmd.id, result: { ok: true } });
+      // A real Camoufox takes seconds to go. FAKE_QUIT_DELAY_MS buys a test
+      // the window where a session is closing but not yet closed.
+      const delay = Number(process.env.FAKE_QUIT_DELAY_MS || 0);
+      if (delay) {
+        setTimeout(() => process.exit(0), delay);
+        return;
+      }
       process.exit(0);
     }
     if (process.env.FAKE_CMD_LOG) {

@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
-import { BrowserHost, BrowserSessions, CredentialBroker } from "@domo/device-core";
+import { BrowserHostConfig, BrowserSessions, CredentialBroker } from "@domo/device-core";
 import { havePython, runProbe } from "./pythonProbe.js";
 
 const FAKE_SERVER = fileURLToPath(
@@ -36,7 +36,7 @@ const HAVE_PYTHON = havePython();
 
 interface Ctx {
   sessions: BrowserSessions;
-  host: BrowserHost;
+  browsers: BrowserHostConfig;
   events: { event: string; fields: { [k: string]: JSONValue } }[];
   dir: string;
   cmdLog: string;
@@ -103,32 +103,36 @@ function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<strin
     ]),
   );
   const events: Ctx["events"] = [];
-  const host = new BrowserHost({
+  const browsers = {
     command: [process.execPath, FAKE_SERVER],
     headed: false,
     screenshotsDir: path.join(dir, "shots"),
     env: { FAKE_CMD_LOG: cmdLog, ...serverEnv },
     audit: () => {},
-  });
+  };
   const credentials = new CredentialBroker({
     command: [process.execPath, FAKE_BROKER],
     env: { FAKE_BROKER_VAULT: vaultPath, ...brokerEnv },
     auditPath: brokerLog,
   });
   const sessions = new BrowserSessions(
-    host,
+    browsers,
     credentials,
     (event, fields) => events.push({ event, fields }),
   );
-  return { sessions, host, events, dir, cmdLog, brokerLog };
+  return { sessions, browsers, events, dir, cmdLog, brokerLog };
 }
+
+/** What the audit calls this session — read off the open event, not recomputed. */
+const audited = (): string =>
+  ctx.events.find((e) => e.event === "browser_session_opened")!.fields.session as string;
 
 /** Open a session already approved for both items and both origins. */
 async function session(): Promise<string> {
   const opened = await ctx.sessions.open("i1", "agent-1", ["pizza.example", "payframe.example"], false);
   const handle = (opened as { session: string }).session;
-  ctx.sessions.extend("i2", "agent-1", handle, [], ["L1", "C1", "I1"], false);
-  await ctx.sessions.command("agent-1", handle, {
+  ctx.sessions.extend("i2", handle, [], ["L1", "C1", "I1"], false);
+  await ctx.sessions.command(handle, {
     action: "goto",
     url: "https://pizza.example/login",
   });
@@ -161,14 +165,14 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await ctx.host.shutdown();
+  await ctx.sessions.closeAll("teardown");
   fs.rmSync(ctx.dir, { recursive: true, force: true });
 });
 
 describe("fill_secret marking", () => {
   it("asks the browser to mark a field the vault masks", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -180,7 +184,7 @@ describe("fill_secret marking", () => {
 
   it("adds nothing to the page for a field the vault does not mask", async () => {
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#addr",
       item: "L1",
@@ -198,7 +202,7 @@ describe("fill_secret marking", () => {
       ["#card-cvc", "code"],
       ["#card-name", "cardholder name"],
     ]) {
-      await ctx.sessions.command("agent-1", handle, {
+      await ctx.sessions.command(handle, {
         action: "fill_secret",
         selector,
         item: "C1",
@@ -210,7 +214,7 @@ describe("fill_secret marking", () => {
 
   it("refuses a field the vault does not offer instead of masking it", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -232,16 +236,16 @@ describe("fill_secret marking", () => {
         "process.exit(1);\n",
     );
     const sessions = new BrowserSessions(
-      ctx.host,
+      ctx.browsers,
       new CredentialBroker({ command: [process.execPath, broken] }),
       (event, fields) => ctx.events.push({ event, fields }),
     );
     const opened = await sessions.open("i1", "agent-1", ["pizza.example"], false);
     const h = (opened as { session: string }).session;
-    sessions.extend("i2", "agent-1", h, [], ["L1"], false);
-    await sessions.command("agent-1", h, { action: "goto", url: "https://pizza.example/login" });
+    sessions.extend("i2", h, [], ["L1"], false);
+    await sessions.command(h, { action: "goto", url: "https://pizza.example/login" });
     const before = fills().length;
-    const result = await sessions.command("agent-1", h, {
+    const result = await sessions.command(h, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -258,7 +262,7 @@ describe("fill_secret marking", () => {
     // question to cache the answer to and no describe in the release path.
     const handle = await session();
     for (const selector of ["#pass", "#pass2", "#pass3"]) {
-      await ctx.sessions.command("agent-1", handle, {
+      await ctx.sessions.command(handle, {
         action: "fill_secret",
         selector,
         item: "L1",
@@ -281,7 +285,7 @@ describe("fill_secret marking", () => {
       ["#city", "city"],
     ];
     for (const [selector, field] of wanted) {
-      const result = await ctx.sessions.command("agent-1", handle, {
+      const result = await ctx.sessions.command(handle, {
         action: "fill_secret",
         selector,
         item: "I1",
@@ -303,11 +307,11 @@ describe("fill_secret marking", () => {
   it("refuses to fill when the page will not let the value be masked", async () => {
     // A page whose CSP blocks the mask: the attribute would go on and change
     // nothing, and the secret would be legible in every screenshot after it.
-    await ctx.host.shutdown();
+    await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -319,7 +323,7 @@ describe("fill_secret marking", () => {
       {
         event: "credential_denied",
         fields: {
-          session: handle,
+          session: audited(),
           item: "L1",
           field: "password",
           origin: "pizza.example",
@@ -337,10 +341,10 @@ describe("fill_secret marking", () => {
   it("still fills a field the vault does not conceal on such a page", async () => {
     // The refusal is about masking, so a field that was never going to be
     // masked is unaffected.
-    await ctx.host.shutdown();
+    await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#addr",
       item: "L1",
@@ -353,14 +357,14 @@ describe("fill_secret marking", () => {
     // The browser re-applies every mark before an observation and says so when
     // one will not take. Handing over the picture anyway is how the value ends
     // up in the transcript.
-    await ctx.host.shutdown();
+    await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_REMASK_FAILS: "1" });
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#pass", item: "L1", field: "password",
     });
     for (const action of ["screenshot", "forms"]) {
-      const result = await ctx.sessions.command("agent-1", handle, { action });
+      const result = await ctx.sessions.command(handle, { action });
       expect(jv(result).get("status").str, action).toBe("error");
       expect(jv(result).get("error").str).toContain("will not let it be hidden on screen");
       // No picture, no field list — nothing of the page comes back.
@@ -372,8 +376,8 @@ describe("fill_secret marking", () => {
     // A refusal that settles into that refused observation is not lost with it:
     // the observation is the device's to withhold, what the page's requests did
     // is the agent's to know.
-    await ctx.sessions.command("agent-1", handle, { action: "click", selector: "#blocked-later" });
-    const refused = jv(await ctx.sessions.command("agent-1", handle, { action: "screenshot" }));
+    await ctx.sessions.command(handle, { action: "click", selector: "#blocked-later" });
+    const refused = jv(await ctx.sessions.command(handle, { action: "screenshot" }));
     expect(refused.get("status").str).toBe("error");
     expect(refused.get("failed_requests").value).toEqual([
       { status: 401, method: "GET", host: "pizza.example" },
@@ -382,7 +386,7 @@ describe("fill_secret marking", () => {
 
   it("tells the browser which document it approved", async () => {
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
     });
     // The fill carries the document's token, not just the frame index — an
@@ -393,11 +397,11 @@ describe("fill_secret marking", () => {
   });
 
   it("refuses when the browser says the frame moved", async () => {
-    await ctx.host.shutdown();
+    await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command("agent-1", handle, {
+    const result = await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
     });
     expect(jv(result).get("status").str).toBe("error");
@@ -405,7 +409,7 @@ describe("fill_secret marking", () => {
     expect(ctx.events.slice(before).at(-1)).toEqual({
       event: "credential_denied",
       fields: {
-        session: handle,
+        session: audited(),
         item: "C1",
         field: "number",
         origin: "payframe.example",
@@ -420,10 +424,10 @@ describe("fill_secret marking", () => {
     // Asking the vault takes long enough for the session to end underneath the
     // fill. The browser is shared, so a value released for a session that has
     // gone would be typed into whatever the next one has on screen.
-    await ctx.host.shutdown();
+    await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({}, { FAKE_BROKER_DELAY_MS: "600" });
     const handle = await session();
-    const inFlight = ctx.sessions.command("agent-1", handle, {
+    const inFlight = ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#pass", item: "L1", field: "password",
     });
     await new Promise((r) => setTimeout(r, 150));
@@ -440,7 +444,7 @@ describe("fill_secret marking", () => {
     expect(ctx.events.at(-1)).toEqual({
       event: "credential_denied",
       fields: {
-        session: handle,
+        session: audited(),
         item: "L1",
         field: "password",
         origin: "pizza.example",
@@ -453,7 +457,7 @@ describe("fill_secret marking", () => {
 
   it("keeps the filled value out of the fixture's own command log", async () => {
     const handle = await session();
-    await ctx.sessions.command("agent-1", handle, {
+    await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
@@ -469,13 +473,13 @@ describe("fill_secret marking", () => {
   it("leaves the result and the audit record exactly as they were", async () => {
     const handle = await session();
     const before = ctx.events.length;
-    const masked = await ctx.sessions.command("agent-1", handle, {
+    const masked = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#pass",
       item: "L1",
       field: "password",
     });
-    const plain = await ctx.sessions.command("agent-1", handle, {
+    const plain = await ctx.sessions.command(handle, {
       action: "fill_secret",
       selector: "#addr",
       item: "L1",
@@ -488,11 +492,11 @@ describe("fill_secret marking", () => {
     expect(ctx.events.slice(before)).toEqual([
       {
         event: "credential_filled",
-        fields: { session: handle, item: "L1", field: "password", origin: "pizza.example" },
+        fields: { session: audited(), item: "L1", field: "password", origin: "pizza.example" },
       },
       {
         event: "credential_filled",
-        fields: { session: handle, item: "L1", field: "shipping address", origin: "pizza.example" },
+        fields: { session: audited(), item: "L1", field: "shipping address", origin: "pizza.example" },
       },
     ]);
     for (const e of ctx.events) expect(JSON.stringify(e)).not.toContain("hunter2");

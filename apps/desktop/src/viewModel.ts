@@ -377,6 +377,9 @@ function classifyActivity(
     if (jv(closed ?? null).get("reason").str === "crashed" || has("browser_crashed")) {
       return { status: "Crashed", tone: "red", category: "failed" };
     }
+    if (has("browser_cookie_merge_failed")) {
+      return { status: "Closed · sign-ins not saved", tone: "amber", category: "failed" };
+    }
     if (has("credential_fill_failed")) {
       return closed
         ? { status: "Closed · fill failed", tone: "amber", category: "failed" }
@@ -562,6 +565,10 @@ function describeStep(e: JSONValue): AuditStep {
     case "browser_session_extended":
       text = `Session widened — origins: ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ") || "—"}; items: ${(ev.get("items").arr ?? []).filter((i): i is string => typeof i === "string").join(", ") || "—"}`;
       state = "ok";
+      break;
+    case "browser_cookie_merge_failed":
+      text = `Sign-ins from this session could not be saved (${ev.get("error").str ?? "merge failed"}) — kept in ${ev.get("profile").str ?? "the session profile"}`;
+      state = "bad";
       break;
     case "browser_session_closed": {
       const reason = ev.get("reason").str ?? "";

@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
-import { BrowserHost, ViewerFrame } from "./browser/browserHost.js";
+import { BrowserHostConfig, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { VaultServer } from "./browser/vaultServer.js";
@@ -117,7 +117,8 @@ export class DeviceAgent {
   readonly vaultServer: VaultServer | null = null;
   /** The owner's own way into the vault: no CLI, no port, no session on disk. */
   readonly vaultClient: VaultClient | null = null;
-  private readonly browserHost: BrowserHost | null = null;
+  /** How the sessions build a browser each: one config, many hosts. */
+  private readonly browserConfig: BrowserHostConfig | null = null;
   private readonly seenNonces = new Set<string>();
 
   constructor(
@@ -137,7 +138,7 @@ export class DeviceAgent {
       const browserDir = path.join(home, "device/browser");
       const auditFn = (event: string, fields: { [k: string]: JSONValue }) =>
         this.audit.record(event, fields);
-      this.browserHost = new BrowserHost({
+      this.browserConfig = {
         command: browserRuntime.serverCommand,
         // Visible by default: the owner should be able to watch what is being
         // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
@@ -147,7 +148,12 @@ export class DeviceAgent {
         headed: process.env.DOMO_BROWSER_HEADED !== "0",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
-        profileDir: path.join(browserDir, "profile"),
+        // Sessions run in here, each on a clone of the user's own profile
+        // below — Firefox locks a profile to one process, so several browsers
+        // at once need a directory each — and hand it back when they close.
+        profileDir: path.join(browserDir, "profiles"),
+        seedProfile: path.join(browserDir, "profile"),
+        mergeCookiesCommand: browserRuntime.mergeCookiesCommand,
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the
@@ -157,7 +163,7 @@ export class DeviceAgent {
         // plow_browser_open, so it does not need to fit this bound.
         actionTimeoutMs: 15_000,
         audit: auditFn,
-      });
+      };
       // Launched from Finder there is no environment to speak of, so the vault
       // and the broker agree on one identity for this machine rather than each
       // falling back to a different default.
@@ -219,8 +225,7 @@ export class DeviceAgent {
         fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;
-      this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
-      this.browserHost.onCrash = () => this.browserSessions?.noteCrash();
+      this.browserSessions = new BrowserSessions(this.browserConfig, credentials, auditFn);
     }
   }
 
@@ -256,8 +261,14 @@ export class DeviceAgent {
 
   /** Close any live browser session, and the vault if we are running one. */
   async shutdown(): Promise<void> {
-    await this.browserSessions?.closeAll("shutdown");
-    this.vaultServer?.stop();
+    // The vault runs as a detached child, so it outlives us unless we stop it:
+    // a browser cleanup that throws must not be what leaves it running after
+    // the app is gone. The failure still reaches the caller.
+    try {
+      await this.browserSessions?.closeAll("shutdown");
+    } finally {
+      this.vaultServer?.stop();
+    }
   }
 
   /**
@@ -265,7 +276,7 @@ export class DeviceAgent {
    * null when no browser is running (it is never started for a viewer poll).
    */
   async browserViewFrame(): Promise<ViewerFrame | null> {
-    return this.browserHost?.viewFrame() ?? null;
+    return this.browserSessions?.viewFrame() ?? null;
   }
 
   /**
@@ -471,7 +482,6 @@ export class DeviceAgent {
     if (session !== null) {
       return this.browserSessions.extend(
         intent.intentId,
-        intent.agentId,
         session,
         origins,
         items,
@@ -499,14 +509,14 @@ export class DeviceAgent {
    * grant — no new intent, no approval — exactly like getOutput binds to an
    * already-approved run. Called in-process by the mcp-server's `browser` tool.
    */
-  async browserCommand(agentId: string, session: string, params: JSONValue): Promise<JSONValue> {
+  async browserCommand(session: string, params: JSONValue): Promise<JSONValue> {
     if (!this.browserSessions) {
       return { status: "error", error: "no browser runtime installed on this device" };
     }
     if (jv(params).get("action").str === "close") {
       return this.browserSessions.close(session, "agent");
     }
-    return this.browserSessions.command(agentId, session, params);
+    return this.browserSessions.command(session, params);
   }
 
   getOutput(handle: string, since = 0): JSONValue {

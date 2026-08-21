@@ -21,13 +21,36 @@
  * what the agent observes/interacts with and where credentials get typed.
  */
 import crypto from "node:crypto";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+import fs from "node:fs";
+import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
-import { BrowserHost } from "./browserHost.js";
+import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
 interface Session {
+  /** This session's own browser. One per session is the whole point. */
+  host: BrowserHost;
+  /** The profile directory this session holds while it lives. */
+  profile: string;
+  /**
+   * What the audit calls this session.
+   *
+   * The handle is a capability now — whoever holds it can drive the browser —
+   * so it must not be written to a file the owner reads, selected into an
+   * agent's history, or sent to the reviewer model off this Mac. This is a
+   * one-way digest of it: stable, so lines about one session can be read
+   * together, and useless to anybody who reads it.
+   */
+  auditId: string;
+  /** Closes THIS session when it goes quiet; sessions do not share a clock. */
+  idleTimer: NodeJS.Timeout | null;
+  /** The teardown, once one starts: everybody else waits on this one. */
+  closing: Promise<void> | null;
+
   handle: string;
   agentId: string;
   origins: string[];
@@ -149,12 +172,34 @@ export interface BrowserSessionInfo {
   inScope: boolean;
 }
 
+/** How many browsers this Mac will run at once. A Camoufox is a window and a
+ * few hundred MB, so there is a limit and it is said out loud when it is hit. */
+const DEFAULT_MAX_BROWSERS = 8;
+
+/**
+ * A short one-way name for a session.
+ *
+ * Used for the profile directory and for every audit line. It is a digest and
+ * nothing else: the handle is a capability — whoever holds it can drive that
+ * browser — so a name derived from it must not carry any of it back. Sanitising
+ * the id would: it strips characters, which is both lossy (two ids folding into
+ * one directory, one agent inheriting another's cookies) and revealing.
+ */
+const run = promisify(execFile);
+
+const digest = (id: string): string =>
+  crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 16);
+
 export class BrowserSessions {
-  private session: Session | null = null;
-  private idleTimer: NodeJS.Timeout | null = null;
+  /** Every live session, by handle. The handle IS the browser: an agent that
+   * passes the same one gets the same browser back, and two agents passing
+   * different ones cannot see each other's pages. */
+  private readonly sessions = new Map<string, Session>();
+  /** Set once, when the app is on its way out. Nothing opens after that. */
+  private quitting = false;
 
   constructor(
-    private readonly host: BrowserHost,
+    private readonly browser: BrowserHostConfig,
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
@@ -169,9 +214,9 @@ export class BrowserSessions {
     return originMatches(host, s.origins);
   }
 
-  /** The live session as the owner's viewer sees it, or null. */
+  /** The session the owner's viewer is watching — the one that acted last. */
   current(): BrowserSessionInfo | null {
-    const s = this.session;
+    const s = this.mostRecent();
     if (!s) return null;
     return {
       origins: [...s.origins],
@@ -189,25 +234,43 @@ export class BrowserSessions {
     credentialMetadata: boolean,
     headed?: boolean,
   ): Promise<JSONValue> {
-    if (this.session && this.session.agentId !== agentId) {
-      return { status: "error", error: "browser is in use by another agent" };
+    // The claim is made BEFORE anything is awaited. Registering after the
+    // browser is warm leaves a window several seconds wide in which the map
+    // says nothing is running: four concurrent opens all read a free slot and
+    // four browsers start, and two opens by the same agent both take the same
+    // profile directory, which Firefox then locks against itself. One record,
+    // taken first, owns the capacity and the profile alike.
+    // An approval can land while the app is already quitting — the intent was
+    // waiting for the owner, and closeAll() has taken its snapshot. Starting a
+    // browser now means one nobody will close: it and its profile outlive us.
+    if (this.quitting) {
+      return { status: "error", error: "this Mac is shutting down" };
     }
-    if (this.session) await this.close(this.session.handle, "reopened");
-
-    // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
-    // start (~30s) absorbs into the deferred handle; every later `browser`
-    // action is non-deferrable and must answer well inside the relay's ~20s
-    // per-exchange ceiling, which it can only do against an already-running
-    // browser. Failing here (no runtime, crash-looped) is an honest open error.
-    try {
-      await this.host.ensureReady(headed);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { status: "error", error: `browser failed to start: ${message}` };
+    if (this.sessions.size >= DEFAULT_MAX_BROWSERS) {
+      return {
+        status: "error",
+        error:
+          `this Mac is already running ${DEFAULT_MAX_BROWSERS} browsers — ` +
+          "close one with plow_browser_close before opening another",
+      };
     }
-
+    const handle = crypto.randomUUID();
+    // Every session browses in a directory of its own, because Firefox locks a
+    // profile against a second copy of itself — but it is a CLONE of the
+    // user's own profile, so every browser opens signed in wherever they are.
+    // On close what it signed into is merged back into the original, and the
+    // clone goes. This Mac is one person's; every browser on it is theirs.
+    const profile = `session-${digest(handle)}`;
+    const host = this.newHost(profile);
+    // A browser that dies takes its own session with it, and nobody else's.
+    host.onCrash = () => this.noteCrash(handle);
     const session: Session = {
-      handle: crypto.randomUUID(),
+      handle,
+      host,
+      profile,
+      auditId: digest(handle),
+      idleTimer: null,
+      closing: null,
       agentId,
       origins: origins.map(normalizeOrigin),
       credentialMetadata,
@@ -216,49 +279,70 @@ export class BrowserSessions {
       lastUrl: "",
       knownPageCount: 1,
     };
+    this.sessions.set(handle, session);
+
+    /** Give the claim back, whatever went wrong after taking it. */
+    const rollBack = async () => {
+      this.sessions.delete(handle);
+      try {
+        await host.shutdown();
+      } catch {
+        /* the browser is going away regardless; the failed open is the real error */
+      }
+      // Thrown away, never handed back: this clone never browsed, and the
+      // browser that held it is only now down.
+      if (this.browser.profileDir) {
+        fs.rmSync(path.join(this.browser.profileDir, profile), { recursive: true, force: true });
+      }
+    };
+
+    // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
+    // start (~30s) absorbs into the deferred handle; every later `browser`
+    // action is non-deferrable and must answer well inside the relay's ~20s
+    // per-exchange ceiling, which it can only do against an already-running
+    // browser. Failing here (no runtime, crash-looped) is an honest open error.
+    try {
+      await host.ensureReady(headed);
+    } catch (error: unknown) {
+      await rollBack();
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "error", error: `browser failed to start: ${message}` };
+    }
+
     // Same order as extend(), and for the same reason: a session the owner's
     // log has no event for is a browser they cannot see being used at all.
     try {
       this.audit("browser_session_opened", {
         intentId,
-        session: session.handle,
+        session: session.auditId,
         origins: session.origins,
         credential_metadata: credentialMetadata,
-        headed: this.host.headed,
+        headed: host.headed,
       });
     } catch (error: unknown) {
-      // The browser is already warm — ensureReady ran above, and headed means a
-      // window is on screen. If the opening cannot be recorded there is no
-      // session to close it later, so put it away here: a running browser with
-      // no session and no audit line is precisely the invisible browser this
-      // path exists to prevent.
-      try {
-        await this.stopBrowser();
-      } catch {
-        /* the browser is going away regardless; the failed open is the real error */
-      }
+      // A running browser with no session and no audit line is precisely the
+      // invisible browser this path exists to prevent.
+      await rollBack();
       throw error;
     }
-    this.session = session;
-    this.armIdleTimer();
+    this.armIdleTimer(session);
     return {
       status: "completed",
-      session: session.handle,
+      session: session.handle, // the capability goes back to its owner, and only there
       origins: session.origins,
-      headed: this.host.headed,
+      headed: host.headed,
     };
   }
 
   /** Widen an existing session (called only after an approved intent). */
   extend(
     intentId: string,
-    agentId: string,
     handle: string,
     origins: string[],
     items: string[],
     credentialMetadata: boolean,
   ): JSONValue {
-    const s = this.validate(agentId, handle);
+    const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
     // Work out the new bound without publishing it, because the record has to
     // survive before the access does. Widening the live session first and
@@ -277,7 +361,7 @@ export class BrowserSessions {
     const itemList = [...widenedItems].sort();
     this.audit("browser_session_extended", {
       intentId,
-      session: s.handle,
+      session: s.auditId,
       origins: widened,
       items: itemList,
     });
@@ -287,106 +371,295 @@ export class BrowserSessions {
     s.lastActivity = Date.now();
     return {
       status: "completed",
-      session: s.handle,
       origins: s.origins,
       items: itemList,
     };
   }
 
+  /** A browser on this session's own clone of the user's profile. */
+  private newHost(profile: string): BrowserHost {
+    if (this.browser.profileDir) this.seedProfile(path.join(this.browser.profileDir, profile));
+    return new BrowserHost({
+      ...this.browser,
+      screenshotsDir: path.join(this.browser.screenshotsDir, profile),
+      ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, profile) } : {}),
+      ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, profile) } : {}),
+    });
+  }
+
   /**
-   * Stop the browser and clear the shutdown latch — one operation, never two.
-   * `shutdown()` sets `shuttingDown` and only `resetBreaker()` clears it, and
-   * `shutdown()` audits browser_stopped on its way out. Split across two calls,
-   * an audit failure in between leaves a host that will start, publish a
-   * session, and then fail every command at the `sendAction()` guard: an open
-   * the agent cannot use. Every caller wants the pair, so the pair is the API.
-   * Callers still choose what to do with a shutdown error; none of them get to
-   * skip the reset.
+   * This session's profile: a copy of the user's own, so the browser opens
+   * where they left off — signed in, with their history and their settings.
+   *
+   * `cp -c` is an APFS clone: a 300MB profile costs no time and no disk until
+   * something writes to it. A volume that cannot clone fails the open out loud
+   * rather than quietly copying 300MB per browser. The lock files never come
+   * along — they belong to whichever Firefox held the profile, not to the copy.
+   *
+   * The user's own profile is never opened by a browser — only cloned from,
+   * and merged into on close (see mergeAndRelease).
    */
-  private async stopBrowser(): Promise<void> {
-    try {
-      await this.host.shutdown();
-    } finally {
-      this.host.resetBreaker();
+  private seedProfile(dir: string): void {
+    if (fs.existsSync(dir)) return;
+    const seed = this.browser.seedProfile;
+    if (!seed || !fs.existsSync(seed)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      return;
+    }
+    fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
+    execFileSync("/bin/cp", ["-Rc", seed, dir]);
+    for (const lock of [".parentlock", "parent.lock", "lock"]) {
+      fs.rmSync(path.join(dir, lock), { force: true });
+    }
+    // What this session started with, kept beside the clone. Merging back
+    // needs to tell a cookie this session CHANGED from one it merely read:
+    // reading moves a cookie's timestamp, and "more recent" alone would let a
+    // browser that only looked at a site put its stale copy of a token over
+    // the fresh one another browser was just given. Another clone, so free.
+    const baseline = this.baselineOf(dir);
+    const cookies = path.join(dir, "cookies.sqlite");
+    if (fs.existsSync(cookies)) {
+      fs.mkdirSync(baseline, { recursive: true, mode: 0o700 });
+      for (const suffix of ["", "-wal", "-shm"]) {
+        if (fs.existsSync(cookies + suffix)) {
+          execFileSync("/bin/cp", ["-c", cookies + suffix, path.join(baseline, `cookies.sqlite${suffix}`)]);
+        }
+      }
     }
   }
 
-  async close(handle: string, reason: string): Promise<JSONValue> {
-    const s = this.session;
-    if (!s || s.handle !== handle) return { status: "error", error: "unknown session" };
-    this.session = null;
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    // What the device is already holding goes on the closing line: no action
-    // follows to carry it out, and the owner's log is promised every entry the
-    // device received. (What the browser had not sent yet dies with it — a
-    // browser being shut down cannot report what it never got to say.)
+  /** Where a session's starting cookies live: inside its own profile, which
+   * Firefox ignores and which takes them with it when the session ends. */
+  private baselineOf(dir: string): string {
+    return path.join(dir, ".plow-baseline");
+  }
+
+  /**
+   * What this session signed into, added to the user's own profile — and then
+   * the clone goes.
+   *
+   * Merged, not handed back: replacing the profile means the last browser to
+   * close decides what the user is signed into, which loses the other one's
+   * login and can even undo a logout. What this session did to its cookies —
+   * changes and sign-outs both — is reconciled into the profile against the
+   * baseline it started from; `merge_cookies.py` holds that contract.
+   *
+   * ponytail: cookies only. A site that keeps its session in localStorage or
+   * IndexedDB still signs out with the clone, and a logout inside a session
+   * does not remove the cookie from the user's profile. Upgrade path is the
+   * same merge over the other stores.
+   */
+  private async mergeAndRelease(s: Session): Promise<void> {
+    if (!this.browser.profileDir) return;
+    const dir = path.join(this.browser.profileDir, s.profile);
     try {
-      await this.stopBrowser();
-    } finally {
-      // Written whichever way the shutdown went: a stopBrowser that throws is
-      // exactly when the last thing the page said is worth having, and taking
-      // the entries before it would have dropped them on that path.
-      const left = failedRequests(this.host.takeFailedRequests());
-      this.audit("browser_session_closed", {
-        session: handle,
-        reason,
-        ...(left.length ? { failed_requests: left } : {}),
+      await this.mergeCookies(dir);
+    } catch (error: unknown) {
+      // The user's profile is worth more than one merge, so it is left exactly
+      // as it was — but the clone STAYS. Deleting it here would throw away the
+      // one copy of whatever this session signed into, quietly, which is the
+      // failure this whole change exists to prevent. It is named in the
+      // owner's log, and the next thing to touch that profile can recover it.
+      this.audit("browser_cookie_merge_failed", {
+        session: s.auditId,
+        profile: dir,
+        error: error instanceof Error ? error.message : String(error),
       });
+      return;
     }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  /** The merge itself: sqlite, on the interpreter this runtime already ships. */
+  private async mergeCookies(dir: string): Promise<void> {
+    const seed = this.browser.seedProfile;
+    const from = path.join(dir, "cookies.sqlite");
+    if (!seed || !fs.existsSync(from)) return;
+    const into = path.join(seed, "cookies.sqlite");
+    if (!fs.existsSync(into)) {
+      // Nothing to merge into — a Mac whose owner has never browsed here. The
+      // profile is made if it is missing: returning instead would drop this
+      // session's sign-ins on exactly the machine that has none to lose them
+      // among, and every session after it would do the same.
+      fs.mkdirSync(seed, { recursive: true, mode: 0o700 });
+      for (const suffix of ["", "-wal", "-shm"]) {
+        if (fs.existsSync(from + suffix)) fs.copyFileSync(from + suffix, into + suffix);
+      }
+      return;
+    }
+    const merge = this.browser.mergeCookiesCommand;
+    // Not a quiet no-op: returning here would report a merge that never
+    // happened, and the clone holding the session's sign-ins would be deleted
+    // on the strength of it. Failing keeps the clone and tells the owner.
+    if (!merge?.length) throw new Error("this browser runtime ships no cookie merger");
+    // Off the event loop: sqlite waits on a busy store, and a browser closing
+    // must not stall every other call this Mac is serving.
+    await run(merge[0], [...merge.slice(1), into, from, path.join(this.baselineOf(dir), "cookies.sqlite")]);
+  }
+
+  /**
+   * A frame from the browser the owner is watching — the same session
+   * `current()` describes, so the picture and the words underneath it are
+   * always about one browser. Two places choosing separately is how a frame
+   * ends up labelled with another session's origins.
+   */
+  async viewFrame(): Promise<ViewerFrame | null> {
+    const s = this.mostRecent();
+    return s ? s.host.viewFrame() : null;
+  }
+
+  /** The session that acted last — what the owner's viewer follows. */
+  private mostRecent(): Session | null {
+    let latest: Session | null = null;
+    for (const s of this.sessions.values()) {
+      // A session on its way out is listed until its profile work finishes,
+      // but it is not what the owner's viewer is watching any more.
+      if (s.closing) continue;
+      if (!latest || s.lastActivity > latest.lastActivity) latest = s;
+    }
+    return latest;
+  }
+
+  /** Close a session: the handle says which browser goes. */
+  async close(handle: string, reason: string): Promise<JSONValue> {
+    const s = this.sessions.get(handle);
+    if (!s) return { status: "error", error: "unknown session" };
+    // The session stays registered across the shutdown below — the claim is
+    // held until the browser is really down — so it is still reachable while
+    // it is on its way out: the idle clock can come due, or a second close can
+    // arrive. Either would run a whole second teardown and write the owner a
+    // second "closed" line for one session. The clock is stopped and the way
+    // back in is shut here, before anything is awaited.
+    // Waiting on the first teardown rather than reporting a completion it has
+    // not reached: the app quits on this answer, and a browser still inside
+    // its shutdown would be left running with its profile on disk.
+    if (s.closing) {
+      await s.closing;
+      return { status: "completed" };
+    }
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    // The claim itself is held until the browser is really down. Releasing it
+    // first lets the same credential reopen while Camoufox still has the
+    // profile, and Firefox locks a profile against a second copy of itself.
+    //
+    // Only this session's browser goes away; everyone else keeps theirs, and
+    // this one's profile goes with it — nothing is left for the next agent.
+    // Finalized whichever way the shutdown went: a stop that throws is exactly
+    // when the last thing the page said is worth having.
+    const teardown = (async () => {
+      try {
+        await s.host.shutdown();
+      } finally {
+        await this.finalize(s, reason);
+      }
+    })();
+    s.closing = teardown;
+    await teardown;
     return { status: "completed" };
   }
 
   /**
-   * The browser died under a live session. There is no host left to shut
-   * down; close the books so the audit shows the session ended rather than
-   * browsing forever. The circuit breaker is deliberately not reset.
+   * A browser died under a live session. There is no host left to shut down;
+   * close the books so the audit shows that session ended rather than browsing
+   * forever. The circuit breaker is deliberately not reset.
    */
-  noteCrash(): void {
-    const s = this.session;
-    if (!s) return;
-    this.session = null;
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    const left = failedRequests(this.host.takeFailedRequests());
-    this.audit("browser_session_closed", {
-      session: s.handle,
-      reason: "crashed",
-      ...(left.length ? { failed_requests: left } : {}),
+  noteCrash(handle: string): void {
+    const s = this.sessions.get(handle);
+    if (!s || s.closing) return;
+    // Published the same way a close publishes its teardown: the session stays
+    // in the map until the merge has settled, so a quit that arrives while a
+    // crashed browser's cookies are still being written waits for them.
+    s.closing = this.finalize(s, "crashed");
+    void s.closing.catch(() => {
+      /* the failure is already in the owner's log; nobody awaited this one */
     });
   }
 
-  /** Close whatever session an agent holds (revocation/disconnect path). */
-  async closeForAgent(agentId: string, reason: string): Promise<void> {
-    if (this.session?.agentId === agentId) await this.close(this.session.handle, reason);
+  /**
+   * The end of a session, in one place: the claim and the clock go, the
+   * profile goes back to the user, and the owner's log says it ended.
+   */
+  private async finalize(s: Session, reason: string): Promise<void> {
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    // The session ended when the browser did; the profile work that follows is
+    // its own line in the log, so a slow merge never delays this one.
+    const left = failedRequests(s.host.takeFailedRequests());
+    try {
+      this.audit("browser_session_closed", {
+        session: s.auditId,
+        reason,
+        ...(left.length ? { failed_requests: left } : {}),
+      });
+    } finally {
+      // Even when the log could not be written: the clone is still a copy of
+      // the user's profile sitting on disk, and it does not get to stay there
+      // because an append failed.
+      try {
+        await this.mergeAndRelease(s);
+      } finally {
+        // Listed until the very end, so a quit that snapshots the map while
+        // this is running waits for it rather than leaving mid-merge.
+        this.sessions.delete(s.handle);
+      }
+    }
   }
 
+  /**
+   * Every session goes down at once. Serially, quitting could spend one
+   * browser's whole shutdown budget before the next session was even asked to
+   * stop — and a quit that outruns this leaves a disposable profile, cookies
+   * and all, on disk. They share nothing, so nothing here has to be ordered.
+   */
   async closeAll(reason: string): Promise<void> {
-    if (this.session) await this.close(this.session.handle, reason);
+    // Latched before the snapshot, so an open that resumes mid-shutdown is
+    // refused rather than registering behind us.
+    this.quitting = true;
+    // settled, not fail-fast: one close that throws (a full disk on the audit
+    // append) must not resolve this while a sibling browser is still inside
+    // its shutdown timeout — the caller quits the app on this promise. The
+    // failure is still raised, once everyone is really down.
+    const results = await Promise.allSettled(
+      [...this.sessions.values()].map((s) => this.close(s.handle, reason)),
+    );
+    const failed = results.find((r) => r.status === "rejected");
+    if (failed) throw failed.reason;
   }
 
-  private validate(agentId: string, handle: string): Session | string {
-    const s = this.session;
-    if (!s || s.handle !== handle) return "unknown session (open one with plow_browser_open)";
-    if (s.agentId !== agentId) return "session belongs to a different agent";
+  /**
+   * The session a handle names, or why there is none.
+   *
+   * The handle says WHICH browser, not whose: this Mac is one person's, and
+   * every browser on it is theirs. Several agents run several browsers at
+   * once and each passes its own handle to keep its own window.
+   */
+  private validate(handle: string): Session | string {
+    const s = this.sessions.get(handle);
+    if (!s) return "unknown session (open one with plow_browser_open)";
+    // A session stays in the map while its browser shuts down. An approval
+    // that lands in that window would widen — or drive — a browser already on
+    // its way out, and the widening would be audited for a session that ends
+    // a moment later.
+    if (s.closing) return "this browser is closing";
     return s;
   }
 
-  private armIdleTimer(): void {
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
-      const s = this.session;
-      if (!s) return;
+  /** Each session closes on its own quiet, not on the busiest one's. */
+  private armIdleTimer(s: Session): void {
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    s.idleTimer = setTimeout(() => {
+      if (!this.sessions.has(s.handle)) return;
       if (Date.now() - s.lastActivity >= this.idleMs) {
         void this.close(s.handle, "idle");
       } else {
-        this.armIdleTimer();
+        this.armIdleTimer(s);
       }
     }, this.idleMs + 1000);
-    this.idleTimer.unref?.();
+    s.idleTimer.unref?.();
   }
 
   /** Execute one agent command inside an approved session. */
-  async command(agentId: string, handle: string, params: JSONValue): Promise<JSONValue> {
-    const s = this.validate(agentId, handle);
+  async command(handle: string, params: JSONValue): Promise<JSONValue> {
+    const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
     s.lastActivity = Date.now();
 
@@ -410,7 +683,7 @@ export class BrowserSessions {
       if (!this.inScope(s, s.lastUrl) && !LOCKOUT_ALLOWED.has(action)) {
         const origin = hostOf(s.lastUrl) ?? s.lastUrl;
         this.audit("browser_scope_violation", {
-          session: s.handle,
+          session: s.auditId,
           action,
           origin,
         });
@@ -441,7 +714,7 @@ export class BrowserSessions {
           const host = hostOf(target);
           if (host === null || !originMatches(host, s.origins)) {
             this.audit("browser_scope_violation", {
-              session: s.handle,
+              session: s.auditId,
               action: "goto",
               origin: host ?? stripQuery(target),
             });
@@ -499,10 +772,10 @@ export class BrowserSessions {
     // there is a refusal to put on one.
     alwaysAudit = true,
   ): JSONValue[] {
-    const failed = failedRequests(this.host.takeFailedRequests());
+    const failed = failedRequests(s.host.takeFailedRequests());
     if (!alwaysAudit && failed.length === 0) return [];
     this.audit("browser_command", {
-      session: s.handle,
+      session: s.auditId,
       action,
       url: stripQuery(url),
       ...extra,
@@ -517,14 +790,14 @@ export class BrowserSessions {
     action: { [k: string]: JSONValue },
     knobs: { [k: string]: JSONValue } = {},
   ): Promise<JSONValue> {
-    const result = await this.host.sendAction(action);
+    const result = await s.host.sendAction(action);
     const url = typeof result.url === "string" ? result.url : "";
     const pageCount = typeof result.page_count === "number" ? result.page_count : 1;
 
     const navigated = url !== s.lastUrl;
     s.lastUrl = url;
     if (navigated) {
-      this.audit("browser_navigated", { session: s.handle, url: stripQuery(url) });
+      this.audit("browser_navigated", { session: s.auditId, url: stripQuery(url) });
     }
     if (pageCount !== s.knownPageCount) {
       s.knownPageCount = pageCount;
@@ -540,7 +813,7 @@ export class BrowserSessions {
     // an observation that cannot be made safely is not made.
     if (result.ok === false && result.mask === "unmasked") {
       this.audit("credential_mask_failed", {
-        session: s.handle,
+        session: s.auditId,
         action: String(action.action),
         url: stripQuery(url),
       });
@@ -562,7 +835,7 @@ export class BrowserSessions {
     if (!this.inScope(s, url)) {
       const origin = hostOf(url) ?? url;
       this.audit("browser_scope_violation", {
-        session: s.handle,
+        session: s.auditId,
         action: String(action.action),
         origin,
       });
@@ -584,12 +857,12 @@ export class BrowserSessions {
 
   private async sweepPages(s: Session): Promise<void> {
     try {
-      const pages = await this.host.sendAction({ action: "pages" });
+      const pages = await s.host.sendAction({ action: "pages" });
       const list = Array.isArray(pages.pages) ? pages.pages : [];
       for (const pg of list) {
         const url = jv(pg).get("url").str ?? "";
         this.audit("browser_navigated", {
-          session: s.handle,
+          session: s.auditId,
           url: stripQuery(url),
           page_index: jv(pg).get("i").int ?? -1,
         });
@@ -610,7 +883,7 @@ export class BrowserSessions {
       };
     }
     const items = await this.credentials.whatsHere(s.lastUrl || "https://invalid.invalid/");
-    this.audit("credential_metadata", { session: s.handle, op: "list" });
+    this.audit("credential_metadata", { session: s.auditId, op: "list" });
     return {
       status: "completed",
       items: items.map((i) => ({
@@ -631,7 +904,7 @@ export class BrowserSessions {
       return { status: "error", error: "no credential access approved for this item" };
     }
     const item = await this.credentials.describeItem(itemId);
-    this.audit("credential_metadata", { session: s.handle, op: "describe", item: itemId });
+    this.audit("credential_metadata", { session: s.auditId, op: "describe", item: itemId });
     return { status: "completed", ...item };
   }
 
@@ -658,7 +931,7 @@ export class BrowserSessions {
     }
     if (!s.credentialItems.has(itemId)) {
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: hostOf(s.lastUrl) ?? "",
@@ -670,7 +943,7 @@ export class BrowserSessions {
       };
     }
 
-    const located = await this.host.sendAction({ action: "locate", selector });
+    const located = await s.host.sendAction({ action: "locate", selector });
     const frame = typeof located.frame === "number" ? located.frame : 0;
     const frameUrl = typeof located.frame_url === "string" ? located.frame_url : "";
     // What identifies the document this field is in. The url answers "may a
@@ -680,7 +953,7 @@ export class BrowserSessions {
     const frameHost = hostOf(frameUrl);
     if (frameHost === null || !originMatches(frameHost, s.origins)) {
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost ?? stripQuery(frameUrl),
@@ -703,7 +976,7 @@ export class BrowserSessions {
       const type = error instanceof CredentialError ? error.type : "BrokerFailed";
       const message = error instanceof Error ? error.message : String(error);
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost,
@@ -723,12 +996,13 @@ export class BrowserSessions {
       return { status: "error", error: `credential release refused: ${message}` };
     }
     // Asking the vault takes long enough for the session to end underneath
-    // this: closed by the owner, by the idle timer, or by another agent opening
-    // one. The browser is shared, so a value released for a session that no
-    // longer exists would be typed into whatever is on screen now.
-    if (this.session !== s) {
+    // this: closed by the owner, by the idle timer, or by a crash. Its browser
+    // goes with it, and the next session to be handed that handle would be a
+    // different browser — so a value released for a session that no longer
+    // exists must not be typed into anything.
+    if (this.sessions.get(s.handle) !== s) {
       this.audit("credential_denied", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost,
@@ -747,7 +1021,7 @@ export class BrowserSessions {
     let secret = release.value;
 
     try {
-      const filled = await this.host.sendAction({
+      const filled = await s.host.sendAction({
         action: "fill",
         selector,
         value: secret,
@@ -770,7 +1044,7 @@ export class BrowserSessions {
       // prevent. Refused rather than filled.
       if (filled.mask === "moved") {
         this.audit("credential_denied", {
-          session: s.handle,
+          session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
@@ -787,7 +1061,7 @@ export class BrowserSessions {
       }
       if (filled.ok !== true) {
         this.audit("credential_denied", {
-          session: s.handle,
+          session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
@@ -813,7 +1087,7 @@ export class BrowserSessions {
       // enough secret loses its tail and an exact-match scrub leaves the prefix
       // behind in audit.ndjson. Nothing derived from the failure text is kept.
       this.audit("credential_fill_failed", {
-        session: s.handle,
+        session: s.auditId,
         item: itemId,
         field,
         origin: frameHost,
@@ -830,7 +1104,7 @@ export class BrowserSessions {
       secret = "";
     }
     this.audit("credential_filled", {
-      session: s.handle,
+      session: s.auditId,
       item: itemId,
       field,
       origin: frameHost,

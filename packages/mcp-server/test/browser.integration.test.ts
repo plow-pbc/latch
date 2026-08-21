@@ -58,7 +58,10 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
       env: { ...base.env, FAKE_BROKER_VAULT: vaultPath },
     };
     device = new DeviceAgent(path.join(dir, "home"), "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), runtime);
-    server = createDomoMcpServer(device);
+    // Three real Camoufoxes take longer to start than a tunnelled call's 8s
+    // budget, and a deferred open answers with a pending envelope and no
+    // session — a clock this test is not about. Give it room.
+    server = createDomoMcpServer(device, { budgetMs: 120_000 });
   }, 60_000);
 
   afterAll(async () => {
@@ -72,6 +75,65 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     if (expectOk) expect(r.isError, `${action}: ${JSON.stringify(r.payload)}`).toBe(false);
     return r;
   };
+
+  /**
+   * Three agents, three real browsers, at once — through the MCP tools, the
+   * way an agent reaches them. It fails if they collide: each session must
+   * read back its OWN page, and closing one must leave the others browsing.
+   */
+  /**
+   * Three browsers at once — the live failure this fixes. Several of the
+   * owner's agents reach this Mac through a single Plow credential, so keying
+   * a session on it made them one agent: the second open was refused, told to
+   * reuse the first's session, and drove it.
+   *
+   * Fails if they collide: each session must read back its own page, and
+   * closing one must leave the others browsing.
+   */
+  it("gives three callers three browsers of their own", async () => {
+    const other: RelayAuth = { agent_id: "other-credential", agent_name: "Other", scopes: ["relay:call"] };
+    const callers = [AGENT, AGENT, other];
+    const pages = callers.map((_, i) => `http://127.0.0.1:${site.port}/?caller=${i}`);
+    let open: { session: string; caller: RelayAuth }[] = [];
+    try {
+      const opened = await Promise.all(
+        callers.map((caller) =>
+          callTool(server, "plow_browser_open", { origins: ["127.0.0.1"], goal: "parallel browsing" }, caller),
+        ),
+      );
+      open = opened.map((r, i) => {
+        expect(r.isError, JSON.stringify(r.payload)).toBe(false);
+        return { session: (r.payload as { session: string }).session, caller: callers[i] };
+      });
+      expect(new Set(open.map((o) => o.session)).size).toBe(3);
+
+      // Driven at the same time, each to its own page.
+      await Promise.all(
+        open.map(({ session, caller }, i) =>
+          callTool(server, "plow_browser", { session, action: "goto", url: pages[i] }, caller),
+        ),
+      );
+      for (const [i, { session, caller }] of open.entries()) {
+        const r = await callTool(server, "plow_browser", { session, action: "url" }, caller);
+        expect(r.isError, `caller ${i}: ${JSON.stringify(r.payload)}`).toBe(false);
+        expect((r.payload as { url: string }).url).toBe(pages[i]);
+      }
+
+      // Closing one leaves the others browsing.
+      await callTool(server, "plow_browser_close", { session: open[0].session }, open[0].caller);
+      open = open.slice(1);
+      for (const [i, { session, caller }] of open.entries()) {
+        const r = await callTool(server, "plow_browser", { session, action: "url" }, caller);
+        expect((r.payload as { url: string }).url).toBe(pages[i + 1]);
+      }
+    } finally {
+      // However this ends, the Mac gets its browsers back — the next test
+      // needs room to open one.
+      for (const { session, caller } of open) {
+        await callTool(server, "plow_browser_close", { session }, caller).catch(() => {});
+      }
+    }
+  }, 300_000);
 
   it("logs in, orders, pays in the iframe, confirms — secrets never cross MCP", async () => {
     const opened = await callTool(
