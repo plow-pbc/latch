@@ -63,13 +63,38 @@ export const PROTOCOL_REVISION = "2026-07-28";
  * question; describing it accurately is not. An instructions block that
  * overstates the guarantee is worse than one that says less.
  *
+ * The web paragraph INVERTED on 2026-08-20, and the reason is worth keeping
+ * because the old sentence reads perfectly reasonable. It used to send
+ * "general web reading" to the agent's own tools, on the theory that a fetch
+ * is faster than a human approval and trivia should not cost one. What that
+ * missed is that the agent's fetch leaves a datacenter address, and the sites
+ * users actually ask about refuse it. "What's on the homepage of Reddit?" went
+ * out to a blocked fetch and came back a failure, with nothing anywhere
+ * telling the agent that a real browser on the user's own network was one call
+ * away. The example is carried verbatim because a concrete case moves a model
+ * where a rule does not.
+ *
+ * It states the browser's advantages as FACTS and stops short of the one that
+ * would be a lie: the profile persists, it is not "signed in". Same reason
+ * `plow_browser_open` is guarded against that phrase in toolCopy.test.ts — a
+ * persistent profile promises nothing about any particular site.
+ *
+ * There are no fallbacks here on purpose. Offering the agent's own tools as a
+ * faster alternative is what produced the behaviour above; the carve-out is
+ * scoped to the agent's own work product instead, which is the one thing it
+ * will not route to someone else's machine anyway.
+ *
  * This is guidance to a model, never a capability claim. Nothing here widens
  * what a tool may do; the enforceable bound is the capability set the human
  * approves.
  */
-export const SERVER_INSTRUCTIONS = `These tools act on the user's own Mac — their real files, their real applications, and a real browser running there. Your own file, shell and web tools act on your workspace, which is a different machine the user cannot see.
+export const SERVER_INSTRUCTIONS = `These tools operate the user's own Mac — their real files, their real applications, their real shell, and a real browser running there. Your own file, shell and web tools act on your workspace: a different machine, on a different network address, that the user cannot see.
 
-Use these tools whenever the task is about THIS USER's computer, accounts, or data: a file that exists on their machine, something that must run there, or a site they need to be signed in to as themselves. Use your own tools for scratch work, for code you are writing, and for general web reading.
+Reach for these whenever the question is about the live web or about this user's world. Public pages included: your own fetch leaves a datacenter address that many sites refuse outright, it trips bot walls and consent interstitials, and it sees none of a page that renders in JavaScript. Their browser is a real one on their own network, with a profile that persists between sessions. "What's on the homepage of Reddit?" is a plow_browser_open question.
+
+Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: osascript to drive their applications, mdfind for Spotlight, sips for images, pbcopy and pbpaste for the clipboard, open to launch a file or an app, screencapture, shortcuts.
+
+Use your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.
 
 The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.`;
 
@@ -147,6 +172,15 @@ function refusal(id: unknown, method: string): Response {
 export interface McpServerOptions {
   /** Overridable so tests do not have to wait out the real budget. */
   budgetMs?: number;
+  /**
+   * The app's own version, reported in the handshake. This package cannot read
+   * it — it is a library, and the version that matters is the Electron app's,
+   * not this workspace's — so the app passes `app.getVersion()` in. The default
+   * is deliberately not a plausible release number: a handshake reporting
+   * `0.0.0-dev` in the field is a caller that forgot to pass one, which a
+   * hardcoded `0.1.0` hid for as long as it existed.
+   */
+  version?: string;
 }
 
 export interface DomoMcpServer {
@@ -167,6 +201,7 @@ export function createDomoMcpServer(
   options: McpServerOptions = {},
 ): DomoMcpServer {
   const budgetMs = options.budgetMs ?? CALL_BUDGET_MS;
+  const version = options.version ?? "0.0.0-dev";
   const deferred = new DeferredResults(budgetMs);
   const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
@@ -174,7 +209,26 @@ export function createDomoMcpServer(
   const handler = createMcpHandler(
     (ctx) => {
       const server = new McpServer(
-        { name: "plow", version: "0.1.0" },
+        // Six fields, and we used to send two. `description` is the one field
+        // MCP has for "what is this server FOR", and a client that drops the
+        // instructions block (it may — see SERVER_INSTRUCTIONS) still gets
+        // this. `title` is what a client puts on screen, so it carries the
+        // descriptive phrasing the bare name cannot.
+        //
+        // `icons` is deliberately absent. A server reachable only through a
+        // relay has no public URL to serve an icon from, so it would have to
+        // ride every handshake as a data: URI — real bytes, on every
+        // initialize, for decoration.
+        {
+          name: "plow-latch",
+          title: "Plow Latch — Mac Desktop Manager",
+          version,
+          description:
+            "Operate this person's own Mac: read and write their files, run shell and macOS " +
+            "tooling, and drive a real browser on their own network. Every operation appears " +
+            "on their screen for approval.",
+          websiteUrl: "https://watchmepivot.com/",
+        },
         {
           // Without this the client may open a subscriptions stream, which a
           // one-buffered-exchange-per-frame tunnel cannot carry.
@@ -188,7 +242,11 @@ export function createDomoMcpServer(
         server.registerTool(
           spec.name,
           {
+            title: spec.title,
             description: spec.description,
+            // Display and routing hints only — see ToolHints in tools.ts. The
+            // bound is the approved capability set, computed from arguments.
+            annotations: spec.annotations,
             inputSchema: fromJsonSchema(spec.inputSchema as never),
           },
           async (args: unknown) => {

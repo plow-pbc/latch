@@ -28,13 +28,52 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function makeServer(): DomoMcpServer {
+function makeServer(options: { version?: string } = {}): DomoMcpServer {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-copy-"));
   cleanups.push(() => fs.rmSync(home, { recursive: true, force: true }));
   const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
-  const server = createDomoMcpServer(device);
+  const server = createDomoMcpServer(device, options);
   cleanups.push(() => server.close());
   return server;
+}
+
+/**
+ * The 2025-era handshake, which is the only one that carries `serverInfo`.
+ *
+ * It answers SSE, and there is no opting out: the legacy binding refuses with
+ * 406 unless the client accepts BOTH `application/json` and
+ * `text/event-stream`, and having accepted both it picks the stream. So the
+ * one frame is unwrapped here rather than by the shared `parse`, which serves
+ * the modern per-request path every other test uses.
+ */
+async function initialize(server: DomoMcpServer): Promise<Record<string, unknown>> {
+  const legacy = "2025-11-25";
+  const response = await rpc(
+    server,
+    "initialize",
+    { protocolVersion: legacy, capabilities: {}, clientInfo: { name: "t", version: "1" } },
+    undefined,
+    { protocolVersion: legacy },
+  );
+  expect(response.status, response.body).toBe(200);
+  const data = response.body
+    .split("\n")
+    .find((line) => line.startsWith("data:"))
+    ?.slice("data:".length);
+  expect(data, `no SSE data frame in: ${response.body}`).toBeDefined();
+  return ((JSON.parse(data!) as { result?: Record<string, unknown> }).result ?? {}) as Record<
+    string,
+    unknown
+  >;
+}
+
+/** Every tool as a client sees it, with the metadata beside the description. */
+async function listed(server: DomoMcpServer) {
+  const tools = parse(await rpc(server, "tools/list", {})).result?.tools as
+    | { name: string; title?: string; description: string; annotations?: Record<string, boolean> }[]
+    | undefined;
+  expect(tools).toBeDefined();
+  return tools!;
 }
 
 /** Every tool's description, keyed by name, as a client sees it. */
@@ -173,8 +212,12 @@ describe("the browsing skill agrees with the tools it documents", () => {
   // same breath; when they disagreed about who does general web reading, the
   // agent resolved it arbitrarily — the exact inconsistency this work exists to
   // remove.
-  it("the skill description does not claim general web reading", () => {
-    expect(BROWSING_SKILL.description).toMatch(/general web reading belongs in your own tools/i);
+  // This assertion INVERTED on 2026-08-20 along with the copy it guards. It
+  // used to require the skill to say general web reading belonged in the
+  // agent's own tools; that is the sentence the whole change exists to remove.
+  it("the skill description claims the live web, and says why it can", () => {
+    expect(BROWSING_SKILL.description).toMatch(/reading the live web/i);
+    expect(BROWSING_SKILL.description).toMatch(/datacenter address/i);
     expect(BROWSING_SKILL.description).not.toMatch(/any task that requires visiting/i);
   });
 });
@@ -194,6 +237,118 @@ function manifestStrings(): { where: string; text: string }[] {
   out.push({ where: "skill.description", text: BROWSING_SKILL.description });
   return out;
 }
+
+describe("the handshake says what this server is", () => {
+  /**
+   * `serverInfo` rides `initialize` and ONLY `initialize`. The 2026-07-28
+   * `server/discover` result is supportedVersions + capabilities +
+   * instructions — no `Implementation` anywhere in it. So `title`,
+   * `description` and `websiteUrl` reach 2025-era clients (claude.ai's
+   * connector opens that way) and no one else, which is exactly why the
+   * routing contract lives in the instructions block instead of here.
+   */
+  it("initialize carries a titled, described identity", async () => {
+    const info = (await initialize(makeServer())).serverInfo as Record<string, string> | undefined;
+    expect(info?.name).toBe("plow-latch");
+    expect(info?.title).toMatch(/Plow Latch/);
+    // The one field MCP has for "what is this server FOR". It has to name
+    // whose machine this is; an empty one was the whole finding.
+    expect(info?.description).toMatch(/own Mac/i);
+    expect(info?.websiteUrl).toMatch(/^https:\/\//);
+  });
+
+  it("reports the version it was given, and flags the default as a bug", async () => {
+    const real = (await initialize(makeServer({ version: "1.2.3" }))).serverInfo as { version: string };
+    expect(real.version).toBe("1.2.3");
+    // A caller that forgets gets a value that reads as unset rather than as a
+    // release — the hardcoded "0.1.0" hid exactly that for as long as it lived.
+    const missing = (await initialize(makeServer())).serverInfo as { version: string };
+    expect(missing.version).toBe("0.0.0-dev");
+  });
+});
+
+describe("every tool says what kind of tool it is", () => {
+  it("carries a title and annotations for every tool", async () => {
+    for (const tool of await listed(makeServer())) {
+      expect(tool.title, `${tool.name} has no title`).toBeTruthy();
+      expect(typeof tool.annotations?.readOnlyHint, `${tool.name} has no readOnlyHint`).toBe(
+        "boolean",
+      );
+    }
+  });
+
+  // Pinned as a set rather than per-tool: the failure mode worth catching is a
+  // NEW tool that quietly defaults to looking harmless, and a per-tool loop
+  // cannot see one that was never added to it.
+  it("the read-only tools are exactly the ones that cannot change this Mac", async () => {
+    const readOnly = (await listed(makeServer()))
+      .filter((t) => t.annotations?.readOnlyHint)
+      .map((t) => t.name)
+      .sort();
+    expect(readOnly).toEqual(
+      [
+        "plow_get_output",
+        "plow_get_result",
+        "plow_list_skills",
+        "plow_read_file",
+        "plow_read_skill",
+        // list/describe only, and no tool here returns a vault value.
+        "plow_vault",
+      ].sort(),
+    );
+  });
+
+  it("everything that reaches the open internet says so", async () => {
+    const openWorld = (await listed(makeServer()))
+      .filter((t) => t.annotations?.openWorldHint)
+      .map((t) => t.name)
+      .sort();
+    expect(openWorld).toEqual(
+      ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_command"].sort(),
+    );
+  });
+});
+
+describe("nothing on the surface sends the live web back to the agent's own tools", () => {
+  /**
+   * The sentence this change exists to remove had THREE homes: the
+   * instructions block, `plow_browser_open`'s description, and the browsing
+   * skill's. Guarding the three we happen to remember is how the fourth one
+   * ships, so this runs over every string a model reads.
+   */
+  it("no manifest string routes web reading away from this Mac", () => {
+    for (const { where, text } of manifestStrings()) {
+      expect(text, `${where} sends web reading to the agent's own tools`).not.toMatch(
+        /general web reading|which your own tools do faster|your own tools, which are faster/i,
+      );
+    }
+  });
+
+  it("the instructions route the live web here, name the mechanism, and give an example", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/datacenter address/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/plow_browser_open/);
+    // A concrete case moves a model where a rule does not. This one is the
+    // request that started the work.
+    expect(SERVER_INSTRUCTIONS).toMatch(/reddit/i);
+  });
+
+  it("the instructions name macOS tooling the agent's own workspace lacks", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/osascript/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/mdfind/);
+  });
+
+  /**
+   * A persistent profile is not a promise that any particular site is logged
+   * in, and saying so would be the kind of claim a user discovers is false at
+   * the worst moment. `plow_browser_open` was already guarded; the pressure to
+   * oversell applies to every string here, so the guard does too.
+   */
+  it("nothing claims the browser is already signed in", () => {
+    for (const { where, text } of manifestStrings()) {
+      expect(text, `${where} oversells the profile`).not.toMatch(/already signed in/i);
+    }
+  });
+});
 
 describe("nothing an agent reads names a tool by its old name", () => {
   // Not just the skill: #46's pending-handle note shipped "poll get_result"

@@ -12,10 +12,10 @@ export const BROWSING_SKILL: Skill = {
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
     "owner's local credentials (their vault): a secret is typed into the page rather than "
-    + "returned to you. Use when " +
-    "the task needs the OWNER'S browser rather than any browser: signing in as them, filling " +
-    "forms, buying things, or reading a page only their session can see. General web reading " +
-    "belongs in your own tools, which are faster at it.",
+    + "returned to you. Use it for reading the live web at all — it runs on their network " +
+    "rather than a datacenter address many sites refuse, and it renders JavaScript — and " +
+    "whenever the task needs the OWNER'S browser rather than any browser: signing in as them, " +
+    "filling forms, buying things, or reading a page only their session can see.",
   body: `# Browsing on this Mac
 
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:
