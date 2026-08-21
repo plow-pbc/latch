@@ -6,8 +6,10 @@
 # app would never see a build under a different identity as an update. Same for
 # the `domo` publish prefix below — it is baked into shipped bundles as
 # app-update.yml.
+#
+# No productName here: electron-builder falls back to the app's package.json,
+# and the recipe runs it from apps/desktop.
 appId: co.plow.domo-desktop
-productName: Plow Latch
 
 # Hyphenated artifact names: these become S3 keys and feed URLs, where spaces
 # (the productName default) mean %20-encoding everywhere a human pastes a link.

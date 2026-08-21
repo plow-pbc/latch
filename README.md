@@ -1,4 +1,4 @@
-# Domo Desktop
+# Plow Latch
 
 Lets a remote AI agent (Claude Code or any MCP client) use a Mac — read/write
 files, run CLI commands with streaming output, and drive a real browser —
@@ -11,6 +11,12 @@ tight fit around them — reads in particular are permitted more broadly. See
 
 Implemented in **TypeScript** (Node + Electron). See [DESIGN.md](DESIGN.md) for
 the architecture and [README-ts.md](README-ts.md) for the package/app layout.
+
+**The product is Plow Latch; the codebase is `domo`.** The app ships, launches and
+brands itself as Plow Latch. `domo` survives in the identifiers a rename must not
+touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
+`DOMO_HOME`, this repository's name, and the frozen vault Keychain identity
+(DESIGN.md §11a-i, which records what renaming it cost the last time).
 
 > **Being rebuilt — no agent can reach this Mac today.** The in-repo broker that
 > used to route agents here has been removed. A Mac will instead dial *out* to
@@ -37,7 +43,7 @@ just app         # launch the desktop app
 
 | App / package | Role |
 |---|---|
-| `apps/desktop` (Domo Desktop) | Electron app: runs the device core in its main process; approval windows, rules manager, audit viewer. |
+| `apps/desktop` (Plow Latch) | Electron app: runs the device core in its main process; approval windows, rules manager, audit viewer. |
 | `packages/protocol` | Canonical JSON, Ed25519 identity, capabilities, intents, grants, rule keys. |
 | `packages/transport` | The Connection seam and the outbound WebSocket client. |
 | `packages/device-core` | The decision + execution path: policy engine, sandboxed executor, file ops, browsing subsystem, audit log. |

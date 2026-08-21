@@ -155,7 +155,7 @@ flag**, and do not use `HeadlessPolicy` for a run that is supposed to prove the 
 false greens by construction.
 
 The product's own escape hatch is the answer. The dialog is its own `BrowserWindow`, title
-`Domo — Approve`, buttons `["Deny", "Always Allow", "Allow Once"]`. Click **Always Allow** once and
+`Plow Latch — Approve`, buttons `["Deny", "Always Allow", "Allow Once"]`. Click **Always Allow** once and
 later identical calls need nobody — the rule persists to `${DOMO_HOME}/device/rules.json` under
 
 ```
