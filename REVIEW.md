@@ -21,11 +21,13 @@ lives and what is still verified by hand.
 **Agents do reach a Mac through this app today.** This paragraph said the
 opposite for as long as the relay was unbuilt, and that sentence was
 load-bearing: it is what tells you whether a reachability-gated finding is
-theoretical or live. It is live. A finding that depends on a remote agent
-actually reaching this Mac gets graded as reachable, not hypothetical — so
-treat the paths an agent drives (approval, capability derivation, the sandbox,
-origin and credential enforcement) as live surface with a real caller on the
-other end.
+theoretical or live. It is live.
+
+That changes whether a finding is REAL. It does not change how much defensive
+code one earns. A reachable path still has to clear the carve-out below to be
+worth a branch, and everything outside that list is still judged at
+single-digit-users. "An agent could reach this" is the start of the argument,
+not the end of it.
 
 **Userbase:** single-digit, internal. One engineer plus a handful of alpha
 machines. The signed/notarized DMG and the S3 update feed exist and work, but
