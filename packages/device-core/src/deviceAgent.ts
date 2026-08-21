@@ -222,8 +222,9 @@ export class DeviceAgent {
           : undefined,
         beforeRun: vault ? () => vault.start() : undefined,
         auditPath: path.join(browserDir, "credential-audit.log"),
-        // The relay gives up first and every browser action is capped at
-        // 15s, so the broker has to fail inside that or the session dies.
+        // Innermost of three nested deadlines: the broker fails inside the
+        // per-action cap, which sits inside the relay's own ceiling. It has to
+        // give up first or the session dies with it.
         timeoutMs: 12_000,
         person: vaultPerson,
         fleetToken: process.env.DOMO_VAULT_TOKEN,
