@@ -284,32 +284,31 @@ describe("every tool says what kind of tool it is", () => {
   // Pinned as a set rather than per-tool: the failure mode worth catching is a
   // NEW tool that quietly defaults to looking harmless, and a per-tool loop
   // cannot see one that was never added to it.
-  it("the read-only tools are exactly the ones that cannot change this Mac", async () => {
-    const readOnly = (await listed(makeServer()))
-      .filter((t) => t.annotations?.readOnlyHint)
-      .map((t) => t.name)
-      .sort();
-    expect(readOnly).toEqual(
-      [
+  it.each([
+    {
+      hint: "readOnlyHint" as const,
+      what: "cannot change this Mac",
+      tools: [
         "plow_get_output",
         "plow_get_result",
         "plow_list_skills",
         "plow_read_file",
-        "plow_read_skill",
         // list/describe only, and no tool here returns a vault value.
+        "plow_read_skill",
         "plow_vault",
-      ].sort(),
-    );
-  });
-
-  it("everything that reaches the open internet says so", async () => {
-    const openWorld = (await listed(makeServer()))
-      .filter((t) => t.annotations?.openWorldHint)
+      ],
+    },
+    {
+      hint: "openWorldHint" as const,
+      what: "reach the open internet",
+      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_command"],
+    },
+  ])("the tools that $what are exactly the ones marked $hint", async ({ hint, tools }) => {
+    const marked = (await listed(makeServer()))
+      .filter((t) => t.annotations?.[hint])
       .map((t) => t.name)
       .sort();
-    expect(openWorld).toEqual(
-      ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_command"].sort(),
-    );
+    expect(marked).toEqual([...tools].sort());
   });
 });
 

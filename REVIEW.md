@@ -38,7 +38,13 @@ they serve that same group — a packaged release is not evidence of scale.
   bytes, rule keys and SBPL profiles are asserted against it. A diff that
   changes those bytes is a protocol break and must say so.
 - **`agent_id` is the isolation key; `agent_name` is display-only** and is
-  neither unique nor non-null.
+  neither unique nor non-null. **Browser sessions are the deliberate
+  exception** — a session keys on its unguessable handle, because several of
+  the owner's agents reach this Mac through ONE credential and keying on the id
+  made two of them share a browser. The handle says WHICH browser, not whose;
+  every browser on this Mac is the owner's (`CLAUDE.md`, and
+  `BrowserSessions.validate()`). Treat handle-authority as intended, not as a
+  cross-agent gap.
 - **Nothing may block past the 20s relay call budget** — that is why file ops
   are async and size-capped, and why slow tools return a deferred handle.
 - The renderer is sandboxed (`contextIsolation` on, `nodeIntegration` off,
@@ -97,7 +103,7 @@ manage a resource nobody has run out of?
 
 | Scope creep — DON'T | Worth blocking on — DO |
 |---|---|
-| Accept a retention/eviction/capacity layer added to bound a resource with no observed pressure signal (PR #91's profile reaper — deleted, and its startup ordering was itself a data-loss bug). | An authorization gap: one agent acting on another's session, browser, handle or rule (PR #100's cross-agent close). |
+| Accept a retention/eviction/capacity layer added to bound a resource with no observed pressure signal (PR #91's profile reaper — deleted, and its startup ordering was itself a data-loss bug). | An authorization gap: one agent acting on another's **job, deferred handle or always-allow rule** — the surfaces that key on `agent_id`. NOT a browser session reached with its own handle; see the exception above. |
 | Ask for a new abstraction, registry or manager to hold state an existing owner already holds (PR #100's `BrowserPool` shadowing `BrowserSessions`). | A secret or credential reaching a log line, an error string, a URL, the audit log, or the renderer — in any encoding. |
 | Ask for an integration test that would need a server stood up. Mocking here is function- and fixture-level only. | A capability, rule key or sandbox profile that goal text can influence. |
 | Add a defensive branch for a state the pinned dependency cannot produce (PR #103's partial-response record — deleted once the API was checked). | A change to canonical JSON, signing bytes, rule keys or SBPL that moves `fixtures/` bytes without declaring a protocol break. |
