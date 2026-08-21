@@ -50,10 +50,16 @@ class ScriptedPolicy implements PolicyDelegate {
     private readonly delayMs = 0,
     /** How it decided. Some sources carry an explanation to the caller. */
     private readonly source = "ask",
+    /** The decider's own sentence, when it has one for the calling agent. */
+    private readonly reason?: string,
   ) {}
   async decideIntent() {
     if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
-    return { decision: this.decision, source: this.source };
+    return {
+      decision: this.decision,
+      source: this.source,
+      ...(this.reason ? { reason: this.reason } : {}),
+    };
   }
 }
 
@@ -239,6 +245,51 @@ describe("a tool call end to end, in process", () => {
     });
   }
 
+  /**
+   * The reviewer's refusal has to arrive with the reviewer's own words in it.
+   *
+   * Without them the agent is handed the human-denial sentence — which is not
+   * merely unhelpful but false, since in this mode the owner never saw the
+   * request — and its only move is to retry the identical thing. One sentence
+   * about what was wrong is what turns a dead end into a narrower second try.
+   */
+  it("a reviewer's denial reaches the agent in the reviewer's own words", async () => {
+    const critique = "the origin list reaches well past the shop being ordered from";
+    const { server, device } = makeServer(
+      new ScriptedPolicy("deny", 0, "adversarial", critique),
+    );
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "a.txt"), "x");
+    const { isError, payload } = await callTool(
+      server,
+      "plow_read_file",
+      { path: path.join(dir, "a.txt") },
+      AGENT,
+    );
+    expect(isError).toBe(true);
+    expect(payload.status).toBe("denied");
+    expect(payload.reason).toBe(critique);
+    expect(payload.reason).not.toBe("the owner of this Mac denied the request");
+    expect(events(device)).not.toContain("file_read");
+  });
+
+  /**
+   * The other half, and the one that must not regress: a HUMAN's Deny still
+   * says nothing. Why the owner said no is between them and their Mac, and the
+   * dialog never asked them for a sentence to hand over anyway.
+   */
+  it("a human's denial still carries no explanation", async () => {
+    const { server } = makeServer(new ScriptedPolicy("deny", 0, "ask"));
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "a.txt"), "x");
+    const { payload } = await callTool(
+      server,
+      "plow_read_file",
+      { path: path.join(dir, "a.txt") },
+      AGENT,
+    );
+    expect(payload.reason).toBe("the owner of this Mac denied the request");
+  });
 });
 
 describe("agent identity", () => {

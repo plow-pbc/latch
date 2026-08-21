@@ -311,7 +311,7 @@ export class DeviceAgent {
       capabilities: intent.capabilities.map(capabilityDisplay),
     });
 
-    const grant = await this.policy.decide(intent, this.delegate);
+    const { grant, reason: decidedReason } = await this.policy.decide(intent, this.delegate);
     onDecided?.();
     this.audit.record("intent_decision", {
       intentId: intent.intentId,
@@ -320,9 +320,12 @@ export class DeviceAgent {
     });
     if (grant.decision === "deny") {
       // Most denials need no explanation — the owner said no, and why is
-      // between them and their Mac. A few are standing conditions the calling
-      // agent can actually act on, and those carry a fixed sentence.
-      const reason = EXPLAINED_DENIALS[grant.source];
+      // between them and their Mac. Two kinds do: standing conditions the
+      // calling agent can act on, which carry a fixed sentence from the table
+      // below, and a reviewer's refusal, which arrives with the reviewer's own
+      // one-line critique. The decider's sentence wins where there is one —
+      // it is about THIS request, where the table's is about the machine.
+      const reason = decidedReason ?? EXPLAINED_DENIALS[grant.source];
       return reason ? { status: "denied", reason } : { status: "denied" };
     }
     return this.execute(intent, payload);

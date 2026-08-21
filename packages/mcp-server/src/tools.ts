@@ -423,11 +423,16 @@ export const TOOLS: ToolSpec[] = [
       }
       // The owner is about to approve a browser they may not see: say so in the
       // line they read, and carry the choice as payload — it bounds nothing.
+      //
+      // "background", not "hidden". Both describe the same window, but one of
+      // them is a word for concealment, and it was being read as one: a browser
+      // the owner asked to run out of sight is ordinary automation, and the
+      // request line should not accuse it of sneaking.
       const headed = a.get("headed").bool;
       const response = await decideAndRun(
         ctx,
         progress,
-        `browse${headed === false ? " (hidden window)" : ""}: ${origins.join(", ")}`,
+        `browse${headed === false ? " (background window)" : ""}: ${origins.join(", ")}`,
         a.get("goal").str ?? undefined,
         capabilities,
         headed === null ? null : { headed },

@@ -224,6 +224,17 @@ describe("browser tools (fake runtime)", () => {
       .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_opened")
       .map((e) => jv(e as JSONValue).get("headed").bool);
     expect(opened).toEqual([false, true]);
+
+    // The words on the request line, which is what the owner reads and what
+    // the reviewer is handed. "hidden window" said concealment about a window
+    // the owner asked to run out of the way; "background window" says what it
+    // is. Nothing about the bound changes either way — the origins do that.
+    const requests = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "intent_received")
+      .map((e) => jv(e as JSONValue).get("request").str ?? "");
+    expect(requests[0]).toContain("browse (background window)");
+    expect(requests.join(" ")).not.toContain("hidden");
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {

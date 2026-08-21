@@ -114,7 +114,7 @@ describe("PolicyEngine", () => {
     const always = new HeadlessPolicy({ intent: "always_allow" });
     const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
 
-    const first = await engine.decide(intentWith(caps), always);
+    const { grant: first } = await engine.decide(intentWith(caps), always);
     expect(first.decision).toBe("always_allow");
     expect(first.source).toBe("prompt");
     expect(engine.allRules()).toHaveLength(1);
@@ -122,7 +122,7 @@ describe("PolicyEngine", () => {
     // A fresh intent with the same capabilities matches the stored rule —
     // even though the delegate would now deny.
     const denyAll = new HeadlessPolicy({ intent: "deny" });
-    const second = await engine.decide(intentWith(caps), denyAll);
+    const { grant: second } = await engine.decide(intentWith(caps), denyAll);
     expect(second.decision).toBe("always_allow");
     expect(second.source).toBe("rule");
   });
@@ -130,7 +130,7 @@ describe("PolicyEngine", () => {
   it("deny is never stored as a rule", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const deny = new HeadlessPolicy({ intent: "deny" });
-    const grant = await engine.decide(
+    const { grant } = await engine.decide(
       intentWith([{ kind: "network", allowed: true }]),
       deny,
     );
@@ -144,7 +144,7 @@ describe("PolicyEngine", () => {
       intent: "allow_once",
       denyKinds: ["process.exec"],
     });
-    const grant = await engine.decide(
+    const { grant } = await engine.decide(
       intentWith([{ kind: "process.exec", argv: ["rm"] }]),
       policy,
     );
@@ -157,7 +157,10 @@ describe("PolicyEngine", () => {
     const annotated = {
       decideIntent: async () => ({ decision: "allow_once" as const, source: "approve" }),
     };
-    const g1 = await engine.decide(intentWith([{ kind: "network", allowed: true }]), annotated);
+    const { grant: g1 } = await engine.decide(
+      intentWith([{ kind: "network", allowed: true }]),
+      annotated,
+    );
     expect(g1.decision).toBe("allow_once");
     expect(g1.source).toBe("approve");
 
@@ -165,8 +168,32 @@ describe("PolicyEngine", () => {
     const bare = {
       decideIntent: async () => "deny" as const,
     };
-    const g2 = await engine.decide(intentWith([{ kind: "network", allowed: false }]), bare);
+    const { grant: g2, reason } = await engine.decide(
+      intentWith([{ kind: "network", allowed: false }]),
+      bare,
+    );
     expect(g2.source).toBe("prompt");
+    // A bare Decision has nothing to say to the calling agent, and the engine
+    // does not invent one.
+    expect(reason).toBeUndefined();
+  });
+
+  it("carries a delegate's reason out beside the grant, not inside it", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const explained = {
+      decideIntent: async () => ({
+        decision: "deny" as const,
+        source: "adversarial",
+        reason: "the origin list reaches well past the shop",
+      }),
+    };
+    const { grant, reason } = await engine.decide(
+      intentWith([{ kind: "network", allowed: true }]),
+      explained,
+    );
+    expect(reason).toBe("the origin list reaches well past the shop");
+    // `Grant` is the signed protocol object: display text must not appear in it.
+    expect(JSON.stringify(grant)).not.toContain("reaches well past");
   });
 });
 

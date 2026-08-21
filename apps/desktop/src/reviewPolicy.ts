@@ -14,7 +14,6 @@ import {
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
 } from "@domo/device-core";
 import {
-  agentHistory,
   REVIEWER_MODEL,
   ReviewArgs,
   ReviewFailureCause,
@@ -71,8 +70,6 @@ export interface DecideDeps {
   settings: Settings;
   /** Plow API origin. Baked into the build, never a setting. */
   apiBaseUrl: string;
-  /** The audit log's current entries, for the reviewer's history context. */
-  auditEntries: () => JSONValue[];
   record: (event: string, fields: Record<string, JSONValue>) => void;
   review: (
     args: ReviewArgs,
@@ -83,7 +80,16 @@ export interface DecideDeps {
 
 /**
  * Decide one intent. The returned `source` records HOW it was decided, for the
- * audit log.
+ * audit log, and `reason` is the sentence the calling agent gets told.
+ *
+ * Only the REVIEWER's denials carry a reason. A human pressing Deny gives none
+ * — why the owner said no is between them and their Mac, and the dialog never
+ * asked them for a sentence anyway. The reviewer's is different in kind: it is
+ * a machine's one-line critique of a machine's request, written to be acted on,
+ * and withholding it left the agent staring at "the owner of this Mac denied
+ * the request" — a sentence that is not even true, since the owner never saw
+ * it. An agent that is told the origin list was too wide can send a narrower
+ * one; an agent told nothing retries the same thing or gives up.
  *
  * The adversarial-agent features need a Plow credential; without one,
  * adversarial mode denies (`DENIAL_SOURCE_NO_REVIEWER`) and Ask
@@ -92,7 +98,7 @@ export interface DecideDeps {
 export async function decideIntent(
   intent: Intent,
   deps: DecideDeps,
-): Promise<{ decision: ApprovalDecision; source: string }> {
+): Promise<{ decision: ApprovalDecision; source: string; reason?: string }> {
   const { settings } = deps;
   const mode = settings.approvalMode ?? "ask";
 
@@ -109,7 +115,6 @@ export async function decideIntent(
   const humanAvailable = mode !== "adversarial";
 
   const review = async () => {
-    const history = agentHistory(deps.auditEntries(), intent.agentId);
     deps.record("adversarial_review_started", {
       intentId: intent.intentId,
       agent: intent.agentId,
@@ -119,7 +124,6 @@ export async function decideIntent(
     });
     const r = await deps.review({
       intent,
-      history,
       // A SECRET. It reaches the Authorization header of the Plow request and
       // nothing else — never the audit record below, never the renderer.
       plowCredential: (settings.relayCredential ?? "").trim(),
@@ -151,7 +155,11 @@ export async function decideIntent(
     }
     const { verdict, reason, cause } = await review();
     if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
-    if (verdict === "deny") return { decision: "deny", source: "adversarial" };
+    // The reviewer's own sentence, forwarded verbatim. It has already been
+    // through `parseVerdict` and the credential check, which is what makes it
+    // safe to repeat: it is a plain string the model wrote, carrying nothing
+    // derived from the transport it arrived on.
+    if (verdict === "deny") return { decision: "deny", source: "adversarial", reason };
     // The account cannot pay for inference, so the reviewer can never run.
     // Deny — and say why, in a form the calling agent can read.
     // Quietly reverting to prompting a human would change the mode the user

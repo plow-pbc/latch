@@ -150,12 +150,13 @@ let updates: UpdateController | null = null;
 class ElectronPolicy implements PolicyDelegate {
   // The branching itself lives in reviewPolicy.ts so it is testable without a
   // display; this only supplies the Electron-shaped pieces.
-  async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
+  async decideIntent(
+    intent: Intent,
+  ): Promise<{ decision: ApprovalDecision; source: string; reason?: string }> {
     const audit = device?.audit;
     return decideIntent(intent, {
       settings: loadSettings(home),
       apiBaseUrl,
-      auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
       openApproval: async (hint) =>

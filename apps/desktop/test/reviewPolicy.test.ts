@@ -178,8 +178,18 @@ describe("decideIntent — adversarial mode", () => {
   // setting; there is no third verdict to hand over, because `ask` is not in
   // the schema the reviewer answers into when nobody is behind it.
   const decisionCases = [
+    // An allow needs no sentence — the agent got what it asked for.
     { verdict: "allow" as const, decision: "allow_once", source: "adversarial" },
-    { verdict: "deny" as const, decision: "deny", source: "adversarial" },
+    // A deny does. It is the reviewer's own critique of the request, and it is
+    // the only thing that lets the agent send a better one; without it the
+    // agent is told "the owner of this Mac denied the request", which is not
+    // even true here — the owner never saw it.
+    {
+      verdict: "deny" as const,
+      decision: "deny",
+      source: "adversarial",
+      reason: "genuinely ambiguous",
+    },
   ];
 
   for (const c of decisionCases) {
@@ -189,7 +199,11 @@ describe("decideIntent — adversarial mode", () => {
         reason: "genuinely ambiguous",
         decision: "allow_once",
       });
-      expect(await h.run()).toEqual({ decision: c.decision, source: c.source });
+      expect(await h.run()).toEqual({
+        decision: c.decision,
+        source: c.source,
+        ...(c.reason ? { reason: c.reason } : {}),
+      });
       expect(h.openApproval).not.toHaveBeenCalled();
     });
   }
@@ -326,6 +340,20 @@ describe("decideIntent — ask mode and suggestions", () => {
       await h.run();
       await expect(h.dialogs[0]).resolves.toMatchObject({ decision: hint });
     }
+  });
+
+  /**
+   * The reviewer's hint is display-only here: the human is the decider, and
+   * whatever they decide is nobody else's business. In particular a Deny they
+   * pressed while a reviewer suggestion sat on screen must not forward that
+   * suggestion to the agent as if it were the reason.
+   */
+  it("a human's answer carries no reason out, even when the reviewer offered one", async () => {
+    const h = harness(
+      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      { verdict: "deny", reason: "the origin list is too wide", decision: "deny" },
+    );
+    expect(await h.run()).toEqual({ decision: "deny", source: "ask" });
   });
 
   it("skips the review entirely when suggestions are off", async () => {

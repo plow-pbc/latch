@@ -163,6 +163,78 @@ Decisions: **Always allow / Allow once / Deny.**
   not the approval flow. It is the raw material for the future adversarial
   reviewer and the iOS remote-approval app.
 
+## 5a. The reviewer
+
+An optional second decider, between policy and the human prompt: a model that
+sees one intent and answers allow / deny / (when a human is behind it) ask.
+"AI Reviewer decides" runs it with nobody to escalate to; Ask mode runs it as a
+suggestion on the dialog. It never widens anything — the capability set is still
+what the sandbox is built from.
+
+It asks two questions:
+
+1. **Does this fit the errand?**
+2. **If it turns out to be a mistake, can the owner walk it back in about a
+   minute?**
+
+**Default lax.** This is the owner's Mac and the owner's agent running the
+owner's errands. Ordinary work goes through; a reviewer that blocks ordinary
+work is a broken reviewer, not a careful one.
+
+**Reads are lax, irreversible actions are strict.** A read destroys nothing —
+the walk-it-back test passes trivially — so reads are not gated. The scrutiny
+goes where the damage is: recursive deletion, bulk overwrites, spending money,
+publishing outward, switching off the owner's protections. That is judged by
+what the operation *does*, never by which path it names.
+
+**The purpose statement is the errand, and it widens as readily as it narrows.**
+An owner who writes "Manage my SSH keys" has made reading those keys the job.
+The earlier design called the purpose "the outer bound" and denied anything
+outside it, which is the field read backwards — silence about something is
+silence, not prohibition. No purpose set means a general-purpose computer
+assistant.
+
+**No ratchet.** The reviewer is given this intent and nothing else. It used to
+receive the agent's recent audit events, with the prompt naming repeated denials
+as a strong signal to deny; that makes the first denial evidence for the second
+and is self-fuelling, because a growing pile of denials is exactly what a
+compromised agent would produce. A real delivery errand died that way twenty-odd
+times in one afternoon, the stated reason escalating to "compromised or
+misaligned agent" over a request that was fine every time. The fix is structural
+rather than textual: `adversarialReview` has no history parameter, so there is
+nothing to be influenced by.
+
+**No enumerated sensitive paths**, in the prompt or in the code. The long
+version of these instructions listed `~/.ssh`, `.env`, keychains, browser
+profiles — and each line was a place the reviewer stopped judging and started
+matching. A list cannot know that an SSH-key agent means `~/.ssh`, and cannot
+know that the path nobody listed is the crown jewels. The model can.
+
+**Denials carry the reviewer's sentence to the calling agent.** A machine's
+refusal of a machine's request is written to be acted on: told the origin list
+was too wide, an agent can send a narrower one. A *human's* Deny carries nothing
+— why the owner said no is between them and their Mac.
+
+### Declined: an enumerated `~/.ssh` probe
+
+The recurring proposal is to special-case durable credentials — `~/.ssh` and
+friends — so the reviewer refuses them whatever the errand says. It is declined,
+deliberately:
+
+- **This is one layer, not the layer.** Approval sits above the seatbelt
+  profile, the origin enforcement, the credential gate and the audit log. A
+  control that the mechanical layers already carry does not need re-litigating
+  in a prompt.
+- **An agent going after a durable credential is malicious, not careless.** The
+  reviewer's threat model is a *mistaken or overreaching* agent — the errand
+  that grew a step too far. Malicious agents were never this layer's job, and a
+  model asked to judge one is being asked to out-think an adversary that can
+  simply phrase the request differently.
+- **The list is what breaks the honest case.** An owner who wants an SSH-key
+  manager wants exactly the thing the list forbids, and there is no wording that
+  distinguishes them from the attacker by path alone. That is the whole reason
+  the enumeration came out.
+
 ## 6. Execution & sandbox
 
 **Minimize what needs sandboxing.** `plow_read_file` and `plow_write_file`

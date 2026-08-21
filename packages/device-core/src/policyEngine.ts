@@ -22,8 +22,14 @@ import {
  * "prompt" (generic), "ask" (human dialog), "approve" (auto-approve),
  * "adversarial" (adversarial-agent review), "policy" (auto-deny). Rule matches
  * are labeled "rule" by the engine itself.
+ *
+ * `reason` is one sentence for the CALLING AGENT, and only some deciders have
+ * one to give: it exists so a machine's refusal can say what was wrong with the
+ * request. A human's Deny does not fill it in — see `decideIntent` in the app.
  */
-export type IntentDecision = Decision | { decision: Decision; source?: string };
+export type IntentDecision =
+  | Decision
+  | { decision: Decision; source?: string; reason?: string };
 
 /** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
@@ -61,19 +67,31 @@ export class PolicyEngine {
     fs.writeFileSync(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
   }
 
-  async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
+  /**
+   * The grant, plus the decider's sentence for the calling agent when there is
+   * one.
+   *
+   * Two values rather than a wider `Grant`: `Grant` is the frozen protocol
+   * object whose canonical bytes are what gets signed, so a field added to it
+   * to carry display text would be a protocol break for no protocol reason.
+   */
+  async decide(
+    intent: Intent,
+    delegate: PolicyDelegate,
+  ): Promise<{ grant: Grant; reason?: string }> {
     const key = intentRuleKey(intent);
     if (this.rules.has(key)) {
-      return makeGrant(intent, "always_allow", "rule");
+      return { grant: makeGrant(intent, "always_allow", "rule") };
     }
     const result = await delegate.decideIntent(intent);
     const decision = typeof result === "string" ? result : result.decision;
     const source = typeof result === "string" ? "prompt" : (result.source ?? "prompt");
+    const reason = typeof result === "string" ? undefined : result.reason;
     if (decision === "always_allow") {
       this.rules.set(key, makeAlwaysAllowRule(intent));
       this.persist();
     }
-    return makeGrant(intent, decision, source);
+    return { grant: makeGrant(intent, decision, source), ...(reason ? { reason } : {}) };
   }
 }
 
