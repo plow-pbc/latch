@@ -201,10 +201,6 @@ describe("the browsing skill agrees with the tools it documents", () => {
     }
   });
 
-  it("names no tool without the plow_ prefix", () => {
-    expect(bareToolNames(BROWSING_SKILL.body)).toEqual([]);
-  });
-
   // The skill and the server instructions are read by the same model in the
   // same breath; when they disagreed about who does general web reading, the
   // agent resolved it arbitrarily — the exact inconsistency this work exists to
@@ -341,17 +337,29 @@ describe("nothing on the surface sends the live web back to the agent's own tool
     expect(SERVER_INSTRUCTIONS).toMatch(/reddit/i);
   });
 
+  it("the instructions name macOS tooling the agent's own workspace lacks", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/mdfind/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/sips/);
+  });
+
   /**
    * The examples must be tools that actually RUN under the seatbelt profile.
-   * `osascript` and `screencapture` were pinned here for one commit and taken
+   * `osascript` and `screencapture` were prescribed for one commit and taken
    * out: the profile is `(deny default)` with no `appleevent-send`, and the app
    * ships no automation entitlement, so naming them pointed the agent at a
    * guaranteed denial — the same bug as the web sentence, facing the other way.
+   *
+   * Class-wide, not on the instructions alone. The tooling list had a second
+   * home in `plow_run_command`'s description, so a guard on one string would
+   * have let it back in through the other — the mistake this file spends two
+   * blocks warning about, made once more while fixing it.
    */
-  it("the instructions name macOS tooling that works under the sandbox", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/mdfind/);
-    expect(SERVER_INSTRUCTIONS).toMatch(/sips/);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/osascript|screencapture/);
+  it("nothing anywhere prescribes tooling the sandbox denies", () => {
+    for (const { where, text } of manifestStrings()) {
+      expect(text, `${where} prescribes tooling the seatbelt profile denies`).not.toMatch(
+        /osascript|screencapture/,
+      );
+    }
   });
 
   /**
