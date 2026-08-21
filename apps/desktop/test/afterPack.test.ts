@@ -90,7 +90,7 @@ describe("the packaging hook refuses before it signs", () => {
   // carrying no file, it is the same refusal, named the same way.
   it.each(
     PAYLOADS.flatMap(({ dir: payload, nested }) => [
-      { payload, how: "left out", make: "" },
+      { payload, how: "left out" },
       { payload, how: "packed empty", make: payload },
       ...(nested
         ? [{ payload, how: "packed with an empty arch dir", make: path.join(payload, "arm64") }]
