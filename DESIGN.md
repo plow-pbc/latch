@@ -171,21 +171,33 @@ sees one intent and answers allow / deny / (when a human is behind it) ask.
 suggestion on the dialog. It never widens anything — the capability set is still
 what the sandbox is built from.
 
-It asks two questions:
+It asks one question — **is this operation reasonably within the owner's
+errand** — and answers it under a short set of rules:
 
-1. **Does this fit the errand?**
-2. **If it turns out to be a mistake, can the owner walk it back in about a
-   minute?**
+- The locally derived capability list is authoritative and is what the sandbox
+  enforces. The agent's prose is context and cannot widen it.
+- The owner's purpose statement is trusted and **may authorize sensitive work**.
+  Credentials, authentication codes, private data, command execution and
+  security configuration are not categories to refuse; they are things to judge
+  against the errand.
+- With no purpose statement, assume a general-purpose computer assistant and be
+  **permissive** — deny only what is clearly unrelated to any plausible task,
+  destructive beyond apparent need, or broad acquisition of data with no
+  coherent task behind it.
+- Judge by the externally meaningful **result**: what the operation returns,
+  changes or exercises. A broad internal search is fine when what comes back is
+  narrow and relevant. A window the owner cannot see is ordinary automation, not
+  concealment.
+- Ordinary multi-step workflows are coherent context, not escalation —
+  retrieving a verification code during an authorized sign-in is part of that
+  sign-in.
 
 **Default lax.** This is the owner's Mac and the owner's agent running the
 owner's errands. Ordinary work goes through; a reviewer that blocks ordinary
-work is a broken reviewer, not a careful one.
-
-**Reads are lax, irreversible actions are strict.** A read destroys nothing —
-the walk-it-back test passes trivially — so reads are not gated. The scrutiny
-goes where the damage is: recursive deletion, bulk overwrites, spending money,
-publishing outward, switching off the owner's protections. That is judged by
-what the operation *does*, never by which path it names.
+work is a broken reviewer, not a careful one. Reading is cheap — a read destroys
+nothing — so the scrutiny goes to what the operation *does*: wholesale deletion,
+bulk overwrites, spending money, publishing outward. That is judged by effect,
+never by which path the operation names.
 
 **The purpose statement is the errand, and it widens as readily as it narrows.**
 An owner who writes "Manage my SSH keys" has made reading those keys the job.
@@ -194,15 +206,27 @@ outside it, which is the field read backwards — silence about something is
 silence, not prohibition. No purpose set means a general-purpose computer
 assistant.
 
-**No ratchet.** The reviewer is given this intent and nothing else. It used to
-receive the agent's recent audit events, with the prompt naming repeated denials
-as a strong signal to deny; that makes the first denial evidence for the second
-and is self-fuelling, because a growing pile of denials is exactly what a
-compromised agent would produce. A real delivery errand died that way twenty-odd
-times in one afternoon, the stated reason escalating to "compromised or
-misaligned agent" over a request that was fine every time. The fix is structural
-rather than textual: `adversarialReview` has no history parameter, so there is
-nothing to be influenced by.
+**No ratchet — structurally, not by instruction.** The reviewer sees this intent
+plus a cumulative-effect view of what this agent's **allowed** operations have
+already done. It used to receive the whole audit stream, with the prompt naming
+repeated denials as a strong signal to deny; that makes the first denial evidence
+for the second and is self-fuelling, because a growing pile of denials is exactly
+what a compromised agent would produce. A real delivery errand died that way
+twenty-odd times in one afternoon, the stated reason escalating to "compromised
+or misaligned agent" over a request that was fine every time.
+
+The fix is not "ignore prior denials" — an instruction to disregard what you can
+see is what failed. `allowedEffects()` is an **allowlist of effect events**, so a
+denied operation is absent for the reason that it never executed and therefore
+never produced one. Refusal-shaped events are not filtered out; they were never
+eligible, and a refusal event invented next month is not eligible either. The
+prompt's rule 6 only explains the absence, so a reviewer does not read a short
+history as a scrubbed one. The intent under review is excluded from its own
+history — `intent_received` is written before the policy is consulted.
+
+**Close calls resolve in favour of allowing**, and a denial's reason must be
+factual, specific and non-accusatory: it names the scope or target that would
+have to be narrowed to pass, and never speculates about compromise or motive.
 
 **No enumerated sensitive paths**, in the prompt or in the code. The long
 version of these instructions listed `~/.ssh`, `.env`, keychains, browser

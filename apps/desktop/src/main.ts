@@ -157,6 +157,7 @@ class ElectronPolicy implements PolicyDelegate {
     return decideIntent(intent, {
       settings: loadSettings(home),
       apiBaseUrl,
+      auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
       openApproval: async (hint) =>

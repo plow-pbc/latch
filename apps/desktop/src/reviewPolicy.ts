@@ -14,6 +14,7 @@ import {
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
 } from "@domo/device-core";
 import {
+  allowedEffects,
   REVIEWER_MODEL,
   ReviewArgs,
   ReviewFailureCause,
@@ -70,6 +71,11 @@ export interface DecideDeps {
   settings: Settings;
   /** Plow API origin. Baked into the build, never a setting. */
   apiBaseUrl: string;
+  /**
+   * The audit log's entries, for the reviewer's cumulative-effect view. What
+   * reaches the model is `allowedEffects` of these and never the raw list.
+   */
+  auditEntries: () => JSONValue[];
   record: (event: string, fields: Record<string, JSONValue>) => void;
   review: (
     args: ReviewArgs,
@@ -115,6 +121,10 @@ export async function decideIntent(
   const humanAvailable = mode !== "adversarial";
 
   const review = async () => {
+    // Effects only, and not this intent's own — see `allowedEffects`. Read
+    // BEFORE the started event so the reviewer's own audit rows can never
+    // become part of what it is looking at.
+    const history = allowedEffects(deps.auditEntries(), intent.agentId, intent.intentId);
     deps.record("adversarial_review_started", {
       intentId: intent.intentId,
       agent: intent.agentId,
@@ -124,6 +134,7 @@ export async function decideIntent(
     });
     const r = await deps.review({
       intent,
+      history,
       // A SECRET. It reaches the Authorization header of the Plow request and
       // nothing else — never the audit record below, never the renderer.
       plowCredential: (settings.relayCredential ?? "").trim(),

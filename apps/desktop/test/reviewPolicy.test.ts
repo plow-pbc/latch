@@ -90,6 +90,70 @@ function harness(
   return { run, records, reviewCalls, dialogs, review, openApproval };
 }
 
+/**
+ * What is actually PASSED, not what the prompt says.
+ *
+ * The ratchet was not a wording problem: the reviewer was handed the agent's
+ * denials and drew the obvious conclusion from them. So this asserts on the
+ * argument `decideIntent` builds — a denial-soaked audit log has to arrive at
+ * the reviewer as effects and nothing else.
+ */
+describe("the reviewer is handed effects, never denials", () => {
+  const denialSoakedLog: JSONValue[] = [
+    { event: "intent_received", intentId: "old", agent: "agent-1", request: "browse: doordash.com" },
+    { event: "intent_decision", intentId: "old", decision: "deny", source: "adversarial" },
+    { event: "adversarial_review_result", intentId: "old", verdict: "deny", reason: "compromised or misaligned agent" },
+    { event: "denied_operation", intentId: "old", error: "outside approved scope" },
+    { event: "file_read", intentId: "old", path: "/tmp/earlier.txt" },
+  ];
+
+  function withLog(entries: JSONValue[]) {
+    const reviewCalls: { history: JSONValue[] }[] = [];
+    const review = vi.fn(async (args: { history: JSONValue[] }) => {
+      reviewCalls.push(args);
+      return { verdict: "allow" as const, reason: "fine" };
+    });
+    const i = intent();
+    return {
+      i,
+      reviewCalls,
+      run: () =>
+        decideIntent(i, {
+          settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+          apiBaseUrl: "https://api.plow.co",
+          auditEntries: () => entries,
+          record: () => {},
+          review,
+          openApproval: async () => "deny" as const,
+        }),
+    };
+  }
+
+  it("strips every denial out of the log on the way to the reviewer", async () => {
+    const h = withLog(denialSoakedLog);
+    await h.run();
+    expect(h.reviewCalls).toHaveLength(1);
+    // The one effect row, and nothing that records a refusal.
+    expect(h.reviewCalls[0].history).toEqual([denialSoakedLog[4]]);
+    const serialized = JSON.stringify(h.reviewCalls[0].history);
+    expect(serialized).not.toContain("deny");
+    expect(serialized).not.toContain("compromised");
+  });
+
+  it("does not hand the reviewer the operation it is reviewing", async () => {
+    // `intent_received` for THIS intent is already in the log by the time the
+    // policy is consulted, so an unguarded history counts it against itself.
+    const log: JSONValue[] = [];
+    const h = withLog(log);
+    log.push(
+      { event: "intent_received", intentId: h.i.intentId, agent: "agent-1", request: "run: ls" },
+      { event: "file_read", intentId: h.i.intentId, path: "/tmp/now.txt" },
+    );
+    await h.run();
+    expect(h.reviewCalls[0].history).toEqual([]);
+  });
+});
+
 describe("availability is credential presence", () => {
   it("signed in, or not", () => {
     expect(reviewerAvailable(settings())).toBe(false);
