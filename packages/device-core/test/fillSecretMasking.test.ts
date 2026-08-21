@@ -623,6 +623,19 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.newline_fits_once_dropped.result).toEqual({ ok: true, frame: 0 });
   });
 
+  it("lets an over-cap value stand when the field itself accepted it whole", () => {
+    // The other side of the shortest-form measure. A textarea KEEPS its breaks,
+    // so "one\ntwo" under-counts to six, passes the gate, and is typed — the
+    // keys clip at the cap, the repair assigns, and an assignment ignores
+    // `maxlength`, so the field ends up holding all seven characters past its
+    // own cap. Nothing is reported because nothing differs: what was sent is
+    // what is there. What the page does with that on submit is the page's
+    // business, and the fill said honestly what went in.
+    expect(probed.over_cap_textarea_keeps_its_breaks.result).toEqual({ ok: true, frame: 0 });
+    expect(probed.over_cap_textarea_keeps_its_breaks.node_len)
+      .toBe(probed.over_cap_textarea_keeps_its_breaks.asked_len);
+  });
+
   it("fills a value exactly as long as the field's cap", () => {
     expect(probed.at_cap.result).toEqual({ ok: true, frame: 0 });
   });
@@ -636,12 +649,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     { what: "groups the digits it was given", scenario: "grouped_by_the_field" },
     { what: "strips a space out of a name", scenario: "stripped_by_the_field" },
     { what: "clips what it was given", scenario: "clipped_by_the_field" },
-    // A textarea keeps its breaks, so the shortest-form measure under-counts
-    // and the value is not refused. It goes in, the field clips it, and the
-    // difference is reported — the direction this is built to fail in, since a
-    // measure that cannot know how the field will take a value should not be
-    // the thing that refuses one.
-    { what: "clips a break-bearing value it accepted", scenario: "newline_clipped_by_a_textarea" },
   ])("reports, without refusing, a field that $what", ({ scenario }) => {
     expect(probed[scenario].result).toEqual({ ok: true, frame: 0, altered: true });
   });

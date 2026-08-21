@@ -208,6 +208,12 @@ class Handle:
         landed = (self.value or "") + text
         if self.rewrites is not None:
             landed = self.rewrites(landed)
+        # Typed keys are clipped at the cap; an ASSIGNMENT is not, which is the
+        # whole reason a fill could put an over-cap value in a field. Counted in
+        # UTF-16 units, the way `maxlength` counts.
+        if self.max_length >= 0:
+            landed = landed.encode("utf-16-le")[:self.max_length * 2].decode(
+                "utf-16-le", errors="ignore")
         self.value = landed
         if self.partial_fill and self.type_calls > 1:
             # Some of it went in and then the field went away. It takes more
@@ -558,13 +564,14 @@ def main() -> int:
         "newline_fits_once_dropped": run(
             server, {**base, "value": "one\ntwo"}, max_length=6),
         # The other side of that measure: a TEXTAREA keeps its breaks, so the
-        # shortest form under-counts and the value is not refused. It goes in,
-        # the field clips it, and the difference is reported -- which is the
-        # direction this is meant to fail in. Refusing on a measure that cannot
-        # know how the field will take it is what this design gives up.
-        "newline_clipped_by_a_textarea": run(
-            server, {**base, "value": "one\ntwo"}, max_length=6, typeable="multiline",
-            rewrites=lambda t: t[:6]),
+        # shortest form under-counts and the value is not refused. The keys are
+        # clipped at the cap, the repair assigns -- and an assignment ignores
+        # `maxlength`, so the field ends up holding the whole value past its own
+        # cap, exactly as it was sent. Nothing is reported because nothing about
+        # it differs; what the page does with an over-cap value on submit is the
+        # page's business, and this said honestly what went in.
+        "over_cap_textarea_keeps_its_breaks": run(
+            server, {**base, "value": "one\ntwo"}, max_length=6, typeable="multiline"),
         # The same at a single-line field, spelled with CR. This is what pins the
         # ORDER of the normalization: CR becomes LF before the strip removes it,
         # so no Enter is sent. Reversed, `type()` would press Enter mid-value and
