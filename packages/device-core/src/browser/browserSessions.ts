@@ -817,9 +817,13 @@ export class BrowserSessions {
     // the completed shape below, which is the failure worth engineering out.
     if (result.ok === false && result.mask === "too_long") {
       const cap = jv(result).get("cap").num;
+      const room = cap === null ? "so many" : cap;
       throw new Error(
-        `that field holds only ${cap === null ? "so many" : cap} characters and the value is ` +
-        `longer, so it was not filled`,
+        jv(result).get("fits").bool === true
+          ? `that field holds ${room} characters and did not keep the whole value, so it was ` +
+            `not filled — it changes what is typed into it`
+          : `that field holds only ${room} characters and the value is longer, so it was ` +
+            `not filled`,
       );
     }
 
@@ -1085,6 +1089,7 @@ export class BrowserSessions {
       // cap is the page's own published attribute, so naming it leaks nothing;
       // the value's length stays out of both records, as everywhere else.
       const cap = jv(filled).get("cap").num;
+      const fits = jv(filled).get("fits").bool === true;
       if (filled.mask === "too_long") {
         // `credential_fill_failed`, not `credential_denied`: the latter is what
         // the badge ladder reads as "Scope blocked", and origin and credential
@@ -1096,16 +1101,24 @@ export class BrowserSessions {
           field,
           origin: frameHost,
           selector,
-          reason: cap === null
-            ? "the field holds fewer characters than the value"
-            : `the field holds only ${cap} characters`,
+          reason: fits
+            ? `the field holds ${cap} characters and did not keep the whole value`
+            : cap === null
+              ? "the field holds fewer characters than the value"
+              : `the field holds only ${cap} characters`,
         });
         return {
           status: "error",
           error:
-            `${field} was not filled: ${selector} holds only ${cap === null ? "so many" : cap} ` +
-            `characters and this value is longer. The value in the vault cannot be entered in ` +
-            `this field — it will have to be shortened where it is stored.`,
+            fits
+              // It fit. Saying "shorten it where it is stored" here would send
+              // the owner to change a credential that is not the problem.
+              ? `${field} was not filled: ${selector} holds ${cap} characters and did not keep ` +
+                `the whole value — it changes what is typed into it. The value in the vault is ` +
+                `not at fault; this field cannot be filled by an agent.`
+              : `${field} was not filled: ${selector} holds only ${cap === null ? "so many" : cap} ` +
+                `characters and this value is longer. The value in the vault cannot be entered ` +
+                `in this field — it will have to be shortened where it is stored.`,
         };
       }
       if (filled.ok !== true) {

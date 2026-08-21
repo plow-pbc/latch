@@ -233,9 +233,7 @@ class Handle:
         # and are CLIPPED by whatever cap the field is reporting now. Without
         # the clip the only reachable variant is "nothing landed", which is the
         # one that cannot show what a refusal leaves behind in the page.
-        cap = self.max_length_after if (
-            self.max_length_after is not None and self.typed is not None
-        ) else self.max_length
+        cap = self._cap()
         landed = (self.value or "") + text
         if self.reformats == "strip":
             landed = "".join(c for c in landed if c.isalnum())
@@ -367,7 +365,7 @@ def run(server, cmd, document_token="doc-1", **node):
         # The value is never part of this: only whether the fill happened, and
         # for a locate, what identity it reported.
         out["result"] = {k: v for k, v in result.items()
-                         if k in ("ok", "mask", "frame", "frame_url", "frame_token", "cap")}
+                         if k in ("ok", "mask", "frame", "frame_url", "frame_token", "cap", "fits")}
     except Exception as exc:  # noqa: BLE001 — the scenario under test
         out["error"] = type(exc).__name__
     out["marked"] = frame.handle.marked
@@ -693,6 +691,12 @@ def main() -> int:
         # sent length against that cap refused this before the node was even
         # touched; the digits are what cannot be reformatted away, and there are
         # exactly ten of them.
+        # Equal LENGTH, different value: a field that drops punctuation out of a
+        # credential. A count of what survives reformatting says seven either
+        # way, so only comparing the stripped values catches it -- punctuation
+        # in a password is content, not shaping.
+        "punctuation_dropped_from_secret": run(
+            server, {**base, "value": "hunt!er2"}, max_length=8, reformats="strip"),
         "strips_declared_cap_upfront": run(
             server, {**base, "value": "555-123-4567"}, max_length=10, reformats="strip"),
         "reformatting_field_shrinks": run(

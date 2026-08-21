@@ -374,6 +374,12 @@ def _bare_units(value):
 class _FieldTooShort(RuntimeError):
     """The field will not hold the value. Carries the cap so the caller can say so.
 
+    `fits` separates the two ways of getting here, because they have different
+    remedies. False: the value could not fit in any representation, and the
+    answer is to shorten it where it is stored. True: it could have fit and the
+    field did not keep it anyway -- telling someone to shorten a valid stored
+    credential would be wrong advice, and would not touch the real cause.
+
     WHAT THE PAGE IS LEFT HOLDING, stated here because it differs by path and
     every site that answers this refusal needs it:
 
@@ -389,12 +395,13 @@ class _FieldTooShort(RuntimeError):
     So no message about this refusal may claim what the field contains.
     """
 
-    def __init__(self, cap):
-        super().__init__("field holds %d characters and the value is longer" % cap)
+    def __init__(self, cap, fits=False):
+        super().__init__("field holds %d characters and did not keep the value" % cap)
         self.cap = cap
+        self.fits = fits
 
 
-def _clear_and_refuse(el, cap):
+def _clear_and_refuse(el, cap, fits=False):
     """Leave nothing in the field, then refuse. Never returns.
 
     By the time either caller reaches this the head assignment has destroyed
@@ -411,7 +418,7 @@ def _clear_and_refuse(el, cap):
         el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
     except Exception:  # noqa: BLE001 -- the refusal is the answer
         pass
-    raise _FieldTooShort(cap)
+    raise _FieldTooShort(cap, fits)
 
 
 def _refuse_if_impossible(el, value):
@@ -437,7 +444,9 @@ def _refuse_unless_kept(el, value):
     prefix test sees the loss.
     """
     if not el.evaluate(HOLDS_ALL_JS, value):
-        _clear_and_refuse(el, el.evaluate(FIELD_CAP_JS))
+        # It fit -- the capacity question already said so -- and the field
+        # dropped some of it regardless.
+        _clear_and_refuse(el, el.evaluate(FIELD_CAP_JS), fits=True)
 
 
 UNMASK_JS = """(el) => {
@@ -554,7 +563,7 @@ def _type_value(el, value):
         try:
             _refuse_if_impossible(el, value)
         except _FieldTooShort as short:
-            _clear_and_refuse(el, short.cap)
+            _clear_and_refuse(el, short.cap, short.fits)
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
@@ -995,7 +1004,8 @@ class Session:
                 self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
                 return {"ok": True, "frame": i}
             except _FieldTooShort as short:
-                return {"ok": False, "mask": "too_long", "cap": short.cap, "frame": i}
+                return {"ok": False, "mask": "too_long", "cap": short.cap,
+                        "fits": short.fits, "frame": i}
         raise last or RuntimeError("selector not found: %s" % sel)
 
     def handle(self, cmd, screenshots_dir):

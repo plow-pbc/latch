@@ -642,7 +642,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // One shape for every one of them: the vault fills unconcealed fields too,
     // and their failure text is swallowed the same way, so there is one answer
     // rather than two. The cap rides along because the device renders it.
-    expect(probe.result).toEqual({ ok: false, mask: "too_long", cap, frame: 0 });
+    expect(probe.result).toEqual({ ok: false, mask: "too_long", cap, fits: false, frame: 0 });
     expect(probe.error).toBeNull();
     // Resolved, and nothing after it: no fill, no mark to strip, nothing
     // half-written for a later screenshot to catch.
@@ -663,14 +663,14 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   it.each([
     // Nothing landed, so nothing is left to conceal or track.
     { what: "an ordinary fill", scenario: "cap_lowered_mid_fill",
-      cap: 4, left: 0, marked: false, ledgered: false },
+      cap: 4, fits: false, left: 0, marked: false, ledgered: false },
     { what: "a concealed fill", scenario: "cap_lowered_mid_fill_masked",
-      cap: 4, left: 0, marked: false, ledgered: false },
+      cap: 4, fits: false, left: 0, marked: false, ledgered: false },
     // Clipped keys landed and were cleared.
     { what: "an ordinary fill whose clipped keys landed", scenario: "cap_lowered_keys_landed",
-      cap: 4, left: 0, marked: false, ledgered: false },
+      cap: 4, fits: false, left: 0, marked: false, ledgered: false },
     { what: "a concealed fill whose clipped keys landed", scenario: "cap_lowered_keys_landed_masked",
-      cap: 4, left: 0, marked: false, ledgered: false },
+      cap: 4, fits: false, left: 0, marked: false, ledgered: false },
     // The page that moved the cap detached the node, so the clear cannot land
     // either. The refusal still has to come back carrying the cap — replaced by
     // the clear's own failure it would fall to "check the selector", the
@@ -679,21 +679,32 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // Unconcealed has no mark to keep it under; concealed keeps it covered AND
     // ledgered, so the one path where part of the value survives hides it.
     { what: "an ordinary fill whose field cannot be cleared", scenario: "cap_lowered_clear_fails",
-      cap: 4, left: 4, marked: false, ledgered: false },
+      cap: 4, fits: false, left: 4, marked: false, ledgered: false },
     { what: "a concealed fill whose field cannot be cleared",
       scenario: "cap_lowered_clear_fails_masked",
-      cap: 4, left: 4, marked: true, ledgered: true },
+      cap: 4, fits: false, left: 4, marked: true, ledgered: true },
     // A control that rewrites what it is given: a card input growing spaces,
     // carrying maxlength 17 for the Amex it renders as "3714 496353 98431".
     // `KEYS_DROPPED_JS` answers false for it by design — it took every key it
     // accepted — and 16 digits measure under 17, so neither the prefix test nor
     // a units comparison sees the clip. Asking the field whether it took the
     // last key does.
+    // The one refusal where the value FITS and the field declined to keep it —
+    // so the remedy is not "shorten what you stored", which would send the
+    // owner to change a credential that is not the problem.
     { what: "a field that reformats and clips", scenario: "reformatting_field_clips",
-      cap: 17, left: 0, marked: false, ledgered: false },
+      cap: 17, fits: true, left: 0, marked: false, ledgered: false },
+    // Same shape, equal length: a field dropping punctuation out of a secret.
+    // A count of what survives reformatting reads seven either way; only the
+    // stripped values differ, because punctuation in a password is content.
+    { what: "a field that drops punctuation from a secret",
+      scenario: "punctuation_dropped_from_secret",
+      cap: 8, fits: true, left: 0, marked: false, ledgered: false },
   ])("refuses $what when the page lowers the cap mid-fill", (row) => {
     const probe = probed[row.scenario];
-    expect(probe.result).toEqual({ ok: false, mask: "too_long", cap: row.cap, frame: 0 });
+    expect(probe.result).toEqual({
+      ok: false, mask: "too_long", cap: row.cap, fits: row.fits, frame: 0,
+    });
     expect(probe.node_len).toBe(row.left);
     expect(probe.marked).toBe(row.marked);
     expect(probe.ledgered).toBe(row.ledgered);
