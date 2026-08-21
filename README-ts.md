@@ -272,8 +272,8 @@ run the app against it, drive it by hand. The procedure is in
 [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 `packages/relay-client/test` does hold automated coverage of the client's own
-protocol behavior over fake connections; `docs/TESTING-THE-APP.md` enumerates
-what.
+protocol behavior — the pure wire contract, plus the connection lifecycle over
+hand-written fakes; `docs/TESTING-THE-APP.md` enumerates what.
 
 ## Running the desktop app
 
