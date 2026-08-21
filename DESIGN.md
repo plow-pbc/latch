@@ -133,7 +133,9 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   whenever the adversarial reviewer runs, the intent is formatted into a prompt
   with recent audit history and posted to Plow's chat-completion endpoint
   (`apps/desktop/src/adversarialAgent.ts`), so its contents leave the Mac.
-  WHETHER it runs is decided in `apps/desktop/src/reviewPolicy.ts` — restating
+  WHETHER it runs is decided in precedence order by
+  `packages/device-core/src/policyEngine.ts`, whose stored always-allow rule
+  short-circuits first, and then `apps/desktop/src/reviewPolicy.ts` — restating
   those conditions here is how this sentence was wrong four times. What *is*
   signed is the **Grant**: the device's Ed25519 signature over canonical JSON
   (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
