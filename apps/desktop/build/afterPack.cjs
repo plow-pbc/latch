@@ -92,7 +92,8 @@ module.exports = async function afterPack(context) {
   }
   // camoufox is the one payload with a known interior: a fuse that stopped
   // partway leaves files behind but no bundle to sign.
-  if (findApps(camoufox).length === 0) {
+  const camoufoxApps = findApps(camoufox);
+  if (camoufoxApps.length === 0) {
     throw new Error(
       "[afterPack] the camoufox payload holds no Camoufox.app — a fuse that did not finish",
     );
@@ -140,15 +141,13 @@ module.exports = async function afterPack(context) {
   // stub — keeps whatever signature it shipped with (Mozilla's ad-hoc, which
   // notarization rejects). Sign those individually first; the --deep pass
   // then seals them as resources.
-  let apps = 0;
-  for (const app of findApps(camoufox)) {
+  for (const app of camoufoxApps) {
     const inResources = [...walk(app)]
       .filter(isMachO)
       .filter((f) => path.relative(app, f).startsWith(path.join("Contents", "Resources") + path.sep))
       .sort((a, b) => b.split("/").length - a.split("/").length);
     for (const f of inResources) signFile(f, BROWSER_ENTITLEMENTS);
     signBundle(app, BROWSER_ENTITLEMENTS);
-    apps++;
   }
 
   // 4b) Vault CLI — one loose Mach-O per arch, helper entitlements (it is a
@@ -187,7 +186,7 @@ module.exports = async function afterPack(context) {
 
   console.log(
     `[afterPack] re-signed browser-runtime: Python.framework + site-packages, ` +
-      `${apps} Camoufox.app, dropped ${dropped} non-signable files; ` +
+      `${camoufoxApps.length} Camoufox.app, dropped ${dropped} non-signable files; ` +
       `verified ${verified} Mach-O (Developer ID + hardened runtime + timestamp)`,
   );
 };

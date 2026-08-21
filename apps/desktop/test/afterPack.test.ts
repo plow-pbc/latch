@@ -75,16 +75,14 @@ describe("the packaging hook refuses before it signs", () => {
     );
   });
 
-  it.each(PAYLOADS)("names %s when that is the payload left out", async (payload) => {
-    pack(payload);
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      `is missing ${path.basename(payload)} —`,
-    );
-  });
-
-  it.each(PAYLOADS)("names %s when it was packed empty", async (payload) => {
+  // One expectation over both columns is the claim: absent and empty are the
+  // same refusal, named the same way.
+  it.each(PAYLOADS.flatMap((payload) => [
+    { payload, how: "left out", empty: false },
+    { payload, how: "packed empty", empty: true },
+  ]))("names $payload when it was $how", async ({ payload, empty }) => {
     const runtime = pack(payload);
-    fs.mkdirSync(path.join(runtime, payload), { recursive: true });
+    if (empty) fs.mkdirSync(path.join(runtime, payload), { recursive: true });
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       `is missing ${path.basename(payload)} —`,
     );
