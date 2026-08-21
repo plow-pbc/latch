@@ -59,8 +59,11 @@ class Handle:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
                  document_token="doc-1", type_fails=False, typeable="single-line",
-                 drops_keys=False, assign_fails=False):
+                 drops_keys=False, assign_fails=False, max_length=-1):
         self.trace = trace
+        # What the field itself will hold. -1 is "no cap", which is what an
+        # element without a maxlength reports.
+        self.max_length = max_length
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
         # The keystrokes fail before the first one lands, so the node is left
@@ -112,6 +115,8 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
+        if "maxLength" in js:
+            return self.max_length
         if "tagName" in js:
             return self.typeable
         if "startsWith(now)" in js:
@@ -226,7 +231,7 @@ class Frame:
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
                  typeable="single-line", drops_keys=False, assign_fails=False,
-                 hides=False, detached=False):
+                 hides=False, detached=False, max_length=-1):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -234,9 +239,10 @@ class Frame:
         self.detached = detached
         self.url = "https://pizza.example/login"
         self.document_token = document_token
+        self.max_length = max_length
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
                              partial_fill, document_token, type_fails, typeable, drops_keys,
-                             assign_fails)
+                             assign_fails, max_length)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -297,12 +303,13 @@ class Page:
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
         document_token="doc-1", type_fails=False, typeable="single-line", drops_keys=False,
-        assign_fails=False):
+        assign_fails=False, max_length=-1):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
                   type_fails=type_fails, typeable=typeable, drops_keys=drops_keys,
-                  assign_fails=assign_fails)
+                  assign_fails=assign_fails,
+                  max_length=max_length)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -568,6 +575,16 @@ def main() -> int:
         # A field holding nothing has nothing to conceal.
         "typing_never_started": run(server, {**base, "mask": True}, type_fails=True,
                                     value="1 Elm St"),
+        # A field that will not hold the whole value. "hunter2" is 7; a cap of 4
+        # means a real page would take "hunt" and submit that, or -- assigned --
+        # take all 7 into a field a person could only have typed 4 into. Neither
+        # is the value that was asked for, so nothing is written at all: the node
+        # is untouched, unmarked, and the caller hears about it.
+        "capped_secret": run(server, {**base, "mask": True}, max_length=4),
+        "capped_plain": run(server, base, max_length=4),
+        # The boundary: a value exactly the length of the cap fits, and the fill
+        # is ordinary. Guards the check against being off by one.
+        "at_cap": run(server, {**base, "value": "1234"}, max_length=4),
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.
         "mask_blocked": run(server, {**base, "mask": True}, mask_result="unmasked"),

@@ -568,6 +568,30 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed.masked.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
+  // A field caps what it will hold, and the two ways of putting a value in fail
+  // differently: typed input is clipped to the cap, an assignment lands whole
+  // into a field a person could only have filled to the cap. Both submit
+  // something other than what was asked for, so neither is allowed to happen.
+  it.each([
+    ["a concealed fill", "capped_secret"],
+    ["a visible fill", "capped_plain"],
+  ])("refuses %s of a field that cannot hold the value, leaving the node alone", (_what, scenario) => {
+    const probe = probed[scenario];
+    expect(probe.error).toBe("RuntimeError");
+    // Refused before the node is touched: resolved, and nothing after it. No
+    // fill, no mark to strip, nothing half-written for a screenshot to catch.
+    expect(probe.trace).toEqual(["frame.wait_for_selector"]);
+    expect(probe.marked).toBe(false);
+    expect(probe.value_kept).toBe(true);
+    expect(probe.ledgered).toBe(false);
+  });
+
+  it("fills a value exactly as long as the field's cap", () => {
+    // The boundary the check must not be off by one on: this one fits.
+    expect(probed.at_cap.error).toBeNull();
+    expect(probed.at_cap.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("types the value in rather than assigning it", () => {
     // The bug this replaced: `el.fill()` sets `.value` and fires one `input`,
     // so a password box went from empty to complete with no keydown/keyup at

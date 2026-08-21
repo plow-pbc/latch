@@ -308,6 +308,10 @@ NOTHING_LANDED_JS = f"""(el, previous) => {{
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 
+# A field's own cap on what it will hold. -1 when it does not set one, which is
+# what an element with no maxlength reports and what a non-input answers.
+FIELD_CAP_JS = """(el) => (el.maxLength === undefined ? -1 : el.maxLength)"""
+
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
     if (el.style) {
@@ -778,6 +782,20 @@ class Session:
             expected = cmd.get("frame_token")
             if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
                 return {"ok": False, "mask": "moved", "frame": i}
+            # A field caps what it will hold, and the two ways of putting a
+            # value in fail differently: `_type_value` is clipped to the cap,
+            # while an assignment is not clipped at all -- `maxlength`
+            # constrains typing, and `tooLong` only reads true once a user edit
+            # sets the dirty value flag. Both submit something other than what
+            # was asked for. Refused BEFORE the node is touched, so a value that
+            # will not fit is never half-written into the page: nothing to roll
+            # back, and no partial secret left behind a mark. Lengths only --
+            # the value reaches neither this message nor the audit log.
+            cap = el.evaluate(FIELD_CAP_JS)
+            if cap is not None and cap > 0 and len(cmd["value"]) > cap:
+                raise RuntimeError(
+                    "field holds %d characters, value is %d -- not filled" %
+                    (cap, len(cmd["value"])))
             if cmd.get("mask"):
                 # Marked first, and only typed once the mark is known to have
                 # taken. An unmasked answer means the page defeated it, and the
