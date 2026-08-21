@@ -45,6 +45,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: armed(actual.open),
     stat: armed(actual.stat),
     mkdir: armed(actual.mkdir),
+    lstat: armed(actual.lstat),
     readFile: armed(actual.readFile),
     writeFile: armed(actual.writeFile),
   };
@@ -77,7 +78,13 @@ const SECRET = "plow_sk_do_not_leak_me";
  * the check runs and a symlink when the open does — which is a rename and a
  * symlink, two calls an attacker with a write anywhere in the tree can make.
  */
-function stage(): { target: string; approved: string; plowHome: string; settings: string } {
+function stage(): {
+  target: string;
+  approved: string;
+  plowHome: string;
+  settings: string;
+  dir: string;
+} {
   const plowHome = tempDir();
   fs.mkdirSync(path.join(plowHome, "app"), { recursive: true });
   const settings = path.join(plowHome, "app/settings.json");
@@ -92,7 +99,7 @@ function stage(): { target: string; approved: string; plowHome: string; settings
     fs.renameSync(dir, dir + ".moved");
     fs.symlinkSync(path.join(plowHome, "app"), dir);
   };
-  return { target: path.join(dir, "settings.json"), approved, plowHome, settings };
+  return { target: path.join(dir, "settings.json"), approved, plowHome, settings, dir };
 }
 
 describe("a path that changes between the check and the open", () => {
@@ -104,6 +111,27 @@ describe("a path that changes between the check and the open", () => {
       (buf) => expect(buf.toString()).not.toContain(SECRET),
       () => {},
     );
+  });
+
+  /**
+   * The same window, but with nothing at the destination yet.
+   *
+   * This is the one `mkdir(…, {recursive: true})` lost: it resolved the whole
+   * path itself and created as it went, so a swap mid-walk left real
+   * directories — and then an `O_CREAT` zero-length file — inside Plow Latch's
+   * own home, and the refusal that followed was already too late.
+   */
+  it("creates nothing at all when the destination is absent and the path moves", async () => {
+    const { approved, plowHome, settings, dir } = stage();
+    const target = path.join(dir, "new/deeper/written.txt");
+    await expect(
+      FileOps.write(target, Buffer.from("agent wrote this"), [approved], plowHome),
+    ).rejects.toThrow();
+    // Nothing of ours anywhere inside the app's own home…
+    expect(fs.readdirSync(path.join(plowHome, "app")).sort()).toEqual(["settings.json"]);
+    expect(fs.readFileSync(settings, "utf8")).toBe(SECRET);
+    // …and nothing left behind at the approved end either.
+    expect(fs.existsSync(path.join(dir + ".moved", "new"))).toBe(false);
   });
 
   it("is refused rather than written, and nothing is truncated on the way", async () => {

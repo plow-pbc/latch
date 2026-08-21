@@ -80,7 +80,8 @@ async function resolveInScope(
   //
   // The FAMILY, not just this instance: one Mac runs a home per checkout, each
   // signed in for its own relay credential, so `Plow-Latch-<other>` beside this
-  // one is somebody's credential too.
+  // one is somebody's credential too — and the packaged install's, in app data,
+  // is somebody's whether or not this run was pointed at a home near it.
   const home = await canonicalizeAsync(deviceHome);
   if (isInsidePlowHome(canonical, home)) {
     throw new FileOpsError(
@@ -145,6 +146,121 @@ async function openVerified(
   }
 }
 
+
+/**
+ * Open one directory and prove it is the directory the canonical path names —
+ * or report that it is not there yet.
+ *
+ * `null` means ENOENT and nothing else: any other refusal throws, because a
+ * component that has become a symlink (`ELOOP`, from `O_NOFOLLOW`) is the
+ * attack and not an absence to be filled in.
+ */
+async function openDirVerified(dir: string): Promise<FileHandle | null> {
+  let handle: FileHandle;
+  try {
+    handle = await fs.open(
+      dir,
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    if ((error as NodeJS.ErrnoException)?.code === "ELOOP") {
+      throw new FileOpsError(
+        `a directory on the way to this path is a symlink, which is not what was approved: ${dir}`,
+        true,
+      );
+    }
+    throw error;
+  }
+  try {
+    const [opened, name, resolved] = await Promise.all([
+      handle.stat(),
+      fs.lstat(dir),
+      canonicalizeAsync(dir),
+    ]);
+    if (resolved !== dir || opened.dev !== name.dev || opened.ino !== name.ino) {
+      throw new FileOpsError(
+        `the path changed underneath this operation and was not the directory that was approved: ${dir}`,
+        true,
+      );
+    }
+    return handle;
+  } catch (error: unknown) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Walk down to the file's parent, verifying every component and creating only
+ * what is missing — one level at a time, each one proved before the next.
+ *
+ * `mkdir(…, {recursive: true})` was the hole: it resolves the whole path itself
+ * and creates as it goes, so a directory swapped for a symlink mid-walk left
+ * real directories — and then an `O_CREAT` zero-length file — somewhere nobody
+ * approved, including inside Plow Latch's own home. The refusal that followed
+ * was already too late.
+ *
+ * Node has no `openat`/`mkdirat`, so this cannot be made atomic; what it can be
+ * is ORDERED. Nothing is created until its parent has been opened and proved,
+ * each new directory is proved immediately after it appears, the scope and home
+ * checks are re-run at every level rather than once at the bottom, and anything
+ * this call created is removed again if a later level refuses. A swap can
+ * therefore still lose us a step — it cannot leave the step behind.
+ */
+async function prepareParent(
+  canonical: string,
+  allowedRoots: string[],
+  deviceHome: string,
+): Promise<void> {
+  const created: string[] = [];
+  let current = "";
+  try {
+    for (const component of path.dirname(canonical).split("/").filter(Boolean)) {
+      current = current + "/" + component;
+      let handle = await openDirVerified(current);
+      if (handle === null) {
+        // Creating, so the checks come first and at THIS level: an approval
+        // covers a directory the operation is under, never one above it.
+        const home = await canonicalizeAsync(deviceHome);
+        if (isInsidePlowHome(current, home)) {
+          throw new FileOpsError(
+            "path is inside Plow Latch's own home directory, which agents may not read or write",
+            true,
+          );
+        }
+        if (!(await isWithinRootsAsync(current, allowedRoots))) {
+          throw new FileOpsError(`path outside approved scope: ${current}`, true);
+        }
+        await fs.mkdir(current);
+        created.push(current);
+        handle = await openDirVerified(current);
+        if (handle === null) throw new FileOpsError(`could not create directory: ${current}`);
+      }
+      await handle.close().catch(() => {});
+    }
+  } catch (error: unknown) {
+    // Ours to remove, and only ours: deepest first, only while the name still
+    // resolves to itself, and `rmdir` refuses anything somebody has since put
+    // something in. Cleaning up must never become its own way of deleting
+    // something: if the swap that caused the refusal is still in place, this
+    // does nothing at all rather than remove whatever is at the other end.
+    for (const dir of created.reverse()) {
+      if ((await canonicalizeAsync(dir).catch(() => "")) !== dir) continue;
+      await fs.rmdir(dir).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+/** See the call site: the narrowest possible unwind of a file we just created. */
+async function removeIfOursAndEmpty(canonical: string): Promise<void> {
+  if ((await canonicalizeAsync(canonical).catch(() => "")) !== canonical) return;
+  const info = await fs.lstat(canonical).catch(() => null);
+  if (info === null || !info.isFile() || info.size !== 0) return;
+  await fs.unlink(canonical).catch(() => {});
+}
+
 export const FileOps = {
   /**
    * `deviceHome` is REQUIRED, not optional with a default. A caller that forgot
@@ -189,15 +305,26 @@ export const FileOps = {
       );
     }
     const canonical = await resolveInScope(filePath, allowedRoots, deviceHome);
+    await prepareParent(canonical, allowedRoots, deviceHome);
+    // Whether the file was already there decides what a refusal has to clean
+    // up: one we created is ours to remove, one that existed is not.
+    const existed = await fs.lstat(canonical).then(
+      () => true,
+      () => false,
+    );
     let handle: FileHandle;
     try {
-      await fs.mkdir(path.dirname(canonical), { recursive: true });
       // Created if absent, never TRUNCATED here: truncation is destruction, and
       // it must not happen until the descriptor has been proved to be the file
       // that was checked. An open that emptied the wrong file and then refused
       // would have done the damage the refusal is for.
       handle = (await openVerified(canonical, fsConstants.O_WRONLY | fsConstants.O_CREAT)).handle;
     } catch (error: unknown) {
+      // Only a file this call created, only while the name still resolves to
+      // itself, and only while it is still empty. A refusal must not turn into
+      // a delete of whatever the redirect pointed at — leaving a stray empty
+      // file is the lesser failure by a wide margin.
+      if (!existed) await removeIfOursAndEmpty(canonical);
       if (error instanceof FileOpsError) throw error;
       throw new FileOpsError(`write failed: ${error instanceof Error ? error.message : error}`);
     }

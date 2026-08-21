@@ -235,7 +235,13 @@ be redirected once it exists; the descriptor is then proved to be the checked
 file (`O_NOFOLLOW`, the name re-resolving to the same canonical path, and the
 descriptor's device/inode matching the name's). A write opens without
 truncating, because an open that empties the wrong file before it verifies has
-already done the damage. The test opens the window deliberately rather than
+already done the damage — and it walks down to the parent one level at a time,
+opening and proving each component and re-running the scope and home checks
+there, rather than handing the whole path to `mkdir -p`. Node has no
+`openat`/`mkdirat`, so this cannot be atomic; what it can be is **ordered**, and
+anything the call created is removed again when a later level refuses — never
+by a path that has since moved, because cleaning up must not become its own way
+of deleting somebody's file. The test opens the window deliberately rather than
 racing for it — a wall-clock race passed against the unfixed code by never
 landing in a window microseconds wide.
 
