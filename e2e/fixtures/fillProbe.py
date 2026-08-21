@@ -204,15 +204,10 @@ class Handle:
             return
         # Keys land ON what the assignment left, never instead of it -- which
         # is the only way a scenario can tell the head was assigned at all --
-        # and the field then does to them whatever it does: rewriting first,
-        # then clipping to what it holds. `maxlength` counts UTF-16 units, so
-        # slicing by code point would keep four emoji where a browser keeps two.
+        # and the field then does to them whatever it does.
         landed = (self.value or "") + text
         if self.rewrites is not None:
             landed = self.rewrites(landed)
-        if self.max_length >= 0:
-            landed = landed.encode("utf-16-le")[:self.max_length * 2].decode(
-                "utf-16-le", errors="ignore")
         self.value = landed
         if self.partial_fill and self.type_calls > 1:
             # Some of it went in and then the field went away. It takes more
@@ -550,14 +545,18 @@ def main() -> int:
         # Clipped rather than rewritten: the same report, since the field is
         # holding something other than what went in either way.
         "clipped_by_the_field": run(
-            server, {**base, "value": "hunter2"}, max_length=4, typeable="single-line",
-            rewrites=None) if False else run(
             server, {**base, "value": "hunter2"}, rewrites=lambda t: t[:4]),
         # A value carrying a newline, at a single-line field. The node could not
         # hold the break anyway -- an <input> strips it in value sanitization --
         # so it is normalized away and the rest still goes in as real keys, and
         # no Enter is ever sent at a form.
         "newline_single_line": run(server, {**base, "value": "one\ntwo"}),
+        # The same value at a field that holds six. The break never reaches the
+        # node, so what arrives is "onetwo" and it fits -- measuring the value
+        # as given would refuse it and tell the owner to shorten something that
+        # was never too long.
+        "newline_fits_once_dropped": run(
+            server, {**base, "value": "one\ntwo"}, max_length=6),
         # The same at a single-line field, spelled with CR. This is what pins the
         # ORDER of the normalization: CR becomes LF before the strip removes it,
         # so no Enter is sent. Reversed, `type()` would press Enter mid-value and

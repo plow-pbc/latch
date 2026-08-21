@@ -346,6 +346,23 @@ def _respond(payload):
     _RESP.flush()
 
 
+def _collapse_breaks(value):
+    """CR and CRLF become one LF. Shared, so the measure below and the fill
+    that follows it can never disagree about what was sent."""
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _least_it_can_arrive_as(value):
+    """The fewest units this value can reach a field as.
+
+    A node that is not multiline drops the breaks entirely, so a value carrying
+    one arrives shorter than it was given. Measuring the shortest form is what
+    keeps the refusal to values that cannot fit HOWEVER the field takes them --
+    anything else is reported rather than refused, which is the whole split.
+    """
+    return _utf16_units(_collapse_breaks(value).replace("\n", ""))
+
+
 def _utf16_units(value):
     """What `maxlength` counts: UTF-16 code units, not code points.
 
@@ -425,7 +442,7 @@ def _type_value(el, value):
     # still go in as real keys, and why the tail can never press Enter at a form
     # -- by construction, rather than by a branch that gives the keystrokes up.
     # The browser behavior underneath is in docs/TESTING-THE-APP.md.
-    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    value = _collapse_breaks(value)
     if kind != "multiline":
         value = value.replace("\n", "")
     # A tab is the one character no normalization can rescue -- the keys cannot
@@ -838,7 +855,7 @@ class Session:
             # this, because "will it fit" needs no idea what the value MEANS,
             # where "was the field entitled to change it" does.
             cap = el.evaluate(FIELD_CAP_JS)
-            if cap >= 0 and _utf16_units(cmd["value"]) > cap:
+            if cap >= 0 and _least_it_can_arrive_as(cmd["value"]) > cap:
                 return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
             if cmd.get("mask"):
                 # Marked first, and only typed once the mark is known to have

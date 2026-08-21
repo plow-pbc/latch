@@ -615,6 +615,14 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed[scenario].ledgered).toBe(false);
   });
 
+  it("does not refuse a value that only overflows before its break is dropped", () => {
+    // "one\ntwo" is seven, and the field holds six — but a node that is not
+    // multiline never receives the break, so what arrives is "onetwo" and it
+    // fits. Measuring the value as given would refuse it and tell the owner to
+    // shorten something that was never too long.
+    expect(probed.newline_fits_once_dropped.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("fills a value exactly as long as the field's cap", () => {
     expect(probed.at_cap.result).toEqual({ ok: true, frame: 0 });
   });
