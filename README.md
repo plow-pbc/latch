@@ -18,14 +18,17 @@ touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
 `DOMO_HOME`, this repository's name, and the frozen vault Keychain identity
 (DESIGN.md §11a-i, which records what renaming it cost the last time).
 
-> **Being rebuilt — no agent can reach this Mac today.** The in-repo broker that
-> used to route agents here has been removed. A Mac will instead dial *out* to
-> the Plow relay, which authenticates the calling agent and forwards MCP to an
-> MCP server running in this app. That MCP server and the outbound relay client
-> are the next pieces of work. What is here now — the policy engine, the
-> capability-derived sandbox, file operations, the audit log, the approval UI and
-> the adversarial reviewer — builds, runs and is covered by the test suite, but
-> has no transport in front of it.
+> **Being rebuilt.** The in-repo broker that used to route agents here has been
+> removed. A Mac now dials *out* to the Plow relay, which authenticates the
+> calling agent and forwards MCP to an MCP server running in this app. Both
+> halves exist here — that server and the outbound relay client — and so does
+> the relay itself (see `CLAUDE.md` § Layout, "Being rebuilt").
+> **Agents do reach this Mac today.** The policy engine, the capability-derived
+> sandbox, file operations, the audit log, the approval UI and the adversarial
+> reviewer build, run and are covered by the test suite. What the relay leg's
+> automated coverage does and does not reach is owned by
+> [README-ts.md](README-ts.md#integration-coverage) § Integration coverage;
+> the rest of that leg is verified by hand.
 
 ## Quickstart with `just`
 

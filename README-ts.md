@@ -9,9 +9,12 @@ the architecture and the reasoning behind each decision).
 > which authenticates the agent and forwards MCP to the MCP server in
 > `packages/mcp-server`. Both halves exist here: the server, and the outbound
 > client in `packages/relay-client` that dials the relay and serves what it
-> tunnels. **The relay itself does not exist yet** — it is a different repository
-> and is not built, so this side is verified against a stand-in that speaks the
-> same wire contract.
+> tunnels. **The relay exists** too (see `CLAUDE.md` § Layout, "Being rebuilt").
+> The remaining gap is that the relay leg has no automated *end-to-end*
+> coverage: the in-repo stand-in was deleted and there is no automated
+> live-stack path either, so that leg is verified by hand. What remains here
+> is the wire contract plus handshake, heartbeat and reconnect against a fake
+> connection. See [§ Integration coverage](#integration-coverage).
 
 ## Layout
 
@@ -262,16 +265,20 @@ against a stand-in relay built to the wire contract — and that stand-in has no
 been deleted too, along with the drivers and the relay+MCP gate that ran against
 it (head chef's call: a locally running plow API already simulates plow).
 
-So there is **no automated integration coverage of the relay leg at all** today,
-and no automated live-stack path either — the two scripts that drove a real plow
-stack (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
-deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket, sends
-the auth frame, reconnects, or tunnels an MCP call. That whole path is verified
+So there is **no automated end-to-end coverage of the relay leg** today, and no
+automated live-stack path either: the two scripts that drove a real plow stack
+(`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
+deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket to a
+real relay or tunnels an MCP call end to end. That whole path is verified
 **manually**: bring up a plow stack, run the app against it, drive it by hand.
 The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 What `packages/relay-client/test` still holds is the pure part of the wire
-contract — `stripHopByHop`, `Host` preservation, frame validation.
+contract — `stripHopByHop`, `Host` preservation, frame validation — plus the
+socket lifecycle against a `FakeConn`: the handshake, heartbeat and pong,
+silent-drop detection, backoff, reconnect, and the dial-resolves-after-`stop()`
+race (`lifecycle.test.ts`, `liveness.test.ts`). Automated, in process, and the
+first place to look before calling a relay-leg gap untestable.
 
 ## Running the desktop app
 

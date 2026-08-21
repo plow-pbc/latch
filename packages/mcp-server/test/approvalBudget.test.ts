@@ -53,7 +53,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const { ApprovalStore, DeviceAgent } = await import("@domo/device-core");
 const { createDomoMcpServer } = await import("@domo/mcp-server");
-const { callTool } = await import("./client.js");
+const { callTool, pollUntil } = await import("./client.js");
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
 
@@ -105,11 +105,12 @@ describe("the budget fires while persisting the approval is still in flight", ()
 
     // Let the write finish; the approval then resolves and the result lands.
     openGate();
-    let poll = payload;
-    for (let i = 0; i < 80 && poll.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "plow_get_result", { handle: payload.handle }, AGENT)).payload;
-    }
+    const poll = (
+      await pollUntil(
+        () => callTool(server, "plow_get_result", { handle: payload.handle }, AGENT),
+        (r) => r.payload.status !== "pending",
+      )
+    ).payload;
     expect(poll.status).toBe("ready");
     expect(poll.result.content).toBe("the numbers");
   });
@@ -142,6 +143,18 @@ describe("the budget fires while persisting the approval is still in flight", ()
     expect(asked).toBe(false);
     openGate();
     await call;
+    // Awaited, not asserted outright. `budgetMs` is 40 here, so the call has
+    // almost certainly already deferred and `await call` returns the PENDING
+    // payload the moment the budget fires — which is before `openGate()` let
+    // the delegate run. Asserting straight through raced that gap and failed
+    // about one full-suite run in eight on a loaded machine, while passing
+    // every time this file ran alone. The contract is unchanged: the human is
+    // still asked, and the assertion above still pins that it happened only
+    // AFTER the record was on disk.
+    await pollUntil(
+      async () => asked,
+      (v) => v,
+    );
     expect(asked).toBe(true);
   });
 });

@@ -28,7 +28,7 @@ What went, and what it did:
 | Deleted | What it did |
 |---|---|
 | `packages/relay-client/test/fakeRelay.ts` | The stand-in relay: plow's channel handshake, tunnelled HTTP exchanges. |
-| `packages/relay-client/test/relayClient.test.ts` | The relay client's integration tests, which stood one up. |
+| `packages/relay-client/test/relayClient.test.ts` | The relay client's integration tests, which stood one up. (Its lifecycle checks survive against a fake connection in `lifecycle.test.ts` / `liveness.test.ts`.) |
 | `e2e/relay-gate/gate.ts` | The relay + MCP end-to-end gate against a live plow variant stack. |
 | `e2e/transcripts.test.ts` | Ran the transcript scripts under vitest. (The rest of `e2e/` stays: the worktree-naming test and the browser fixtures the package tests import.) |
 | `apps/desktop/scripts/first-run-drive.mjs` | Drove the whole first run with real key and mouse events. |
@@ -36,11 +36,13 @@ What went, and what it did:
 | `apps/desktop/scripts/slow-approval-transcript.mjs` | The slow-approval / long-command round trip with timings. |
 | `apps/desktop/scripts/approve-drive.mjs` | The app half of an acceptance run: seeded credential, real clicks. |
 
-**What this costs, so nobody rediscovers it the hard way:** `@domo/relay-client` keeps only pure
-wire-contract tests (`test/wire.test.ts` — `stripHopByHop`, `Host` preservation, frame validation).
-Nothing in `npx vitest run` opens a socket, sends the auth frame, reconnects, or tunnels an MCP
-call, and nothing in CI does either. Those paths are verified **by hand**, by running the app
-against a locally running plow API and watching what happens.
+**What this costs, so nobody rediscovers it the hard way:** nothing in `npx vitest run` or in CI
+opens a socket to a *real* relay or tunnels an MCP call end to end. That path is verified **by
+hand**, by running the app against a locally running plow API and watching what happens.
+
+What `@domo/relay-client` still covers in process — the wire contract, and the socket lifecycle
+against a fake connection — is enumerated in [README-ts.md](../README-ts.md#integration-coverage)
+§ Integration coverage, which owns that list. Read it before calling a relay-leg gap untestable.
 
 ---
 

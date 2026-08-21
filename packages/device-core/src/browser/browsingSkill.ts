@@ -7,15 +7,30 @@
 import { Skill } from "../skills.js";
 import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
 
+/**
+ * Why this Mac's browser is the one that answers a live-web question, in ONE
+ * place. Three surfaces said it in three independent wordings — the server
+ * instructions, `plow_browser_open`, and the skill description below — which
+ * meant three prose edits and a regex guard to keep them in step. They
+ * interpolate this instead.
+ *
+ * Every clause is a fact the agent's own fetch cannot match, and none of them
+ * overstates: the profile really is a copy of the user's, so "already signed
+ * in" is description rather than promise.
+ */
+export const LIVE_WEB_ROUTING =
+  "their browser runs on their own network rather than a datacenter address many sites " +
+  "refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is " +
+  "already signed in wherever they are";
+
 export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
     "owner's local credentials (their vault): a secret is typed into the page rather than "
-    + "returned to you. Use when " +
-    "the task needs the OWNER'S browser rather than any browser: signing in as them, filling " +
-    "forms, buying things, or reading a page only their session can see. General web reading " +
-    "belongs in your own tools, which are faster at it.",
+    + `returned to you. Use it for reading the live web at all — ${LIVE_WEB_ROUTING} — and ` +
+    "whenever the task needs the OWNER'S browser rather than any browser: signing in as them, " +
+    "filling forms, buying things, or reading a page only their session can see.",
   body: `# Browsing on this Mac
 
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:

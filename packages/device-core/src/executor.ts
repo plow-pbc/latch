@@ -45,6 +45,15 @@ export const SandboxProfile = {
       "(allow signal (target children))",
       "(allow sysctl-read)",
       // TODO(v1.x): tighten to the specific services processes need.
+      //
+      // Before you do: the MCP manifest names specific macOS tools it promises
+      // an agent can run, and every one of them resolves a service through
+      // THIS line. `MACOS_TOOLING` in mcp-server/src/tools.ts is the single
+      // list; today it is mdfind, sips and pbcopy/pbpaste, each verified
+      // to exit 0 under this profile as written. An allowlist that misses what
+      // they need turns that copy into a guaranteed denial — the exact bug the
+      // copy was rewritten to remove — so tightening here means re-running them
+      // under the new profile and editing that constant in the same commit.
       "(allow mach-lookup)",
       "(allow file-read-metadata)",
       "(allow file-ioctl)",
