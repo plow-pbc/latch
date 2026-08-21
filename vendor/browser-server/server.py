@@ -100,16 +100,16 @@ SETTLE_MS = 1000
 
 # A fill ends on real keys wherever it can: a field that goes from empty to
 # complete with no keydown/keypress/keyup at all is the cheapest signal an
-# interrogating defense has. `_type_value` owns which nodes and values it
-# cannot do that for, and why the rest are assigned; `TYPEABLE_JS` below owns
-# why a given node takes no keys. Keystrokes cost a delay each and an agent may
-# fill a field with prose, so only the last TYPED_CHARS are typed and the bulk
-# ahead of them is assigned. That number is a statement about credentials
-# rather than a latency derivation: an ordinary password, a card number or a
-# one-time code is shorter than this and is typed whole. Nothing enforces that
-# a released value fits -- a long API key or a JWT does not -- and one that
-# does not lands with its head assigned and its last TYPED_CHARS typed, which
-# still ends the field on real keys.
+# interrogating defense has. `_type_value` owns which nodes and which values
+# that holds for, and `TYPEABLE_JS` below owns why a given node takes no keys.
+# Keystrokes cost a delay each and an agent may fill a field with prose, so
+# only the last TYPED_CHARS are typed and the bulk ahead of them is assigned.
+# That number is a statement about credentials rather than a latency
+# derivation: an ordinary password, a card number or a one-time code is shorter
+# than this and is typed whole. Nothing enforces that a released value fits --
+# a long API key or a JWT does not -- and one that does not lands with its head
+# assigned and its last TYPED_CHARS typed, which still ends the field on real
+# keys.
 #
 # What each key's press is given, handed to `el.type(ch, delay=...)` one
 # character at a time -- so it is spent WITHIN a key rather than between one key

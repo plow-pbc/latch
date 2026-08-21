@@ -76,6 +76,10 @@ Three of them, in the order the code reaches them:
    sent.
 2. `type()` sends a tab as **Tab**, which moves focus instead of adding a
    character. A value holding one in its typed tail is assigned whole instead.
+   More generally, what `type()` does with a character depends on whether it is
+   on Playwright's key map — one that is not may arrive as inserted text with no
+   key events at all, which is the outcome the whole typing path exists to
+   avoid. `KEY_DELAY_MS` is spent inside a key press either way.
 3. An `<input>` **sanitizes an assigned value**, and differently per type. CR
    and LF never survive. Some types will not keep a leading or trailing tab.
 
