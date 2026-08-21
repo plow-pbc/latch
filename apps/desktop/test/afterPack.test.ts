@@ -15,22 +15,19 @@ const afterPack = createRequire(import.meta.url)("../build/afterPack.cjs") as (
   context: unknown,
 ) => Promise<void>;
 
-/** Every directory the browser runtime is made of, as packed. */
+/** Every directory the browser runtime is made of, as packed. `nested` marks
+ * the ones whose binaries sit an arch level down — declared here rather than
+ * inferred from the name, so a rename moves both uses at once. */
 const PAYLOADS = [
-  "python/Python.framework",
-  "python/site-packages",
-  "server",
-  "camoufox",
-  "vault-cli",
-  "vault-server",
+  { dir: "python/Python.framework" },
+  { dir: "python/site-packages" },
+  { dir: "server" },
+  { dir: "camoufox" },
+  { dir: "vault-cli", nested: true },
+  { dir: "vault-server", nested: true },
 ];
 
-/** The ones that keep their binaries an arch level down, not at the top.
- * Derived, so renaming a payload cannot silently empty this column. */
-const NESTED = PAYLOADS.filter((p) => p.startsWith("vault-"));
-
-/** How a payload can come up carrying no file. A typo is a compile error. */
-type Shape = "absent" | "empty" | "arch";
+const NESTED = PAYLOADS.filter((p) => p.nested).map((p) => p.dir);
 
 const contextFor = (appOutDir: string) => ({
   appOutDir,
@@ -47,7 +44,7 @@ describe("the packaging hook refuses before it signs", () => {
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
-    for (const payload of PAYLOADS) {
+    for (const { dir: payload } of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
       fs.writeFileSync(path.join(runtime, payload, "carried"), "");
@@ -92,17 +89,16 @@ describe("the packaging hook refuses before it signs", () => {
   // One expectation over every column is the claim: however a payload comes up
   // carrying no file, it is the same refusal, named the same way.
   it.each(
-    PAYLOADS.flatMap((payload) => [
-      { payload, how: "left out", shape: "absent" as Shape },
-      { payload, how: "packed empty", shape: "empty" as Shape },
-      ...(NESTED.includes(payload)
-        ? [{ payload, how: "packed with an empty arch dir", shape: "arch" as Shape }]
+    PAYLOADS.flatMap(({ dir: payload, nested }) => [
+      { payload, how: "left out", make: "" },
+      { payload, how: "packed empty", make: payload },
+      ...(nested
+        ? [{ payload, how: "packed with an empty arch dir", make: path.join(payload, "arm64") }]
         : []),
     ]),
-  )("names $payload when it was $how", async ({ payload, shape }) => {
+  )("names $payload when it was $how", async ({ payload, make }) => {
     const runtime = pack(payload);
-    if (shape === "empty") fs.mkdirSync(path.join(runtime, payload), { recursive: true });
-    if (shape === "arch") fs.mkdirSync(path.join(runtime, payload, "arm64"), { recursive: true });
+    if (make) fs.mkdirSync(path.join(runtime, make), { recursive: true });
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       `is missing ${path.basename(payload)} —`,
     );
