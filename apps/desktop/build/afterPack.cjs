@@ -108,8 +108,6 @@ module.exports = async function afterPack(context) {
         "package with `just package` or `just package-unnotarized`",
     );
   }
-  // camoufox is the one payload with a known interior: a fuse that stopped
-  // partway leaves files behind but no bundle to sign.
   // vault-server has a known interior, and unlike camoufox it is NOT fused: it
   // ships as two thin per-arch trees the merge passes through (x64ArchFiles),
   // and vaultServerIn resolves <hostArch>/vaultwarden. So a tree carrying only
@@ -128,6 +126,8 @@ module.exports = async function afterPack(context) {
       `[afterPack] vault-server is missing ${missingVault.join(", ")} — a vault build that did not finish`,
     );
   }
+  // camoufox's interior: a fuse that stopped partway leaves files behind but no
+  // bundle to sign.
   const camoufoxApps = findApps(camoufox);
   if (camoufoxApps.length === 0) {
     throw new Error(
