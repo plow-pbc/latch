@@ -154,6 +154,27 @@ const GOAL = {
     "Why you need this, in one line. The user reads exactly this when deciding whether to approve.",
 };
 
+/**
+ * The macOS tooling an agent is told to reach for, in ONE place.
+ *
+ * It had two homes — this sentence and the instructions block — and every
+ * review round since found another facet of that duplication: a guard covering
+ * one home, a coupling note pointing at one home, a positive assertion pinning
+ * one home. One constant, interpolated into both, removes the class.
+ *
+ * Every name here was RUN under the generated seatbelt profile before being
+ * printed: `mdfind`, `sips`, `pbcopy` and `pbpaste` all exit 0 under
+ * `(deny default)` + `(allow mach-lookup)`. `osascript` driving another
+ * application, `screencapture` and `shortcuts` are deliberately absent — the
+ * profile grants no `appleevent-send` and the app ships no automation
+ * entitlement or TCC usage strings, so naming them would point an agent at a
+ * denial. See the coupling note in device-core's executor.ts before changing
+ * either this list or that profile.
+ */
+export const MACOS_TOOLING =
+  "mdfind for Spotlight search across their files, sips for images, " +
+  "pbcopy and pbpaste for the clipboard, and whatever else they have installed";
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_file",
@@ -242,8 +263,7 @@ export const TOOLS: ToolSpec[] = [
       "Run a command on the user's own Mac — their installed tools, their data, their network. " +
       "Use this when the command must affect their machine; use your own shell for your own work. " +
       "Their Mac is a macOS workstation, so reach for tooling your workspace does not have when " +
-      "it fits the job: mdfind for Spotlight search across their files, sips for images, " +
-      "pbcopy and pbpaste for the clipboard, and whatever else they have installed. " +
+      `it fits the job: ${MACOS_TOOLING}. ` +
       "It runs inside a seatbelt sandbox. Declare every path you need: " +
       "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
       "write access is granted from them. They are NOT the full extent of what the command can " +

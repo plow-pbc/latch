@@ -23,7 +23,14 @@ import { JSONValue } from "@domo/protocol";
 import { DeviceAgent } from "@domo/device-core";
 import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
-import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./tools.js";
+import {
+  AgentIdentity,
+  MACOS_TOOLING,
+  TOOLS,
+  ToolContext,
+  toolBlocks,
+  toolContent,
+} from "./tools.js";
 
 /** The MCP revision this server speaks, and the only one it will speak. */
 export const PROTOCOL_REVISION = "2026-07-28";
@@ -84,16 +91,11 @@ export const PROTOCOL_REVISION = "2026-07-28";
  * scoped to the agent's own work product instead, which is the one thing it
  * will not route to someone else's machine anyway.
  *
- * The macOS examples are deliberately the ones that WORK under the sandbox.
- * `osascript` and `screencapture` were in an earlier draft of this paragraph
- * and were taken out: the generated seatbelt profile is `(deny default)` and
- * never grants `appleevent-send` (executor.ts), and the packaged app ships no
- * automation entitlement or TCC usage strings — so an Apple-event send is
- * refused, and naming it here would route an agent at a path that reliably
- * fails. That is the same bug as the web sentence above, pointing the other
- * way. Making that capability real is a policy change with its own security
- * argument, an entitlement, and a frozen-fixture SBPL break; it is not a copy
- * edit, and until someone makes it, this list stays honest.
+ * The macOS examples are interpolated from `MACOS_TOOLING` rather than written
+ * here, because this paragraph and `plow_run_command`'s description are two
+ * homes for one list and every review round found another facet of that. The
+ * rules about which names may appear — and why `osascript` may not — live on
+ * that constant.
  *
  * This is guidance to a model, never a capability claim. Nothing here widens
  * what a tool may do; the enforceable bound is the capability set the human
@@ -103,7 +105,7 @@ export const SERVER_INSTRUCTIONS = `These tools operate the user's own Mac — t
 
 Reach for these whenever the question is about the live web or about this user's world. Public pages included: your own fetch leaves a datacenter address that many sites refuse outright, it trips bot walls and consent interstitials, and it sees none of a page that renders in JavaScript. Their browser is a real one on their own network, with a profile that persists between sessions. "What's on the homepage of Reddit?" is a plow_browser_open question.
 
-Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: mdfind for Spotlight search across their files, sips for images, pbcopy and pbpaste for the clipboard, and whatever else they have installed.
+Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: ${MACOS_TOOLING}.
 
 Use your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.
 

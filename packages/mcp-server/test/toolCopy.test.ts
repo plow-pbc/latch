@@ -343,34 +343,39 @@ describe("nothing on the surface sends the live web back to the agent's own tool
   });
 
   /**
-   * The examples must be tools that actually RUN under the seatbelt profile.
-   * `osascript` and `screencapture` were prescribed for one commit and taken
-   * out: the profile is `(deny default)` with no `appleevent-send`, and the app
-   * ships no automation entitlement, so naming them pointed the agent at a
-   * guaranteed denial — the same bug as the web sentence, facing the other way.
+   * Every phrase that must not appear ANYWHERE a model reads, in one table.
    *
-   * Class-wide, not on the instructions alone. The tooling list had a second
-   * home in `plow_run_command`'s description, so a guard on one string would
-   * have let it back in through the other — the mistake this file spends two
-   * blocks warning about, made once more while fixing it.
+   * These were four separate loops over `manifestStrings()` differing only in
+   * a regex and a message — and the shape kept costing: each new forbidden
+   * class arrived as another copy of the loop, and each round of review found
+   * one whose regex was narrower than its own test name promised. One table,
+   * one loop, and the rationale rides each row instead of a comment above it.
+   *
+   * `open` and `shortcuts` were removed from the tooling copy alongside
+   * `osascript`, but only `shortcuts` is pinned here: `open` is far too common
+   * an English word to assert against a prose corpus without false positives.
    */
-  it("nothing anywhere prescribes tooling the sandbox denies", () => {
-    for (const { where, text } of manifestStrings()) {
-      expect(text, `${where} prescribes tooling the seatbelt profile denies`).not.toMatch(
-        /osascript|screencapture/,
-      );
-    }
-  });
+  const FORBIDDEN = [
+    {
+      what: "routes web reading to the agent's own tools",
+      pattern: /general web reading|which your own tools do faster|your own tools, which are faster/i,
+      why: "the sentence this whole surface exists to remove; it had three homes",
+    },
+    {
+      what: "prescribes tooling the sandbox denies",
+      pattern: /osascript|screencapture|shortcuts/i,
+      why: "(deny default) grants no appleevent-send and the app ships no automation entitlement",
+    },
+    {
+      what: "oversells the browser profile",
+      pattern: /already signed in/i,
+      why: "a persistent profile promises nothing about any particular site",
+    },
+  ];
 
-  /**
-   * A persistent profile is not a promise that any particular site is logged
-   * in, and saying so would be the kind of claim a user discovers is false at
-   * the worst moment. `plow_browser_open` was already guarded; the pressure to
-   * oversell applies to every string here, so the guard does too.
-   */
-  it("nothing claims the browser is already signed in", () => {
+  it.each(FORBIDDEN)("no manifest string $what", ({ pattern, why }) => {
     for (const { where, text } of manifestStrings()) {
-      expect(text, `${where} oversells the profile`).not.toMatch(/already signed in/i);
+      expect(text, `${where}: ${why}`).not.toMatch(pattern);
     }
   });
 });
