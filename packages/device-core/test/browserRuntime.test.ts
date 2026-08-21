@@ -83,6 +83,15 @@ describe("resolveBrowserRuntime", () => {
     });
   });
 
+  it("does not take a flat vaultwarden, which is a layout nothing packs", () => {
+    // The packaging gate requires <arch>/vaultwarden for both arches. A resolver
+    // that also took a flat one would accept a tree packaging refuses.
+    const { resources, root } = fakePayload({ withVaultCli: true });
+    fs.mkdirSync(path.join(root, "vault-server", "web-vault"), { recursive: true });
+    fs.writeFileSync(path.join(root, "vault-server", "vaultwarden"), "");
+    expect(resolveBrowserRuntime(resources)!.vaultServer).toBeNull();
+  });
+
   it("reports no vault when this build ships none, so we can still point at a hosted one", () => {
     const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: true }).resources)!;
     expect(runtime.vaultServer).toBeNull();
