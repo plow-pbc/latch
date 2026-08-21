@@ -25,6 +25,10 @@ const PAYLOADS = [
   "vault-server",
 ];
 
+/** vault-server is not fused: both arch binaries ship, plus the shared web UI.
+ * Keyed by the piece the hook names when it is the one missing. */
+const VAULT_INTERIOR = ["arm64/vaultwarden", "x86_64/vaultwarden", "web-vault/index.html"];
+
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";
 
 /** `mac` is electron-builder's resolved mac config. It defaults to carrying the
@@ -58,7 +62,7 @@ describe("the packaging hook refuses before it signs", () => {
       fs.mkdirSync(path.join(runtime, "camoufox", "Camoufox.app"), { recursive: true });
     }
     if (omit !== "vault-server") {
-      for (const f of ["arm64/vaultwarden", "web-vault/index.html"]) {
+      for (const f of VAULT_INTERIOR) {
         fs.mkdirSync(path.join(runtime, "vault-server", path.dirname(f)), { recursive: true });
         fs.writeFileSync(path.join(runtime, "vault-server", f), "");
       }
@@ -144,11 +148,17 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir, { identity: null }))).rejects.toThrow(/ships unsigned/);
   });
 
-  it("refuses a vault-server that has web-vault but no vaultwarden", async () => {
+  // One arch present and the other not is the shipping case: it clears every
+  // other gate on the packaging Mac and lands on the other arch's users.
+  it.each(VAULT_INTERIOR)("refuses a vault-server packed without %s", async (piece) => {
     const runtime = pack("vault-server");
-    fs.mkdirSync(path.join(runtime, "vault-server", "web-vault"), { recursive: true });
-    fs.writeFileSync(path.join(runtime, "vault-server", "web-vault", "index.html"), "");
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(/missing vaultwarden or web-vault/);
+    for (const f of VAULT_INTERIOR.filter((other) => other !== piece)) {
+      fs.mkdirSync(path.join(runtime, "vault-server", path.dirname(f)), { recursive: true });
+      fs.writeFileSync(path.join(runtime, "vault-server", f), "");
+    }
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      `vault-server is missing ${path.dirname(piece) === "web-vault" ? "web-vault" : piece}`,
+    );
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {

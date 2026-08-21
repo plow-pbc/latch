@@ -110,13 +110,22 @@ module.exports = async function afterPack(context) {
   }
   // camoufox is the one payload with a known interior: a fuse that stopped
   // partway leaves files behind but no bundle to sign.
-  // vault-server has a known interior too: vaultServerIn wants a vaultwarden
-  // binary AND web-vault, and the build writes web-vault first — so a vault
-  // build that stopped leaves files here with no binary among them.
-  const hasVaultwarden = [...walk(vaultServer)].some((f) => path.basename(f) === "vaultwarden");
-  if (!hasVaultwarden || bare(path.join(vaultServer, "web-vault"))) {
+  // vault-server has a known interior, and unlike camoufox it is NOT fused: it
+  // ships as two thin per-arch trees the merge passes through (x64ArchFiles),
+  // and vaultServerIn resolves <hostArch>/vaultwarden. So a tree carrying only
+  // the packaging Mac's arch clears every other gate and reaches the other
+  // arch's users with no vault at all — dead credentials, nothing downstream
+  // catches it. web-vault is the build's first step and the resolver's second
+  // requirement, so a run that stopped early leaves it alone here.
+  const missingVault = [
+    ...["arm64/vaultwarden", "x86_64/vaultwarden"].filter(
+      (rel) => !fs.existsSync(path.join(vaultServer, rel)),
+    ),
+    ...(bare(path.join(vaultServer, "web-vault")) ? ["web-vault"] : []),
+  ];
+  if (missingVault.length > 0) {
     throw new Error(
-      "[afterPack] the vault-server payload is missing vaultwarden or web-vault — a vault build that did not finish",
+      `[afterPack] vault-server is missing ${missingVault.join(", ")} — a vault build that did not finish`,
     );
   }
   const camoufoxApps = findApps(camoufox);
