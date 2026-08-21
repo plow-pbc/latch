@@ -128,6 +128,10 @@ describe("a tool call end to end, in process", () => {
     expect(jv(received).get("capabilities").arr).toEqual([`Read: ${canonicalize(file)}`]);
     expect(jv(received).get("agent").str).toBe("agent-1");
     expect(jv(received).get("goal").str).toBe("check the greeting");
+    // The session this intent belongs to. A later review reads it to tell an
+    // approval that is still live from one the owner gave in a session that has
+    // since ended — an append-only log would otherwise replay consent forever.
+    expect(jv(received).get("session").str).not.toBeNull();
   });
 
   it("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {

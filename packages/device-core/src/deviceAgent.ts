@@ -291,6 +291,12 @@ export class DeviceAgent {
     this.audit.record("intent_received", {
       intentId: intent.intentId,
       agent: intent.agentId,
+      // The browsing/working session this intent belongs to. Recorded so a
+      // later review can tell an approval that is still live from one the
+      // owner gave in a session that has since ended: consent does not
+      // outlive the thing it was given for, and an append-only log would
+      // otherwise keep replaying it forever.
+      session: intent.sessionId,
       // The name is for a human to read here and in the approval dialog. It is
       // never an identity: Session.name is nullable and not unique, so two
       // credentials can produce the same one. `agent` above is the identity.

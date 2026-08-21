@@ -606,6 +606,41 @@ if update size becomes a problem.
 5. **Adversarial reviewer:** an agent consuming the same intent + audit stream,
    sitting between policy and prompt as an additional gate.
 
+**The reviewer asks one question: is this proportionate to the errand?** Two
+axes, and nothing else: BREADTH — how much the operation hands back to the agent
+— and IRREVERSIBILITY — what cannot be walked back. Reads are free within
+breadth limits; a read is never gated for what it might contain.
+
+It is one layer and the prompt says so. Capabilities are derived on this Mac
+from tool arguments, the sandbox profile is generated from the approved set,
+browser origins are enforced per session, everything is audited, and a LOGIN
+item is released only on its own registered site (`_cmd_get_field`,
+`vendor/browser-server/seed_vault_broker/cli.py:986`). So the reviewer does not
+reason about exfiltration, credential classes, or destinations: an agent that
+reads a filled password out of a page is malicious rather than careless, and
+this layer was never what stops that. What it catches is the honest mistake and
+the request that is wildly out of line.
+
+The owner's purpose statement and the approvals recorded THIS session
+(`intent_decision` with `source: ask` and `allow_once`; `intent_received`
+records the session id) are context for judging proportion — what the errand is.
+They authorize nothing and their absence forbids nothing; with no records,
+ordinary computer work is assumed. `source: adversarial` is excluded so the
+reviewer cannot cite its own past allows, `approve` says nothing about any
+particular operation, and `always_allow`/`rule` are excluded because an active
+rule already authorizes its exact capability set mechanically while a revoked
+one would keep arguing out of an append-only log.
+
+**A denial must say what would pass.** Adversarial mode shows no dialog, so a
+verdict the agent cannot act on ends the errand silently; "narrow it to the last
+month of mail from this sender" is the only recovery path the design offers.
+
+A previous version reasoned about consent, floors, over-collection, sinks and
+credential classes at ~4,900 tokens, needed the review budget raised to 45s, and
+still refused a 2FA code read during a login the owner asked for. Calibration is
+verified by live-inference controls recorded on the PR, never by asserting on
+prompt text.
+
 The remote milestone is where the **TypeScript re-platform (§13)** lands: the
 hosted broker ships as the first TS component, and the rest of the system
 follows behind the same wire contract.
