@@ -377,8 +377,16 @@ def _type_value(el, value):
     # a manual one -- which moves focus instead of adding a character, so the
     # node ends up holding the value with the tab missing. That gap is
     # mid-value, which KEYS_DROPPED_JS only recognises as a prefix, so nothing
-    # would repair it and the fill would report a value the node never held. An
-    # assignment carries a tab, so such a value takes the path it always had.
+    # would repair it and the fill would report a value the node never held.
+    #
+    # So such a value takes the path it always had. That is not the same as the
+    # assignment carrying it: an `email` or a `url` input sanitizes leading and
+    # trailing ASCII whitespace away, a tab included, and the assign path is
+    # never asked KEYS_DROPPED_JS -- so a tab on either end of a value for one
+    # of those is dropped by the browser and reported ok. That is `fill()`'s
+    # behavior, unchanged here and the same before any of this typed; typing a
+    # leading tab instead would move focus off the field, which is worse than
+    # what the browser already does with it.
     if "\t" in value[-TYPED_CHARS:]:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
