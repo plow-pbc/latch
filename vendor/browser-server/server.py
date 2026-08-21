@@ -247,12 +247,11 @@ DOC_TOKEN_JS = """() => {
 # `fill()` sets one, the same loud refusal where it will not.
 #
 # Only a <textarea> and an <input> of a text-carrying type are typed at. An
-# editing host -- contenteditable, a designMode body -- is deliberately
-# neither: the
-# credential submits this exists for are <input>, and admitting arbitrary hosts
-# cost a second editability taxonomy (which declared attribute values count,
-# which embedded and non-rendered tags to refuse before reading it) for a case
-# no machine here reaches. Such a node is assigned, as it was before typing.
+# editing host -- contenteditable, a designMode body -- is deliberately neither:
+# the credential submits this exists for are <input>, and admitting arbitrary
+# hosts cost a second editability taxonomy (which declared attribute values
+# count, which embedded and non-rendered tags to refuse before reading it) for a
+# case no machine here reaches. Such a node is assigned, as it was before typing.
 #
 # The two kinds differ on whether the node holds a line break: a <textarea>
 # holds one as a character, an <input>'s value sanitization strips it.

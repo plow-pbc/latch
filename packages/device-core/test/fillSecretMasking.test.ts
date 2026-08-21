@@ -611,10 +611,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(masked.node_len).toBe(masked.asked_len);
   });
 
-  // How a line break is normalized, per kind, through the real Python fill path.
-  // One contract, so one table: a break survives where the node can hold one and
-  // is dropped where it cannot, CR and CRLF collapse to a single LF either way,
-  // and the rule applies to the TAIL, which is all that gets typed.
+  // What the keys carry, through the real Python fill path. One contract, so one
+  // table: a line break survives where the node can hold one and is dropped
+  // where it cannot, CR and CRLF collapse to a single LF either way, and both
+  // that rule and the tab guard apply to the TAIL, which is all that gets typed.
   //
   // Every row types. That is the point — the branch this replaced gave the
   // keystrokes up whenever a break appeared, which is the one property issue #86
@@ -642,6 +642,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       what: "a break in the assigned head leaves the tail typed as it was",
       scenario: "newline_outside_tail", typedLen: probed.constants.typed_chars,
     },
+    {
+      what: "a tab in the assigned head leaves the tail typed as it was",
+      scenario: "tab_outside_tail", typedLen: probed.constants.typed_chars,
+    },
   ])("$what", ({ scenario, typedLen }) => {
     const run = probed[scenario];
     expect(run.trace).toContain("handle.type");
@@ -659,16 +663,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     const run = probed.tab_value;
     expect(run.trace).not.toContain("handle.type");
     expect(run.typed_len).toBeNull();
-    expect(run.result).toEqual({ ok: true, frame: 0 });
-  });
-
-  it("types the tail of a long value whose tab is in the assigned head", () => {
-    // Scoped to the tail, like the line-break rule: only what gets typed can
-    // send a key. Widening it to the whole value would send every long
-    // tab-bearing value to a bare assignment, ending the field on no keys.
-    const run = probed.tab_outside_tail;
-    expect(run.trace).toContain("handle.type");
-    expect(run.typed_len).toBe(probed.constants.typed_chars);
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
