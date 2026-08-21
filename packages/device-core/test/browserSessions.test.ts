@@ -717,10 +717,16 @@ describe("every browser opens as the user, already signed in", () => {
     new URL("../../../vendor/browser-server/merge_cookies.py", import.meta.url),
   );
 
-  /** A real Firefox-shaped cookie store holding the sites named. */
+  /** A real Firefox-shaped cookie store holding the sites named.
+   *
+   * `host` or `host=value` — the value is what a refreshed token changes and a
+   * read does not, which is what the merge has to tell apart. */
   const cookieStore = (file: string, hosts: string[], usedAt = 1): void => {
     const rows = hosts
-      .map((h, i) => `('sid','yes','${h}','/',0,${usedAt + i},1,1,1,0,0,0,1,'')`)
+      .map((h, i) => {
+        const [host, value = "yes"] = h.split("=");
+        return `('sid','${value}','${host}','/',0,${usedAt + i},1,1,1,0,0,0,1,'')`;
+      })
       .join(",");
     execFileSync(PYTHON, [
       "-c",
@@ -737,13 +743,16 @@ db.commit()`,
     ]);
   };
 
-  /** Which sites a profile is signed into. */
-  const signedInto = (dir: string): string[] =>
+  /** Which sites a profile is signed into, and with what. */
+  const signedInto = (dir: string, withValues = false): string[] =>
     execFileSync(PYTHON, [
       "-c",
       `import sqlite3,sys
-print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host FROM moz_cookies ORDER BY host")))`,
+rows = sqlite3.connect(sys.argv[1]).execute("SELECT host, value FROM moz_cookies ORDER BY host")
+show = len(sys.argv) > 2
+print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
       path.join(dir, "cookies.sqlite"),
+      ...(withValues ? ["values"] : []),
     ])
       .toString()
       .split("\n")
@@ -823,6 +832,27 @@ print("\\n".join(h for (h,) in sqlite3.connect(sys.argv[1]).execute("SELECT host
     await sessions.close(second, "agent");
     expect(signedInto(seed)).toEqual(["a.example", "b.example", "his.example"]);
     expect(fs.readdirSync(profiles)).toEqual([]);
+  });
+
+  it("does not let a browser that only READ a site undo one that signed in again", async () => {
+    // Reading a page moves a cookie's timestamp. Merging on "more recently
+    // used" alone let a browser that touched nothing put its months-old copy
+    // of a token over the fresh one another browser had just been given —
+    // signing the user out by doing nothing.
+    const { sessions, seed, profiles } = signedIn({ has: ["site.example=old-token"] });
+    const refreshed = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const refreshedDir = only(profiles);
+    const stale = jv(await sessions.open("int-2", AGENT, ["a.example"], false)).get("session").str!;
+    const staleDir = path.join(profiles, fs.readdirSync(profiles).find((d) => path.join(profiles, d) !== refreshedDir)!);
+
+    // One session is handed a new token; the other only reads the same site,
+    // which moves its timestamp past the first's without changing anything.
+    cookieStore(path.join(refreshedDir, "cookies.sqlite"), ["site.example=new-token"], 50);
+    cookieStore(path.join(staleDir, "cookies.sqlite"), ["site.example=old-token"], 90);
+
+    await sessions.close(refreshed, "agent");
+    await sessions.close(stale, "agent");
+    expect(signedInto(seed, true)).toEqual(["site.example=new-token"]);
   });
 
   it("keeps a first sign-in on a Mac whose owner has no profile yet", async () => {

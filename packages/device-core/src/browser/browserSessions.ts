@@ -411,6 +411,27 @@ export class BrowserSessions {
     for (const lock of [".parentlock", "parent.lock", "lock"]) {
       fs.rmSync(path.join(dir, lock), { force: true });
     }
+    // What this session started with, kept beside the clone. Merging back
+    // needs to tell a cookie this session CHANGED from one it merely read:
+    // reading moves a cookie's timestamp, and "more recent" alone would let a
+    // browser that only looked at a site put its stale copy of a token over
+    // the fresh one another browser was just given. Another clone, so free.
+    const baseline = this.baselineOf(dir);
+    const cookies = path.join(dir, "cookies.sqlite");
+    if (fs.existsSync(cookies)) {
+      fs.mkdirSync(baseline, { recursive: true, mode: 0o700 });
+      for (const suffix of ["", "-wal", "-shm"]) {
+        if (fs.existsSync(cookies + suffix)) {
+          execFileSync("/bin/cp", ["-c", cookies + suffix, path.join(baseline, `cookies.sqlite${suffix}`)]);
+        }
+      }
+    }
+  }
+
+  /** Where a session's starting cookies live: inside its own profile, which
+   * Firefox ignores and which takes them with it when the session ends. */
+  private baselineOf(dir: string): string {
+    return path.join(dir, ".plow-baseline");
   }
 
   /**
@@ -474,7 +495,7 @@ export class BrowserSessions {
     if (!merge?.length) throw new Error("this browser runtime ships no cookie merger");
     // Off the event loop: sqlite waits on a busy store, and a browser closing
     // must not stall every other call this Mac is serving.
-    await run(merge[0], [...merge.slice(1), into, from]);
+    await run(merge[0], [...merge.slice(1), into, from, path.join(this.baselineOf(dir), "cookies.sqlite")]);
   }
 
   /**
