@@ -123,15 +123,15 @@ from, the audit log stores, and the adversarial reviewer evaluates.
     { "kind": "network",      "allowed": false }
   ],
   "createdAt": "…", "expiresAt": "…(+120s)",
-  "sessionId": "uuid", "nonce": "uuid",
-  "signature": "ed25519 over canonical JSON of everything above"
+  "sessionId": "uuid", "nonce": "uuid"
 }
 ```
 
-- **Signing:** canonical JSON (sorted keys, ISO-8601 dates) signed Ed25519.
-  In v1 the broker holds agent private keys and signs on the agent's behalf
-  (the agent *runtime* holds the key — Claude Code itself can't do crypto);
-  the device verifies against the public key pinned at access-grant time.
+- **Signing:** the intent carries none. It is built on this Mac from an
+  authenticated agent's tool call and never crosses the wire, so there is
+  nothing to verify. What *is* signed is the **Grant**: the device's Ed25519
+  signature over canonical JSON (sorted keys, ISO-8601 dates), the Mac
+  attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 

@@ -273,7 +273,7 @@ run the app against it, drive it by hand. The procedure is in
 
 `packages/relay-client/test` does hold automated coverage of the client's own
 protocol behavior over a fake connection; `docs/TESTING-THE-APP.md` enumerates
-what, and is the one place that does.
+what.
 
 ## Running the desktop app
 

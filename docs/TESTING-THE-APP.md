@@ -38,7 +38,7 @@ What went, and what it did:
 
 **What this costs, so nobody rediscovers it the hard way:** `@domo/relay-client` does carry
 automated tests — `test/wire.test.ts` for the pure wire contract, and `test/liveness.test.ts` /
-`test/lifecycle.test.ts` driving the client over a `FakeConn` through the auth handshake, the
+`test/lifecycle.test.ts` driving the client over hand-written fake connections through the auth handshake, the
 heartbeat, reconnect-with-backoff, and a dial that resolves after `stop()`. What none of them do is
 open a socket or tunnel an MCP call: no test in `npx vitest run` talks to a real relay, and nothing
 in CI does either. Those paths are verified **by hand**, by running the app
