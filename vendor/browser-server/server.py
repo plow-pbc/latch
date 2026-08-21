@@ -269,10 +269,10 @@ TYPEABLE_JS = """(el) => {
     // asked, KEYS_DROPPED_JS sees no drop, no repair runs, and a value the node
     // never held is reported as landed. Asking for a string excludes every form
     // control by construction rather than by a list that cannot be closed -- and
-    // asking for mere presence would over-reach, because <li> (a long) and
-    // <progress>/<meter> (doubles) carry a NUMERIC `value` while holding their
-    // text in textContent, and an <li contenteditable> is ordinary editor
-    // markup. <output> and <data> go the other way: their `value` is a
+    // asking for mere presence would over-reach, because <li> carries a NUMERIC
+    // `value` (a long) while holding its text in textContent, and an
+    // <li contenteditable> is ordinary editor markup. <output> and <data> go the
+    // other way: their `value` is a
     // DOMString, so they are refused here -- an accepted loss, since a declared
     // editor is not what either element is for.
     if (typeof el.value === "string") return "";
@@ -394,23 +394,23 @@ def _type_value(el, value):
     if not kind:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
-    if kind == "multiline":
-        # The one node that holds a newline as a character -- and it holds only
-        # LF: a textarea's API value normalizes CR and CRLF to a single LF.
-        # `type()` sends CR and LF alike as Enter, so an un-normalized CRLF would
-        # press it TWICE where the assignment stores one break, and the read-back
-        # could never be a prefix of what was asked -- which switches
-        # KEYS_DROPPED_JS off for the whole fill, so a maxlength truncation on
-        # that same value would go unrepaired and be reported as landed.
-        # Normalizing first means the head, the tail and the `wanted` compared
-        # below are all the string the node ends up holding, by either path.
-        value = value.replace("\r\n", "\n").replace("\r", "\n")
-    elif any(c in value[-TYPED_CHARS:] for c in ("\n", "\r")):
-        # Only the tail is typed, so only the tail can press Enter -- which at a
-        # single-line field submits the form with part of the value in it.
-        # `fill()` could never do that, so typing must not introduce it.
-        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-        return
+    # Everything below compares against `value` -- the prefix test that decides
+    # whether the keys landed, and the assignment that repairs them when they did
+    # not. Each has to speak the string the node will actually HOLD, or it
+    # answers about a value that never existed anywhere.
+    #
+    # `type()` sends CR and LF alike as Enter. A textarea keeps that as one LF,
+    # because its API value normalizes CR and CRLF. Nowhere else does the break
+    # survive at all: an <input> strips CR and LF in its value sanitization, and
+    # a declared host reads back through textContent, which returns the text
+    # without the markup Enter made of it. Normalizing to that here, once, is
+    # also what makes the tail unable to press Enter at a single-line field --
+    # the form can no longer be submitted with half a value in it, by
+    # construction rather than by a branch that gave up the keystrokes to avoid
+    # it.
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    if kind != "multiline":
+        value = value.replace("\n", "")
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
     # the tail's own budget would let TYPED_CHARS of them stack up to that many

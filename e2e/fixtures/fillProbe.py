@@ -497,9 +497,10 @@ def main() -> int:
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
                                      marked=True, value="hunter2"),
         "plain": run(server, base),
-        # A value carrying a newline, at a single-line field. `type()` would send
-        # it as the Enter key and submit the form mid-value, which `fill()` could
-        # never do, so the whole value is assigned instead.
+        # A value carrying a newline, at a single-line field. The node could not
+        # hold the break anyway -- an <input> strips it in value sanitization --
+        # so it is normalized away and the rest still goes in as real keys, and
+        # no Enter is ever sent at a form.
         "newline_single_line": run(server, {**base, "value": "one\ntwo"}),
         # The same value at a textarea, which is the one node that holds a
         # newline as a character: it keeps its keystrokes.

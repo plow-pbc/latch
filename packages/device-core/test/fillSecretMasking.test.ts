@@ -611,17 +611,16 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(masked.node_len).toBe(masked.asked_len);
   });
 
-  it("assigns a value carrying a newline rather than pressing Enter at a form", () => {
-    // `type()` sends a newline as the Enter key, which submits the form from a
-    // single-line field with only part of the value in it. `fill()` could never
-    // do that, so typing must not introduce it: the whole value is assigned.
-    // What the probe can honestly answer is that no key was sent and the assign
-    // path ran. Not that the node holds the value verbatim: a real single-line
-    // input runs the value sanitization algorithm on assignment and strips
-    // CR/LF, which the fake's plain assignment cannot model.
+  it("drops a break a single-line field could not hold, and still types the rest", () => {
+    // An <input> strips CR and LF in its value sanitization, so the break was
+    // never going to survive by any path. Normalizing it away up front is what
+    // lets the value still go in as real keys — and it is why no Enter can be
+    // sent at a form, rather than a branch that gave up the keystrokes to avoid
+    // sending one.
     const run = probed.newline_single_line;
-    expect(run.trace).not.toContain("handle.type");
-    expect(run.typed_len).toBeNull();
+    expect(run.trace).toContain("handle.type");
+    expect(run.typed_has_cr).toBe(false);
+    expect(run.typed_len).toBe("onetwo".length);
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
@@ -643,6 +642,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     const run = probed.newline_outside_tail;
     expect(run.trace).toContain("handle.type");
     expect(run.typed_len).toBe(probed.constants.typed_chars);
+    expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
   it("presses Enter once for a CRLF, and compares against what the node will hold", () => {
@@ -654,6 +654,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.trace).toContain("handle.type");
     expect(run.typed_has_cr).toBe(false);
     expect(run.typed_len).toBe("one\ntwo".length);
+    expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
   it("assigns the value outright when the keys did not compose it", () => {
@@ -1325,6 +1326,9 @@ describe("which nodes take typing", () => {
     { what: "an iframe declaring itself an editor", el: host("IFRAME", "true"), kind: "" },
     { what: "an image declaring itself an editor", el: host("IMG", "true"), kind: "" },
     { what: "a canvas declaring itself an editor", el: host("CANVAS", "true"), kind: "" },
+    { what: "a video declaring itself an editor", el: host("VIDEO", "true"), kind: "" },
+    { what: "an audio element declaring itself an editor", el: host("AUDIO", "true"), kind: "" },
+    { what: "a meter declaring itself an editor", el: host("METER", "true", { value: 0 }), kind: "" },
     // Form controls declaring themselves hosts. Each carries its text in a
     // string `value`, so the read-back could never recognise the typed
     // characters — and typing at a <select> drives option type-ahead instead of
