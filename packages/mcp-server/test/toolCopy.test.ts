@@ -293,8 +293,8 @@ describe("every tool says what kind of tool it is", () => {
         "plow_get_result",
         "plow_list_skills",
         "plow_read_file",
-        // list/describe only, and no tool here returns a vault value.
         "plow_read_skill",
+        // list/describe only, and no tool here returns a vault value.
         "plow_vault",
       ],
     },
