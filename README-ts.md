@@ -14,7 +14,7 @@ the architecture and the reasoning behind each decision).
 > coverage: the in-repo stand-in was deleted and there is no automated
 > live-stack path either, so that leg is verified by hand. What remains here
 > is the wire contract plus handshake, heartbeat and reconnect against a fake
-> connection. See § Integration coverage.
+> connection. See [§ Integration coverage](#integration-coverage).
 
 ## Layout
 
