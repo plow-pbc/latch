@@ -139,8 +139,8 @@ class Handle:
         if "__domoDocumentToken" in js:
             return self.document_token
         if "bare(" in js:
-            wanted = args[0] if args else ""
-            if self.field_type == "password":
+            wanted, exact = (args[0] if args else ["", False])
+            if exact:
                 return (self.value or "") == wanted
             seps = " \t\r\n-()./"
             bare = lambda t: "".join(c for c in t if c not in seps)  # noqa: E731
@@ -702,6 +702,11 @@ def main() -> int:
         # credential. A count of what survives reformatting says seven either
         # way, so only comparing the stripped values catches it -- punctuation
         # in a password is content, not shaping.
+        # The measure the exact rule changes: eight units whole, seven with the
+        # dash treated as shaping. A cap of seven admits it only under the bare
+        # measure, and a password's dash is not shaping.
+        "secret_fits_only_if_dash_is_shaping": run(
+            server, {**base, "value": "hunt-er2"}, max_length=7, field_type="password"),
         "punctuation_dropped_from_secret": run(
             server, {**base, "value": "hunt-er2"}, max_length=8, reformats="strip",
             field_type="password"),

@@ -650,6 +650,11 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     { what: "a fill the vault does not conceal", scenario: "capped_plain", cap: 4 },
     { what: "a field that holds nothing", scenario: "zero_cap", cap: 0 },
     { what: "a value whose emoji are two code units each", scenario: "astral_over_cap", cap: 4 },
+    // The boundary the exact rule moves: "hunt-er2" is eight units whole and
+    // seven with the dash read as shaping. A cap of seven admits it only under
+    // the bare measure, and a password's dash is not shaping.
+    { what: "a secret that fits only if its dash is shaping",
+      scenario: "secret_fits_only_if_dash_is_shaping", cap: 7 },
   ])("refuses $what and does not touch the node", ({ scenario, cap }) => {
     const probe = probed[scenario];
     // One shape for every one of them: the vault fills unconcealed fields too,

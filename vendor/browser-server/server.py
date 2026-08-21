@@ -322,13 +322,12 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 # that is not a letter or digit: an emoji, or the punctuation in a password, is
 # content a field cannot reformat away, and counting alphanumerics alone would
 # call losing it no loss at all.
-HOLDS_ALL_JS = f"""(el, wanted) => {{
+HOLDS_ALL_JS = f"""(el, [wanted, exact]) => {{
     const held = {_HELD};
-    // A password input never reformats, so nothing about what it holds is
-    // allowed to differ. Everywhere else the shaping is the field's to change.
-    if ((el.tagName || "").toLowerCase() === "input" && el.type === "password") {{
-        return held === wanted;
-    }}
+    // `exact` comes from FIELD_RULE_JS rather than being decided again here: a
+    // second read of `el.type` is a second definition of the same rule, and one
+    // of them would eventually be the stale one.
+    if (exact) return held === wanted;
     const bare = (t) => t.replace(/[\\s\\-()./]/gu, "");
     return bare(held) === bare(wanted);
 }}"""
@@ -455,7 +454,11 @@ def _refuse_if_impossible(el, value):
     cap = rule["cap"]
     # A field that must match exactly is measured on the whole value: none of it
     # is shaping the field is entitled to drop.
-    needs = _units(value) if rule["exact"] else _bare_units(value)
+    # Line breaks are dropped on the way into any field that is not multiline,
+    # and an exact field never is, so counting them here would refuse a value
+    # that fits.
+    needs = _units(value.replace("\r", "").replace("\n", "")) if rule["exact"] \
+        else _bare_units(value)
     if cap >= 0 and needs > cap:
         raise _FieldTooShort(cap)
 
@@ -468,10 +471,11 @@ def _refuse_unless_kept(el, value):
     control that reformats AND clips -- it took every key it accepted, so no
     prefix test sees the loss.
     """
-    if not el.evaluate(HOLDS_ALL_JS, value):
+    rule = el.evaluate(FIELD_RULE_JS)
+    if not el.evaluate(HOLDS_ALL_JS, [value, rule["exact"]]):
         # It fit -- the capacity question already said so -- and the field
         # dropped some of it regardless.
-        _clear_and_refuse(el, el.evaluate(FIELD_RULE_JS)["cap"], fits=True)
+        _clear_and_refuse(el, rule["cap"], fits=True)
 
 
 UNMASK_JS = """(el) => {
