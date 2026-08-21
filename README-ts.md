@@ -265,8 +265,8 @@ against a stand-in relay built to the wire contract — and that stand-in has no
 been deleted too, along with the drivers and the relay+MCP gate that ran against
 it (head chef's call: a locally running plow API already simulates plow).
 
-So there is **no automated integration coverage of the relay leg at all** today,
-and no automated live-stack path either — the two scripts that drove a real plow
+So there is **no automated end-to-end coverage of the relay leg** today — see
+below for what the in-process tests do reach — and no live-stack path either — the two scripts that drove a real plow
 stack (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
 deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket to a
 real relay or tunnels an MCP call end to end. That whole path is verified
