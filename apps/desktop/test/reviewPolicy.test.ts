@@ -90,6 +90,48 @@ function harness(
   return { run, records, reviewCalls, dialogs, review, openApproval };
 }
 
+/**
+ * What is actually PASSED, not what the prompt says.
+ *
+ * The ratchet was never a wording problem, so this asserts on the argument
+ * `decideIntent` builds: a denial-soaked audit log and an empty one produce the
+ * identical review call, because the history handed over is empty either way.
+ */
+describe("nothing about the past reaches the reviewer", () => {
+  it("passes an empty history however full the audit log is", async () => {
+    const reviewCalls: ReviewArgs[] = [];
+    const review = vi.fn(async (args: ReviewArgs) => {
+      reviewCalls.push(args);
+      return { verdict: "allow" as const, reason: "fine" };
+    });
+    const soaked: JSONValue[] = [
+      { event: "intent_received", intentId: "old", agent: "agent-1", request: "browse: doordash.com" },
+      { event: "intent_decision", intentId: "old", decision: "deny", source: "adversarial" },
+      {
+        event: "adversarial_review_result",
+        intentId: "old",
+        verdict: "deny",
+        reason: "compromised or misaligned agent",
+      },
+      { event: "file_read", intentId: "old", path: "/tmp/earlier.txt" },
+    ];
+    await decideIntent(intent(), {
+      settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      auditEntries: () => soaked,
+      record: () => {},
+      review,
+      openApproval: async () => "deny" as const,
+    });
+
+    expect(reviewCalls).toHaveLength(1);
+    expect(reviewCalls[0].history).toEqual([]);
+    const serialized = JSON.stringify(reviewCalls[0]);
+    expect(serialized).not.toContain("compromised");
+    expect(serialized).not.toContain("earlier.txt");
+  });
+});
+
 describe("availability is credential presence", () => {
   it("signed in, or not", () => {
     expect(reviewerAvailable(settings())).toBe(false);

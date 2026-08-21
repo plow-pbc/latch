@@ -9,7 +9,12 @@
  * reviewer is the only thing that reads the text.
  */
 import { describe, expect, it } from "vitest";
-import { APPROVAL_MODES, PURPOSE_CAVEATS, PURPOSE_LABEL } from "../src/renderer/approvals.js";
+import {
+  APPROVAL_MODES,
+  PURPOSE_CAVEATS,
+  PURPOSE_LABEL,
+  PURPOSE_PLACEHOLDER,
+} from "../src/renderer/approvals.js";
 
 interface Mode {
   value: string;
@@ -65,10 +70,23 @@ describe("approvals card", () => {
   it("states the bound and the cost beside the purpose field", () => {
     // Both halves, and the honest one is not optional: turning this mode on is
     // what stops the questions, and the card has to say so.
+    //
+    // The first line used to promise the purpose could "only narrow what gets
+    // approved". It cannot, and the owner should not be told it can: an owner
+    // who writes "Manage my SSH keys" has just widened the job to include them.
     expect(PURPOSE_CAVEATS).toContain(
-      "It can only narrow what gets approved — each approval still lists the capabilities this Mac will enforce.",
+      "It describes the errand — it can widen what gets approved as easily as narrow it. Each approval still lists the capabilities this Mac will enforce.",
     );
+    expect(PURPOSE_CAVEATS.join(" ")).not.toContain("only narrow");
     expect(PURPOSE_CAVEATS).toContain("Requests that fit may be approved without asking you.");
+  });
+
+  it("models an explicit boundary in the purpose example", () => {
+    expect(PURPOSE_PLACEHOLDER).toContain("DoorDash ordering and delivery tracking");
+    expect(PURPOSE_PLACEHOLDER).toContain("Product Hunt launches");
+    expect(PURPOSE_PLACEHOLDER).toMatch(
+      /You have no business with anything else on this computer — no files, no other sites\.$/,
+    );
   });
 
   it("points Ask mode at the suggestions toggle in its own card", () => {
