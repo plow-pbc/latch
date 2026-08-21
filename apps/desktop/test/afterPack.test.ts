@@ -69,7 +69,15 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow(/CODESIGN_IDENTITY is not set/);
   });
 
-  it("names the runtime alone when none of it was packed", async () => {
+  it.each([
+    { how: "never packed", empty: false },
+    { how: "packed empty", empty: true },
+  ])("names the runtime alone when it was $how", async ({ empty }) => {
+    if (empty) {
+      fs.mkdirSync(path.join(dir, "Plow Latch.app", "Contents", "Resources", "browser-runtime"), {
+        recursive: true,
+      });
+    }
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       /missing browser-runtime — package with/,
     );
@@ -86,6 +94,18 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       `is missing ${path.basename(payload)} —`,
     );
+  });
+
+  it("accepts a payload whose content sits an arch level down", async () => {
+    const runtime = pack();
+    for (const nested of ["vault-cli", "vault-server"]) {
+      fs.rmSync(path.join(runtime, nested), { recursive: true });
+      fs.mkdirSync(path.join(runtime, nested, "arm64"), { recursive: true });
+      fs.writeFileSync(path.join(runtime, nested, "arm64", "binary"), "");
+    }
+    // Past the guard it reaches codesign and dies on the fabricated identity;
+    // what this pins is that the guard itself did not call the tree empty.
+    await expect(afterPack(contextFor(dir))).rejects.not.toThrow(/is missing/);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {

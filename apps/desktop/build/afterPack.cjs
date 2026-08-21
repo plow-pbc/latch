@@ -77,7 +77,9 @@ module.exports = async function afterPack(context) {
   const server = path.join(runtime, "server");
   // Absent and empty are one condition: a payload directory carrying nothing
   // signs nothing, verifies vacuously, and ships the same app.
-  const bare = (d) => !fs.existsSync(d) || fs.readdirSync(d).length === 0;
+  // walk() recurses and yields files, so this sees a payload whose content sits
+  // an arch level down (vault-cli/<arch>/bw) and stops at the first hit.
+  const bare = (d) => !fs.existsSync(d) || walk(d).next().done === true;
   // A bare runtime explains all six children, so it is named on its own.
   const missing = bare(runtime)
     ? ["browser-runtime"]
