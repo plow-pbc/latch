@@ -51,15 +51,89 @@ module.exports = async function afterPack(context) {
   // Only the final universal app matters; the per-arch temp packs are deleted
   // right after the merge.
   if (context.appOutDir.includes("-temp")) return;
-  const identity = process.env.CODESIGN_IDENTITY;
+  // The packager seals the outer app with its configured identity, so the
+  // runtime has to carry that one: two Developer IDs means two team ids, which
+  // is the same dead browsing an unsigned runtime causes. Taking it from the
+  // packager rather than the environment leaves one source, and an env var that
+  // disagrees is a mistake worth stopping for rather than silently overriding.
+  const configured = context.packager.platformSpecificBuildOptions.identity;
+  // electron-builder spells "do not sign" as an explicit null, which is not the
+  // same as leaving it unset. Signing the runtime anyway would put a Developer
+  // ID payload under an ad-hoc shell — the two-team split this guard is for.
+  if (configured === null) {
+    throw new Error(
+      "[afterPack] mac.identity is null, so the app ships unsigned — a signed browser runtime under an ad-hoc shell is the split this hook exists to prevent",
+    );
+  }
+  const identity = configured ?? process.env.CODESIGN_IDENTITY;
   if (!identity) {
-    console.log("[afterPack] CODESIGN_IDENTITY not set — skipping browser-runtime re-sign");
-    return;
+    // An ad-hoc Mach-O carries no team id, so the hardened runtime refuses to
+    // map Python.framework into the python that loads it and browsing is dead
+    // in an app that otherwise looks healthy.
+    throw new Error(
+      "[afterPack] no signing identity — package with `just package` or `just package-unnotarized`",
+    );
+  }
+  if (configured && process.env.CODESIGN_IDENTITY && process.env.CODESIGN_IDENTITY !== configured) {
+    throw new Error(
+      `[afterPack] CODESIGN_IDENTITY (${process.env.CODESIGN_IDENTITY}) is not the packager's identity (${configured})`,
+    );
   }
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  if (!fs.existsSync(runtime)) return;
+  // What a packaged build cannot work without. `vault-cli` is the one payload
+  // left out: the broker defaults SEED_VAULT_BW to a `bw` on PATH. `vault-server`
+  // is NOT its twin — SEED_VAULT_URL defaults to "" and the broker refuses every
+  // credential call as unconfigured, and deviceAgent only supplies a URL when
+  // this build ships the server, so omitting it ships dead credentials.
+  const framework = path.join(runtime, "python", "Python.framework");
+  const sitePackages = path.join(runtime, "python", "site-packages");
+  const server = path.join(runtime, "server");
+  const camoufox = path.join(runtime, "camoufox");
+  const vaultServer = path.join(runtime, "vault-server");
+  // Absent and empty are one condition: a payload carrying nothing signs
+  // nothing, verifies vacuously, and ships the same app. walk() recurses and
+  // stops at the first file, so a tree of empty directories still reads bare.
+  const bare = (d) => !fs.existsSync(d) || walk(d).next().done === true;
+  // A bare runtime explains all five children, so it is named on its own.
+  const missing = bare(runtime)
+    ? ["browser-runtime"]
+    : [framework, sitePackages, server, camoufox, vaultServer]
+        .filter(bare)
+        .map((d) => path.basename(d));
+  if (missing.length > 0) {
+    throw new Error(
+      `[afterPack] the packed app is missing ${missing.join(", ")} — ` +
+        "package with `just package` or `just package-unnotarized`",
+    );
+  }
+  // vault-server has a known interior, and unlike camoufox it is NOT fused: it
+  // ships as two thin per-arch trees the merge passes through (x64ArchFiles),
+  // and vaultServerIn resolves <hostArch>/vaultwarden. So a tree carrying only
+  // the packaging Mac's arch clears every other gate and reaches the other
+  // arch's users with no vault at all — dead credentials, nothing downstream
+  // catches it. web-vault is the build's first step and the resolver's second
+  // requirement, so a run that stopped early leaves it alone here.
+  const missingVault = [
+    ...["arm64/vaultwarden", "x86_64/vaultwarden"].filter(
+      (rel) => !fs.existsSync(path.join(vaultServer, rel)),
+    ),
+    ...(bare(path.join(vaultServer, "web-vault")) ? ["web-vault"] : []),
+  ];
+  if (missingVault.length > 0) {
+    throw new Error(
+      `[afterPack] vault-server is missing ${missingVault.join(", ")} — a vault build that did not finish`,
+    );
+  }
+  // camoufox's interior: a fuse that stopped partway leaves files behind but no
+  // bundle to sign.
+  const camoufoxApps = findApps(camoufox);
+  if (camoufoxApps.length === 0) {
+    throw new Error(
+      "[afterPack] the camoufox payload holds no Camoufox.app — a fuse that did not finish",
+    );
+  }
 
   // 1) Drop non-signable leftovers (belt — the build script prunes them too).
   let dropped = 0;
@@ -87,21 +161,15 @@ module.exports = async function afterPack(context) {
   // individually-signed nested Mach-Os keep their timestamps; sealing only
   // re-signs each bundle's main binary and regenerates CodeResources over the
   // merge-rewritten Info.plists.
-  const framework = path.join(runtime, "python", "Python.framework");
-  if (fs.existsSync(framework)) {
-    const machos = [...walk(framework)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
-    for (const f of machos) signFile(f, HELPER_ENTITLEMENTS);
-    for (const nested of findBundles(framework, ".app")) signFile(nested, HELPER_ENTITLEMENTS);
-    signFile(framework, HELPER_ENTITLEMENTS);
-  }
+  const machos = [...walk(framework)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
+  for (const f of machos) signFile(f, HELPER_ENTITLEMENTS);
+  for (const nested of findBundles(framework, ".app")) signFile(nested, HELPER_ENTITLEMENTS);
+  signFile(framework, HELPER_ENTITLEMENTS);
 
   // 3) Loose site-packages Mach-O (the .so extensions and the Playwright node
   // driver) — individually, deepest first so leaves precede loaders.
-  const sitePackages = path.join(runtime, "python", "site-packages");
-  if (fs.existsSync(sitePackages)) {
-    const loose = [...walk(sitePackages)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
-    for (const f of loose) signFile(f, HELPER_ENTITLEMENTS);
-  }
+  const loose = [...walk(sitePackages)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
+  for (const f of loose) signFile(f, HELPER_ENTITLEMENTS);
 
   // 4) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.
   // `--deep` only discovers nested code in the standard locations (MacOS,
@@ -109,33 +177,24 @@ module.exports = async function afterPack(context) {
   // stub — keeps whatever signature it shipped with (Mozilla's ad-hoc, which
   // notarization rejects). Sign those individually first; the --deep pass
   // then seals them as resources.
-  const camoufox = path.join(runtime, "camoufox");
-  let apps = 0;
-  if (fs.existsSync(camoufox)) {
-    for (const app of findApps(camoufox)) {
-      const inResources = [...walk(app)]
-        .filter(isMachO)
-        .filter((f) => path.relative(app, f).startsWith(path.join("Contents", "Resources") + path.sep))
-        .sort((a, b) => b.split("/").length - a.split("/").length);
-      for (const f of inResources) signFile(f, BROWSER_ENTITLEMENTS);
-      signBundle(app, BROWSER_ENTITLEMENTS);
-      apps++;
-    }
+  for (const app of camoufoxApps) {
+    const inResources = [...walk(app)]
+      .filter(isMachO)
+      .filter((f) => path.relative(app, f).startsWith(path.join("Contents", "Resources") + path.sep))
+      .sort((a, b) => b.split("/").length - a.split("/").length);
+    for (const f of inResources) signFile(f, BROWSER_ENTITLEMENTS);
+    signBundle(app, BROWSER_ENTITLEMENTS);
   }
 
-  // 4b) Vault CLI — one loose Mach-O per arch, helper entitlements (it is a
-  // Node build, so V8 needs JIT).
+  // 4b) vaultwarden, one loose Mach-O per arch.
+  for (const f of walk(vaultServer)) {
+    if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
+  }
+
+  // 4c) `bw`, when this build carries it — a Node build, so V8 needs JIT.
   const vaultCli = path.join(runtime, "vault-cli");
   if (fs.existsSync(vaultCli)) {
     for (const f of walk(vaultCli)) {
-      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
-    }
-  }
-
-  // 4c) Vault server — one loose Mach-O per arch (compiled from Rust source).
-  const vaultServer = path.join(runtime, "vault-server");
-  if (fs.existsSync(vaultServer)) {
-    for (const f of walk(vaultServer)) {
       if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
     }
   }
@@ -165,7 +224,7 @@ module.exports = async function afterPack(context) {
 
   console.log(
     `[afterPack] re-signed browser-runtime: Python.framework + site-packages, ` +
-      `${apps} Camoufox.app, dropped ${dropped} non-signable files; ` +
+      `${camoufoxApps.length} Camoufox.app, dropped ${dropped} non-signable files; ` +
       `verified ${verified} Mach-O (Developer ID + hardened runtime + timestamp)`,
   );
 };

@@ -639,6 +639,12 @@ function mergeCamoufoxUniversal() {
     return;
   }
 
+  // The sweep below requires the two per-arch trees to be byte-identical outside
+  // Mach-O, so patch both before comparing them: one cached (already patched)
+  // and one freshly extracted is otherwise a diff. The universal tree is dittoed
+  // from arm64, so it inherits the patch rather than needing its own.
+  patchCamoufoxDockPolicies();
+
   const installPathOf = (root) => {
     const cfg = JSON.parse(fs.readFileSync(path.join(root, "config.json"), "utf8"));
     return path.join(root, cfg.active_version);
