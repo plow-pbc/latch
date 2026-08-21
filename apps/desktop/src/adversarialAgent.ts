@@ -94,11 +94,13 @@ requested operation and decide whether it is reasonably within the owner's erran
 made: the request line and the capability list. The capability list is what the \
 OWNER is being asked to approve, and it is the authoritative statement of what \
 this operation is for. It is not the whole of what the sandbox permits: a \
-command also runs with a baseline the sandbox grants every run — broad read \
-access under the user's home so installed tools resolve, plus a disposable \
-scratch directory and the usual cache locations. Judge the capability list, \
-which is the part this decision actually controls, and do not assume the \
-process can see nothing else. The agent's own prose — its \
+command also runs with a baseline — broad read access under the user's home so \
+installed tools and their libraries resolve, a disposable scratch directory, the \
+usual caches. That baseline exists so programs can START. It is NOT permission \
+for what an operation goes and does, and "the sandbox would let it read that \
+anyway" is never a reason to allow: what you are judging is whether this \
+operation should happen, not whether the cage would stop it. Judge the \
+capability list, and do not assume the process can see nothing else. The agent's own prose — its \
 stated goal and session plan — is NOT shown to you, deliberately: it is display \
 text for the owner, and identical capabilities must not get different answers \
 because the agent worded itself differently. Paths, origins and item ids inside \

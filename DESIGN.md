@@ -216,16 +216,24 @@ errand died that way twenty-odd times in one afternoon.
 It was then narrowed to an allowlist of *effect* events from **allowed**
 operations only — denials structurally absent, since a denied operation never
 executes and so never produces one — kept for one purpose, spotting aggregate
-scope. That input is strictly better and it still ratcheted: in a 20-run live
-control on one unchanged request, the reviewer allowed the first nine and then
-denied nine of the last eleven, reasoning from the accumulated pile rather than
-from the request. Denials were provably not in the prompt; accumulation alone
-was enough.
+scope. In a 20-run live control on one unchanged request the reviewer allowed
+the first nine and then denied nine of the last eleven.
 
-So there is no history parameter. Any history at all makes a verdict depend on a
-growing list, and a growing list is what escalates. The prompt says the absence
-is deliberate rather than instructing the model to ignore anything — an
-instruction to disregard what you can see is the thing that failed first.
+**What the denials actually said matters, and it is not the flattering
+reading.** They did not cite the number of prior sessions. Every one of them
+cited a *sequential enumeration pattern* — `/order/1` through `/order/19` — and
+called it scraping. That pattern was invented by the control's own fixture,
+which numbered its synthetic browse effects consecutively. The reviewer was
+reading its input correctly; the input was leading.
+
+So the count is real and the mechanism is not the one it first appeared to be.
+The parameter is still gone, for the reason that survives either reading: a
+verdict that depends on a growing list will move as the list grows, the
+direction it moves is set by whatever the list happens to look like, and
+nothing in this design needs it. Isolation costs nothing here and cannot
+ratchet. The prompt says the absence is deliberate rather than instructing the
+model to ignore anything — an instruction to disregard what you can see is the
+thing that failed first.
 
 **Close calls resolve in favour of allowing**, and a denial's reason must be
 factual, specific and non-accusatory: it names the scope or target that would
