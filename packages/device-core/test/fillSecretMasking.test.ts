@@ -691,6 +691,23 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // And the clipped prefix really is still there: the honest outcome, and the
     // reason no message about this refusal claims what the field holds.
     expect(probed.cap_lowered_clear_fails.node_len).toBe(4);
+    // Left visible, because an unconcealed vault fill has no mark to keep.
+    expect(probed.cap_lowered_clear_fails.marked).toBe(false);
+  });
+
+  it("keeps a prefix it could not clear concealed and tracked", () => {
+    // Same failure on a concealed fill, and the mask bookkeeping between the
+    // clear and the answer asks the node questions of its own — none of which
+    // may replace the refusal either.
+    expect(probed.cap_lowered_clear_fails_masked.result).toEqual({
+      ok: false, mask: "too_long", cap: 4, frame: 0,
+    });
+    // A prefix of a credential is in the field and could not be removed, so it
+    // stays covered and the ledger knows about it. This is the one path where
+    // something of the value survives, and it is the one that hides it.
+    expect(probed.cap_lowered_clear_fails_masked.node_len).toBe(4);
+    expect(probed.cap_lowered_clear_fails_masked.marked).toBe(true);
+    expect(probed.cap_lowered_clear_fails_masked.ledgered).toBe(true);
   });
 
   it("still repairs dropped keys when the cap did not move", () => {

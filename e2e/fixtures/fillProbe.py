@@ -634,6 +634,12 @@ def main() -> int:
         # this path exists to stop producing.
         "cap_lowered_clear_fails": run(server, {**base, "value": "hunter2"},
                                        max_length=20, max_length_after=4, clear_fails=True),
+        # The same, concealed: the mask bookkeeping runs between the clear's
+        # failure and the answer, and it asks the node questions. If one of
+        # those replaced the refusal the concealed path would lose the cap
+        # exactly where the unconcealed one keeps it.
+        "cap_lowered_clear_fails_masked": run(server, {**base, "mask": True, "value": "hunter2"},
+                                              max_length=20, max_length_after=4, clear_fails=True),
         # maxlength="0" is valid HTML and holds nothing. -1 is the only value
         # that means uncapped, so 0 must refuse rather than read as "no cap".
         "zero_cap": run(server, {**base, "value": "x"}, max_length=0),
