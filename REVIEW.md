@@ -50,10 +50,10 @@ they serve that same group — a packaged release is not evidence of scale.
   every browser on this Mac is the owner's (`CLAUDE.md`, and
   `BrowserSessions.validate()`). Treat handle-authority as intended, not as a
   cross-agent gap.
-- **Nothing may block past the relay call budget** — `CLAUDE.md` § Layout owns
-  the value, and `packages/mcp-server`'s `CALL_BUDGET_MS` is what this Mac
-  allows itself inside it. That is why file ops are async and size-capped, and
-  why slow tools return a deferred handle.
+- **Nothing may block past the relay call budget** —
+  `packages/mcp-server/src/deferred.ts` owns `RELAY_TIMEOUT_MS`,
+  `CALL_BUDGET_MS` and the margin between them. That is why file ops are async
+  and size-capped, and why slow tools return a deferred handle.
 - The renderer is sandboxed (`contextIsolation` on, `nodeIntegration` off,
   strict CSP, no remote content) and reaches main only through `preload.cts`.
 - Everything honors `DOMO_HOME`, so tests use throwaway roots.
