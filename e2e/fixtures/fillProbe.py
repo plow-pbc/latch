@@ -508,7 +508,7 @@ def main() -> int:
         # submit the form with half a credential in it.
         "cr_single_line": run(server, {**base, "value": "one\rtwo"}),
         # The same value at a node that keeps the break. This stands for a
-        # textarea specifically: the fake holds back exactly what was typed, so
+        # textarea specifically: the fake reads back exactly what was typed, so
         # it cannot model a declared host, whose textContent read-back does not
         # see the markup Enter made -- which is also why the host's prefix
         # comparison is unpinned. There `wanted` carries an LF the read-back
