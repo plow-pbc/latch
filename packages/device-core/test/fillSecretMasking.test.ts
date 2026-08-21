@@ -1169,43 +1169,104 @@ describe("whether a fill that failed left anything behind", () => {
   });
 });
 
-describe("which fields take real keys", () => {
-  const typeable = loadScript("TYPEABLE_JS") as (el: {
-    tagName: string;
-    type?: string;
-  }) => boolean;
+describe("which nodes take typing", () => {
+  // The predicate itself, run as the page runs it — no python, no browser. What
+  // it decides is which nodes get keystrokes and which are assigned, and the
+  // whole hazard is on the false side: `type()` refuses nothing, so "yes" typed
+  // at a checkbox toggles nothing and answers ok, a <select> changes option by
+  // type-ahead, a date input takes the segments in locale order, a hidden input
+  // cannot even hold focus — so the keystrokes, on the credential path a
+  // secret's characters, land wherever focus already was.
+  const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => boolean;
+  // Each stub carries what the predicate READS of that shape, and nothing more:
+  // a property no branch reaches reads as coverage while pinning nothing. For an
+  // input and a textarea that is `disabled`/`readOnly` — both really have them,
+  // and the last line is the only thing standing between a read-only field and a
+  // credential typed at it. For an input it is also `type`, an enumerated
+  // reflection: always lowercase, and "text" for an attribute that is missing or
+  // unrecognised, which is why `getAttribute` is here to disagree with it. For
+  // everything else it is `contenteditable` and the document's design mode.
+  const input = (type: string, extra: Record<string, unknown> = {}) => ({
+    tagName: "INPUT", type, disabled: false, readOnly: false,
+    getAttribute: (k: string) => (k === "type" ? type : null), ...extra,
+  });
+  // `type` is not the input's alone — a textarea answers "textarea" — so a
+  // predicate that dropped the tag check and asked `el.type` by itself would
+  // send every textarea back to assignment, and a stub answering undefined
+  // would not notice.
+  const textarea = (extra: Record<string, unknown> = {}) => ({
+    tagName: "TEXTAREA", type: "textarea", disabled: false, readOnly: false,
+    getAttribute: () => null, ...extra,
+  });
+  // Any other element: it carries no `contenteditable`, which is what every
+  // node inside a rich-text region has in common with every node outside one.
+  const element = (tagName: string, extra: Record<string, unknown> = {}) => ({
+    tagName, getAttribute: () => null, ...extra,
+  });
+  // One that declares itself an editor, with whatever value.
+  const host = (tagName: string, attr: string = "") =>
+    element(tagName, { getAttribute: (k: string) => (k === "contenteditable" ? attr : null) });
+  // A document put wholly into edit mode, which declares its own body and
+  // nothing else.
+  const inDesignMode = (tagName: string) =>
+    element(tagName, { ownerDocument: { designMode: "on" } });
 
-  // Which fields get real keys and which keep the assignment they always had.
-  // Asserted against the literal `server.py` evaluates, because the list IS the
-  // behavior — the probe stubs the answer, so only this can catch an edit to it.
   it.each([
-    { what: "a text box", el: { tagName: "INPUT", type: "text" }, typed: true },
-    { what: "a password box", el: { tagName: "INPUT", type: "password" }, typed: true },
-    // A one-time code or a CVV is routinely declared this way, and it composes
-    // its value from the keys exactly as a text box does.
-    { what: "a number field", el: { tagName: "INPUT", type: "number" }, typed: true },
-    { what: "a tel field", el: { tagName: "INPUT", type: "tel" }, typed: true },
-    { what: "an email field", el: { tagName: "INPUT", type: "email" }, typed: true },
-    { what: "a search field", el: { tagName: "INPUT", type: "search" }, typed: true },
-    { what: "a url field", el: { tagName: "INPUT", type: "url" }, typed: true },
-    { what: "a textarea", el: { tagName: "TEXTAREA" }, typed: true },
-    { what: "a contenteditable", el: { tagName: "DIV" }, typed: true },
-    // Typing "2026-08-19" into one of these lands 6081-02-02, silently.
-    { what: "a date field", el: { tagName: "INPUT", type: "date" }, typed: false },
-    {
-      what: "a datetime-local field",
-      el: { tagName: "INPUT", type: "datetime-local" },
-      typed: false,
-    },
-    // These do take their characters; they are assigned because no defense
-    // samples them, so there is nothing to weigh against the path they had.
-    { what: "a time field", el: { tagName: "INPUT", type: "time" }, typed: false },
-    { what: "a month field", el: { tagName: "INPUT", type: "month" }, typed: false },
-    { what: "a week field", el: { tagName: "INPUT", type: "week" }, typed: false },
-    // Not textual at all: these refuse keys outright.
-    { what: "a colour picker", el: { tagName: "INPUT", type: "color" }, typed: false },
-    { what: "a range slider", el: { tagName: "INPUT", type: "range" }, typed: false },
-  ])("$what is $typed to type into", ({ el, typed }) => {
+    // Every type on the list, because dropping one silently sends that field
+    // back to assignment — the tell issue #86 is about — with nothing red.
+    { what: "a text field", el: input("text"), typed: true },
+    { what: "an email field", el: input("email"), typed: true },
+    { what: "a password field", el: input("password"), typed: true },
+    { what: "a search box", el: input("search"), typed: true },
+    { what: "a phone field, which is where a one-time code lands", el: input("tel"), typed: true },
+    { what: "a url field", el: input("url"), typed: true },
+    { what: "a number field, which is the card expiry beside a credential", el: input("number"), typed: true },
+    // The commonest input in the wild carries no type attribute at all: the
+    // property answers "text" where `getAttribute` answers null, so a predicate
+    // rewritten to read the attribute — as every other literal in this file does
+    // — would send every one of them back to assignment.
+    { what: "an input with no type attribute", el: input("text", { getAttribute: () => null }), typed: true },
+    // The attribute is case-insensitive and the property is not: ordinary
+    // markup where the two disagree on more than presence.
+    { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), typed: true },
+    { what: "a textarea", el: textarea(), typed: true },
+    { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), typed: true },
+    { what: "a div marked contenteditable=true", el: host("DIV", "true"), typed: true },
+    // The attribute is ASCII case-insensitive; capitalised markup is ordinary.
+    { what: "a div marked contenteditable=TRUE", el: host("DIV", "TRUE"), typed: true },
+    { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), typed: true },
+    { what: "a custom element that carries the attribute", el: host("X-EDITOR"), typed: true },
+    { what: "a checkbox", el: input("checkbox"), typed: false },
+    { what: "a radio button", el: input("radio"), typed: false },
+    { what: "a file picker", el: input("file"), typed: false },
+    { what: "a submit button", el: input("submit"), typed: false },
+    { what: "a hidden input, which cannot take focus", el: input("hidden"), typed: false },
+    { what: "a date input Firefox lays out as segments", el: input("date"), typed: false },
+    { what: "a range slider", el: input("range"), typed: false },
+    { what: "a read-only textarea", el: textarea({ readOnly: true }), typed: false },
+    { what: "a disabled textarea", el: textarea({ disabled: true }), typed: false },
+    // Nodes that declare nothing. Inside a rich-text region every one of them
+    // inherits the editable state — the control where typing picks an option by
+    // type-ahead, the embedded document the mask cannot reach, the ordinary span
+    // where select-all would replace the whole region — and none of them is the
+    // host, which is the only thing the predicate asks about.
+    { what: "a select", el: element("SELECT"), typed: false },
+    { what: "an iframe", el: element("IFRAME"), typed: false },
+    { what: "a span", el: element("SPAN"), typed: false },
+    { what: "an editor explicitly turned off", el: host("DIV", "false"), typed: false },
+    // `contenteditable` is enumerated, so anything outside its keywords means
+    // inherit: carrying the attribute is not declaring a host. These are the
+    // nodes that would otherwise be typed into on the strength of the attribute
+    // alone.
+    { what: "an unrecognised contenteditable value", el: host("SPAN", "banana"), typed: false },
+    { what: "the contenteditable=inherit older guidance taught", el: host("DIV", "inherit"), typed: false },
+    { what: "an iframe carrying an invalid value", el: host("IFRAME", "banana"), typed: false },
+    // designMode declares the body and nothing else: a control in such a
+    // document is no more the editing host than one in a region.
+    { what: "the body of a document in designMode", el: inDesignMode("BODY"), typed: true },
+    { what: "a select in a document in designMode", el: inDesignMode("SELECT"), typed: false },
+    { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), typed: false },
+  ])("$what: typed=$typed", ({ el, typed }) => {
     expect(typeable(el)).toBe(typed);
   });
 });

@@ -234,19 +234,59 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
-# Whether a node's value is the characters it is given. A date or a
-# datetime-local composes its out of something else entirely -- typing
-# "2026-08-19" into one lands 6081-02-02, silently -- and a colour or a range
-# is not textual at all and refuses keys outright. The rest of the date and
-# time family does take its characters, and is assigned anyway for the other
-# reason: none of the family is a field an interrogating defense samples, so
-# there is nothing to weigh against keeping the path they always had.
-# Everything else takes characters as characters, `number` included: a
-# one-time code or a CVV is routinely declared that way, and those are exactly
-# the fields the keystrokes are for. Anything not an <input> -- a textarea, a
-# contenteditable -- is text by construction.
-TYPEABLE_JS = """(el) => el.tagName !== "INPUT" ||
-    ["text", "password", "search", "tel", "url", "email", "number"].includes(el.type)"""
+# Whether this node takes TYPING. `type()` refuses nothing -- it focuses
+# whatever it is given and sends the keys -- so every node `fill()` treats
+# specially has to be recognised here instead. The false side is the whole
+# hazard: "yes" typed at a checkbox toggles nothing and answers ok, a <select>
+# changes option by type-ahead, a date input takes its segments in whatever
+# order the locale puts them (typing "2026-08-19" lands 6081-02-02, silently),
+# a colour or a range refuses keys outright, and a hidden input cannot hold
+# focus at all -- so the characters, on the credential path a secret's, land
+# wherever focus already was. Everything turned down here is ASSIGNED, which is
+# exactly what it got before there was typing: the same value where `fill()`
+# sets one, the same loud refusal where it will not.
+TYPEABLE_JS = """(el) => {
+    const typed = ["text", "email", "password", "search", "tel", "url", "number"];
+    const tag = el.tagName.toLowerCase();
+    if (tag !== "input" && tag !== "textarea") {
+        // The node has to BE the editing host, not merely sit inside one.
+        // `isContentEditable` is the computed, INHERITED state, so everything in
+        // a rich-text region answers true -- a <select> (typing picks an option
+        // by type-ahead), an <iframe> (focus succeeds and the characters go into
+        // the embedded document, where the mask cannot reach), a <style> or a
+        // <template> (not rendered, so focus is a no-op). Naming those was a list
+        // that could never be closed, and leaning on the `fill()` in front does
+        // not close it either -- that gate reads the inherited state too, so a
+        // <span> inside a rich-text region passes it. What only a host has is a
+        // DECLARED value: the attribute is enumerated, so anything outside its
+        // keywords -- a typo, or the "inherit" older guidance taught people to
+        // write -- means inherit, and a span carrying one is no more the host
+        // than its neighbours.
+        //
+        // `designMode = "on"` is the one host that declares itself another way:
+        // it makes the document's own body editable, which is the classic
+        // iframe editor, with no attribute anywhere.
+        const attr = el.getAttribute("contenteditable");
+        if (attr === null) {
+            return tag === "body" && el.ownerDocument.designMode === "on";
+        }
+        const value = attr.toLowerCase();
+        return value === "" || value === "true" || value === "plaintext-only";
+    }
+    if (tag === "input" && !typed.includes(el.type)) return false;
+    return !el.disabled && !el.readOnly;
+}"""
+
+# Whether Enter would SUBMIT rather than insert. `type()` sends a newline as the
+# Enter key, so a value carrying one -- an agent passing a line read from a file
+# or a command, which routinely keeps its trailing newline -- implicitly submits
+# the form from a single-line field, mid-value. `fill()` could never do that, so
+# typing must not introduce it: such a value is assigned whole instead. A
+# <textarea> is the opposite case and must keep its keys, because there a
+# newline IS the character the value is made of.
+ENTER_SUBMITS_JS = """(el) => {
+    return el.tagName.toLowerCase() === "input";
+}"""
 
 # How a node holds its text: `value` for an input, `textContent` for a
 # contenteditable, which `TYPEABLE_JS` sends down the typed path too. Asking an
@@ -301,9 +341,11 @@ def _respond(payload):
 def _type_value(el, value):
     """Put `value` into a resolved node so that the field ends on real keys.
 
-    A node is first asked whether its value is even the characters it is given.
-    One that answers no is a widget, and is assigned whole, exactly as this
-    always did.
+    A node is first asked whether it takes typing at all -- whether it is a
+    text-carrying input, a textarea, or an element that DECLARES itself an
+    editing host. One that answers no is assigned whole, exactly as this always
+    did. So is a value whose tail carries a newline, which `type()` would send
+    to a single-line field as the Enter key and submit the form mid-value.
 
     For the rest, everything before the last TYPED_CHARS is assigned in one go
     -- that is the `el.fill()` the rest of this exists to avoid, used
@@ -329,6 +371,12 @@ def _type_value(el, value):
     every path from here on leaves the caller's failure handling to unwind it.
     """
     if not el.evaluate(TYPEABLE_JS):
+        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        return
+    # Only the tail is typed, so only the tail can press Enter. Asked here rather
+    # than inside TYPEABLE_JS because it costs a round trip, and a value carrying
+    # a newline is the rare one -- an ordinary fill never pays for it.
+    if any(c in value[-TYPED_CHARS:] for c in ("\n", "\r")) and el.evaluate(ENTER_SUBMITS_JS):
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
