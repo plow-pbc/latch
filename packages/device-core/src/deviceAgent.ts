@@ -6,8 +6,10 @@
  * There is no transport here any more. The broker link — dialing, the
  * enrollment challenge, pairing, reconnect, and the agent-key pinning that went
  * with them — was removed with the broker itself; an Intent is now built
- * in-process from an authenticated agent's call and never crosses a wire, so
- * there is no signature to verify and no agent public key to pin.
+ * in-process from an authenticated agent's call and is never *received* over a
+ * wire, so there is no third party's signature to verify and no agent public
+ * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
+ * object* owns where an intent's contents go.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import os from "node:os";
@@ -159,7 +161,7 @@ export class DeviceAgent {
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
         // Every `browser` action is non-deferrable and must answer inside the
-        // relay's ~20s per-exchange ceiling; cap the per-action wait below it so
+        // relay's per-exchange ceiling; cap the per-action wait below it so
         // a hung page/eval returns an error in time instead of a torn 504. The
         // cold start is separate (startTimeoutMs) and paid by the deferrable
         // plow_browser_open, so it does not need to fit this bound.
@@ -220,8 +222,9 @@ export class DeviceAgent {
           : undefined,
         beforeRun: vault ? () => vault.start() : undefined,
         auditPath: path.join(browserDir, "credential-audit.log"),
-        // The relay gives up around 20s and every browser action is capped at
-        // 15s, so the broker has to fail inside that or the session dies.
+        // Innermost of three nested deadlines: the broker fails inside the
+        // per-action cap, which sits inside the relay's own ceiling. It has to
+        // give up first or the session dies with it.
         timeoutMs: 12_000,
         person: vaultPerson,
         fleetToken: process.env.DOMO_VAULT_TOKEN,

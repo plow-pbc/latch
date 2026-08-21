@@ -1,9 +1,17 @@
 # Network & Security Runbook
 
-**What this is:** the ordered, concrete plan for taking Domo from the v1 local
-loop (Unix sockets, no encryption) to a networked, secured deployment. It is
-written to be *executed* — one phase at a time — either by you or by handing a
-single phase to Claude Code (`claude -p "Do Phase 2 of docs/network-security-runbook.md"`).
+> **Superseded — do not execute.** This runbook plans the *broker* architecture,
+> which has been removed. A Mac now dials out to the Plow relay, which
+> authenticates the calling agent; an intent is built on this Mac and carries no
+> agent signature and no pinned agent key. The "Invariants to preserve" below
+> still require both, so following a phase would rebuild a protocol the shipped
+> path deliberately dropped — and the Swift sources several phases target are
+> gone. Kept as the record of what was planned and why. See `DESIGN.md`,
+> `README-ts.md` and `CLAUDE.md` for where the transport actually stands.
+
+**What this was:** the ordered, concrete plan for taking Domo from the v1 local
+loop (Unix sockets, no encryption) to a networked, secured deployment. It was
+written to be executed one phase at a time.
 
 **Why it's a separate file:** none of this is needed for feature development.
 Features live above the transport and are built/tested on the local Unix-socket

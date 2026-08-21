@@ -1,7 +1,7 @@
 /**
  * Browser session store and the enforcement core.
  *
- * A session is created/widened only by an approved signed intent; every
+ * A session is created/widened only by an approved intent; every
  * subsequent command is validated here against the session's approved bound:
  * - navigation targets must match the origin allowlist (checked BEFORE goto);
  * - after every action the observed URL is re-checked (clicks and page JS
@@ -143,7 +143,8 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
 
 /**
  * Longest a single `wait` action may park an exchange. The relay abandons a
- * tunnelled call at ~20s and `browser` is non-deferrable, so every action must
+ * tunnelled call at its own ceiling (`CLAUDE.md` § Layout owns the value) and
+ * `browser` is non-deferrable, so every action must
  * answer well inside that; `wait` and `goto` are the only ones that can run
  * long by design and are bounded (here and in server.py / BrowserHost). A
  * longer pause is expressed as several waits.
@@ -298,7 +299,7 @@ export class BrowserSessions {
 
     // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
     // start (~30s) absorbs into the deferred handle; every later `browser`
-    // action is non-deferrable and must answer well inside the relay's ~20s
+    // action is non-deferrable and must answer well inside the relay's
     // per-exchange ceiling, which it can only do against an already-running
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
     try {

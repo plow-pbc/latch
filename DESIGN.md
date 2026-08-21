@@ -3,13 +3,13 @@
 **Status:** v1 (local loop) — decisions locked 2026-08-08
 **Audience:** Domo developers and agents working on this codebase.
 
-Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a person's
-Mac — read and write files, run CLI commands with streaming output, and drive a
-real browser on their machine — through an **intent-based request
-system**: every operation is a structured, signed intent that a human (later, an
-adversarial reviewer agent plus a human escalation path) can inspect and approve
-before it executes inside an on-the-fly sandbox derived from exactly the approved
-capabilities.
+Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a
+person's Mac — read and write files, run CLI commands with streaming output,
+and drive a real browser on their machine — through an **intent-based request
+system**: every operation is a structured intent that a human and an
+adversarial reviewer agent can inspect and approve, with the configured
+approval mode deciding which of them is consulted, before it executes inside an
+on-the-fly sandbox derived from exactly the approved capabilities.
 
 v1 runs entirely on one Mac, but every flow — enrollment, discovery, access
 requests, intents, approvals, revocation — goes through the same protocol a
@@ -104,16 +104,14 @@ Design points:
 
 ## 4. The intent object
 
-Every operation (file read/write, command, browser session) becomes one signed
-intent — the single artifact that the approval UI renders, the sandbox is
-derived from, the audit log stores, and the future adversarial reviewer
-evaluates.
+Every operation (file read/write, command, browser session) becomes one intent
+— the single artifact that the approval UI renders, the sandbox is derived
+from, the audit log stores, and the adversarial reviewer evaluates.
 
 ```json
 {
   "intentId": "uuid",
   "agentId": "fingerprint", "agentDisplay": "Family Coordinator",
-  "agentPublicKey": "base64-ed25519",
   "deviceId": "target-device",
   "goal": "Resize last month's photos for the shared album",
   "planContext": "Session goals from access request / spin-up",
@@ -125,15 +123,25 @@ evaluates.
     { "kind": "network",      "allowed": false }
   ],
   "createdAt": "…", "expiresAt": "…(+120s)",
-  "sessionId": "uuid", "nonce": "uuid",
-  "signature": "ed25519 over canonical JSON of everything above"
+  "sessionId": "uuid", "nonce": "uuid"
 }
 ```
 
-- **Signing:** canonical JSON (sorted keys, ISO-8601 dates) signed Ed25519.
-  In v1 the broker holds agent private keys and signs on the agent's behalf
-  (the agent *runtime* holds the key — Claude Code itself can't do crypto);
-  the device verifies against the public key pinned at access-grant time.
+- **Signing:** the intent carries none. It is never *received* over the wire —
+  it is built on this Mac from an authenticated agent's tool call — so there is
+  no third party's signature to verify. That is not a data-locality claim:
+  whenever the reviewer runs — adversarial mode's verdict and the default `ask`
+  mode's suggestion hint both call it — four things are posted to Plow's
+  chat-completion endpoint (`apps/desktop/src/adversarialAgent.ts`): the
+  agent's display name and id, the request composed on this Mac, the requested
+  capability bounds, and the owner's own `agentPurpose` text, which rides in
+  the system message. Nothing else does — no goal text, and no audit history:
+  `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
+  explains why. WHETHER it runs is decided in precedence order by
+  `packages/device-core/src/policyEngine.ts`, whose stored always-allow rule
+  short-circuits first, and then `apps/desktop/src/reviewPolicy.ts`. What *is*
+  signed is the **Grant**: the device's Ed25519 signature over canonical JSON
+  (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 
@@ -160,8 +168,9 @@ Decisions: **Always allow / Allow once / Deny.**
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
-  not the approval flow. It is the raw material for the future adversarial
-  reviewer and the iOS remote-approval app.
+  not the approval flow. It is the raw material for the future iOS
+  remote-approval app — not for the adversarial reviewer, which is handed
+  `history: []` (§4).
 
 ## 6. Execution & sandbox
 
@@ -213,6 +222,11 @@ the approver what a command *would* touch is a v2 item.
 
 ## 8. Security model & remote milestone
 
+> **Historical.** This section records the broker-era security model — signed
+> intents, pinned agent keys, a Noise channel making the broker a blind relay.
+> The broker is gone; see `CLAUDE.md` and §4 for what ships. Retained as the
+> record of what was decided and why (issue #137).
+
 | Layer | v1 (local) | Remote milestone |
 |---|---|---|
 | Transport | Unix sockets, `0700` runtime dir | TLS to broker, cert-pinned |
@@ -227,19 +241,19 @@ TOFU key pinning, broker holds agent private keys, no revocation UI.
 The transport is abstracted behind `Connection`/`ConnectionListener`/
 `ConnectionDialer` (with a `PeerTrustEvaluator`/`SPKIPin` security seam) so the
 networked transport is a drop-in below `LineRPC`. The step-by-step plan to build
-the network and security layers is **`docs/network-security-runbook.md`**.
+the network and security layers was **`docs/network-security-runbook.md`**, now
+marked superseded — it plans the removed broker and must not be executed.
 
-**Status (remote milestone):** runbook Phases 1–6 are implemented and tested
-(`Tests/DomoNetworkTests`): WebSocket transport (`WebSocketConnection`), SPKI
-certificate pinning (self-signed, no public CA), enrollment + connect-time
-challenge/response, an end-to-end encrypted `E2EChannel` (X25519+Ed25519+HKDF+
-ChaCha20-Poly1305 — CryptoKit, no external dep) that makes the broker a blind
-relay, agent revocation (broker-refuses-routing + device-authoritative), and a
-hosted `wss://` deploy (`scripts/gen-broker-cert.sh`, `just broker-wss`). The one
-piece not yet flipped on in the *running daemon* is relocating intent
-construction/signing from the broker to the agent endpoint so the live channel is
-end-to-end (the `E2EChannel` and its enforcement are complete and tested; see the
-runbook's Phase 4 note). Phase 7 (iOS approval app) is out of scope for now.
+**Status (remote milestone) — historical; this records the broker-era security
+model, which was removed with the broker.** Runbook Phases 1–6 were implemented
+and tested (`Tests/DomoNetworkTests`): WebSocket transport
+(`WebSocketConnection`), SPKI certificate pinning (self-signed, no public CA),
+enrollment + connect-time challenge/response, an end-to-end encrypted
+`E2EChannel` (X25519+Ed25519+HKDF+ChaCha20-Poly1305 — CryptoKit, no external
+dep) that makes the broker a blind relay, agent revocation
+(broker-refuses-routing + device-authoritative), and a hosted `wss://` deploy
+(`scripts/gen-broker-cert.sh`, `just broker-wss`). All of it went with the
+Swift sources; none of it ships.
 
 ## 9. On-disk layout
 
@@ -280,8 +294,8 @@ repo can prove they broke nothing.
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
-  `denied`, …) — tests assert on it; humans read it; the adversarial reviewer
-  will consume it.
+  `denied`, …) — tests assert on it and humans read it. The adversarial reviewer
+  does NOT: it is handed `history: []` on purpose (§4).
 
 `make test` runs everything. `swift test` builds all executables it spawns.
 
@@ -318,18 +332,18 @@ signs out with the clone. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an
-unbounded rule. Instead one signed intent opens a **session** whose capability
-is the enforceable bound — a `browser` capability with an origin allowlist
+unbounded rule. Instead one intent opens a **session** whose capability is
+the enforceable bound — a `browser` capability with an origin allowlist
 (`origins: ["dominos.com", "*.dominos.com"]`, explicit patterns, no PSL
 logic) and optionally `credential` capabilities. Subsequent commands ride the
 session handle over the `browser_command` RPC with no new intent. The handle
 says WHICH browser, not whose: unlike `get_output`, which is checked against
 the agent that started the job, this Mac is one person's and every browser on
-it is theirs, so whoever holds a handle can drive that browser. Widening scope mid-session (a checkout popup
-lands on a payment provider) is a new intent with the identical capability
-shape, so always-allow rules are meaningful and reusable; a fully-ruled task
-runs unattended end to end (the e2e suite asserts a second session is decided
-entirely by `source: "rule"`).
+it is theirs, so whoever holds a handle can drive that browser. Widening
+scope mid-session (a checkout popup lands on a payment provider) is a new
+intent with the identical capability shape, so always-allow rules are
+meaningful and reusable; a fully-ruled task runs unattended end to end (the
+e2e suite asserts a second session is decided entirely by `source: "rule"`).
 
 **Enforcement** lives in `packages/device-core/src/browser/browserSessions.ts`
 — trusted TS between the agent and Playwright, because seatbelt cannot cage a
@@ -618,8 +632,11 @@ if update size becomes a problem.
 3. **Remote:** cloud broker (same wire contract), WebSocket transport, pairing
    codes, revocation; iOS approval app.
 4. **Multi-user:** spaces, capability ceilings, cross-owner approvals.
-5. **Adversarial reviewer:** an agent consuming the same intent + audit stream,
-   sitting between policy and prompt as an additional gate.
+5. **Adversarial reviewer** — *landed*, though not as planned here: it sits
+   between policy and prompt as an additional gate, but judges the one intent
+   in front of it rather than consuming the audit stream (§4).
+   `apps/desktop/src/adversarialAgent.ts`, wired into the approval path at
+   `main.ts`.
 
 The remote milestone is where the **TypeScript re-platform (§13)** lands: the
 hosted broker ships as the first TS component, and the rest of the system
@@ -636,12 +653,14 @@ the Swift golden-vector tool — is **frozen as the protocol spec**: the TS suit
 asserts against it, and any change to those bytes is a deliberate protocol
 break. See `README-ts.md` for the layout and CLAUDE.md for the working rules.
 
-**What landed:**
+**What landed** (as of the migration; see #137 — parts of this list describe
+components since removed)**:**
 - `packages/{protocol,transport,broker-core,device-core}` + `apps/{broker,mcp,device,desktop}`.
-- `fixtures/*.json` golden vectors, asserted byte-for-byte by the TS suite
-  (canonical JSON, intent/grant signing bytes, rule keys, E2E key schedule +
-  AEAD frame, connection strings, path canonicalization, SBPL). Generated by the
-  Swift implementation during the migration; now frozen (the generator is gone).
+- `fixtures/*.json` golden vectors, asserted by the TS suite. Generated by the
+  Swift implementation during the migration; now frozen (the generator is
+  gone). The key-schedule, AEAD-frame and connection-string vectors listed here
+  originally went with the concepts they froze — `README-ts.md` has the six
+  that remain.
 - Mixed-stack E2E: every scenario runs TS/TS, TS-broker+Swift-device, and
   Swift-broker+TS-device (the last two when `.build/debug` exists) — the wire
   contract is proven across implementations.

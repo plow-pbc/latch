@@ -6,7 +6,9 @@
  * to where it belongs. The broker built a *signed intent* from tool arguments
  * and shipped it to a Mac; we build the same capability set from the same
  * arguments, in-process, and hand it straight to the policy engine. Nothing is
- * signed because nothing crosses a wire.
+ * signed because no third party's intent is received here. That is provenance,
+ * not confinement — DESIGN.md §4 *The intent object* owns where an intent's
+ * contents go.
  *
  * The surface is reduced: the broker's tools assumed many Macs behind one
  * endpoint, so every one of them took a `device`. Ours is one Mac addressed by
