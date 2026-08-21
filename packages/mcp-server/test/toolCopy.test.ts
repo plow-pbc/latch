@@ -17,6 +17,7 @@ import { BROWSING_SKILL, DeviceAgent, HeadlessPolicy } from "@domo/device-core";
 import {
   createDomoMcpServer,
   DomoMcpServer,
+  SERVER_IDENTITY,
   SERVER_INSTRUCTIONS,
   TOOLS,
 } from "@domo/mcp-server";
@@ -78,11 +79,7 @@ async function listed(server: DomoMcpServer) {
 
 /** Every tool's description, keyed by name, as a client sees it. */
 async function descriptions(server: DomoMcpServer): Promise<Record<string, string>> {
-  const listed = parse(await rpc(server, "tools/list", {})).result?.tools as
-    | { name: string; description: string }[]
-    | undefined;
-  expect(listed).toBeDefined();
-  return Object.fromEntries(listed!.map((t) => [t.name, t.description]));
+  return Object.fromEntries((await listed(server)).map((t) => [t.name, t.description]));
 }
 
 describe("the server tells the agent what it is for", () => {
@@ -152,10 +149,10 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
 
 describe("the goal field says a human reads it", () => {
   it("names the reader, and does not offer access for a better answer", async () => {
-    const listed = parse(await rpc(makeServer(), "tools/list", {})).result?.tools as
+    const tools = parse(await rpc(makeServer(), "tools/list", {})).result?.tools as
       | { name: string; inputSchema: { properties?: Record<string, { description?: string }> } }[]
       | undefined;
-    const goal = listed?.find((t) => t.name === "plow_read_file")?.inputSchema?.properties?.goal;
+    const goal = tools?.find((t) => t.name === "plow_read_file")?.inputSchema?.properties?.goal;
     expect(goal?.description).toMatch(/the user reads/i);
     // Goal text is display-only and never influences a decision path, so the
     // copy must not imply that explaining well earns anything.
@@ -222,10 +219,19 @@ describe("the browsing skill agrees with the tools it documents", () => {
   });
 });
 
-/** Every string the manifest puts in front of a model. */
+/**
+ * Every string the manifest puts in front of a model.
+ *
+ * "Every" is load-bearing and this list has been short before. It missed tool
+ * TITLES (a client shows `title` in preference to `name`, so a model skimming
+ * a tool list reads them) and the skill BODY (`plow_read_skill` serves it in
+ * full) — both of which the guards below are meant to cover. If you add a
+ * string an agent can read, add it here; the guards are only as wide as this.
+ */
 function manifestStrings(): { where: string; text: string }[] {
   const out = [{ where: "instructions", text: SERVER_INSTRUCTIONS }];
   for (const tool of TOOLS) {
+    out.push({ where: `${tool.name}.title`, text: tool.title });
     out.push({ where: `${tool.name}.description`, text: tool.description });
     const props =
       (tool.inputSchema as { properties?: Record<string, { description?: string }> })
@@ -235,6 +241,9 @@ function manifestStrings(): { where: string; text: string }[] {
     }
   }
   out.push({ where: "skill.description", text: BROWSING_SKILL.description });
+  out.push({ where: "skill.body", text: BROWSING_SKILL.body });
+  out.push({ where: "serverInfo.title", text: SERVER_IDENTITY.title });
+  out.push({ where: "serverInfo.description", text: SERVER_IDENTITY.description });
   return out;
 }
 
@@ -332,9 +341,17 @@ describe("nothing on the surface sends the live web back to the agent's own tool
     expect(SERVER_INSTRUCTIONS).toMatch(/reddit/i);
   });
 
-  it("the instructions name macOS tooling the agent's own workspace lacks", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/osascript/);
+  /**
+   * The examples must be tools that actually RUN under the seatbelt profile.
+   * `osascript` and `screencapture` were pinned here for one commit and taken
+   * out: the profile is `(deny default)` with no `appleevent-send`, and the app
+   * ships no automation entitlement, so naming them pointed the agent at a
+   * guaranteed denial — the same bug as the web sentence, facing the other way.
+   */
+  it("the instructions name macOS tooling that works under the sandbox", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/mdfind/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/sips/);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/osascript|screencapture/);
   });
 
   /**

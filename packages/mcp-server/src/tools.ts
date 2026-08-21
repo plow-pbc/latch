@@ -242,9 +242,8 @@ export const TOOLS: ToolSpec[] = [
       "Run a command on the user's own Mac — their installed tools, their data, their network. " +
       "Use this when the command must affect their machine; use your own shell for your own work. " +
       "Their Mac is a macOS workstation, so reach for tooling your workspace does not have when " +
-      "it fits the job: osascript to drive their applications, mdfind for Spotlight, sips for " +
-      "images, pbcopy and pbpaste for the clipboard, open to launch a file or an app, " +
-      "screencapture, shortcuts. " +
+      "it fits the job: mdfind for Spotlight search across their files, sips for images, " +
+      "pbcopy and pbpaste for the clipboard, and whatever else they have installed. " +
       "It runs inside a seatbelt sandbox. Declare every path you need: " +
       "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
       "write access is granted from them. They are NOT the full extent of what the command can " +
@@ -467,7 +466,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_browser_request",
-    title: "Fetch a URL through the user's browser",
+    title: "Ask to widen the browser session",
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
