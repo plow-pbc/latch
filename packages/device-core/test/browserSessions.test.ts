@@ -721,11 +721,11 @@ describe("every browser opens as the user, already signed in", () => {
    *
    * `host` or `host=value` — the value is what a refreshed token changes and a
    * read does not, which is what the merge has to tell apart. */
-  const cookieStore = (file: string, hosts: string[], usedAt = 1): void => {
+  const cookieStore = (file: string, hosts: string[], usedAt = 1, expiry = 0): void => {
     const rows = hosts
       .map((h, i) => {
         const [host, value = "yes"] = h.split("=");
-        return `('sid','${value}','${host}','/',0,${usedAt + i},1,1,1,0,0,0,1,'')`;
+        return `('sid','${value}','${host}','/',${expiry},${usedAt + i},1,1,1,0,0,0,1,'')`;
       })
       .join(",");
     execFileSync(PYTHON, [
@@ -793,6 +793,33 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
     };
   };
 
+  /** When a cookie in a profile runs out. */
+  const expiryOf = (dir: string, host: string): number =>
+    Number(
+      execFileSync(PYTHON, [
+        "-c",
+        `import sqlite3,sys
+print(sqlite3.connect(sys.argv[1]).execute("SELECT expiry FROM moz_cookies WHERE host = ?", (sys.argv[2],)).fetchone()[0])`,
+        path.join(dir, "cookies.sqlite"),
+        host,
+      ])
+        .toString()
+        .trim(),
+    );
+
+  /** Signed out inside a session: the cookie is gone from its clone. */
+  const signOut = (file: string, host: string): void => {
+    execFileSync(PYTHON, [
+      "-c",
+      `import sqlite3,sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("DELETE FROM moz_cookies WHERE host = ?", (sys.argv[2],))
+db.commit()`,
+      file,
+      host,
+    ]);
+  };
+
   /** The one profile directory a session made, whichever it is. */
   const only = (profiles: string): string => path.join(profiles, fs.readdirSync(profiles)[0]);
 
@@ -853,6 +880,21 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
     await sessions.close(refreshed, "agent");
     await sessions.close(stale, "agent");
     expect(signedInto(seed, true)).toEqual(["site.example=new-token"]);
+  });
+
+  it("carries a renewal that kept the same value, and a sign-out", async () => {
+    // "Changed" is not just a new value: a site that pushes the same token
+    // out by a month renews the expiry, and a logout removes the row
+    // altogether. Both are things the session did, and both have to land.
+    const { sessions, seed, profiles } = signedIn({ has: ["renewed.example", "leaving.example"] });
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const store = path.join(only(profiles), "cookies.sqlite");
+    cookieStore(store, ["renewed.example"], 50, 99_999);
+    signOut(store, "leaving.example");
+
+    await sessions.close(handle, "agent");
+    expect(signedInto(seed)).toEqual(["renewed.example"]);
+    expect(expiryOf(seed, "renewed.example")).toBe(99_999);
   });
 
   it("keeps a first sign-in on a Mac whose owner has no profile yet", async () => {
