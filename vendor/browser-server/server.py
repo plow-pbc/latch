@@ -439,9 +439,10 @@ def _type_value(el, value):
     # still go in as real keys, and why the tail can never press Enter at a form
     # -- by construction, rather than by a branch that gives the keystrokes up.
     # The browser behavior underneath is in docs/TESTING-THE-APP.md.
-    # A field that DECLARES a cap never reaches here: an over-cap value is
-    # refused before the node is touched, so what follows is about a field that
-    # took the value and then made its own decisions about it.
+    # A value over the cap the field DECLARED when the fill was admitted never
+    # reaches here. What follows is about a field that took the value and then
+    # made its own decisions about it -- including moving that cap, which the
+    # assignments below re-read rather than trust.
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     if kind != "multiline":
         value = value.replace("\n", "")
@@ -470,7 +471,17 @@ def _type_value(el, value):
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
-        _assign_whole(el, value)
+        try:
+            _assign_whole(el, value)
+        except _FieldTooShort:
+            # The cap moved under the fill. The head assignment already
+            # destroyed whatever the field held, and what the keys left behind
+            # is a PREFIX OF THE SECRET -- on an unconcealed vault fill that is
+            # a legible partial credential sitting in the page, answered by a
+            # result that says nothing was filled. So leave nothing: this is
+            # the one place that knows the node was written to.
+            el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
+            raise
 
 
 def _parse_args():
@@ -853,10 +864,12 @@ class Session:
             # while an assignment is not clipped at all -- `maxlength`
             # constrains typing, and `tooLong` only reads true once a user edit
             # sets the dirty value flag. Both submit something other than what
-            # was asked for. Refused BEFORE the node is touched, so a value that
-            # will not fit is never half-written into the page: nothing to roll
-            # back, and no partial secret left behind a mark. Lengths only --
-            # the value reaches neither this message nor the audit log.
+            # was asked for. Refused BEFORE the node is touched, so the ordinary
+            # case leaves the page exactly as it was found. A cap the page moves
+            # mid-fill is refused later, by the assignment that repairs dropped
+            # keys -- that one clears the field first, so neither path ends with
+            # a partial value in the page. Lengths only: the value reaches
+            # neither this message nor the audit log.
             # A cap refusal is one answer however it is reached: before the
             # node is touched, or from an assignment inside `_type_value` after
             # the page moved the cap under a fill in progress. Answered as a

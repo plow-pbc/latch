@@ -663,11 +663,19 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   it.each([
     { what: "an ordinary fill", scenario: "cap_lowered_mid_fill" },
     { what: "a concealed fill", scenario: "cap_lowered_mid_fill_masked" },
+    { what: "an ordinary fill whose clipped keys landed", scenario: "cap_lowered_keys_landed" },
+    { what: "a concealed fill whose clipped keys landed", scenario: "cap_lowered_keys_landed_masked" },
   ])("refuses $what when the page lowers the cap mid-fill", ({ scenario }) => {
     expect(probed[scenario].result).toEqual({
       ok: false, mask: "too_long", cap: 4, frame: 0,
     });
-    // Nothing landed, so nothing is left concealed or tracked.
+    // The refusal leaves NOTHING in the page. By the time the cap moves, the
+    // head assignment has already destroyed what the field held and the keys
+    // that landed are a prefix of the secret — on an unconcealed vault fill
+    // that would be a legible partial credential sitting under a result that
+    // says the field was not filled.
+    expect(probed[scenario].node_len).toBe(0);
+    // And with nothing there, nothing stays concealed or tracked.
     expect(probed[scenario].marked).toBe(false);
     expect(probed[scenario].ledgered).toBe(false);
   });

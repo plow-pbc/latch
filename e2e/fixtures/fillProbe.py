@@ -206,8 +206,15 @@ class Handle:
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
-        # is the only way a scenario can tell the head was assigned at all.
-        self.value = (self.value or "") + text
+        # is the only way a scenario can tell the head was assigned at all --
+        # and are CLIPPED by whatever cap the field is reporting now. Without
+        # the clip the only reachable variant is "nothing landed", which is the
+        # one that cannot show what a refusal leaves behind in the page.
+        cap = self.max_length_after if (
+            self.max_length_after is not None and self.typed is not None
+        ) else self.max_length
+        landed = (self.value or "") + text
+        self.value = landed[:cap] if cap >= 0 else landed
         if self.partial_fill and self.type_calls > 1:
             # Some of it went in and then the field went away. It takes more
             # than one key for that to be interesting: what the node is left
@@ -603,6 +610,13 @@ def main() -> int:
                                     max_length=20, max_length_after=4, drops_keys=True),
         "cap_lowered_mid_fill_masked": run(server, {**base, "mask": True, "value": "hunter2"},
                                            max_length=20, max_length_after=4, drops_keys=True),
+        # The same move with the keys LANDING, clipped to the lowered cap --
+        # what a real field does. The node is holding a prefix of the secret
+        # when the repair refuses, so the refusal has to leave nothing behind.
+        "cap_lowered_keys_landed": run(server, {**base, "value": "hunter2"},
+                                       max_length=20, max_length_after=4),
+        "cap_lowered_keys_landed_masked": run(server, {**base, "mask": True, "value": "hunter2"},
+                                              max_length=20, max_length_after=4),
         # maxlength="0" is valid HTML and holds nothing. -1 is the only value
         # that means uncapped, so 0 must refuse rather than read as "no cap".
         "zero_cap": run(server, {**base, "value": "x"}, max_length=0),
