@@ -99,7 +99,18 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await act("fill_secret", { selector: "#pass", item: "L1", field: "password" });
     await act("click", { selector: "#login" });
     expect((await act("text")).payload.text).toContain("Menu");
-    expect(site.state.loginAttempts.at(-1)).toEqual({ user: "jon@example.com", pass: "pizza-time-99" });
+    // Issue #86, on the wire: each credential arrived as real typing — one
+    // browser-produced character key event per character, counted by the page
+    // itself. `fill()` would have assigned .value and fired a single input
+    // event, and the page — like the defense in front of a real sign-in — would
+    // have counted none at all. The two fields are counted separately, so
+    // neither can cover for the other.
+    expect(site.state.loginAttempts.at(-1)).toEqual({
+      user: "jon@example.com",
+      pass: "pizza-time-99",
+      userKeys: "jon@example.com".length,
+      passKeys: "pizza-time-99".length,
+    });
 
     await act("click", { selector: "#pepperoni" });
     await act("click", { selector: "#order" });
