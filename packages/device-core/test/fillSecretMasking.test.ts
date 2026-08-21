@@ -1421,16 +1421,21 @@ describe("which nodes take typing", () => {
 // it. `maxLength` REFLECTS the attribute everywhere; only some kinds enforce it.
 describe("which fields report a cap", () => {
   const cap = loadScript("FIELD_CAP_JS") as (el: unknown) => number;
+  // `type` is an enumerated reflection: always a lowercase string, "text" for a
+  // missing or unrecognised attribute, so no row models it as absent.
   const node = (tagName: string, type: string | null, maxLength: number) =>
     ({ tagName, type, maxLength });
 
   it.each([
+    // Every kind on the allowlist, because dropping one silently sends that
+    // field back to being filled and clipped instead of refused.
     { what: "a text input", el: node("INPUT", "text", 16), reports: 16 },
-    { what: "a password input", el: node("INPUT", "password", 16), reports: 16 },
-    { what: "an email input", el: node("INPUT", "email", 8), reports: 8 },
+    { what: "a search input", el: node("INPUT", "search", 12), reports: 12 },
+    { what: "a url input", el: node("INPUT", "url", 20), reports: 20 },
     { what: "a tel input", el: node("INPUT", "tel", 10), reports: 10 },
+    { what: "an email input", el: node("INPUT", "email", 8), reports: 8 },
+    { what: "a password input", el: node("INPUT", "password", 16), reports: 16 },
     { what: "a textarea", el: node("TEXTAREA", null, 40), reports: 40 },
-    { what: "an input with no type at all", el: node("INPUT", null, 5), reports: 5 },
     // Everything below carries the attribute and is not governed by it. Reading
     // one here would turn an authoring mistake into a fill that never lands.
     { what: "a number input carrying a stray maxlength", el: node("INPUT", "number", 4), reports: -1 },
@@ -1439,8 +1444,10 @@ describe("which fields report a cap", () => {
     { what: "a contenteditable host", el: node("DIV", null, 4), reports: -1 },
     { what: "a select", el: node("SELECT", null, 4), reports: -1 },
     // -1 is what an uncapped field reports, and what the parser coerces an
-    // invalid attribute value to.
+    // invalid attribute value to. 0 is a real cap that holds nothing, so it
+    // must pass through as itself — a `|| -1` tidy would read it as uncapped.
     { what: "an uncapped text input", el: node("INPUT", "text", -1), reports: -1 },
+    { what: "a field capped at zero", el: node("INPUT", "text", 0), reports: 0 },
   ])("reports $what as $reports", ({ el, reports }) => {
     expect(cap(el)).toBe(reports);
   });

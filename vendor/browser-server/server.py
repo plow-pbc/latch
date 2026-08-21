@@ -320,7 +320,9 @@ FIELD_CAP_JS = """(el) => {
     const tag = (el.tagName || "").toLowerCase();
     if (tag === "textarea") return el.maxLength;
     if (tag !== "input") return -1;
-    const kind = (el.type || "text").toLowerCase();
+    // `type` is an enumerated reflection -- always a string, "text" when the
+    // attribute is missing or unrecognised -- and only an input reaches here.
+    const kind = el.type.toLowerCase();
     return ["text", "search", "url", "tel", "email", "password"].includes(kind)
         ? el.maxLength
         : -1;
