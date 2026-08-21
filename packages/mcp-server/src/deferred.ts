@@ -26,9 +26,11 @@ import { JSONValue } from "@domo/protocol";
  * abandons a tunnelled exchange. Not ours — it belongs to `plow-pbc/plow` — but
  * `CALL_BUDGET_MS` is chosen against it, so it is named here rather than
  * restated in prose wherever a timeout is sized against it. If the relay
- * changes this, this is the line to change, and the budget check in
- * `mcpServer.test.ts` fails until the arithmetic is redone. (The MCP client
- * abandons later still, around 30s.)
+ * changes this, this is the line to change. `mcpServer.test.ts` then catches a
+ * ceiling that has dropped below the budget plus the margin — a ceiling that
+ * ROSE leaves more headroom and passes quietly, so this line is the record of
+ * what it is, not a tripwire for every change. (The MCP client abandons later
+ * still, around 30s.)
  *
  * Exported for that check, not as a value to build on: it belongs to another
  * system, and nothing here can verify it.
