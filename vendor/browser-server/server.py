@@ -98,17 +98,17 @@ SCAN_INTERVAL_MS = 50
 # answer describes where the page ended up rather than where it was mid-flight.
 SETTLE_MS = 1000
 
-# A value ENDS as keystrokes, never as a bare assignment. `fill()` sets `.value`
-# and fires `input`/`change`, so a password box goes from empty to complete with
-# no keydown/keypress/keyup at all -- the cheapest signal an interrogating
-# defense has. Keystrokes cost a delay each and an agent may fill a field with
-# prose, so only the last TYPED_CHARS are typed and the bulk ahead of them is
-# assigned. TYPED_CHARS is chosen as a statement about credentials rather than
-# derived from latency: an ordinary password, a card number or a one-time code
-# is shorter than this and is typed whole. Nothing enforces that a released
-# value fits -- a long API key or a JWT does not -- and one that does not lands
-# with its head assigned and its last TYPED_CHARS typed, which still ends the
-# field on real keys.
+# How much of a value arrives as key events. A field that goes from empty to
+# complete with no keydown/keypress/keyup at all is the cheapest signal an
+# interrogating defense has, so a fill ends on real keys wherever it can --
+# `_type_value` owns when it cannot, and why. Keystrokes cost a delay each and
+# an agent may fill a field with prose, so only the last TYPED_CHARS are typed
+# and the bulk ahead of them is assigned. The number is a statement about
+# credentials rather than a latency derivation: an ordinary password, a card
+# number or a one-time code is shorter than this and is typed whole. Nothing
+# enforces that a released value fits -- a long API key or a JWT does not -- and
+# one that does not lands with its head assigned and its last TYPED_CHARS typed,
+# which still ends the field on real keys.
 KEY_DELAY_MS = 45
 # What a key may cost beyond its delay: the round trip that dispatches it and
 # the actionability check in front of it. A few milliseconds on a local page.
