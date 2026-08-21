@@ -269,9 +269,12 @@ TYPEABLE_JS = """(el) => {
     // asked, KEYS_DROPPED_JS sees no drop, no repair runs, and a value the node
     // never held is reported as landed. Asking for a string excludes every form
     // control by construction rather than by a list that cannot be closed -- and
-    // asking for mere presence would over-reach, because <li>, <output>,
-    // <progress> and friends carry a NUMERIC `value` while holding their text in
-    // textContent, and an <li contenteditable> is ordinary editor markup.
+    // asking for mere presence would over-reach, because <li> (a long) and
+    // <progress>/<meter> (doubles) carry a NUMERIC `value` while holding their
+    // text in textContent, and an <li contenteditable> is ordinary editor
+    // markup. <output> and <data> go the other way: their `value` is a
+    // DOMString, so they are refused here -- an accepted loss, since a declared
+    // editor is not what either element is for.
     if (typeof el.value === "string") return "";
     // What is left with no `value` and no text of its own: embedded documents
     // and nodes that are not rendered. None of them puts the characters where
@@ -281,7 +284,7 @@ TYPEABLE_JS = """(el) => {
     // This markup is page-controlled, so it cannot be left to the attribute to
     // be honest about.
     if (["iframe", "frame", "object", "embed", "style", "template", "script", "title",
-         "img", "video", "audio", "canvas"].includes(tag)) {
+         "img", "video", "audio", "canvas", "progress", "meter"].includes(tag)) {
         return "";
     }
     // The node has to BE the editing host, not merely sit inside one.
@@ -391,9 +394,21 @@ def _type_value(el, value):
     if not kind:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
-    # Only the tail is typed, so only the tail can press Enter -- and one answer
-    # already says whether this node holds a newline as a character.
-    if kind != "multiline" and any(c in value[-TYPED_CHARS:] for c in ("\n", "\r")):
+    if kind == "multiline":
+        # The one node that holds a newline as a character -- and it holds only
+        # LF: a textarea's API value normalizes CR and CRLF to a single LF.
+        # `type()` sends CR and LF alike as Enter, so an un-normalized CRLF would
+        # press it TWICE where the assignment stores one break, and the read-back
+        # could never be a prefix of what was asked -- which switches
+        # KEYS_DROPPED_JS off for the whole fill, so a maxlength truncation on
+        # that same value would go unrepaired and be reported as landed.
+        # Normalizing first means the head, the tail and the `wanted` compared
+        # below are all the string the node ends up holding, by either path.
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
+    elif any(c in value[-TYPED_CHARS:] for c in ("\n", "\r")):
+        # Only the tail is typed, so only the tail can press Enter -- which at a
+        # single-line field submits the form with part of the value in it.
+        # `fill()` could never do that, so typing must not introduce it.
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)

@@ -645,6 +645,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.typed_len).toBe(probed.constants.typed_chars);
   });
 
+  it("presses Enter once for a CRLF, and compares against what the node will hold", () => {
+    // `type()` sends CR and LF alike as Enter, so an un-normalized CRLF would
+    // press it twice where a textarea holds one break — and the read-back could
+    // then never be a prefix of what was asked, which switches the dropped-keys
+    // repair off for the whole fill. The tail is what the node will hold.
+    const run = probed.crlf_multiline;
+    expect(run.trace).toContain("handle.type");
+    expect(run.typed_has_cr).toBe(false);
+    expect(run.typed_len).toBe("one\ntwo".length);
+  });
+
   it("assigns the value outright when the keys did not compose it", () => {
     // A field can take the keys and sanitise some of them away — a number
     // input handed something that is not a number does exactly that. Reporting
@@ -1325,7 +1336,10 @@ describe("which nodes take typing", () => {
     // textContent, and <li contenteditable> is ordinary rich-text markup, so
     // asking for mere presence of `value` would send it back to assignment.
     { what: "a list item declaring itself an editor", el: host("LI", "true", { value: 0 }), kind: "single-line" },
-    { what: "a progress element declaring itself an editor", el: host("PROGRESS", "true", { value: 0 }), kind: "single-line" },
+    // <progress> and <meter> render a widget; their contents are legacy fallback
+    // and are never painted, so they belong with <img> and <canvas> above rather
+    // than with <li>, whatever their value's type.
+    { what: "a progress element declaring itself an editor", el: host("PROGRESS", "true", { value: 0 }), kind: "" },
     { what: "an object declaring itself an editor", el: host("OBJECT", "true"), kind: "" },
     { what: "an embed declaring itself an editor", el: host("EMBED", "true"), kind: "" },
     { what: "a style tag declaring itself an editor", el: host("STYLE", "true"), kind: "" },

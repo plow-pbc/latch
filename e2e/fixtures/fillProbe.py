@@ -325,6 +325,9 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
     # how many the node ended up holding. Lengths, never values.
     out["asked_len"] = len(cmd.get("value", "") or "")
     out["typed_len"] = None if frame.handle.typed is None else len(frame.handle.typed)
+    # Whether a carriage return reached the keys. A boolean, never the text: the
+    # typed string is the value, and nothing here may carry one out.
+    out["typed_has_cr"] = frame.handle.typed is not None and "\r" in frame.handle.typed
     # One call per character is what keeps a key out of an unmarked sibling.
     out["type_calls"] = frame.handle.type_calls
     # The largest and smallest budget any key was handed -- the first key's and
@@ -506,6 +509,13 @@ def main() -> int:
         # value whose newline sits in the head still ends on real keys, because
         # the head is assigned anyway.
         "newline_outside_tail": run(server, {**base, "value": "one\n" + "x" * 2000}),
+        # CRLF at a textarea. `type()` sends CR and LF alike as Enter, so the
+        # pair would press it twice where the node holds one break -- the server
+        # normalizes before it splits head from tail, so the keys carry no CR and
+        # the length is the one the node will hold. That Enter inserts a newline
+        # at all is a browser claim, and stays a manual one.
+        "crlf_multiline": run(server, {**base, "value": "one\r\ntwo"},
+                              typeable="multiline"),
         # A date widget: its value is composed from something other than the
         # characters, so keystrokes land the wrong day or nothing at all.
         "not_typeable": run(server, {**base, "value": "2026-08-19"}, typeable=""),
