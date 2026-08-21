@@ -1425,8 +1425,10 @@ describe("which fields report a cap", () => {
   // elements that have one — "text" for a missing or unrecognised attribute,
   // "textarea" on a textarea, "select-one" on a select — so a row gives what
   // the IDL gives, and an element with no `type` at all reads `undefined`.
-  const node = (tagName: string, type: string | undefined, maxLength: number) =>
-    ({ tagName, type, maxLength });
+  const node = (
+    tagName: string, type: string | undefined, maxLength: number,
+    extra: Record<string, unknown> = {},
+  ) => ({ tagName, type, maxLength, ...extra });
 
   it.each([
     // Every kind on the allowlist, because dropping one silently sends that
@@ -1443,7 +1445,9 @@ describe("which fields report a cap", () => {
     // instead fails on the assertion rather than on the stub.
     {
       what: "an input whose type attribute is capitalised",
-      el: { tagName: "INPUT", type: "password", getAttribute: () => "Password", maxLength: 16 },
+      el: node("INPUT", "password", 16, {
+        getAttribute: (k: string) => (k === "type" ? "Password" : null),
+      }),
       reports: 16,
     },
     { what: "a textarea", el: node("TEXTAREA", "textarea", 40), reports: 40 },
