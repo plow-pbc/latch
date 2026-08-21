@@ -15,9 +15,12 @@ the architecture and [README-ts.md](README-ts.md) for the package/app layout.
 > **Being rebuilt.** The in-repo broker that used to route agents here has been
 > removed. A Mac now dials *out* to the Plow relay, which authenticates the
 > calling agent and forwards MCP to an MCP server running in this app. Both
-> halves of this side exist, and so does the relay — see `CLAUDE.md` § Layout,
-> "Being rebuilt". **Agents do reach this Mac today.** What is missing is
-> automated *integration* coverage of the relay leg, which is verified by hand;
+> halves exist here — that server and the outbound relay client — and so does
+> the relay itself (see `CLAUDE.md` § Layout, "Being rebuilt").
+> **Agents do reach this Mac today.** The policy engine, the capability-derived
+> sandbox, file operations, the audit log, the approval UI and the adversarial
+> reviewer build, run and are covered by the test suite. What is missing is
+> automated *integration* coverage of the relay leg, which is verified by hand —
 > see [README-ts.md](README-ts.md) § Integration coverage.
 
 ## Quickstart with `just`

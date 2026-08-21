@@ -55,9 +55,13 @@ these costs a review slot and teaches the author to skim:
 - **The device private key is a plaintext seed in a `0600` file.** No Keychain,
   no `safeStorage`. It is on the roadmap (DESIGN.md §12), not an oversight.
 - **There is no automated live-stack test.** The stand-in relay was deleted
-  deliberately; the relay leg is verified by hand against a local Plow API
-  (`docs/TESTING-THE-APP.md`). "Add an integration test for this" is not an
-  available remedy — say "verify by hand and report what you saw" instead.
+  deliberately; anything needing a real plow stack is verified by hand against a
+  local Plow API (`docs/TESTING-THE-APP.md`). For those, "add an integration
+  test" is not an available remedy — say "verify by hand and report what you
+  saw" instead. **This does not extend to the relay client's own lifecycle**,
+  which IS testable in `npx vitest run` against a `FakeConn` — handshake stalls,
+  backoff and redial, the pre-auth fuse, any-frame-as-proof-of-life all have
+  tests today (`packages/relay-client/test`). Ask for that one.
 - **The browser evidence buffer is destructive and unserialized** —
   issue #104, declined with the reachability conditions named.
 
