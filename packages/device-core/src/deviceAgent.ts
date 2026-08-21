@@ -6,8 +6,10 @@
  * There is no transport here any more. The broker link — dialing, the
  * enrollment challenge, pairing, reconnect, and the agent-key pinning that went
  * with them — was removed with the broker itself; an Intent is now built
- * in-process from an authenticated agent's call and never crosses a wire, so
- * there is no signature to verify and no agent public key to pin.
+ * in-process from an authenticated agent's call and is never *received* over a
+ * wire, so there is no third party's signature to verify and no agent public
+ * key to pin. That is provenance, not confinement — a reviewer sends an
+ * intent's contents outbound (apps/desktop/src/adversarialAgent.ts).
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import os from "node:os";

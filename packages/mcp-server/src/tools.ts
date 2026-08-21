@@ -6,10 +6,9 @@
  * to where it belongs. The broker built a *signed intent* from tool arguments
  * and shipped it to a Mac; we build the same capability set from the same
  * arguments, in-process, and hand it straight to the policy engine. Nothing is
- * signed because no third party's intent is received here -- the capability set
- * is built from the arguments in this process. That is about provenance, not
- * confinement: a reviewer sends an intent's contents outbound (see
- * `protocol/src/intent.ts`).
+ * signed because no third party's intent is received here. That is provenance,
+ * not confinement — a reviewer sends an intent's contents outbound
+ * (apps/desktop/src/adversarialAgent.ts).
  *
  * The surface is reduced: the broker's tools assumed many Macs behind one
  * endpoint, so every one of them took a `device`. Ours is one Mac addressed by

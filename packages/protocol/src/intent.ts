@@ -6,9 +6,10 @@
  * An Intent is built on this Mac from an authenticated agent's tool call and is
  * never RECEIVED over the wire, so it carries no agent public key and no agent
  * signature — there is no third party's signature to verify. That is about
- * provenance, not confinement: whenever a reviewer runs -- adversarial mode
- * always, and the default `ask` mode with suggestions on -- an intent's contents
- * are formatted into a prompt and sent outbound (adversarialAgent.ts).
+ * provenance, not confinement: whenever a reviewer runs — adversarial mode
+ * always, and the default `ask` mode with suggestions on — an intent's contents
+ * are formatted into a prompt and sent outbound
+ * (apps/desktop/src/adversarialAgent.ts).
  * The DEVICE signature over a Grant stays: that one is the Mac attesting to its
  * own decision.
  */

@@ -215,6 +215,11 @@ the approver what a command *would* touch is a v2 item.
 
 ## 8. Security model & remote milestone
 
+> **Historical.** This section records the broker-era security model — signed
+> intents, pinned agent keys, a Noise channel making the broker a blind relay.
+> The broker is gone; see `CLAUDE.md` and §4 for what ships. Retained as the
+> record of what was decided and why (issue #137).
+
 | Layer | v1 (local) | Remote milestone |
 |---|---|---|
 | Transport | Unix sockets, `0700` runtime dir | TLS to broker, cert-pinned |
