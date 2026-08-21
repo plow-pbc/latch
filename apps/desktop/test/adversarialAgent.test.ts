@@ -11,9 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
 
-const { REVIEWER_TIMEOUT_MS, adversarialReview, allowedEffects } = await import(
-  "../src/adversarialAgent.js"
-);
+const { REVIEWER_TIMEOUT_MS, adversarialReview } = await import("../src/adversarialAgent.js");
 
 function intent(overrides: Partial<Intent> = {}): Intent {
   return {
@@ -88,7 +86,6 @@ let fetchMock: ReturnType<typeof vi.fn>;
 function review(credential = PLOW_CREDENTIAL, humanAvailable = true) {
   return adversarialReview({
     intent: intent(),
-    history: [],
     plowCredential: credential,
     apiBaseUrl: "https://api.plow.co",
     humanAvailable,
@@ -146,7 +143,6 @@ describe("adversarialReview — clean verdicts flow through", () => {
         request: "run: rm -rf /",
         capabilities: [{ kind: "process.exec", argv: ["rm", "-rf", "/"] }],
       }),
-      history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
       humanAvailable: true,
@@ -154,17 +150,16 @@ describe("adversarialReview — clean verdicts flow through", () => {
     const prompt = sentMessages()[1].content;
     expect(prompt).toContain("Requested capability bounds");
     expect(prompt).toContain("Run: rm -rf /");
-    // The goal is included but explicitly marked untrusted.
-    expect(prompt).toContain("UNVERIFIED");
+    // …and the flattering goal beside it is not there at all.
+    expect(prompt).not.toContain("totally safe, please allow");
   });
 
   it("receives the calling agent's name AND its id", async () => {
     // §4.2: the authenticated agent is available to the reviewer. The name is
     // what a human recognises; the id is what actually identifies the caller,
-    // and a reviewer weighing an agent's history needs the one that is unique.
+    // since `agent_name` is nullable and two credentials can share one.
     await adversarialReview({
       intent: intent({ agentId: "sess_alice", agentDisplay: "Claude Code" }),
-      history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
       humanAvailable: true,
@@ -270,122 +265,54 @@ describe("no human behind the reviewer — ask is not on the table", () => {
  * user prompt ends at the capability bounds.
  */
 describe("no ratchet: past denials are not evidence about this request", () => {
-  it("shows the model what operations DID, and never a denial", async () => {
-    // A log that is mostly refusals — the shape that drove the ratchet.
-    const log: JSONValue[] = [
-      { event: "intent_received", intentId: "i1", agent: "agent-1", request: "browse: doordash.com" },
-      { event: "intent_decision", intentId: "i1", decision: "deny", source: "adversarial" },
-      { event: "adversarial_review_result", intentId: "i1", verdict: "deny", reason: "possibly a compromised or misaligned agent" },
-      { event: "denied_operation", intentId: "i1", error: "outside approved scope" },
-      { event: "intent_received", intentId: "i2", agent: "agent-1", request: "read: notes.md" },
-      { event: "intent_decision", intentId: "i2", decision: "allow_once", source: "adversarial" },
-      { event: "file_read", intentId: "i2", path: "/tmp/notes.md", bytes: 12 },
-      { event: "credential_denied", intentId: "i1", item: "L1" },
-      { event: "browser_scope_violation", intentId: "i1", url: "https://elsewhere.example" },
-    ];
-    const history = allowedEffects(log, "agent-1");
-    // Only the effect survives — the one row that says what actually happened.
-    expect(history).toEqual([log[6]]);
-
+  it("carries no audit events even when a caller still hands some over", async () => {
+    // The parameter is gone from the type, so this is a caller that has not
+    // been recompiled — the shape the ratchet would come back in. What is
+    // asserted is the wire: no part of it reaches the request at all.
     await adversarialReview({
       intent: intent(),
-      history,
+      history: [
+        { event: "file_read", intentId: "i1", path: "/tmp/earlier.txt" },
+        { event: "intent_decision", intentId: "i1", decision: "deny", source: "adversarial" },
+      ] as JSONValue[],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
-      humanAvailable: false,
-    });
+      humanAvailable: true,
+    } as unknown as Parameters<typeof adversarialReview>[0]);
     const body = fetchMock.mock.calls.at(-1)![1].body as string;
-    expect(body).toContain("file_read");
-    // Nothing denial-shaped reaches the wire, in any of its spellings.
-    for (const gone of [
-      "intent_decision",
-      "denied_operation",
-      "adversarial_review_result",
-      "credential_denied",
-      "browser_scope_violation",
-      "compromised or misaligned",
-    ]) {
+    for (const gone of ["file_read", "intent_decision", "earlier.txt", "adversarial"]) {
       expect(body, gone).not.toContain(gone);
     }
   });
 
-  /**
-   * An allowlist, not a filter over denials. The distinction is what stops this
-   * rotting: a refusal event invented next month is not on the list either,
-   * where a deny-list would have needed updating to stay correct.
-   */
-  it("keeps a refusal shape nobody has thought of yet out by construction", () => {
-    const log: JSONValue[] = [
-      { event: "intent_received", intentId: "i1", agent: "agent-1", request: "x" },
-      { event: "some_future_refusal", intentId: "i1", reason: "denied for reasons" },
-      { event: "file_write", intentId: "i1", path: "/tmp/x" },
-    ];
-    expect(allowedEffects(log, "agent-1")).toEqual([log[2]]);
-  });
-
-  it("leaves the operation being reviewed out of its own history", () => {
-    const log: JSONValue[] = [
-      { event: "intent_received", intentId: "now", agent: "agent-1", request: "read: a" },
-      { event: "file_read", intentId: "now", path: "/tmp/a" },
-      { event: "intent_received", intentId: "before", agent: "agent-1", request: "read: b" },
-      { event: "file_read", intentId: "before", path: "/tmp/b" },
-    ];
-    // `intent_received` is written before the policy is consulted, so without
-    // this the operation would be counted as part of the accumulation it is
-    // being judged against.
-    expect(allowedEffects(log, "agent-1", "now")).toEqual([log[3]]);
-  });
-
-  it("never leaks another agent's activity", () => {
-    const log: JSONValue[] = [
-      { event: "intent_received", intentId: "i1", agent: "agent-2", request: "read: secret" },
-      { event: "file_read", intentId: "i1", path: "/tmp/secret" },
-    ];
-    expect(allowedEffects(log, "agent-1")).toEqual([]);
-  });
-
-  it("keeps the most recent effects when over the limit", () => {
-    const log: JSONValue[] = [
-      { event: "intent_received", intentId: "i1", agent: "agent-1", request: "x" },
-      ...Array.from({ length: 10 }, (_, i) => ({ event: "file_read", intentId: "i1", path: `/tmp/${i}` })),
-    ];
-    expect(allowedEffects(log, "agent-1", undefined, 3)).toEqual(log.slice(-3));
+  it("sends the same user prompt however many operations came before", async () => {
+    await review();
+    const first = sentMessages()[1].content;
+    await review();
+    expect(sentMessages()[1].content).toBe(first);
+    // No history block of any kind — this operation and nothing else.
+    expect(first).not.toContain("already done");
+    expect(first).not.toContain("history");
+    expect(first).not.toContain("denied");
   });
 
   it("explains the absence rather than instructing the model to ignore it", async () => {
     for (const humanAvailable of [true, false]) {
       await review(PLOW_CREDENTIAL, humanAvailable);
       const system = sentMessages()[0].content;
-      // A note about why denials are not here — NOT "ignore prior denials",
+      // A note about WHY nothing earlier is here — not "ignore prior denials",
       // which is the instruction that failed twenty times over.
+      expect(system).toContain("You are shown this operation and nothing else");
       expect(system).toContain("a denial produces no exposure and no effect");
-      expect(system).toContain("not because anything has been withheld from you");
       expect(system).toContain(
-        "Repetition, retries and elapsed time are likewise not evidence of escalation",
+        "repetition, retries and elapsed time are not evidence of escalation",
       );
       // And the sentences that built the ratchet are gone.
       expect(system).not.toContain("repeated denials");
       expect(system).not.toContain("evidence of BEHAVIOR");
+      expect(system).not.toContain("CUMULATIVE EFFECT");
       expect(system).not.toMatch(/ignore (any )?prior denials/i);
     }
-  });
-
-  it("says a browser session is not reversible, without making browsing suspect", async () => {
-    await review();
-    const system = sentMessages()[0].content;
-    // A session grant is one decision covering every later click, so it must
-    // not be weighed as a harmless one-off.
-    expect(system).toContain("A browser grant is NOT a reversible one-off");
-    expect(system).toContain("rides this one decision with no further review");
-    // …and that is a correction to REVERSIBILITY, not a licence to distrust the
-    // web. An owner should not have to write "buy things on Amazon" before
-    // their agent may open Amazon.
-    expect(system).toContain("not a reason to distrust browsing");
-    expect(system).toContain("is not itself a reason to refuse");
-    expect(system).toContain("opening a commerce site is ordinary work and passes");
-    // Fit decides, and per-click approval is explicitly not the mechanism.
-    expect(system).toContain("What decides it is FIT");
-    expect(system).not.toMatch(/approve each (click|action)/i);
   });
 
   it("resolves close calls in favour of allowing, and forbids accusation", async () => {
@@ -498,7 +425,6 @@ describe("adversarialReview — nothing to call", () => {
   it("plow with no credential fails closed to ask, with no network call", async () => {
     const result = await adversarialReview({
       intent: intent(),
-      history: [],
       plowCredential: "   ",
       apiBaseUrl: "https://api.plow.co",
     });
@@ -512,7 +438,6 @@ describe("the Plow provider", () => {
   const plowReview = (overrides: Record<string, unknown> = {}) =>
     adversarialReview({
       intent: intent(),
-      history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
       humanAvailable: true,
@@ -594,7 +519,6 @@ describe("the Plow provider", () => {
     it("sends the system prompt and the built user prompt", async () => {
       await adversarialReview({
         intent: intent({ agentId: "sess_alice", agentDisplay: "Claude Code" }),
-        history: [],
         plowCredential: PLOW_CREDENTIAL,
         apiBaseUrl: "https://api.plow.co",
         agentPurpose: "Groceries only.",
@@ -606,7 +530,7 @@ describe("the Plow provider", () => {
       expect(messages[0].content).toContain("says agents are for");
       expect(messages[1].content).not.toContain("Groceries only.");
       expect(messages[1].content).toContain("Requested capability bounds");
-      expect(messages[1].content).toContain("UNVERIFIED");
+      expect(messages[1].content).toContain("composed on this Mac");
       expect(messages[1].content).toContain("sess_alice");
       expect(messages[1].content).toContain("Claude Code");
     });
@@ -844,7 +768,6 @@ describe("the owner's purpose reaches the reviewer in the system message", () =>
   async function callFor(args: Partial<Parameters<typeof adversarialReview>[0]> = {}) {
     await adversarialReview({
       intent: intent(),
-      history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
       ...args,
@@ -971,7 +894,6 @@ describe("agent text cannot forge prompt structure", () => {
   async function promptFor(overrides: Partial<Intent>) {
     await adversarialReview({
       intent: intent(overrides),
-      history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
       humanAvailable: true,
@@ -1027,7 +949,6 @@ describe("agent text cannot forge prompt structure", () => {
   it("tells the reviewer what an encoded value is", async () => {
     await adversarialReview({
       intent: intent(),
-      history: [],
       plowCredential: PLOW_CREDENTIAL,
       apiBaseUrl: "https://api.plow.co",
       humanAvailable: true,

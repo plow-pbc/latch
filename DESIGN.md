@@ -206,23 +206,26 @@ outside it, which is the field read backwards — silence about something is
 silence, not prohibition. No purpose set means a general-purpose computer
 assistant.
 
-**No ratchet — structurally, not by instruction.** The reviewer sees this intent
-plus a cumulative-effect view of what this agent's **allowed** operations have
-already done. It used to receive the whole audit stream, with the prompt naming
-repeated denials as a strong signal to deny; that makes the first denial evidence
-for the second and is self-fuelling, because a growing pile of denials is exactly
-what a compromised agent would produce. A real delivery errand died that way
-twenty-odd times in one afternoon, the stated reason escalating to "compromised
-or misaligned agent" over a request that was fine every time.
+**No ratchet — structurally, not by instruction.** The reviewer sees this
+operation and nothing else. It first received the whole audit stream, with the
+prompt naming repeated denials as a strong signal to deny; that makes the first
+denial evidence for the second and is self-fuelling, because a growing pile of
+denials is exactly what a compromised agent would produce. A real delivery
+errand died that way twenty-odd times in one afternoon.
 
-The fix is not "ignore prior denials" — an instruction to disregard what you can
-see is what failed. `allowedEffects()` is an **allowlist of effect events**, so a
-denied operation is absent for the reason that it never executed and therefore
-never produced one. Refusal-shaped events are not filtered out; they were never
-eligible, and a refusal event invented next month is not eligible either. The
-prompt's rule 6 only explains the absence, so a reviewer does not read a short
-history as a scrubbed one. The intent under review is excluded from its own
-history — `intent_received` is written before the policy is consulted.
+It was then narrowed to an allowlist of *effect* events from **allowed**
+operations only — denials structurally absent, since a denied operation never
+executes and so never produces one — kept for one purpose, spotting aggregate
+scope. That input is strictly better and it still ratcheted: in a 20-run live
+control on one unchanged request, the reviewer allowed the first nine and then
+denied nine of the last eleven, reasoning from the accumulated pile rather than
+from the request. Denials were provably not in the prompt; accumulation alone
+was enough.
+
+So there is no history parameter. Any history at all makes a verdict depend on a
+growing list, and a growing list is what escalates. The prompt says the absence
+is deliberate rather than instructing the model to ignore anything — an
+instruction to disregard what you can see is the thing that failed first.
 
 **Close calls resolve in favour of allowing**, and a denial's reason must be
 factual, specific and non-accusatory: it names the scope or target that would

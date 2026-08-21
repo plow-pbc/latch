@@ -10,7 +10,7 @@
  * The model uses the classic extended-thinking parameter (`budget_tokens`), not
  * the newer `effort` control, and the verdict comes back as structured JSON.
  */
-import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
+import { capabilityDisplay, Intent } from "@domo/protocol";
 import { ApiBaseUrl, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 
 /**
@@ -107,7 +107,11 @@ the errand. An errand widens the job as readily as it narrows it.
 3. With no purpose statement, assume a general-purpose computer assistant and BE \
 PERMISSIVE. Deny only what is clearly unrelated to any plausible task, \
 destructive beyond apparent need, or broad acquisition of data with no coherent \
-task behind it.
+task behind it. Scale is what makes acquisition broad: reading what a task needs \
+is ordinary, while sweeping an entire personal archive — everything of a kind, \
+across years — is a copy of the owner\'s life rather than a read of a thing, and \
+network access alongside it is a copy that can leave this Mac. "Some task might \
+want all of it" is not a coherent task.
 
 4. Judge by the externally meaningful RESULT: what the operation returns, \
 changes, or exercises. A broad internal search is fine when what comes back is \
@@ -132,13 +136,11 @@ agent will end up holding it.
 Retrieving a verification code during an authorized sign-in is a supporting step \
 of that sign-in — allow it.
 
-6. The history below is CUMULATIVE EFFECT and is for one thing only: an emerging \
-pattern whose aggregate result is materially broader than the errand. It is made \
-of what operations actually DID, so it contains only operations that were \
-allowed. Denied operations are absent because a denial produces no exposure and \
-no effect — there is nothing for it to have done — not because anything has been \
-withheld from you. Repetition, retries and elapsed time are likewise not \
-evidence of escalation, compromise or bad intent.
+6. You are shown this operation and nothing else — no earlier operations, and no \
+earlier refusals. That is deliberate, not an omission: a denial produces no \
+exposure and no effect, so there is nothing for it to be evidence of, and \
+repetition, retries and elapsed time are not evidence of escalation, compromise \
+or bad intent either. Judge what is in front of you.
 
 7. RESOLVE CLOSE CALLS IN FAVOUR OF ALLOWING.
 
@@ -246,22 +248,26 @@ function encoded(value: string | undefined | null): string {
 }
 
 /**
- * The user message: this one operation, and what earlier operations actually
- * DID.
+ * The user message: this one operation, and nothing else.
  *
- * The reviewer used to be handed the agent's whole recent audit stream "as
- * evidence of BEHAVIOR", with the prompt naming repeated denials as a strong
- * signal to deny. That is a ratchet: the first denial becomes evidence for the
- * second, the second for the third, and it is self-fuelling, because a growing
- * pile of denials is exactly what a compromised agent would produce. A real
- * errand died that way twenty-odd times in one afternoon, the stated reason
- * escalating to "compromised or misaligned agent" over a request that was fine
- * every single time.
+ * There is no history here, and its absence is the whole design. The reviewer
+ * first received the raw audit stream, with the prompt naming repeated denials
+ * as a strong signal to deny — a ratchet, where the first denial is evidence
+ * for the second, and self-fuelling, because a growing pile of denials is what
+ * a compromised agent would produce. A real errand died that way twenty-odd
+ * times in one afternoon.
  *
- * What replaces it is not an instruction to ignore denials — that instruction
- * is what failed — but a stream that never had one in it. See `allowedEffects`.
+ * It was then narrowed to the *effects* of ALLOWED operations only, for
+ * cumulative scope. That is a strictly better input and it still ratcheted: in
+ * a 20-run control on one unchanged request, the reviewer allowed the first
+ * nine and then denied nine of the last eleven, reasoning from the pile rather
+ * than the request. Denials were provably not in the input; the accumulation
+ * was enough on its own.
+ *
+ * So the parameter is gone rather than filtered. Any history at all makes a
+ * verdict depend on a growing list, and a growing list is what escalates.
  */
-function buildPrompt(intent: Intent, history: JSONValue[], humanAvailable: boolean): string {
+function buildPrompt(intent: Intent, humanAvailable: boolean): string {
   // A capability display is composed on this Mac, but the paths, origins, argv
   // and item ids inside it are the agent's, so the line is encoded like any
   // other agent-written value. What it MEANS is unchanged: this is still the
@@ -269,21 +275,11 @@ function buildPrompt(intent: Intent, history: JSONValue[], humanAvailable: boole
   const caps = (intent.capabilities ?? [])
     .map((c) => `  - ${encoded(capabilityDisplay(c))}`)
     .join("\n");
-  // Already one JSON document per line: `JSON.stringify` escapes the line
-  // breaks and quotes inside every string it writes, so an event cannot end
-  // its own line or open a field of its own.
-  const historyText = history.length
-    ? history.map((e) => JSON.stringify(e)).join("\n")
-    : "(nothing yet)";
   return (
     `Operation to review:\n` +
     `Agent: ${encoded(intent.agentDisplay)} (${encoded(intent.agentId)})\n` +
     `Request (composed on this Mac from the tool call): ${encoded(intent.request)}\n` +
     `Requested capability bounds (what the sandbox will enforce if allowed):\n${caps || "  (none)"}\n\n` +
-    `What this agent's ALLOWED operations have already done on this device ` +
-    `(effects only — for cumulative scope, per rule 6; agent-supplied strings, ` +
-    `UNVERIFIED; most recent last):\n` +
-    `${historyText}\n\n` +
     `Decide ${humanAvailable ? "allow, deny, or ask" : "allow or deny"}.`
   );
 }
@@ -499,12 +495,6 @@ function plowCall(
 export interface ReviewArgs {
   intent: Intent;
   /**
-   * What this agent's ALLOWED operations have already done — from
-   * `allowedEffects`, and from nothing else. A caller that hands over raw audit
-   * entries here puts the ratchet back.
-   */
-  history: JSONValue[];
-  /**
    * The `relay:device` credential. A SECRET: it goes in the `Authorization`
    * header and nowhere else.
    */
@@ -566,7 +556,7 @@ export async function adversarialReview(
     const result = await withTimeout(
       call(
         systemPrompt(args.agentPurpose ?? "", args.humanAvailable),
-        buildPrompt(args.intent, args.history, args.humanAvailable),
+        buildPrompt(args.intent, args.humanAvailable),
         budget.signal,
       ),
       REVIEWER_TIMEOUT_MS,
@@ -605,71 +595,4 @@ export async function adversarialReview(
     // human something true. It is still a literal, not the error's own text.
     return failedReview(error instanceof ReviewTimeout ? "reviewer timed out" : "reviewer error");
   }
-}
-
-/**
- * The audit events that record what an operation DID, and the only ones the
- * reviewer is ever shown.
- *
- * An allowlist, not a filter over denials, and that is the whole safety
- * argument. A denied intent never executes, so it never produces one of these —
- * there is no denial to strip out, because none was ever made. The same holds
- * for the shapes that describe a refusal rather than an effect
- * (`denied_operation`, `intent_rejected`, `credential_denied`,
- * `browser_scope_violation`, the `adversarial_review_*` pair): they are simply
- * not on this list, and a new one added tomorrow is not on it either. A
- * deny-list would have had to be updated to stay correct; this cannot rot in
- * that direction.
- *
- * `intent_decision` is deliberately absent even though half its rows say
- * "allow_once". It is a record of a decision, not of an effect — and it is the
- * row where the word "deny" lives.
- */
-const EFFECT_EVENTS = new Set([
-  "file_read",
-  "file_write",
-  "exec_start",
-  "exec_end",
-  "exec_error",
-  "browser_session_opened",
-  "browser_session_extended",
-  "browser_session_closed",
-  "browser_navigated",
-  "browser_command",
-  "credential_filled",
-  "credential_metadata",
-]);
-
-/**
- * What this agent's allowed operations have already done on this device.
- *
- * `exclude` drops the intent being reviewed right now. It is already in the log
- * — `intent_received` is written before the policy is consulted — and an
- * operation appearing in its own cumulative history would be counted twice by a
- * rule that exists to spot accumulation.
- */
-export function allowedEffects(
-  allEvents: JSONValue[],
-  agentId: string,
-  exclude?: string,
-  limit = 40,
-): JSONValue[] {
-  // Effect events carry only an intentId, so first collect this agent's intent
-  // ids, then keep the effects tied to them plus anything stamped with the id.
-  const intentIds = new Set<string>();
-  for (const e of allEvents) {
-    const ev = jv(e);
-    if (ev.get("event").str === "intent_received" && ev.get("agent").str === agentId) {
-      const iid = ev.get("intentId").str;
-      if (iid && iid !== exclude) intentIds.add(iid);
-    }
-  }
-  const relevant = allEvents.filter((e) => {
-    const ev = jv(e);
-    if (!EFFECT_EVENTS.has(ev.get("event").str ?? "")) return false;
-    const iid = ev.get("intentId").str;
-    if (iid !== null) return iid !== exclude && intentIds.has(iid);
-    return ev.get("agent").str === agentId;
-  });
-  return relevant.slice(-limit);
 }

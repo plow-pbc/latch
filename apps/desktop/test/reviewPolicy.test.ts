@@ -93,23 +93,14 @@ function harness(
 /**
  * What is actually PASSED, not what the prompt says.
  *
- * The ratchet was not a wording problem: the reviewer was handed the agent's
- * denials and drew the obvious conclusion from them. So this asserts on the
- * argument `decideIntent` builds — a denial-soaked audit log has to arrive at
- * the reviewer as effects and nothing else.
+ * The ratchet was never a wording problem, so this asserts on the argument
+ * `decideIntent` builds. There is no history in it — a denial-soaked audit log
+ * and an empty one produce the identical review call.
  */
-describe("the reviewer is handed effects, never denials", () => {
-  const denialSoakedLog: JSONValue[] = [
-    { event: "intent_received", intentId: "old", agent: "agent-1", request: "browse: doordash.com" },
-    { event: "intent_decision", intentId: "old", decision: "deny", source: "adversarial" },
-    { event: "adversarial_review_result", intentId: "old", verdict: "deny", reason: "compromised or misaligned agent" },
-    { event: "denied_operation", intentId: "old", error: "outside approved scope" },
-    { event: "file_read", intentId: "old", path: "/tmp/earlier.txt" },
-  ];
-
+describe("nothing about the past reaches the reviewer", () => {
   function withLog(entries: JSONValue[]) {
-    const reviewCalls: { history: JSONValue[] }[] = [];
-    const review = vi.fn(async (args: { history: JSONValue[] }) => {
+    const reviewCalls: Record<string, unknown>[] = [];
+    const review = vi.fn(async (args: Record<string, unknown>) => {
       reviewCalls.push(args);
       return { verdict: "allow" as const, reason: "fine" };
     });
@@ -121,36 +112,33 @@ describe("the reviewer is handed effects, never denials", () => {
         decideIntent(i, {
           settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
           apiBaseUrl: "https://api.plow.co",
-          auditEntries: () => entries,
           record: () => {},
           review,
           openApproval: async () => "deny" as const,
-        }),
+        } as unknown as Parameters<typeof decideIntent>[1]),
     };
   }
 
-  it("strips every denial out of the log on the way to the reviewer", async () => {
-    const h = withLog(denialSoakedLog);
-    await h.run();
-    expect(h.reviewCalls).toHaveLength(1);
-    // The one effect row, and nothing that records a refusal.
-    expect(h.reviewCalls[0].history).toEqual([denialSoakedLog[4]]);
-    const serialized = JSON.stringify(h.reviewCalls[0].history);
-    expect(serialized).not.toContain("deny");
-    expect(serialized).not.toContain("compromised");
-  });
+  it("builds the same review call from a denial-soaked log as from an empty one", async () => {
+    const soaked = withLog([
+      { event: "intent_received", intentId: "old", agent: "agent-1", request: "browse: doordash.com" },
+      { event: "intent_decision", intentId: "old", decision: "deny", source: "adversarial" },
+      { event: "adversarial_review_result", intentId: "old", verdict: "deny", reason: "compromised or misaligned agent" },
+      { event: "file_read", intentId: "old", path: "/tmp/earlier.txt" },
+    ]);
+    await soaked.run();
+    const empty = withLog([]);
+    await empty.run();
 
-  it("does not hand the reviewer the operation it is reviewing", async () => {
-    // `intent_received` for THIS intent is already in the log by the time the
-    // policy is consulted, so an unguarded history counts it against itself.
-    const log: JSONValue[] = [];
-    const h = withLog(log);
-    log.push(
-      { event: "intent_received", intentId: h.i.intentId, agent: "agent-1", request: "run: ls" },
-      { event: "file_read", intentId: h.i.intentId, path: "/tmp/now.txt" },
+    expect(soaked.reviewCalls).toHaveLength(1);
+    expect(soaked.reviewCalls[0]).not.toHaveProperty("history");
+    const serialized = JSON.stringify(soaked.reviewCalls[0]);
+    expect(serialized).not.toContain("compromised");
+    expect(serialized).not.toContain("earlier.txt");
+    // Same intent shape in, same argument out — whatever the log holds.
+    expect(Object.keys(soaked.reviewCalls[0]).sort()).toEqual(
+      Object.keys(empty.reviewCalls[0]).sort(),
     );
-    await h.run();
-    expect(h.reviewCalls[0].history).toEqual([]);
   });
 });
 
