@@ -64,7 +64,11 @@ module.exports = async function afterPack(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  if (!fs.existsSync(runtime)) return;
+  if (!fs.existsSync(runtime)) {
+    throw new Error(
+      "[afterPack] no browser-runtime in the packed app — run node scripts/build-browser-runtime.mjs",
+    );
+  }
 
   // 1) Drop non-signable leftovers (belt — the build script prunes them too).
   let dropped = 0;
