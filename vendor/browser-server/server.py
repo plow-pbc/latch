@@ -383,10 +383,15 @@ def _type_value(el, value):
     # assignment carrying it: an `email` or a `url` input sanitizes leading and
     # trailing ASCII whitespace away, a tab included, and the assign path is
     # never asked KEYS_DROPPED_JS -- so a tab on either end of a value for one
-    # of those is dropped by the browser and reported ok. That is `fill()`'s
-    # behavior, unchanged here and the same before any of this typed; typing a
-    # leading tab instead would move focus off the field, which is worse than
-    # what the browser already does with it.
+    # of those is dropped by the browser and reported ok -- and the split path
+    # is no better, because the prefix test is blind to a stripped LEADING
+    # character too. Both are `fill()`'s own behavior, unchanged here and older
+    # than any of this; typing a leading tab instead would move focus off the
+    # field, which is worse than what the browser already does with it.
+    #
+    # The browser claims this paragraph rests on are listed in
+    # docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on" --
+    # nothing in the suite can see them.
     if "\t" in value[-TYPED_CHARS:]:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return

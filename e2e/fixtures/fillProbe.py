@@ -508,7 +508,9 @@ def main() -> int:
         # submit the form with half a credential in it.
         "cr_single_line": run(server, {**base, "value": "one\rtwo"}),
         # A tab, which `type()` sends as the Tab key -- focus moves and no
-        # character lands, so the keys can never carry this value.
+        # character lands, so the keys can never carry this value. That is a
+        # browser claim this fake cannot model; it and its siblings are listed
+        # in docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on".
         "tab_value": run(server, {**base, "value": "one\ttwo"}),
         # And one whose tab sits in the assigned head. The guard is scoped to the
         # tail, which is all that gets typed, so this still ends on real keys --

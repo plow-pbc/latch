@@ -61,6 +61,31 @@ app by hand, drive it by hand — keyboard and mouse, not the inspector.
 
 ---
 
+## Browser behaviors the fill path rests on
+
+`_type_value` in `vendor/browser-server/server.py` decides what it can send as
+keystrokes from three claims about what a real browser does. The suite cannot
+see any of them — `e2e/fixtures/fillProbe.py` drives fake nodes that answer a
+`typeable=` knob and read back exactly what was typed — so these are checked by
+hand, against the bundled Camoufox, or not at all:
+
+- **`type()` sends a newline as the Enter key.** At a `<textarea>` that inserts
+  one line break, which is why a textarea keeps its breaks and everything else
+  has them normalized away first.
+- **`type()` sends a tab as the Tab key**, which moves focus rather than adding
+  a character. No normalization rescues that, so a value whose typed tail holds
+  one is assigned instead.
+- **An `<input>` runs a value sanitization algorithm on assignment.** Every type
+  strips CR and LF; `email` and `url` additionally strip leading and trailing
+  ASCII whitespace, a tab included. So an edge tab on a value for one of those
+  is dropped by the browser on the assign path and reported ok — `fill()`'s own
+  behavior, and older than any of the typing work.
+
+If you change the fill path, re-check the one you touched against a real page
+before trusting a green suite.
+
+---
+
 ## What still runs headless
 
 | Command | What it proves |
