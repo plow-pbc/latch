@@ -64,9 +64,24 @@ module.exports = async function afterPack(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  if (!fs.existsSync(runtime)) {
+  // Every payload the runtime is made of. Half a runtime signs and verifies
+  // vacuously — step 5 only walks what is there — and ships the same app that
+  // installs, launches and serves intents with browsing dead.
+  const framework = path.join(runtime, "python", "Python.framework");
+  const sitePackages = path.join(runtime, "python", "site-packages");
+  const camoufox = path.join(runtime, "camoufox");
+  const vaultCli = path.join(runtime, "vault-cli");
+  const vaultServer = path.join(runtime, "vault-server");
+  // `server` carries no Mach-O, so nothing below signs it — but it is what the
+  // browser host actually execs, so its absence is the same dead browsing.
+  const server = path.join(runtime, "server");
+  const missing = [runtime, framework, sitePackages, server, camoufox, vaultCli, vaultServer]
+    .filter((d) => !fs.existsSync(d))
+    .map((d) => path.basename(d));
+  if (missing.length > 0) {
     throw new Error(
-      "[afterPack] no browser-runtime in the packed app — run node scripts/build-browser-runtime.mjs",
+      `[afterPack] browser-runtime is missing ${missing.join(", ")} — ` +
+        "package with `just package` or `just package-unnotarized`",
     );
   }
 
@@ -96,21 +111,15 @@ module.exports = async function afterPack(context) {
   // individually-signed nested Mach-Os keep their timestamps; sealing only
   // re-signs each bundle's main binary and regenerates CodeResources over the
   // merge-rewritten Info.plists.
-  const framework = path.join(runtime, "python", "Python.framework");
-  if (fs.existsSync(framework)) {
-    const machos = [...walk(framework)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
-    for (const f of machos) signFile(f, HELPER_ENTITLEMENTS);
-    for (const nested of findBundles(framework, ".app")) signFile(nested, HELPER_ENTITLEMENTS);
-    signFile(framework, HELPER_ENTITLEMENTS);
-  }
+  const machos = [...walk(framework)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
+  for (const f of machos) signFile(f, HELPER_ENTITLEMENTS);
+  for (const nested of findBundles(framework, ".app")) signFile(nested, HELPER_ENTITLEMENTS);
+  signFile(framework, HELPER_ENTITLEMENTS);
 
   // 3) Loose site-packages Mach-O (the .so extensions and the Playwright node
   // driver) — individually, deepest first so leaves precede loaders.
-  const sitePackages = path.join(runtime, "python", "site-packages");
-  if (fs.existsSync(sitePackages)) {
-    const loose = [...walk(sitePackages)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
-    for (const f of loose) signFile(f, HELPER_ENTITLEMENTS);
-  }
+  const loose = [...walk(sitePackages)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
+  for (const f of loose) signFile(f, HELPER_ENTITLEMENTS);
 
   // 4) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.
   // `--deep` only discovers nested code in the standard locations (MacOS,
@@ -118,35 +127,26 @@ module.exports = async function afterPack(context) {
   // stub — keeps whatever signature it shipped with (Mozilla's ad-hoc, which
   // notarization rejects). Sign those individually first; the --deep pass
   // then seals them as resources.
-  const camoufox = path.join(runtime, "camoufox");
   let apps = 0;
-  if (fs.existsSync(camoufox)) {
-    for (const app of findApps(camoufox)) {
-      const inResources = [...walk(app)]
-        .filter(isMachO)
-        .filter((f) => path.relative(app, f).startsWith(path.join("Contents", "Resources") + path.sep))
-        .sort((a, b) => b.split("/").length - a.split("/").length);
-      for (const f of inResources) signFile(f, BROWSER_ENTITLEMENTS);
-      signBundle(app, BROWSER_ENTITLEMENTS);
-      apps++;
-    }
+  for (const app of findApps(camoufox)) {
+    const inResources = [...walk(app)]
+      .filter(isMachO)
+      .filter((f) => path.relative(app, f).startsWith(path.join("Contents", "Resources") + path.sep))
+      .sort((a, b) => b.split("/").length - a.split("/").length);
+    for (const f of inResources) signFile(f, BROWSER_ENTITLEMENTS);
+    signBundle(app, BROWSER_ENTITLEMENTS);
+    apps++;
   }
 
   // 4b) Vault CLI — one loose Mach-O per arch, helper entitlements (it is a
   // Node build, so V8 needs JIT).
-  const vaultCli = path.join(runtime, "vault-cli");
-  if (fs.existsSync(vaultCli)) {
-    for (const f of walk(vaultCli)) {
-      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
-    }
+  for (const f of walk(vaultCli)) {
+    if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
   }
 
   // 4c) Vault server — one loose Mach-O per arch (compiled from Rust source).
-  const vaultServer = path.join(runtime, "vault-server");
-  if (fs.existsSync(vaultServer)) {
-    for (const f of walk(vaultServer)) {
-      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
-    }
+  for (const f of walk(vaultServer)) {
+    if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
   }
 
   // 5) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a
