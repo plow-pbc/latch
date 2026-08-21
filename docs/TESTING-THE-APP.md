@@ -61,6 +61,46 @@ app by hand, drive it by hand — keyboard and mouse, not the inspector.
 
 ---
 
+## Browser behaviors the fill path rests on
+
+`_type_value` in `vendor/browser-server/server.py` decides what it can send as
+keystrokes from assumptions about what a real browser does with a key and with
+an assigned value. **The suite cannot check any of them** — `fillProbe.py`
+drives fake nodes that answer a `typeable=` knob and read back exactly what was
+typed, so a scenario is green whether the assumption holds or not.
+
+Three of them, in the order the code reaches them:
+
+1. `type()` sends a newline as **Enter**, which a `<textarea>` takes as one line
+   break. Every other typed node has breaks normalized away before anything is
+   sent.
+2. `type()` sends a tab as **Tab**, which moves focus instead of adding a
+   character. A value holding one in its typed tail is assigned whole instead.
+   More generally, what `type()` does with a character depends on whether it is
+   on Playwright's key map — one that is not may arrive as inserted text with no
+   key events at all, which is the outcome the whole typing path exists to
+   avoid. So a value going through `el.type` is the code asking for key events,
+   not a guarantee it got them; `KEY_DELAY_MS` is spent inside that call either
+   way.
+3. An `<input>` **sanitizes an assigned value**, and differently per type. CR
+   and LF never survive. Some types will not keep a leading or trailing tab.
+
+The one that bites: **an assignment is not a guarantee the node kept the value,
+and nothing downstream reports the difference** — the tab guard's branch returns
+without asking `KEYS_DROPPED_JS` at all, and on the split path a value that lost
+its *leading* character is not a prefix of what was wanted, so the check answers
+false. The fill answers ok either way. This is `fill()`'s own behavior, older
+than the typing work, and it is the first thing to suspect if a credential lands
+short.
+
+Do not trust the specifics above — the per-type details have been written down
+wrong here more than once. **Confirm against the field**: drive the real fill
+through the MCP server against a page you control, then read the value back the
+same way the page would and compare it to what you asked for. Re-check whichever
+assumption you touched whenever you change the fill path.
+
+---
+
 ## What still runs headless
 
 | Command | What it proves |
