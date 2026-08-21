@@ -21,9 +21,11 @@ import {
   CALL_BUDGET_MS,
   createDomoMcpServer,
   DeferredResults,
+  DELIVERY_MARGIN_MS,
   DomoMcpServer,
   HANDLE_TTL_MS,
   PROTOCOL_REVISION,
+  RELAY_TIMEOUT_MS,
   RelayAuth,
   toAuthInfo,
 } from "@domo/mcp-server";
@@ -320,12 +322,12 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(owner.payload.status).not.toBe("unknown");
   });
 
-  it("the call budget leaves the relay's 25s exchange ten seconds to deliver", () => {
-    // The relay's pending future times out at 25 SECONDS. What is left after
-    // the budget is not slack: it is the time registering the handle, framing
-    // the response and matching it to the waiting exchange all have to fit in.
-    const RELAY_TIMEOUT_MS = 25_000;
-    const DELIVERY_MARGIN_MS = 10_000;
+  it("the call budget leaves the relay's exchange enough time to deliver", () => {
+    // All three imported: this asserts a relationship between the constants the
+    // code actually uses. Declaring the relay's ceiling here instead would make
+    // the check assert against a number this test invented, which cannot fail
+    // when the real one moves.
+    //
     // Pinned, not just bounded: a margin check alone passes for any budget
     // SHORTER than this one too, and the point of the number is that a human
     // gets the whole fifteen seconds to answer inside the original call.

@@ -22,13 +22,25 @@ import crypto from "node:crypto";
 import { JSONValue } from "@domo/protocol";
 
 /**
- * How long a tool may block before it must hand back a handle.
- *
- * The relay's pending future times out at 25 seconds and the MCP client
- * abandons at ~30s. What is left after this budget is what delivery gets:
- * registering the handle, framing the response, and the relay matching it to
- * the exchange still waiting — so the ten seconds behind it are the margin,
- * not slack.
+ * The relay's own ceiling: how long its pending future waits before it
+ * abandons a tunnelled exchange. Not ours — it belongs to `plow-pbc/plow` — but
+ * `CALL_BUDGET_MS` is derived from it, so it is named here rather than restated
+ * in prose wherever a timeout is sized against it. If the relay changes this,
+ * this is the line to change, and the budget check below fails until the
+ * arithmetic is redone. (The MCP client abandons later still, around 30s.)
+ */
+export const RELAY_TIMEOUT_MS = 25_000;
+
+/**
+ * What delivery must fit in after the budget is spent: registering the handle,
+ * framing the response, and the relay matching it to the exchange still
+ * waiting. A floor, not slack.
+ */
+export const DELIVERY_MARGIN_MS = 10_000;
+
+/**
+ * How long a tool may block before it must hand back a handle — sized so that
+ * `RELAY_TIMEOUT_MS` minus this leaves at least `DELIVERY_MARGIN_MS`.
  */
 export const CALL_BUDGET_MS = 15_000;
 

@@ -69,12 +69,14 @@ owns that list.
   sends a capability set or an intent — it calls a tool, and `mcp-server`
   derives the capabilities the policy engine and the sandbox will enforce. Goal
   text rides along for the human to read and never influences the bound.
-- **Nothing may block past the call budget.** The relay's pending future times
-  out at **25 seconds**, so a tunnelled call has to answer well inside that. Any
-  tool that cannot returns a deferred handle and keeps working; `plow_get_result`
-  retrieves it. A handle belongs to the `agent_id` that created it. This is why
-  file operations are async and size-capped: synchronous work blocks the event
-  loop and the budget timer never fires.
+- **Nothing may block past the call budget.** `RELAY_TIMEOUT_MS` in
+  `packages/mcp-server/src/deferred.ts` is the relay's ceiling and
+  `CALL_BUDGET_MS` beside it is what this Mac allows itself inside it — that
+  file owns both numbers and the margin between them. Any tool that cannot
+  answer in the budget returns a deferred handle and keeps working;
+  `plow_get_result` retrieves it. A handle belongs to the `agent_id` that
+  created it. This is why file operations are async and size-capped:
+  synchronous work blocks the event loop and the budget timer never fires.
 - **`agent_id` is the isolation key; `agent_name` is display-only.** Jobs,
   deferred handles and always-allow rules key on the id. The name is nullable
   and not unique — two credentials can share one — so it identifies nothing.
