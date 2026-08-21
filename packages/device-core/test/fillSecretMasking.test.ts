@@ -418,8 +418,10 @@ describe("fill_secret marking", () => {
     // The cap, not "check the selector" — the selector was right.
     expect(jv(result).get("error").str).toContain("holds only 16 characters");
     expect(jv(result).get("error").str).not.toContain("check the selector");
+    // `credential_fill_failed`, not `credential_denied` — the badge ladder
+    // reads the latter as "Scope blocked", and nothing about scope failed here.
     expect(ctx.events.slice(before).at(-1)).toEqual({
-      event: "credential_denied",
+      event: "credential_fill_failed",
       fields: {
         session: audited(), item, field, origin, selector,
         reason: "the field holds only 16 characters",
@@ -653,6 +655,30 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // How the refusal is REPORTED differs because how it is heard does: a visible
   // fill's failure text reaches the agent, a secret's never does, so that one
   // comes back as a shape the device reads and turns into its own message.
+  // A cap can move under a fill already in progress — a card-number input
+  // lowers `maxlength` once the first digits identify the brand, 15 for Amex
+  // against 16 for the rest — so the value is admitted, the keys are clipped,
+  // and the repair that assigns has to ask the field again rather than trust
+  // the answer the fill was admitted on.
+  it.each([
+    { what: "an ordinary fill", scenario: "cap_lowered_mid_fill" },
+    { what: "a concealed fill", scenario: "cap_lowered_mid_fill_masked" },
+  ])("refuses $what when the page lowers the cap mid-fill", ({ scenario }) => {
+    expect(probed[scenario].result).toEqual({
+      ok: false, mask: "too_long", cap: 4, frame: 0,
+    });
+    // Nothing landed, so nothing is left concealed or tracked.
+    expect(probed[scenario].marked).toBe(false);
+    expect(probed[scenario].ledgered).toBe(false);
+  });
+
+  it("still repairs dropped keys when the cap did not move", () => {
+    // The contrast that keeps the refusal from swallowing the repair path:
+    // same dropped keys, same assignment, cap unchanged — it lands.
+    expect(probed.keys_dropped.result).toEqual({ ok: true, frame: 0 });
+    expect(probed.keys_dropped.node_len).toBe(probed.keys_dropped.asked_len);
+  });
+
   it("fills a value exactly as long as the field's cap", () => {
     // The boundary the check must not be off by one on: this one fits.
     expect(probed.at_cap.error).toBeNull();

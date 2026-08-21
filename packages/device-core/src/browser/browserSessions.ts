@@ -1084,7 +1084,11 @@ export class BrowserSessions {
       // the value's length stays out of both records, as everywhere else.
       const cap = jv(filled).get("cap").num;
       if (filled.mask === "too_long") {
-        this.audit("credential_denied", {
+        // `credential_fill_failed`, not `credential_denied`: the latter is what
+        // the badge ladder reads as "Scope blocked", and origin and credential
+        // scope both passed here — the field is simply too small. The owner
+        // gets "Fill failed", which is what happened.
+        this.audit("credential_fill_failed", {
           session: s.auditId,
           item: itemId,
           field,
@@ -1098,8 +1102,8 @@ export class BrowserSessions {
           status: "error",
           error:
             `${field} was not filled: ${selector} holds only ${cap === null ? "so many" : cap} ` +
-            `characters and this value is longer, so nothing was typed. The value in the vault ` +
-            `cannot be entered in this field — it will have to be shortened where it is stored.`,
+            `characters and this value is longer. The value in the vault cannot be entered in ` +
+            `this field — it will have to be shortened where it is stored.`,
         };
       }
       if (filled.ok !== true) {

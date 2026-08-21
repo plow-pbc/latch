@@ -59,7 +59,8 @@ class Handle:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
                  document_token="doc-1", type_fails=False, typeable="single-line",
-                 drops_keys=False, assign_fails=False, max_length=-1):
+                 drops_keys=False, assign_fails=False, max_length=-1,
+                 max_length_after=None):
         self.trace = trace
         # What the field itself will hold. -1 is "no cap", which is what an
         # element without a maxlength reports.
@@ -83,6 +84,9 @@ class Handle:
         # NODE that holds it, so every question asked afterwards sees the same
         # thing the real one would.
         self.drops_keys = drops_keys
+        # What the field reports once it has taken keys, when that differs --
+        # a card-number input lowers its cap the moment the brand is known.
+        self.max_length_after = max_length_after
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
         self.assign_fails = assign_fails
@@ -116,6 +120,8 @@ class Handle:
         if "__domoDocumentToken" in js:
             return self.document_token
         if "maxLength" in js:
+            if self.max_length_after is not None and self.typed is not None:
+                return self.max_length_after
             # The real script reports a cap only for the element kinds
             # `maxlength` governs; a node standing in for one of those answers
             # its cap, and -1 is "uncapped" exactly as it is in the page.
@@ -234,7 +240,7 @@ class Frame:
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
                  typeable="single-line", drops_keys=False, assign_fails=False,
-                 hides=False, detached=False, max_length=-1):
+                 hides=False, detached=False, max_length=-1, max_length_after=None):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -244,7 +250,7 @@ class Frame:
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
                              partial_fill, document_token, type_fails, typeable, drops_keys,
-                             assign_fails, max_length)
+                             assign_fails, max_length, max_length_after)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -305,13 +311,13 @@ class Page:
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
         document_token="doc-1", type_fails=False, typeable="single-line", drops_keys=False,
-        assign_fails=False, max_length=-1):
+        assign_fails=False, max_length=-1, max_length_after=None):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
                   type_fails=type_fails, typeable=typeable, drops_keys=drops_keys,
                   assign_fails=assign_fails,
-                  max_length=max_length)
+                  max_length=max_length, max_length_after=max_length_after)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -587,6 +593,16 @@ def main() -> int:
         # The boundary: a value exactly the length of the cap fits, and the fill
         # is ordinary. Guards the check against being off by one.
         "at_cap": run(server, {**base, "value": "1234"}, max_length=4),
+        # The cap MOVES under a fill already in progress: admitted at 20, lowered
+        # to 4 once the field had keys, which is what a card-number input does
+        # when the first digits identify the brand (15 for Amex against 16 for
+        # the rest). The keys are clipped, the repair assigns -- and the
+        # assignment asks the field again rather than trusting the answer the
+        # fill was admitted on.
+        "cap_lowered_mid_fill": run(server, {**base, "value": "hunter2"},
+                                    max_length=20, max_length_after=4, drops_keys=True),
+        "cap_lowered_mid_fill_masked": run(server, {**base, "mask": True, "value": "hunter2"},
+                                           max_length=20, max_length_after=4, drops_keys=True),
         # maxlength="0" is valid HTML and holds nothing. -1 is the only value
         # that means uncapped, so 0 must refuse rather than read as "no cap".
         "zero_cap": run(server, {**base, "value": "x"}, max_length=0),

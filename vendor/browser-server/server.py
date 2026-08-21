@@ -342,6 +342,38 @@ def _utf16_units(value):
     # the one unit the browser counts it as.
     return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
 
+
+class _FieldTooShort(RuntimeError):
+    """The field will not hold the value. Carries the cap so the caller can say so."""
+
+    def __init__(self, cap):
+        super().__init__("field holds %d characters and the value is longer" % cap)
+        self.cap = cap
+
+
+def _refuse_if_capped(el, value):
+    """Refuse a value the field's own cap will not admit, wherever we are.
+
+    Asked again at every point the whole value is about to go in, rather than
+    once before the fill starts, because a cap can move under a fill in
+    progress: a card-number field commonly LOWERS its `maxlength` once the
+    first digits identify the brand -- 15 for Amex against 16 for the rest --
+    so a value the fill was admitted with stops fitting halfway through it.
+    """
+    cap = el.evaluate(FIELD_CAP_JS)
+    if cap >= 0 and _utf16_units(value) > cap:
+        raise _FieldTooShort(cap)
+
+
+def _assign_whole(el, value):
+    """Put the whole value in, or refuse it. The only way a whole value lands.
+
+    Every site that assigns rather than types goes through here, so the cap is
+    re-read on all of them instead of on whichever one a bug was noticed at.
+    """
+    _refuse_if_capped(el, value)
+    el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
     if (el.style) {
@@ -395,7 +427,7 @@ def _type_value(el, value):
     """
     kind = el.evaluate(TYPEABLE_JS)
     if not kind:
-        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        _assign_whole(el, value)
         return
     # Everything below compares against `value` -- the prefix test that decides
     # whether the keys landed, and the assignment that repairs them when they did
@@ -422,7 +454,7 @@ def _type_value(el, value):
     # an edge tab, and which types drop one, is in docs/TESTING-THE-APP.md --
     # stated once there because restating it here put the copies out of step.
     if "\t" in value[-TYPED_CHARS:]:
-        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        _assign_whole(el, value)
         return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
@@ -438,7 +470,7 @@ def _type_value(el, value):
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
-        el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        _assign_whole(el, value)
 
 
 def _parse_args():
@@ -825,55 +857,54 @@ class Session:
             # will not fit is never half-written into the page: nothing to roll
             # back, and no partial secret left behind a mark. Lengths only --
             # the value reaches neither this message nor the audit log.
-            # -1 is uncapped, which is what an element without the attribute
-            # reports and what the parser coerces an invalid one to. 0 is a real
-            # cap that holds nothing, so it is not an escape hatch.
-            cap = el.evaluate(FIELD_CAP_JS)
-            if cap >= 0 and _utf16_units(cmd["value"]) > cap:
-                # A shape rather than a raise, the way a moved frame is: a
-                # vault fill's failure text never reaches the agent -- the
-                # device writes its own, because Playwright's would quote the
-                # value -- and "check the selector" is exactly wrong for a
-                # selector that was right. Masked or not, the same answer: the
-                # vault fills unconcealed fields too.
-                return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
-            if cmd.get("mask"):
-                # Marked first, and only typed once the mark is known to have
-                # taken. An unmasked answer means the page defeated it, and the
-                # value is not typed at all -- the caller turns that into its
-                # own refusal. Marking and filling are one step or neither: a
-                # mark that goes on and a fill that then times out would leave
-                # an ordinary field tagged and withheld from `forms` for the
-                # life of the page.
-                was_marked = el.evaluate(WAS_MARKED_JS)
-                before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
-                state = el.evaluate(MASK_JS)
-                if state == "unmasked":
-                    before.dispose()
-                    return {"ok": False, "mask": state, "frame": i}
-                try:
-                    _type_value(el, cmd["value"])
-                except Exception:
-                    # Nothing landed: put the node back as it was found.
-                    # Something did: it is holding a value nobody can account
-                    # for, so the mark stays and the ledger learns about it.
-                    if el.evaluate(NOTHING_LANDED_JS, before):
-                        if not was_marked:
-                            el.evaluate(UNMASK_JS)
-                    else:
-                        self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                    raise
-                finally:
-                    before.dispose()
-                self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                return {"ok": True, "mask": state, "frame": i}
-            # Not a secret. The mark comes off AFTER the value is in, never
-            # before: a fill that times out would otherwise leave the node
-            # holding the previous secret with nothing left to hide it.
-            _type_value(el, cmd["value"])
-            el.evaluate(UNMASK_JS)
-            self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
-            return {"ok": True, "frame": i}
+            # A cap refusal is one answer however it is reached: before the
+            # node is touched, or from an assignment inside `_type_value` after
+            # the page moved the cap under a fill in progress. Answered as a
+            # shape rather than a raise, the way a moved frame is -- a vault
+            # fill's failure text never reaches the agent, because Playwright's
+            # would quote the value, and "check the selector" is exactly wrong
+            # for a selector that was right.
+            try:
+                _refuse_if_capped(el, cmd["value"])
+                if cmd.get("mask"):
+                    # Marked first, and only typed once the mark is known to have
+                    # taken. An unmasked answer means the page defeated it, and the
+                    # value is not typed at all -- the caller turns that into its
+                    # own refusal. Marking and filling are one step or neither: a
+                    # mark that goes on and a fill that then times out would leave
+                    # an ordinary field tagged and withheld from `forms` for the
+                    # life of the page.
+                    was_marked = el.evaluate(WAS_MARKED_JS)
+                    before = el.evaluate_handle(VALUE_SNAPSHOT_JS)
+                    state = el.evaluate(MASK_JS)
+                    if state == "unmasked":
+                        before.dispose()
+                        return {"ok": False, "mask": state, "frame": i}
+                    try:
+                        _type_value(el, cmd["value"])
+                    except Exception:
+                        # Nothing landed: put the node back as it was found.
+                        # Something did: it is holding a value nobody can account
+                        # for, so the mark stays and the ledger learns about it.
+                        if el.evaluate(NOTHING_LANDED_JS, before):
+                            if not was_marked:
+                                el.evaluate(UNMASK_JS)
+                        else:
+                            self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                        raise
+                    finally:
+                        before.dispose()
+                    self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                    return {"ok": True, "mask": state, "frame": i}
+                # Not a secret. The mark comes off AFTER the value is in, never
+                # before: a fill that times out would otherwise leave the node
+                # holding the previous secret with nothing left to hide it.
+                _type_value(el, cmd["value"])
+                el.evaluate(UNMASK_JS)
+                self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
+                return {"ok": True, "frame": i}
+            except _FieldTooShort as short:
+                return {"ok": False, "mask": "too_long", "cap": short.cap, "frame": i}
         raise last or RuntimeError("selector not found: %s" % sel)
 
     def handle(self, cmd, screenshots_dir):
