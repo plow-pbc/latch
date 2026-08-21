@@ -9,9 +9,10 @@ the architecture and the reasoning behind each decision).
 > which authenticates the agent and forwards MCP to the MCP server in
 > `packages/mcp-server`. Both halves exist here: the server, and the outbound
 > client in `packages/relay-client` that dials the relay and serves what it
-> tunnels. **The relay itself does not exist yet** — it is a different repository
-> and is not built, so this side is verified against a stand-in that speaks the
-> same wire contract.
+> tunnels. **The relay exists** too, in the `plow6` repo (`api/plow/relay/`), so
+> the remaining gap is that this side has no automated live-stack test — the
+> in-repo stand-in was deleted, and the relay leg is verified by hand against a
+> running plow stack.
 
 ## Layout
 
