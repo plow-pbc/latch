@@ -61,7 +61,8 @@ these costs a review slot and teaches the author to skim:
   saw" instead. **This does not extend to the relay client's own lifecycle**,
   which IS testable in `npx vitest run` against a `FakeConn`. Read
   `packages/relay-client/test` before calling a relay-leg gap untestable — and
-  ask for that test. README-ts.md § Integration coverage owns what it reaches.
+  ask for that test. `README-ts.md` § Integration coverage owns the list of
+  what `FakeConn` already reaches.
 - **The browser evidence buffer is destructive and unserialized** —
   issue #104, declined with the reachability conditions named.
 
