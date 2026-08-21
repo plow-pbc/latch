@@ -335,9 +335,14 @@ describe("what the agent-facing copy must and must not say", () => {
   it("both copy homes interpolate the one tooling list", async () => {
     expect(SERVER_INSTRUCTIONS).toContain(MACOS_TOOLING);
     expect((await descriptions(makeServer())).plow_run_command).toContain(MACOS_TOOLING);
-    // The whole verified set, not the two that happened to be here before:
-    // executor.ts's coupling note treats all four as load-bearing, so dropping
-    // the clipboard pair is exactly the edit that must not ship green.
+  });
+
+  /**
+   * Content, not seam — its own case so a failure names what broke. Every tool
+   * here was RUN under the generated profile; executor.ts's mach-lookup note
+   * governs the same set, so dropping the clipboard pair must not ship green.
+   */
+  it("the tooling list names every tool verified under the profile", () => {
     for (const tool of ["mdfind", "sips", "pbcopy", "pbpaste"]) {
       expect(MACOS_TOOLING).toContain(tool);
     }
