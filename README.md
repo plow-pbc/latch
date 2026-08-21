@@ -19,9 +19,10 @@ the architecture and [README-ts.md](README-ts.md) for the package/app layout.
 > the relay itself (see `CLAUDE.md` § Layout, "Being rebuilt").
 > **Agents do reach this Mac today.** The policy engine, the capability-derived
 > sandbox, file operations, the audit log, the approval UI and the adversarial
-> reviewer build, run and are covered by the test suite. What is missing is
-> automated *integration* coverage of the relay leg, which is verified by hand —
-> see [README-ts.md](README-ts.md) § Integration coverage.
+> reviewer build, run and are covered by the test suite. What the relay leg's
+> automated coverage does and does not reach is owned by
+> [README-ts.md](README-ts.md) § Integration coverage; the rest of that leg is
+> verified by hand.
 
 ## Quickstart with `just`
 
