@@ -106,7 +106,7 @@ Design points:
 
 Every operation (file read/write, command, browser session) becomes one signed
 intent — the single artifact that the approval UI renders, the sandbox is
-derived from, the audit log stores, and the future adversarial reviewer
+derived from, the audit log stores, and the adversarial reviewer
 evaluates.
 
 ```json
@@ -160,8 +160,8 @@ Decisions: **Always allow / Allow once / Deny.**
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
-  not the approval flow. It is the raw material for the future adversarial
-  reviewer and the iOS remote-approval app.
+  not the approval flow. It is the raw material for the adversarial reviewer and
+  the future iOS remote-approval app.
 
 ## 6. Execution & sandbox
 
