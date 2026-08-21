@@ -76,6 +76,17 @@ export interface DecideDeps {
   review: (
     args: ReviewArgs,
   ) => Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }>;
+  /**
+   * What this Mac can establish about the operation on its own — the origins a
+   * live browser session already holds, a vault item's category and whether it
+   * belongs to the page in front of it.
+   *
+   * Injected rather than read here because it is device state (the vault
+   * broker, the browser sessions) and this file must stay runnable with no
+   * display and no device. Absent means "nothing to add", which is the honest
+   * answer for every operation that is not a credential fill.
+   */
+  deviceFacts?: (intent: Intent) => Promise<string[]>;
   /** Show the human the approval dialog, optionally with the reviewer's say. */
   openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
 }
@@ -115,8 +126,12 @@ export async function decideIntent(
       // must not name one that never saw this intent.
       model: REVIEWER_MODEL,
     });
+    const facts = deps.deviceFacts ? await deps.deviceFacts(intent) : [];
     const r = await deps.review({
       intent,
+      // Established on this Mac at decision time. The prompt says so, and says
+      // it in a line the agent cannot write into.
+      deviceFacts: facts,
       // Nothing about the past. The reviewer reasoned from a growing pile of
       // earlier operations rather than from the request, and each denial fed
       // the next; it now sees this operation and nothing else.

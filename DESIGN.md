@@ -158,6 +158,19 @@ Decisions: **Always allow / Allow once / Deny.**
   argv) and same path scopes only — `git status` approved does not cover
   `git push`; argument-level templating is future work.
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
+- **A third input the reviewer gets, and the agent cannot write:** what this Mac
+  RESOLVED about the operation. A credential fill arrives as a list of opaque
+  vault ids, and a reviewer asked whether to type `bxk3…` into a page nobody has
+  described to it cannot answer. So the device establishes, at decision time,
+  the origins the live browser session already holds, the page it is on, each
+  item's title and category, and whether the vault considers that item to belong
+  to that page — from the session handle the tool call carried and the vault's
+  own answer, never from anything the agent said. These are facts to judge the
+  request against, never a bound: the capability set is still the whole of what
+  an approval grants. The vault is time-boxed, and a vault that does not answer
+  is reported as UNRESOLVED rather than left out, because a silence reads as
+  "nothing wrong" and that is the one misreading that turns not knowing into a
+  reason to allow.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
   not the approval flow. It is the raw material for the future adversarial

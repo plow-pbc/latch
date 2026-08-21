@@ -214,6 +214,30 @@ export class BrowserSessions {
     return originMatches(host, s.origins);
   }
 
+  /**
+   * What this Mac knows about ONE session, named by its handle.
+   *
+   * For a decision about widening that session: the reviewer is otherwise
+   * shown a list of opaque vault ids and asked whether to type them into a
+   * page nobody has described to it. `current()` is the wrong answer to that
+   * question — it returns whichever session acted last, which need not be the
+   * one being widened.
+   *
+   * The handle goes IN and never comes back out: it is the capability that
+   * drives the browser, and this returns what the session is, not how to reach
+   * it.
+   */
+  describe(handle: string): BrowserSessionInfo | null {
+    const s = this.sessions.get(handle);
+    if (!s) return null;
+    return {
+      origins: [...s.origins],
+      agentId: s.agentId,
+      lastUrl: s.lastUrl,
+      inScope: this.inScope(s, s.lastUrl),
+    };
+  }
+
   /** The session the owner's viewer is watching — the one that acted last. */
   current(): BrowserSessionInfo | null {
     const s = this.mostRecent();

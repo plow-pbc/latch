@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   Capability,
   Intent,
+  JSONValue,
   KeyPair,
   makeIntent,
 } from "@domo/protocol";
@@ -194,6 +195,27 @@ describe("PolicyEngine", () => {
       sessionId: "s1",
     });
   }
+
+  /**
+   * The tool call's delivery detail reaches the delegate, not only the
+   * execution. Which browser session a widen is about is not in the capability
+   * set — it cannot be, it is a handle and not a bound — and a reviewer asked
+   * to judge a credential fill without it is looking at opaque ids.
+   */
+  it("hands the delegate the payload the intent arrived with", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const seen: JSONValue[] = [];
+    const spy = {
+      async decideIntent(_intent: Intent, payload?: JSONValue) {
+        seen.push(payload ?? null);
+        return "allow_once" as const;
+      },
+    };
+    await engine.decide(intentWith([{ kind: "process.exec", argv: ["ls"] }]), spy, {
+      session: "handle-1",
+    });
+    expect(seen).toEqual([{ session: "handle-1" }]);
+  });
 
   it("always_allow stores a rule reused on the next matching intent", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));

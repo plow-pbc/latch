@@ -227,7 +227,7 @@ function encoded(value: string | undefined | null): string {
  * So nothing earlier is built into the message at all. Any history makes a
  * verdict depend on a growing list, and a growing list is what escalates.
  */
-function buildPrompt(intent: Intent, humanAvailable: boolean): string {
+function buildPrompt(intent: Intent, deviceFacts: string[], humanAvailable: boolean): string {
   // A capability display is composed on this Mac, but the paths, origins, argv
   // and item ids inside it are the agent's, so the line is encoded like any
   // other agent-written value. What it MEANS is unchanged: this is still the
@@ -235,12 +235,25 @@ function buildPrompt(intent: Intent, humanAvailable: boolean): string {
   const caps = (intent.capabilities ?? [])
     .map((c) => `  - ${encoded(capabilityDisplay(c))}`)
     .join("\n");
+  // Resolved on this Mac from its own state — the vault, the live browser
+  // session — and never from anything the agent sent. A vault item id is opaque
+  // ("bxk3…"), and a reviewer asked whether to type that item into a page it
+  // cannot see is being asked to guess. These are the facts that make the
+  // question answerable: what the session is already approved for, what
+  // category the item is, and whether it belongs to the site in front of it.
+  //
+  // Still encoded, though device-composed: the values inside are vault titles
+  // and page origins, and a title is whatever somebody typed into their vault.
+  const facts = deviceFacts.map((f) => `  - ${encoded(f)}`).join("\n");
   return (
     `Operation to review:\n` +
     `Agent: ${encoded(intent.agentDisplay)} (${encoded(intent.agentId)})\n` +
     `Request (composed on this Mac from the tool call): ${encoded(intent.request)}\n` +
-    `Requested capability bounds (what the sandbox will enforce if allowed):\n${caps || "  (none)"}\n\n` +
-    `Decide ${humanAvailable ? "allow, deny, or ask" : "allow or deny"}.`
+    `Requested capability bounds (what the sandbox will enforce if allowed):\n${caps || "  (none)"}\n` +
+    (facts
+      ? `What this Mac resolved about it (established HERE, not supplied by the agent):\n${facts}\n`
+      : "") +
+    `\nDecide ${humanAvailable ? "allow, deny, or ask" : "allow or deny"}.`
   );
 }
 
@@ -352,7 +365,23 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Prom
  */
 type ProviderResult =
   | { ok: true; text: string }
-  | { ok: false; reason: string; cause?: ReviewFailureCause };
+  | {
+      ok: false;
+      reason: string;
+      cause?: ReviewFailureCause;
+      /**
+       * Worth asking once more, inside the same budget.
+       *
+       * Exactly ONE failure earns this: a 2xx whose body carries no content.
+       * The request was accepted, billed and answered — the answer is simply
+       * empty, which is a hiccup in the generation rather than anything about
+       * the request. Everything else here is a standing condition (no balance,
+       * a refused model) or a failure a second identical request would repeat,
+       * and retrying those would double the cost of a call that is already
+       * lost.
+       */
+      retryable?: true;
+    };
 
 /**
  * One review round-trip. Providers are the only part that touches a network.
@@ -446,7 +475,7 @@ function plowCall(
     const content = (body as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]
       ?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
-      return { ok: false, reason: "reviewer returned no verdict" };
+      return { ok: false, reason: "reviewer returned no verdict", retryable: true };
     }
     return { ok: true, text: content };
   };
@@ -485,6 +514,19 @@ export interface ReviewArgs {
    * quietly instead of as a type error.
    */
   humanAvailable: boolean;
+  /**
+   * Facts the DEVICE established about this operation, one per line.
+   *
+   * Not context and not history: each line is something this Mac looked up in
+   * its own state at decision time — the origins a live browser session is
+   * already approved for, a vault item's category, whether that item's site
+   * matches the page. A credential fill was otherwise reviewed on opaque ids
+   * alone, which is a question nobody could answer.
+   *
+   * The agent cannot write into this. Anything it supplies arrives as the goal
+   * or the request and is labelled as such.
+   */
+  deviceFacts?: string[];
 }
 
 /** The one shape a non-verdict takes: `ask`, plus why it isn't one. */
@@ -519,15 +561,19 @@ export async function adversarialReview(
   // verdict the human has already been handed.
   const budget = new AbortController();
   try {
-    const result = await withTimeout(
-      call(
-        systemPrompt(args.agentPurpose ?? "", args.humanAvailable),
-        buildPrompt(args.intent, args.humanAvailable),
-        budget.signal,
-      ),
-      REVIEWER_TIMEOUT_MS,
-      () => budget.abort(),
-    );
+    const system = systemPrompt(args.agentPurpose ?? "", args.humanAvailable);
+    const prompt = buildPrompt(args.intent, args.deviceFacts ?? [], args.humanAvailable);
+    // One retry, and only for an accepted-but-empty answer — see `retryable`.
+    // INSIDE the budget, deliberately: the timeout wraps both attempts and the
+    // second shares the same abort signal, so a retry can never buy the review
+    // more wall-clock than one review was ever allowed. A second attempt that
+    // does not fit simply does not happen.
+    const attempts = async (): Promise<ProviderResult> => {
+      const first = await call(system, prompt, budget.signal);
+      if (first.ok || first.retryable !== true) return first;
+      return call(system, prompt, budget.signal);
+    };
+    const result = await withTimeout(attempts(), REVIEWER_TIMEOUT_MS, () => budget.abort());
     if (!result.ok) {
       // `no_credits` is the sharper answer where it applies, so it wins.
       return failedReview(result.reason, result.cause ?? "unavailable");

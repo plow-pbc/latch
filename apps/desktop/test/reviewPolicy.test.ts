@@ -91,6 +91,47 @@ function harness(
 }
 
 /**
+ * The other half of "the reviewer sees this operation and nothing else": what
+ * this MAC knows about the operation still reaches it. The reviewer was being
+ * handed opaque vault ids and asked to judge a fill; these are the facts that
+ * make that a question with an answer.
+ */
+describe("what the device resolved reaches the reviewer", () => {
+  it("is passed on the review call", async () => {
+    const reviewCalls: ReviewArgs[] = [];
+    await decideIntent(intent(), {
+      settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      auditEntries: () => [],
+      record: () => {},
+      deviceFacts: async () => ["the session is already approved for: chase.com"],
+      review: async (args: ReviewArgs) => {
+        reviewCalls.push(args);
+        return { verdict: "allow" as const, reason: "fine" };
+      },
+      openApproval: async () => "deny" as const,
+    });
+    expect(reviewCalls[0].deviceFacts).toEqual(["the session is already approved for: chase.com"]);
+  });
+
+  it("is an empty list when the caller supplies no source at all", async () => {
+    const reviewCalls: ReviewArgs[] = [];
+    await decideIntent(intent(), {
+      settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      auditEntries: () => [],
+      record: () => {},
+      review: async (args: ReviewArgs) => {
+        reviewCalls.push(args);
+        return { verdict: "allow" as const, reason: "fine" };
+      },
+      openApproval: async () => "deny" as const,
+    });
+    expect(reviewCalls[0].deviceFacts).toEqual([]);
+  });
+});
+
+/**
  * What is actually PASSED, not what the prompt says.
  *
  * The ratchet was never a wording problem, so this asserts on the argument

@@ -36,7 +36,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Decision, Intent, capabilityDisplay } from "@domo/protocol";
+import { Decision, Intent, JSONValue, capabilityDisplay } from "@domo/protocol";
 import { IntentDecision, PolicyDelegate } from "./policyEngine.js";
 
 /** Same fifteen minutes as a deferred handle — §4.3 uses one window. */
@@ -200,7 +200,7 @@ export class ApprovalStore implements PolicyDelegate {
     return true;
   }
 
-  async decideIntent(intent: Intent): Promise<IntentDecision> {
+  async decideIntent(intent: Intent, payload?: JSONValue): Promise<IntentDecision> {
     const started = this.now();
     const record: ApprovalRecord = {
       intentId: intent.intentId,
@@ -249,7 +249,7 @@ export class ApprovalStore implements PolicyDelegate {
     // Ask whoever normally answers. Its result goes through the same settlement
     // check as an external answer and as the timer.
     void this.inner
-      .decideIntent(intent)
+      .decideIntent(intent, payload)
       .then((decision) => settle(decision, "dialog"))
       .catch(() => settle({ decision: "deny", source: "error" }, "error"));
 

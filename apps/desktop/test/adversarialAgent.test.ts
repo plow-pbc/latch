@@ -122,6 +122,76 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * A 2xx with nothing in it.
+ *
+ * The request was accepted, billed and answered — the answer is simply empty,
+ * which is a hiccup in the generation rather than anything about the request.
+ * Every other failure here is a standing condition or one an identical second
+ * request would repeat, so this is the only one worth asking again.
+ */
+describe("an accepted-but-empty answer is asked once more", () => {
+  it("retries, and the second answer is the verdict", async () => {
+    fetchMock
+      .mockResolvedValueOnce(plowResponse(""))
+      .mockResolvedValueOnce(plowResponse(verdictJson("deny", "too broad")));
+    expect(await review()).toEqual({ verdict: "deny", reason: "too broad" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after the second, rather than looping", async () => {
+    fetchMock.mockResolvedValue(plowResponse(""));
+    expect(await review()).toEqual({
+      verdict: "ask",
+      reason: "reviewer returned no verdict",
+      cause: "unavailable",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a failure a second identical request would repeat", async () => {
+    fetchMock.mockResolvedValue(plowError(402));
+    expect((await review()).cause).toBe("no_credits");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The retry lives INSIDE the review's own budget: two attempts never buy more
+   * wall-clock than one review was ever allowed.
+   */
+  it("does not extend the budget", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(plowResponse("")).mockImplementationOnce(
+      () => new Promise<Response>(() => {}),
+    );
+    const pending = review();
+    await vi.advanceTimersByTimeAsync(REVIEWER_TIMEOUT_MS + 1);
+    expect((await pending).cause).toBe("unavailable");
+  });
+});
+
+describe("what this Mac resolved about the operation", () => {
+  it("reaches the reviewer, in the message the agent cannot write into", async () => {
+    await adversarialReview({
+      intent: intent(),
+      history: [],
+      plowCredential: PLOW_CREDENTIAL,
+      apiBaseUrl: "https://api.plow.co",
+      humanAvailable: true,
+      deviceFacts: ['vault item bxk3 is "Chase", category LOGIN; the vault lists the current page as one of its own sites'],
+    });
+    const user = sentMessages().find((m) => m.role === "user")!.content;
+    expect(user).toContain("established HERE, not supplied by the agent");
+    expect(user).toContain("category LOGIN");
+  });
+
+  it("leaves the block out entirely when there is nothing to say", async () => {
+    await review();
+    const user = sentMessages().find((m) => m.role === "user")!.content;
+    expect(user).not.toContain("established HERE");
+  });
+});
+
 describe("adversarialReview — clean verdicts flow through", () => {
   it("allow", async () => {
     answersWith(verdictJson("allow", "harmless listing"));

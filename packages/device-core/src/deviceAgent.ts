@@ -311,7 +311,12 @@ export class DeviceAgent {
       capabilities: intent.capabilities.map(capabilityDisplay),
     });
 
-    const grant = await this.policy.decide(intent, this.delegate);
+    // The payload rides along to the decision, not only to the execution: it
+    // says WHICH browser session a widen is about, and a reviewer handed a list
+    // of opaque vault ids without that has been asked an unanswerable question.
+    // It is delivery detail, never a bound — the capability set is still the
+    // whole of what an approval grants.
+    const grant = await this.policy.decide(intent, this.delegate, payload);
     onDecided?.();
     this.audit.record("intent_decision", {
       intentId: intent.intentId,

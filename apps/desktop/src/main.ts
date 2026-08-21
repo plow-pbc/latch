@@ -19,7 +19,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Intent } from "@domo/protocol";
+import { Intent, JSONValue, jv } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
@@ -43,6 +43,7 @@ import { ConnectClient } from "./connectClient.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
+import { credentialFillFacts } from "./reviewFacts.js";
 import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
 import {
   isSignedIn,
@@ -150,7 +151,10 @@ let updates: UpdateController | null = null;
 class ElectronPolicy implements PolicyDelegate {
   // The branching itself lives in reviewPolicy.ts so it is testable without a
   // display; this only supplies the Electron-shaped pieces.
-  async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
+  async decideIntent(
+    intent: Intent,
+    payload?: JSONValue,
+  ): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
     return decideIntent(intent, {
       settings: loadSettings(home),
@@ -158,6 +162,13 @@ class ElectronPolicy implements PolicyDelegate {
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
+      deviceFacts: () =>
+        credentialFillFacts(intent, payload ?? null, {
+          session: (handle) => device?.browserSessions?.describe(handle) ?? null,
+          vault: device?.credentialBroker
+            ? (url) => device!.credentialBroker!.whatsHere(url)
+            : null,
+        }),
       openApproval: async (hint) =>
         openApprovalWindow(
           { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },

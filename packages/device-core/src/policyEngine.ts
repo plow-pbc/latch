@@ -11,6 +11,7 @@ import {
   Grant,
   Intent,
   intentRuleKey,
+  JSONValue,
   makeAlwaysAllowRule,
   makeGrant,
 } from "@domo/protocol";
@@ -27,7 +28,14 @@ export type IntentDecision = Decision | { decision: Decision; source?: string };
 
 /** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
-  decideIntent(intent: Intent): Promise<IntentDecision>;
+  /**
+   * `payload` is the tool call's delivery detail — a browser session handle and
+   * nothing an approval is granted over. It is here so a delegate can look up
+   * what this Mac knows about the thing being acted on (which session, which
+   * page) before deciding. Optional, so a delegate that does not care about it
+   * simply does not take it; the enforceable bound is still the capability set.
+   */
+  decideIntent(intent: Intent, payload?: JSONValue): Promise<IntentDecision>;
 }
 
 export class PolicyEngine {
@@ -61,12 +69,12 @@ export class PolicyEngine {
     fs.writeFileSync(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
   }
 
-  async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
+  async decide(intent: Intent, delegate: PolicyDelegate, payload?: JSONValue): Promise<Grant> {
     const key = intentRuleKey(intent);
     if (this.rules.has(key)) {
       return makeGrant(intent, "always_allow", "rule");
     }
-    const result = await delegate.decideIntent(intent);
+    const result = await delegate.decideIntent(intent, payload);
     const decision = typeof result === "string" ? result : result.decision;
     const source = typeof result === "string" ? "prompt" : (result.source ?? "prompt");
     if (decision === "always_allow") {
