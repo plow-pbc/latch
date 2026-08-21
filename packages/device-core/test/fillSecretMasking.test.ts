@@ -662,6 +662,16 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
+  it("types the tail of a long value whose tab is in the assigned head", () => {
+    // Scoped to the tail, like the line-break rule: only what gets typed can
+    // send a key. Widening it to the whole value would send every long
+    // tab-bearing value to a bare assignment, ending the field on no keys.
+    const run = probed.tab_outside_tail;
+    expect(run.trace).toContain("handle.type");
+    expect(run.typed_len).toBe(probed.constants.typed_chars);
+    expect(run.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("assigns the value outright when the keys did not compose it", () => {
     // A field can take the keys and sanitise some of them away — a number
     // input handed something that is not a number does exactly that. Reporting

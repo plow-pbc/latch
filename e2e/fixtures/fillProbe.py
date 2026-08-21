@@ -510,6 +510,11 @@ def main() -> int:
         # A tab, which `type()` sends as the Tab key -- focus moves and no
         # character lands, so the keys can never carry this value.
         "tab_value": run(server, {**base, "value": "one\ttwo"}),
+        # And one whose tab sits in the assigned head. The guard is scoped to the
+        # tail, which is all that gets typed, so this still ends on real keys --
+        # widening it to the whole value would send every long tab-bearing value
+        # to a bare assignment.
+        "tab_outside_tail": run(server, {**base, "value": "one\t" + "x" * 2000}),
         # A break at a textarea, the node that keeps it as a character: it keeps
         # its keystrokes too.
         "newline_multiline": run(server, {**base, "value": "one\ntwo"},

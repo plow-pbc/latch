@@ -247,7 +247,8 @@ DOC_TOKEN_JS = """() => {
 # `fill()` sets one, the same loud refusal where it will not.
 #
 # Only a <textarea> and an <input> of a text-carrying type are typed at. An
-# editing host -- contenteditable, a designMode body -- is deliberately not: the
+# editing host -- contenteditable, a designMode body -- is deliberately
+# neither: the
 # credential submits this exists for are <input>, and admitting arbitrary hosts
 # cost a second editability taxonomy (which declared attribute values count,
 # which embedded and non-rendered tags to refuse before reading it) for a case
@@ -264,11 +265,12 @@ TYPEABLE_JS = """(el) => {
     return el.disabled || el.readOnly ? "" : "single-line";
 }"""
 
-# How a node holds its text: `value` for an input, `textContent` for a
-# contenteditable, which `TYPEABLE_JS` sends down the typed path too. Asking an
-# input for its textContent -- or a contenteditable for its value -- reads the
-# node as empty, which calls every fill dropped and every failed fill harmless,
-# so every question below asks through this one.
+# How a node holds its text: `value` for an input or a textarea, `textContent`
+# for anything else. Typing only reaches the first two, but every node reaches
+# the ASSIGNMENT path -- so the snapshot and nothing-landed questions below are
+# still asked about a contenteditable. Asking an input for its textContent, or a
+# contenteditable for its value, reads the node as empty, which would call every
+# fill dropped and every failed fill harmless, so all of them ask through this.
 _HELD = "(typeof el.value === 'string' ? el.value : (el.textContent || ''))"
 
 # What a node is holding, captured before a fill so a failure has something
@@ -372,8 +374,9 @@ def _type_value(el, value):
     if kind != "multiline":
         value = value.replace("\n", "")
     # A tab is the one character no normalization can rescue. `type()` sends it
-    # as the Tab KEY, which moves focus instead of adding a character, so the
-    # node ends up holding the value with the tab missing -- and that gap is
+    # as the Tab KEY -- a browser claim, like the Enter one above, and it stays
+    # a manual one -- which moves focus instead of adding a character, so the
+    # node ends up holding the value with the tab missing. That gap is
     # mid-value, which KEYS_DROPPED_JS only recognises as a prefix, so nothing
     # would repair it and the fill would report a value the node never held. An
     # assignment carries a tab, so such a value takes the path it always had.
