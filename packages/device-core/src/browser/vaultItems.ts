@@ -88,6 +88,9 @@ export interface VaultItemSummary {
 
 export interface VaultItem {
   id: string;
+  /** What the vault says this item's last write was. Handed back on save so a
+   * form that has gone stale is refused instead of overwriting the newer one. */
+  revision: string;
   name: string;
   type: VaultItemType;
   notes: string;
@@ -101,6 +104,9 @@ export interface VaultItem {
 /** What the app sends to write an item. Omitted keys keep what is stored. */
 export interface VaultItemInput {
   itemId?: string;
+  /** The revision the form was opened on. Supplied, and no longer the vault's
+   * current one, means someone else wrote this item first. */
+  revision?: string;
   type?: VaultItemType;
   name?: string;
   notes?: string;
@@ -207,6 +213,7 @@ export function decryptItem(cipher: Cipher, account: VaultKey): VaultItem {
   }
   return {
     id: String(cipher.id ?? ""),
+    revision: String(cipher.revisionDate ?? ""),
     name: dec(cipher.name, key),
     type: TYPE_NAME[type],
     notes: dec(cipher.notes, key),
@@ -267,21 +274,26 @@ export function encryptCipher(
   cipher.card = null;
   cipher.identity = null;
   if (type === 1) {
-    // The form shows every URL, so an edit sends every URL. Entry by entry:
-    // one whose address did not change is passed through exactly as stored —
-    // match rule and all — and only a changed or added one is written anew.
+    // The form shows every URL, so an edit sends every URL, and an emptied row
+    // travels as a blank holding its place. A row is therefore the entry that
+    // sits at its own position — which is only sound because a save built on a
+    // version of the item the vault has since replaced never gets here:
+    // staleEdit refuses it first. See VaultClient.save.
     const previous = existing?.login?.uris ?? [];
     delete out.uris;
     let uris = previous;
     if (input.urls !== undefined) {
       uris = input.urls
         .map((u, i) => {
-          if (u === "") return null;                          // the owner emptied this row
-          const same = previous[i] && dec(previous[i].uri, key) === u;
-          // Unchanged: the stored entry, as it is — unless it has no checksum,
-          // which is a URL nothing else can see, and rewriting it is the repair.
-          if (same && previous[i].uriChecksum) return previous[i];
-          return { uri: enc(u, key), uriChecksum: checksum(u, key), match: same ? previous[i].match ?? null : null };
+          if (!u) return null;                                // the owner emptied this row
+          const held = previous[i];
+          const same = !!held && dec(held.uri, key) === u;
+          // Unchanged, and visible to every other client: the stored entry as it is.
+          if (same && held.uriChecksum) return held;
+          // Changed or added, or stored without a checksum — a URL nothing else
+          // can see, where rewriting it is the repair. The repair keeps the
+          // match rule; a row the owner actually edited does not.
+          return { uri: enc(u, key), uriChecksum: checksum(u, key), match: same ? held.match ?? null : null };
         })
         .filter((u): u is NonNullable<typeof u> => u !== null);
     }
@@ -294,6 +306,20 @@ export function encryptCipher(
     cipher.identity = out;
   }
   return cipher;
+}
+
+/**
+ * Whether a save was composed against an item the vault has since rewritten.
+ *
+ * The form sends the revision it was opened on. If that is no longer the
+ * vault's, everything the owner is looking at may be out of date — not only
+ * the URLs — so the save has nothing safe to write. An edit that names no
+ * revision made no claim about what it saw, which is the same position:
+ * it cannot be trusted over whatever is stored. Only a new item is exempt,
+ * having no stored version to be behind.
+ */
+export function staleEdit(existing: Cipher | null, revision: string | undefined): boolean {
+  return !!existing && revision !== String(existing.revisionDate ?? "");
 }
 
 /**

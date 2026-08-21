@@ -24,7 +24,13 @@ import {
   jv,
   makeIntent,
 } from "@domo/protocol";
-import { DeviceAgent, MAX_CLICK_TIMEOUT_MS, MAX_FILE_BYTES } from "@domo/device-core";
+import { ToolAnnotations } from "@modelcontextprotocol/server";
+import {
+  DeviceAgent,
+  LIVE_WEB_ROUTING,
+  MAX_CLICK_TIMEOUT_MS,
+  MAX_FILE_BYTES,
+} from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 
@@ -54,7 +60,18 @@ export interface ToolContext {
 /** One tool as this package defines it, before the MCP SDK wraps it. */
 export interface ToolSpec {
   name: string;
+  /** The human-readable label a client shows instead of the snake_case name. */
+  title: string;
   description: string;
+  /**
+   * HINTS FOR DISPLAY AND ROUTING — not enforcement. What a tool may actually
+   * do is the capability set the human approved, computed on this Mac from the
+   * arguments. Nothing here is consulted by the policy engine, the sandbox or
+   * the audit log, and a `readOnlyHint` read as a bound is exactly the drift
+   * CLAUDE.md warns about. The MCP spec says the same from the other side: a
+   * client must treat these as untrusted, because a server is free to lie.
+   */
+  annotations: ToolAnnotations;
   inputSchema: JSONValue;
   /**
    * Whether this tool constructs an intent and can therefore block on a human.
@@ -144,9 +161,26 @@ const GOAL = {
     "Why you need this, in one line. The user reads exactly this when deciding whether to approve.",
 };
 
+/**
+ * The macOS tooling an agent is told to reach for, in ONE place — this sentence
+ * and `plow_run_command`'s description are two consumers of one list.
+ *
+ * Every name here was RUN under the generated seatbelt profile before being
+ * printed: `mdfind`, `sips`, `pbcopy` and `pbpaste` all exit 0 under
+ * `(deny default)` + `(allow mach-lookup)`. `osascript` driving another
+ * application, `screencapture` and `shortcuts` are deliberately absent — the
+ * profile grants no `appleevent-send` and the app ships no automation
+ * entitlement, so naming them would point an agent at a denial. Adding a name
+ * means running it first; see the coupling note in device-core's executor.ts.
+ */
+export const MACOS_TOOLING =
+  "mdfind for Spotlight search across their files, sips for images, " +
+  "pbcopy and pbpaste for the clipboard, and whatever else they have installed";
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_file",
+    title: "Read a file on the user's Mac",
     description:
       "Read a file on the user's own Mac — their real filesystem, not your workspace. " +
       "They may be asked to approve, so this can return a pending handle.",
@@ -159,6 +193,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
@@ -184,6 +219,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_write_file",
+    title: "Write a file on the user's Mac",
     description:
       "Write a file on the user's own Mac — use this when the file is for them to open or keep, " +
       "not for your own working files. They may be asked to approve, so this can return a " +
@@ -194,6 +230,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { path: { type: "string" }, content: { type: "string" }, goal: GOAL },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
@@ -223,9 +260,12 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_run_command",
+    title: "Run a command on the user's Mac",
     description:
       "Run a command on the user's own Mac — their installed tools, their data, their network. " +
       "Use this when the command must affect their machine; use your own shell for your own work. " +
+      "Their Mac is a macOS workstation, so reach for tooling your workspace does not have when " +
+      `it fits the job: ${MACOS_TOOLING}. ` +
       "It runs inside a seatbelt sandbox. Declare every path you need: " +
       "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
       "write access is granted from them. They are NOT the full extent of what the command can " +
@@ -269,6 +309,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
@@ -315,6 +356,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_get_output",
+    title: "Get output from a running command",
     description:
       "Fetch incremental output of a command still running from plow_run_command. " +
       "Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, " +
@@ -327,6 +369,7 @@ export const TOOLS: ToolSpec[] = [
     },
     // Output retrieval is bound to an already-approved run: no new intent, no
     // approval, and nothing slow to wait on.
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
       const handle = jv(args).get("handle").str;
@@ -338,12 +381,14 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_list_skills",
+    title: "List this Mac's skills",
     description:
       "Call this early. This Mac publishes skills — how-to guides for tasks it can do, written " +
       "for whoever is driving it, and specific to this user's setup in ways you cannot otherwise " +
       "know. Lists their names and descriptions; read one with plow_read_skill before starting " +
       "work it covers.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(_args, ctx) {
       return { skills: ctx.device.skills.manifest() };
@@ -351,6 +396,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_read_skill",
+    title: "Read one of this Mac's skills",
     description:
       "Read a skill this Mac publishes (listed by plow_list_skills): a how-to guide for a task. " +
       "Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the plow_browser tools).",
@@ -360,6 +406,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { name: { type: "string", description: "Skill name from plow_list_skills" } },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
       const name = jv(args).get("name").str;
@@ -371,24 +418,23 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_browser_open",
+    title: "Open a browser on the user's Mac",
     description:
-      "Open a browser on the user's own Mac, as the user: it starts on a copy of their own "
-    + "profile, so it is already signed in wherever they are, and what you sign into is "
-    + "merged back into their profile when the session closes — including when several "
-    + "browsers are open at once. It can also "
-    + "fill passwords from their vault without returning them to you ('eval' is the exception: " +
-      "it reads page values directly, and must not be pointed at a field you filled) — so use " +
-      "it for sites that " +
-      "must be signed in as them, not for general web reading, which your own tools do faster. " +
-      "The session id you get back says WHICH browser: pass it on every call and you keep the "
-    + "same window. The Mac runs a few at once — every one of them the user's — and says so "
-    + "plainly when it is full. "
-    + "It is a supervised anti-detection browser, scoped to the listed " +
+      "Open a browser on the user's own Mac, as the user — use this for reading the live web, " +
+      `not your own fetch: ${LIVE_WEB_ROUTING}. ` +
+      "What you sign into is merged back into their profile when the session closes — including " +
+      "when several browsers are open at once. It can also fill passwords from their vault " +
+      "without returning them to you ('eval' is the exception: it reads page values directly, " +
+      "and must not be pointed at a field you filled). " +
+      "The session id you get back says WHICH browser: pass it on every call and you keep the " +
+      "same window. The Mac runs a few at once — every one of them the user's — and says so " +
+      "plainly when it is full. " +
+      "It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
       "permission to list the owner's vault item names (never values). The browser window is " +
-      "visible by default; pass headed:false only when the owner asked for it to run in the " +
-      "background. Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
+      "hidden by default; pass headed:true only when the owner asked to watch it run. " +
+      "Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
       "skill first.",
     inputSchema: {
       type: "object",
@@ -406,14 +452,15 @@ export const TOOLS: ToolSpec[] = [
         headed: {
           type: "boolean",
           description:
-            "Show the browser window so the owner can watch (default true). Pass false only " +
-            "when the owner asked to run it in the background — you see the same screenshots " +
-            "either way, they do not.",
+            "Show the browser window so the owner can watch (default false). Pass true only " +
+            "when the owner asked to watch it run — you see the same screenshots either way, " +
+            "they do not.",
         },
         goal: GOAL,
       },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
@@ -423,13 +470,14 @@ export const TOOLS: ToolSpec[] = [
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });
       }
-      // The owner is about to approve a browser they may not see: say so in the
-      // line they read, and carry the choice as payload — it bounds nothing.
+      // The owner does not see the browser unless this session asks for a
+      // window: say when one is coming in the line they read, and carry the
+      // choice as payload — it bounds nothing.
       const headed = a.get("headed").bool;
       const response = await decideAndRun(
         ctx,
         progress,
-        `browse${headed === false ? " (hidden window)" : ""}: ${origins.join(", ")}`,
+        `browse${headed === true ? " (visible window)" : ""}: ${origins.join(", ")}`,
         a.get("goal").str ?? undefined,
         capabilities,
         headed === null ? null : { headed },
@@ -445,6 +493,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_browser_request",
+    title: "Ask to widen the browser session",
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
@@ -466,6 +515,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
@@ -503,6 +553,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_browser",
+    title: "Drive the user's browser",
     description:
       "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
@@ -555,6 +606,7 @@ export const TOOLS: ToolSpec[] = [
     // Rides the session grant — no new intent, no approval. Non-deferrable so a
     // screenshot's image block reaches the agent directly (a deferred result
     // would be re-serialized as text by plow_get_result).
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     deferrable: false,
     async run(args, ctx) {
       const a = jv(args);
@@ -607,6 +659,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_vault",
+    title: "Look inside the user's password vault",
     description:
       "Check here before concluding you cannot sign in somewhere. " +
       "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
@@ -627,6 +680,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
       const a = jv(args);
@@ -638,6 +692,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_browser_close",
+    title: "Close the browser session",
     description: "Close a browser session when the task is done.",
     inputSchema: {
       type: "object",
@@ -645,6 +700,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { session: { type: "string" } },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
       const session = jv(args).get("session").str;
@@ -659,6 +715,7 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "plow_get_result",
+    title: "Poll a pending result",
     description:
       "Retrieve the result of any call that returned a pending handle — whichever tool created it. " +
       "Answers pending / ready / denied / failed / expired / unknown. " +
@@ -669,6 +726,7 @@ export const TOOLS: ToolSpec[] = [
       properties: { handle: { type: "string" } },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
       const handle = jv(args).get("handle").str;

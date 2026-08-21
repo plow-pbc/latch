@@ -5,14 +5,18 @@ the architecture and the reasoning behind each decision).
 
 > **Rebuilt: a Mac dials out.** The in-repo broker — the rendezvous service,
 > its MCP subset, the connection-string/certificate-pinning concepts and the
-> pairing flow — has been removed. A Mac now reaches agents by dialing *out* to
-> the Plow relay, which authenticates the agent and forwards MCP to the MCP
-> server in `packages/mcp-server`. Both halves exist here: the server, and the
-> outbound client in `packages/relay-client` that dials the relay and serves
-> what it tunnels. The relay is a different repository, and it is **built and
-> serving** — agents reach Macs through this app today. There is no in-repo
-> stand-in for it any more, so the leg against a real relay is verified by hand
-> rather than in the suite; see [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+> pairing flow — has been removed. A Mac now reaches agents by dialing *out*
+> to the Plow relay, which authenticates the agent and forwards MCP to the
+> MCP server in `packages/mcp-server`. Both halves exist here: the server,
+> and the outbound client in `packages/relay-client` that dials the relay and
+> serves what it tunnels. **The relay exists** too, and agents reach Macs
+> through this app today (see `CLAUDE.md` § Layout, "Rebuilt: a Mac dials
+> out"). The remaining gap is that the relay leg has no automated
+> *end-to-end* coverage: the in-repo stand-in was deleted and there is no
+> automated live-stack path either, so that leg is verified by hand. What
+> remains here is the wire contract plus handshake, heartbeat and reconnect
+> against a fake connection. See [§ Integration
+> coverage](#integration-coverage).
 
 ## Layout
 
@@ -270,17 +274,20 @@ against a stand-in relay built to the wire contract — and that stand-in has no
 been deleted too, along with the drivers and the relay+MCP gate that ran against
 it (head chef's call: a locally running plow API already simulates plow).
 
-So there is **no automated coverage against a real relay** today, and no
-automated live-stack path either — the two scripts that drove a real plow stack
+So there is **no automated end-to-end coverage of the relay leg** today, and no
+automated live-stack path either: the two scripts that drove a real plow stack
 (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
-deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket or
-tunnels an MCP call. That path is verified **manually**: bring up a plow stack,
-run the app against it, drive it by hand. The procedure is in
-[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket to a
+real relay or tunnels an MCP call end to end. That whole path is verified
+**manually**: bring up a plow stack, run the app against it, drive it by hand.
+The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
-`packages/relay-client/test` does hold automated coverage of the client's own
-protocol behavior — the pure wire contract, plus the connection lifecycle over
-hand-written fakes; `docs/TESTING-THE-APP.md` enumerates what.
+What `packages/relay-client/test` still holds is the pure part of the wire
+contract — `stripHopByHop`, `Host` preservation, frame validation — plus the
+socket lifecycle against hand-written fakes: the handshake, heartbeat and pong,
+silent-drop detection, backoff, reconnect, and the dial-resolves-after-`stop()`
+race (`lifecycle.test.ts`, `liveness.test.ts`). Automated, in process, and the
+first place to look before calling a relay-leg gap untestable.
 
 ## Running the desktop app
 

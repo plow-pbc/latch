@@ -2,7 +2,7 @@
  * The deferred-result contract (design §4.3).
  *
  * A tunnelled call has a hard ceiling: the relay's pending future times out at
- * 20 seconds, so nothing on this Mac may block past its call budget — not a
+ * 25 seconds, so nothing on this Mac may block past its call budget — not a
  * human who has walked away from an approval, not a slow command. Any
  * tool that cannot finish inside the budget returns a handle instead, keeps the
  * work running, and the agent retrieves the outcome later with `plow_get_result`.
@@ -24,12 +24,13 @@ import { JSONValue } from "@domo/protocol";
 /**
  * How long a tool may block before it must hand back a handle.
  *
- * The relay's pending future times out at 20 seconds and the MCP client
- * abandons at ~30s. This has to leave room for the tunnel round-trip on top of
- * itself, not merely be smaller than the relay's timeout — hence well under
- * half of it.
+ * The relay's pending future times out at 25 seconds and the MCP client
+ * abandons at ~30s. What is left after this budget is what delivery gets:
+ * registering the handle, framing the response, and the relay matching it to
+ * the exchange still waiting — so the ten seconds behind it are the margin,
+ * not slack.
  */
-export const CALL_BUDGET_MS = 8_000;
+export const CALL_BUDGET_MS = 15_000;
 
 /** Both halves of §4.3's fifteen minutes: pending lifetime, and result retention. */
 export const HANDLE_TTL_MS = 15 * 60_000;
@@ -56,8 +57,8 @@ export type PendingReason = "awaiting_approval" | "running";
  * `awaiting_approval` must not claim a dialog is on screen, because often
  * there is not one. It means "no decision yet", and that covers the work
  * before anyone is asked (path resolution, writing the approval record), the
- * adversarial reviewer thinking — a 30s budget against this 8s one, so in that
- * mode deferring while nobody has been asked is the ORDINARY case — and the
+ * adversarial reviewer thinking — a 30s budget against this 15s one, so in
+ * that mode deferring while nobody has been asked is still commonplace — and the
  * approve/deny modes, which never show a human anything at all.
  *
  * An earlier version of this note hedged on whether approval was *needed*,

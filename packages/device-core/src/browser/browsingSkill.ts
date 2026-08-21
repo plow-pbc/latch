@@ -7,15 +7,30 @@
 import { Skill } from "../skills.js";
 import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
 
+/**
+ * Why this Mac's browser is the one that answers a live-web question, in ONE
+ * place. Three surfaces said it in three independent wordings — the server
+ * instructions, `plow_browser_open`, and the skill description below — which
+ * meant three prose edits and a regex guard to keep them in step. They
+ * interpolate this instead.
+ *
+ * Every clause is a fact the agent's own fetch cannot match, and none of them
+ * overstates: the profile really is a copy of the user's, so "already signed
+ * in" is description rather than promise.
+ */
+export const LIVE_WEB_ROUTING =
+  "their browser runs on their own network rather than a datacenter address many sites " +
+  "refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is " +
+  "already signed in wherever they are";
+
 export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
     "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
     "owner's local credentials (their vault): a secret is typed into the page rather than "
-    + "returned to you. Use when " +
-    "the task needs the OWNER'S browser rather than any browser: signing in as them, filling " +
-    "forms, buying things, or reading a page only their session can see. General web reading " +
-    "belongs in your own tools, which are faster at it.",
+    + `returned to you. Use it for reading the live web at all — ${LIVE_WEB_ROUTING} — and ` +
+    "whenever the task needs the OWNER'S browser rather than any browser: signing in as them, " +
+    "filling forms, buying things, or reading a page only their session can see.",
   body: `# Browsing on this Mac
 
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:
@@ -31,10 +46,10 @@ the page; that is the one way round it, and it is not one you have any reason to
 - \`plow_browser_open {origins: ["dominos.com", "*.dominos.com"], credentials_metadata: true, goal}\`
   asks the owner to approve a browsing session bound to those site origins. List every
   domain you expect up front — the apex and the wildcard are separate entries.
-- The window is **visible by default** — the owner watches what is done with their
-  credentials. If they ask for it in the background ("don't take over my screen", "run it
-  headless"), open with \`headed: false\`; if they ask to watch, say nothing or pass
-  \`headed: true\`. Your screenshots are identical either way — only their view changes.
+- The window is **hidden by default** — the browser runs in the background and does not
+  take over the owner's screen. If they ask to watch it ("show me", "open it where I can
+  see it"), open with \`headed: true\`; otherwise say nothing or pass \`headed: false\`.
+  Your screenshots are identical either way — only their view changes.
   The choice lasts the session; a new mode means a new \`plow_browser_open\`.
 - Every \`plow_browser\` action is checked against the approved origins. If a click or popup
   lands outside them, page content locks: you can only \`url\`, \`pages\`, \`use_page\`, or

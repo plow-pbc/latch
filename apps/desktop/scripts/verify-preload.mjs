@@ -507,8 +507,20 @@ app.whenReady().then(async () => {
       inAgentsPane: !!pane.querySelector(".panel.agents"),
       // The stored text, in the field, and the two things said beside it.
       showsStoredPurpose: !!field && field.checkVisibility() && field.value === "Groceries and calendar only.",
+      purposeExampleHasBoundary: field?.placeholder.endsWith(
+        "You have no business with anything else on this computer — no files, no other sites.",
+      ) ?? false,
       labelled: pane.innerText.includes("What are agents for?"),
-      saysItOnlyNarrows: pane.innerText.includes("It can only narrow what gets approved"),
+      // The purpose is the ERRAND, and an errand widens as readily as it
+      // narrows: an owner who writes "Manage my SSH keys" has just made those
+      // keys the job. This probe used to pin the opposite claim — that the
+      // field "can only narrow what gets approved" — which was both untrue and
+      // the wrong direction, so it pins the new contract and the absence of
+      // the old promise.
+      saysItCanWiden: pane.innerText.includes(
+        "it can widen what gets approved as easily as narrow it",
+      ),
+      noOnlyNarrowsClaim: !pane.innerText.includes("only narrow"),
       saysItMayApprove: pane.innerText.includes("Requests that fit may be approved without asking you."),
       // The card is context, not enforcement: no capability list here, and the
       // word this rename retired is nowhere on screen.
@@ -831,8 +843,10 @@ app.whenReady().then(async () => {
       "Ask me every time,AI Reviewer decides,Approve everything,Deny everything" &&
     approvalsReviewer.inAgentsPane &&
     approvalsReviewer.showsStoredPurpose &&
+    approvalsReviewer.purposeExampleHasBoundary &&
     approvalsReviewer.labelled &&
-    approvalsReviewer.saysItOnlyNarrows &&
+    approvalsReviewer.saysItCanWiden &&
+    approvalsReviewer.noOnlyNarrowsClaim &&
     approvalsReviewer.saysItMayApprove &&
     approvalsReviewer.noAdversarialWord &&
     approvalsReviewer.noHintLineTakingItsPlace &&

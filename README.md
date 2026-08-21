@@ -19,16 +19,16 @@ touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
 (DESIGN.md §11a-i, which records what renaming it cost the last time).
 
 > **Agents reach this Mac today.** The in-repo broker that used to route them
-> here has been removed; a Mac now dials *out* to the Plow relay, which
-> authenticates the calling agent and forwards MCP to the MCP server running in
-> this app. Both halves of this side exist (`@domo/mcp-server`,
-> `@domo/relay-client`), and the relay — a separate repository — is built and
-> serving. So the policy engine, the capability-derived sandbox, file
-> operations, the audit log, the approval UI and the adversarial reviewer are
-> not just covered by the test suite: they are the live path a real caller
-> drives. The relay client's own protocol behavior is covered over a fake
-> connection; the leg against a real relay is verified by hand — see
-> [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+> here has been removed. A Mac now dials *out* to the Plow relay, which
+> authenticates the calling agent and forwards MCP to an MCP server running
+> in this app. Both halves exist here — that server and the outbound relay
+> client — and so does the relay itself (see `CLAUDE.md` § Layout, "Rebuilt:
+> a Mac dials out"). So the policy engine, the capability-derived sandbox,
+> file operations, the audit log, the approval UI and the adversarial
+> reviewer are not just covered by the test suite: they are the live path a
+> real caller drives. What the relay leg's automated coverage does and does
+> not reach is owned by [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md);
+> the rest of that leg is verified by hand.
 
 ## Quickstart with `just`
 

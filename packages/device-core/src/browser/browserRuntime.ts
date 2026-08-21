@@ -69,11 +69,9 @@ function camoufoxIn(dir: string): string | null {
  * Null when this build has no vault payload — the broker then talks to whatever
  * SEED_VAULT_URL points at, the way it did when we hosted it. */
 function vaultServerIn(dir: string): { binary: string; webVaultDir: string } | null {
-  const binary = [path.join(dir, hostArch(), "vaultwarden"), path.join(dir, "vaultwarden")].find(
-    (c) => fs.existsSync(c),
-  );
+  const binary = path.join(dir, hostArch(), "vaultwarden");
   const webVaultDir = path.join(dir, "web-vault");
-  if (!binary || !fs.existsSync(webVaultDir)) return null;
+  if (!fs.existsSync(binary) || !fs.existsSync(webVaultDir)) return null;
   return { binary, webVaultDir };
 }
 

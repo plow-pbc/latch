@@ -37,17 +37,21 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 stdio shim, connection-string/pinning concepts and pairing flow) has been
 removed. A Mac dials *out* to the Plow relay, which authenticates the calling
 agent and forwards MCP to `@domo/mcp-server`. Both halves of this side exist,
-and so does the relay — a different repository, built and serving: **agents
-reach Macs through this app today.** What is gone is the in-repo stand-in that
-used to verify this side against the wire contract (head chef's call: a locally
-running plow API simulates plow). The scripts that drove a *live* stack went
-with it, so there is **no automated live-stack path** — not here, not in CI.
-What is manual is the leg against a REAL relay: bring up a plow stack, run the
-app against it, drive it. `packages/relay-client/test` does cover the client's
-protocol behavior — the pure wire contract, plus the connection lifecycle over
+and **so does the relay** — in the `plow-pbc/plow` repository, where
+`api/plow/relay/` serves the MCP endpoint, the device WebSocket and an OAuth
+flow, covered by `api/tests/relay/`. **Agents reach Macs through this app
+today.** This line used to say the relay was "not built", which was true when
+written and cost a later reader a wrong assumption; check that repo rather than
+this sentence. What is gone is the in-repo stand-in that used to verify this
+side against the wire contract (head chef's call: a locally running plow API
+simulates plow). The scripts that drove a *live* stack went with it, so there
+is **no automated live-stack path** — not here, not in CI. What is manual is
+the leg against a REAL relay: bring up a plow stack, run the app against it,
+drive it. `packages/relay-client/test` does cover the client's protocol
+behavior — the pure wire contract, plus the connection lifecycle over
 hand-written fakes; nothing in it opens a socket or tunnels an MCP call. See
-[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md), which enumerates what that
-coverage is.
+[README-ts.md](README-ts.md#integration-coverage) § Integration coverage, which
+owns that list.
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's
@@ -66,7 +70,7 @@ coverage is.
   derives the capabilities the policy engine and the sandbox will enforce. Goal
   text rides along for the human to read and never influences the bound.
 - **Nothing may block past the call budget.** The relay's pending future times
-  out at **20 seconds**, so a tunnelled call has to answer well inside that. Any
+  out at **25 seconds**, so a tunnelled call has to answer well inside that. Any
   tool that cannot returns a deferred handle and keeps working; `plow_get_result`
   retrieves it. A handle belongs to the `agent_id` that created it. This is why
   file operations are async and size-capped: synchronous work blocks the event

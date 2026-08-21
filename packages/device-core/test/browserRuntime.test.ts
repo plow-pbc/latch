@@ -22,7 +22,17 @@ afterEach(() => {
  * browser-runtime/, the layout electron-builder produces. Returns the dir to
  * hand to resolveBrowserRuntime.
  */
-function fakePayload(opts: { withVaultCli: boolean; withVaultServer?: boolean }): { resources: string; root: string } {
+/** Which vault-server tree to lay down. Only `per-arch` is a layout the build
+ * produces; the rest are the shapes a stopped or hand-made build leaves. */
+type VaultShape = "per-arch" | "flat" | "binary-only";
+
+const VAULT_TREES: Record<VaultShape, string[]> = {
+  "per-arch": [`${arch}/vaultwarden`, "web-vault/.keep"],
+  flat: ["vaultwarden", "web-vault/.keep"],
+  "binary-only": [`${arch}/vaultwarden`],
+};
+
+function fakePayload(opts: { withVaultCli: boolean; vaultServer?: VaultShape }): { resources: string; root: string } {
   const resources = fs.mkdtempSync(path.join(os.tmpdir(), "domo-runtime-"));
   dirs.push(resources);
   const root = path.join(resources, "browser-runtime");
@@ -38,10 +48,9 @@ function fakePayload(opts: { withVaultCli: boolean; withVaultServer?: boolean })
     fs.mkdirSync(path.join(root, "vault-cli", arch), { recursive: true });
     fs.writeFileSync(path.join(root, "vault-cli", arch, "bw"), "");
   }
-  if (opts.withVaultServer) {
-    fs.mkdirSync(path.join(root, "vault-server", arch), { recursive: true });
-    fs.writeFileSync(path.join(root, "vault-server", arch, "vaultwarden"), "");
-    fs.mkdirSync(path.join(root, "vault-server", "web-vault"), { recursive: true });
+  for (const rel of opts.vaultServer ? VAULT_TREES[opts.vaultServer] : []) {
+    fs.mkdirSync(path.join(root, "vault-server", path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, "vault-server", rel), "");
   }
   return { resources, root };
 }
@@ -75,12 +84,19 @@ describe("resolveBrowserRuntime", () => {
   });
 
   it("finds the vault this build ships, binary plus web interface", () => {
-    const { resources, root } = fakePayload({ withVaultCli: true, withVaultServer: true });
+    const { resources, root } = fakePayload({ withVaultCli: true, vaultServer: "per-arch" });
     const runtime = resolveBrowserRuntime(resources)!;
     expect(runtime.vaultServer).toEqual({
       binary: path.join(root, "vault-server", arch, "vaultwarden"),
       webVaultDir: path.join(root, "vault-server", "web-vault"),
     });
+  });
+
+  // Neither is a layout the build produces, and packaging refuses both — a
+  // resolver that took either would accept a tree that cannot ship.
+  it.each(["flat", "binary-only"] as const)("reports no vault for a %s tree", (shape) => {
+    const { resources } = fakePayload({ withVaultCli: false, vaultServer: shape });
+    expect(resolveBrowserRuntime(resources)!.vaultServer).toBeNull();
   });
 
   it("reports no vault when this build ships none, so we can still point at a hosted one", () => {

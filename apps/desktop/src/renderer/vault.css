@@ -135,6 +135,8 @@
 .vaultui .add-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; font-weight: 600; color: var(--blue-fg); cursor: pointer; background: none; border: 0; padding: 0; transition: color .14s; }
 .vaultui .add-link:hover { color: var(--blue-fg); }
 .vaultui .add-link svg { width: 13px; height: 13px; }
+/* Nothing to remove, when there is only one site left to remove. */
+.vaultui .url-rows > .field:only-child .drop { display: none; }
 .vaultui .mini { flex: none; width: 28px; height: 28px; border-radius: 7px; border: 0; background: none; cursor: pointer;
     color: var(--muted); display: grid; place-items: center; transition: background .13s, color .13s; }
 .vaultui .mini svg { width: 14px; height: 14px; }

@@ -20,10 +20,17 @@ import {
   McpServer,
 } from "@modelcontextprotocol/server";
 import { JSONValue } from "@domo/protocol";
-import { DeviceAgent } from "@domo/device-core";
+import { DeviceAgent, LIVE_WEB_ROUTING } from "@domo/device-core";
 import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
-import { AgentIdentity, TOOLS, ToolContext, toolBlocks, toolContent } from "./tools.js";
+import {
+  AgentIdentity,
+  MACOS_TOOLING,
+  TOOLS,
+  ToolContext,
+  toolBlocks,
+  toolContent,
+} from "./tools.js";
 
 /** The MCP revision this server speaks, and the only one it will speak. */
 export const PROTOCOL_REVISION = "2026-07-28";
@@ -31,47 +38,80 @@ export const PROTOCOL_REVISION = "2026-07-28";
 /**
  * What this server is FOR, in the agent's own terms.
  *
- * Every tool description used to say only what a tool does. An agent choosing
- * between an instant read in its own workspace and one that might block on a
- * human picked its own every time — correctly, on the information it had,
- * because nothing said the local read was reading the wrong machine. Users had
- * to prefix requests with "with Plow, do X" to get these tools used at all.
+ * The boundary is stated once here rather than thirteen times in thirteen tool
+ * descriptions: these tools reach the user's real computer, the agent's own do
+ * not. Tool descriptions carry a compressed version anyway, because a client
+ * may drop this block — it rides `initialize` (2025 clients) and
+ * `server/discover` (2026-07-28), and neither obliges a client to forward it.
  *
- * So the boundary is stated once, here, rather than thirteen times in thirteen
- * descriptions: these tools reach the user's real computer, the agent's own
- * tools do not. The tool descriptions carry a compressed version of the same
- * thing because not every client forwards this block to the model — it rides
- * `initialize` (2025 clients) and `server/discover` (2026-07-28), and a client
- * is free to drop it.
+ * **No fallbacks, on purpose.** This used to route "general web reading" to the
+ * agent's own tools, on the theory that a fetch is cheaper than a human's
+ * approval. That sends "what's on the homepage of Reddit?" to a datacenter
+ * address the site refuses, and the agent reports failure with nothing telling
+ * it a real browser was one call away. The Reddit example stays verbatim: a
+ * concrete case moves a model where a rule does not.
  *
- * The last paragraph is the approval contract, and it is here because nothing
- * anywhere told an agent what to DO about a pending handle: not to go quiet,
- * and not to re-issue the call — which asks the human a second time.
+ * **Claim only what holds.** The approval sentence ENUMERATES rather than
+ * generalising, because "the user approves anything that touches their machine"
+ * is false — `plow_vault` list/describe builds no intent and asks nobody. Same
+ * reason the pending-handle line defers to the payload instead of describing
+ * it: the handle's own `reason` says what it waits for, and a second copy in
+ * prose was wrong in exactly the states that matter. An instructions block that
+ * overstates its guarantee is worse than one that says less.
  *
- * It DEFERS to the payload rather than describing it. This paragraph used to
- * say a pending handle "means a request is on their screen and nobody has
- * answered yet" — the same claim the pending note itself was corrected for,
- * and false in the same states: the reason may be `running`, or approval may
- * not have been asked for yet. Two copies of a runtime contract in prose is
- * one copy too many; the handle says what it is waiting for, so point at it.
- *
- * The approval sentence ENUMERATES rather than generalising, and that is not
- * style. It said "the user approves anything that touches their machine",
- * which is false: `vault` list/describe is non-deferrable, builds no intent,
- * and reads the vault's inventory (titles, usernames, sites — never a value)
- * with no human in the loop. Whether that carve-out should exist is a product
- * question; describing it accurately is not. An instructions block that
- * overstates the guarantee is worse than one that says less.
+ * `LIVE_WEB_ROUTING` and `MACOS_TOOLING` are interpolated rather than written
+ * here; each has other consumers, and the rules about what may appear in them
+ * (including why `osascript` may not) live on those constants.
  *
  * This is guidance to a model, never a capability claim. Nothing here widens
  * what a tool may do; the enforceable bound is the capability set the human
  * approves.
  */
-export const SERVER_INSTRUCTIONS = `These tools act on the user's own Mac — their real files, their real applications, and a real browser running there. Your own file, shell and web tools act on your workspace, which is a different machine the user cannot see.
+export const SERVER_INSTRUCTIONS = `These tools operate the user's own Mac — their real files, their real applications, their real shell, and a real browser running there. Your own file, shell and web tools act on your workspace: a different machine, on a different network address, that the user cannot see.
 
-Use these tools whenever the task is about THIS USER's computer, accounts, or data: a file that exists on their machine, something that must run there, or a site they need to be signed in to as themselves. Use your own tools for scratch work, for code you are writing, and for general web reading.
+Reach for these whenever the question is about the live web or about this user's world. Public pages included: ${LIVE_WEB_ROUTING} — your own fetch does none of that, and trips bot walls and consent interstitials besides. "What's on the homepage of Reddit?" is a plow_browser_open question.
+
+Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: ${MACOS_TOOLING}.
+
+Use your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.
 
 The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.`;
+
+/**
+ * Who this server says it is. Exported so the copy guards in toolCopy.test.ts
+ * can read these strings the same way they read every other one a model sees.
+ *
+ * `version` is not here — it belongs to the app, not to this constant, and is
+ * merged in at construction.
+ *
+ * `name` went from "plow" to "plow-latch" without a migration, and that is
+ * safe rather than lucky: a client namespaces tools by the name the USER gave
+ * the connector, not by this field. Measured, not assumed — a live claude.ai
+ * connector exposes these as `mcp__claude_ai_Plow_Latch_-_Mac_Desktop_Manager__*`
+ * while this field still read "plow". So no remembered approval keys on it.
+ * Check that again before renaming it a third time.
+ *
+ * `icons` is deliberately absent. A server reachable only through a relay has
+ * no public URL to serve an icon from, so it would have to ride every
+ * handshake as a data: URI — real bytes, on every initialize, for decoration.
+ *
+ * `description` says operations stay within the APPROVED SCOPE, not that every
+ * one appears on screen. The stronger sentence was here and was false in three
+ * ordinary states: a `plow_browser` command rides an already-approved session
+ * and builds no intent, a stored always-allow rule is answered by the policy
+ * engine without waking the delegate, and Approve mode decides without a
+ * dialog. Promising a prompt that does not come is worse than promising less —
+ * the same rule the instructions block above follows for the vault carve-out.
+ */
+export const SERVER_IDENTITY = {
+  name: "plow-latch",
+  title: "Plow Latch — Mac Desktop Manager",
+  description:
+    "Operate this person's own Mac: read and write their files, run shell and macOS " +
+    "tooling, and drive a real browser on their own network. Operations stay within " +
+    "the scope the owner approved.",
+  websiteUrl: "https://watchmepivot.com/",
+} as const;
 
 /**
  * The agent identity the relay asserts on each request frame (design §3.4).
@@ -147,6 +187,15 @@ function refusal(id: unknown, method: string): Response {
 export interface McpServerOptions {
   /** Overridable so tests do not have to wait out the real budget. */
   budgetMs?: number;
+  /**
+   * The app's own version, reported in the handshake. This package cannot read
+   * it — it is a library, and the version that matters is the Electron app's,
+   * not this workspace's — so the app passes `app.getVersion()` in. The default
+   * is deliberately not a plausible release number: a handshake reporting
+   * `0.0.0-dev` in the field is a caller that forgot to pass one, which a
+   * hardcoded `0.1.0` hid for as long as it existed.
+   */
+  version?: string;
 }
 
 export interface DomoMcpServer {
@@ -167,6 +216,7 @@ export function createDomoMcpServer(
   options: McpServerOptions = {},
 ): DomoMcpServer {
   const budgetMs = options.budgetMs ?? CALL_BUDGET_MS;
+  const version = options.version ?? "0.0.0-dev";
   const deferred = new DeferredResults(budgetMs);
   const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
@@ -174,7 +224,9 @@ export function createDomoMcpServer(
   const handler = createMcpHandler(
     (ctx) => {
       const server = new McpServer(
-        { name: "plow", version: "0.1.0" },
+        // `description` is the one field MCP has for "what is this server
+        // FOR", and a client that drops the instructions block still gets it.
+        { ...SERVER_IDENTITY, version },
         {
           // Without this the client may open a subscriptions stream, which a
           // one-buffered-exchange-per-frame tunnel cannot carry.
@@ -188,7 +240,11 @@ export function createDomoMcpServer(
         server.registerTool(
           spec.name,
           {
+            title: spec.title,
             description: spec.description,
+            // Display and routing hints only — see ToolHints in tools.ts. The
+            // bound is the approved capability set, computed from arguments.
+            annotations: spec.annotations,
             inputSchema: fromJsonSchema(spec.inputSchema as never),
           },
           async (args: unknown) => {

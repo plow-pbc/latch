@@ -899,7 +899,8 @@ app.whenReady().then(async () => {
   }
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
-  mcp = createDomoMcpServer(device);
+  // The version rides the MCP handshake, so it has to be the app's real one.
+  mcp = createDomoMcpServer(device, { version: app.getVersion() });
   await startRelay();
 
   onboarding = new Onboarding({

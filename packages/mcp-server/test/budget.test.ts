@@ -65,7 +65,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const { canonicalizeAsync } = await import("@domo/protocol");
 const { DeviceAgent, FileOps, HeadlessPolicy } = await import("@domo/device-core");
 const { createDomoMcpServer, DeferredResults } = await import("@domo/mcp-server");
-const { callTool } = await import("./client.js");
+const { callTool, pollUntil } = await import("./client.js");
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
 
@@ -116,11 +116,12 @@ describe("the budget fires while a slow path resolution is still in flight", () 
 
     // Only now let resolution complete; the work then runs to a real result.
     openGate();
-    let poll = payload;
-    for (let i = 0; i < 80 && poll.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "plow_get_result", { handle }, AGENT)).payload;
-    }
+    const poll = (
+      await pollUntil(
+        () => callTool(server, "plow_get_result", { handle }, AGENT),
+        (r) => r.payload.status !== "pending",
+      )
+    ).payload;
     expect(poll.status).toBe("ready");
     expect(poll.result.content).toBe("hello mac");
   });
