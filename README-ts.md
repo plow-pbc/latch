@@ -9,11 +9,12 @@ the architecture and the reasoning behind each decision).
 > which authenticates the agent and forwards MCP to the MCP server in
 > `packages/mcp-server`. Both halves exist here: the server, and the outbound
 > client in `packages/relay-client` that dials the relay and serves what it
-> tunnels. **The relay exists** too (see `CLAUDE.md` § Being rebuilt). The
-> remaining gap is that nothing automated covers the relay leg at all: the
-> in-repo stand-in was deleted, taking the in-process coverage with it, and
-> there is no live-stack path either — that leg is verified by hand. See
-> § Integration coverage.
+> tunnels. **The relay exists** too (see `CLAUDE.md` § Layout, "Being rebuilt").
+> The remaining gap is that the relay leg has no automated *integration*
+> coverage: the in-repo stand-in was deleted and there is no live-stack path
+> either, so that leg is verified by hand. What remains here is the wire
+> contract plus handshake, heartbeat and reconnect against a fake connection.
+> See § Integration coverage.
 
 ## Layout
 
@@ -267,13 +268,17 @@ it (head chef's call: a locally running plow API already simulates plow).
 So there is **no automated integration coverage of the relay leg at all** today,
 and no automated live-stack path either — the two scripts that drove a real plow
 stack (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
-deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket, sends
-the auth frame, reconnects, or tunnels an MCP call. That whole path is verified
+deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket to a
+real relay or tunnels an MCP call end to end. That whole path is verified
 **manually**: bring up a plow stack, run the app against it, drive it by hand.
 The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 What `packages/relay-client/test` still holds is the pure part of the wire
-contract — `stripHopByHop`, `Host` preservation, frame validation.
+contract — `stripHopByHop`, `Host` preservation, frame validation — plus the
+socket lifecycle against a `FakeConn`: the handshake, heartbeat and pong,
+silent-drop detection, backoff, reconnect, and the dial-resolves-after-`stop()`
+race (`lifecycle.test.ts`, `liveness.test.ts`). Automated, in process, and the
+first place to look before calling a relay-leg gap untestable.
 
 ## Running the desktop app
 

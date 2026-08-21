@@ -45,8 +45,8 @@ used to verify this side against the wire contract has been deleted (head
 chef's call: a locally running plow API simulates plow). The scripts that drove
 a *live* stack went with it, so there is **no automated live-stack path either**
 — not here, not in CI. The relay leg is verified **by hand**: bring up a plow
-stack, run the app against it, drive it. `packages/relay-client/test` keeps only
-the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+stack, run the app against it, drive it. `packages/relay-client/test` keeps the
+wire-contract checks plus the socket lifecycle against a fake connection. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's

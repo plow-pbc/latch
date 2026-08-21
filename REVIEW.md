@@ -16,11 +16,11 @@ architectural tradeoff.
 
 **Stage:** pre-PMF, and mid-rebuild. The old in-repo broker has been removed; a
 Mac now dials *out* to the Plow relay, which exists — see `CLAUDE.md`
-§ Being rebuilt for where it lives and what is still verified by hand.
+§ Layout, "Being rebuilt", for where it lives and what is still verified by hand.
 
 **Agents do reach a Mac through this app today.** This paragraph said the
-opposite for as long as the relay was unbuilt, and that sentence was load-
-bearing: it is what tells you whether a reachability-gated finding is
+opposite for as long as the relay was unbuilt, and that sentence was
+load-bearing: it is what tells you whether a reachability-gated finding is
 theoretical or live. It is live. A finding that depends on a remote agent
 actually reaching this Mac gets graded as reachable, not hypothetical.
 

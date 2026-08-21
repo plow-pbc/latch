@@ -12,14 +12,13 @@ tight fit around them — reads in particular are permitted more broadly. See
 Implemented in **TypeScript** (Node + Electron). See [DESIGN.md](DESIGN.md) for
 the architecture and [README-ts.md](README-ts.md) for the package/app layout.
 
-> **Being rebuilt — no agent can reach this Mac today.** The in-repo broker that
-> used to route agents here has been removed. A Mac will instead dial *out* to
-> the Plow relay, which authenticates the calling agent and forwards MCP to an
-> MCP server running in this app. That MCP server and the outbound relay client
-> are the next pieces of work. What is here now — the policy engine, the
-> capability-derived sandbox, file operations, the audit log, the approval UI and
-> the adversarial reviewer — builds, runs and is covered by the test suite, but
-> has no transport in front of it.
+> **Being rebuilt.** The in-repo broker that used to route agents here has been
+> removed. A Mac now dials *out* to the Plow relay, which authenticates the
+> calling agent and forwards MCP to an MCP server running in this app. Both
+> halves of this side exist, and so does the relay — see `CLAUDE.md` § Layout,
+> "Being rebuilt". **Agents do reach this Mac today.** What is missing is
+> automated *integration* coverage of the relay leg, which is verified by hand;
+> see [README-ts.md](README-ts.md) § Integration coverage.
 
 ## Quickstart with `just`
 
