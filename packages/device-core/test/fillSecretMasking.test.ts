@@ -636,6 +636,12 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     { what: "groups the digits it was given", scenario: "grouped_by_the_field" },
     { what: "strips a space out of a name", scenario: "stripped_by_the_field" },
     { what: "clips what it was given", scenario: "clipped_by_the_field" },
+    // A textarea keeps its breaks, so the shortest-form measure under-counts
+    // and the value is not refused. It goes in, the field clips it, and the
+    // difference is reported — the direction this is built to fail in, since a
+    // measure that cannot know how the field will take a value should not be
+    // the thing that refuses one.
+    { what: "clips a break-bearing value it accepted", scenario: "newline_clipped_by_a_textarea" },
   ])("reports, without refusing, a field that $what", ({ scenario }) => {
     expect(probed[scenario].result).toEqual({ ok: true, frame: 0, altered: true });
   });

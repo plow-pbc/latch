@@ -557,6 +557,14 @@ def main() -> int:
         # was never too long.
         "newline_fits_once_dropped": run(
             server, {**base, "value": "one\ntwo"}, max_length=6),
+        # The other side of that measure: a TEXTAREA keeps its breaks, so the
+        # shortest form under-counts and the value is not refused. It goes in,
+        # the field clips it, and the difference is reported -- which is the
+        # direction this is meant to fail in. Refusing on a measure that cannot
+        # know how the field will take it is what this design gives up.
+        "newline_clipped_by_a_textarea": run(
+            server, {**base, "value": "one\ntwo"}, max_length=6, typeable="multiline",
+            rewrites=lambda t: t[:6]),
         # The same at a single-line field, spelled with CR. This is what pins the
         # ORDER of the normalization: CR becomes LF before the strip removes it,
         # so no Enter is sent. Reversed, `type()` would press Enter mid-value and
