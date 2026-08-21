@@ -315,7 +315,7 @@ describe("every tool says what kind of tool it is", () => {
   });
 });
 
-describe("nothing on the surface sends the live web back to the agent's own tools", () => {
+describe("what the agent-facing copy must and must not say", () => {
   it("the instructions route the live web here, name the mechanism, and give an example", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/datacenter address/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_browser_open/);
@@ -335,9 +335,12 @@ describe("nothing on the surface sends the live web back to the agent's own tool
   it("both copy homes interpolate the one tooling list", async () => {
     expect(SERVER_INSTRUCTIONS).toContain(MACOS_TOOLING);
     expect((await descriptions(makeServer())).plow_run_command).toContain(MACOS_TOOLING);
-    // And the list itself still names tools verified to run under the profile.
-    expect(MACOS_TOOLING).toMatch(/mdfind/);
-    expect(MACOS_TOOLING).toMatch(/sips/);
+    // The whole verified set, not the two that happened to be here before:
+    // executor.ts's coupling note treats all four as load-bearing, so dropping
+    // the clipboard pair is exactly the edit that must not ship green.
+    for (const tool of ["mdfind", "sips", "pbcopy", "pbpaste"]) {
+      expect(MACOS_TOOLING).toContain(tool);
+    }
   });
 
   /**
