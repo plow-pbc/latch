@@ -639,6 +639,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       scenario: "crlf_multiline", typedLen: "one\ntwo".length,
     },
     {
+      // `null` is not "do not check" — it means the tail length, which lives on
+      // `probed` and so is not bound while this table is being built.
       what: "a break in the assigned head leaves the tail typed as it was",
       scenario: "newline_outside_tail", typedLen: null,
     },

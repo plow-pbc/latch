@@ -68,9 +68,9 @@ class Handle:
         self.type_fails = type_fails
         # What TYPEABLE_JS answers for this node: "" is a date, colour or range
         # widget -- assigned rather than typed, because its value is not the
-        # characters it is handed. "multiline" is the one kind that holds a
-        # newline as a character, so it is the only one typed a value carrying
-        # one.
+        # characters it is handed. "multiline" means the node KEEPS a line break
+        # at all -- a textarea as a character, a declared editing host as markup
+        # -- so it is the kind whose value is typed with the break still in it.
         self.typeable = typeable
         # A field that says it takes characters and then sanitises away every
         # one it will not hold -- a number input handed something that is not a
@@ -507,8 +507,10 @@ def main() -> int:
         # so no Enter is sent. Reversed, `type()` would press Enter mid-value and
         # submit the form with half a credential in it.
         "cr_single_line": run(server, {**base, "value": "one\rtwo"}),
-        # The same value at a textarea, which is the one node that holds a
-        # newline as a character: it keeps its keystrokes.
+        # The same value at a node that keeps the break. This stands for a
+        # textarea specifically: the fake holds back exactly what was typed, so
+        # it cannot model a declared host, whose textContent read-back does not
+        # see the markup Enter made.
         "newline_multiline": run(server, {**base, "value": "one\ntwo"},
                                  typeable="multiline"),
         # The rule is scoped to the TAIL, which is all that gets typed: a long
