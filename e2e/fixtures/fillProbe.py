@@ -121,6 +121,12 @@ class Handle:
         # handle lands in the node the mark is on, wherever focus has wandered.
         self.type_calls = 0
 
+    def _cap(self):
+        """The cap in force now: a field that moves it does so once it has keys."""
+        if self.max_length_after is not None and self.typed is not None:
+            return self.max_length_after
+        return self.max_length
+
     def evaluate(self, js, *args):
         # Recorded as a fact about the script, not its text: which one it is.
         # Ordered most specific first: MASK_JS mentions setAttribute,
@@ -128,9 +134,10 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
+        if "held:" in js:
+            return {"held": len(self.value or ""), "cap": self._cap()}
         if "maxLength" in js:
-            if self.max_length_after is not None and self.typed is not None:
-                return self.max_length_after
+            return self._cap()
             # The real script reports a cap only for the element kinds
             # `maxlength` governs; a node standing in for one of those answers
             # its cap, and -1 is "uncapped" exactly as it is in the page.
@@ -264,7 +271,7 @@ class Frame:
     """
 
     def __init__(self, trace, nodes=None, document_token="doc-1", hides=False, detached=False,
-                 handle=None, **node):
+                 **node):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -276,7 +283,7 @@ class Frame:
         # of those knobs made three signatures that had to be edited together
         # for each new one, which is churn the seam caused rather than the
         # scenarios needing it.
-        self.handle = handle or Handle(trace, document_token=document_token, **node)
+        self.handle = Handle(trace, document_token=document_token, **node)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -642,17 +649,17 @@ def main() -> int:
         # exactly where the unconcealed one keeps it.
         "cap_lowered_clear_fails_masked": run(server, {**base, "mask": True, "value": "hunter2"},
                                               max_length=20, max_length_after=4, clear_fails=True),
-        # A reformatting field states its cap in ITS OWN representation, so this
-        # one is NOT refused and cannot be: a space-inserting card input carries
-        # maxlength 17 for an Amex it renders as "3714 496353 98431", and the 16
-        # digits sent measure under that. Pinned rather than left invisible --
-        # the clip goes unseen, and the units are why.
-        "reformatting_field_clips_unseen": run(
+        # A space-inserting card input carrying maxlength 17 for an Amex it
+        # renders as "3714 496353 98431". Comparing the 16 digits sent against
+        # that cap says they fit -- different representations -- so this is
+        # caught by asking the FIELD whether it took the last key instead.
+        "reformatting_field_clips": run(
             server, {**base, "value": "4111111111111111"},
             max_length=19, max_length_after=17, reformats="group"),
-        # The other direction, and the one that would BREAK a working fill: a
-        # phone input stripping punctuation down to ten digits. Measuring the
-        # sent value against that cap would refuse a fill that landed whole.
+        # The other direction, and the one that must NOT be refused: a phone
+        # input stripping punctuation down to ten digits. Its last key changed
+        # what the field holds, so the field took it -- an unchanged value with
+        # room to spare is an edit absorbed, not a key rejected.
         "reformatting_field_shrinks": run(
             server, {**base, "value": "555-123-4567"},
             max_length=20, max_length_after=10, reformats="strip"),

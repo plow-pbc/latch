@@ -683,6 +683,14 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     { what: "a concealed fill whose field cannot be cleared",
       scenario: "cap_lowered_clear_fails_masked",
       cap: 4, left: 4, marked: true, ledgered: true },
+    // A control that rewrites what it is given: a card input growing spaces,
+    // carrying maxlength 17 for the Amex it renders as "3714 496353 98431".
+    // `KEYS_DROPPED_JS` answers false for it by design — it took every key it
+    // accepted — and 16 digits measure under 17, so neither the prefix test nor
+    // a units comparison sees the clip. Asking the field whether it took the
+    // last key does.
+    { what: "a field that reformats and clips", scenario: "reformatting_field_clips",
+      cap: 17, left: 0, marked: false, ledgered: false },
   ])("refuses $what when the page lowers the cap mid-fill", (row) => {
     const probe = probed[row.scenario];
     expect(probe.result).toEqual({ ok: false, mask: "too_long", cap: row.cap, frame: 0 });
@@ -691,22 +699,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probe.ledgered).toBe(row.ledgered);
   });
 
-  // The limit of this check, pinned rather than left to be rediscovered: a
-  // field that REWRITES what it is given states its cap in its own
-  // representation, and the value we hold is in ours. Measuring one against the
-  // other is wrong in both directions, so neither of these is refused.
-  it.each([
-    // Missed: a space-inserting card input carries maxlength 17 for an Amex it
-    // renders as "3714 496353 98431", so 16 digits measure under it and the
-    // clip goes unseen. This is the case the check cannot reach.
-    { what: "clips what it was given", scenario: "reformatting_field_clips_unseen", left: 17 },
-    // And the direction that matters more, because refusing here would break a
-    // fill that works today: a phone input stripping punctuation to ten digits
-    // holds everything it was sent, under a cap the sent value measures over.
-    { what: "shrinks what it was given", scenario: "reformatting_field_shrinks", left: 10 },
-  ])("does not refuse a field that $what", ({ scenario, left }) => {
-    expect(probed[scenario].result).toEqual({ ok: true, frame: 0 });
-    expect(probed[scenario].node_len).toBe(left);
+  // A field that REWRITES what it is given cannot be checked by measuring the
+  // value we sent against the cap it states — those are different
+  // representations. It is asked whether it TOOK the last key instead, which
+  // separates the two cases that matter.
+  it("does not refuse a field that shrinks what it was given", () => {
+    // A phone input stripping punctuation to ten digits: its last key changed
+    // what the field holds, so the field took it. An unchanged value with room
+    // to spare is an edit absorbed, not a key rejected — and refusing here
+    // would break a fill that works today.
+    expect(probed.reformatting_field_shrinks.result).toEqual({ ok: true, frame: 0 });
+    expect(probed.reformatting_field_shrinks.node_len).toBe(10);
   });
 
   it("still repairs dropped keys when the cap did not move", () => {

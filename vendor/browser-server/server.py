@@ -311,6 +311,15 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 
 # A field's own cap on what it will hold. -1 when it does not set one, which is
 # what an element with no maxlength reports and what a non-input answers.
+# How full the field is, against how full it can get. Both in the FIELD's own
+# representation, which is the whole point: a reformatting control rewrites what
+# it is given, so the only honest question is whether IT accepted a key, not
+# whether what it holds resembles what was sent.
+FILL_STATE_JS = f"""(el) => ({{
+    held: {_HELD}.length,
+    cap: (el.maxLength === undefined ? -1 : el.maxLength),
+}})"""
+
 FIELD_CAP_JS = """(el) => {
     // `maxLength` reflects the attribute even on elements the browser does not
     // enforce it for -- `<input type="number" maxlength="4">` is a common
@@ -364,6 +373,26 @@ class _FieldTooShort(RuntimeError):
     def __init__(self, cap):
         super().__init__("field holds %d characters and the value is longer" % cap)
         self.cap = cap
+
+
+def _clear_and_refuse(el, cap):
+    """Leave nothing in the field, then refuse. Never returns.
+
+    By the time either caller reaches this the head assignment has destroyed
+    whatever the field held and the keys have left a PREFIX OF THE VALUE -- on
+    an unconcealed vault fill, a legible partial credential under an answer
+    saying it was not filled.
+
+    Best effort, and the refusal outlives it: the same page script that moves a
+    cap can detach or freeze the node, and that failure replacing this one would
+    cost the caller the cap and drop it back on "check the selector", the
+    message this path exists to stop producing.
+    """
+    try:
+        el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
+    except Exception:  # noqa: BLE001 -- the refusal is the answer
+        pass
+    raise _FieldTooShort(cap)
 
 
 def _refuse_if_capped(el, value):
@@ -472,11 +501,27 @@ def _type_value(el, value):
     # the tail's own budget would let TYPED_CHARS of them stack up to that many
     # times what a single call could ever spend, and past the device's cap.
     deadline = time.monotonic() + TYPING_MAX_MS / 1000
-    for ch in value[-TYPED_CHARS:]:
+    tail = value[-TYPED_CHARS:]
+    before_last = None
+    for i, ch in enumerate(tail):
         left = (deadline - time.monotonic()) * 1000
         if left <= 0:
             raise RuntimeError("typing outran its budget")
+        # A field that fills up part-way through rejects every key after it
+        # does, so the LAST one is enough to catch it -- one question at the end
+        # rather than one per character, which the exchange budget would feel.
+        if i == len(tail) - 1:
+            before_last = el.evaluate(FILL_STATE_JS)["held"]
         el.type(ch, delay=KEY_DELAY_MS, timeout=left)
+    # Did the field TAKE that key? Asked of the field itself, so it holds for a
+    # control that rewrites what it is given -- the case a comparison between
+    # the value we sent and a cap the field states about its own rendering
+    # cannot reach. Unchanged AND full means rejected; unchanged while there is
+    # room is an edit the field absorbed, which is what a control stripping
+    # punctuation does on purpose.
+    state = el.evaluate(FILL_STATE_JS)
+    if state["cap"] >= 0 and state["held"] == state["cap"] and state["held"] == before_last:
+        _clear_and_refuse(el, state["cap"])
     # Asked again only where the field did NOT rewrite what it was given, which
     # is what `KEYS_DROPPED_JS` being true means. A reformatting field cannot be
     # checked this way at all: it declares its cap in ITS OWN representation,
@@ -489,22 +534,8 @@ def _type_value(el, value):
     if el.evaluate(KEYS_DROPPED_JS, value):
         try:
             _refuse_if_capped(el, value)
-        except _FieldTooShort:
-            # The head assignment already destroyed whatever the field held, and
-            # what the keys left is a PREFIX OF THE VALUE -- on an unconcealed
-            # vault fill, a legible partial credential under an answer saying it
-            # was not filled. So leave nothing.
-            #
-            # Best effort, and the refusal outlives it: the same page script
-            # that moves a cap can detach or freeze the node, and that failure
-            # replacing this one would cost the caller the cap and drop it back
-            # on "check the selector", the message this path exists to stop
-            # producing.
-            try:
-                el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
-            except Exception:  # noqa: BLE001 -- the refusal is the answer
-                pass
-            raise
+        except _FieldTooShort as short:
+            _clear_and_refuse(el, short.cap)
         # The field did not take the keys. Assign it, which is what this did
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
