@@ -52,12 +52,12 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     every reply an action produces drains them as `failed_requests`, an error
     as much as a result. Upstream reports nothing about a page's own traffic,
     so an action whose XHR came back 429 answered `{ok: true}`.
-  - `fill` types the value in rather than assigning it where it can:
-    everything before the last `TYPED_CHARS` is assigned and the tail arrives
-    as one key event per character, with `_type_value` owning which nodes and
-    which values that holds for and `TYPEABLE_JS` owning why a given node takes
-    no keys. Upstream's `el.fill()` sets `.value` and fires a single `input`,
-    so a password box goes from empty to complete with no
+  - `fill` types the value in rather than assigning it where it can: everything
+    before the last `TYPED_CHARS` is assigned and the tail is passed to
+    `el.type` one character at a time, with `_type_value` owning which nodes
+    and which values that holds for and `TYPEABLE_JS` owning why a given node
+    takes no keys. Upstream's `el.fill()` sets `.value` and fires a single
+    `input`, so a password box goes from empty to complete with no
     keydown/keypress/keyup at all, which is what interrogation-style bot
     defenses (Kasada, Akamai Bot Manager) sample — Costco's sign-in answered
     every credential submit with a 429 (issue #86). The split keeps a long
