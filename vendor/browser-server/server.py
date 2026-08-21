@@ -323,25 +323,36 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 # content a field cannot reformat away, and counting alphanumerics alone would
 # call losing it no loss at all.
 HOLDS_ALL_JS = f"""(el, wanted) => {{
+    const held = {_HELD};
+    // A password input never reformats, so nothing about what it holds is
+    // allowed to differ. Everywhere else the shaping is the field's to change.
+    if ((el.tagName || "").toLowerCase() === "input" && el.type === "password") {{
+        return held === wanted;
+    }}
     const bare = (t) => t.replace(/[\\s\\-()./]/gu, "");
-    return bare({_HELD}) === bare(wanted);
+    return bare(held) === bare(wanted);
 }}"""
 
-FIELD_CAP_JS = """(el) => {
+FIELD_RULE_JS = """(el) => {
+    // What this field's constraint is, in one answer: how much it can hold, and
+    // whether what it holds has to match EXACTLY.
+    //
     // `maxLength` reflects the attribute even on elements the browser does not
     // enforce it for -- `<input type="number" maxlength="4">` is a common
     // authoring mistake -- and reading one there would turn a stray attribute
     // into a refusal of a fill that lands intact today. Only the kinds it
     // actually governs report a cap; everything else is uncapped.
-    const tag = el.tagName.toLowerCase();
-    if (tag === "textarea") return el.maxLength;
-    if (tag !== "input") return -1;
-    // `type` is an enumerated reflection -- always a lowercase string, "text"
-    // when the attribute is missing or unrecognised -- so it is compared raw,
-    // the way TYPEABLE_JS above compares it.
-    return ["text", "search", "url", "tel", "email", "password"].includes(el.type)
-        ? el.maxLength
-        : -1;
+    //
+    // `exact` is the password case, and it is not a special case so much as the
+    // absence of one: separators are tolerated because FORMATTING controls
+    // insert and strip them, and a password input is never a formatting control
+    // -- it renders dots. So a dash in a password is content, where a dash in a
+    // card or phone field is shaping, and only here can the two be told apart.
+    const tag = (el.tagName || "").toLowerCase();
+    if (tag === "textarea") return { cap: el.maxLength, exact: false };
+    if (tag !== "input") return { cap: -1, exact: false };
+    const capped = ["text", "search", "url", "tel", "email", "password"].includes(el.type);
+    return { cap: capped ? el.maxLength : -1, exact: el.type === "password" };
 }"""
 
 
@@ -357,6 +368,16 @@ def _bare(value):
     return "".join(c for c in value if c not in _SEPARATORS)
 
 
+def _units(value):
+    """UTF-16 code units, which is what `maxlength` counts.
+
+    `surrogatepass` because a lone surrogate makes a plain encode raise, and
+    that exception lands in the catch whose message this refusal exists to stop
+    producing.
+    """
+    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
 def _bare_units(value):
     """The bare value measured the way `maxlength` measures: UTF-16 code units.
 
@@ -368,7 +389,7 @@ def _bare_units(value):
     encode raise, and that exception lands in the catch whose message this
     refusal exists to stop producing.
     """
-    return len(_bare(value).encode("utf-16-le", errors="surrogatepass")) // 2
+    return _units(_bare(value))
 
 
 class _FieldTooShort(RuntimeError):
@@ -430,8 +451,12 @@ def _refuse_if_impossible(el, value):
     assignment ignores `maxlength`, so it is the one way an over-cap value can
     be sitting in a field that says it cannot hold one.
     """
-    cap = el.evaluate(FIELD_CAP_JS)
-    if cap >= 0 and _bare_units(value) > cap:
+    rule = el.evaluate(FIELD_RULE_JS)
+    cap = rule["cap"]
+    # A field that must match exactly is measured on the whole value: none of it
+    # is shaping the field is entitled to drop.
+    needs = _units(value) if rule["exact"] else _bare_units(value)
+    if cap >= 0 and needs > cap:
         raise _FieldTooShort(cap)
 
 
@@ -446,7 +471,7 @@ def _refuse_unless_kept(el, value):
     if not el.evaluate(HOLDS_ALL_JS, value):
         # It fit -- the capacity question already said so -- and the field
         # dropped some of it regardless.
-        _clear_and_refuse(el, el.evaluate(FIELD_CAP_JS), fits=True)
+        _clear_and_refuse(el, el.evaluate(FIELD_RULE_JS)["cap"], fits=True)
 
 
 UNMASK_JS = """(el) => {

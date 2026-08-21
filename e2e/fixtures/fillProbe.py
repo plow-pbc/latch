@@ -60,7 +60,8 @@ class Handle:
                  document_url="https://pizza.example/login", value="", partial_fill=False,
                  document_token="doc-1", type_fails=False, typeable="single-line",
                  drops_keys=False, assign_fails=False, max_length=-1,
-                 max_length_after=None, clear_fails=False, reformats=False):
+                 max_length_after=None, clear_fails=False, reformats=False,
+                 field_type="text"):
         self.trace = trace
         # What the field itself will hold. -1 is "no cap", which is what an
         # element without a maxlength reports.
@@ -96,6 +97,9 @@ class Handle:
         # prefix of what was sent, which is exactly what KEYS_DROPPED_JS treats
         # as "took every key".
         self.reformats = reformats
+        # `password` is the kind that never reformats, so what it holds has to
+        # match exactly -- a dash in a password is content, not shaping.
+        self.field_type = field_type
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
         self.assign_fails = assign_fails
@@ -135,14 +139,17 @@ class Handle:
         if "__domoDocumentToken" in js:
             return self.document_token
         if "bare(" in js:
+            wanted = args[0] if args else ""
+            if self.field_type == "password":
+                return (self.value or "") == wanted
             seps = " \t\r\n-()./"
             bare = lambda t: "".join(c for c in t if c not in seps)  # noqa: E731
-            return bare(self.value or "") == bare(args[0] if args else "")
+            return bare(self.value or "") == bare(wanted)
         if "maxLength" in js:
             # The real script reports a cap only for the element kinds
             # `maxlength` governs; a node standing in for one of those answers
             # its cap, and -1 is "uncapped" exactly as it is in the page.
-            return self._cap()
+            return {"cap": self._cap(), "exact": self.field_type == "password"}
         if "tagName" in js:
             return self.typeable
         if "startsWith(now)" in js:
@@ -696,7 +703,8 @@ def main() -> int:
         # way, so only comparing the stripped values catches it -- punctuation
         # in a password is content, not shaping.
         "punctuation_dropped_from_secret": run(
-            server, {**base, "value": "hunt!er2"}, max_length=8, reformats="strip"),
+            server, {**base, "value": "hunt-er2"}, max_length=8, reformats="strip",
+            field_type="password"),
         "strips_declared_cap_upfront": run(
             server, {**base, "value": "555-123-4567"}, max_length=10, reformats="strip"),
         "reformatting_field_shrinks": run(

@@ -400,62 +400,48 @@ describe("fill_secret marking", () => {
   // took the same path. Both must name the cap rather than send the agent back
   // to check a selector that was right.
   it.each([
+    // Too long to fit: shortening the stored value IS the remedy, and the
+    // selector was right, so "check the selector" must not appear.
     { what: "a concealed field", selector: "#card-number", item: "C1", field: "number",
-      origin: "payframe.example", held: "4111111111111111" },
+      origin: "payframe.example", held: "4111111111111111",
+      env: { FAKE_TOO_LONG: "16" },
+      says: ["holds only 16 characters"], omits: ["check the selector"],
+      reason: "the field holds only 16 characters" },
     { what: "a field the vault does not conceal", selector: "#card-name", item: "C1",
-      field: "cardholder name", origin: "payframe.example", held: "Jon Doe" },
+      field: "cardholder name", origin: "payframe.example", held: "Jon Doe",
+      env: { FAKE_TOO_LONG: "16" },
+      says: ["holds only 16 characters"], omits: ["check the selector"],
+      reason: "the field holds only 16 characters" },
+    // It FIT and the field would not keep it. Saying "shortened" here would
+    // send the owner to change a credential that is not the problem — which is
+    // the whole reason the refusal carries which question failed.
+    { what: "a field that changes what is typed into it", selector: "#card-number",
+      item: "C1", field: "number", origin: "payframe.example", held: "4111111111111111",
+      env: { FAKE_TOO_LONG: "16", FAKE_TOO_LONG_FITS: "1" },
+      says: ["did not keep the whole value", "not at fault"], omits: ["shortened"],
+      reason: "the field did not keep the whole value" },
   ])("tells the agent the cap when $what will not hold the value", async ({
-    selector, item, field, origin, held,
+    selector, item, field, origin, held, env, says, omits, reason,
   }) => {
     await ctx.sessions.closeAll("teardown");
-    ctx = makeCtx({ FAKE_TOO_LONG: "16" });
+    ctx = makeCtx(env);
     const handle = await session();
     const before = ctx.events.length;
     const result = await ctx.sessions.command(handle, {
       action: "fill_secret", selector, item, field,
     });
     expect(jv(result).get("status").str).toBe("error");
-    // The cap, not "check the selector" — the selector was right.
-    expect(jv(result).get("error").str).toContain("holds only 16 characters");
-    expect(jv(result).get("error").str).not.toContain("check the selector");
+    const error = jv(result).get("error").str ?? "";
+    for (const text of says) expect(error).toContain(text);
+    for (const text of omits) expect(error).not.toContain(text);
     // `credential_fill_failed`, not `credential_denied` — the badge ladder
     // reads the latter as "Scope blocked", and nothing about scope failed here.
     expect(ctx.events.slice(before).at(-1)).toEqual({
       event: "credential_fill_failed",
-      fields: {
-        session: audited(), item, field, origin, selector,
-        reason: "the field holds only 16 characters",
-      },
+      fields: { session: audited(), item, field, origin, selector, reason },
     });
     // Whatever this row's value is, it is the one thing that does not travel.
     expect(JSON.stringify(result)).not.toContain(held);
-  });
-
-  // Two ways to be refused, and the advice has to differ: shortening the stored
-  // value fixes one and is actively wrong for the other.
-  it("does not blame the stored value when the field would not keep it", async () => {
-    await ctx.sessions.closeAll("teardown");
-    ctx = makeCtx({ FAKE_TOO_LONG: "16", FAKE_TOO_LONG_FITS: "1" });
-    const handle = await session();
-    const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
-    });
-    const error = jv(result).get("error").str ?? "";
-    expect(error).toContain("did not keep the whole value");
-    expect(error).toContain("not at fault");
-    // The other arm's remedy must not appear: it would send the owner to change
-    // a credential that is not the problem.
-    expect(error).not.toContain("shortened");
-    expect(ctx.events.slice(before).at(-1)).toEqual({
-      event: "credential_fill_failed",
-      fields: {
-        session: audited(), item: "C1", field: "number",
-        origin: "payframe.example", selector: "#card-number",
-        reason: "the field did not keep the whole value",
-      },
-    });
-    expect(JSON.stringify(result)).not.toContain("4111");
   });
 
   // The agent's own `fill` takes the same refusal. Its regression is the worst
@@ -1543,7 +1529,7 @@ describe("which nodes take typing", () => {
 // script the browser actually runs rather than through a stub that answers for
 // it. `maxLength` REFLECTS the attribute everywhere; only some kinds enforce it.
 describe("which fields report a cap", () => {
-  const cap = loadScript("FIELD_CAP_JS") as (el: unknown) => number;
+  const rule = loadScript("FIELD_RULE_JS") as (el: unknown) => { cap: number; exact: boolean };
   // `type` is an enumerated reflection: always a lowercase string on the
   // elements that have one — "text" for a missing or unrecognised attribute,
   // "textarea" on a textarea, "select-one" on a select — so a row gives what
@@ -1599,7 +1585,21 @@ describe("which fields report a cap", () => {
     { what: "an uncapped text input", el: node("INPUT", "text", -1), reports: -1 },
     { what: "a field capped at zero", el: node("INPUT", "text", 0), reports: 0 },
   ])("reports $what as $reports", ({ el, reports }) => {
-    expect(cap(el)).toBe(reports);
+    expect(rule(el).cap).toBe(reports);
+  });
+
+  // The other half of the same rule: which fields have to match EXACTLY. Not a
+  // special case so much as the absence of one — separators are tolerated
+  // because formatting controls insert and strip them, and a password input is
+  // never a formatting control, so a dash in a password is content.
+  it.each([
+    { what: "a password input", el: node("INPUT", "password", 16), exact: true },
+    { what: "a text input", el: node("INPUT", "text", 16), exact: false },
+    { what: "a tel input", el: node("INPUT", "tel", 10), exact: false },
+    { what: "a textarea", el: node("TEXTAREA", "textarea", 40), exact: false },
+    { what: "a select", el: node("SELECT", "select-one", 4), exact: false },
+  ])("requires $what to match exactly: $exact", ({ el, exact }) => {
+    expect(rule(el).exact).toBe(exact);
   });
 });
 
