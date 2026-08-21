@@ -51,41 +51,46 @@ module.exports = async function afterPack(context) {
   // Only the final universal app matters; the per-arch temp packs are deleted
   // right after the merge.
   if (context.appOutDir.includes("-temp")) return;
-  const identity = process.env.CODESIGN_IDENTITY;
+  // The packager seals the outer app with its configured identity, so the
+  // runtime has to carry that one: two Developer IDs means two team ids, which
+  // is the same dead browsing an unsigned runtime causes. Taking it from the
+  // packager rather than the environment leaves one source, and an env var that
+  // disagrees is a mistake worth stopping for rather than silently overriding.
+  const configured = context.packager.platformSpecificBuildOptions.identity;
+  const identity = configured ?? process.env.CODESIGN_IDENTITY;
   if (!identity) {
-    // Skipping leaves the runtime ad-hoc signed, and an ad-hoc Mach-O carries no
-    // team id — so the hardened runtime refuses to map Python.framework into the
-    // python that loads it, and browsing is dead in an app that otherwise looks
-    // healthy. Only a bare electron-builder run gets here; the just recipes set it.
+    // An ad-hoc Mach-O carries no team id, so the hardened runtime refuses to
+    // map Python.framework into the python that loads it and browsing is dead
+    // in an app that otherwise looks healthy.
     throw new Error(
-      "[afterPack] CODESIGN_IDENTITY is not set — package with `just package` or `just package-unnotarized`",
+      "[afterPack] no signing identity — package with `just package` or `just package-unnotarized`",
+    );
+  }
+  if (configured && process.env.CODESIGN_IDENTITY && process.env.CODESIGN_IDENTITY !== configured) {
+    throw new Error(
+      `[afterPack] CODESIGN_IDENTITY (${process.env.CODESIGN_IDENTITY}) is not the packager's identity (${configured})`,
     );
   }
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  // Every payload the runtime is made of. Half a runtime signs and verifies
-  // vacuously — step 5 only walks what is there — and ships the same app that
-  // installs, launches and serves intents with browsing dead.
+  // What browserRuntime.ts needs to resolve a runtime at all: the interpreter,
+  // its site-packages, the server.py the browser host execs, and a browser.
+  // The vault payloads are deliberately absent — vaultCliIn falls back to a `bw`
+  // on PATH and vaultServerIn to a hosted SEED_VAULT_URL, so a build without
+  // them is one we support, not one to abort.
   const framework = path.join(runtime, "python", "Python.framework");
   const sitePackages = path.join(runtime, "python", "site-packages");
-  const camoufox = path.join(runtime, "camoufox");
-  const vaultCli = path.join(runtime, "vault-cli");
-  const vaultServer = path.join(runtime, "vault-server");
-  // `server` carries no Mach-O, so nothing below signs it — but it is what the
-  // browser host actually execs, so its absence is the same dead browsing.
   const server = path.join(runtime, "server");
-  // Absent and empty are one condition: a payload directory carrying nothing
-  // signs nothing, verifies vacuously, and ships the same app.
-  // walk() recurses and yields files, so this sees a payload whose content sits
-  // an arch level down (vault-cli/<arch>/bw) and stops at the first hit.
+  const camoufox = path.join(runtime, "camoufox");
+  // Absent and empty are one condition: a payload carrying nothing signs
+  // nothing, verifies vacuously, and ships the same app. walk() recurses and
+  // stops at the first file, so a tree of empty directories still reads bare.
   const bare = (d) => !fs.existsSync(d) || walk(d).next().done === true;
-  // A bare runtime explains all six children, so it is named on its own.
+  // A bare runtime explains all four children, so it is named on its own.
   const missing = bare(runtime)
     ? ["browser-runtime"]
-    : [framework, sitePackages, server, camoufox, vaultCli, vaultServer]
-        .filter(bare)
-        .map((d) => path.basename(d));
+    : [framework, sitePackages, server, camoufox].filter(bare).map((d) => path.basename(d));
   if (missing.length > 0) {
     throw new Error(
       `[afterPack] the packed app is missing ${missing.join(", ")} — ` +
@@ -152,15 +157,13 @@ module.exports = async function afterPack(context) {
     signBundle(app, BROWSER_ENTITLEMENTS);
   }
 
-  // 4b) Vault CLI — one loose Mach-O per arch, helper entitlements (it is a
-  // Node build, so V8 needs JIT).
-  for (const f of walk(vaultCli)) {
-    if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
-  }
-
-  // 4c) Vault server — one loose Mach-O per arch (compiled from Rust source).
-  for (const f of walk(vaultServer)) {
-    if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
+  // 4b/4c) The vault payloads, when this build carries them: `bw` (a Node build,
+  // so V8 needs JIT) and vaultwarden, one loose Mach-O per arch each.
+  for (const dir of ["vault-cli", "vault-server"].map((d) => path.join(runtime, d))) {
+    if (!fs.existsSync(dir)) continue;
+    for (const f of walk(dir)) {
+      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
+    }
   }
 
   // 5) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a

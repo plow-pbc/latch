@@ -15,23 +15,23 @@ const afterPack = createRequire(import.meta.url)("../build/afterPack.cjs") as (
   context: unknown,
 ) => Promise<void>;
 
-/** Every directory the browser runtime is made of, as packed. `nested` marks
- * the ones whose binaries sit an arch level down — declared here rather than
- * inferred from the name, so a rename moves both uses at once. */
+/** What the runtime cannot resolve without. The vault payloads are not here:
+ * browserRuntime.ts falls back to a `bw` on PATH and a hosted vault. */
 const PAYLOADS = [
-  { dir: "python/Python.framework" },
-  { dir: "python/site-packages" },
-  { dir: "server" },
-  { dir: "camoufox" },
-  { dir: "vault-cli", nested: true },
-  { dir: "vault-server", nested: true },
+  "python/Python.framework",
+  "python/site-packages",
+  "server",
+  "camoufox",
 ];
 
-const NESTED = PAYLOADS.filter((p) => p.nested).map((p) => p.dir);
-
-const contextFor = (appOutDir: string) => ({
+/** `identity` mirrors electron-builder's `mac.identity`; left off, the hook
+ * falls back to CODESIGN_IDENTITY. */
+const contextFor = (appOutDir: string, identity?: string) => ({
   appOutDir,
-  packager: { appInfo: { productFilename: "Plow Latch" } },
+  packager: {
+    appInfo: { productFilename: "Plow Latch" },
+    platformSpecificBuildOptions: { identity },
+  },
 });
 
 describe("the packaging hook refuses before it signs", () => {
@@ -44,7 +44,7 @@ describe("the packaging hook refuses before it signs", () => {
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
-    for (const { dir: payload } of PAYLOADS) {
+    for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
       fs.writeFileSync(path.join(runtime, payload, "carried"), "");
@@ -73,7 +73,14 @@ describe("the packaging hook refuses before it signs", () => {
   it("refuses an unsigned runtime rather than shipping one macOS will not load", async () => {
     delete process.env.CODESIGN_IDENTITY;
     pack();
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(/CODESIGN_IDENTITY is not set/);
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(/no signing identity/);
+  });
+
+  it("refuses an environment identity that is not the one sealing the app", async () => {
+    pack();
+    await expect(
+      afterPack(contextFor(dir, "Developer ID Application: Someone Else (OTHER1)")),
+    ).rejects.toThrow(/is not the packager's identity/);
   });
 
   it.each([
@@ -89,12 +96,9 @@ describe("the packaging hook refuses before it signs", () => {
   // One expectation over every column is the claim: however a payload comes up
   // carrying no file, it is the same refusal, named the same way.
   it.each(
-    PAYLOADS.flatMap(({ dir: payload, nested }) => [
+    PAYLOADS.flatMap((payload) => [
       { payload, how: "left out" },
       { payload, how: "packed empty", make: payload },
-      ...(nested
-        ? [{ payload, how: "packed with an empty arch dir", make: path.join(payload, "arm64") }]
-        : []),
     ]),
   )("names $payload when it was $how", async ({ payload, make }) => {
     const runtime = pack(payload);
@@ -104,16 +108,16 @@ describe("the packaging hook refuses before it signs", () => {
     );
   });
 
-  it("accepts a payload whose content sits an arch level down", async () => {
-    expect(NESTED.length).toBeGreaterThan(0); // else the loop below proves nothing
-    const runtime = pack("server");
-    for (const nested of NESTED) {
-      fs.rmSync(path.join(runtime, nested), { recursive: true });
-      fs.mkdirSync(path.join(runtime, nested, "arm64"), { recursive: true });
-      fs.writeFileSync(path.join(runtime, nested, "arm64", "binary"), "");
-    }
-    // `server` is the only one left out, and it is named alone only if the two
-    // nested trees were not also called bare — the assertion is the acceptance.
+  it("names a payload that is all empty directories and no file", async () => {
+    const runtime = pack("camoufox");
+    fs.mkdirSync(path.join(runtime, "camoufox", "browsers", "official"), { recursive: true });
+    await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing camoufox —");
+  });
+
+  it("does not require the vault payloads a build may legitimately omit", async () => {
+    // pack() never writes vault-cli or vault-server. `server` is named alone
+    // only if their absence is not also a refusal.
+    pack("server");
     await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing server —");
   });
 
