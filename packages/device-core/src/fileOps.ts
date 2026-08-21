@@ -181,6 +181,42 @@ async function openParent(dir: string): Promise<FileHandle | null> {
 }
 
 /**
+ * One write at a time per target file, within this process.
+ *
+ * Two tunnelled calls naming the same file ran concurrently, and each one
+ * truncates before it writes: the second's truncate could land between the
+ * first's write and its own, so the file ended up holding a piece of one and a
+ * piece of the other — and BOTH calls reported success. A file is written whole
+ * or not at all, so they queue.
+ *
+ * Keyed on the canonical path, because that is the file; two spellings of one
+ * file must take the same place in the queue. The entry is dropped when nobody
+ * is behind it, so this does not become a map of every path ever written.
+ *
+ * Within this process is the whole of what it claims. Another process editing
+ * the same file is not something a lock here can order, and nothing above this
+ * pretends otherwise.
+ */
+const writesInFlight = new Map<string, Promise<void>>();
+
+async function serialized<T>(canonical: string, run: () => Promise<T>): Promise<T> {
+  const ahead = writesInFlight.get(canonical) ?? Promise.resolve();
+  // Whatever is ahead has FINISHED, not succeeded: one call failing must not
+  // cancel the next, and must not reject the queue it was standing in.
+  const mine = ahead.then(run);
+  const tail = mine.then(
+    () => {},
+    () => {},
+  );
+  writesInFlight.set(canonical, tail);
+  try {
+    return await mine;
+  } finally {
+    if (writesInFlight.get(canonical) === tail) writesInFlight.delete(canonical);
+  }
+}
+
+/**
  * Put the bytes in, with the proved parent held open the whole time.
  *
  * Open before create, and create with `O_EXCL`. Node has no `openat`, so the
@@ -220,7 +256,19 @@ async function writeInto(
   try {
     if (!(await provesToBe(parent, dir))) throw new FileOpsError(MOVED, true);
     if (!created) await handle.truncate(0);
-    await handle.write(data, 0, data.length, 0);
+    // Every byte, and proved. One `write` is not a promise to write the whole
+    // buffer — it returns how much it took, and a short write on a full disk,
+    // a slow volume or a large payload used to be reported to the agent as a
+    // completed write of the whole file. The loop is the fix; the count is the
+    // proof.
+    let written = 0;
+    while (written < data.length) {
+      const { bytesWritten } = await handle.write(data, written, data.length - written, written);
+      if (bytesWritten <= 0) {
+        throw new FileOpsError(`write stopped after ${written} of ${data.length} bytes`);
+      }
+      written += bytesWritten;
+    }
   } finally {
     await handle.close().catch(() => {});
   }
@@ -288,21 +336,26 @@ export const FileOps = {
       );
     }
     const canonical = await resolveInScope(filePath, allowedRoots, deviceHome);
-    const dir = path.dirname(canonical);
-    const parent = await openParent(dir);
-    if (parent === null) {
-      throw new FileOpsError(
-        `the directory ${dir} does not exist. This operation writes a file; it does not ` +
-          `create the directories on the way to one — create the directory first.`,
-      );
-    }
-    try {
-      await writeInto(parent, dir, canonical, data);
-    } catch (error: unknown) {
-      if (error instanceof FileOpsError) throw error;
-      throw new FileOpsError(`write failed: ${error instanceof Error ? error.message : error}`);
-    } finally {
-      await parent.close().catch(() => {});
-    }
+    // The queue wraps the parent's proof as well as the write, so a call
+    // waiting its turn is not sitting on an open descriptor — and so the proof
+    // is next to the write it vouches for rather than the far side of a wait.
+    return serialized(canonical, async () => {
+      const dir = path.dirname(canonical);
+      const parent = await openParent(dir);
+      if (parent === null) {
+        throw new FileOpsError(
+          `the directory ${dir} does not exist. This operation writes a file; it does not ` +
+            `create the directories on the way to one — create the directory first.`,
+        );
+      }
+      try {
+        await writeInto(parent, dir, canonical, data);
+      } catch (error: unknown) {
+        if (error instanceof FileOpsError) throw error;
+        throw new FileOpsError(`write failed: ${error instanceof Error ? error.message : error}`);
+      } finally {
+        await parent.close().catch(() => {});
+      }
+    });
   },
 };
