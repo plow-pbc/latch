@@ -9,11 +9,11 @@ the architecture and the reasoning behind each decision).
 > which authenticates the agent and forwards MCP to the MCP server in
 > `packages/mcp-server`. Both halves exist here: the server, and the outbound
 > client in `packages/relay-client` that dials the relay and serves what it
-> tunnels. **The relay exists** too, in the `plow-pbc/plow` repo
-> (`api/plow/relay/`). The remaining gap is that the relay leg has no automated
-> coverage here AT ALL — the in-repo stand-in was deleted, taking the in-process
-> coverage with it — so the leg is verified by hand against a running plow
-> stack. See § Integration coverage.
+> tunnels. **The relay exists** too (see `CLAUDE.md` § Being rebuilt). The
+> remaining gap is that nothing automated covers the relay leg at all: the
+> in-repo stand-in was deleted, taking the in-process coverage with it, and
+> there is no live-stack path either — that leg is verified by hand. See
+> § Integration coverage.
 
 ## Layout
 

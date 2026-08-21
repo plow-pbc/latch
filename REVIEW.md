@@ -15,11 +15,14 @@ not break. Read the **base-branch** copies of both before judging an
 architectural tradeoff.
 
 **Stage:** pre-PMF, and mid-rebuild. The old in-repo broker has been removed; a
-Mac now dials *out* to the Plow relay. Both halves of this side exist
-(`@domo/mcp-server`, `@domo/relay-client`), and **so does the relay** — it lives
-in the `plow-pbc/plow` repo (`api/plow/relay/`: the MCP endpoint, the device WebSocket,
-an OAuth flow, covered by `api/tests/relay/`). This line said it was "not built"
-long after it was; check that repo rather than this sentence.
+Mac now dials *out* to the Plow relay, which exists — see `CLAUDE.md`
+§ Being rebuilt for where it lives and what is still verified by hand.
+
+**Agents do reach a Mac through this app today.** This paragraph said the
+opposite for as long as the relay was unbuilt, and that sentence was load-
+bearing: it is what tells you whether a reachability-gated finding is
+theoretical or live. It is live. A finding that depends on a remote agent
+actually reaching this Mac gets graded as reachable, not hypothetical.
 
 **Userbase:** single-digit, internal. One engineer plus a handful of alpha
 machines. The signed/notarized DMG and the S3 update feed exist and work, but
