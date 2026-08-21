@@ -668,7 +668,17 @@ describe("per-agent isolation (§4.4)", () => {
     );
 
     // The owner still reads it — nothing was consumed or broken.
-    const owner = await callTool(server, "plow_get_output", { handle }, ALICE);
+    //
+    // Polled, not read once. `startJob` returns as soon as the call's 100ms
+    // wait elapses, which says the job is RUNNING — not that it has written
+    // anything yet. Reading straight through raced sandbox-exec's startup and
+    // failed roughly one run in fifty on a loaded machine, asserting on an
+    // empty string. The sibling test below already says why in a comment.
+    let owner = await callTool(server, "plow_get_output", { handle }, ALICE);
+    for (let i = 0; i < 80 && !String(owner.payload.output ?? "").includes("alice-secret"); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      owner = await callTool(server, "plow_get_output", { handle }, ALICE);
+    }
     expect(owner.isError).toBe(false);
     expect(owner.payload.output).toContain("alice-secret");
   });

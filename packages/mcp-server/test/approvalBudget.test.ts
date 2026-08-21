@@ -142,6 +142,15 @@ describe("the budget fires while persisting the approval is still in flight", ()
     expect(asked).toBe(false);
     openGate();
     await call;
+    // Awaited, not asserted outright. `budgetMs` is 40 here, so the call has
+    // almost certainly already deferred and `await call` returns the PENDING
+    // payload the moment the budget fires — which is before `openGate()` let
+    // the delegate run. Asserting straight through raced that gap and failed
+    // about one full-suite run in eight on a loaded machine, while passing
+    // every time this file ran alone. The contract is unchanged: the human is
+    // still asked, and the assertion above still pins that it happened only
+    // AFTER the record was on disk.
+    for (let i = 0; i < 80 && !asked; i++) await new Promise((r) => setTimeout(r, 25));
     expect(asked).toBe(true);
   });
 });
