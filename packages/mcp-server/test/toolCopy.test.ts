@@ -335,19 +335,6 @@ describe("what the agent-facing copy must and must not say", () => {
   });
 
   /**
-   * Pins the SEAM, not the words. Grepping the instructions for /mdfind/ was
-   * the obvious assertion and it stopped meaning anything the moment one
-   * constant fed both strings: dropping `${MACOS_TOOLING}` from
-   * plow_run_command's description — the plausible edit when the mach-lookup
-   * TODO forces a rewrite — would ship green while the tool that actually runs
-   * the commands named no tooling at all.
-   */
-  it("both copy homes interpolate the one tooling list", async () => {
-    expect(SERVER_INSTRUCTIONS).toContain(MACOS_TOOLING);
-    expect((await descriptions(makeServer())).plow_run_command).toContain(MACOS_TOOLING);
-  });
-
-  /**
    * Content, not seam — its own case so a failure names what broke. Every
    * clause is a reason the agent's own fetch cannot answer a live-web
    * question, and each is separately droppable, so the case pins the set whole
@@ -363,6 +350,19 @@ describe("what the agent-facing copy must and must not say", () => {
     ]) {
       expect(LIVE_WEB_ROUTING).toMatch(claim);
     }
+  });
+
+  /**
+   * Pins the SEAM, not the words. Grepping the instructions for /mdfind/ was
+   * the obvious assertion and it stopped meaning anything the moment one
+   * constant fed both strings: dropping `${MACOS_TOOLING}` from
+   * plow_run_command's description — the plausible edit when the mach-lookup
+   * TODO forces a rewrite — would ship green while the tool that actually runs
+   * the commands named no tooling at all.
+   */
+  it("both copy homes interpolate the one tooling list", async () => {
+    expect(SERVER_INSTRUCTIONS).toContain(MACOS_TOOLING);
+    expect((await descriptions(makeServer())).plow_run_command).toContain(MACOS_TOOLING);
   });
 
   /**
