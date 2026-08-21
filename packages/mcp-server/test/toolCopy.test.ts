@@ -315,20 +315,6 @@ describe("every tool says what kind of tool it is", () => {
 });
 
 describe("nothing on the surface sends the live web back to the agent's own tools", () => {
-  /**
-   * The sentence this change exists to remove had THREE homes: the
-   * instructions block, `plow_browser_open`'s description, and the browsing
-   * skill's. Guarding the three we happen to remember is how the fourth one
-   * ships, so this runs over every string a model reads.
-   */
-  it("no manifest string routes web reading away from this Mac", () => {
-    for (const { where, text } of manifestStrings()) {
-      expect(text, `${where} sends web reading to the agent's own tools`).not.toMatch(
-        /general web reading|which your own tools do faster|your own tools, which are faster/i,
-      );
-    }
-  });
-
   it("the instructions route the live web here, name the mechanism, and give an example", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/datacenter address/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_browser_open/);
@@ -343,49 +329,50 @@ describe("nothing on the surface sends the live web back to the agent's own tool
   });
 
   /**
-   * Every phrase that must not appear ANYWHERE a model reads, in one table.
+   * Every fault that must not appear ANYWHERE a model reads, in one table.
    *
    * These were four separate loops over `manifestStrings()` differing only in
-   * a regex and a message — and the shape kept costing: each new forbidden
-   * class arrived as another copy of the loop, and each round of review found
-   * one whose regex was narrower than its own test name promised. One table,
-   * one loop, and the rationale rides each row instead of a comment above it.
+   * a check and a message, and the shape kept costing: each new forbidden
+   * class arrived as another copy of the loop, and review kept finding one
+   * whose check was narrower than its own test name promised. `offends` is a
+   * predicate rather than a regex so the bare-tool-name sweep — which calls a
+   * function, not a match — belongs in the same table instead of beside it.
    *
    * `open` and `shortcuts` were removed from the tooling copy alongside
    * `osascript`, but only `shortcuts` is pinned here: `open` is far too common
    * an English word to assert against a prose corpus without false positives.
    */
-  const FORBIDDEN = [
+  const FORBIDDEN: { what: string; why: string; offends: (text: string) => boolean }[] = [
     {
       what: "routes web reading to the agent's own tools",
-      pattern: /general web reading|which your own tools do faster|your own tools, which are faster/i,
       why: "the sentence this whole surface exists to remove; it had three homes",
+      offends: (text) =>
+        /general web reading|which your own tools do faster|your own tools, which are faster/i.test(
+          text,
+        ),
     },
     {
       what: "prescribes tooling the sandbox denies",
-      pattern: /osascript|screencapture|shortcuts/i,
       why: "(deny default) grants no appleevent-send and the app ships no automation entitlement",
+      offends: (text) => /osascript|screencapture|shortcuts/i.test(text),
     },
     {
       what: "oversells the browser profile",
-      pattern: /already signed in/i,
       why: "a persistent profile promises nothing about any particular site",
+      offends: (text) => /already signed in/i.test(text),
+    },
+    {
+      what: "names a tool without its plow_ prefix",
+      // Not just the skill: #46's pending-handle note shipped "poll
+      // get_result" an hour before that rename landed, and nothing caught it.
+      why: "a bare tool name is a call an agent cannot make",
+      offends: (text) => bareToolNames(text).length > 0,
     },
   ];
 
-  it.each(FORBIDDEN)("no manifest string $what", ({ pattern, why }) => {
+  it.each(FORBIDDEN)("no manifest string $what", ({ offends, why }) => {
     for (const { where, text } of manifestStrings()) {
-      expect(text, `${where}: ${why}`).not.toMatch(pattern);
-    }
-  });
-});
-
-describe("nothing an agent reads names a tool by its old name", () => {
-  // Not just the skill: #46's pending-handle note shipped "poll get_result"
-  // an hour before this rename landed, and nothing here would have caught it.
-  it("no manifest string carries a bare tool name", () => {
-    for (const { where, text } of manifestStrings()) {
-      expect(bareToolNames(text), `${where} names a tool without plow_`).toEqual([]);
+      expect(offends(text), `${where}: ${why}`).toBe(false);
     }
   });
 });
