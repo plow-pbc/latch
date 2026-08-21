@@ -127,10 +127,13 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 }
 ```
 
-- **Signing:** the intent carries none. It is built on this Mac from an
-  authenticated agent's tool call and never crosses the wire, so there is
-  nothing to verify. What *is* signed is the **Grant**: the device's Ed25519
-  signature over canonical JSON (sorted keys, ISO-8601 dates), the Mac
+- **Signing:** the intent carries none. It is never *received* over the wire —
+  it is built on this Mac from an authenticated agent's tool call — so there is
+  no third party's signature to verify. That is not a data-locality claim: in a
+  reviewer mode its contents go OUTBOUND, formatted into a prompt with recent
+  audit history and posted to Plow's chat-completion endpoint
+  (`adversarialAgent.ts`). What *is* signed is the **Grant**: the device's
+  Ed25519 signature over canonical JSON (sorted keys, ISO-8601 dates), the Mac
   attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
@@ -225,7 +228,8 @@ TOFU key pinning, broker holds agent private keys, no revocation UI.
 The transport is abstracted behind `Connection`/`ConnectionListener`/
 `ConnectionDialer` (with a `PeerTrustEvaluator`/`SPKIPin` security seam) so the
 networked transport is a drop-in below `LineRPC`. The step-by-step plan to build
-the network and security layers is **`docs/network-security-runbook.md`**.
+the network and security layers was **`docs/network-security-runbook.md`**, now
+marked superseded — it plans the removed broker and must not be executed.
 
 **Status (remote milestone):** runbook Phases 1–6 are implemented and tested
 (`Tests/DomoNetworkTests`): WebSocket transport (`WebSocketConnection`), SPKI

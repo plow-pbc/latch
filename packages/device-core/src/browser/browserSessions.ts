@@ -1,7 +1,7 @@
 /**
  * Browser session store and the enforcement core.
  *
- * A session is created/widened only by an approved signed intent; every
+ * A session is created/widened only by an approved intent; every
  * subsequent command is validated here against the session's approved bound:
  * - navigation targets must match the origin allowlist (checked BEFORE goto);
  * - after every action the observed URL is re-checked (clicks and page JS

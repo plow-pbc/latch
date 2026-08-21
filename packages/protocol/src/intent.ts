@@ -3,11 +3,13 @@
  * Dates are ISO-8601 strings (seconds precision) at rest and on the wire, so
  * canonical encoding never touches floating point.
  *
- * An Intent is now a MAC-INTERNAL construct: it is built on this Mac from an
- * authenticated agent's tool call, never received over the wire, so it carries
- * no agent public key and no agent signature (there is nothing to verify — the
- * bytes never left this process). The DEVICE signature over a Grant stays: that
- * one is the Mac attesting to its own decision.
+ * An Intent is built on this Mac from an authenticated agent's tool call and is
+ * never RECEIVED over the wire, so it carries no agent public key and no agent
+ * signature — there is no third party's signature to verify. That is about
+ * provenance, not confinement: a reviewer mode formats an intent's contents
+ * into a prompt and sends them outbound (apps/desktop/src/adversarialAgent.ts).
+ * The DEVICE signature over a Grant stays: that one is the Mac attesting to its
+ * own decision.
  */
 import crypto from "node:crypto";
 import { Capability, normalizedCapability, RuleKey } from "./capability.js";
