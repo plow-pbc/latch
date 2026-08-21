@@ -316,7 +316,7 @@ signs out with the clone. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an
-unbounded rule. Instead one signed intent opens a **session** whose capability
+unbounded rule. Instead one intent opens a **session** whose capability
 is the enforceable bound — a `browser` capability with an origin allowlist
 (`origins: ["dominos.com", "*.dominos.com"]`, explicit patterns, no PSL
 logic) and optionally `credential` capabilities. Subsequent commands ride the
