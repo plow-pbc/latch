@@ -870,21 +870,10 @@ app.whenReady().then(async () => {
     await click(DISCARD);
     await waitForNode(() => closeAnswer !== null, "the renderer's answer to main");
     const windowCloseAnswersMain = closeAnswer === true;
-
-    // A forced teardown while a question is open leaves nobody to answer it, so
-    // the pending request must settle itself rather than outlive its window.
-    const orphan = new BrowserWindow({
-      show: false,
-      webPreferences: { preload: path.join(dist, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
-    });
-    await orphan.loadFile(path.join(dist, "renderer/index.html"));
-    await waitFor(orphan, `document.querySelector("#seg")`, "the orphan window to render");
-    let orphanSettled = false;
-    orphan.on("closed", () => { orphanSettled = true; });
-    orphan.webContents.send("ui:confirmLeave"); // never answered
-    orphan.destroy();
-    const destroyedWindowSettles = await waitForNode(() => orphanSettled, "the destroyed window to settle")
-      .then(() => true).catch(() => false);
+    // Consent must TAKE the form away, not just release it: quit spends seconds
+    // shutting down, and a form still on screen is a form still being typed into.
+    const consentClosesTheForm = await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`,
+      "the approved form to be taken away").then(() => true).catch(() => false);
 
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
@@ -893,7 +882,7 @@ app.whenReady().then(async () => {
       secondEditorAsks, refusedSecondEditorKeepsRow, windowCloseAsks, windowCloseAnswersMain,
       reselectingVaultKeepsTheForm,
       oneDialogForTwoAskers, refusalIsReported, refusedCloseKeepsTheForm,
-      destroyedWindowSettles,
+      consentClosesTheForm,
     };
   })();
 
@@ -988,7 +977,7 @@ app.whenReady().then(async () => {
     vaultUnsaved.oneDialogForTwoAskers &&
     vaultUnsaved.refusalIsReported &&
     vaultUnsaved.refusedCloseKeepsTheForm &&
-    vaultUnsaved.destroyedWindowSettles &&
+    vaultUnsaved.consentClosesTheForm &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

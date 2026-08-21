@@ -1050,7 +1050,13 @@ function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
     ipcMain.on("ui:confirmLeaveReply", onReply);
     // The question is drawn IN the window, so it has to be on screen to be seen.
     if (!win.isVisible()) win.show();
-    win.webContents.send("ui:confirmLeave");
+    // ...and it has to be asked of a renderer that is already listening: the
+    // bridge uses ipcRenderer.on, which does not replay, so a question sent
+    // mid-load is one nobody will ever answer — and this promise is shared, so
+    // that would strand every later close behind it. Same wait as showSettings.
+    const ask = () => win.webContents.send("ui:confirmLeave");
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", ask);
+    else ask();
   }).finally(() => { leaveInFlight = null; });
   return leaveInFlight;
 }

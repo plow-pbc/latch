@@ -328,7 +328,13 @@ function vreleaseEditor(who) {
     the window down. vmayDiscard() is what keeps it to one dialog. */
 export async function vaultConfirmLeave() {
   const ok = await vmayDiscard();
-  if (ok) editor = null; // the pane, and every form on it, is about to go
+  if (ok) {
+    // Close it, don't just drop the seat. Quit answers this and then spends
+    // seconds shutting the browsers down, and a form left on screen is a form
+    // still being typed into — edits nothing is watching for any more.
+    editor?.close();
+    editor = null;
+  }
   return ok;
 }
 
