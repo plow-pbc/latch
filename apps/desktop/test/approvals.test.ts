@@ -65,9 +65,14 @@ describe("approvals card", () => {
   it("states the bound and the cost beside the purpose field", () => {
     // Both halves, and the honest one is not optional: turning this mode on is
     // what stops the questions, and the card has to say so.
+    //
+    // The first line used to promise the purpose could "only narrow what gets
+    // approved". It cannot, and the owner should not be told it can: an owner
+    // who writes "Manage my SSH keys" has just widened the job to include them.
     expect(PURPOSE_CAVEATS).toContain(
-      "It can only narrow what gets approved — each approval still lists the capabilities this Mac will enforce.",
+      "It describes the errand — it can widen what gets approved as easily as narrow it. Each approval still lists the capabilities this Mac will enforce.",
     );
+    expect(PURPOSE_CAVEATS.join(" ")).not.toContain("only narrow");
     expect(PURPOSE_CAVEATS).toContain("Requests that fit may be approved without asking you.");
   });
 
