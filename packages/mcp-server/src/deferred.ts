@@ -1,11 +1,12 @@
 /**
  * The deferred-result contract (design §4.3).
  *
- * A tunnelled call has a hard ceiling — `RELAY_TIMEOUT_MS` below — so nothing
- * on this Mac may block past `CALL_BUDGET_MS`: not a human who has walked away
- * from an approval, not a slow command. Any tool that cannot finish inside the
- * budget returns a handle instead, keeps the work running, and the agent
- * retrieves the outcome later with `plow_get_result`.
+ * A tunnelled call has a hard ceiling — `RELAY_TIMEOUT_MS`, in
+ * `@domo/relay-client`'s `wire.ts` — so nothing on this Mac may block past
+ * `CALL_BUDGET_MS`: not a human who has walked away from an approval, not a
+ * slow command. Any tool that cannot finish inside the budget returns a handle
+ * instead, keeps the work running, and the agent retrieves the outcome later
+ * with `plow_get_result`.
  *
  * Two rules make this safe rather than merely convenient:
  *
@@ -22,36 +23,15 @@ import crypto from "node:crypto";
 import { JSONValue } from "@domo/protocol";
 
 /**
- * The relay's own ceiling: how long its pending future waits before it
- * abandons a tunnelled exchange. Not ours — it belongs to `plow-pbc/plow` — but
- * `CALL_BUDGET_MS` is chosen against it, so it is named here rather than
- * restated in prose wherever a timeout is sized against it. If the relay
- * changes this, this is the line to change. `mcpServer.test.ts` then catches a
- * ceiling that has dropped below the budget plus the margin — a ceiling that
- * ROSE leaves more headroom and passes quietly, so this line is the record of
- * what it is, not a tripwire for every change. (The MCP client abandons later
- * still, around 30s.)
- *
- * Exported for that check, not as a value to build on: it belongs to another
- * system, and nothing here can verify it.
- */
-export const RELAY_TIMEOUT_MS = 25_000;
-
-/**
- * What delivery must fit in after the budget is spent: registering the handle,
- * framing the response, and the relay matching it to the exchange still
- * waiting. A floor, not slack.
- */
-export const DELIVERY_MARGIN_MS = 10_000;
-
-/**
  * How long a tool may block before it must hand back a handle.
  *
- * CHOSEN against the two above, not computed from them: a human gets the whole
- * fifteen seconds to answer inside the original call, which is the point of the
- * number and why it is a literal rather than `RELAY_TIMEOUT_MS -
- * DELIVERY_MARGIN_MS`. `mcpServer.test.ts` pins it and checks the margin still
- * clears, so the two only move together by a human editing both.
+ * CHOSEN against the relay's own ceiling — `RELAY_TIMEOUT_MS` in
+ * `@domo/relay-client`'s `wire.ts`, which owns what the relay does — leaving
+ * enough behind it for delivery: registering the handle, framing the response,
+ * and the relay matching it to the exchange still waiting. Not computed from
+ * it: a human gets the whole fifteen seconds to answer inside the original
+ * call, which is the point of the number and why it is a literal.
+ * `relay-client/test/wire.test.ts` checks the two still leave room.
  */
 export const CALL_BUDGET_MS = 15_000;
 
