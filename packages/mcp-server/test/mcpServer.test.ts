@@ -27,7 +27,7 @@ import {
   RelayAuth,
   toAuthInfo,
 } from "@domo/mcp-server";
-import { callTool, parse, rpc } from "./client.js";
+import { callTool, parse, pollUntil, rpc } from "./client.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(async () => {
@@ -296,11 +296,12 @@ describe("the deferred-result contract (§4.3)", () => {
     const early = await callTool(server, "plow_get_result", { handle }, AGENT);
     expect(early.payload.status).toBe("pending");
 
-    let poll = early.payload;
-    for (let i = 0; i < 60 && poll.status === "pending"; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      poll = (await callTool(server, "plow_get_result", { handle }, AGENT)).payload;
-    }
+    const poll = (
+      await pollUntil(
+        () => callTool(server, "plow_get_result", { handle }, AGENT),
+        (r) => r.payload.status !== "pending",
+      )
+    ).payload;
     expect(poll.status).toBe("ready");
     // Byte-for-byte what the original call would have returned.
     expect(poll.result).toEqual({ path: canonicalize(file), content: "slow content" });
@@ -642,6 +643,14 @@ describe("per-agent isolation (§4.4)", () => {
   // the same thing, and Session.name is not unique.
   const MALLORY: RelayAuth = { agent_id: "sess_mallory", agent_name: "Claude Code" };
 
+  /**
+   * Start a job and return its handle once it has actually EMITTED something.
+   *
+   * The wait belongs here rather than at each call site. `wait_ms: 100` elapsing
+   * means the job is RUNNING, not that sandbox-exec has started and flushed —
+   * so a caller that reads output immediately races startup. That bit one test
+   * for real, and every future caller of this helper inherited the same trap.
+   */
   async function startJob(server: DomoMcpServer, auth: RelayAuth, marker: string) {
     const { payload } = await callTool(
       server,
@@ -650,7 +659,13 @@ describe("per-agent isolation (§4.4)", () => {
       auth,
     );
     expect(payload.status).toBe("running");
-    return payload.handle as string;
+    const handle = payload.handle as string;
+    // `since: 0` so waiting here never advances a cursor a test is asserting on.
+    await pollUntil(
+      () => callTool(server, "plow_get_output", { handle, since: 0 }, auth),
+      (r) => r.isError || String(r.payload.output ?? "").includes(marker),
+    );
+    return handle;
   }
 
   it("one agent cannot read another's job output — even sharing a name", async () => {
@@ -667,18 +682,9 @@ describe("per-agent isolation (§4.4)", () => {
       JSON.stringify(invented.payload).replace("NO-SUCH-HANDLE", handle),
     );
 
-    // The owner still reads it — nothing was consumed or broken.
-    //
-    // Polled, not read once. `startJob` returns as soon as the call's 100ms
-    // wait elapses, which says the job is RUNNING — not that it has written
-    // anything yet. Reading straight through raced sandbox-exec's startup and
-    // failed roughly one run in fifty on a loaded machine, asserting on an
-    // empty string. The sibling test below already says why in a comment.
-    let owner = await callTool(server, "plow_get_output", { handle }, ALICE);
-    for (let i = 0; i < 80 && !String(owner.payload.output ?? "").includes("alice-secret"); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      owner = await callTool(server, "plow_get_output", { handle }, ALICE);
-    }
+    // The owner still reads it — nothing was consumed or broken. `startJob`
+    // has already waited for the job to emit, so this reads once.
+    const owner = await callTool(server, "plow_get_output", { handle }, ALICE);
     expect(owner.isError).toBe(false);
     expect(owner.payload.output).toContain("alice-secret");
   });
@@ -690,14 +696,13 @@ describe("per-agent isolation (§4.4)", () => {
     expect(aliceHandle).not.toBe(malloryHandle);
 
     /** Poll a job to completion — sandbox-exec startup is not instant. */
-    const drain = async (handle: string, auth: RelayAuth) => {
-      let out = { status: "running", output: "" } as any;
-      for (let i = 0; i < 80 && out.status === "running"; i++) {
-        await new Promise((r) => setTimeout(r, 25));
-        out = (await callTool(server, "plow_get_output", { handle, since: 0 }, auth)).payload;
-      }
-      return out;
-    };
+    const drain = async (handle: string, auth: RelayAuth) =>
+      (
+        await pollUntil(
+          () => callTool(server, "plow_get_output", { handle, since: 0 }, auth),
+          (r) => r.payload.status !== "running",
+        )
+      ).payload;
 
     // Alice reads her stream to the end. Repeatedly, from byte 0.
     const aliceOut = await drain(aliceHandle, ALICE);

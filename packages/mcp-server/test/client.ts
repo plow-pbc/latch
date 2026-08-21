@@ -98,3 +98,29 @@ export async function callTool(
   }
   return { payload, isError: parsed.result?.isError === true, status: raw.status };
 }
+
+/**
+ * Read until `done`, or give up.
+ *
+ * Six copies of `for (let i = 0; i < 80 && …; i++) await new Promise(r =>
+ * setTimeout(r, 25))` had accumulated across four test files, at two different
+ * try counts, and two of them were added while fixing a flake caused by NOT
+ * polling. The idiom belongs in one place.
+ *
+ * It reads once before waiting, so a condition that is already true costs
+ * nothing. It RETURNS the last value rather than throwing on exhaustion:
+ * every caller has its own assertion about that value, and those messages say
+ * far more than a generic timeout would.
+ */
+export async function pollUntil<T>(
+  read: () => Promise<T>,
+  done: (value: T) => boolean,
+  { tries = 80, everyMs = 25 }: { tries?: number; everyMs?: number } = {},
+): Promise<T> {
+  let value = await read();
+  for (let i = 0; i < tries && !done(value); i++) {
+    await new Promise((r) => setTimeout(r, everyMs));
+    value = await read();
+  }
+  return value;
+}
