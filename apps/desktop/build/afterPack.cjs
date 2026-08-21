@@ -110,6 +110,15 @@ module.exports = async function afterPack(context) {
   }
   // camoufox is the one payload with a known interior: a fuse that stopped
   // partway leaves files behind but no bundle to sign.
+  // vault-server has a known interior too: vaultServerIn wants a vaultwarden
+  // binary AND web-vault, and the build writes web-vault first — so a vault
+  // build that stopped leaves files here with no binary among them.
+  const hasVaultwarden = [...walk(vaultServer)].some((f) => path.basename(f) === "vaultwarden");
+  if (!hasVaultwarden || bare(path.join(vaultServer, "web-vault"))) {
+    throw new Error(
+      "[afterPack] the vault-server payload is missing vaultwarden or web-vault — a vault build that did not finish",
+    );
+  }
   const camoufoxApps = findApps(camoufox);
   if (camoufoxApps.length === 0) {
     throw new Error(
@@ -168,11 +177,15 @@ module.exports = async function afterPack(context) {
     signBundle(app, BROWSER_ENTITLEMENTS);
   }
 
-  // 4b/4c) The vault payloads, when this build carries them: `bw` (a Node build,
-  // so V8 needs JIT) and vaultwarden, one loose Mach-O per arch each.
-  for (const dir of ["vault-cli", "vault-server"].map((d) => path.join(runtime, d))) {
-    if (!fs.existsSync(dir)) continue;
-    for (const f of walk(dir)) {
+  // 4b) vaultwarden, one loose Mach-O per arch.
+  for (const f of walk(vaultServer)) {
+    if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
+  }
+
+  // 4c) `bw`, when this build carries it — a Node build, so V8 needs JIT.
+  const vaultCli = path.join(runtime, "vault-cli");
+  if (fs.existsSync(vaultCli)) {
+    for (const f of walk(vaultCli)) {
       if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
     }
   }

@@ -25,13 +25,16 @@ const PAYLOADS = [
   "vault-server",
 ];
 
-/** `identity` mirrors electron-builder's `mac.identity`; left off, the hook
- * falls back to CODESIGN_IDENTITY. */
-const contextFor = (appOutDir: string, identity?: string | null) => ({
+const IDENTITY = "Developer ID Application: Nobody (TEAMID)";
+
+/** `mac` is electron-builder's resolved mac config. It defaults to carrying the
+ * identity the environment also has, because that agreement is what every
+ * packaging recipe produces; pass `{}` for a build that configured none. */
+const contextFor = (appOutDir: string, mac: { identity?: string | null } = { identity: IDENTITY }) => ({
   appOutDir,
   packager: {
     appInfo: { productFilename: "Plow Latch" },
-    platformSpecificBuildOptions: { identity },
+    platformSpecificBuildOptions: mac,
   },
 });
 
@@ -50,15 +53,22 @@ describe("the packaging hook refuses before it signs", () => {
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
       fs.writeFileSync(path.join(runtime, payload, "carried"), "");
     }
+    // The two payloads the hook looks inside, built as production ships them.
     if (omit !== "camoufox") {
       fs.mkdirSync(path.join(runtime, "camoufox", "Camoufox.app"), { recursive: true });
+    }
+    if (omit !== "vault-server") {
+      for (const f of ["arm64/vaultwarden", "web-vault/index.html"]) {
+        fs.mkdirSync(path.join(runtime, "vault-server", path.dirname(f)), { recursive: true });
+        fs.writeFileSync(path.join(runtime, "vault-server", f), "");
+      }
     }
     return runtime;
   };
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "afterpack-"));
-    process.env.CODESIGN_IDENTITY = "Developer ID Application: Nobody (TEAMID)";
+    process.env.CODESIGN_IDENTITY = IDENTITY;
   });
 
   afterEach(() => {
@@ -74,13 +84,20 @@ describe("the packaging hook refuses before it signs", () => {
   it("refuses an unsigned runtime rather than shipping one macOS will not load", async () => {
     delete process.env.CODESIGN_IDENTITY;
     pack();
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(/no signing identity/);
+    await expect(afterPack(contextFor(dir, {}))).rejects.toThrow(/no signing identity/);
+  });
+
+  it("falls back to the environment when the packager configured none", async () => {
+    // Past both identity guards on the env alone: `server` is named, which only
+    // happens after an identity resolved.
+    pack("server");
+    await expect(afterPack(contextFor(dir, {}))).rejects.toThrow("is missing server —");
   });
 
   it("refuses an environment identity that is not the one sealing the app", async () => {
     pack();
     await expect(
-      afterPack(contextFor(dir, "Developer ID Application: Someone Else (OTHER1)")),
+      afterPack(contextFor(dir, { identity: "Developer ID Application: Someone Else (OTHER1)" })),
     ).rejects.toThrow(/is not the packager's identity/);
   });
 
@@ -124,7 +141,14 @@ describe("the packaging hook refuses before it signs", () => {
 
   it("refuses a build whose identity is explicitly null", async () => {
     pack();
-    await expect(afterPack(contextFor(dir, null))).rejects.toThrow(/ships unsigned/);
+    await expect(afterPack(contextFor(dir, { identity: null }))).rejects.toThrow(/ships unsigned/);
+  });
+
+  it("refuses a vault-server that has web-vault but no vaultwarden", async () => {
+    const runtime = pack("vault-server");
+    fs.mkdirSync(path.join(runtime, "vault-server", "web-vault"), { recursive: true });
+    fs.writeFileSync(path.join(runtime, "vault-server", "web-vault", "index.html"), "");
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(/missing vaultwarden or web-vault/);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {
