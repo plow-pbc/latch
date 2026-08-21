@@ -141,8 +141,9 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_run_command.indexOf("own Mac")).toBeLessThan(d.plow_run_command.indexOf("sandbox"));
   });
 
-  // The differentiator: it browses AS the user — their profile, their logins —
-  // and can fill from their vault. Both are things a plain web fetch cannot do.
+  // What this case owns is the vault fill and the WHICH-browser line. Browsing
+  // AS the user — their profile, their logins — is pinned on LIVE_WEB_ROUTING,
+  // which this description interpolates.
   it("plow_browser_open says why it beats a plain web fetch", async () => {
     const d = await descriptions(makeServer());
     expect(d.plow_browser_open).toMatch(/vault/);
@@ -347,9 +348,10 @@ describe("what the agent-facing copy must and must not say", () => {
   });
 
   /**
-   * Content, not seam. Every clause is a reason the agent's own fetch cannot
-   * answer a live-web question, and each is separately droppable — pinning one
-   * of four leaves the other three free to vanish.
+   * Content, not seam — its own case so a failure names what broke. Every
+   * clause is a reason the agent's own fetch cannot answer a live-web
+   * question, and each is separately droppable, so the case pins the set whole
+   * rather than a representative.
    */
   it("the routing sentence names every advantage a plain fetch lacks", () => {
     for (const claim of [
