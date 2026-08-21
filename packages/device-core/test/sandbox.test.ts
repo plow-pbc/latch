@@ -6,7 +6,7 @@
  *     blocks a fetch that succeeds when allowed — mirroring the Swift
  *     DeviceCoreTests sandbox assertions (DESIGN.md §10).
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +17,7 @@ const sbpl = JSON.parse(fs.readFileSync(path.join(fixturesDir, "sbpl.json"), "ut
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   while (cleanups.length) cleanups.pop()!();
 });
 function tempDir(): string {
@@ -164,6 +165,39 @@ describe("real sandboxed execution", () => {
     const result = await executor.run({
       argv: ["/bin/cat", path.join(theirs, "app/settings.json"), path.join(packaged, "app/settings.json")],
       readPaths: [support],
+      writePaths: [],
+      network: false,
+      waitMs: 10_000,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output.toString()).not.toContain("plow_sk_do_not_leak_me");
+  });
+
+  /**
+   * A run pointed somewhere else by DOMO_HOME moves its OWN home and nobody
+   * else's.
+   *
+   * `DOMO_HOME=/tmp/…` is documented (docs/TESTING-THE-APP.md) and is how the
+   * app gets tested. Anchoring the family only beside that home left the
+   * packaged install's `~/Library/Application Support/Plow-Latch/settings.json`
+   * — a live relay credential — under the profile's broad home read.
+   */
+  it("refuses the app-data homes even when this run's home is somewhere else", async () => {
+    const fakeUserHome = tempDir();
+    vi.spyOn(os, "homedir").mockReturnValue(fakeUserHome);
+    const packaged = path.join(fakeUserHome, "Library/Application Support/Plow-Latch");
+    fs.mkdirSync(path.join(packaged, "app"), { recursive: true });
+    fs.writeFileSync(
+      path.join(packaged, "app/settings.json"),
+      JSON.stringify({ relayCredential: "plow_sk_do_not_leak_me" }),
+    );
+
+    // Nowhere near app data — the shape of a throwaway DOMO_HOME.
+    const elsewhere = tempDir();
+    const executor = new Executor(path.join(elsewhere, "device/scratch"), elsewhere);
+    const result = await executor.run({
+      argv: ["/bin/cat", path.join(packaged, "app/settings.json")],
+      readPaths: [packaged],
       writePaths: [],
       network: false,
       waitMs: 10_000,

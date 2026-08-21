@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { canonicalize } from "@domo/protocol";
-import { homeFamilyRegex } from "./plowHome.js";
+import { homeFamilyParents, homeFamilyRegex } from "./plowHome.js";
 
 const READ_BOILERPLATE = [
   "/usr",
@@ -38,11 +38,18 @@ function regexLiteral(pattern: string): string {
 }
 
 /**
- * The sibling-home pattern, over the CANONICAL home so it matches the physical
- * paths seatbelt enforces against (`/private/...`, not `/...`).
+ * The home-family patterns, over CANONICAL directories so they match the
+ * physical paths seatbelt enforces against (`/private/...`, not `/...`).
+ *
+ * Two of them in the general case: beside this run's own home, and in app data,
+ * where the packaged install and every other checkout keep theirs. A run
+ * started with an explicit `DOMO_HOME` elsewhere moves its own home and nobody
+ * else's, so the second is not optional.
  */
-function canonicalizedFamilyRegex(deviceHome: string): string {
-  return homeFamilyRegex(canonicalize(deviceHome));
+function canonicalizedFamilyRegexes(deviceHome: string, userHome: string): string[] {
+  return homeFamilyParents(canonicalize(deviceHome), userHome).map((parent) =>
+    homeFamilyRegex(canonicalize(parent)),
+  );
 }
 
 export const SandboxProfile = {
@@ -152,9 +159,11 @@ export const SandboxProfile = {
     // one's own does, and a command's own output is how it would leave, so no
     // read or network capability has to be declared for it.
     const plowHome = quote(canonicalize(args.deviceHome));
-    const family = canonicalizedFamilyRegex(args.deviceHome);
-    lines.push(`(deny file-read* (subpath ${plowHome}) (regex ${regexLiteral(family)}))`);
-    lines.push(`(deny file-write* (subpath ${plowHome}) (regex ${regexLiteral(family)}))`);
+    const family = canonicalizedFamilyRegexes(args.deviceHome, home)
+      .map((r) => `(regex ${regexLiteral(r)})`)
+      .join(" ");
+    lines.push(`(deny file-read* (subpath ${plowHome}) ${family})`);
+    lines.push(`(deny file-write* (subpath ${plowHome}) ${family})`);
     lines.push(`(allow file-read* (subpath ${quote(canonicalize(args.scratch))}))`);
     lines.push(`(allow file-write* (subpath ${quote(canonicalize(args.scratch))}))`);
     return lines.join("\n");

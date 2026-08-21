@@ -217,8 +217,11 @@ certain, and it holds whatever an approval said.
 `Plow-Latch-<branch>` beside the packaged install's plain `Plow-Latch` — and
 each signs in for its OWN relay credential, so reading the neighbour's
 `settings.json` takes a credential exactly as reading this one's does. Both
-mechanisms refuse the whole name family: the profile with a regex anchored to
-the directory the home sits in (the list of siblings is not knowable when the
+mechanisms refuse the whole name family in **two** places: beside this run's
+own home, and under `~/Library/Application Support`, because an explicit
+`DOMO_HOME` moves this instance's home and nobody else's — anchoring the family
+only beside a throwaway home left the packaged install's credential under the
+profile's broad home read. The profile does it with a regex per parent (the list of siblings is not knowable when the
 profile is generated — one can appear while a command runs; the name pattern is
 what is fixed), `FileOps` with the same test on the canonical path. A folder
 that merely begins alike — `Plow-Latchkey Notes` — is not a home and stays
