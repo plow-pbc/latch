@@ -9,9 +9,10 @@ the architecture and the reasoning behind each decision).
 > which authenticates the agent and forwards MCP to the MCP server in
 > `packages/mcp-server`. Both halves exist here: the server, and the outbound
 > client in `packages/relay-client` that dials the relay and serves what it
-> tunnels. **The relay itself does not exist yet** — it is a different repository
-> and is not built, so this side is verified against a stand-in that speaks the
-> same wire contract.
+> tunnels. The relay is a different repository, and it is **built and serving** —
+> agents reach Macs through this app today. There is no in-repo stand-in for it
+> any more, so the relay leg is verified by hand rather than in the suite; see
+> [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Layout
 

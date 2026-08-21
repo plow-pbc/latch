@@ -35,15 +35,16 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 
 **Being rebuilt.** The broker (its rendezvous service, MCP subset, stdio shim,
 connection-string/pinning concepts and pairing flow) has been removed. A Mac
-dials *out* to the Plow relay, which authenticates the calling agent and forwards
-MCP to `@domo/mcp-server`. Both halves of this side exist. **The relay itself
-does not** — different repository, not built — and the in-repo stand-in that
-used to verify this side against the wire contract has been deleted (head
-chef's call: a locally running plow API simulates plow). The scripts that drove
-a *live* stack went with it, so there is **no automated live-stack path either**
-— not here, not in CI. The relay leg is verified **by hand**: bring up a plow
-stack, run the app against it, drive it. `packages/relay-client/test` keeps only
-the pure wire-contract checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+dials *out* to the Plow relay, which authenticates the calling agent and
+forwards MCP to `@domo/mcp-server`. Both halves of this side exist, and so does
+the relay — a different repository, built and serving: **agents reach Macs
+through this app today.** What is gone is the in-repo stand-in that used to
+verify this side against the wire contract (head chef's call: a locally running
+plow API simulates plow). The scripts that drove a *live* stack went with it,
+so there is **no automated live-stack path** — not here, not in CI. The relay
+leg is verified **by hand**: bring up a plow stack, run the app against it,
+drive it. `packages/relay-client/test` keeps only the pure wire-contract
+checks. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's

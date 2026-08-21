@@ -15,10 +15,11 @@ not break. Read the **base-branch** copies of both before judging an
 architectural tradeoff.
 
 **Stage:** pre-PMF, and mid-rebuild. The old in-repo broker has been removed; a
-Mac now dials *out* to the Plow relay. Both halves of this side exist
-(`@domo/mcp-server`, `@domo/relay-client`); **the relay itself does not** — it
-lives in another repo and is not built. No agent reaches a Mac through this app
-today.
+Mac now dials *out* to the Plow relay, which lives in another repo. **That relay
+is built and serving, and agents do reach Macs through this app today.** Treat
+the paths an agent drives — approval, capability derivation, the sandbox, origin
+and credential enforcement — as live surface with a real caller on the other
+end, not as a design not yet exercised.
 
 **Userbase:** single-digit, internal. One engineer plus a handful of alpha
 machines. The signed/notarized DMG and the S3 update feed exist and work, but
