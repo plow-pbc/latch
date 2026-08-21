@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -150,7 +150,7 @@ let updates: UpdateController | null = null;
 class ElectronPolicy implements PolicyDelegate {
   // The branching itself lives in reviewPolicy.ts so it is testable without a
   // display; this only supplies the Electron-shaped pieces.
-  async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
+  async decideIntent(intent: Intent, signal?: AbortSignal): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
     return decideIntent(intent, {
       settings: loadSettings(home),
@@ -158,10 +158,12 @@ class ElectronPolicy implements PolicyDelegate {
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
+      ownerPresent: () => powerMonitor.getSystemIdleState(5 * 60) === "active",
       openApproval: async (hint) =>
         openApprovalWindow(
           { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
           hint,
+          signal,
         ),
     });
   }
@@ -202,9 +204,11 @@ function openApprovalWindow(
   // Resolves to what the adversarial agent had to say, or null when it is not
   // being consulted at all.
   hint: Promise<ReviewHint> | null = null,
+  signal?: AbortSignal,
 ): Promise<ApprovalDecision> {
-  const run = () =>
-    new Promise<ApprovalDecision>((resolve) => {
+  const run = () => {
+    if (signal?.aborted) return Promise.resolve("deny" as const);
+    return new Promise<ApprovalDecision>((resolve) => {
       const win = new BrowserWindow({
         width: 460,
         height: 560,
@@ -231,11 +235,14 @@ function openApprovalWindow(
       const finish = (decision: ApprovalDecision) => {
         if (settled) return;
         settled = true;
+        signal?.removeEventListener("abort", onAbort);
         ipcMain.removeHandler("approval:get");
         ipcMain.removeHandler("approval:ready");
         win.close();
         resolve(decision);
       };
+      const onAbort = () => finish("deny");
+      signal?.addEventListener("abort", onAbort, { once: true });
       // The renderer pulls its model (never pushed with executable content).
       // `suggesting` tells it whether an adversarial review is in flight, so it
       // can show an indeterminate "reviewing…" indicator until the hint lands.
@@ -270,6 +277,7 @@ function openApprovalWindow(
       win.on("closed", () => {
         ipcMain.removeHandler("approval:ready");
         ipcMain.removeListener("approval:decide", onDecision);
+        signal?.removeEventListener("abort", onAbort);
         if (!settled) {
           settled = true;
           resolve("deny");
@@ -277,6 +285,7 @@ function openApprovalWindow(
       });
       void win.loadFile(path.join(rendererDir, "approval.html"));
     });
+  };
   const result = approvalChain.then(run, run);
   approvalChain = result.catch(() => {});
   return result;

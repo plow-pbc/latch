@@ -100,6 +100,7 @@ async function decideAndRun(
   goal: string | undefined,
   capabilities: Capability[],
   payload: JSONValue = null,
+  askOwner = false,
 ): Promise<JSONValue> {
   const intent: Intent = makeIntent({
     agentId: ctx.agent.agentId,
@@ -108,6 +109,7 @@ async function decideAndRun(
     goal,
     request,
     capabilities,
+    askOwner,
     sessionId: ctx.sessionId,
   });
   const response = await ctx.device.handleIntent(intent, payload, () => progress.decided());
@@ -142,6 +144,13 @@ const GOAL = {
     "Why you need this, in one line. The user reads exactly this when deciding whether to approve.",
 };
 
+const ASK_OWNER = {
+  type: "boolean",
+  description:
+    "After an AI Reviewer denial, set true on one retry to ask the owner directly. " +
+    "The retry is refused immediately if the owner is not active at this Mac.",
+};
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_file",
@@ -154,6 +163,7 @@ export const TOOLS: ToolSpec[] = [
       properties: {
         path: { type: "string", description: "Absolute path (~ allowed)" },
         goal: GOAL,
+        ask_owner: ASK_OWNER,
       },
       additionalProperties: false,
     },
@@ -169,6 +179,8 @@ export const TOOLS: ToolSpec[] = [
         `read file: ${path}`,
         a.get("goal").str ?? undefined,
         [{ kind: "fs.read", paths: [path] }],
+        null,
+        a.get("ask_owner").bool === true,
       );
       const base64 = jv(response).get("content_base64").str;
       if (base64 === null) throw new Error("no content returned");
@@ -189,7 +201,12 @@ export const TOOLS: ToolSpec[] = [
     inputSchema: {
       type: "object",
       required: ["path", "content"],
-      properties: { path: { type: "string" }, content: { type: "string" }, goal: GOAL },
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+        goal: GOAL,
+        ask_owner: ASK_OWNER,
+      },
       additionalProperties: false,
     },
     deferrable: true,
@@ -215,6 +232,7 @@ export const TOOLS: ToolSpec[] = [
         a.get("goal").str ?? undefined,
         [{ kind: "fs.write", paths: [path] }],
         { content_base64: data.toString("base64") },
+        a.get("ask_owner").bool === true,
       );
       return { path, bytes: jv(response).get("bytes").value ?? null };
     },
@@ -264,6 +282,7 @@ export const TOOLS: ToolSpec[] = [
             "Capped at this Mac's call budget, beyond which the call defers instead.",
         },
         goal: GOAL,
+        ask_owner: ASK_OWNER,
       },
       additionalProperties: false,
     },
@@ -303,6 +322,7 @@ export const TOOLS: ToolSpec[] = [
         a.get("goal").str ?? undefined,
         capabilities,
         { wait_ms: waitMs },
+        a.get("ask_owner").bool === true,
       );
       // The job is this agent's. Claimed here rather than in the executor,
       // which has one registry for the whole process and no idea who called.
@@ -409,6 +429,7 @@ export const TOOLS: ToolSpec[] = [
             "either way, they do not.",
         },
         goal: GOAL,
+        ask_owner: ASK_OWNER,
       },
       additionalProperties: false,
     },
@@ -431,6 +452,7 @@ export const TOOLS: ToolSpec[] = [
         a.get("goal").str ?? undefined,
         capabilities,
         headed === null ? null : { headed },
+        a.get("ask_owner").bool === true,
       );
       const r = jv(response);
       return {
@@ -461,6 +483,7 @@ export const TOOLS: ToolSpec[] = [
           description: "vault item ids to make fillable",
         },
         goal: GOAL,
+        ask_owner: ASK_OWNER,
       },
       additionalProperties: false,
     },
@@ -490,6 +513,7 @@ export const TOOLS: ToolSpec[] = [
         // The handle is delivery detail (like wait_ms); the approved bound is
         // entirely in the signed-off capabilities.
         { session },
+        a.get("ask_owner").bool === true,
       );
       const r = jv(response);
       // A widen the device refused is an error to the caller, not a reply with

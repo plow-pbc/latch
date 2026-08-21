@@ -11,6 +11,7 @@ import { Intent, JSONValue } from "@domo/protocol";
 import {
   DENIAL_SOURCE_NO_CREDITS,
   DENIAL_SOURCE_NO_REVIEWER,
+  DENIAL_SOURCE_OWNER_UNAVAILABLE,
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
 } from "@domo/device-core";
 import {
@@ -79,6 +80,8 @@ export interface DecideDeps {
   ) => Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }>;
   /** Show the human the approval dialog, optionally with the reviewer's say. */
   openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
+  /** Whether an appeal can be put in front of the owner now. */
+  ownerPresent: () => boolean;
 }
 
 /**
@@ -98,6 +101,12 @@ export async function decideIntent(
 
   if (mode === "approve") return { decision: "allow_once", source: "approve" };
   if (mode === "deny") return { decision: "deny", source: "policy" };
+  if (intent.askOwner) {
+    if (!deps.ownerPresent()) {
+      return { decision: "deny", source: DENIAL_SOURCE_OWNER_UNAVAILABLE };
+    }
+    return { decision: await deps.openApproval(null), source: "ask" };
+  }
 
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
@@ -176,6 +185,19 @@ export async function decideIntent(
     // without that cause, so a branch on it would be picking between a live
     // source and a dead one.
     return { decision: "deny", source: DENIAL_SOURCE_REVIEWER_UNAVAILABLE };
+  }
+
+  if (mode === "reviewer") {
+    if (!reviewerAvailable(settings)) {
+      return { decision: await deps.openApproval(null), source: "ask" };
+    }
+    const result = await review();
+    if (result.verdict === "allow") {
+      return { decision: "allow_once", source: "adversarial" };
+    }
+    if (result.verdict === "deny") return { decision: "deny", source: "adversarial" };
+    const hint = Promise.resolve({ decision: null, reason: result.reason });
+    return { decision: await deps.openApproval(hint), source: "ask" };
   }
 
   // Ask mode: show the dialog, optionally with the reviewer's hint when both

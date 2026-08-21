@@ -127,6 +127,28 @@ describe("the goal field says a human reads it", () => {
   });
 });
 
+describe("reviewer denials can be escalated once", () => {
+  it("offers the same explicit retry flag on every approval-bearing tool", async () => {
+    const listed = parse(await rpc(makeServer(), "tools/list", {})).result?.tools as
+      | { name: string; inputSchema: { properties?: Record<string, { description?: string }> } }[]
+      | undefined;
+    const names = new Set([
+      "plow_read_file",
+      "plow_write_file",
+      "plow_run_command",
+      "plow_browser_open",
+      "plow_browser_request",
+    ]);
+    const approvalTools = listed?.filter((tool) => names.has(tool.name)) ?? [];
+    expect(approvalTools).toHaveLength(5);
+    for (const tool of approvalTools) {
+      expect(tool.inputSchema.properties?.ask_owner?.description).toMatch(
+        /after an AI Reviewer denial/i,
+      );
+    }
+  });
+});
+
 describe("the browsing skill agrees with the tools it documents", () => {
   /**
    * EVERY example call in the skill body, as (tool, property names).

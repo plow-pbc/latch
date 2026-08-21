@@ -170,6 +170,93 @@ describe("PolicyEngine", () => {
   });
 });
 
+describe("reviewer denial escalation", () => {
+  function readIntent(
+    device: DeviceAgent,
+    file: string,
+    askOwner = false,
+    agentId = "agent-1",
+  ): Intent {
+    return makeIntent({
+      agentId,
+      agentDisplay: "Agent",
+      deviceId: device.identity.deviceId,
+      request: `read file: ${file}`,
+      capabilities: [{ kind: "fs.read", paths: [file] }],
+      askOwner,
+      sessionId: "s1",
+    });
+  }
+
+  it("permits one unbound owner retry after a reviewer denial", async () => {
+    const home = tempDir();
+    const first = path.join(home, "first.txt");
+    const second = path.join(home, "second.txt");
+    fs.writeFileSync(first, "first");
+    fs.writeFileSync(second, "second");
+    let calls = 0;
+    const device = new DeviceAgent(home, "Test Mac", {
+      decideIntent: async () =>
+        calls++ === 0
+          ? { decision: "deny", source: "adversarial" }
+          : { decision: "allow_once", source: "ask" },
+    });
+
+    const denied = await device.handleIntent(readIntent(device, first));
+    expect(denied).toMatchObject({ status: "denied" });
+    expect(JSON.stringify(denied)).toContain("ask_owner: true");
+
+    // The retry may change shape; the human sees and approves its newly derived
+    // capabilities rather than inheriting anything from the denied intent.
+    const allowed = await device.handleIntent(readIntent(device, second, true));
+    expect(allowed).toMatchObject({ status: "completed" });
+
+    const spent = await device.handleIntent(readIntent(device, first, true));
+    expect(spent).toMatchObject({ status: "denied" });
+    expect(JSON.stringify(spent)).toContain("only on one retry");
+    expect(calls).toBe(2);
+  });
+
+  it("keeps an unused escalation when the owner is unavailable", async () => {
+    const home = tempDir();
+    const file = path.join(home, "file.txt");
+    fs.writeFileSync(file, "content");
+    const answers = [
+      { decision: "deny" as const, source: "adversarial" },
+      { decision: "deny" as const, source: "owner_unavailable" },
+      { decision: "allow_once" as const, source: "ask" },
+    ];
+    const device = new DeviceAgent(home, "Test Mac", {
+      decideIntent: async () => answers.shift()!,
+    });
+
+    await device.handleIntent(readIntent(device, file));
+    const unavailable = await device.handleIntent(readIntent(device, file, true));
+    expect(JSON.stringify(unavailable)).toContain("remains available");
+    expect(await device.handleIntent(readIntent(device, file, true))).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  it("does not let another agent spend the denial", async () => {
+    const home = tempDir();
+    const file = path.join(home, "file.txt");
+    fs.writeFileSync(file, "content");
+    let calls = 0;
+    const device = new DeviceAgent(home, "Test Mac", {
+      decideIntent: async () => {
+        calls += 1;
+        return { decision: "deny", source: "adversarial" } as const;
+      },
+    });
+
+    await device.handleIntent(readIntent(device, file, false, "agent-1"));
+    const other = await device.handleIntent(readIntent(device, file, true, "agent-2"));
+    expect(JSON.stringify(other)).toContain("only on one retry");
+    expect(calls).toBe(1);
+  });
+});
+
 describe("AuditLog", () => {
   it("appends one NDJSON event per line, oldest first", () => {
     const log = new AuditLog(path.join(tempDir(), "audit.ndjson"));

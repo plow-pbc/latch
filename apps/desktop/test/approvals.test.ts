@@ -25,12 +25,14 @@ describe("approvals card", () => {
     expect(modes.map((m) => m.value)).toEqual([
       "ask",
       "adversarial",
+      "reviewer",
       "approve",
       "deny",
     ]);
     expect(modes.map((m) => m.label)).toEqual([
       "Ask me every time",
       "AI Reviewer decides",
+      "AI Reviewer decides, but asks me when unsure",
       "Approve everything",
       "Deny everything",
     ]);
@@ -48,6 +50,7 @@ describe("approvals card", () => {
 
   it("offers the purpose field to the reviewer's mode and no other", () => {
     expect(mode("adversarial").showsPurpose).toBe(true);
+    expect(mode("reviewer").showsPurpose).toBe(true);
     for (const value of ["ask", "approve", "deny"]) {
       expect(mode(value).showsPurpose).toBe(false);
     }

@@ -140,6 +140,23 @@ describe("the wait is bounded", () => {
     expect(record.decision).toBe("deny");
   });
 
+  it("withdraws the unanswered delegate when the approval expires", async () => {
+    let withdrawn = false;
+    const delegate: PolicyDelegate = {
+      decideIntent: (_intent, signal) =>
+        new Promise((resolve) => {
+          signal?.addEventListener("abort", () => {
+            withdrawn = true;
+            resolve("deny");
+          });
+        }),
+    };
+    const store = new ApprovalStore(tempDir(), delegate, 30);
+
+    expect(await store.decideIntent(intentFor())).toEqual({ decision: "deny", source: "expired" });
+    expect(withdrawn).toBe(true);
+  });
+
   it("a delegate that throws denies rather than hanging", async () => {
     const dir = tempDir();
     const store = new ApprovalStore(dir, {

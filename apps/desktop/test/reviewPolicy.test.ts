@@ -61,6 +61,7 @@ function harness(
     reason?: string;
     cause?: ReviewFailureCause;
     decision?: "allow_once" | "always_allow" | "deny";
+    ownerPresent?: boolean;
   } = {},
 ) {
   const records: { event: string; fields: Record<string, JSONValue> }[] = [];
@@ -78,14 +79,15 @@ function harness(
     dialogs.push(hint);
     return opts.decision ?? ("deny" as const);
   });
-  const run = () =>
-    decideIntent(intent(), {
+  const run = (current = intent()) =>
+    decideIntent(current, {
       settings: s,
       apiBaseUrl: "https://api.plow.co",
       auditEntries: () => [],
       record: (event, fields) => records.push({ event, fields }),
       review,
       openApproval,
+      ownerPresent: () => opts.ownerPresent ?? true,
     });
   return { run, records, reviewCalls, dialogs, review, openApproval };
 }
@@ -301,6 +303,62 @@ describe("decideIntent — adversarial mode", () => {
     });
   }
 
+});
+
+describe("decideIntent — reviewer with human fallback", () => {
+  const mixed = () =>
+    settings({ approvalMode: "reviewer", relayCredential: PLOW_CREDENTIAL });
+
+  it.each([
+    ["allow", "allow_once"],
+    ["deny", "deny"],
+  ] as const)("a %s verdict decides without a dialog", async (verdict, decision) => {
+    const h = harness(mixed(), { verdict, decision: "always_allow" });
+    expect(await h.run()).toEqual({ decision, source: "adversarial" });
+    expect(h.openApproval).not.toHaveBeenCalled();
+    expect(h.reviewCalls[0].humanAvailable).toBe(true);
+  });
+
+  it("an ask verdict hands the decision to the owner", async () => {
+    const h = harness(mixed(), { verdict: "ask", reason: "uncertain", decision: "always_allow" });
+    expect(await h.run()).toEqual({ decision: "always_allow", source: "ask" });
+    await expect(h.dialogs[0]).resolves.toEqual({ decision: null, reason: "uncertain" });
+  });
+
+  it("no reviewer falls back to the owner instead of silently changing the stored mode", async () => {
+    const h = harness(settings({ approvalMode: "reviewer" }), { decision: "allow_once" });
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
+    expect(h.review).not.toHaveBeenCalled();
+    expect(h.dialogs).toEqual([null]);
+  });
+});
+
+describe("an explicit owner escalation", () => {
+  it("bypasses review and opens a plain approval while the owner is active", async () => {
+    const h = harness(
+      settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      { decision: "allow_once" },
+    );
+    expect(await h.run({ ...intent(), askOwner: true })).toEqual({
+      decision: "allow_once",
+      source: "ask",
+    });
+    expect(h.review).not.toHaveBeenCalled();
+    expect(h.dialogs).toEqual([null]);
+  });
+
+  it("fails fast without opening a dialog while the owner is inactive", async () => {
+    const h = harness(
+      settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+      { ownerPresent: false },
+    );
+    expect(await h.run({ ...intent(), askOwner: true })).toEqual({
+      decision: "deny",
+      source: "owner_unavailable",
+    });
+    expect(h.review).not.toHaveBeenCalled();
+    expect(h.openApproval).not.toHaveBeenCalled();
+  });
 });
 
 describe("decideIntent — ask mode and suggestions", () => {

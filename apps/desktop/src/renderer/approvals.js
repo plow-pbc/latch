@@ -37,6 +37,12 @@ export const APPROVAL_MODES = [
     hint: "",
   },
   {
+    value: "reviewer",
+    label: "AI Reviewer decides, but asks me when unsure",
+    showsPurpose: true,
+    hint: "",
+  },
+  {
     value: "approve",
     label: "Approve everything",
     showsPurpose: false,

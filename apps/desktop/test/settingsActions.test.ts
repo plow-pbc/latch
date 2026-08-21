@@ -85,7 +85,7 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
   });
 
   it("does not disturb the other approval modes", () => {
-    for (const mode of ["approve", "ask", "deny"] as const) {
+    for (const mode of ["approve", "reviewer", "ask", "deny"] as const) {
       const home = homeWith({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL });
       signOutOfPlow(home);
       expect(stored(home).approvalMode).toBe(mode);
@@ -108,7 +108,7 @@ describe("Adversarial mode is selectable whether or not a reviewer can run", () 
 
   it("stores the other modes as asked, and unknown input as ask", () => {
     const home = homeWith({ relayCredential: PLOW_CREDENTIAL });
-    for (const mode of ["approve", "deny", "ask"] as const) {
+    for (const mode of ["approve", "reviewer", "deny", "ask"] as const) {
       expect(setApprovalMode(home, mode)).toBe(mode);
       expect(stored(home).approvalMode).toBe(mode);
     }

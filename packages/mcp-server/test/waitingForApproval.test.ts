@@ -81,11 +81,11 @@ describe("a timeout is not a refusal", () => {
     expect(payload.reason).toMatch(/try again/i);
     // The sentence a human pressing Deny produces must not appear here.
     expect(payload.reason).not.toMatch(/denied the request/);
-    // …and it must not send the user back to the prompt that just expired: it
-    // is still on screen, it is inert, and clicking it only lets the retry's
-    // dialog through. Retry first.
+    // …and it must not send the user back to the prompt that just expired. The
+    // store withdraws the delegate at the deadline, so that window is closed
+    // and the serialized queue can advance before a retry arrives.
     expect(payload.reason).not.toMatch(/approve it on their Mac/i);
-    expect(payload.reason).toMatch(/expired and does nothing/i);
+    expect(payload.reason).not.toMatch(/prompt.*expired/i);
     expect(bareToolNames(payload.reason)).toEqual([]);
   });
 

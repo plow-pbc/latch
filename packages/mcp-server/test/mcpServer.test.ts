@@ -198,6 +198,35 @@ describe("a tool call end to end, in process", () => {
     expect(events(device)).not.toContain("file_read");
   });
 
+  it("carries ask_owner from a reviewer-denied retry into the Mac's intent", async () => {
+    let calls = 0;
+    const { server, device } = makeServer({
+      decideIntent: async () =>
+        calls++ === 0
+          ? { decision: "deny", source: "adversarial" }
+          : { decision: "allow_once", source: "ask" },
+    });
+    const dir = tempDir();
+    const file = path.join(dir, "a.txt");
+    fs.writeFileSync(file, "x");
+
+    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    expect(first.payload.reason).toContain("ask_owner: true");
+
+    const retry = await callTool(
+      server,
+      "plow_read_file",
+      { path: file, ask_owner: true },
+      AGENT,
+    );
+    expect(retry.isError).toBe(false);
+    expect(retry.payload.content).toBe("x");
+    const received = device.audit.entries().filter((entry) =>
+      jv(entry as JSONValue).get("event").str === "intent_received"
+    );
+    expect(jv(received[1] as JSONValue).get("ask_owner").bool).toBe(true);
+  });
+
   // An agent must be able to tell a standing condition — "nobody could review
   // this" — from "the owner decided against it", because only the first is
   // something a human can go and fix. Each denial source carries its own fixed

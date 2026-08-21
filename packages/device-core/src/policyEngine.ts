@@ -27,7 +27,7 @@ export type IntentDecision = Decision | { decision: Decision; source?: string };
 
 /** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
-  decideIntent(intent: Intent): Promise<IntentDecision>;
+  decideIntent(intent: Intent, signal?: AbortSignal): Promise<IntentDecision>;
 }
 
 export class PolicyEngine {

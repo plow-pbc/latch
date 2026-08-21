@@ -25,10 +25,12 @@ export interface WindowBounds {
  *                  credential, an API error, a timeout, a refusal or an answer
  *                  that is not a verdict all deny the operation outright, each
  *                  with a source saying which it was.
+ *   - reviewer:    the reviewer decides when it can and opens the human dialog
+ *                  when it answers ask or cannot produce a verdict
  *   - ask:         always show the approval dialog (default)
  *   - deny:        auto-deny, no dialog
  */
-export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
+export type ApprovalMode = "approve" | "adversarial" | "reviewer" | "ask" | "deny";
 
 export interface Settings {
   /* There is deliberately NO API base URL here. It is baked into the build

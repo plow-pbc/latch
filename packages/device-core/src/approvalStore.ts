@@ -244,12 +244,16 @@ export class ApprovalStore implements PolicyDelegate {
       this.ttlMs,
     );
     timer.unref?.();
-    void answered.finally(() => clearTimeout(timer));
+    const controller = new AbortController();
+    void answered.finally(() => {
+      clearTimeout(timer);
+      controller.abort();
+    });
 
     // Ask whoever normally answers. Its result goes through the same settlement
     // check as an external answer and as the timer.
     void this.inner
-      .decideIntent(intent)
+      .decideIntent(intent, controller.signal)
       .then((decision) => settle(decision, "dialog"))
       .catch(() => settle({ decision: "deny", source: "error" }, "error"));
 

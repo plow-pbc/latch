@@ -59,6 +59,12 @@ export const DENIAL_SOURCE_REVIEWER_UNDECIDED = "reviewer_undecided";
  */
 export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
 
+/** An owner escalation was requested without a reviewer denial to appeal. */
+export const DENIAL_SOURCE_NO_ESCALATION = "no_escalation";
+
+/** The owner was not active, so an escalation did not open a stale prompt. */
+export const DENIAL_SOURCE_OWNER_UNAVAILABLE = "owner_unavailable";
+
 /**
  * Denial sources whose reason is worth telling the calling agent, and the exact
  * sentence it gets.
@@ -68,22 +74,13 @@ export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
  * misbehaviour can put any of those in front of a caller.
  */
 const EXPLAINED_DENIALS: Record<string, string> = {
+  adversarial:
+    "the AI Reviewer denied this request. You may retry once with ask_owner: true " +
+    "to ask the owner to decide, or narrow the request before retrying",
   [DENIAL_SOURCE_NO_CREDITS]:
     "inference unavailable: this Plow account is out of credits, so the " +
-    "adversarial reviewer could not run and the operation was denied",
-  // Nobody answered. This used to fall through to the default sentence, so an
-  // agent was told "the owner of this Mac denied the request" — byte-identical
-  // to a human pressing Deny — and stopped, correctly, on a refusal that never
-  // happened. The owner had simply walked away from the dialog. Distinguishing
-  // the two is the whole fix: one is a decision, the other is a timeout, and
-  // only one of them is worth trying again.
-  //
-  // RETRY FIRST, and say the old prompt is dead. Expiry settles this call from
-  // a timer; it does not close the window, which stays on screen and inert. An
-  // earlier version of this sentence said "ask the user to approve it on their
-  // Mac, then try again" — following it, the user clicks a dead prompt, nothing
-  // runs, and the retry's dialog (queued behind that window) appears as if they
-  // had been asked twice. That is the loop, driven by our own copy.
+    "adversarial reviewer could not run and the operation was denied. You may retry " +
+    "once with ask_owner: true to ask the owner to decide",
   [DENIAL_SOURCE_REVIEWER_UNDECIDED]:
     "the reviewer would not decide this one, and this Mac is set to let the " +
     "reviewer decide — so there is no one to escalate to and it was denied " +
@@ -91,15 +88,21 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   [DENIAL_SOURCE_REVIEWER_UNAVAILABLE]:
     "the reviewer produced no usable verdict — it did not answer, or answered " +
     "with something that was not one — and this Mac is set to let the reviewer " +
-    "decide, so it was denied rather than left waiting. Trying again may work",
+    "decide, so it was denied rather than left waiting. You may retry once with " +
+    "ask_owner: true to ask the owner to decide",
   [DENIAL_SOURCE_NO_REVIEWER]:
     "inference unavailable: Adversarial mode is selected but this Mac has no " +
     "credential for Plow, so the reviewer could not run and the operation was " +
-    "denied",
+    "denied. You may retry once with ask_owner: true to ask the owner to decide",
+  [DENIAL_SOURCE_NO_ESCALATION]:
+    "ask_owner is accepted only on one retry after an AI Reviewer denial. " +
+    "Retry without it so the reviewer can decide",
+  [DENIAL_SOURCE_OWNER_UNAVAILABLE]:
+    "the owner is not currently active at this Mac, so no approval window was opened. " +
+    "The one-time ask_owner retry remains available",
   [APPROVAL_SOURCE_EXPIRED]:
     "no one answered in time, so the request expired and was denied — a timeout, " +
-    "not a refusal. Try again to raise a fresh request; any prompt still on the " +
-    "user's screen from the first attempt is expired and does nothing",
+    "not a refusal. Try again to raise a fresh request",
 };
 
 export class DeviceAgent {
@@ -120,6 +123,7 @@ export class DeviceAgent {
   /** How the sessions build a browser each: one config, many hosts. */
   private readonly browserConfig: BrowserHostConfig | null = null;
   private readonly seenNonces = new Set<string>();
+  private readonly ownerEscalations = new Set<string>();
 
   constructor(
     public readonly home: string,
@@ -309,9 +313,31 @@ export class DeviceAgent {
       request: intent.request,
       goal: intent.goal ?? "",
       capabilities: intent.capabilities.map(capabilityDisplay),
+      ...(intent.askOwner ? { ask_owner: true } : {}),
     });
 
-    const grant = await this.policy.decide(intent, this.delegate);
+    const delegate: PolicyDelegate = intent.askOwner
+      ? {
+          decideIntent: (retry, signal) =>
+            this.ownerEscalations.delete(intent.agentId)
+              ? this.delegate.decideIntent(retry, signal)
+              : Promise.resolve({ decision: "deny", source: DENIAL_SOURCE_NO_ESCALATION }),
+        }
+      : this.delegate;
+    const grant = await this.policy.decide(intent, delegate);
+    if (
+      grant.decision === "deny" &&
+      [
+        "adversarial",
+        DENIAL_SOURCE_NO_CREDITS,
+        DENIAL_SOURCE_NO_REVIEWER,
+        DENIAL_SOURCE_REVIEWER_UNDECIDED,
+        DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
+        DENIAL_SOURCE_OWNER_UNAVAILABLE,
+      ].includes(grant.source)
+    ) {
+      this.ownerEscalations.add(intent.agentId);
+    }
     onDecided?.();
     this.audit.record("intent_decision", {
       intentId: intent.intentId,

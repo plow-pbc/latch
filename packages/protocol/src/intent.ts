@@ -23,6 +23,8 @@ export interface Intent {
   planContext?: string;
   request: string;
   capabilities: Capability[];
+  /** One retry after a reviewer denial may ask the owner to decide instead. */
+  askOwner?: boolean;
   createdAt: string;
   expiresAt: string;
   sessionId: string;
@@ -37,6 +39,7 @@ export function makeIntent(args: {
   planContext?: string;
   request: string;
   capabilities: Capability[];
+  askOwner?: boolean;
   sessionId: string;
   ttlSeconds?: number;
 }): Intent {
@@ -49,6 +52,7 @@ export function makeIntent(args: {
     planContext: args.planContext,
     request: args.request,
     capabilities: args.capabilities,
+    askOwner: args.askOwner,
     createdAt: isoNow(),
     expiresAt: isoNow(args.ttlSeconds ?? 120),
     sessionId: args.sessionId,

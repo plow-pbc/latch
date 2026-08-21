@@ -124,7 +124,7 @@ export async function revokeAndSignOut(
  * it always has.
  */
 export function setApprovalMode(home: string, mode: unknown): Settings["approvalMode"] {
-  const allowed: Settings["approvalMode"][] = ["approve", "adversarial", "ask", "deny"];
+  const allowed: Settings["approvalMode"][] = ["approve", "adversarial", "reviewer", "ask", "deny"];
   const requested = allowed.find((m) => m === mode) ?? "ask";
   return update(home, (s) => (s.approvalMode = requested)).approvalMode;
 }
