@@ -1,9 +1,11 @@
 /**
  * The reviewer that decides operation intents. It sees one operation and
  * nothing earlier — no history, deliberately — and answers allow / deny /
- * (when a human is behind it) ask. `buildPrompt` owns what it is shown;
- * DESIGN.md §4 owns what of that leaves the Mac, and has the precedence by
- * which `policyEngine.ts` and `reviewPolicy.ts` decide whether it runs at all.
+ * (when a human is behind it) ask. Two functions own what it is shown:
+ * `buildPrompt` the operation's user message, `systemPrompt` the owner's
+ * trusted purpose text. DESIGN.md §4 owns what of that leaves the Mac, and has
+ * the precedence by which `policyEngine.ts` and `reviewPolicy.ts` decide
+ * whether it runs at all.
  *
  * Inference runs through Plow's OpenAI-shaped `/v1/chat/completions`, billed to
  * the user's Plow account and authenticated with the device's relay credential.
