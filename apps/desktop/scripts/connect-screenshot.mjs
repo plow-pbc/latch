@@ -127,7 +127,9 @@ const SCREENS = [
       "What happens when an agent asks to do something on this Mac.",
       "AI Reviewer decides",
       "What are agents for?",
-      "It can only narrow what gets approved",
+      // The purpose describes the errand, and an errand widens the job as
+      // readily as it narrows it. This line used to pin the opposite promise.
+      "it can widen what gets approved as easily as narrow it",
       "Requests that fit may be approved without asking you.",
       // The suggestions toggle, re-homed onto this card from Settings.
       "Let the reviewer suggest an answer when an approval window opens",
