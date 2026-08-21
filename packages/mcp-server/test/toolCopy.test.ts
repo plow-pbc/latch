@@ -145,9 +145,6 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
   // and can fill from their vault. Both are things a plain web fetch cannot do.
   it("plow_browser_open says why it beats a plain web fetch", async () => {
     const d = await descriptions(makeServer());
-    // The Mac is one person's, and a session opens on a copy of their profile,
-    // so "already signed in" is now the honest promise rather than an oversell.
-    expect(d.plow_browser_open).toMatch(/already signed in/i);
     expect(d.plow_browser_open).toMatch(/vault/);
     // Several browsers run at once, so the copy says which one the agent holds
     // rather than promising it is the only one.
@@ -354,11 +351,16 @@ describe("what the agent-facing copy must and must not say", () => {
    * answer a live-web question, and each is separately droppable — pinning one
    * of four leaves the other three free to vanish.
    */
-  it("the routing sentence keeps every reason it exists for", () => {
-    expect(LIVE_WEB_ROUTING).toMatch(/datacenter address/i);
-    expect(LIVE_WEB_ROUTING).toMatch(/renders JavaScript/i);
-    expect(LIVE_WEB_ROUTING).toMatch(/copy of their own profile/i);
-    expect(LIVE_WEB_ROUTING).toMatch(/already signed in/i);
+  it("the routing sentence names every advantage a plain fetch lacks", () => {
+    for (const claim of [
+      /own network/i,
+      /datacenter address/i,
+      /renders JavaScript/i,
+      /copy of their own profile/i,
+      /already signed in/i,
+    ]) {
+      expect(LIVE_WEB_ROUTING).toMatch(claim);
+    }
   });
 
   /**
@@ -384,7 +386,8 @@ describe("what the agent-facing copy must and must not say", () => {
    * written when a session opened on a persistent-but-shared profile, where the
    * phrase promised something no particular site kept. Sessions now start on a
    * copy of the user's own profile, so it is the honest description — and
-   * `plow_browser_open` is asserted to make it, above.
+   * `LIVE_WEB_ROUTING`, which every surface interpolates, is asserted to make
+   * it.
    */
   const FORBIDDEN: { what: string; why: string; offends: (text: string) => boolean }[] = [
     {
