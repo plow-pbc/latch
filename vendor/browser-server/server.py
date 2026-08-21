@@ -323,12 +323,16 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 # content a field cannot reformat away, and counting alphanumerics alone would
 # call losing it no loss at all.
 HOLDS_ALL_JS = f"""(el, [wanted, exact]) => {{
-    const held = {_HELD};
+    // Trimmed on both sides: `email` and `url` inputs sanitise edge whitespace
+    // on their own, and a stored value carrying a stray space is a copy-paste
+    // artefact rather than a credential the field altered.
+    const held = ({_HELD}).trim();
+    wanted = wanted.trim();
     // `exact` comes from FIELD_RULE_JS rather than being decided again here: a
     // second read of `el.type` is a second definition of the same rule, and one
     // of them would eventually be the stale one.
     if (exact) return held === wanted;
-    const bare = (t) => t.replace(/[\\s\\-()./]/gu, "");
+    const bare = (t) => t.replace(/[\\s\\-()./+,]/gu, "");
     return bare(held) === bare(wanted);
 }}"""
 
@@ -356,7 +360,7 @@ FIELD_RULE_JS = """(el) => {
 # purpose: every character outside this set is content the field has to keep, so
 # a password's punctuation counts and only grouping marks do not. `HOLDS_ALL_JS`
 # strips the same set on the page side.
-_SEPARATORS = " \t\r\n-()./"
+_SEPARATORS = " \t\r\n-()./+,"
 
 
 def _bare(value):

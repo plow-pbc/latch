@@ -724,6 +724,12 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // changed value report success.
     { what: "a field that drops a space from a name", scenario: "name_loses_its_space",
       cap: 20, fits: true, left: 0, marked: false, ledgered: false },
+    // The capacity half of the same rule on a value that does not fold: seven
+    // units whole, six with the space read as shaping. A cap of six admits it
+    // only under the bare measure.
+    { what: "a name that fits only if its space is shaping",
+      scenario: "name_fits_only_if_space_is_shaping",
+      cap: 6, fits: false, left: 0, marked: false, ledgered: false },
   ])("refuses $what when the page lowers the cap mid-fill", (row) => {
     const probe = probed[row.scenario];
     expect(probe.result).toEqual({
@@ -761,6 +767,9 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // sent against that cap refused this before the node was even touched; the
     // shaping is exactly what the field is entitled to remove.
     { what: "declares the cap of what it keeps", scenario: "strips_declared_cap_upfront", left: 10 },
+    // An international number: the leading "+" groups like the dashes do, so
+    // this is still a grouped number and still folds.
+    { what: "groups an international number", scenario: "international_number_folds", left: 11 },
   ])("does not refuse a field that $what", ({ scenario, left }) => {
     expect(probed[scenario].result).toEqual({ ok: true, frame: 0 });
     expect(probed[scenario].node_len).toBe(left);

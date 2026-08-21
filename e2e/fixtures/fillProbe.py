@@ -140,11 +140,12 @@ class Handle:
             return self.document_token
         if "bare(" in js:
             wanted, exact = (args[0] if args else ["", False])
+            held, wanted = (self.value or "").strip(), wanted.strip()
             if exact:
-                return (self.value or "") == wanted
-            seps = " \t\r\n-()./"
+                return held == wanted
+            seps = " \t\r\n-()./+,"
             bare = lambda t: "".join(c for c in t if c not in seps)  # noqa: E731
-            return bare(self.value or "") == bare(wanted)
+            return bare(held) == bare(wanted)
         if "maxLength" in js:
             # The real script reports a cap only for the element kinds
             # `maxlength` governs; a node standing in for one of those answers
@@ -710,6 +711,16 @@ def main() -> int:
         # A cardholder name whose field drops the space. Nothing is grouped
         # here -- the value has letters in it -- so the space is content and
         # "JonDoe" is not what was asked for, however ordinary the character.
+        # Capacity on a value that does not fold: "Jon Doe" is seven units whole
+        # and six with the space read as shaping, so a cap of six admits it only
+        # under the bare measure -- and a name's space is not shaping.
+        "name_fits_only_if_space_is_shaping": run(
+            server, {**base, "value": "Jon Doe"}, max_length=6),
+        # An international number: the leading + is grouping like the dashes, so
+        # this still folds and still fills.
+        "international_number_folds": run(
+            server, {**base, "value": "+1 555-123-4567"}, max_length=20,
+            max_length_after=11, reformats="strip"),
         "name_loses_its_space": run(
             server, {**base, "value": "Jon Doe"}, max_length=20, reformats="strip"),
         "punctuation_dropped_from_secret": run(
