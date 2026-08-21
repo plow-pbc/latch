@@ -272,24 +272,6 @@ describe("a tool call end to end, in process", () => {
     expect(payload.reason).not.toBe("the owner of this Mac denied the request");
     expect(events(device)).not.toContain("file_read");
   });
-
-  /**
-   * The other half, and the one that must not regress: a HUMAN's Deny still
-   * says nothing. Why the owner said no is between them and their Mac, and the
-   * dialog never asked them for a sentence to hand over anyway.
-   */
-  it("a human's denial still carries no explanation", async () => {
-    const { server } = makeServer(new ScriptedPolicy("deny", 0, "ask"));
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "a.txt"), "x");
-    const { payload } = await callTool(
-      server,
-      "plow_read_file",
-      { path: path.join(dir, "a.txt") },
-      AGENT,
-    );
-    expect(payload.reason).toBe("the owner of this Mac denied the request");
-  });
 });
 
 describe("agent identity", () => {

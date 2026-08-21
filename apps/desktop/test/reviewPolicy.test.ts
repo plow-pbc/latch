@@ -406,20 +406,6 @@ describe("decideIntent — ask mode and suggestions", () => {
     }
   });
 
-  /**
-   * The reviewer's hint is display-only here: the human is the decider, and
-   * whatever they decide is nobody else's business. In particular a Deny they
-   * pressed while a reviewer suggestion sat on screen must not forward that
-   * suggestion to the agent as if it were the reason.
-   */
-  it("a human's answer carries no reason out, even when the reviewer offered one", async () => {
-    const h = harness(
-      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
-      { verdict: "deny", reason: "the origin list is too wide", decision: "deny" },
-    );
-    expect(await h.run()).toEqual({ decision: "deny", source: "ask" });
-  });
-
   it("skips the review entirely when suggestions are off", async () => {
     const h = harness(
       settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: false }),
@@ -451,8 +437,12 @@ describe("decideIntent — ask mode and suggestions", () => {
   it("a suggestion is only ever a hint — the human's click is the decision", async () => {
     const h = harness(settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }), {
       verdict: "allow",
+      reason: "the origin list is too wide",
       decision: "deny",
     });
+    // The human overrules the verdict, and their answer carries no reason out
+    // with it: why the owner said no is between them and their Mac, and the
+    // reviewer's sentence is not theirs to be quoted as.
     expect(await h.run()).toEqual({ decision: "deny", source: "ask" });
   });
 });

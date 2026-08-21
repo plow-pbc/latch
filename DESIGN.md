@@ -106,8 +106,7 @@ Design points:
 
 Every operation (file read/write, command, browser session) becomes one signed
 intent — the single artifact that the approval UI renders, the sandbox is
-derived from, the audit log stores, and the future adversarial reviewer
-evaluates.
+derived from, the audit log stores, and the reviewer (§5a) evaluates.
 
 ```json
 {
@@ -160,8 +159,9 @@ Decisions: **Always allow / Allow once / Deny.**
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
-  not the approval flow. It is the raw material for the future adversarial
-  reviewer and the iOS remote-approval app.
+  not the approval flow. Its *effect* half is what the reviewer's
+  cumulative-scope view is built from (§5a); the rest is for humans and the iOS
+  remote-approval app.
 
 ## 5a. The reviewer
 
@@ -376,8 +376,8 @@ repo can prove they broke nothing.
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
-  `denied`, …) — tests assert on it; humans read it; the adversarial reviewer
-  will consume it.
+  `denied`, …) — tests assert on it, humans read it, and its effect events feed
+  the reviewer's cumulative-scope view (§5a).
 
 `make test` runs everything. `swift test` builds all executables it spawns.
 
@@ -714,8 +714,9 @@ if update size becomes a problem.
 3. **Remote:** cloud broker (same wire contract), WebSocket transport, pairing
    codes, revocation; iOS approval app.
 4. **Multi-user:** spaces, capability ceilings, cross-owner approvals.
-5. **Adversarial reviewer:** an agent consuming the same intent + audit stream,
-   sitting between policy and prompt as an additional gate.
+5. ~~**Adversarial reviewer**~~ — landed; see §5a for what it became. It does
+   *not* consume the audit stream: it is given one intent plus the effects of
+   this agent's allowed operations, and never its denials.
 
 The remote milestone is where the **TypeScript re-platform (§13)** lands: the
 hosted broker ships as the first TS component, and the rest of the system
