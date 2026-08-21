@@ -1,11 +1,12 @@
 /**
  * The deferred-result contract (design §4.3).
  *
- * A tunnelled call has a hard ceiling: the relay's pending future times out at
- * 25 seconds, so nothing on this Mac may block past its call budget — not a
- * human who has walked away from an approval, not a slow command. Any
- * tool that cannot finish inside the budget returns a handle instead, keeps the
- * work running, and the agent retrieves the outcome later with `plow_get_result`.
+ * A tunnelled call has a hard ceiling — `RELAY_TIMEOUT_MS`, in
+ * `@domo/relay-client`'s `wire.ts` — so nothing on this Mac may block past
+ * `CALL_BUDGET_MS`: not a human who has walked away from an approval, not a
+ * slow command. Any tool that cannot finish inside the budget returns a handle
+ * instead, keeps the work running, and the agent retrieves the outcome later
+ * with `plow_get_result`.
  *
  * Two rules make this safe rather than merely convenient:
  *
@@ -24,11 +25,13 @@ import { JSONValue } from "@domo/protocol";
 /**
  * How long a tool may block before it must hand back a handle.
  *
- * The relay's pending future times out at 25 seconds and the MCP client
- * abandons at ~30s. What is left after this budget is what delivery gets:
- * registering the handle, framing the response, and the relay matching it to
- * the exchange still waiting — so the ten seconds behind it are the margin,
- * not slack.
+ * CHOSEN against the relay's own ceiling — `RELAY_TIMEOUT_MS` in
+ * `@domo/relay-client`'s `wire.ts`, which owns what the relay does — leaving
+ * enough behind it for delivery: registering the handle, framing the response,
+ * and the relay matching it to the exchange still waiting. Not computed from
+ * it: a human gets the whole fifteen seconds to answer inside the original
+ * call, which is the point of the number and why it is a literal.
+ * `relay-client/test/wire.test.ts` checks the two still leave room.
  */
 export const CALL_BUDGET_MS = 15_000;
 

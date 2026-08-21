@@ -69,9 +69,11 @@ owns that list.
   sends a capability set or an intent — it calls a tool, and `mcp-server`
   derives the capabilities the policy engine and the sandbox will enforce. Goal
   text rides along for the human to read and never influences the bound.
-- **Nothing may block past the call budget.** The relay's pending future times
-  out at **25 seconds**, so a tunnelled call has to answer well inside that. Any
-  tool that cannot returns a deferred handle and keeps working; `plow_get_result`
+- **Nothing may block past the call budget.** `RELAY_TIMEOUT_MS` in
+  `@domo/relay-client`'s `wire.ts` is the relay's ceiling — it belongs with the
+  rest of the cross-repo contract — and `CALL_BUDGET_MS` in `@domo/mcp-server`
+  is what this Mac allows itself inside it. Any tool that cannot answer in the
+  budget returns a deferred handle and keeps working; `plow_get_result`
   retrieves it. A handle belongs to the `agent_id` that created it. This is why
   file operations are async and size-capped: synchronous work blocks the event
   loop and the budget timer never fires.
