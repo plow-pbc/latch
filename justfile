@@ -1,9 +1,10 @@
 # Domo — task runner (TypeScript stack).
 # Run `just` with no arguments to list everything.
 #
-# The broker is gone: this Mac no longer runs or dials a relay of its own. The
-# outbound client that dials the Plow relay is the next piece of work, so what
-# is left here is build, test, and running the app against its local state.
+# The broker is gone. This Mac dials OUT to the Plow relay, and the client that
+# does it ships (`@domo/relay-client`) — agents reach Macs through this app
+# today. What is here is build, test, and running the app; the relay leg itself
+# has no automated path, so it is driven by hand (docs/TESTING-THE-APP.md).
 
 root    := justfile_directory()
 # Empty in the main checkout; the normalized branch name in a linked git

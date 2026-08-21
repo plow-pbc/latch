@@ -7,8 +7,7 @@
  * and shipped it to a Mac; we build the same capability set from the same
  * arguments, in-process, and hand it straight to the policy engine. Nothing is
  * signed because no third party's intent is received here. That is provenance,
- * not confinement — a reviewer sends an intent's contents outbound
- * (apps/desktop/src/adversarialAgent.ts).
+ * not confinement — DESIGN.md §4 owns what leaves the Mac.
  *
  * The surface is reduced: the broker's tools assumed many Macs behind one
  * endpoint, so every one of them took a `device`. Ours is one Mac addressed by

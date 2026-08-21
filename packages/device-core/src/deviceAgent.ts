@@ -8,8 +8,8 @@
  * with them — was removed with the broker itself; an Intent is now built
  * in-process from an authenticated agent's call and is never *received* over a
  * wire, so there is no third party's signature to verify and no agent public
- * key to pin. That is provenance, not confinement — a reviewer sends an
- * intent's contents outbound (apps/desktop/src/adversarialAgent.ts).
+ * key to pin. That is provenance, not confinement — DESIGN.md §4 owns what
+ * leaves the Mac.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import os from "node:os";

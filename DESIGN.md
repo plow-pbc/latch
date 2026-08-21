@@ -133,9 +133,9 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   contents go OUTBOUND whenever a reviewer runs — adversarial mode always, and
   the default `ask` mode whenever suggestions are on, which they are on a
   signed-in Mac — formatted into a prompt with recent audit history and posted
-  to Plow's chat-completion endpoint (`adversarialAgent.ts`). What *is* signed is the **Grant**: the device's
-  Ed25519 signature over canonical JSON (sorted keys, ISO-8601 dates), the Mac
-  attesting to its own decision.
+  to Plow's chat-completion endpoint (`adversarialAgent.ts`). What *is* signed
+  is the **Grant**: the device's Ed25519 signature over canonical JSON (sorted
+  keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 

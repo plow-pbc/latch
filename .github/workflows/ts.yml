@@ -29,8 +29,8 @@ jobs:
       - run: npx vitest run packages/protocol packages/transport
       # The device sandbox needs macOS seatbelt (sandbox-exec); mcp-server's
       # cases run real sandboxed commands through it. relay-client's own tests
-      # are pure wire-contract checks now — its end-to-end cases went with the
-      # stand-in relay (see docs/TESTING-THE-APP.md).
+      # cover the wire contract and the connection lifecycle over fakes; nothing
+      # here talks to a real relay (see docs/TESTING-THE-APP.md).
       - if: runner.os == 'macOS'
         run: npx vitest run packages/device-core packages/mcp-server packages/relay-client apps/desktop
       # What is left under `e2e/`: the worktree-naming contract. The relay+MCP
