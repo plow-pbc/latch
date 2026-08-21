@@ -130,12 +130,14 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 - **Signing:** the intent carries none. It is never *received* over the wire —
   it is built on this Mac from an authenticated agent's tool call — so there is
   no third party's signature to verify. That is not a data-locality claim: its
-  contents go OUTBOUND whenever a reviewer runs — adversarial mode always, and
-  the default `ask` mode whenever suggestions are on, which they are on a
-  signed-in Mac — formatted into a prompt with recent audit history and posted
-  to Plow's chat-completion endpoint (`adversarialAgent.ts`). What *is* signed
-  is the **Grant**: the device's Ed25519 signature over canonical JSON (sorted
-  keys, ISO-8601 dates), the Mac attesting to its own decision.
+  contents go OUTBOUND whenever a reviewer runs — adversarial mode on every
+  intent, and the default `ask` mode with suggestions on — both once this Mac
+  is signed in, since the reviewer needs the relay credential and without one
+  adversarial mode denies rather than calling out. What runs is the intent
+  formatted into a prompt with recent audit history, posted to Plow's
+  chat-completion endpoint (`adversarialAgent.ts`). What *is* signed is the
+  **Grant**: the device's Ed25519 signature over canonical JSON (sorted keys,
+  ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 
