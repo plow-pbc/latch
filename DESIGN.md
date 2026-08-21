@@ -135,9 +135,9 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   is signed in, since the reviewer needs the relay credential and without one
   adversarial mode denies rather than calling out. What runs is the intent
   formatted into a prompt with recent audit history, posted to Plow's
-  chat-completion endpoint (`adversarialAgent.ts`). What *is* signed is the
-  **Grant**: the device's Ed25519 signature over canonical JSON (sorted keys,
-  ISO-8601 dates), the Mac attesting to its own decision.
+  chat-completion endpoint (`apps/desktop/src/adversarialAgent.ts`). What *is*
+  signed is the **Grant**: the device's Ed25519 signature over canonical JSON
+  (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 

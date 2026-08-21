@@ -5,8 +5,8 @@
  *
  * An Intent is built on this Mac from an authenticated agent's tool call and is
  * never RECEIVED over the wire, so it carries no agent public key and no agent
- * signature. That is provenance, not confinement — DESIGN.md §4 owns what
- * leaves the Mac. The DEVICE signature over a Grant stays: that one is the Mac
+ * signature. That is provenance, not confinement — DESIGN.md §4 *The intent
+ * object* owns where an intent's contents go. The DEVICE signature over a Grant stays: that one is the Mac
  * attesting to its own decision.
  */
 import crypto from "node:crypto";
