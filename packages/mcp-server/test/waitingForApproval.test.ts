@@ -133,7 +133,7 @@ describe("a pending handle says what to do about it", () => {
     // prefixed. Sweep it where it actually surfaces: on the payload.
     expect(bareToolNames(payload.note)).toEqual([]);
     // It must NOT claim a dialog is on screen. Often there is not one: the
-    // adversarial reviewer runs on a 30s budget against this 8s one, and the
+    // adversarial reviewer runs on a 30s budget against this 15s one, and the
     // approve/deny modes never ask a human at all.
     expect(payload.note).not.toMatch(/on the user's Mac now/i);
   });

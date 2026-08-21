@@ -319,12 +319,17 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(owner.payload.status).not.toBe("unknown");
   });
 
-  it("the call budget sits comfortably below the relay's 20s timeout", () => {
-    // The relay's pending future times out at 20 SECONDS. The budget has to
-    // leave room for the tunnel round-trip on top of itself, not merely be
-    // smaller than the ceiling — so: at most half of it.
-    const RELAY_TIMEOUT_MS = 20_000;
-    expect(CALL_BUDGET_MS).toBeLessThanOrEqual(RELAY_TIMEOUT_MS / 2);
+  it("the call budget leaves the relay's 25s exchange ten seconds to deliver", () => {
+    // The relay's pending future times out at 25 SECONDS. What is left after
+    // the budget is not slack: it is the time registering the handle, framing
+    // the response and matching it to the waiting exchange all have to fit in.
+    const RELAY_TIMEOUT_MS = 25_000;
+    const DELIVERY_MARGIN_MS = 10_000;
+    // Pinned, not just bounded: a margin check alone passes for any budget
+    // SHORTER than this one too, and the point of the number is that a human
+    // gets the whole fifteen seconds to answer inside the original call.
+    expect(CALL_BUDGET_MS).toBe(15_000);
+    expect(RELAY_TIMEOUT_MS - CALL_BUDGET_MS).toBeGreaterThanOrEqual(DELIVERY_MARGIN_MS);
     expect(HANDLE_TTL_MS).toBe(15 * 60_000);
   });
 });
