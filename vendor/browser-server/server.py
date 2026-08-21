@@ -360,28 +360,22 @@ def _type_value(el, value):
     # not. Each has to speak the string the node will actually HOLD, or it
     # answers about a value that never existed anywhere.
     #
-    # `type()` sends CR and LF alike as Enter, and a textarea's API value
-    # normalizes CR and CRLF to a single LF -- so an un-normalized CRLF would
-    # press Enter twice where the node holds one break.
-    #
-    # An <input> keeps no break at all: its value sanitization strips CR and LF,
-    # so one is deleted by the browser whatever put it there. Dropping it here
-    # instead is what lets the rest still go in as real keys, and it is why the
-    # tail can never press Enter at a form -- by construction, rather than by a
-    # branch that gave the keystrokes up to avoid sending one.
+    # CR and CRLF collapse to one LF, and a node that keeps no break loses it
+    # here rather than at the browser. That is what lets a break-bearing value
+    # still go in as real keys, and why the tail can never press Enter at a form
+    # -- by construction, rather than by a branch that gives the keystrokes up.
+    # The browser behavior underneath is in docs/TESTING-THE-APP.md.
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     if kind != "multiline":
         value = value.replace("\n", "")
-    # A tab is the one character no normalization can rescue: `type()` sends it
-    # as the Tab KEY, which moves focus instead of adding one, so the keys can
-    # never carry this value. It is assigned instead -- the path it always had.
+    # A tab is the one character no normalization can rescue -- the keys cannot
+    # carry it -- so a value holding one in the part that WOULD be typed is
+    # assigned whole instead, the path it always had. One in the head is not
+    # this branch's business: the head is assigned either way.
     #
-    # That is not a claim that the assignment CARRIES it. Some input types will
-    # not hold an edge tab at all, and drop it whichever assignment ran, with no
-    # prefix test able to see the loss. Those behaviors are recorded once, in
-    # docs/TESTING-THE-APP.md, "Browser behaviors the fill path rests on" --
-    # nothing in the suite can reach them, and restating them here is what put
-    # the two copies out of step twice.
+    # Assigning is not the same as the node keeping it. What an input does with
+    # an edge tab, and which types drop one, is in docs/TESTING-THE-APP.md --
+    # stated once there because restating it here put the copies out of step.
     if "\t" in value[-TYPED_CHARS:]:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return

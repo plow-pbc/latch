@@ -64,38 +64,38 @@ app by hand, drive it by hand — keyboard and mouse, not the inspector.
 ## Browser behaviors the fill path rests on
 
 `_type_value` in `vendor/browser-server/server.py` decides what it can send as
-keystrokes from three claims about what a real browser does. The suite cannot
-see any of them — `e2e/fixtures/fillProbe.py` drives fake nodes that answer a
-`typeable=` knob and read back exactly what was typed — so these are checked by
-hand, against the bundled Camoufox, or not at all:
+keystrokes from assumptions about what a real browser does. **The suite cannot
+check any of them** — `e2e/fixtures/fillProbe.py` drives fake nodes that answer
+a `typeable=` knob and read back exactly what was typed, so a scenario is green
+whether the assumption holds or not. They are only ever confirmed by hand,
+against the bundled Camoufox.
 
-- **`type()` sends a newline as the Enter key.** At a `<textarea>` that inserts
-  one line break, which is why a textarea keeps its breaks and everything else
-  has them normalized away first.
+What the code assumes:
+
+- **`type()` sends a newline as the Enter key**, and at a `<textarea>` that
+  inserts one line break. This is why a textarea keeps its breaks and every
+  other node has them normalized away before anything is typed.
 - **`type()` sends a tab as the Tab key**, which moves focus rather than adding
-  a character. No normalization rescues that, so a value whose typed tail holds
-  one is assigned instead.
-- **An `<input>` runs a value sanitization algorithm on assignment**, and it
-  differs by type. `text`, `search`, `password`, `tel` strip CR and LF. `email`
-  and `url` strip those *and* leading and trailing ASCII whitespace, a tab
-  included. `number` is not a stripper at all: its algorithm blanks the whole
-  value when it is not a valid floating-point number, so `"1\r2"` does not come
-  back as `"12"` — it comes back empty (and Playwright's `fill` rejects a
-  non-numeric value before assigning rather than trimming it).
+  a character. Nothing rescues that, so a value whose typed tail holds one is
+  assigned whole instead.
+- **An `<input>` sanitizes its value on assignment, and what it does differs by
+  type.** CR and LF do not survive. Some types will not hold a leading or
+  trailing tab either. `number` does not sanitize by stripping at all — an
+  invalid value goes empty rather than getting trimmed.
 
-  The consequence for the fill path: an edge tab on a value for `email`, `url`
-  or `number` is gone whichever assignment ran — the whole-value one the tab
-  guard takes, or the head of a split fill, which a value longer than
-  `TYPED_CHARS` reaches without that guard firing. No prefix test sees it: a
-  value that lost its *leading* character is not a prefix of what was wanted, so
-  `KEYS_DROPPED_JS` answers false. The fill reports ok. That is `fill()`'s own
-  behavior, older than any of the typing work — but it is the thing to check
-  first if a credential ever lands one character short.
+The consequence worth knowing before you debug one: **an assignment is not a
+guarantee the node kept the value.** Where the browser drops an edge character,
+it is dropped whichever assignment ran — the whole-value one the tab guard
+takes, or the head of a split fill — and `KEYS_DROPPED_JS` does not catch it,
+because a value that lost its *leading* character is not a prefix of what was
+wanted. The fill answers ok. That is `fill()`'s own behavior and older than any
+of the typing work, but it is the first thing to check if a credential ever
+lands one character short.
 
-If you change the fill path, re-check the one you touched against a real page
-before trusting a green suite.
-
----
+**To confirm any of these**, drive the real fill through the MCP server against a
+page you control, and read the field back with `document.querySelector(...).value`
+rather than trusting the `{"ok": true}`. Re-check the one you touched whenever
+you change the fill path.
 
 ## What still runs headless
 
