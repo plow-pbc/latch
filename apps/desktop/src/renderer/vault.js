@@ -294,14 +294,20 @@ function vconfirm(title, body, confirmLabel) {
  */
 let editor = null; // { dirty(), close() } — the one form that may be holding edits
 
-/** True when the current editor's edits may be thrown away. */
-async function vmayDiscard() {
-  if (!editor?.dirty()) return true;
-  return vconfirm(
+/**
+ * True when the current editor's edits may be thrown away. One dialog at a
+ * time, whoever asks: a row collapsing and a Cmd-W arriving together are two
+ * callers of this, and two stacked overlays over one form is nonsense.
+ */
+let asking = null;
+function vmayDiscard() {
+  if (!editor?.dirty()) return Promise.resolve(true);
+  asking ??= vconfirm(
     "Discard your changes?",
     "What you typed here has not been saved to the vault. Leaving throws it away.",
     "Discard",
-  );
+  ).finally(() => { asking = null; });
+  return asking;
 }
 
 /** Hand the seat to `next`, asking whoever holds it to give up their edits. */
@@ -318,20 +324,12 @@ function vreleaseEditor(who) {
   if (editor === who) editor = null;
 }
 
-/**
- * Asked before anything replaces this pane — a tab switch, or main tearing the
- * window down. One question at a time whoever asks: a tab switch and a Cmd-W
- * can genuinely overlap, and two stacked dialogs over one form is nonsense.
- */
-let leaveAsked = null;
-export function vaultConfirmLeave() {
-  leaveAsked ??= vmayDiscard()
-    .then((ok) => {
-      if (ok) editor = null; // the pane, and every form on it, is about to go
-      return ok;
-    })
-    .finally(() => { leaveAsked = null; });
-  return leaveAsked;
+/** Asked before anything replaces this pane — a tab switch, or main tearing
+    the window down. vmayDiscard() is what keeps it to one dialog. */
+export async function vaultConfirmLeave() {
+  const ok = await vmayDiscard();
+  if (ok) editor = null; // the pane, and every form on it, is about to go
+  return ok;
 }
 
 /** One saved item: her row, and the form it opens into. */

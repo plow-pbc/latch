@@ -846,7 +846,10 @@ app.whenReady().then(async () => {
     const countReply = () => { replies += 1; };
     ipcMain.on("ui:confirmLeaveReply", countReply);
     win.webContents.send("ui:confirmLeave");
-    win.webContents.send("ui:confirmLeave"); // a second path, same pending question
+    // ...and a row collapse arriving at the same moment, which reaches the
+    // dialog by a different route than the window teardown does.
+    await click(".vaultui .vitem .vrow");
+    win.webContents.send("ui:confirmLeave"); // a third path, same pending question
     await waitAsking();
     const oneDialogForTwoAskers = await js(() =>
       document.querySelectorAll(".vaultui .confirm-overlay").length === 1);

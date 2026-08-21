@@ -330,7 +330,7 @@ function createMainWindow(): void {
   let allowClose = false;
   mainWindow.on("close", (event) => {
     persist();
-    if (allowClose || cleanedUp) return;
+    if (allowClose || cleanedUp || gateClosing) return;
     event.preventDefault();
     void mayLeaveMain(win).then((mayLeave) => {
       if (!mayLeave || win.isDestroyed()) return;
@@ -338,10 +338,8 @@ function createMainWindow(): void {
       win.close();
     });
   });
-  // Only if it is still the current one: 'closed' can arrive after the gate has
-  // already dropped the reference and opened a replacement.
   mainWindow.on("closed", () => {
-    if (mainWindow === win) mainWindow = null;
+    mainWindow = null;
   });
 }
 
@@ -792,14 +790,21 @@ const gate = new WindowGate({
   isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
   openMain: () => createMainWindow(),
   openSetup: () => openOnboardingWindow(),
-  // The main window is NOT dropped here: `close()` can now be held open by the
-  // leave question, and a cancelled close must leave the window tracked or
-  // signing in would open a second one on top of it. `isMainOpen` reads
-  // `isDestroyed()`, which is already true the moment a real close lands, so
-  // dropping the reference early never bought anything.
+  // The gate's close is NOT a departure the owner may refuse: it fires when the
+  // relay rejects the credential, and a signed-out Mac is not entitled to a main
+  // window at all — the gate's contract is exactly one window, always. Letting
+  // the discard question cancel THIS close left main open beside Setup. The
+  // unsaved edits are lost, and that is the honest trade: there is no signed-out
+  // state in which that form could have been saved.
+  //
+  // The reference is not dropped here — `isMainOpen` reads `isDestroyed()`,
+  // already true the moment the close lands, and 'closed' clears it.
   closeMain: () => {
     const win = mainWindow;
-    if (win && !win.isDestroyed()) win.close();
+    if (!win || win.isDestroyed()) return;
+    gateClosing = true;
+    win.close();
+    gateClosing = false;
   },
   // Setup has no form to lose, so its close is immediate and the early drop
   // still buys a truthful `isSetupOpen` before 'closed' arrives.
@@ -1028,6 +1033,8 @@ app.whenReady().then(async () => {
  * not a renderer that failed to reply, and no timer can tell them apart, so
  * silence keeps the window; Force Quit is still there for a wedged one.
  */
+/** Set only while the gate itself is closing main — see closeMain below. */
+let gateClosing = false;
 let leaveInFlight: Promise<boolean> | null = null;
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);
