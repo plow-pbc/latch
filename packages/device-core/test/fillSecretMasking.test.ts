@@ -396,6 +396,44 @@ describe("fill_secret marking", () => {
     expect(fill.frame_token).toBe("doc-card");
   });
 
+  // The browser reports that the field is holding something else; it does not
+  // judge whether that matters. Here it can be judged: the value came out of
+  // the vault, so a field that changed it did not receive the credential.
+  it.each([
+    { what: "the field says it holds less than the value",
+      env: { FAKE_TOO_LONG: "16" },
+      says: ["holds only 16 characters", "shortened where it is stored"],
+      omits: ["check the selector"],
+      reason: "the field holds only 16 characters" },
+    { what: "the field is holding something other than what was typed",
+      env: { FAKE_ALTERED: "1" },
+      says: ["not holding what was typed", "not at fault"],
+      // The other one's remedy: it would send the owner to change a credential
+      // that is not the problem.
+      omits: ["shortened"],
+      reason: "the field changed the value it was given" },
+  ])("refuses a credential fill when $what", async ({ env, says, omits, reason }) => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx(env);
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    const error = jv(result).get("error").str ?? "";
+    for (const text of says) expect(error).toContain(text);
+    for (const text of omits) expect(error).not.toContain(text);
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_fill_failed",
+      fields: {
+        session: audited(), item: "C1", field: "number",
+        origin: "payframe.example", selector: "#card-number", reason,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("4111");
+  });
+
   it("refuses when the browser says the frame moved", async () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
@@ -520,7 +558,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         trace: string[];
         error: string | null;
         marked: boolean;
-        result: { ok?: boolean; mask?: string; frame?: number; frame_url?: string; frame_token?: string } | null;
+        result: { ok?: boolean; mask?: string; frame?: number; frame_url?: string;
+          frame_token?: string; cap?: number; altered?: boolean } | null;
         value_kept: boolean;
         ledgered: boolean;
         typed_delay: number | null;
@@ -557,6 +596,57 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       ranked_gone_first: { error: string | null; tried: number };
     }>(FILL_PROBE);
   })();
+
+  // The one thing knowable before the node is touched: the field says how much
+  // it holds and the value is more. Refused there, so nothing is half-written
+  // and the page is left exactly as it was found.
+  it.each([
+    { what: "an ordinary fill", scenario: "over_cap" },
+    { what: "a concealed fill", scenario: "over_cap_masked" },
+    // `maxlength` counts UTF-16 units, so four emoji are eight of them.
+    { what: "a value whose emoji are two units each", scenario: "over_cap_astral" },
+  ])("refuses $what of a field that says it holds less", ({ scenario }) => {
+    expect(probed[scenario].result).toEqual({ ok: false, mask: "too_long", cap: 4, frame: 0 });
+    // Nothing was written, so nothing was marked and nothing is tracked.
+    expect(probed[scenario].trace).toEqual(["frame.wait_for_selector"]);
+    expect(probed[scenario].marked).toBe(false);
+    expect(probed[scenario].ledgered).toBe(false);
+  });
+
+  it("fills a value exactly as long as the field's cap", () => {
+    expect(probed.at_cap.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  // Everything else a field does to a value is REPORTED, not judged. Whether a
+  // difference matters depends on what the value means — a card box gaining its
+  // spaces has changed nothing that counts, a name box losing one has changed
+  // somebody's name — and the browser server cannot tell those apart. So it
+  // says the field is holding something else and stops there.
+  it.each([
+    { what: "groups the digits it was given", scenario: "grouped_by_the_field" },
+    { what: "strips a space out of a name", scenario: "stripped_by_the_field" },
+    { what: "clips what it was given", scenario: "clipped_by_the_field" },
+  ])("reports, without refusing, a field that $what", ({ scenario }) => {
+    expect(probed[scenario].result).toEqual({ ok: true, frame: 0, altered: true });
+  });
+
+  it("reports it on a concealed fill too, which stays marked and tracked", () => {
+    expect(probed.stripped_by_the_field_masked.result).toEqual({
+      ok: true, mask: "stylesheet", frame: 0, altered: true,
+    });
+    // The value is in the page and it is a credential, so it stays covered.
+    expect(probed.stripped_by_the_field_masked.marked).toBe(true);
+    expect(probed.stripped_by_the_field_masked.ledgered).toBe(true);
+  });
+
+  it.each([
+    { what: "a fill the field took whole", scenario: "plain" },
+    { what: "a concealed fill the field took whole", scenario: "masked" },
+    { what: "a repair after the keys were dropped", scenario: "keys_dropped" },
+    { what: "a value assigned into a widget", scenario: "not_typeable" },
+  ])("says nothing about $what", ({ scenario }) => {
+    expect(probed[scenario].result).not.toHaveProperty("altered");
+  });
 
   it("resolves the node once and marks it before the value goes in", () => {
     expect(probed.masked.trace).toEqual([

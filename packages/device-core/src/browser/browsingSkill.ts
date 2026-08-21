@@ -89,6 +89,11 @@ url, title, links, forms, tables, pages.
   carries them too — that is usually the reason it failed. You are told the host, not the
   path, and only for your approved origins. One can also settle late and ride the next
   result. Do not instrument the page with \`eval\` to find this out; this is that answer.
+- **\`altered\` on a fill means the field is not holding what you typed.** Pages
+  rewrite what goes into them — a card box adds spaces to the digits, a phone box
+  drops the dashes — and that is usually fine. It is not fine when the value had
+  to arrive intact. You are told the difference happened, not whether it matters;
+  screenshot the field and decide. A fill without it landed exactly.
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after

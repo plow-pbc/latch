@@ -308,6 +308,30 @@ NOTHING_LANDED_JS = f"""(el, previous) => {{
 # Whether a node is already carrying the mark, asked before anything touches it.
 WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 
+
+# How much this field will hold, and -1 when it does not say. `maxLength`
+# reflects the attribute even on kinds the browser never enforces it for --
+# `<input type="number" maxlength="4">` is a common authoring mistake -- so
+# reading one there would turn a stray attribute into a refused fill.
+FIELD_CAP_JS = """(el) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "textarea") return el.maxLength;
+    if (tag !== "input") return -1;
+    return ["text", "search", "url", "tel", "email", "password"].includes(el.type)
+        ? el.maxLength
+        : -1;
+}"""
+
+# Is the field holding exactly what was put into it? Compared IN THE PAGE, the
+# way the prefix test is: the value goes in, a boolean comes back.
+#
+# Exactly, with no allowance for what the field might have been entitled to
+# change. Deciding that a difference is acceptable needs to know what the value
+# MEANS -- whether a space belongs to a card number's grouping or to somebody's
+# name -- and nothing here knows that. So this reports the difference and lets
+# the layers that do know decide what it is worth.
+HELD_MATCHES_JS = f"""(el, wanted) => {_HELD} === wanted"""
+
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
     if (el.style) {
@@ -322,8 +346,37 @@ def _respond(payload):
     _RESP.flush()
 
 
+def _utf16_units(value):
+    """What `maxlength` counts: UTF-16 code units, not code points.
+
+    An astral character is one code point and two units, so counting code points
+    would call four emoji a fit for a field that holds two. `surrogatepass`
+    because a lone surrogate makes a plain encode raise.
+    """
+    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
+def _kept(el, attempted):
+    """`{"altered": True}` when the field is not holding what went into it.
+
+    A fact, not a verdict, and absent when there is nothing to say. Whether a
+    difference matters depends on what the value means -- a card input renders
+    the digits it was given with spaces in them and has changed nothing that
+    counts, while a name field dropping a space has changed somebody's name --
+    and that is not knowable here. It is knowable to the device, which fetched
+    the value and knows which vault field it came from, and to the agent, which
+    can see the page. So this says what happened and they decide what it is
+    worth.
+    """
+    return {} if el.evaluate(HELD_MATCHES_JS, attempted) else {"altered": True}
+
+
 def _type_value(el, value):
     """Put `value` into a resolved node so that the field ends on real keys.
+
+    Returns the string it actually attempted, which is not always the one it was
+    given: a single-line node cannot take a break, so the caller comparing what
+    the field kept has to compare against this rather than against `value`.
 
     A node is first asked what KIND of typing it takes -- a text-carrying input
     or a textarea, and nothing else. One that answers "" is assigned whole,
@@ -361,7 +414,7 @@ def _type_value(el, value):
     kind = el.evaluate(TYPEABLE_JS)
     if not kind:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-        return
+        return value
     # Everything below compares against `value` -- the prefix test that decides
     # whether the keys landed, and the assignment that repairs them when they did
     # not. Each has to speak the string the node will actually HOLD, or it
@@ -385,7 +438,7 @@ def _type_value(el, value):
     # stated once there because restating it here put the copies out of step.
     if "\t" in value[-TYPED_CHARS:]:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-        return
+        return value
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
     # the tail's own budget would let TYPED_CHARS of them stack up to that many
@@ -401,6 +454,7 @@ def _type_value(el, value):
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+    return value
 
 
 def _parse_args():
@@ -778,6 +832,14 @@ class Session:
             expected = cmd.get("frame_token")
             if expected is not None and el.evaluate(DOC_TOKEN_JS) != expected:
                 return {"ok": False, "mask": "moved", "frame": i}
+            # The one thing that can be known before touching the node: the
+            # field says how much it holds, and this is more. Refused here so
+            # the page is left exactly as it was found -- and refused only on
+            # this, because "will it fit" needs no idea what the value MEANS,
+            # where "was the field entitled to change it" does.
+            cap = el.evaluate(FIELD_CAP_JS)
+            if cap >= 0 and _utf16_units(cmd["value"]) > cap:
+                return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
             if cmd.get("mask"):
                 # Marked first, and only typed once the mark is known to have
                 # taken. An unmasked answer means the page defeated it, and the
@@ -793,7 +855,7 @@ class Session:
                     before.dispose()
                     return {"ok": False, "mask": state, "frame": i}
                 try:
-                    _type_value(el, cmd["value"])
+                    attempted = _type_value(el, cmd["value"])
                 except Exception:
                     # Nothing landed: put the node back as it was found.
                     # Something did: it is holding a value nobody can account
@@ -807,14 +869,15 @@ class Session:
                 finally:
                     before.dispose()
                 self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
-                return {"ok": True, "mask": state, "frame": i}
+                return {"ok": True, "mask": state, "frame": i,
+                        **_kept(el, attempted)}
             # Not a secret. The mark comes off AFTER the value is in, never
             # before: a fill that times out would otherwise leave the node
             # holding the previous secret with nothing left to hide it.
-            _type_value(el, cmd["value"])
+            attempted = _type_value(el, cmd["value"])
             el.evaluate(UNMASK_JS)
             self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
-            return {"ok": True, "frame": i}
+            return {"ok": True, "frame": i, **_kept(el, attempted)}
         raise last or RuntimeError("selector not found: %s" % sel)
 
     def handle(self, cmd, screenshots_dir):
