@@ -92,6 +92,13 @@ describe("resolveBrowserRuntime", () => {
     expect(resolveBrowserRuntime(resources)!.vaultServer).toBeNull();
   });
 
+  it("does not take a binary without the web interface it serves", () => {
+    const { resources, root } = fakePayload({ withVaultCli: true });
+    fs.mkdirSync(path.join(root, "vault-server", arch), { recursive: true });
+    fs.writeFileSync(path.join(root, "vault-server", arch, "vaultwarden"), "");
+    expect(resolveBrowserRuntime(resources)!.vaultServer).toBeNull();
+  });
+
   it("reports no vault when this build ships none, so we can still point at a hosted one", () => {
     const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: true }).resources)!;
     expect(runtime.vaultServer).toBeNull();
