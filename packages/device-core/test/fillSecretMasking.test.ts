@@ -639,16 +639,14 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       scenario: "crlf_multiline", typedLen: "one\ntwo".length,
     },
     {
-      // `null` is not "do not check" — it means the tail length, which lives on
-      // `probed` and so is not bound while this table is being built.
       what: "a break in the assigned head leaves the tail typed as it was",
-      scenario: "newline_outside_tail", typedLen: null,
+      scenario: "newline_outside_tail", typedLen: probed.constants.typed_chars,
     },
   ])("$what", ({ scenario, typedLen }) => {
     const run = probed[scenario];
     expect(run.trace).toContain("handle.type");
     expect(run.typed_has_cr).toBe(false);
-    expect(run.typed_len).toBe(typedLen ?? probed.constants.typed_chars);
+    expect(run.typed_len).toBe(typedLen);
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 

@@ -510,7 +510,12 @@ def main() -> int:
         # The same value at a node that keeps the break. This stands for a
         # textarea specifically: the fake holds back exactly what was typed, so
         # it cannot model a declared host, whose textContent read-back does not
-        # see the markup Enter made.
+        # see the markup Enter made -- which is also why the host's prefix
+        # comparison is unpinned. There `wanted` carries an LF the read-back
+        # never will, so KEYS_DROPPED_JS answers false and the repair is off for
+        # any host fill carrying a break. A host has no maxlength and no value
+        # sanitization, so nothing it would have repaired can arise; if that
+        # changes, this is the gap to close first.
         "newline_multiline": run(server, {**base, "value": "one\ntwo"},
                                  typeable="multiline"),
         # The rule is scoped to the TAIL, which is all that gets typed: a long
