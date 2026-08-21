@@ -569,21 +569,37 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 
   // A field caps what it will hold, and the two ways of putting a value in fail
-  // differently: typed input is clipped to the cap, an assignment lands whole
-  // into a field a person could only have filled to the cap. Both submit
-  // something other than what was asked for, so neither is allowed to happen.
+  // differently: typing is clipped to the cap, an assignment lands whole into a
+  // field a person could only have filled to the cap. Both submit something
+  // other than what was asked for, so neither is allowed to happen — and the
+  // node is left exactly as it was found either way.
   it.each([
-    ["a concealed fill", "capped_secret"],
-    ["a visible fill", "capped_plain"],
-  ])("refuses %s of a field that cannot hold the value, leaving the node alone", (_what, scenario) => {
+    { what: "a concealed fill", scenario: "capped_secret" },
+    { what: "a visible fill", scenario: "capped_plain" },
+    { what: "a field that holds nothing", scenario: "zero_cap" },
+    { what: "a value whose emoji are two code units each", scenario: "astral_over_cap" },
+  ])("refuses $what and does not touch the node", ({ scenario }) => {
     const probe = probed[scenario];
-    expect(probe.error).toBe("RuntimeError");
-    // Refused before the node is touched: resolved, and nothing after it. No
-    // fill, no mark to strip, nothing half-written for a screenshot to catch.
+    // Resolved, and nothing after it: no fill, no mark to strip, nothing
+    // half-written for a later screenshot to catch.
     expect(probe.trace).toEqual(["frame.wait_for_selector"]);
     expect(probe.marked).toBe(false);
     expect(probe.value_kept).toBe(true);
     expect(probe.ledgered).toBe(false);
+  });
+
+  // How the refusal is REPORTED differs because how it is heard does: a visible
+  // fill's failure text reaches the agent, a secret's never does, so that one
+  // comes back as a shape the device reads and turns into its own message.
+  it("hands a concealed fill's refusal back as a shape carrying the cap", () => {
+    expect(probed.capped_secret.result).toEqual({
+      ok: false, mask: "too_long", cap: 4, frame: 0,
+    });
+    expect(probed.capped_secret.error).toBeNull();
+  });
+
+  it("fails a visible fill loudly, since its message is forwarded", () => {
+    expect(probed.capped_plain.error).toBe("RuntimeError");
   });
 
   it("fills a value exactly as long as the field's cap", () => {

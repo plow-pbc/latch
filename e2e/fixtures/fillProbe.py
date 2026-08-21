@@ -239,7 +239,6 @@ class Frame:
         self.detached = detached
         self.url = "https://pizza.example/login"
         self.document_token = document_token
-        self.max_length = max_length
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
                              partial_fill, document_token, type_fails, typeable, drops_keys,
                              assign_fails, max_length)
@@ -319,7 +318,7 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
         # The value is never part of this: only whether the fill happened, and
         # for a locate, what identity it reported.
         out["result"] = {k: v for k, v in result.items()
-                         if k in ("ok", "mask", "frame", "frame_url", "frame_token")}
+                         if k in ("ok", "mask", "frame", "frame_url", "frame_token", "cap")}
     except Exception as exc:  # noqa: BLE001 — the scenario under test
         out["error"] = type(exc).__name__
     out["marked"] = frame.handle.marked
@@ -585,6 +584,13 @@ def main() -> int:
         # The boundary: a value exactly the length of the cap fits, and the fill
         # is ordinary. Guards the check against being off by one.
         "at_cap": run(server, {**base, "value": "1234"}, max_length=4),
+        # maxlength="0" is valid HTML and holds nothing. -1 is the only value
+        # that means uncapped, so 0 must refuse rather than read as "no cap".
+        "zero_cap": run(server, {**base, "value": "x"}, max_length=0),
+        # `maxlength` counts UTF-16 code units. Four emoji are 4 code points and
+        # 8 units, so a code-point count would call this a fit and let the
+        # browser clip it.
+        "astral_over_cap": run(server, {**base, "value": "\U0001F600" * 4}, max_length=4),
         "detached": run(server, {**base, "mask": True}, detach_before_fill=True),
         # A page that defeats the mark: nothing may be typed into it.
         "mask_blocked": run(server, {**base, "mask": True}, mask_result="unmasked"),

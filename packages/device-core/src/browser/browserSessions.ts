@@ -1059,6 +1059,31 @@ export class BrowserSessions {
             `Screenshot the page and locate the field again.`,
         };
       }
+      // A field that will not hold the whole value: refused before anything was
+      // typed, so the page is exactly as it was found. Its own branch because
+      // the catch below cannot forward the browser's text, and "the field may
+      // be the wrong one — check the selector" is precisely wrong here: the
+      // selector was right and re-issuing the same fill will fail forever. The
+      // cap is the page's own published attribute, so naming it leaks nothing;
+      // the value's length stays out of both records, as everywhere else.
+      if (filled.mask === "too_long") {
+        const cap = jv(filled).get("cap").num;
+        this.audit("credential_denied", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: `the field holds only ${cap} characters`,
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: ${selector} holds only ${cap} characters and this value is ` +
+            `longer, so nothing was typed. The value in the vault cannot be entered in this ` +
+            `field — it will have to be shortened where it is stored.`,
+        };
+      }
       if (filled.ok !== true) {
         this.audit("credential_denied", {
           session: s.auditId,

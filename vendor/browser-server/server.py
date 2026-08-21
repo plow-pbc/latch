@@ -312,6 +312,16 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 # what an element with no maxlength reports and what a non-input answers.
 FIELD_CAP_JS = """(el) => (el.maxLength === undefined ? -1 : el.maxLength)"""
 
+
+def _utf16_units(value):
+    """What `maxlength` counts: UTF-16 code units, not code points.
+
+    An astral character -- an emoji, some CJK extensions -- is one code point
+    and two units, so counting code points under-measures exactly at the
+    boundary this guards and lets through a value the browser will clip.
+    """
+    return len(value.encode("utf-16-le")) // 2
+
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
     if (el.style) {
@@ -791,11 +801,22 @@ class Session:
             # will not fit is never half-written into the page: nothing to roll
             # back, and no partial secret left behind a mark. Lengths only --
             # the value reaches neither this message nor the audit log.
+            # -1 is uncapped, which is what an element without the attribute
+            # reports and what the parser coerces an invalid one to. 0 is a real
+            # cap that holds nothing, so it is not an escape hatch.
             cap = el.evaluate(FIELD_CAP_JS)
-            if cap is not None and cap > 0 and len(cmd["value"]) > cap:
+            if cap is not None and cap >= 0 and _utf16_units(cmd["value"]) > cap:
+                # How this is reported differs because how it is HEARD does. A
+                # visible fill's failure text reaches the agent, so it can say
+                # so plainly. A secret's never does -- the device writes its own
+                # message, because Playwright's would quote the value -- and
+                # "check the selector" is the wrong thing to tell an agent whose
+                # selector was right, so the cap comes back as a shape the
+                # device can read, the way a moved frame does.
+                if cmd.get("mask"):
+                    return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
                 raise RuntimeError(
-                    "field holds %d characters, value is %d -- not filled" %
-                    (cap, len(cmd["value"])))
+                    "field holds %d characters and the value is longer -- not filled" % cap)
             if cmd.get("mask"):
                 # Marked first, and only typed once the mark is known to have
                 # taken. An unmasked answer means the page defeated it, and the
