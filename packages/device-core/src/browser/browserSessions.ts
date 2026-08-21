@@ -807,23 +807,34 @@ export class BrowserSessions {
     // that went wrong can count it the way this one counted `eval`.
     const refused = this.reportRefusals(s, String(action.action), url, knobs);
 
+    // A field that will not hold the value, refused before anything was typed.
+    // The agent is told the cap because the alternative is re-issuing a fill
+    // that can never land; the cap is the page's own attribute, and the value's
+    // length is not part of it. Audited for the same reason the refusal two
+    // branches down is: without a line of its own, `audit.ndjson` shows this
+    // fill exactly as it shows one that landed. A shape without a numeric cap
+    // is not this branch's — it falls through rather than print "null".
+    const cappedAt = jv(result).get("cap").num;
+    if (result.ok === false && result.mask === "too_long" && cappedAt !== null) {
+      this.audit("browser_fill_refused", {
+        session: s.auditId,
+        action: String(action.action),
+        url: stripQuery(url),
+        cap: cappedAt,
+      });
+      return {
+        status: "error",
+        error:
+          `${String(action.action)} was refused: that field holds only ${cappedAt} characters ` +
+          `and the value is longer, so nothing was typed.`,
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
+    }
+
     // The browser puts the mark back on every concealed field before it lets
     // anything be observed, and says so when one of them would not take. It
     // sends no picture and no field list in that case, and neither does this:
     // an observation that cannot be made safely is not made.
-    // A field that will not hold the value, refused before anything was typed.
-    // The agent is told the cap because the alternative is re-issuing a fill
-    // that cannot ever land; the cap is the page's own attribute, and the
-    // value's length is not part of it.
-    if (result.ok === false && result.mask === "too_long") {
-      return {
-        status: "error",
-        error:
-          `${String(action.action)} was refused: that field holds only ` +
-          `${jv(result).get("cap").num} characters and the value is longer, so nothing was typed.`,
-        ...(refused.length ? { failed_requests: refused } : {}),
-      };
-    }
     if (result.ok === false && result.mask === "unmasked") {
       this.audit("credential_mask_failed", {
         session: s.auditId,
@@ -1079,8 +1090,8 @@ export class BrowserSessions {
       // selector was right and re-issuing the same fill will fail forever. The
       // cap is the page's own published attribute, so naming it leaks nothing;
       // the value's length stays out of both records, as everywhere else.
-      if (filled.mask === "too_long") {
-        const cap = jv(filled).get("cap").num;
+      const cap = jv(filled).get("cap").num;
+      if (filled.mask === "too_long" && cap !== null) {
         this.audit("credential_denied", {
           session: s.auditId,
           item: itemId,

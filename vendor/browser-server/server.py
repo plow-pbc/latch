@@ -288,7 +288,8 @@ VALUE_SNAPSHOT_JS = f"""(el) => {_HELD}"""
 
 # Whether the keys failed to land, in the only two shapes an assignment could
 # repair: the field took none of them, or it took a prefix and stopped. A number
-# input sanitises away anything it will not hold; a maxlength truncates. A field
+# input sanitises away anything it will not hold; an UNDECLARED cap truncates --
+# a declared `maxlength` is refused before the node is touched. A field
 # that REFORMATS what it was given -- a card number, a phone -- took every key
 # and holds something else on purpose, so it is not a prefix and is left alone.
 KEYS_DROPPED_JS = f"""(el, wanted) => {{
@@ -320,7 +321,11 @@ def _utf16_units(value):
     and two units, so counting code points under-measures exactly at the
     boundary this guards and lets through a value the browser will clip.
     """
-    return len(value.encode("utf-16-le")) // 2
+    # surrogatepass because a lone surrogate -- reachable from a \udXXX escape in
+    # a stored value -- makes a plain encode raise, and that exception lands in
+    # the catch whose message this refusal exists to stop producing. It is also
+    # the one unit the browser counts it as.
+    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
 
 UNMASK_JS = """(el) => {
     el.removeAttribute("data-domo-secret");
@@ -364,10 +369,11 @@ def _type_value(el, value):
     screenshot. Refocusing per key keeps every character in the node the device
     approved, and a node that goes away raises rather than typing on. What it
     does NOT do is fill such a control: box one refuses every key after the
-    first, so the fallback below assigns the whole code into it (an assignment
-    ignores `maxlength`) and the form is left unsubmittable. That is the
-    deliberate trade -- the credential stays in the node the owner approved, and
-    a segmented control takes one fill per box.
+    first, so the fallback below assigns the whole code into it and the form is
+    left unsubmittable. That is the deliberate trade -- the credential stays in
+    the node the owner approved, and a segmented control takes one fill per box.
+    Where such a control declares a `maxlength` of one per box, the refusal
+    above answers first and nothing is assigned at all.
 
     A node that has gone away raises out of the first question asked of it, and
     every path from here on leaves the caller's failure handling to unwind it.
@@ -386,6 +392,9 @@ def _type_value(el, value):
     # still go in as real keys, and why the tail can never press Enter at a form
     # -- by construction, rather than by a branch that gives the keystrokes up.
     # The browser behavior underneath is in docs/TESTING-THE-APP.md.
+    # A field that DECLARES a cap never reaches here: an over-cap value is
+    # refused before the node is touched, so what follows is about a field that
+    # took the value and then made its own decisions about it.
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     if kind != "multiline":
         value = value.replace("\n", "")

@@ -196,13 +196,18 @@ function handle(cmd) {
       return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
     }
     // The frame behind the index is no longer the document the device approved.
-    // A field whose maxlength is shorter than the value: the real server
-    // refuses before it touches the node, masked or not.
-    if (process.env.FAKE_TOO_LONG) {
-      return { ok: false, mask: "too_long", cap: Number(process.env.FAKE_TOO_LONG), frame: 0 };
-    }
     if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_token) {
       return { ok: false, mask: "moved", frame: cmd.frame ?? 0 };
+    }
+    // A field whose maxlength is shorter than the value: the real server
+    // refuses before it touches the node, masked or not, and reports the frame
+    // the node was found in. After frame-moved, so setting both flags does not
+    // make that one unreachable.
+    if (process.env.FAKE_TOO_LONG !== undefined) {
+      return {
+        ok: false, mask: "too_long",
+        cap: Number(process.env.FAKE_TOO_LONG), frame: cmd.frame ?? 0,
+      };
     }
     // Playwright puts the value it tried to type into its own failure message.
     // Reproduce that shape so the leak this guards against is testable.

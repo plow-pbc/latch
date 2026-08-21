@@ -401,11 +401,11 @@ describe("fill_secret marking", () => {
   // to check a selector that was right.
   it.each([
     { what: "a concealed field", selector: "#card-number", item: "C1", field: "number",
-      origin: "payframe.example" },
+      origin: "payframe.example", held: "4111111111111111" },
     { what: "a field the vault does not conceal", selector: "#card-name", item: "C1",
-      field: "cardholder name", origin: "payframe.example" },
+      field: "cardholder name", origin: "payframe.example", held: "Jon Doe" },
   ])("tells the agent the cap when $what will not hold the value", async ({
-    selector, item, field, origin,
+    selector, item, field, origin, held,
   }) => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_TOO_LONG: "16" });
@@ -425,8 +425,26 @@ describe("fill_secret marking", () => {
         reason: "the field holds only 16 characters",
       },
     });
-    // The value's length is the one thing that does not travel.
-    expect(JSON.stringify(result)).not.toContain("4111");
+    // Whatever this row's value is, it is the one thing that does not travel.
+    expect(JSON.stringify(result)).not.toContain(held);
+  });
+
+  // The agent's own `fill` takes the same refusal, and its regression is worse
+  // than the one above: without this branch the result falls through as
+  // `status: "completed"` carrying `ok: false`, which tells the agent the fill
+  // happened while nothing was typed.
+  it("refuses the agent's own fill rather than reporting it completed", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_TOO_LONG: "16" });
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill", selector: "#card-name", value: "a value longer than sixteen",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("holds only 16 characters");
+    // And the owner's ledger can tell it from a fill that landed.
+    expect(ctx.events.slice(before).map((e) => e.event)).toContain("browser_fill_refused");
   });
 
   it("refuses when the browser says the frame moved", async () => {
@@ -607,13 +625,17 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // other than what was asked for, so neither is allowed to happen — and the
   // node is left exactly as it was found either way.
   it.each([
-    { what: "a concealed fill", scenario: "capped_secret" },
-    { what: "a visible fill", scenario: "capped_plain" },
-    { what: "a field that holds nothing", scenario: "zero_cap" },
-    { what: "a value whose emoji are two code units each", scenario: "astral_over_cap" },
-  ])("refuses $what and does not touch the node", ({ scenario }) => {
+    { what: "a concealed fill", scenario: "capped_secret", cap: 4 },
+    { what: "a fill the vault does not conceal", scenario: "capped_plain", cap: 4 },
+    { what: "a field that holds nothing", scenario: "zero_cap", cap: 0 },
+    { what: "a value whose emoji are two code units each", scenario: "astral_over_cap", cap: 4 },
+  ])("refuses $what and does not touch the node", ({ scenario, cap }) => {
     const probe = probed[scenario];
-    expect(probe.result).toMatchObject({ ok: false, mask: "too_long" });
+    // One shape for every one of them: the vault fills unconcealed fields too,
+    // and their failure text is swallowed the same way, so there is one answer
+    // rather than two. The cap rides along because the device renders it.
+    expect(probe.result).toEqual({ ok: false, mask: "too_long", cap, frame: 0 });
+    expect(probe.error).toBeNull();
     // Resolved, and nothing after it: no fill, no mark to strip, nothing
     // half-written for a later screenshot to catch.
     expect(probe.trace).toEqual(["frame.wait_for_selector"]);
@@ -625,22 +647,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // How the refusal is REPORTED differs because how it is heard does: a visible
   // fill's failure text reaches the agent, a secret's never does, so that one
   // comes back as a shape the device reads and turns into its own message.
-  it("hands a concealed fill's refusal back as a shape carrying the cap", () => {
-    expect(probed.capped_secret.result).toEqual({
-      ok: false, mask: "too_long", cap: 4, frame: 0,
-    });
-    expect(probed.capped_secret.error).toBeNull();
-  });
-
-  it("answers an unconcealed fill with the same shape", () => {
-    // The vault fills unconcealed fields through the same path, and their text
-    // is swallowed the same way, so there is one answer rather than two.
-    expect(probed.capped_plain.result).toEqual({
-      ok: false, mask: "too_long", cap: 4, frame: 0,
-    });
-    expect(probed.capped_plain.error).toBeNull();
-  });
-
   it("fills a value exactly as long as the field's cap", () => {
     // The boundary the check must not be off by one on: this one fits.
     expect(probed.at_cap.error).toBeNull();
