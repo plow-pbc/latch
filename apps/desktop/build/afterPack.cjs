@@ -53,8 +53,13 @@ module.exports = async function afterPack(context) {
   if (context.appOutDir.includes("-temp")) return;
   const identity = process.env.CODESIGN_IDENTITY;
   if (!identity) {
-    console.log("[afterPack] CODESIGN_IDENTITY not set — skipping browser-runtime re-sign");
-    return;
+    // Skipping leaves the runtime ad-hoc signed, and an ad-hoc Mach-O carries no
+    // team id — so the hardened runtime refuses to map Python.framework into the
+    // python that loads it, and browsing is dead in an app that otherwise looks
+    // healthy. Only a bare electron-builder run gets here; the just recipes set it.
+    throw new Error(
+      "[afterPack] CODESIGN_IDENTITY is not set — package with `just package` or `just package-unnotarized`",
+    );
   }
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
