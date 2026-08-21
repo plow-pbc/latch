@@ -1,11 +1,11 @@
 /**
  * The deferred-result contract (design §4.3).
  *
- * A tunnelled call has a hard ceiling: the relay's pending future times out at
- * 25 seconds, so nothing on this Mac may block past its call budget — not a
- * human who has walked away from an approval, not a slow command. Any
- * tool that cannot finish inside the budget returns a handle instead, keeps the
- * work running, and the agent retrieves the outcome later with `plow_get_result`.
+ * A tunnelled call has a hard ceiling — `RELAY_TIMEOUT_MS` below — so nothing
+ * on this Mac may block past `CALL_BUDGET_MS`: not a human who has walked away
+ * from an approval, not a slow command. Any tool that cannot finish inside the
+ * budget returns a handle instead, keeps the work running, and the agent
+ * retrieves the outcome later with `plow_get_result`.
  *
  * Two rules make this safe rather than merely convenient:
  *
