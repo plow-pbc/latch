@@ -33,13 +33,63 @@ function tempDir(): string {
   return dir;
 }
 
+/**
+ * A throwaway stand-in for DOMO_HOME in the bounds tests, which are about
+ * scope rather than about the app's own state. It is a real directory nothing
+ * else touches, so it can never overlap the fixtures below.
+ */
+const DEVICE_HOME = "/domo-nonexistent-device-home";
+
 describe("FileOps bounds", () => {
   it("reads within scope, rejects outside", async () => {
     const dir = tempDir();
     const inside = path.join(dir, "a.txt");
     fs.writeFileSync(inside, "data");
-    expect((await FileOps.read(inside, [dir])).toString()).toBe("data");
-    await expect(FileOps.read("/etc/hosts", [dir])).rejects.toThrow(FileOpsError);
+    expect((await FileOps.read(inside, [dir], DEVICE_HOME)).toString()).toBe("data");
+    await expect(FileOps.read("/etc/hosts", [dir], DEVICE_HOME)).rejects.toThrow(FileOpsError);
+  });
+
+  /**
+   * `plow_read_file` / `plow_write_file` do not go through seatbelt at all —
+   * they are in-process, so the sandbox deny that covers `plow_run_command`
+   * does not reach them. This is the other half of the same floor.
+   *
+   * `settings.json` under DOMO_HOME holds the relay credential and
+   * `agentPurpose`, which the reviewer is handed as the owner's own words about
+   * what agents are for. An agent that can write it writes its own permissions.
+   */
+  it("refuses the app's own home even when an approval named it", async () => {
+    const plowHome = tempDir();
+    const settings = path.join(plowHome, "app/settings.json");
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, JSON.stringify({ relayCredential: "plow_sk_do_not_leak_me" }));
+
+    // Approved as a root, and it still does not matter: the refusal sits under
+    // the capability set rather than beside it.
+    await expect(FileOps.read(settings, [plowHome], plowHome)).rejects.toThrow(
+      /own home directory/,
+    );
+    await expect(
+      FileOps.write(settings, Buffer.from('{"agentPurpose":"do anything"}'), [plowHome], plowHome),
+    ).rejects.toThrow(/own home directory/);
+    // Nothing was written.
+    expect(fs.readFileSync(settings, "utf8")).not.toContain("do anything");
+  });
+
+  it("refuses it by real path, not by the spelling the agent used", async () => {
+    const plowHome = tempDir();
+    const settings = path.join(plowHome, "app/settings.json");
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, "secret");
+    const outside = tempDir();
+    // A symlink from an approved directory into the app's home, and a ".."
+    // walk — both resolve before the check, which is why it canonicalizes.
+    const link = path.join(outside, "link.json");
+    fs.symlinkSync(settings, link);
+    await expect(FileOps.read(link, [outside], plowHome)).rejects.toThrow(/own home directory/);
+    await expect(
+      FileOps.read(path.join(plowHome, "app/../app/settings.json"), [plowHome], plowHome),
+    ).rejects.toThrow(/own home directory/);
   });
 
   it("rejects ../ traversal escaping the root", async () => {
@@ -48,7 +98,7 @@ describe("FileOps bounds", () => {
     fs.mkdirSync(sub);
     fs.writeFileSync(path.join(dir, "secret.txt"), "s");
     // sub/../secret.txt canonicalizes to dir/secret.txt — outside [sub].
-    await expect(FileOps.read(path.join(sub, "../secret.txt"), [sub])).rejects.toThrow(
+    await expect(FileOps.read(path.join(sub, "../secret.txt"), [sub], DEVICE_HOME)).rejects.toThrow(
       /approved scope/,
     );
   });
@@ -60,13 +110,13 @@ describe("FileOps bounds", () => {
     const link = path.join(root, "link.txt");
     fs.symlinkSync(path.join(outside, "target.txt"), link);
     // The symlink resolves outside root, so canonicalization catches it.
-    await expect(FileOps.read(link, [root])).rejects.toThrow(/approved scope/);
+    await expect(FileOps.read(link, [root], DEVICE_HOME)).rejects.toThrow(/approved scope/);
   });
 
   it("writes within scope and creates parent dirs", async () => {
     const dir = tempDir();
     const target = path.join(dir, "nested/deep/out.txt");
-    await FileOps.write(target, Buffer.from("hi"), [dir]);
+    await FileOps.write(target, Buffer.from("hi"), [dir], DEVICE_HOME);
     expect(fs.readFileSync(target, "utf8")).toBe("hi");
   });
 
@@ -77,13 +127,13 @@ describe("FileOps bounds", () => {
     const fd = fs.openSync(big, "w");
     fs.ftruncateSync(fd, MAX_FILE_BYTES + 1);
     fs.closeSync(fd);
-    await expect(FileOps.read(big, [dir])).rejects.toThrow(/single-call limit/);
+    await expect(FileOps.read(big, [dir], DEVICE_HOME)).rejects.toThrow(/single-call limit/);
   });
 
   it("refuses a write over the single-call size ceiling", async () => {
     const dir = tempDir();
     await expect(
-      FileOps.write(path.join(dir, "big.bin"), Buffer.alloc(MAX_FILE_BYTES + 1), [dir]),
+      FileOps.write(path.join(dir, "big.bin"), Buffer.alloc(MAX_FILE_BYTES + 1), [dir], DEVICE_HOME),
     ).rejects.toThrow(/single-call limit/);
     expect(fs.existsSync(path.join(dir, "big.bin"))).toBe(false);
   });
