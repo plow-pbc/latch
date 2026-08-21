@@ -56,11 +56,11 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
     before the last `TYPED_CHARS` is assigned and the tail arrives as one key
     event per character, with `_type_value` owning which nodes and which values
     that holds for, and why the rest are assigned. Upstream's `el.fill()` sets
-    `.value` and fires a single `input`,
-    so a password box goes from empty to complete with no keydown/keypress/keyup
-    at all, which is what interrogation-style bot defenses (Kasada, Akamai Bot
-    Manager) sample — Costco's sign-in answered every credential submit with a
-    429 (issue #86). The split keeps a long value inside the relay budget.
+    `.value` and fires a single `input`, so a password box goes from empty to
+    complete with no keydown/keypress/keyup at all, which is what
+    interrogation-style bot defenses (Kasada, Akamai Bot Manager) sample —
+    Costco's sign-in answered every credential submit with a 429 (issue #86).
+    The split keeps a long value inside the relay budget.
   - **`humanize` is deliberately NOT passed, and the pointer still teleports.**
     This is the other half of #86 and it does not have a fix here. Camoufox's
     humanized cursor hangs this browser build (`official/152.0.4-beta.28`,
