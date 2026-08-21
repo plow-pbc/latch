@@ -805,11 +805,9 @@ export class BrowserSessions {
     }
     // `knobs` is what the agent had to ask for, so the next look at a session
     // that went wrong can count it the way this one counted `eval`.
-    // A field that will not hold the value. Reached before anything is typed —
-    // the ordinary case, which leaves the page as it was found — or from a cap
-    // the page moved under a fill in progress, where the browser clears what it
-    // wrote. The message claims nothing about what the field holds, because
-    // those two leave different things in it.
+    // A field that will not hold the value. The message claims nothing about
+    // what the field is left holding — that differs by which path refused, and
+    // `_FieldTooShort` in server.py is where the difference is written down.
     // Thrown rather than given a refusal kind of its own: the catch around this
     // call already writes the message into `browser_command`, which is what
     // makes the owner's log show a refused fill differently from one that
@@ -1079,10 +1077,8 @@ export class BrowserSessions {
             `Screenshot the page and locate the field again.`,
         };
       }
-      // A field that will not hold the whole value. Refused before anything is
-      // typed in the ordinary case; when the page moves the cap mid-fill the
-      // browser clears what it wrote first, so neither leaves the value in the
-      // page. Its own branch because
+      // A field that will not hold the whole value; what the page is left
+      // holding is on `_FieldTooShort` in server.py. Its own branch because
       // the catch below cannot forward the browser's text, and "the field may
       // be the wrong one — check the selector" is precisely wrong here: the
       // selector was right and re-issuing the same fill will fail forever. The

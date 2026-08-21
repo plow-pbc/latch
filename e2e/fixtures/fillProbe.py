@@ -60,7 +60,7 @@ class Handle:
                  document_url="https://pizza.example/login", value="", partial_fill=False,
                  document_token="doc-1", type_fails=False, typeable="single-line",
                  drops_keys=False, assign_fails=False, max_length=-1,
-                 max_length_after=None):
+                 max_length_after=None, clear_fails=False):
         self.trace = trace
         # What the field itself will hold. -1 is "no cap", which is what an
         # element without a maxlength reports.
@@ -87,6 +87,9 @@ class Handle:
         # What the field reports once it has taken keys, when that differs --
         # a card-number input lowers its cap the moment the brand is known.
         self.max_length_after = max_length_after
+        # The node the page detached or froze along with moving the cap: the
+        # clear that follows a mid-fill refusal cannot land on it.
+        self.clear_fails = clear_fails
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
         self.assign_fails = assign_fails
@@ -164,6 +167,12 @@ class Handle:
         A node that has gone away fails HERE, which is the point of doing it
         first: nothing is typed into a field nobody can find.
         """
+        # Only the clear that FOLLOWS the keys: for a value shorter than
+        # TYPED_CHARS the head assignment is an empty fill too, and it runs
+        # before anything is typed.
+        if self.clear_fails and value == "" and self.typed is not None:
+            self.trace.append("handle.clear-failed")
+            raise RuntimeError("Element is not attached to the DOM")
         if self.detach_before_fill:
             self.trace.append("handle.assign-failed")
             raise RuntimeError("Element is not attached to the DOM")
@@ -247,7 +256,8 @@ class Frame:
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
                  typeable="single-line", drops_keys=False, assign_fails=False,
-                 hides=False, detached=False, max_length=-1, max_length_after=None):
+                 hides=False, detached=False, max_length=-1, max_length_after=None,
+                 clear_fails=False):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -257,7 +267,7 @@ class Frame:
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
                              partial_fill, document_token, type_fails, typeable, drops_keys,
-                             assign_fails, max_length, max_length_after)
+                             assign_fails, max_length, max_length_after, clear_fails)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -318,13 +328,14 @@ class Page:
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
         document_token="doc-1", type_fails=False, typeable="single-line", drops_keys=False,
-        assign_fails=False, max_length=-1, max_length_after=None):
+        assign_fails=False, max_length=-1, max_length_after=None, clear_fails=False):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
                   type_fails=type_fails, typeable=typeable, drops_keys=drops_keys,
                   assign_fails=assign_fails,
-                  max_length=max_length, max_length_after=max_length_after)
+                  max_length=max_length, max_length_after=max_length_after,
+                  clear_fails=clear_fails)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -617,6 +628,12 @@ def main() -> int:
                                        max_length=20, max_length_after=4),
         "cap_lowered_keys_landed_masked": run(server, {**base, "mask": True, "value": "hunter2"},
                                               max_length=20, max_length_after=4),
+        # The clear cannot land either -- the page that moved the cap detached
+        # the node. The cap answer still has to come back: replaced by the
+        # clear's own failure it would fall to "check the selector", the message
+        # this path exists to stop producing.
+        "cap_lowered_clear_fails": run(server, {**base, "value": "hunter2"},
+                                       max_length=20, max_length_after=4, clear_fails=True),
         # maxlength="0" is valid HTML and holds nothing. -1 is the only value
         # that means uncapped, so 0 must refuse rather than read as "no cap".
         "zero_cap": run(server, {**base, "value": "x"}, max_length=0),

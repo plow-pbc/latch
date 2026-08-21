@@ -344,7 +344,24 @@ def _utf16_units(value):
 
 
 class _FieldTooShort(RuntimeError):
-    """The field will not hold the value. Carries the cap so the caller can say so."""
+    """The field will not hold the value. Carries the cap so the caller can say so.
+
+    WHAT THE PAGE IS LEFT HOLDING, stated here because it differs by path and
+    every site that answers this refusal needs it:
+
+    - Refused before the node is touched (the ordinary case, and the two
+      assign-whole sites that run before anything is written): the field still
+      holds whatever it held -- a prefilled value, a prior fill, the owner's own
+      typing.
+    - Refused by the repair that follows dropped keys, when the page moved the
+      cap under a fill already in progress: the head assignment has already
+      destroyed what was there and the keys left a prefix of the value, so that
+      site clears the field. Best effort -- a node the page detached or froze
+      may keep the prefix, and this refusal still comes back rather than being
+      replaced by the clear's own failure.
+
+    So no message about this refusal may claim what the field contains.
+    """
 
     def __init__(self, cap):
         super().__init__("field holds %d characters and the value is longer" % cap)
@@ -873,12 +890,9 @@ class Session:
             # while an assignment is not clipped at all -- `maxlength`
             # constrains typing, and `tooLong` only reads true once a user edit
             # sets the dirty value flag. Both submit something other than what
-            # was asked for. Refused BEFORE the node is touched, so the ordinary
-            # case leaves the page exactly as it was found. A cap the page moves
-            # mid-fill is refused later, by the assignment that repairs dropped
-            # keys -- that one clears the field first, so neither path ends with
-            # a partial value in the page. Lengths only: the value reaches
-            # neither this message nor the audit log.
+            # was asked for, and refused before the node is touched. What each
+            # path leaves in the page is on `_FieldTooShort`. Lengths only: the
+            # value reaches neither this message nor the audit log.
             # A cap refusal is one answer however it is reached: before the
             # node is touched, or from an assignment inside `_type_value` after
             # the page moved the cap under a fill in progress. Answered as a

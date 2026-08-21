@@ -680,6 +680,19 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(probed[scenario].ledgered).toBe(false);
   });
 
+  it("keeps the cap answer when the field cannot even be cleared", () => {
+    // The page that moved the cap can detach the node along with it. The
+    // clear's own failure must not replace the refusal on the way out — the
+    // caller would lose the cap and fall back on "check the selector", which is
+    // the message this whole path exists to stop producing.
+    expect(probed.cap_lowered_clear_fails.result).toEqual({
+      ok: false, mask: "too_long", cap: 4, frame: 0,
+    });
+    // And the clipped prefix really is still there: the honest outcome, and the
+    // reason no message about this refusal claims what the field holds.
+    expect(probed.cap_lowered_clear_fails.node_len).toBe(4);
+  });
+
   it("still repairs dropped keys when the cap did not move", () => {
     // The contrast that keeps the refusal from swallowing the repair path:
     // same dropped keys, same assignment, cap unchanged — it lands.
