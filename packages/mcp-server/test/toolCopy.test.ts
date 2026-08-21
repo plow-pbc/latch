@@ -326,29 +326,39 @@ describe("what the agent-facing copy must and must not say", () => {
   });
 
   /**
-   * Pins the SEAM, not the words. Grepping the instructions for /mdfind/ was
-   * the obvious assertion and it stopped meaning anything the moment one
-   * constant fed both strings: dropping `${MACOS_TOOLING}` from
-   * plow_run_command's description — the plausible edit when the mach-lookup
-   * TODO forces a rewrite — would have shipped green while the tool that
-   * actually runs the commands named no tooling at all.
-   */
-  /**
    * Seam, not words. The live-web rule had three independent wordings and a
    * regex guard to keep them in step; one constant with three consumers means
    * the assertion is that they still consume it.
    */
   it("all three surfaces interpolate the one live-web routing sentence", async () => {
-    // The mechanism lives here now, so this is where it is pinned.
-    expect(LIVE_WEB_ROUTING).toMatch(/datacenter address/i);
     expect(SERVER_INSTRUCTIONS).toContain(LIVE_WEB_ROUTING);
     expect((await descriptions(makeServer())).plow_browser_open).toContain(LIVE_WEB_ROUTING);
     expect(BROWSING_SKILL.description).toContain(LIVE_WEB_ROUTING);
   });
 
+  /**
+   * Pins the SEAM, not the words. Grepping the instructions for /mdfind/ was
+   * the obvious assertion and it stopped meaning anything the moment one
+   * constant fed both strings: dropping `${MACOS_TOOLING}` from
+   * plow_run_command's description — the plausible edit when the mach-lookup
+   * TODO forces a rewrite — would ship green while the tool that actually runs
+   * the commands named no tooling at all.
+   */
   it("both copy homes interpolate the one tooling list", async () => {
     expect(SERVER_INSTRUCTIONS).toContain(MACOS_TOOLING);
     expect((await descriptions(makeServer())).plow_run_command).toContain(MACOS_TOOLING);
+  });
+
+  /**
+   * Content, not seam. Every clause is a reason the agent's own fetch cannot
+   * answer a live-web question, and each is separately droppable — pinning one
+   * of four leaves the other three free to vanish.
+   */
+  it("the routing sentence keeps every reason it exists for", () => {
+    expect(LIVE_WEB_ROUTING).toMatch(/datacenter address/i);
+    expect(LIVE_WEB_ROUTING).toMatch(/renders JavaScript/i);
+    expect(LIVE_WEB_ROUTING).toMatch(/copy of their own profile/i);
+    expect(LIVE_WEB_ROUTING).toMatch(/already signed in/i);
   });
 
   /**
