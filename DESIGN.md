@@ -316,18 +316,18 @@ signs out with the clone. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an
-unbounded rule. Instead one intent opens a **session** whose capability
-is the enforceable bound — a `browser` capability with an origin allowlist
+unbounded rule. Instead one intent opens a **session** whose capability is
+the enforceable bound — a `browser` capability with an origin allowlist
 (`origins: ["dominos.com", "*.dominos.com"]`, explicit patterns, no PSL
 logic) and optionally `credential` capabilities. Subsequent commands ride the
 session handle over the `browser_command` RPC with no new intent. The handle
 says WHICH browser, not whose: unlike `get_output`, which is checked against
 the agent that started the job, this Mac is one person's and every browser on
-it is theirs, so whoever holds a handle can drive that browser. Widening scope mid-session (a checkout popup
-lands on a payment provider) is a new intent with the identical capability
-shape, so always-allow rules are meaningful and reusable; a fully-ruled task
-runs unattended end to end (the e2e suite asserts a second session is decided
-entirely by `source: "rule"`).
+it is theirs, so whoever holds a handle can drive that browser. Widening
+scope mid-session (a checkout popup lands on a payment provider) is a new
+intent with the identical capability shape, so always-allow rules are
+meaningful and reusable; a fully-ruled task runs unattended end to end (the
+e2e suite asserts a second session is decided entirely by `source: "rule"`).
 
 **Enforcement** lives in `packages/device-core/src/browser/browserSessions.ts`
 — trusted TS between the agent and Playwright, because seatbelt cannot cage a
