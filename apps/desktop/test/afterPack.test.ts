@@ -25,8 +25,12 @@ const PAYLOADS = [
   "vault-server",
 ];
 
-/** The two that keep their binaries an arch level down, not at the top. */
-const NESTED = ["vault-cli", "vault-server"];
+/** The ones that keep their binaries an arch level down, not at the top.
+ * Derived, so renaming a payload cannot silently empty this column. */
+const NESTED = PAYLOADS.filter((p) => p.startsWith("vault-"));
+
+/** How a payload can come up carrying no file. A typo is a compile error. */
+type Shape = "absent" | "empty" | "arch";
 
 const contextFor = (appOutDir: string) => ({
   appOutDir,
@@ -89,10 +93,10 @@ describe("the packaging hook refuses before it signs", () => {
   // carrying no file, it is the same refusal, named the same way.
   it.each(
     PAYLOADS.flatMap((payload) => [
-      { payload, how: "left out", shape: "absent" },
-      { payload, how: "packed empty", shape: "empty" },
+      { payload, how: "left out", shape: "absent" as Shape },
+      { payload, how: "packed empty", shape: "empty" as Shape },
       ...(NESTED.includes(payload)
-        ? [{ payload, how: "packed with an empty arch dir", shape: "arch" }]
+        ? [{ payload, how: "packed with an empty arch dir", shape: "arch" as Shape }]
         : []),
     ]),
   )("names $payload when it was $how", async ({ payload, shape }) => {
