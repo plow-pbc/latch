@@ -49,7 +49,7 @@ migration and are now **frozen as the protocol spec** — the Swift generator ha
 been removed. Six remain, and the TS suites assert against them: canonical JSON
 encoding, identity, the intent object and the grant's signing bytes (the intent
 carries no signature of its own), rule-key normalization, path canonicalization,
-and SBPL profiles — with the two carve-outs under **Signatures** below. Any
+and SBPL profiles — see the carve-outs under **Signatures** below. Any
 change that alters these bytes is a deliberate protocol break — update the
 fixtures on purpose and note it.
 
