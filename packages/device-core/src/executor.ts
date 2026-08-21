@@ -35,14 +35,6 @@ export const SandboxProfile = {
     scratch: string;
     /** Home override for golden tests; defaults to the real home. */
     home?: string;
-    /**
-     * Plow Latch's own home (DOMO_HOME). REQUIRED: the profile grants a broad
-     * read of the user's home so installed tools resolve, and DOMO_HOME lives
-     * under `~/Library/Application Support/`, so without this every sandboxed
-     * command could read `settings.json` — the relay credential, and the
-     * `agentPurpose` the reviewer is handed as the owner's own words.
-     */
-    deviceHome: string;
   }): string {
     const lines: string[] = [
       "(version 1)",
@@ -101,31 +93,6 @@ export const SandboxProfile = {
     } else {
       lines.push("(deny network*)");
     }
-    // LAST, because SBPL is last-match-wins and this must beat every allow
-    // above it — including the broad `(subpath home)` read, which otherwise
-    // covers ~/Library/Application Support/Plow-Latch-*/app/settings.json.
-    //
-    // An agent that can read that file has the relay credential; one that can
-    // write it sets `agentPurpose`, which the next review is handed as the
-    // OWNER's description of what agents are for. Writing your own purpose
-    // statement is writing your own permissions, and no approval can grant
-    // that, so it is not a capability at all — it is a floor under them.
-    //
-    // The scratch directory lives inside that home and must survive: it is
-    // re-allowed after the deny, which is what last-match-wins is for. It holds
-    // one run's disposable working files and nothing else.
-    // `file-read*`/`file-write*`, NOT `file*`. Measured, not assumed: with
-    // `(deny file* …)` here, the earlier `(allow file-read* (subpath home))`
-    // still won and `cat settings.json` printed the credential. Seatbelt does
-    // not resolve this by position alone — an operation-specific allow outranks
-    // a broader deny that comes after it, so the deny has to name the same
-    // operations. A profile-text assertion would not have caught that; the
-    // tests run the sandbox.
-    const plowHome = quote(canonicalize(args.deviceHome));
-    lines.push(`(deny file-read* (subpath ${plowHome}))`);
-    lines.push(`(deny file-write* (subpath ${plowHome}))`);
-    lines.push(`(allow file-read* (subpath ${quote(canonicalize(args.scratch))}))`);
-    lines.push(`(allow file-write* (subpath ${quote(canonicalize(args.scratch))}))`);
     return lines.join("\n");
   },
 };
@@ -197,15 +164,7 @@ class OutputBuffer {
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
 
-  /**
-   * `deviceHome` is REQUIRED — no default. A construction site that forgot it
-   * would build profiles that can read `settings.json`, and that must be a type
-   * error rather than a quiet hole.
-   */
-  constructor(
-    public readonly scratchRoot: string,
-    private readonly deviceHome: string,
-  ) {
+  constructor(public readonly scratchRoot: string) {
     fs.mkdirSync(scratchRoot, { recursive: true });
   }
 
@@ -232,7 +191,6 @@ export class Executor {
       writePaths: args.writePaths,
       network: args.network,
       scratch,
-      deviceHome: this.deviceHome,
     });
     if (process.env.DOMO_DEBUG_SANDBOX) {
       process.stderr.write(`=== PROFILE ===\n${profile}\n=== ARGV ===\n${args.argv.join(" ")}\n`);

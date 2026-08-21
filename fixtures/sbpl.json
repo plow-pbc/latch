@@ -1,42 +1,43 @@
 {
-  "canonicalHome": "/Users/deutschj",
-  "cases": [
+  "canonicalHome" : "\/Users\/deutschj",
+  "cases" : [
     {
-      "name": "read-write-no-network",
-      "network": false,
-      "profile": "(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n(allow process-info*)\n(allow signal (target children))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read-metadata)\n(allow file-ioctl)\n(allow file-read* (subpath \"/usr\") (subpath \"/bin\") (subpath \"/sbin\") (subpath \"/System\") (subpath \"/Library\") (subpath \"/opt\") (subpath \"/private/etc\") (subpath \"/private/var/db\") (subpath \"/private/var/select\") (literal \"/\") (literal \"/private\") (literal \"/private/var\") (literal \"/private/tmp\") (literal \"/tmp\") (literal \"/var\") (literal \"/etc\") (literal \"/Users\") (literal \"/dev/null\") (literal \"/dev/urandom\") (literal \"/dev/random\") (literal \"/dev/zero\") (literal \"/dev/tty\") (subpath \"/dev/fd\"))\n(allow file-write-data (literal \"/dev/null\") (literal \"/dev/tty\") (subpath \"/dev/fd\"))\n(allow file-read* (subpath \"/Users/deutschj\"))\n(allow file-write* (subpath \"/domo-fixture-nonexistent/scratch/run1\"))\n(allow file-read* (subpath \"/domo-fixture-nonexistent/scratch/run1\"))\n(allow file-write* (subpath \"/domo-fixture-nonexistent/out\"))\n(allow file-read* (subpath \"/domo-fixture-nonexistent/out\"))\n(allow file-write* (subpath \"/Users/deutschj/Library/Caches\"))\n(allow file-read* (subpath \"/Users/deutschj/Library/Caches\"))\n(allow file-write* (subpath \"/Users/deutschj/.cache\"))\n(allow file-read* (subpath \"/Users/deutschj/.cache\"))\n(allow file-write* (subpath \"/Users/deutschj/.config\"))\n(allow file-read* (subpath \"/Users/deutschj/.config\"))\n(allow file-write* (subpath \"/Users/deutschj/.local/state\"))\n(allow file-read* (subpath \"/Users/deutschj/.local/state\"))\n(allow file-write* (subpath \"/Users/deutschj/.npm\"))\n(allow file-read* (subpath \"/Users/deutschj/.npm\"))\n(allow file-read* (subpath \"/domo-fixture-nonexistent/in\"))\n(deny network*)\n(deny file-read* (subpath \"/domo-fixture-nonexistent/plow-home\"))\n(deny file-write* (subpath \"/domo-fixture-nonexistent/plow-home\"))\n(allow file-read* (subpath \"/domo-fixture-nonexistent/scratch/run1\"))\n(allow file-write* (subpath \"/domo-fixture-nonexistent/scratch/run1\"))",
-      "readPaths": [
-        "/domo-fixture-nonexistent/in"
+      "name" : "read-write-no-network",
+      "network" : false,
+      "profile" : "(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n(allow process-info*)\n(allow signal (target children))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read-metadata)\n(allow file-ioctl)\n(allow file-read* (subpath \"\/usr\") (subpath \"\/bin\") (subpath \"\/sbin\") (subpath \"\/System\") (subpath \"\/Library\") (subpath \"\/opt\") (subpath \"\/private\/etc\") (subpath \"\/private\/var\/db\") (subpath \"\/private\/var\/select\") (literal \"\/\") (literal \"\/private\") (literal \"\/private\/var\") (literal \"\/private\/tmp\") (literal \"\/tmp\") (literal \"\/var\") (literal \"\/etc\") (literal \"\/Users\") (literal \"\/dev\/null\") (literal \"\/dev\/urandom\") (literal \"\/dev\/random\") (literal \"\/dev\/zero\") (literal \"\/dev\/tty\") (subpath \"\/dev\/fd\"))\n(allow file-write-data (literal \"\/dev\/null\") (literal \"\/dev\/tty\") (subpath \"\/dev\/fd\"))\n(allow file-read* (subpath \"\/Users\/deutschj\"))\n(allow file-write* (subpath \"\/domo-fixture-nonexistent\/scratch\/run1\"))\n(allow file-read* (subpath \"\/domo-fixture-nonexistent\/scratch\/run1\"))\n(allow file-write* (subpath \"\/domo-fixture-nonexistent\/out\"))\n(allow file-read* (subpath \"\/domo-fixture-nonexistent\/out\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/Library\/Caches\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/Library\/Caches\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.cache\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.cache\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.config\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.config\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.local\/state\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.local\/state\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.npm\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.npm\"))\n(allow file-read* (subpath \"\/domo-fixture-nonexistent\/in\"))\n(deny network*)",
+      "readPaths" : [
+        "\/domo-fixture-nonexistent\/in"
       ],
-      "scratch": "/domo-fixture-nonexistent/scratch/run1",
-      "writePaths": [
-        "/domo-fixture-nonexistent/out"
-      ],
-      "deviceHome": "/domo-fixture-nonexistent/plow-home"
+      "scratch" : "\/domo-fixture-nonexistent\/scratch\/run1",
+      "writePaths" : [
+        "\/domo-fixture-nonexistent\/out"
+      ]
     },
     {
-      "name": "network-allowed",
-      "network": true,
-      "profile": "(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n(allow process-info*)\n(allow signal (target children))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read-metadata)\n(allow file-ioctl)\n(allow file-read* (subpath \"/usr\") (subpath \"/bin\") (subpath \"/sbin\") (subpath \"/System\") (subpath \"/Library\") (subpath \"/opt\") (subpath \"/private/etc\") (subpath \"/private/var/db\") (subpath \"/private/var/select\") (literal \"/\") (literal \"/private\") (literal \"/private/var\") (literal \"/private/tmp\") (literal \"/tmp\") (literal \"/var\") (literal \"/etc\") (literal \"/Users\") (literal \"/dev/null\") (literal \"/dev/urandom\") (literal \"/dev/random\") (literal \"/dev/zero\") (literal \"/dev/tty\") (subpath \"/dev/fd\"))\n(allow file-write-data (literal \"/dev/null\") (literal \"/dev/tty\") (subpath \"/dev/fd\"))\n(allow file-read* (subpath \"/Users/deutschj\"))\n(allow file-write* (subpath \"/domo-fixture-nonexistent/scratch/run2\"))\n(allow file-read* (subpath \"/domo-fixture-nonexistent/scratch/run2\"))\n(allow file-write* (subpath \"/Users/deutschj/Library/Caches\"))\n(allow file-read* (subpath \"/Users/deutschj/Library/Caches\"))\n(allow file-write* (subpath \"/Users/deutschj/.cache\"))\n(allow file-read* (subpath \"/Users/deutschj/.cache\"))\n(allow file-write* (subpath \"/Users/deutschj/.config\"))\n(allow file-read* (subpath \"/Users/deutschj/.config\"))\n(allow file-write* (subpath \"/Users/deutschj/.local/state\"))\n(allow file-read* (subpath \"/Users/deutschj/.local/state\"))\n(allow file-write* (subpath \"/Users/deutschj/.npm\"))\n(allow file-read* (subpath \"/Users/deutschj/.npm\"))\n(allow network*)\n(allow system-socket)\n(deny file-read* (subpath \"/domo-fixture-nonexistent/plow-home\"))\n(deny file-write* (subpath \"/domo-fixture-nonexistent/plow-home\"))\n(allow file-read* (subpath \"/domo-fixture-nonexistent/scratch/run2\"))\n(allow file-write* (subpath \"/domo-fixture-nonexistent/scratch/run2\"))",
-      "readPaths": [],
-      "scratch": "/domo-fixture-nonexistent/scratch/run2",
-      "writePaths": [],
-      "deviceHome": "/domo-fixture-nonexistent/plow-home"
+      "name" : "network-allowed",
+      "network" : true,
+      "profile" : "(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n(allow process-info*)\n(allow signal (target children))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read-metadata)\n(allow file-ioctl)\n(allow file-read* (subpath \"\/usr\") (subpath \"\/bin\") (subpath \"\/sbin\") (subpath \"\/System\") (subpath \"\/Library\") (subpath \"\/opt\") (subpath \"\/private\/etc\") (subpath \"\/private\/var\/db\") (subpath \"\/private\/var\/select\") (literal \"\/\") (literal \"\/private\") (literal \"\/private\/var\") (literal \"\/private\/tmp\") (literal \"\/tmp\") (literal \"\/var\") (literal \"\/etc\") (literal \"\/Users\") (literal \"\/dev\/null\") (literal \"\/dev\/urandom\") (literal \"\/dev\/random\") (literal \"\/dev\/zero\") (literal \"\/dev\/tty\") (subpath \"\/dev\/fd\"))\n(allow file-write-data (literal \"\/dev\/null\") (literal \"\/dev\/tty\") (subpath \"\/dev\/fd\"))\n(allow file-read* (subpath \"\/Users\/deutschj\"))\n(allow file-write* (subpath \"\/domo-fixture-nonexistent\/scratch\/run2\"))\n(allow file-read* (subpath \"\/domo-fixture-nonexistent\/scratch\/run2\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/Library\/Caches\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/Library\/Caches\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.cache\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.cache\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.config\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.config\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.local\/state\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.local\/state\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.npm\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.npm\"))\n(allow network*)\n(allow system-socket)",
+      "readPaths" : [
+
+      ],
+      "scratch" : "\/domo-fixture-nonexistent\/scratch\/run2",
+      "writePaths" : [
+
+      ]
     },
     {
-      "name": "tmp-paths",
-      "network": false,
-      "profile": "(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n(allow process-info*)\n(allow signal (target children))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read-metadata)\n(allow file-ioctl)\n(allow file-read* (subpath \"/usr\") (subpath \"/bin\") (subpath \"/sbin\") (subpath \"/System\") (subpath \"/Library\") (subpath \"/opt\") (subpath \"/private/etc\") (subpath \"/private/var/db\") (subpath \"/private/var/select\") (literal \"/\") (literal \"/private\") (literal \"/private/var\") (literal \"/private/tmp\") (literal \"/tmp\") (literal \"/var\") (literal \"/etc\") (literal \"/Users\") (literal \"/dev/null\") (literal \"/dev/urandom\") (literal \"/dev/random\") (literal \"/dev/zero\") (literal \"/dev/tty\") (subpath \"/dev/fd\"))\n(allow file-write-data (literal \"/dev/null\") (literal \"/dev/tty\") (subpath \"/dev/fd\"))\n(allow file-read* (subpath \"/Users/deutschj\"))\n(allow file-write* (subpath \"/private/tmp/domo-sbpl-fixture/scratch\"))\n(allow file-read* (subpath \"/private/tmp/domo-sbpl-fixture/scratch\"))\n(allow file-write* (subpath \"/private/tmp/domo-sbpl-fixture/out\"))\n(allow file-read* (subpath \"/private/tmp/domo-sbpl-fixture/out\"))\n(allow file-write* (subpath \"/Users/deutschj/Library/Caches\"))\n(allow file-read* (subpath \"/Users/deutschj/Library/Caches\"))\n(allow file-write* (subpath \"/Users/deutschj/.cache\"))\n(allow file-read* (subpath \"/Users/deutschj/.cache\"))\n(allow file-write* (subpath \"/Users/deutschj/.config\"))\n(allow file-read* (subpath \"/Users/deutschj/.config\"))\n(allow file-write* (subpath \"/Users/deutschj/.local/state\"))\n(allow file-read* (subpath \"/Users/deutschj/.local/state\"))\n(allow file-write* (subpath \"/Users/deutschj/.npm\"))\n(allow file-read* (subpath \"/Users/deutschj/.npm\"))\n(allow file-read* (subpath \"/private/tmp/domo-sbpl-fixture\"))\n(deny network*)\n(deny file-read* (subpath \"/domo-fixture-nonexistent/plow-home\"))\n(deny file-write* (subpath \"/domo-fixture-nonexistent/plow-home\"))\n(allow file-read* (subpath \"/tmp/domo-sbpl-fixture/scratch\"))\n(allow file-write* (subpath \"/tmp/domo-sbpl-fixture/scratch\"))",
-      "readPaths": [
-        "/tmp/domo-sbpl-fixture"
+      "name" : "tmp-paths",
+      "network" : false,
+      "profile" : "(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n(allow process-info*)\n(allow signal (target children))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read-metadata)\n(allow file-ioctl)\n(allow file-read* (subpath \"\/usr\") (subpath \"\/bin\") (subpath \"\/sbin\") (subpath \"\/System\") (subpath \"\/Library\") (subpath \"\/opt\") (subpath \"\/private\/etc\") (subpath \"\/private\/var\/db\") (subpath \"\/private\/var\/select\") (literal \"\/\") (literal \"\/private\") (literal \"\/private\/var\") (literal \"\/private\/tmp\") (literal \"\/tmp\") (literal \"\/var\") (literal \"\/etc\") (literal \"\/Users\") (literal \"\/dev\/null\") (literal \"\/dev\/urandom\") (literal \"\/dev\/random\") (literal \"\/dev\/zero\") (literal \"\/dev\/tty\") (subpath \"\/dev\/fd\"))\n(allow file-write-data (literal \"\/dev\/null\") (literal \"\/dev\/tty\") (subpath \"\/dev\/fd\"))\n(allow file-read* (subpath \"\/Users\/deutschj\"))\n(allow file-write* (subpath \"\/private\/tmp\/domo-sbpl-fixture\/scratch\"))\n(allow file-read* (subpath \"\/private\/tmp\/domo-sbpl-fixture\/scratch\"))\n(allow file-write* (subpath \"\/private\/tmp\/domo-sbpl-fixture\/out\"))\n(allow file-read* (subpath \"\/private\/tmp\/domo-sbpl-fixture\/out\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/Library\/Caches\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/Library\/Caches\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.cache\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.cache\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.config\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.config\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.local\/state\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.local\/state\"))\n(allow file-write* (subpath \"\/Users\/deutschj\/.npm\"))\n(allow file-read* (subpath \"\/Users\/deutschj\/.npm\"))\n(allow file-read* (subpath \"\/private\/tmp\/domo-sbpl-fixture\"))\n(deny network*)",
+      "readPaths" : [
+        "\/tmp\/domo-sbpl-fixture"
       ],
-      "scratch": "/tmp/domo-sbpl-fixture/scratch",
-      "writePaths": [
-        "/tmp/domo-sbpl-fixture/out"
-      ],
-      "deviceHome": "/domo-fixture-nonexistent/plow-home"
+      "scratch" : "\/tmp\/domo-sbpl-fixture\/scratch",
+      "writePaths" : [
+        "\/tmp\/domo-sbpl-fixture\/out"
+      ]
     }
   ],
-  "home": "/Users/deutschj",
-  "note": "machine-dependent: regenerate with `swift run domo-vectors` on this machine  PROTOCOL BREAK 2026-08-21 (deliberate, tightening): every profile now ends with a deny of file-read*/file-write* on Plow Latch's own home (DOMO_HOME) followed by a re-allow of the run's scratch directory, which lives inside it. SBPL is last-match-wins, so the deny beats the broad (subpath home) read that previously exposed settings.json \u2014 the relay credential and the agentPurpose the reviewer reads as the owner's own words \u2014 to every sandboxed command."
+  "home" : "\/Users\/deutschj",
+  "note" : "machine-dependent: regenerate with `swift run domo-vectors` on this machine"
 }

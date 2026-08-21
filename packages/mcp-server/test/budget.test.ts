@@ -155,7 +155,7 @@ describe("scope resolution inside FileOps is async too", () => {
     fs.writeFileSync(file, "data");
 
     let done = false;
-    const read = FileOps.read(file, [dir], "/domo-nonexistent-device-home").then((buf) => {
+    const read = FileOps.read(file, [dir]).then((buf) => {
       done = true;
       return buf;
     });
