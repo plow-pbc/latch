@@ -140,12 +140,14 @@ export class DeviceAgent {
         this.audit.record(event, fields);
       this.browserConfig = {
         command: browserRuntime.serverCommand,
-        // Visible by default: the owner should be able to watch what is being
-        // done with their credentials. Set DOMO_BROWSER_HEADED=0 for headless,
-        // which is what the test tiers and any unattended run want. This is only
-        // the default — plow_browser_open carries the agent's per-session choice, so
-        // the owner can ask for the background (or to watch) in the moment.
-        headed: process.env.DOMO_BROWSER_HEADED !== "0",
+        // Hidden by default: a browser that takes over the screen is the
+        // exception, not the shipped behaviour — the test tiers and every
+        // unattended run want the background, and the audit log is what says
+        // what was done with the owner's credentials. Set DOMO_BROWSER_HEADED=1
+        // to get a window back for the whole app. This is only the default —
+        // plow_browser_open carries the agent's per-session choice, so the owner
+        // can ask to watch (or to hide it) in the moment.
+        headed: process.env.DOMO_BROWSER_HEADED === "1",
         env: browserRuntime.env,
         screenshotsDir: path.join(browserDir, "screenshots"),
         // Sessions run in here, each on a clone of the user's own profile

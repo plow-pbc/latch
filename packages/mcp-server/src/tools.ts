@@ -385,8 +385,8 @@ export const TOOLS: ToolSpec[] = [
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
       "permission to list the owner's vault item names (never values). The browser window is " +
-      "visible by default; pass headed:false only when the owner asked for it to run in the " +
-      "background. Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
+      "hidden by default; pass headed:true only when the owner asked to watch it run. " +
+      "Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
       "skill first.",
     inputSchema: {
       type: "object",
@@ -404,9 +404,9 @@ export const TOOLS: ToolSpec[] = [
         headed: {
           type: "boolean",
           description:
-            "Show the browser window so the owner can watch (default true). Pass false only " +
-            "when the owner asked to run it in the background — you see the same screenshots " +
-            "either way, they do not.",
+            "Show the browser window so the owner can watch (default false). Pass true only " +
+            "when the owner asked to watch it run — you see the same screenshots either way, " +
+            "they do not.",
         },
         goal: GOAL,
       },
@@ -421,13 +421,14 @@ export const TOOLS: ToolSpec[] = [
       if (a.get("credentials_metadata").bool === true) {
         capabilities.push({ kind: "credential", access: "metadata" });
       }
-      // The owner is about to approve a browser they may not see: say so in the
-      // line they read, and carry the choice as payload — it bounds nothing.
+      // The owner does not see the browser unless this session asks for a
+      // window: say when one is coming in the line they read, and carry the
+      // choice as payload — it bounds nothing.
       const headed = a.get("headed").bool;
       const response = await decideAndRun(
         ctx,
         progress,
-        `browse${headed === false ? " (hidden window)" : ""}: ${origins.join(", ")}`,
+        `browse${headed === true ? " (visible window)" : ""}: ${origins.join(", ")}`,
         a.get("goal").str ?? undefined,
         capabilities,
         headed === null ? null : { headed },

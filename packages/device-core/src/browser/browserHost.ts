@@ -184,7 +184,7 @@ export class BrowserHost {
    * non-deferrable action that would blow the relay's per-exchange ceiling.
    *
    * `headed` is the session's choice; a session that says nothing gets the app
-   * default back, so one agent's hidden window never becomes everybody's.
+   * default back, so one agent's window mode never becomes everybody's.
    * Camoufox fixes the window mode at launch, and this is the only caller, so
    * the mode is simply chosen for the next start — closing a session already
    * shut the previous browser down.
