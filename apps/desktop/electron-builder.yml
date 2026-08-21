@@ -7,12 +7,8 @@
 # the `domo` publish prefix below — it is baked into shipped bundles as
 # app-update.yml.
 #
-# No productName here: electron-builder falls back to the app's package.json
-# (`config.productName || metadata.productName || metadata.name`), and the
-# recipe runs it from apps/desktop, so the manifest names the packaged bundle.
-# It does NOT name a from-source run — main.ts overwrites app.name before ready
-# and restores it from resolveInstancePaths (src/paths.ts), which spells the
-# product itself.
+# No productName here: electron-builder falls back to the app's package.json,
+# and the recipe runs it from apps/desktop.
 appId: co.plow.domo-desktop
 
 # Hyphenated artifact names: these become S3 keys and feed URLs, where spaces
