@@ -12,7 +12,7 @@
 # recipe runs it from apps/desktop, so the manifest names the packaged bundle.
 # It does NOT name a from-source run — main.ts overwrites app.name before ready
 # and restores it from resolveInstancePaths (src/paths.ts), which spells the
-# product itself. A rename touches both.
+# product itself.
 appId: co.plow.domo-desktop
 
 # Hyphenated artifact names: these become S3 keys and feed URLs, where spaces
