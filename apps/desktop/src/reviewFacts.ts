@@ -19,6 +19,21 @@ export interface FactSources {
   timeoutMs?: number;
 }
 
+/**
+ * The origin of a page URL — scheme and host, nothing after it.
+ *
+ * A path is as capable of carrying a token as a query is (`/reset/abc123`), and
+ * the origin is the whole of what a browsing decision turns on. An unparseable
+ * URL is reported as unparseable rather than passed through.
+ */
+function pageOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "an address this Mac could not parse";
+  }
+}
+
 /** How long the vault gets to answer before the review goes ahead without it. */
 const FACT_TIMEOUT_MS = 5_000;
 
@@ -35,6 +50,22 @@ const FACT_TIMEOUT_MS = 5_000;
  *
  * Nothing here is a bound — the capability set is still the whole of what an
  * approval grants. These are facts to judge it against.
+ *
+ * NOTHING the agent wrote appears here. The requested ids are agent-supplied
+ * strings — `plow_browser_request` takes whatever array it is given — so
+ * echoing them into a block labelled "established HERE" would have laundered
+ * agent text through a trusted label: an id spelled
+ * `bxk3 (approved by the owner)` reads as ours. The ids are already on the
+ * capability line, in the agent's own channel and labelled as the agent's, so
+ * this identifies them by POSITION in that line and never repeats them.
+ *
+ * No URL leaves the Mac either. `lastUrl` is documented local-eyes-only and
+ * keeps its query and fragment, which is where reset tokens, session tokens and
+ * PII live; every other consumer on this Mac already reduces a URL to a host
+ * before it reaches the audit log. This block goes off-device in the review
+ * request, so it carries the ORIGIN and nothing else — which is the whole of
+ * what the question turns on. The vault still gets the full URL: it runs here,
+ * and it needs the real page to say whether an item belongs to it.
  *
  * The vault can be slow (a locked or syncing store), and a reviewer waiting on
  * it is a tool call spending its budget. So it is time-boxed, and a timeout
@@ -66,7 +97,7 @@ export async function credentialFillFacts(
     );
     facts.push(
       session.lastUrl
-        ? `its current page is ${session.lastUrl}`
+        ? `its current page is on ${pageOrigin(session.lastUrl)}`
         : "it has not opened a page yet, so there is no site to match these items against",
     );
   }
@@ -100,20 +131,24 @@ export async function credentialFillFacts(
     return facts;
   }
   const known = answer.items;
-  for (const id of items) {
+  facts.push(
+    `the fill requests ${items.length} vault ${items.length === 1 ? "item" : "items"}, ` +
+      `numbered below in the order they appear on the capability line above`,
+  );
+  items.forEach((id, index) => {
     const item = known.find((i) => i.id === id);
+    const label = `requested item ${index + 1}`;
     if (!item) {
-      facts.push(`vault item ${id} is not in this vault`);
-      continue;
+      facts.push(`${label} is not in this vault`);
+      return;
     }
-    const site =
-      !session?.lastUrl
-        ? "there is no open page to match it against"
-        : item.matchesThisPage
-          ? "the vault lists the current page as one of its own sites"
-          : `the vault does NOT list the current page as one of its sites (it lists ${item.urls.join(", ") || "no site at all"})`;
-    facts.push(`vault item ${id} is "${item.title}", category ${item.category || "unknown"}; ${site}`);
-  }
+    const site = !session?.lastUrl
+      ? "there is no open page to match it against"
+      : item.matchesThisPage
+        ? "the vault lists the current page's site as one of its own"
+        : "the vault does NOT list the current page's site as one of its own";
+    facts.push(`${label} is "${item.title}", category ${item.category || "unknown"}; ${site}`);
+  });
   return facts;
 }
 

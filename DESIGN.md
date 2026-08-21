@@ -162,10 +162,14 @@ Decisions: **Always allow / Allow once / Deny.**
   RESOLVED about the operation. A credential fill arrives as a list of opaque
   vault ids, and a reviewer asked whether to type `bxk3…` into a page nobody has
   described to it cannot answer. So the device establishes, at decision time,
-  the origins the live browser session already holds, the page it is on, each
-  item's title and category, and whether the vault considers that item to belong
-  to that page — from the session handle the tool call carried and the vault's
-  own answer, never from anything the agent said. These are facts to judge the
+  the origins the live browser session already holds, the ORIGIN of the page it
+  is on, each item's title and category, and whether the vault considers that
+  item to belong to that page — from the session handle the tool call carried
+  and the vault's own answer, never from anything the agent said. The requested
+  ids are agent-supplied strings, so they are identified by position on the
+  capability line rather than repeated into a block labelled as the device's;
+  and no full URL goes into a request that leaves the Mac, because a page URL
+  keeps its query and fragment and that is where tokens live. These are facts to judge the
   request against, never a bound: the capability set is still the whole of what
   an approval grants. The vault is time-boxed, and a vault that does not answer
   is reported as UNRESOLVED rather than left out, because a silence reads as

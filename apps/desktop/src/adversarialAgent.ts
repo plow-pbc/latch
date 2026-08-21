@@ -244,6 +244,9 @@ function buildPrompt(intent: Intent, deviceFacts: string[], humanAvailable: bool
   //
   // Still encoded, though device-composed: the values inside are vault titles
   // and page origins, and a title is whatever somebody typed into their vault.
+  // Nothing the AGENT wrote reaches this block — see `credentialFillFacts`,
+  // which identifies requested items by position rather than by the id it was
+  // handed, precisely so this label stays true.
   const facts = deviceFacts.map((f) => `  - ${encoded(f)}`).join("\n");
   return (
     `Operation to review:\n` +
