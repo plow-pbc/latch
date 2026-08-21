@@ -611,60 +611,42 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(masked.node_len).toBe(masked.asked_len);
   });
 
-  it("drops a break a single-line field could not hold, and still types the rest", () => {
-    // An <input> strips CR and LF in its value sanitization, so the break was
-    // never going to survive by any path. Normalizing it away up front is what
-    // lets the value still go in as real keys — and it is why no Enter can be
-    // sent at a form, rather than a branch that gave up the keystrokes to avoid
-    // sending one.
-    const run = probed.newline_single_line;
+  // How a line break is normalized, per kind, through the real Python fill path.
+  // One contract, so one table: a break survives where the node can hold one and
+  // is dropped where it cannot, CR and CRLF collapse to a single LF either way,
+  // and the rule applies to the TAIL, which is all that gets typed.
+  //
+  // Every row types. That is the point — the branch this replaced gave the
+  // keystrokes up whenever a break appeared, which is the one property issue #86
+  // exists for. `typed_has_cr` pins the ORDER: CR becomes LF before the strip,
+  // so a CR never reaches `type()`, which would send it as Enter and submit the
+  // form with half a credential in the field.
+  it.each([
+    {
+      what: "a break an input cannot hold is dropped, and the rest still typed",
+      scenario: "newline_single_line", typedLen: "onetwo".length,
+    },
+    {
+      what: "the same break spelled as CR, which must not reach the keys",
+      scenario: "cr_single_line", typedLen: "onetwo".length,
+    },
+    {
+      what: "a break a textarea holds as a character is kept",
+      scenario: "newline_multiline", typedLen: "one\ntwo".length,
+    },
+    {
+      what: "a CRLF becomes one break, not two Enters",
+      scenario: "crlf_multiline", typedLen: "one\ntwo".length,
+    },
+    {
+      what: "a break in the assigned head leaves the tail typed as it was",
+      scenario: "newline_outside_tail", typedLen: null,
+    },
+  ])("$what", ({ scenario, typedLen }) => {
+    const run = probed[scenario];
     expect(run.trace).toContain("handle.type");
     expect(run.typed_has_cr).toBe(false);
-    expect(run.typed_len).toBe("onetwo".length);
-    expect(run.result).toEqual({ ok: true, frame: 0 });
-  });
-
-  it("still types a newline into the one node that holds it as a character", () => {
-    // A textarea is why the predicate answers a kind rather than a boolean:
-    // there the newline IS the character the value is made of, so sending it
-    // through the keys is correct and the field must not lose them.
-    const run = probed.newline_multiline;
-    expect(run.trace).toContain("handle.type");
-    expect(run.typed_len).toBe(run.asked_len);
-    expect(run.result).toEqual({ ok: true, frame: 0 });
-  });
-
-  it("never sends Enter at a form, however the break was spelled", () => {
-    // The order is the whole property: CR becomes LF first, and the strip then
-    // removes it. Reversed, the CR would survive to `type()`, which sends it as
-    // Enter — submitting the form with half a credential in the field.
-    const run = probed.cr_single_line;
-    expect(run.trace).toContain("handle.type");
-    expect(run.typed_has_cr).toBe(false);
-    expect(run.typed_len).toBe("onetwo".length);
-    expect(run.result).toEqual({ ok: true, frame: 0 });
-  });
-
-  it("types the tail of a long value whose newline is in the assigned head", () => {
-    // The rule is about what gets TYPED, which is the tail alone. Widening it to
-    // the whole value would send every long value carrying an early newline back
-    // to assignment, and the field would end on no keys at all — the one
-    // property issue #86 exists for.
-    const run = probed.newline_outside_tail;
-    expect(run.trace).toContain("handle.type");
-    expect(run.typed_len).toBe(probed.constants.typed_chars);
-    expect(run.result).toEqual({ ok: true, frame: 0 });
-  });
-
-  it("presses Enter once for a CRLF, and compares against what the node will hold", () => {
-    // `type()` sends CR and LF alike as Enter, so an un-normalized CRLF would
-    // press it twice where a textarea holds one break — and the read-back could
-    // then never be a prefix of what was asked, which switches the dropped-keys
-    // repair off for the whole fill. The tail is what the node will hold.
-    const run = probed.crlf_multiline;
-    expect(run.trace).toContain("handle.type");
-    expect(run.typed_has_cr).toBe(false);
-    expect(run.typed_len).toBe("one\ntwo".length);
+    expect(run.typed_len).toBe(typedLen ?? probed.constants.typed_chars);
     expect(run.result).toEqual({ ok: true, frame: 0 });
   });
 
@@ -1292,15 +1274,16 @@ describe("which nodes take typing", () => {
     // The attribute is case-insensitive and the property is not: ordinary
     // markup where the two disagree on more than presence.
     { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), kind: "single-line" },
-    // The one node that holds a newline as a character, and the only reason
-    // this predicate answers a kind rather than a boolean.
+    // The nodes that can hold a line break — a textarea as a character, an
+    // editing host as markup — which is the only reason this predicate answers
+    // a kind rather than a boolean. An <input> is the one that cannot.
     { what: "a textarea", el: textarea(), kind: "multiline" },
-    { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), kind: "single-line" },
-    { what: "a div marked contenteditable=true", el: host("DIV", "true"), kind: "single-line" },
+    { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), kind: "multiline" },
+    { what: "a div marked contenteditable=true", el: host("DIV", "true"), kind: "multiline" },
     // The attribute is ASCII case-insensitive; capitalised markup is ordinary.
-    { what: "a div marked contenteditable=TRUE", el: host("DIV", "TRUE"), kind: "single-line" },
-    { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), kind: "single-line" },
-    { what: "a custom element that carries the attribute", el: host("X-EDITOR"), kind: "single-line" },
+    { what: "a div marked contenteditable=TRUE", el: host("DIV", "TRUE"), kind: "multiline" },
+    { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), kind: "multiline" },
+    { what: "a custom element that carries the attribute", el: host("X-EDITOR"), kind: "multiline" },
     { what: "a checkbox", el: input("checkbox"), kind: "" },
     { what: "a radio button", el: input("radio"), kind: "" },
     { what: "a file picker", el: input("file"), kind: "" },
@@ -1353,7 +1336,7 @@ describe("which nodes take typing", () => {
     // A NUMERIC value is not text held elsewhere: an <li> keeps its in
     // textContent, and <li contenteditable> is ordinary rich-text markup, so
     // asking for mere presence of `value` would send it back to assignment.
-    { what: "a list item declaring itself an editor", el: host("LI", "true", { value: 0 }), kind: "single-line" },
+    { what: "a list item declaring itself an editor", el: host("LI", "true", { value: 0 }), kind: "multiline" },
     // <progress> and <meter> render a widget; their contents are legacy fallback
     // and are never painted, so they belong with <img> and <canvas> above rather
     // than with <li>, whatever their value's type.
@@ -1365,7 +1348,7 @@ describe("which nodes take typing", () => {
     { what: "an iframe carrying an invalid value", el: host("IFRAME", "banana"), kind: "" },
     // designMode declares the body and nothing else: a control in such a
     // document is no more the editing host than one in a region.
-    { what: "the body of a document in designMode", el: inDesignMode("BODY"), kind: "single-line" },
+    { what: "the body of a document in designMode", el: inDesignMode("BODY"), kind: "multiline" },
     { what: "a select in a document in designMode",
       el: element("SELECT", { value: "", ownerDocument: { designMode: "on" } }), kind: "" },
     { what: "a div in a document in designMode", el: inDesignMode("DIV"), kind: "" },

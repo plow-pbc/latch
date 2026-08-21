@@ -247,12 +247,12 @@ DOC_TOKEN_JS = """() => {
 # `fill()` sets one, the same loud refusal where it will not.
 #
 # The two kinds differ on ONE question, which is why this is a kind and not a
-# boolean: whether a newline belongs in this node's value. Only a <textarea>
-# carries one as a character. `type()` sends a newline as the Enter KEY, which
-# submits the form from an <input>, and in an editing host inserts markup -- and
-# there the read-back (`_HELD` -> textContent) returns the text without it,
-# while KEYS_DROPPED_JS only recognises a PREFIX, so the mismatch would be
-# reported as a fill that landed.
+# boolean: whether this node can hold a line break at all. A <textarea> holds it
+# as a character and a declared editing host holds it as markup -- both keep it,
+# so both are "multiline". An <input> is the one that cannot: its value
+# sanitization strips CR and LF, so a break there is deleted by the browser
+# whatever put it in, and pretending otherwise would only mean typing an Enter
+# that submits the form with half a value in it.
 TYPEABLE_JS = """(el) => {
     const typed = ["text", "email", "password", "search", "tel", "url", "number"];
     const tag = el.tagName.toLowerCase();
@@ -300,10 +300,10 @@ TYPEABLE_JS = """(el) => {
     // editor, with no attribute anywhere.
     const attr = el.getAttribute("contenteditable");
     if (attr === null) {
-        return tag === "body" && el.ownerDocument.designMode === "on" ? "single-line" : "";
+        return tag === "body" && el.ownerDocument.designMode === "on" ? "multiline" : "";
     }
     const value = attr.toLowerCase();
-    return value === "" || value === "true" || value === "plaintext-only" ? "single-line" : "";
+    return value === "" || value === "true" || value === "plaintext-only" ? "multiline" : "";
 }"""
 
 # How a node holds its text: `value` for an input, `textContent` for a
@@ -364,13 +364,14 @@ def _type_value(el, value):
     editing host. One that answers "" is assigned whole, exactly as this always
     did.
 
-    The rest have their value normalized to what that node will HOLD before head
-    and tail are split: LF at a textarea, no line break anywhere else. Every
+    The rest have their value normalized to what that node can HOLD before head
+    and tail are split: one LF per break where the node keeps breaks at all, and
+    none at an <input>, whose value sanitization strips them anyway. Every
     comparison below then speaks the string the node ends up with, and the tail
     cannot press Enter at a form by construction rather than by a branch.
 
-    For the rest, everything before the last TYPED_CHARS is assigned in one go
-    -- that is the `el.fill()` the rest of this exists to avoid, used
+    Of that normalized value, everything before the last TYPED_CHARS is assigned
+    in one go -- that is the `el.fill()` the rest of this exists to avoid, used
     deliberately, because a field an agent filled with prose cannot be typed key
     by key inside the budget. What a defense samples is that keys arrived at the
     field at all, and they do: the tail is always typed, and a credential is
@@ -401,15 +402,17 @@ def _type_value(el, value):
     # not. Each has to speak the string the node will actually HOLD, or it
     # answers about a value that never existed anywhere.
     #
-    # `type()` sends CR and LF alike as Enter. A textarea keeps that as one LF,
-    # because its API value normalizes CR and CRLF. Nowhere else does the break
-    # survive at all: an <input> strips CR and LF in its value sanitization, and
-    # a declared host reads back through textContent, which returns the text
-    # without the markup Enter made of it. Normalizing to that here, once, is
-    # also what makes the tail unable to press Enter at a single-line field --
-    # the form can no longer be submitted with half a value in it, by
-    # construction rather than by a branch that gave up the keystrokes to avoid
-    # it.
+    # `type()` sends CR and LF alike as Enter, and a node that keeps the break
+    # keeps exactly one per Enter -- a textarea's API value normalizes CR and
+    # CRLF to a single LF, and an editing host makes one piece of markup. So CR
+    # and CRLF collapse to LF for those, and an un-normalized CRLF can no longer
+    # press Enter twice where the node holds one break.
+    #
+    # An <input> keeps no break at all: its value sanitization strips CR and LF,
+    # so one is deleted by the browser whatever put it there. Dropping it here
+    # instead is what lets the rest still go in as real keys, and it is why the
+    # tail can never press Enter at a form -- by construction, rather than by a
+    # branch that gave the keystrokes up to avoid sending one.
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     if kind != "multiline":
         value = value.replace("\n", "")
