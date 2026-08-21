@@ -1173,7 +1173,16 @@ window.domo.onUpdatesChanged(() => {
   if (currentTab === "settings") settingsMounted?.refreshUpdates();
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
-window.domo.onShowSettings(() => selectTab("settings"));
+// Closing the window or quitting throws an open Vault form away too, so main
+// asks here first. Anything outside the Vault has nothing to lose.
+window.domo.onConfirmLeave(async () => {
+  window.domo.confirmLeaveReply(currentTab === "vault" ? await vaultConfirmLeave() : true);
+});
+
+// Only check once Settings is actually on screen — see checkForUpdatesFromMenu.
+window.domo.onShowSettings(async () => {
+  if (await selectTab("settings")) window.domo.updatesCheck();
+});
 // Granting Full Disk Access happens in System Settings, and no event reaches
 // this app when it does — the moment the pane can learn the outcome is when
 // the person comes back.

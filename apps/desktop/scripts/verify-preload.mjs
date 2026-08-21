@@ -743,7 +743,9 @@ app.whenReady().then(async () => {
       `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false;
          n.value = ${JSON.stringify(value)}; n.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
     const asking = () => js(() => !!document.querySelector(".vaultui .confirm-overlay"));
-    const settle = () => new Promise((r) => setTimeout(r, 120));
+    const CONFIRM = ".vaultui .confirm-overlay";
+    const waitAsking = () => waitFor(win, `document.querySelector("${CONFIRM}")`, "the discard confirmation");
+    const waitAnswered = () => waitFor(win, `!document.querySelector("${CONFIRM}")`, "the confirmation to close");
 
     const SHEET = ".vaultui .overlay.show:not(.confirm-overlay)";
     const NAME = ".vaultui .sheet input[data-name='1']";
@@ -757,30 +759,30 @@ app.whenReady().then(async () => {
     await click(".vaultui .btn-primary");
     await waitFor(win, `document.querySelector("${SHEET}")`, "the new-item sheet");
     await click(".vaultui .ptype[data-new='login']");
-    await settle();
+    await waitFor(win, `document.querySelector("${NAME}")`, "the login form");
     await click(".vaultui .sheet-foot .btn.ghost");
-    await settle();
+    await waitFor(win, `!document.querySelector(".vaultui .overlay.show")`, "the sheet to close");
     const cleanSheetClosesFreely = !(await asking()) && !(await js(() => !!document.querySelector(".vaultui .overlay.show")));
 
     // A filled sheet asks, and backing out leaves the typing where it was.
     await click(".vaultui .btn-primary");
     await waitFor(win, `document.querySelector("${SHEET}")`, "the sheet again");
     await click(".vaultui .ptype[data-new='login']");
-    await settle();
+    await waitFor(win, `document.querySelector("${NAME}")`, "the login form");
     await type(NAME, "half-typed");
     await click(".vaultui .sheet-foot .btn.ghost");
-    await settle();
+    await waitAsking();
     const dirtySheetAsks = await asking();
     await click(KEEP);
-    await settle();
+    await waitAnswered();
     const keepKeepsTheTyping = await win.webContents.executeJavaScript(
       `document.querySelector("${NAME}")?.value === "half-typed"`);
 
     // Discard is the other answer, and it does close.
     await click(".vaultui .sheet-foot .btn.ghost");
-    await settle();
+    await waitAsking();
     await click(DISCARD);
-    await settle();
+    await waitFor(win, `!document.querySelector(".vaultui .overlay.show")`, "the sheet to go");
     const discardClosesSheet = await js(() => !document.querySelector(".vaultui .overlay.show"));
 
     // Collapsing an edited row is the same loss through a different door.
@@ -788,10 +790,10 @@ app.whenReady().then(async () => {
     await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row's form");
     await type(".vaultui .vitem.open input[data-name='1']", "renamed");
     await click(".vaultui .vitem .vrow");
-    await settle();
+    await waitAsking();
     const dirtyRowAsksOnCollapse = await asking();
     await click(KEEP);
-    await settle();
+    await waitAnswered();
     const rowStaysOpenOnKeep = await js(() => !!document.querySelector(".vaultui .vitem.open"));
 
     // And so is walking off the tab entirely. Fire-and-forget on purpose:
@@ -800,17 +802,45 @@ app.whenReady().then(async () => {
     const leaveTab = (tab) => win.webContents.executeJavaScript(
       `(() => { window.__domoSelectTab(${JSON.stringify(tab)}); return true; })()`);
     await leaveTab("rules");
-    await settle();
+    await waitAsking();
     const dirtyBlocksTabSwitch =
       (await asking()) && (await js(() => document.querySelector("#seg button.active")?.dataset.tab === "vault"));
     await click(DISCARD);
-    await settle();
+    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "the tab to switch");
     const discardAllowsTabSwitch = await js(() => document.querySelector("#seg button.active")?.dataset.tab === "rules");
+
+    // A second editor cannot be opened over a dirty one without asking — this is
+    // what keeps a save/reload from silently taking another form down with it.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list again");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row's form");
+    await type(".vaultui .vitem.open input[data-name='1']", "dirty-again");
+    await click(".vaultui .btn-primary"); // New, over a dirty row
+    await waitAsking();
+    const secondEditorAsks = await asking();
+    await click(KEEP);
+    await waitAnswered();
+    const refusedSecondEditorKeepsRow = await js(() =>
+      document.querySelector(".vaultui .vitem.open input[data-name='1']")?.value === "dirty-again"
+      && !document.querySelector(".vaultui .overlay.show"));
+
+    // Closing the window asks the same question main-side (Cmd-W and Quit both
+    // route through it). Drive the renderer's half of that conversation.
+    let closeAnswer = null;
+    ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { closeAnswer = ok; });
+    win.webContents.send("ui:confirmLeave");
+    await waitAsking();
+    const windowCloseAsks = await asking();
+    await click(DISCARD);
+    await waitForNode(() => closeAnswer !== null, "the renderer's answer to main");
+    const windowCloseAnswersMain = closeAnswer === true;
 
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
       dirtyRowAsksOnCollapse, rowStaysOpenOnKeep, dirtyBlocksTabSwitch, discardAllowsTabSwitch,
+      secondEditorAsks, refusedSecondEditorKeepsRow, windowCloseAsks, windowCloseAnswersMain,
     };
   })();
 
@@ -897,6 +927,10 @@ app.whenReady().then(async () => {
     vaultUnsaved.rowStaysOpenOnKeep &&
     vaultUnsaved.dirtyBlocksTabSwitch &&
     vaultUnsaved.discardAllowsTabSwitch &&
+    vaultUnsaved.secondEditorAsks &&
+    vaultUnsaved.refusedSecondEditorKeepsRow &&
+    vaultUnsaved.windowCloseAsks &&
+    vaultUnsaved.windowCloseAnswersMain &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&
