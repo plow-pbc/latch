@@ -111,9 +111,12 @@ SETTLE_MS = 1000
 # does not lands with its head assigned and its last TYPED_CHARS typed, which
 # still ends the field on real keys.
 #
-# What each key is held for: this is handed to `el.type(ch, delay=...)` one
-# character at a time, and for a single character Playwright spends it between
-# the keydown and the keyup rather than between one key and the next.
+# What each key's press is given, handed to `el.type(ch, delay=...)` one
+# character at a time -- so it is spent WITHIN a key rather than between one key
+# and the next, which is KEY_OVERHEAD_MS below. Exactly how Playwright spends it
+# depends on whether the character is on its key map at all, and that is a
+# browser assumption rather than something the suite can see: see
+# docs/TESTING-THE-APP.md.
 KEY_DELAY_MS = 45
 # What a key may cost beyond its delay: the round trip that dispatches it and
 # the actionability check in front of it. A few milliseconds on a local page.
