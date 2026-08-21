@@ -25,6 +25,9 @@ const PAYLOADS = [
   "vault-server",
 ];
 
+/** The two that keep their binaries an arch level down, not at the top. */
+const NESTED = ["vault-cli", "vault-server"];
+
 const contextFor = (appOutDir: string) => ({
   appOutDir,
   packager: { appInfo: { productFilename: "Plow Latch" } },
@@ -34,9 +37,12 @@ describe("the packaging hook refuses before it signs", () => {
   let dir: string;
   const realIdentity = process.env.CODESIGN_IDENTITY;
 
+  const runtimeDir = () =>
+    path.join(dir, "Plow Latch.app", "Contents", "Resources", "browser-runtime");
+
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
-    const runtime = path.join(dir, "Plow Latch.app", "Contents", "Resources", "browser-runtime");
+    const runtime = runtimeDir();
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
@@ -73,39 +79,41 @@ describe("the packaging hook refuses before it signs", () => {
     { how: "never packed", empty: false },
     { how: "packed empty", empty: true },
   ])("names the runtime alone when it was $how", async ({ empty }) => {
-    if (empty) {
-      fs.mkdirSync(path.join(dir, "Plow Latch.app", "Contents", "Resources", "browser-runtime"), {
-        recursive: true,
-      });
-    }
+    if (empty) fs.mkdirSync(runtimeDir(), { recursive: true });
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       /missing browser-runtime — package with/,
     );
   });
 
-  // One expectation over both columns is the claim: absent and empty are the
-  // same refusal, named the same way.
-  it.each(PAYLOADS.flatMap((payload) => [
-    { payload, how: "left out", empty: false },
-    { payload, how: "packed empty", empty: true },
-  ]))("names $payload when it was $how", async ({ payload, empty }) => {
+  // One expectation over every column is the claim: however a payload comes up
+  // carrying no file, it is the same refusal, named the same way.
+  it.each(
+    PAYLOADS.flatMap((payload) => [
+      { payload, how: "left out", shape: "absent" },
+      { payload, how: "packed empty", shape: "empty" },
+      ...(NESTED.includes(payload)
+        ? [{ payload, how: "packed with an empty arch dir", shape: "arch" }]
+        : []),
+    ]),
+  )("names $payload when it was $how", async ({ payload, shape }) => {
     const runtime = pack(payload);
-    if (empty) fs.mkdirSync(path.join(runtime, payload), { recursive: true });
+    if (shape === "empty") fs.mkdirSync(path.join(runtime, payload), { recursive: true });
+    if (shape === "arch") fs.mkdirSync(path.join(runtime, payload, "arm64"), { recursive: true });
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       `is missing ${path.basename(payload)} —`,
     );
   });
 
   it("accepts a payload whose content sits an arch level down", async () => {
-    const runtime = pack();
-    for (const nested of ["vault-cli", "vault-server"]) {
+    const runtime = pack("server");
+    for (const nested of NESTED) {
       fs.rmSync(path.join(runtime, nested), { recursive: true });
       fs.mkdirSync(path.join(runtime, nested, "arm64"), { recursive: true });
       fs.writeFileSync(path.join(runtime, nested, "arm64", "binary"), "");
     }
-    // Past the guard it reaches codesign and dies on the fabricated identity;
-    // what this pins is that the guard itself did not call the tree empty.
-    await expect(afterPack(contextFor(dir))).rejects.not.toThrow(/is missing/);
+    // `server` is the only one left out, and it is named alone only if the two
+    // nested trees were not also called bare — the assertion is the acceptance.
+    await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing server —");
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {
