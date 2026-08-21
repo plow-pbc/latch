@@ -90,9 +90,11 @@ class Handle:
         # The node the page detached or froze along with moving the cap: the
         # clear that follows a mid-fill refusal cannot land on it.
         self.clear_fails = clear_fails
-        # A field that REWRITES what it is given -- a card number growing spaces
-        # as it is typed. What it holds is not a prefix of what was sent, which
-        # is exactly what KEYS_DROPPED_JS treats as "took every key".
+        # A field that REWRITES what it is given. "group" grows what it holds --
+        # a card number gaining spaces as it is typed; "strip" shrinks it -- a
+        # phone input dropping punctuation. Either way what it holds is not a
+        # prefix of what was sent, which is exactly what KEYS_DROPPED_JS treats
+        # as "took every key".
         self.reformats = reformats
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
@@ -227,7 +229,9 @@ class Handle:
             self.max_length_after is not None and self.typed is not None
         ) else self.max_length
         landed = (self.value or "") + text
-        if self.reformats:
+        if self.reformats == "strip":
+            landed = "".join(c for c in landed if c.isalnum())
+        elif self.reformats:
             bare = landed.replace(" ", "")
             landed = " ".join(bare[i:i + 4] for i in range(0, len(bare), 4))
         self.value = landed[:cap] if cap >= 0 else landed
@@ -645,13 +649,13 @@ def main() -> int:
         # the clip goes unseen, and the units are why.
         "reformatting_field_clips_unseen": run(
             server, {**base, "value": "4111111111111111"},
-            max_length=19, max_length_after=17, reformats=True),
+            max_length=19, max_length_after=17, reformats="group"),
         # The other direction, and the one that would BREAK a working fill: a
         # phone input stripping punctuation down to ten digits. Measuring the
         # sent value against that cap would refuse a fill that landed whole.
         "reformatting_field_shrinks": run(
             server, {**base, "value": "555-123-4567"},
-            max_length=20, max_length_after=10, reformats=True),
+            max_length=20, max_length_after=10, reformats="strip"),
         # maxlength="0" is valid HTML and holds nothing. -1 is the only value
         # that means uncapped, so 0 must refuse rather than read as "no cap".
         "zero_cap": run(server, {**base, "value": "x"}, max_length=0),
