@@ -311,7 +311,20 @@ WAS_MARKED_JS = """(el) => el.hasAttribute("data-domo-secret")"""
 
 # A field's own cap on what it will hold. -1 when it does not set one, which is
 # what an element with no maxlength reports and what a non-input answers.
-FIELD_CAP_JS = """(el) => (el.maxLength === undefined ? -1 : el.maxLength)"""
+FIELD_CAP_JS = """(el) => {
+    // `maxLength` reflects the attribute even on elements the browser does not
+    // enforce it for -- `<input type="number" maxlength="4">` is a common
+    // authoring mistake -- and reading one there would turn a stray attribute
+    // into a refusal of a fill that lands intact today. Only the kinds it
+    // actually governs report a cap; everything else is uncapped.
+    const tag = (el.tagName || "").toLowerCase();
+    if (tag === "textarea") return el.maxLength;
+    if (tag !== "input") return -1;
+    const kind = (el.type || "text").toLowerCase();
+    return ["text", "search", "url", "tel", "email", "password"].includes(kind)
+        ? el.maxLength
+        : -1;
+}"""
 
 
 def _utf16_units(value):
@@ -814,7 +827,7 @@ class Session:
             # reports and what the parser coerces an invalid one to. 0 is a real
             # cap that holds nothing, so it is not an escape hatch.
             cap = el.evaluate(FIELD_CAP_JS)
-            if cap is not None and cap >= 0 and _utf16_units(cmd["value"]) > cap:
+            if cap >= 0 and _utf16_units(cmd["value"]) > cap:
                 # A shape rather than a raise, the way a moved frame is: a
                 # vault fill's failure text never reaches the agent -- the
                 # device writes its own, because Playwright's would quote the

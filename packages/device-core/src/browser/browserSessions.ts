@@ -805,31 +805,23 @@ export class BrowserSessions {
     }
     // `knobs` is what the agent had to ask for, so the next look at a session
     // that went wrong can count it the way this one counted `eval`.
-    const refused = this.reportRefusals(s, String(action.action), url, knobs);
-
     // A field that will not hold the value, refused before anything was typed.
-    // The agent is told the cap because the alternative is re-issuing a fill
-    // that can never land; the cap is the page's own attribute, and the value's
-    // length is not part of it. Audited for the same reason the refusal two
-    // branches down is: without a line of its own, `audit.ndjson` shows this
-    // fill exactly as it shows one that landed. A shape without a numeric cap
-    // is not this branch's — it falls through rather than print "null".
-    const cappedAt = jv(result).get("cap").num;
-    if (result.ok === false && result.mask === "too_long" && cappedAt !== null) {
-      this.audit("browser_fill_refused", {
-        session: s.auditId,
-        action: String(action.action),
-        url: stripQuery(url),
-        cap: cappedAt,
-      });
-      return {
-        status: "error",
-        error:
-          `${String(action.action)} was refused: that field holds only ${cappedAt} characters ` +
-          `and the value is longer, so nothing was typed.`,
-        ...(refused.length ? { failed_requests: refused } : {}),
-      };
+    // Thrown rather than given a refusal kind of its own: the catch around this
+    // call already writes the message into `browser_command`, which is what
+    // makes the owner's log show a refused fill differently from one that
+    // landed, and already forwards it to the agent. A new audit event would
+    // have to be taught to the activity feed and the session badge as well, for
+    // an answer those two already have. Throwing also cannot fall through to
+    // the completed shape below, which is the failure worth engineering out.
+    if (result.ok === false && result.mask === "too_long") {
+      const cap = jv(result).get("cap").num;
+      throw new Error(
+        `that field holds only ${cap === null ? "so many" : cap} characters and the value is ` +
+        `longer, so nothing was typed`,
+      );
     }
+
+    const refused = this.reportRefusals(s, String(action.action), url, knobs);
 
     // The browser puts the mark back on every concealed field before it lets
     // anything be observed, and says so when one of them would not take. It
@@ -1091,21 +1083,23 @@ export class BrowserSessions {
       // cap is the page's own published attribute, so naming it leaks nothing;
       // the value's length stays out of both records, as everywhere else.
       const cap = jv(filled).get("cap").num;
-      if (filled.mask === "too_long" && cap !== null) {
+      if (filled.mask === "too_long") {
         this.audit("credential_denied", {
           session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
           selector,
-          reason: `the field holds only ${cap} characters`,
+          reason: cap === null
+            ? "the field holds fewer characters than the value"
+            : `the field holds only ${cap} characters`,
         });
         return {
           status: "error",
           error:
-            `${field} was not filled: ${selector} holds only ${cap} characters and this value is ` +
-            `longer, so nothing was typed. The value in the vault cannot be entered in this ` +
-            `field — it will have to be shortened where it is stored.`,
+            `${field} was not filled: ${selector} holds only ${cap === null ? "so many" : cap} ` +
+            `characters and this value is longer, so nothing was typed. The value in the vault ` +
+            `cannot be entered in this field — it will have to be shortened where it is stored.`,
         };
       }
       if (filled.ok !== true) {

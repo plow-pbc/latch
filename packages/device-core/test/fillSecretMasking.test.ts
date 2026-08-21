@@ -429,10 +429,10 @@ describe("fill_secret marking", () => {
     expect(JSON.stringify(result)).not.toContain(held);
   });
 
-  // The agent's own `fill` takes the same refusal, and its regression is worse
-  // than the one above: without this branch the result falls through as
-  // `status: "completed"` carrying `ok: false`, which tells the agent the fill
-  // happened while nothing was typed.
+  // The agent's own `fill` takes the same refusal. Its regression is the worst
+  // shape available — a result that falls through as `status: "completed"`
+  // carrying `ok: false` tells the agent the fill happened while nothing was
+  // typed — which is why it is thrown rather than returned.
   it("refuses the agent's own fill rather than reporting it completed", async () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_TOO_LONG: "16" });
@@ -443,8 +443,14 @@ describe("fill_secret marking", () => {
     });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("holds only 16 characters");
-    // And the owner's ledger can tell it from a fill that landed.
-    expect(ctx.events.slice(before).map((e) => e.event)).toContain("browser_fill_refused");
+    // And the owner's log tells it from a fill that landed, through the record
+    // every failed command already writes rather than an event of its own.
+    // One line, carrying the reason: the refusal is raised before the ordinary
+    // command record is written, so the owner does not get a bare line and then
+    // a second one explaining it.
+    const written = ctx.events.slice(before).filter((e) => e.event === "browser_command");
+    expect(written).toHaveLength(1);
+    expect(written[0].fields.error).toContain("holds only 16 characters");
   });
 
   it("refuses when the browser says the frame moved", async () => {

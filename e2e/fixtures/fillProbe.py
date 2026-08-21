@@ -116,6 +116,9 @@ class Handle:
         if "__domoDocumentToken" in js:
             return self.document_token
         if "maxLength" in js:
+            # The real script reports a cap only for the element kinds
+            # `maxlength` governs; a node standing in for one of those answers
+            # its cap, and -1 is "uncapped" exactly as it is in the page.
             return self.max_length
         if "tagName" in js:
             return self.typeable
