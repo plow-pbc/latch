@@ -75,16 +75,26 @@ module.exports = async function afterPack(context) {
   // `server` carries no Mach-O, so nothing below signs it — but it is what the
   // browser host actually execs, so its absence is the same dead browsing.
   const server = path.join(runtime, "server");
-  // A missing runtime explains all six children, so it is named on its own.
-  const missing = fs.existsSync(runtime)
-    ? [framework, sitePackages, server, camoufox, vaultCli, vaultServer]
-        .filter((d) => !fs.existsSync(d))
-        .map((d) => path.basename(d))
-    : ["browser-runtime"];
+  // Absent and empty are one condition: a payload directory carrying nothing
+  // signs nothing, verifies vacuously, and ships the same app.
+  const bare = (d) => !fs.existsSync(d) || fs.readdirSync(d).length === 0;
+  // A bare runtime explains all six children, so it is named on its own.
+  const missing = bare(runtime)
+    ? ["browser-runtime"]
+    : [framework, sitePackages, server, camoufox, vaultCli, vaultServer]
+        .filter(bare)
+        .map((d) => path.basename(d));
   if (missing.length > 0) {
     throw new Error(
       `[afterPack] the packed app is missing ${missing.join(", ")} — ` +
         "package with `just package` or `just package-unnotarized`",
+    );
+  }
+  // camoufox is the one payload with a known interior: a fuse that stopped
+  // partway leaves files behind but no bundle to sign.
+  if (findApps(camoufox).length === 0) {
+    throw new Error(
+      "[afterPack] the camoufox payload holds no Camoufox.app — a fuse that did not finish",
     );
   }
 
@@ -164,11 +174,6 @@ module.exports = async function afterPack(context) {
     if (!info.includes("Authority=Developer ID Application")) problems.push([f, "no Developer ID"]);
     else if (!/\bTimestamp=/.test(info)) problems.push([f, "no secure timestamp"]);
     else if (!/flags=.*runtime/.test(info)) problems.push([f, "no hardened runtime"]);
-  }
-  if (apps === 0) {
-    throw new Error(
-      "[afterPack] the camoufox payload holds no Camoufox.app — a fuse that did not finish",
-    );
   }
   if (problems.length > 0) {
     const lines = problems

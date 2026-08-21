@@ -34,12 +34,18 @@ describe("the packaging hook refuses before it signs", () => {
   let dir: string;
   const realIdentity = process.env.CODESIGN_IDENTITY;
 
+  /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = path.join(dir, "Plow Latch.app", "Contents", "Resources", "browser-runtime");
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
+      fs.writeFileSync(path.join(runtime, payload, "carried"), "");
     }
+    if (omit !== "camoufox") {
+      fs.mkdirSync(path.join(runtime, "camoufox", "Camoufox.app"), { recursive: true });
+    }
+    return runtime;
   };
 
   beforeEach(() => {
@@ -74,5 +80,19 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       `is missing ${path.basename(payload)} —`,
     );
+  });
+
+  it.each(PAYLOADS)("names %s when it was packed empty", async (payload) => {
+    const runtime = pack(payload);
+    fs.mkdirSync(path.join(runtime, payload), { recursive: true });
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      `is missing ${path.basename(payload)} —`,
+    );
+  });
+
+  it("refuses a camoufox tree a fuse left without a bundle", async () => {
+    const runtime = pack();
+    fs.rmSync(path.join(runtime, "camoufox", "Camoufox.app"), { recursive: true });
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(/holds no Camoufox\.app/);
   });
 });
