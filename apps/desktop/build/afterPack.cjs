@@ -57,6 +57,14 @@ module.exports = async function afterPack(context) {
   // packager rather than the environment leaves one source, and an env var that
   // disagrees is a mistake worth stopping for rather than silently overriding.
   const configured = context.packager.platformSpecificBuildOptions.identity;
+  // electron-builder spells "do not sign" as an explicit null, which is not the
+  // same as leaving it unset. Signing the runtime anyway would put a Developer
+  // ID payload under an ad-hoc shell — the two-team split this guard is for.
+  if (configured === null) {
+    throw new Error(
+      "[afterPack] mac.identity is null, so the app ships unsigned — a signed browser runtime under an ad-hoc shell is the split this hook exists to prevent",
+    );
+  }
   const identity = configured ?? process.env.CODESIGN_IDENTITY;
   if (!identity) {
     // An ad-hoc Mach-O carries no team id, so the hardened runtime refuses to
@@ -74,23 +82,26 @@ module.exports = async function afterPack(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  // What browserRuntime.ts needs to resolve a runtime at all: the interpreter,
-  // its site-packages, the server.py the browser host execs, and a browser.
-  // The vault payloads are deliberately absent — vaultCliIn falls back to a `bw`
-  // on PATH and vaultServerIn to a hosted SEED_VAULT_URL, so a build without
-  // them is one we support, not one to abort.
+  // What a packaged build cannot work without. `vault-cli` is the one payload
+  // left out: the broker defaults SEED_VAULT_BW to a `bw` on PATH. `vault-server`
+  // is NOT its twin — SEED_VAULT_URL defaults to "" and the broker refuses every
+  // credential call as unconfigured, and deviceAgent only supplies a URL when
+  // this build ships the server, so omitting it ships dead credentials.
   const framework = path.join(runtime, "python", "Python.framework");
   const sitePackages = path.join(runtime, "python", "site-packages");
   const server = path.join(runtime, "server");
   const camoufox = path.join(runtime, "camoufox");
+  const vaultServer = path.join(runtime, "vault-server");
   // Absent and empty are one condition: a payload carrying nothing signs
   // nothing, verifies vacuously, and ships the same app. walk() recurses and
   // stops at the first file, so a tree of empty directories still reads bare.
   const bare = (d) => !fs.existsSync(d) || walk(d).next().done === true;
-  // A bare runtime explains all four children, so it is named on its own.
+  // A bare runtime explains all five children, so it is named on its own.
   const missing = bare(runtime)
     ? ["browser-runtime"]
-    : [framework, sitePackages, server, camoufox].filter(bare).map((d) => path.basename(d));
+    : [framework, sitePackages, server, camoufox, vaultServer]
+        .filter(bare)
+        .map((d) => path.basename(d));
   if (missing.length > 0) {
     throw new Error(
       `[afterPack] the packed app is missing ${missing.join(", ")} — ` +

@@ -15,18 +15,19 @@ const afterPack = createRequire(import.meta.url)("../build/afterPack.cjs") as (
   context: unknown,
 ) => Promise<void>;
 
-/** What the runtime cannot resolve without. The vault payloads are not here:
- * browserRuntime.ts falls back to a `bw` on PATH and a hosted vault. */
+/** What a packaged build cannot work without. `vault-cli` is absent on purpose:
+ * the broker falls back to a `bw` on PATH. `vault-server` is not its twin. */
 const PAYLOADS = [
   "python/Python.framework",
   "python/site-packages",
   "server",
   "camoufox",
+  "vault-server",
 ];
 
 /** `identity` mirrors electron-builder's `mac.identity`; left off, the hook
  * falls back to CODESIGN_IDENTITY. */
-const contextFor = (appOutDir: string, identity?: string) => ({
+const contextFor = (appOutDir: string, identity?: string | null) => ({
   appOutDir,
   packager: {
     appInfo: { productFilename: "Plow Latch" },
@@ -114,11 +115,16 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing camoufox —");
   });
 
-  it("does not require the vault payloads a build may legitimately omit", async () => {
-    // pack() never writes vault-cli or vault-server. `server` is named alone
-    // only if their absence is not also a refusal.
+  it("does not require the vault CLI, which falls back to a bw on PATH", async () => {
+    // pack() never writes vault-cli. `server` is named alone only if that
+    // absence is not also a refusal.
     pack("server");
     await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing server —");
+  });
+
+  it("refuses a build whose identity is explicitly null", async () => {
+    pack();
+    await expect(afterPack(contextFor(dir, null))).rejects.toThrow(/ships unsigned/);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {
