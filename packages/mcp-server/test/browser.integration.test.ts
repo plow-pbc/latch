@@ -99,9 +99,11 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     await act("fill_secret", { selector: "#pass", item: "L1", field: "password" });
     await act("click", { selector: "#login" });
     expect((await act("text")).payload.text).toContain("Menu");
-    // Issue #86, on the wire: each credential arrived as real typing — one
-    // browser-produced character key event per character, counted by the page
-    // itself. `fill()` would have assigned .value and fired a single input
+    // Issue #86, on the wire: browser-produced character key events reached
+    // each credential field — one per character, counted by the page itself.
+    // That the landed value came from those keys is a different claim, and the
+    // `keys_dropped` probe assertion is what holds it: a keydown fires whether
+    // or not the character is inserted. `fill()` would have assigned .value and fired a single input
     // event, and the page — like the defense in front of a real sign-in — would
     // have counted none at all. The two fields are counted separately, so
     // neither can cover for the other. Both values are shorter than

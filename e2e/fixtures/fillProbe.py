@@ -58,7 +58,7 @@ class Handle:
 
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
-                 document_token="doc-1", type_fails=False, typeable=True,
+                 document_token="doc-1", type_fails=False, typeable="single-line",
                  drops_keys=False, assign_fails=False):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
@@ -66,8 +66,11 @@ class Handle:
         # The keystrokes fail before the first one lands, so the node is left
         # holding what the clear left it: nothing.
         self.type_fails = type_fails
-        # False is a date, colour or range widget: assigned rather than typed,
-        # because its value is not the characters it is handed.
+        # What TYPEABLE_JS answers for this node: "" is a date, colour or range
+        # widget -- assigned rather than typed, because its value is not the
+        # characters it is handed. "multiline" is the one kind that holds a
+        # newline as a character, so it is the only one typed a value carrying
+        # one.
         self.typeable = typeable
         # A field that says it takes characters and then sanitises away every
         # one it will not hold -- a number input handed something that is not a
@@ -222,7 +225,7 @@ class Frame:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
-                 typeable=True, drops_keys=False, assign_fails=False,
+                 typeable="single-line", drops_keys=False, assign_fails=False,
                  hides=False, detached=False):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
@@ -293,7 +296,7 @@ class Page:
 
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
-        document_token="doc-1", type_fails=False, typeable=True, drops_keys=False,
+        document_token="doc-1", type_fails=False, typeable="single-line", drops_keys=False,
         assign_fails=False):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
@@ -491,14 +494,22 @@ def main() -> int:
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
                                      marked=True, value="hunter2"),
         "plain": run(server, base),
+        # A value carrying a newline, at a single-line field. `type()` would send
+        # it as the Enter key and submit the form mid-value, which `fill()` could
+        # never do, so the whole value is assigned instead.
+        "newline_single_line": run(server, {**base, "value": "one\ntwo"}),
+        # The same value at a textarea, which is the one node that holds a
+        # newline as a character: it keeps its keystrokes.
+        "newline_multiline": run(server, {**base, "value": "one\ntwo"},
+                                 typeable="multiline"),
         # A date widget: its value is composed from something other than the
         # characters, so keystrokes land the wrong day or nothing at all.
-        "not_typeable": run(server, {**base, "value": "2026-08-19"}, typeable=False),
+        "not_typeable": run(server, {**base, "value": "2026-08-19"}, typeable=""),
         # The same widget holding something the vault masks. The question is
         # asked AFTER the mark goes on, which is a call site that did not exist
         # before the widget branch did.
         "not_typeable_masked": run(server, {**base, "mask": True, "value": "2026-08-19"},
-                                   typeable=False),
+                                   typeable=""),
         # A field that took the keys and then sanitised some of them away, so
         # the node does not hold what was asked for. Reporting that as a fill
         # would tell the caller a credential landed when it did not.

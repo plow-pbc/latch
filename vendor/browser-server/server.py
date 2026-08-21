@@ -234,58 +234,60 @@ DOC_TOKEN_JS = """() => {
     return w.__domoDocumentToken;
 }"""
 
-# Whether this node takes TYPING. `type()` refuses nothing -- it focuses
-# whatever it is given and sends the keys -- so every node `fill()` treats
-# specially has to be recognised here instead. The false side is the whole
-# hazard: "yes" typed at a checkbox toggles nothing and answers ok, a <select>
-# changes option by type-ahead, a date input takes its segments in whatever
-# order the locale puts them (typing "2026-08-19" lands 6081-02-02, silently),
-# a colour or a range refuses keys outright, and a hidden input cannot hold
-# focus at all -- so the characters, on the credential path a secret's, land
-# wherever focus already was. Everything turned down here is ASSIGNED, which is
-# exactly what it got before there was typing: the same value where `fill()`
-# sets one, the same loud refusal where it will not.
+# What KIND of typing this node takes, or "" for none. `type()` refuses nothing
+# -- it focuses whatever it is given and sends the keys -- so every node
+# `fill()` treats specially has to be recognised here instead. The empty answer
+# is the whole hazard: "yes" typed at a checkbox toggles nothing and answers ok,
+# a <select> changes option by type-ahead, a date input takes its segments in
+# whatever order the locale puts them (typing "2026-08-19" lands 6081-02-02,
+# silently), a colour or a range refuses keys outright, and a hidden input
+# cannot hold focus at all -- so the characters, on the credential path a
+# secret's, land wherever focus already was. Everything answered "" is ASSIGNED,
+# which is exactly what it got before there was typing: the same value where
+# `fill()` sets one, the same loud refusal where it will not.
+#
+# The two kinds differ on ONE question, which is why this is a kind and not a
+# boolean: whether a newline belongs in this node's value. Only a <textarea>
+# carries one as a character. `type()` sends a newline as the Enter KEY, which
+# submits the form from an <input>, and in an editing host inserts markup -- and
+# there the read-back (`_HELD` -> textContent) returns the text without it,
+# while KEYS_DROPPED_JS only recognises a PREFIX, so the mismatch would be
+# reported as a fill that landed.
 TYPEABLE_JS = """(el) => {
     const typed = ["text", "email", "password", "search", "tel", "url", "number"];
     const tag = el.tagName.toLowerCase();
-    if (tag !== "input" && tag !== "textarea") {
-        // The node has to BE the editing host, not merely sit inside one.
-        // `isContentEditable` is the computed, INHERITED state, so everything in
-        // a rich-text region answers true -- a <select> (typing picks an option
-        // by type-ahead), an <iframe> (focus succeeds and the characters go into
-        // the embedded document, where the mask cannot reach), a <style> or a
-        // <template> (not rendered, so focus is a no-op). Naming those was a list
-        // that could never be closed, and leaning on the `fill()` in front does
-        // not close it either -- that gate reads the inherited state too, so a
-        // <span> inside a rich-text region passes it. What only a host has is a
-        // DECLARED value: the attribute is enumerated, so anything outside its
-        // keywords -- a typo, or the "inherit" older guidance taught people to
-        // write -- means inherit, and a span carrying one is no more the host
-        // than its neighbours.
-        //
-        // `designMode = "on"` is the one host that declares itself another way:
-        // it makes the document's own body editable, which is the classic
-        // iframe editor, with no attribute anywhere.
-        const attr = el.getAttribute("contenteditable");
-        if (attr === null) {
-            return tag === "body" && el.ownerDocument.designMode === "on";
-        }
-        const value = attr.toLowerCase();
-        return value === "" || value === "true" || value === "plaintext-only";
+    if (tag === "textarea") return el.disabled || el.readOnly ? "" : "multiline";
+    if (tag === "input") {
+        if (!typed.includes(el.type)) return "";
+        return el.disabled || el.readOnly ? "" : "single-line";
     }
-    if (tag === "input" && !typed.includes(el.type)) return false;
-    return !el.disabled && !el.readOnly;
-}"""
-
-# Whether Enter would SUBMIT rather than insert. `type()` sends a newline as the
-# Enter key, so a value carrying one -- an agent passing a line read from a file
-# or a command, which routinely keeps its trailing newline -- implicitly submits
-# the form from a single-line field, mid-value. `fill()` could never do that, so
-# typing must not introduce it: such a value is assigned whole instead. A
-# <textarea> is the opposite case and must keep its keys, because there a
-# newline IS the character the value is made of.
-ENTER_SUBMITS_JS = """(el) => {
-    return el.tagName.toLowerCase() === "input";
+    // Embedded and non-rendered nodes are never editing hosts, whatever they
+    // DECLARE: focus on an <iframe> delegates to the document inside it, so a
+    // secret's characters land where the mark on the outer node cannot reach,
+    // and a <style> or <template> is not rendered, so focus is a no-op and the
+    // keys go wherever focus already was. This markup is page-controlled, so it
+    // cannot be left to the attribute to be honest about.
+    if (["iframe", "frame", "object", "embed", "style", "template", "script", "title"].includes(tag)) {
+        return "";
+    }
+    // The node has to BE the editing host, not merely sit inside one.
+    // `isContentEditable` is the computed, INHERITED state, so everything in a
+    // rich-text region answers true -- and leaning on the `fill()` in front does
+    // not close that either, because Playwright's gate reads the inherited state
+    // too, so a <span> inside a region passes it. What only a host has is a
+    // DECLARED value: the attribute is enumerated, so anything outside its
+    // keywords -- a typo, or the "inherit" older guidance taught -- means
+    // inherit, and a span carrying one is no more the host than its neighbours.
+    //
+    // `designMode = "on"` is the one host that declares itself another way: it
+    // makes the document's own body editable, which is the classic iframe
+    // editor, with no attribute anywhere.
+    const attr = el.getAttribute("contenteditable");
+    if (attr === null) {
+        return tag === "body" && el.ownerDocument.designMode === "on" ? "single-line" : "";
+    }
+    const value = attr.toLowerCase();
+    return value === "" || value === "true" || value === "plaintext-only" ? "single-line" : "";
 }"""
 
 # How a node holds its text: `value` for an input, `textContent` for a
@@ -341,11 +343,12 @@ def _respond(payload):
 def _type_value(el, value):
     """Put `value` into a resolved node so that the field ends on real keys.
 
-    A node is first asked whether it takes typing at all -- whether it is a
+    A node is first asked what KIND of typing it takes -- whether it is a
     text-carrying input, a textarea, or an element that DECLARES itself an
-    editing host. One that answers no is assigned whole, exactly as this always
-    did. So is a value whose tail carries a newline, which `type()` would send
-    to a single-line field as the Enter key and submit the form mid-value.
+    editing host. One that answers "" is assigned whole, exactly as this always
+    did. So is a value whose tail carries a newline, unless the node is the one
+    kind that holds a newline as a character: `type()` sends it as the Enter
+    key, which submits the form from an input and inserts markup in a host.
 
     For the rest, everything before the last TYPED_CHARS is assigned in one go
     -- that is the `el.fill()` the rest of this exists to avoid, used
@@ -370,13 +373,13 @@ def _type_value(el, value):
     A node that has gone away raises out of the first question asked of it, and
     every path from here on leaves the caller's failure handling to unwind it.
     """
-    if not el.evaluate(TYPEABLE_JS):
+    kind = el.evaluate(TYPEABLE_JS)
+    if not kind:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
-    # Only the tail is typed, so only the tail can press Enter. Asked here rather
-    # than inside TYPEABLE_JS because it costs a round trip, and a value carrying
-    # a newline is the rare one -- an ordinary fill never pays for it.
-    if any(c in value[-TYPED_CHARS:] for c in ("\n", "\r")) and el.evaluate(ENTER_SUBMITS_JS):
+    # Only the tail is typed, so only the tail can press Enter -- and one answer
+    # already says whether this node holds a newline as a character.
+    if kind != "multiline" and any(c in value[-TYPED_CHARS:] for c in ("\n", "\r")):
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)

@@ -611,6 +611,27 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(masked.node_len).toBe(masked.asked_len);
   });
 
+  it("assigns a value carrying a newline rather than pressing Enter at a form", () => {
+    // `type()` sends a newline as the Enter key, which submits the form from a
+    // single-line field with only part of the value in it. `fill()` could never
+    // do that, so typing must not introduce it: the whole value is assigned.
+    const run = probed.newline_single_line;
+    expect(run.trace).not.toContain("handle.type");
+    expect(run.typed_len).toBeNull();
+    expect(run.node_len).toBe(run.asked_len);
+    expect(run.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("still types a newline into the one node that holds it as a character", () => {
+    // A textarea is why the predicate answers a kind rather than a boolean:
+    // there the newline IS the character the value is made of, so sending it
+    // through the keys is correct and the field must not lose them.
+    const run = probed.newline_multiline;
+    expect(run.trace).toContain("handle.type");
+    expect(run.typed_len).toBe(run.asked_len);
+    expect(run.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("assigns the value outright when the keys did not compose it", () => {
     // A field can take the keys and sanitise some of them away — a number
     // input handed something that is not a number does exactly that. Reporting
@@ -1172,18 +1193,22 @@ describe("whether a fill that failed left anything behind", () => {
 describe("which nodes take typing", () => {
   // The predicate itself, run as the page runs it — no python, no browser. What
   // it decides is which nodes get keystrokes and which are assigned, and the
-  // whole hazard is on the false side: `type()` refuses nothing, so "yes" typed
+  // whole hazard is on the empty side: `type()` refuses nothing, so "yes" typed
   // at a checkbox toggles nothing and answers ok, a <select> changes option by
   // type-ahead, a date input takes the segments in locale order, a hidden input
   // cannot even hold focus — so the keystrokes, on the credential path a
   // secret's characters, land wherever focus already was.
-  const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => boolean;
+  //
+  // It answers a KIND rather than a boolean because one more question rides on
+  // the same call: whether a newline belongs in this node's value. Only a
+  // textarea holds one as a character.
+  const typeable = loadScript("TYPEABLE_JS") as (el: unknown) => string;
   // Each stub carries what the predicate READS of that shape, and nothing more:
   // a property no branch reaches reads as coverage while pinning nothing. For an
   // input and a textarea that is `disabled`/`readOnly` — both really have them,
-  // and the last line is the only thing standing between a read-only field and a
-  // credential typed at it. For an input it is also `type`, an enumerated
-  // reflection: always lowercase, and "text" for an attribute that is missing or
+  // and it is the only thing standing between a read-only field and a credential
+  // typed at it. For an input it is also `type`, an enumerated reflection:
+  // always lowercase, and "text" for an attribute that is missing or
   // unrecognised, which is why `getAttribute` is here to disagree with it. For
   // everything else it is `contenteditable` and the document's design mode.
   const input = (type: string, extra: Record<string, unknown> = {}) => ({
@@ -1214,60 +1239,76 @@ describe("which nodes take typing", () => {
   it.each([
     // Every type on the list, because dropping one silently sends that field
     // back to assignment — the tell issue #86 is about — with nothing red.
-    { what: "a text field", el: input("text"), typed: true },
-    { what: "an email field", el: input("email"), typed: true },
-    { what: "a password field", el: input("password"), typed: true },
-    { what: "a search box", el: input("search"), typed: true },
-    { what: "a phone field, which is where a one-time code lands", el: input("tel"), typed: true },
-    { what: "a url field", el: input("url"), typed: true },
-    { what: "a number field, which is the card expiry beside a credential", el: input("number"), typed: true },
+    { what: "a text field", el: input("text"), kind: "single-line" },
+    { what: "an email field", el: input("email"), kind: "single-line" },
+    { what: "a password field", el: input("password"), kind: "single-line" },
+    { what: "a search box", el: input("search"), kind: "single-line" },
+    { what: "a phone field, which is where a one-time code lands", el: input("tel"), kind: "single-line" },
+    { what: "a url field", el: input("url"), kind: "single-line" },
+    { what: "a number field, which is the card expiry beside a credential", el: input("number"), kind: "single-line" },
     // The commonest input in the wild carries no type attribute at all: the
     // property answers "text" where `getAttribute` answers null, so a predicate
     // rewritten to read the attribute — as every other literal in this file does
     // — would send every one of them back to assignment.
-    { what: "an input with no type attribute", el: input("text", { getAttribute: () => null }), typed: true },
+    { what: "an input with no type attribute", el: input("text", { getAttribute: () => null }), kind: "single-line" },
     // The attribute is case-insensitive and the property is not: ordinary
     // markup where the two disagree on more than presence.
-    { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), typed: true },
-    { what: "a textarea", el: textarea(), typed: true },
-    { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), typed: true },
-    { what: "a div marked contenteditable=true", el: host("DIV", "true"), typed: true },
+    { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), kind: "single-line" },
+    // The one node that holds a newline as a character, and the only reason
+    // this predicate answers a kind rather than a boolean.
+    { what: "a textarea", el: textarea(), kind: "multiline" },
+    { what: "a contenteditable div, which has no disabled or readOnly at all", el: host("DIV"), kind: "single-line" },
+    { what: "a div marked contenteditable=true", el: host("DIV", "true"), kind: "single-line" },
     // The attribute is ASCII case-insensitive; capitalised markup is ordinary.
-    { what: "a div marked contenteditable=TRUE", el: host("DIV", "TRUE"), typed: true },
-    { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), typed: true },
-    { what: "a custom element that carries the attribute", el: host("X-EDITOR"), typed: true },
-    { what: "a checkbox", el: input("checkbox"), typed: false },
-    { what: "a radio button", el: input("radio"), typed: false },
-    { what: "a file picker", el: input("file"), typed: false },
-    { what: "a submit button", el: input("submit"), typed: false },
-    { what: "a hidden input, which cannot take focus", el: input("hidden"), typed: false },
-    { what: "a date input Firefox lays out as segments", el: input("date"), typed: false },
-    { what: "a range slider", el: input("range"), typed: false },
-    { what: "a read-only textarea", el: textarea({ readOnly: true }), typed: false },
-    { what: "a disabled textarea", el: textarea({ disabled: true }), typed: false },
+    { what: "a div marked contenteditable=TRUE", el: host("DIV", "TRUE"), kind: "single-line" },
+    { what: "a plaintext-only editor", el: host("DIV", "plaintext-only"), kind: "single-line" },
+    { what: "a custom element that carries the attribute", el: host("X-EDITOR"), kind: "single-line" },
+    { what: "a checkbox", el: input("checkbox"), kind: "" },
+    { what: "a radio button", el: input("radio"), kind: "" },
+    { what: "a file picker", el: input("file"), kind: "" },
+    { what: "a submit button", el: input("submit"), kind: "" },
+    { what: "a hidden input, which cannot take focus", el: input("hidden"), kind: "" },
+    { what: "a date input Firefox lays out as segments", el: input("date"), kind: "" },
+    { what: "a range slider", el: input("range"), kind: "" },
+    { what: "a read-only input", el: input("password", { readOnly: true }), kind: "" },
+    { what: "a disabled input", el: input("password", { disabled: true }), kind: "" },
+    { what: "a read-only textarea", el: textarea({ readOnly: true }), kind: "" },
+    { what: "a disabled textarea", el: textarea({ disabled: true }), kind: "" },
     // Nodes that declare nothing. Inside a rich-text region every one of them
     // inherits the editable state — the control where typing picks an option by
     // type-ahead, the embedded document the mask cannot reach, the ordinary span
-    // where select-all would replace the whole region — and none of them is the
+    // where the keys would replace the whole region — and none of them is the
     // host, which is the only thing the predicate asks about.
-    { what: "a select", el: element("SELECT"), typed: false },
-    { what: "an iframe", el: element("IFRAME"), typed: false },
-    { what: "a span", el: element("SPAN"), typed: false },
-    { what: "an editor explicitly turned off", el: host("DIV", "false"), typed: false },
+    { what: "a select", el: element("SELECT"), kind: "" },
+    { what: "an iframe", el: element("IFRAME"), kind: "" },
+    { what: "a span", el: element("SPAN"), kind: "" },
+    { what: "an editor explicitly turned off", el: host("DIV", "false"), kind: "" },
     // `contenteditable` is enumerated, so anything outside its keywords means
     // inherit: carrying the attribute is not declaring a host. These are the
     // nodes that would otherwise be typed into on the strength of the attribute
     // alone.
-    { what: "an unrecognised contenteditable value", el: host("SPAN", "banana"), typed: false },
-    { what: "the contenteditable=inherit older guidance taught", el: host("DIV", "inherit"), typed: false },
-    { what: "an iframe carrying an invalid value", el: host("IFRAME", "banana"), typed: false },
+    { what: "an unrecognised contenteditable value", el: host("SPAN", "banana"), kind: "" },
+    { what: "the contenteditable=inherit older guidance taught", el: host("DIV", "inherit"), kind: "" },
+    // Embedded and non-rendered nodes, DECLARING themselves hosts with a value
+    // the attribute accepts. The markup is page-controlled, so the declared case
+    // is reachable by anything the browser is pointed at: focus on an <iframe>
+    // delegates into the document inside it, where a secret's characters land
+    // beyond the reach of the mark on the outer node, and a <style> or
+    // <template> is not rendered at all, so focus is a no-op and the keys go
+    // wherever focus already was.
+    { what: "an iframe declaring itself an editor", el: host("IFRAME", "true"), kind: "" },
+    { what: "an object declaring itself an editor", el: host("OBJECT", "true"), kind: "" },
+    { what: "an embed declaring itself an editor", el: host("EMBED", "true"), kind: "" },
+    { what: "a style tag declaring itself an editor", el: host("STYLE", "true"), kind: "" },
+    { what: "a template declaring itself an editor", el: host("TEMPLATE", "true"), kind: "" },
+    { what: "an iframe carrying an invalid value", el: host("IFRAME", "banana"), kind: "" },
     // designMode declares the body and nothing else: a control in such a
     // document is no more the editing host than one in a region.
-    { what: "the body of a document in designMode", el: inDesignMode("BODY"), typed: true },
-    { what: "a select in a document in designMode", el: inDesignMode("SELECT"), typed: false },
-    { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), typed: false },
-  ])("$what: typed=$typed", ({ el, typed }) => {
-    expect(typeable(el)).toBe(typed);
+    { what: "the body of a document in designMode", el: inDesignMode("BODY"), kind: "single-line" },
+    { what: "a select in a document in designMode", el: inDesignMode("SELECT"), kind: "" },
+    { what: "a body outside designMode", el: element("BODY", { ownerDocument: { designMode: "off" } }), kind: "" },
+  ])("$what: kind=$kind", ({ el, kind }) => {
+    expect(typeable(el)).toBe(kind);
   });
 });
 
