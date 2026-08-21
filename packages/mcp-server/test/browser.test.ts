@@ -206,50 +206,31 @@ describe("browser tools (fake runtime)", () => {
       .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_opened")
       .map((e) => jv(e as JSONValue).get("headed").bool);
 
-  it("the shipped default is headless; a session asks for the window it wants", async () => {
+  // Two ways a session's window mode is decided — the app default the install
+  // ships with, and the per-session `headed` that overrides it either way.
+  // Each row opens twice: a session that says nothing, then one that asks for
+  // the opposite. `expected` is both, in order, and every oracle must agree.
+  it.each([
     // No DOMO_BROWSER_HEADED at all — this is what a packaged install runs.
-    vi.stubEnv("DOMO_BROWSER_HEADED", undefined);
+    ["the shipped default is headless, and a session can ask to be watched", undefined, true, [false, true]],
+    ["DOMO_BROWSER_HEADED=1 puts the window back, and a session can still hide", "1", false, [true, false]],
+  ])("%s", async (_name, env, override, expected) => {
+    vi.stubEnv("DOMO_BROWSER_HEADED", env);
     cleanups.push(() => vi.unstubAllEnvs());
     const { server, device, argvLog } = makeServer();
 
     const quiet = await callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT);
     expect(quiet.isError, JSON.stringify(quiet.payload)).toBe(false);
-    expect(quiet.payload.headed).toBe(false);
     await callTool(server, "plow_browser_close", { session: quiet.payload.session }, AGENT);
-
-    const watched = await callTool(
-      server, "plow_browser_open", { origins: ["pizza.example"], headed: true }, AGENT,
+    const asked = await callTool(
+      server, "plow_browser_open", { origins: ["pizza.example"], headed: override }, AGENT,
     );
-    expect(watched.payload.headed).toBe(true);
 
-    // The flag only exists on the command line, so the launches are the oracle.
-    const [first, second] = launches(argvLog);
-    expect(first).not.toContain("--headed");
-    expect(second).toContain("--headed");
-    // And the owner's log says which browser each session got.
-    expect(openedHeaded(device)).toEqual([false, true]);
-  });
-
-  it("DOMO_BROWSER_HEADED=1 gives the window back to every session that says nothing", async () => {
-    vi.stubEnv("DOMO_BROWSER_HEADED", "1"); // opting the whole app back in
-    cleanups.push(() => vi.unstubAllEnvs());
-    const { server, device, argvLog } = makeServer();
-
-    const watched = await callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT);
-    expect(watched.isError, JSON.stringify(watched.payload)).toBe(false);
-    expect(watched.payload.headed).toBe(true);
-    await callTool(server, "plow_browser_close", { session: watched.payload.session }, AGENT);
-
-    // …and a session may still hide itself under that override.
-    const hidden = await callTool(
-      server, "plow_browser_open", { origins: ["pizza.example"], headed: false }, AGENT,
-    );
-    expect(hidden.payload.headed).toBe(false);
-
-    const [first, second] = launches(argvLog);
-    expect(first).toContain("--headed");
-    expect(second).not.toContain("--headed");
-    expect(openedHeaded(device)).toEqual([true, false]);
+    // What the agent is told, what the browser was actually launched with (the
+    // flag only exists on the command line), and what the owner's log records.
+    expect([quiet.payload.headed, asked.payload.headed]).toEqual(expected);
+    expect(launches(argvLog).map((argv) => argv.includes("--headed"))).toEqual(expected);
+    expect(openedHeaded(device)).toEqual(expected);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {
