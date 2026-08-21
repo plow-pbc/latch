@@ -1377,7 +1377,7 @@ describe("which nodes take typing", () => {
     { what: "an input with no type attribute", el: input("text", { getAttribute: () => null }), kind: "single-line" },
     // The attribute is case-insensitive and the property is not: ordinary
     // markup where the two disagree on more than presence.
-    { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: () => "Password" }), kind: "single-line" },
+    { what: "an input whose type attribute is capitalised", el: input("password", { getAttribute: (k: string) => (k === "type" ? "Password" : null) }), kind: "single-line" },
     // The node that holds a line break as a character, which is the only reason
     // this predicate answers a kind rather than a boolean.
     { what: "a textarea", el: textarea(), kind: "multiline" },
