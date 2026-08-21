@@ -131,17 +131,17 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   it is built on this Mac from an authenticated agent's tool call — so there is
   no third party's signature to verify. That is not a data-locality claim:
   whenever the reviewer runs — adversarial mode's verdict and the default `ask`
-  mode's suggestion hint both call it — the agent's display name and id, the
-  request composed on this Mac, and the requested capability bounds are
-  formatted into a prompt and posted to Plow's chat-completion endpoint
-  (`apps/desktop/src/adversarialAgent.ts`), so those leave the Mac. Nothing
-  else does: no goal text, and no audit history — `reviewPolicy.ts` passes
-  `history: []` deliberately, and `buildPrompt` explains why. WHETHER it runs
-  is decided in precedence order by `packages/device-core/src/policyEngine.ts`,
-  whose stored always-allow rule short-circuits first, and then
-  `apps/desktop/src/reviewPolicy.ts`. What *is* signed is the **Grant**: the
-  device's Ed25519 signature over canonical JSON (sorted keys, ISO-8601 dates),
-  the Mac attesting to its own decision.
+  mode's suggestion hint both call it — four things are posted to Plow's
+  chat-completion endpoint (`apps/desktop/src/adversarialAgent.ts`): the
+  agent's display name and id, the request composed on this Mac, the requested
+  capability bounds, and the owner's own `agentPurpose` text, which rides in
+  the system message. Nothing else does — no goal text, and no audit history:
+  `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
+  explains why. WHETHER it runs is decided in precedence order by
+  `packages/device-core/src/policyEngine.ts`, whose stored always-allow rule
+  short-circuits first, and then `apps/desktop/src/reviewPolicy.ts`. What *is*
+  signed is the **Grant**: the device's Ed25519 signature over canonical JSON
+  (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 
@@ -168,8 +168,9 @@ Decisions: **Always allow / Allow once / Deny.**
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
-  not the approval flow. It is the raw material for the adversarial reviewer and
-  the future iOS remote-approval app.
+  not the approval flow. It is the raw material for the future iOS
+  remote-approval app — not for the adversarial reviewer, which is handed
+  `history: []` (§4).
 
 ## 6. Execution & sandbox
 

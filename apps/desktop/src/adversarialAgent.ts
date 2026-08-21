@@ -1,8 +1,8 @@
 /**
  * The reviewer that decides operation intents. It sees the device-built
- * request, the capability bounds, and what this agent's ALLOWED operations
- * have already done, then answers allow / deny / (when a human is behind it)
- * ask. DESIGN.md §4 covers what of the intent leaves the Mac when it runs;
+ * request, the capability bounds, and the owner's purpose text — and nothing
+ * earlier: no history, deliberately (see `buildPrompt`). It answers allow /
+ * deny / (when a human is behind it) ask. DESIGN.md §4 covers what of the intent leaves the Mac when it runs;
  * `reviewPolicy.ts` and `policyEngine.ts` decide whether it runs at all.
  *
  * Inference runs through Plow's OpenAI-shaped `/v1/chat/completions`, billed to
@@ -564,7 +564,11 @@ export async function adversarialReview(
   }
 }
 
-/** Build the recent audit history relevant to one agent (used as review context). */
+/**
+ * Build the recent audit history relevant to one agent. NOT review context any
+ * more — `reviewPolicy.ts` passes `history: []` and this is unused; it comes
+ * out with `ReviewArgs.history` in its own change.
+ */
 export function agentHistory(allEvents: JSONValue[], agentId: string, limit = 40): JSONValue[] {
   // intent_* / exec_* / denied_operation events carry only intentId, so first
   // collect this agent's intent ids, then include everything tied to them plus
