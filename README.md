@@ -24,10 +24,10 @@ touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
 > this app. Both halves of this side exist (`@domo/mcp-server`,
 > `@domo/relay-client`), and the relay — a separate repository — is built and
 > serving. So the policy engine, the capability-derived sandbox, file
-> operations, the audit log and the approval UI are not just covered by the test
-> suite: they are the live path a real caller drives. The relay leg itself has
-> no automated test here and is verified by hand — see
-> [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+> operations, the audit log, the approval UI and the adversarial reviewer are
+> not just covered by the test suite: they are the live path a real caller
+> drives. The relay leg itself has no automated test here and is verified by
+> hand — see [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Quickstart with `just`
 
@@ -60,7 +60,7 @@ approved capabilities — *derived from*, not tightly fitted to; see
 actually permits. The audit log is append-only. See DESIGN.md §8.
 
 Agent identity used to be an agent-held Ed25519 key pinned at access-grant time;
-it will instead be asserted by the relay, which authenticates the agent before
+it is now asserted by the relay, which authenticates the agent before
 forwarding. Note two things that are true of the code today: the device private
 key is a plaintext seed in a `0600` file (there is no Keychain or `safeStorage`
 integration anywhere), and `settings.json` — which holds the Plow relay

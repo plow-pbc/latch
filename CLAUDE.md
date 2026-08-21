@@ -33,7 +33,7 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 - `apps/desktop` — the Electron app. Main process runs `device-core`; the
   renderer is sandboxed (see the security rule below).
 
-**Being rebuilt.** The broker (its rendezvous service, MCP subset, stdio shim,
+**Rebuilt: a Mac dials out.** The broker (its rendezvous service, MCP subset,
 connection-string/pinning concepts and pairing flow) has been removed. A Mac
 dials *out* to the Plow relay, which authenticates the calling agent and
 forwards MCP to `@domo/mcp-server`. Both halves of this side exist, and so does

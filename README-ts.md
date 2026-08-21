@@ -3,16 +3,16 @@
 The TypeScript + Electron implementation of Domo (see [DESIGN.md](DESIGN.md) for
 the architecture and the reasoning behind each decision).
 
-> **Being rebuilt.** The in-repo broker — the rendezvous service, its MCP subset,
-> the connection-string/certificate-pinning concepts and the pairing flow — has
-> been removed. A Mac now reaches agents by dialing *out* to the Plow relay,
-> which authenticates the agent and forwards MCP to the MCP server in
-> `packages/mcp-server`. Both halves exist here: the server, and the outbound
-> client in `packages/relay-client` that dials the relay and serves what it
-> tunnels. The relay is a different repository, and it is **built and serving** —
-> agents reach Macs through this app today. There is no in-repo stand-in for it
-> any more, so the relay leg is verified by hand rather than in the suite; see
-> [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+> **Rebuilt: a Mac dials out.** The in-repo broker — the rendezvous service,
+> its MCP subset, the connection-string/certificate-pinning concepts and the
+> pairing flow — has been removed. A Mac now reaches agents by dialing *out* to
+> the Plow relay, which authenticates the agent and forwards MCP to the MCP
+> server in `packages/mcp-server`. Both halves exist here: the server, and the
+> outbound client in `packages/relay-client` that dials the relay and serves
+> what it tunnels. The relay is a different repository, and it is **built and
+> serving** — agents reach Macs through this app today. There is no in-repo
+> stand-in for it any more, so the relay leg is verified by hand rather than in
+> the suite; see [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Layout
 
