@@ -12,8 +12,7 @@ the architecture and the reasoning behind each decision).
 > what it tunnels. The relay is a different repository, and it is **built and
 > serving** — agents reach Macs through this app today. There is no in-repo
 > stand-in for it any more, so the leg against a real relay is verified by hand
-> rather than in the suite; see
-> [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+> rather than in the suite; see [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
 ## Layout
 
@@ -264,16 +263,19 @@ against a stand-in relay built to the wire contract — and that stand-in has no
 been deleted too, along with the drivers and the relay+MCP gate that ran against
 it (head chef's call: a locally running plow API already simulates plow).
 
-So there is **no automated coverage against a real relay** today,
-and no automated live-stack path either — the two scripts that drove a real plow
-stack (`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
-deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket, sends
-the auth frame, reconnects, or tunnels an MCP call. That whole path is verified
-**manually**: bring up a plow stack, run the app against it, drive it by hand.
-The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+So there is **no automated coverage against a real relay** today, and no
+automated live-stack path either — the two scripts that drove a real plow stack
+(`e2e/relay-gate/gate.ts`, `apps/desktop/scripts/approve-drive.mjs`) were
+deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket or
+tunnels an MCP call. That path is verified **manually**: bring up a plow stack,
+run the app against it, drive it by hand. The procedure is in
+[docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
 
-What `packages/relay-client/test` still holds is the pure part of the wire
-contract — `stripHopByHop`, `Host` preservation, frame validation.
+What `packages/relay-client/test` does hold: `wire.test.ts` for the pure wire
+contract — `stripHopByHop`, `Host` preservation, frame validation — plus
+`liveness.test.ts` and `lifecycle.test.ts`, which drive the client over a
+`FakeConn` through the auth handshake, the heartbeat, reconnect-with-backoff,
+and a dial that resolves after `stop()`.
 
 ## Running the desktop app
 

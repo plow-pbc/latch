@@ -3,13 +3,13 @@
 **Status:** v1 (local loop) — decisions locked 2026-08-08
 **Audience:** Domo developers and agents working on this codebase.
 
-Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a person's
-Mac — read and write files, run CLI commands with streaming output, and drive a
-real browser on their machine — through an **intent-based request
-system**: every operation is a structured, signed intent that an adversarial
-reviewer agent and a human can inspect and approve
-before it executes inside an on-the-fly sandbox derived from exactly the approved
-capabilities.
+Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a
+person's Mac — read and write files, run CLI commands with streaming output,
+and drive a real browser on their machine — through an **intent-based request
+system**: every operation is a structured, signed intent that a human, an
+adversarial reviewer agent, or both — depending on the configured approval mode
+— can inspect and approve before it executes inside an on-the-fly sandbox
+derived from exactly the approved capabilities.
 
 v1 runs entirely on one Mac, but every flow — enrollment, discovery, access
 requests, intents, approvals, revocation — goes through the same protocol a
@@ -281,7 +281,7 @@ repo can prove they broke nothing.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
   `denied`, …) — tests assert on it; humans read it; the adversarial reviewer
-  will consume it.
+  consumes it.
 
 `make test` runs everything. `swift test` builds all executables it spawns.
 

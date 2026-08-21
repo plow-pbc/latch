@@ -1,5 +1,5 @@
 /**
- * The adversarial agent that reviews operation intents (DESIGN.md §12 roadmap:
+ * The adversarial agent that reviews operation intents (DESIGN.md §12:
  * "an agent consuming the same intent + audit stream, sitting between policy and
  * prompt as an additional gate"). It looks at the command/goal, the requested
  * capability bounds, and the agent's recent history on this device, then decides
