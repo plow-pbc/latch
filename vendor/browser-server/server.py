@@ -480,7 +480,16 @@ def _type_value(el, value):
             # a legible partial credential sitting in the page, answered by a
             # result that says nothing was filled. So leave nothing: this is
             # the one place that knows the node was written to.
-            el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
+            #
+            # Best effort, and the refusal outlives it either way: the same page
+            # script that moved the cap can detach or freeze the node, and if
+            # that failure replaced this one the caller would lose the cap
+            # answer entirely and fall back on "check the selector" -- the
+            # message this whole path exists to stop producing.
+            try:
+                el.fill("", timeout=DEFAULT_ACTION_TIMEOUT_MS)
+            except Exception:  # noqa: BLE001 -- the refusal below is the answer
+                pass
             raise
 
 

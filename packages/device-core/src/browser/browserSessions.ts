@@ -805,9 +805,11 @@ export class BrowserSessions {
     }
     // `knobs` is what the agent had to ask for, so the next look at a session
     // that went wrong can count it the way this one counted `eval`.
-    // A field that will not hold the value. Refused before anything was typed,
-    // or — when the page moved the cap under a fill in progress — after the
-    // browser cleared what it had written, so the field is empty either way.
+    // A field that will not hold the value. Reached before anything is typed —
+    // the ordinary case, which leaves the page as it was found — or from a cap
+    // the page moved under a fill in progress, where the browser clears what it
+    // wrote. The message claims nothing about what the field holds, because
+    // those two leave different things in it.
     // Thrown rather than given a refusal kind of its own: the catch around this
     // call already writes the message into `browser_command`, which is what
     // makes the owner's log show a refused fill differently from one that
@@ -819,7 +821,7 @@ export class BrowserSessions {
       const cap = jv(result).get("cap").num;
       throw new Error(
         `that field holds only ${cap === null ? "so many" : cap} characters and the value is ` +
-        `longer, so the field was left empty`,
+        `longer, so it was not filled`,
       );
     }
 
@@ -1077,8 +1079,10 @@ export class BrowserSessions {
             `Screenshot the page and locate the field again.`,
         };
       }
-      // A field that will not hold the whole value: refused before anything was
-      // typed, so the page is exactly as it was found. Its own branch because
+      // A field that will not hold the whole value. Refused before anything is
+      // typed in the ordinary case; when the page moves the cap mid-fill the
+      // browser clears what it wrote first, so neither leaves the value in the
+      // page. Its own branch because
       // the catch below cannot forward the browser's text, and "the field may
       // be the wrong one — check the selector" is precisely wrong here: the
       // selector was right and re-issuing the same fill will fail forever. The
@@ -1104,9 +1108,8 @@ export class BrowserSessions {
           status: "error",
           error:
             `${field} was not filled: ${selector} holds only ${cap === null ? "so many" : cap} ` +
-            `characters and this value is longer, so the field was left empty. The value in the ` +
-            `vault cannot be entered in this field — it will have to be shortened where it is ` +
-            `stored.`,
+            `characters and this value is longer. The value in the vault cannot be entered in ` +
+            `this field — it will have to be shortened where it is stored.`,
         };
       }
       if (filled.ok !== true) {
