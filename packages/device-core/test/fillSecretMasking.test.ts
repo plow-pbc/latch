@@ -1433,8 +1433,9 @@ describe("which fields report a cap", () => {
     // Every stub answers attributes, so a rewrite reading the ATTRIBUTE rather
     // than the IDL property fails on the assertion for the whole table instead
     // of throwing on the eleven rows that never carried the method.
-    // Keyed on the tag as well as the name: only an input HAS a `type` content
-    // attribute, so a textarea or a select answers null the way the DOM does.
+    // Keyed on the tag as well as the name: of the tags stubbed here, only the
+    // input has a `type` content attribute, so a textarea or a select answers
+    // null the way a real one does.
     // Otherwise an attribute-reading rewrite would read "textarea" off the stub
     // and keep reporting a cap where the real DOM hands it null.
     getAttribute: (k: string) => (k === "type" && tagName === "INPUT" ? type ?? null : null),
