@@ -105,6 +105,7 @@ describe("the packaging hook refuses before it signs", () => {
   });
 
   it("accepts a payload whose content sits an arch level down", async () => {
+    expect(NESTED.length).toBeGreaterThan(0); // else the loop below proves nothing
     const runtime = pack("server");
     for (const nested of NESTED) {
       fs.rmSync(path.join(runtime, nested), { recursive: true });
