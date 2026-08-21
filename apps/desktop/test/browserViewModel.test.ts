@@ -37,7 +37,7 @@ describe("approvalViewModel for browser intents", () => {
     const titles: CredentialTitles = new Map([["L1", { title: "Dominos", category: "LOGIN" }]]);
     const vm = approvalViewModel(browserIntent(), titles);
     const cred = vm.capabilities.find((c) => c.kind === "credential")!;
-    expect(cred.display).toContain("'Dominos' (LOGIN)");
+    expect(cred.display).toContain("'Dominos' (LOGIN, id L1)");
     expect(cred.display).toContain("C1 (unknown item)");
     // The card must not promise more than the browser keeps: the value is typed
     // here, and the agent driving that page can read it back.

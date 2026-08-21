@@ -53,8 +53,18 @@ export function approvalViewModel(
   });
   const display = (c: Capability): string => {
     if (c.kind === "credential" && c.access === "fill" && credentialItems.length > 0) {
+      // Title and category for the human, and the stable id beside them.
+      //
+      // The id is what everything downstream keys on: the `intent_received`
+      // capability line, the always-allow rule the owner may build out of this
+      // approval, and anything later reading either. A dialog that showed only
+      // the title left the owner approving one label while the record carried
+      // another, with nothing on screen joining the two — and two vault items
+      // can share a title.
       const names = credentialItems.map((i) =>
-        i.title !== null ? `'${i.title}' (${i.category ?? "?"})` : `${i.id} (unknown item)`,
+        i.title !== null
+          ? `'${i.title}' (${i.category ?? "?"}, id ${i.id})`
+          : `${i.id} (unknown item)`,
       );
       // What the owner is actually granting: the value is typed here and never
       // handed back to the agent — but the agent is driving the page it lands
