@@ -752,7 +752,12 @@ app.whenReady().then(async () => {
     const KEEP = ".vaultui .confirm-overlay .btn.ghost";
     const DISCARD = ".vaultui .confirm-overlay .btn.danger";
 
-    await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
+    // The pane is already showing the LOCKED vault from the check above, and
+    // re-selecting the tab you are on is deliberately a no-op now — so go away
+    // and come back to make it re-read the (now populated) stub.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("rules"); return true; })()`);
+    await waitFor(win, `!document.querySelector(".vaultui")`, "the vault pane to go");
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
     await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list to render");
 
     // An untouched sheet closes without a question.
@@ -825,6 +830,15 @@ app.whenReady().then(async () => {
       document.querySelector(".vaultui .vitem.open input[data-name='1']")?.value === "dirty-again"
       && !document.querySelector(".vaultui .overlay.show"));
 
+    // Clicking the tab you are already on is not navigation, and must not
+    // quietly rebuild the pane out from under that still-dirty row.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    const resel = await js(() => ({
+      asked: !!document.querySelector(".vaultui .confirm-overlay"),
+      kept: document.querySelector(".vaultui .vitem.open input[data-name='1']")?.value === "dirty-again",
+    }));
+    const reselectingVaultKeepsTheForm = !resel.asked && resel.kept;
+
     // Closing the window asks the same question main-side (Cmd-W and Quit both
     // route through it). Drive the renderer's half of that conversation.
     let closeAnswer = null;
@@ -841,6 +855,7 @@ app.whenReady().then(async () => {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
       dirtyRowAsksOnCollapse, rowStaysOpenOnKeep, dirtyBlocksTabSwitch, discardAllowsTabSwitch,
       secondEditorAsks, refusedSecondEditorKeepsRow, windowCloseAsks, windowCloseAnswersMain,
+      reselectingVaultKeepsTheForm,
     };
   })();
 
@@ -931,6 +946,7 @@ app.whenReady().then(async () => {
     vaultUnsaved.refusedSecondEditorKeepsRow &&
     vaultUnsaved.windowCloseAsks &&
     vaultUnsaved.windowCloseAnswersMain &&
+    vaultUnsaved.reselectingVaultKeepsTheForm &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

@@ -330,7 +330,7 @@ function createMainWindow(): void {
     persist();
     if (allowClose || quitting) return;
     event.preventDefault();
-    void confirmRendererLeave().then((mayLeave) => {
+    void confirmRendererLeave(win).then((mayLeave) => {
       if (!mayLeave || win.isDestroyed()) return;
       allowClose = true;
       win.close();
@@ -1017,18 +1017,18 @@ app.whenReady().then(async () => {
  * or when the owner chose to discard. The timeout is deliberate: a renderer
  * that is wedged or gone must not be able to make the app unquittable.
  */
-function confirmRendererLeave(): Promise<boolean> {
-  const win = mainWindow;
+function confirmRendererLeave(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);
   return new Promise((resolve) => {
     const done = (ok: boolean) => {
-      clearTimeout(timer);
       ipcMain.removeListener("ui:confirmLeaveReply", onReply);
       resolve(ok);
     };
     const onReply = (_e: unknown, ok: boolean) => done(!!ok);
-    const timer = setTimeout(() => done(true), 5000);
     ipcMain.on("ui:confirmLeaveReply", onReply);
+    // No timeout, and no assumed answer: a person reading the question is not a
+    // renderer that failed to reply, and five seconds cannot tell them apart.
+    // Silence keeps the window — Force Quit is still there for a wedged one.
     // The question is drawn IN the window, so it has to be on screen to be seen.
     if (!win.isVisible()) win.show();
     win.webContents.send("ui:confirmLeave");
@@ -1046,7 +1046,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitting) return;
   quitting = true;
-  void confirmRendererLeave().then((mayLeave) => {
+  void confirmRendererLeave(mainWindow).then((mayLeave) => {
     if (!mayLeave) {
       quitting = false; // they went back to their form; this quit never happened
       return;

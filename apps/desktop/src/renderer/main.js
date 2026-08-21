@@ -17,7 +17,10 @@ const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 
-let currentTab = "audit";
+// Null until boot() picks one: the HTML marks Audit active for the first paint,
+// but boot must still RENDER that pane, and "already on this tab" now returns
+// early — so the starting value cannot be a tab boot might legitimately select.
+let currentTab = null;
 let filter = "all";
 // The mounted Settings pane, while that tab is up. Holds a `refresh` that
 // updates the display nodes in place, so a relay reconnect cannot reset the
@@ -1128,7 +1131,10 @@ function render() {
 // whole pane, so an open form with unsaved edits gets a say first — and a caller
 // must not persist a tab the owner backed out of.
 async function selectTab(tab) {
-  if (currentTab === "vault" && tab !== "vault" && !(await vaultConfirmLeave())) return false;
+  // Already there: a rebuild would throw away an open form for no navigation at
+  // all, which is the loss this guard exists to prevent.
+  if (tab === currentTab) return true;
+  if (currentTab === "vault" && !(await vaultConfirmLeave())) return false;
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
