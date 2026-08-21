@@ -17,6 +17,8 @@
  *   FAKE_CSP_BLOCKS_MASK=1   answer every masked fill "unmasked" and type
  *                            nothing, the way a page whose style-src omits
  *                            'unsafe-inline' defeats the mask
+ *   FAKE_TOO_LONG_FITS=1     make that refusal the "it fit and the field would
+ *                            not keep it" arm rather than the over-cap one
  *   FAKE_TOO_LONG=n          answer every fill "too_long" with cap n, the way the
  *                            real server does for a field that cannot hold it
  *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
@@ -205,6 +207,9 @@ function handle(cmd) {
       return {
         ok: false, mask: "too_long",
         cap: Number(process.env.FAKE_TOO_LONG), frame: cmd.frame ?? 0,
+        // The value FIT and the field declined to keep it — the arm whose
+        // remedy is not "shorten what you stored".
+        ...(process.env.FAKE_TOO_LONG_FITS === "1" ? { fits: true } : {}),
       };
     }
     if (cmd.mask && process.env.FAKE_CSP_BLOCKS_MASK === "1") {

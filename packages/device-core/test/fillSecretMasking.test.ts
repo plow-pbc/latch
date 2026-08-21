@@ -431,6 +431,33 @@ describe("fill_secret marking", () => {
     expect(JSON.stringify(result)).not.toContain(held);
   });
 
+  // Two ways to be refused, and the advice has to differ: shortening the stored
+  // value fixes one and is actively wrong for the other.
+  it("does not blame the stored value when the field would not keep it", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_TOO_LONG: "16", FAKE_TOO_LONG_FITS: "1" });
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
+    });
+    const error = jv(result).get("error").str ?? "";
+    expect(error).toContain("did not keep the whole value");
+    expect(error).toContain("not at fault");
+    // The other arm's remedy must not appear: it would send the owner to change
+    // a credential that is not the problem.
+    expect(error).not.toContain("shortened");
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_fill_failed",
+      fields: {
+        session: audited(), item: "C1", field: "number",
+        origin: "payframe.example", selector: "#card-number",
+        reason: "the field did not keep the whole value",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("4111");
+  });
+
   // The agent's own `fill` takes the same refusal. Its regression is the worst
   // shape available — a result that falls through as `status: "completed"`
   // carrying `ok: false` tells the agent the fill happened while nothing was

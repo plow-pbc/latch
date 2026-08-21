@@ -820,8 +820,8 @@ export class BrowserSessions {
       const room = cap === null ? "so many" : cap;
       throw new Error(
         jv(result).get("fits").bool === true
-          ? `that field holds ${room} characters and did not keep the whole value, so it was ` +
-            `not filled — it changes what is typed into it`
+          ? `that field did not keep the whole value, so it was not filled — it changes what ` +
+            `is typed into it`
           : `that field holds only ${room} characters and the value is longer, so it was ` +
             `not filled`,
       );
@@ -1102,7 +1102,7 @@ export class BrowserSessions {
           origin: frameHost,
           selector,
           reason: fits
-            ? `the field holds ${cap} characters and did not keep the whole value`
+            ? "the field did not keep the whole value"
             : cap === null
               ? "the field holds fewer characters than the value"
               : `the field holds only ${cap} characters`,
@@ -1113,9 +1113,9 @@ export class BrowserSessions {
             fits
               // It fit. Saying "shorten it where it is stored" here would send
               // the owner to change a credential that is not the problem.
-              ? `${field} was not filled: ${selector} holds ${cap} characters and did not keep ` +
-                `the whole value — it changes what is typed into it. The value in the vault is ` +
-                `not at fault; this field cannot be filled by an agent.`
+              ? `${field} was not filled: ${selector} did not keep the whole value — it changes ` +
+                `what is typed into it. The value in the vault is not at fault; this field ` +
+                `cannot be filled by an agent.`
               : `${field} was not filled: ${selector} holds only ${cap === null ? "so many" : cap} ` +
                 `characters and this value is longer. The value in the vault cannot be entered ` +
                 `in this field — it will have to be shortened where it is stored.`,
