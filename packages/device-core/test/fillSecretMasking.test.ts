@@ -1424,7 +1424,7 @@ describe("which fields report a cap", () => {
   // `type` is an enumerated reflection: always a lowercase string on the
   // elements that have one — "text" for a missing or unrecognised attribute,
   // "textarea" on a textarea, "select-one" on a select — so a row gives what
-  // the IDL gives, and only an element with no `type` at all omits it.
+  // the IDL gives, and an element with no `type` at all reads `undefined`.
   const node = (tagName: string, type: string | undefined, maxLength: number) =>
     ({ tagName, type, maxLength });
 
@@ -1437,6 +1437,15 @@ describe("which fields report a cap", () => {
     { what: "a tel input", el: node("INPUT", "tel", 10), reports: 10 },
     { what: "an email input", el: node("INPUT", "email", 8), reports: 8 },
     { what: "a password input", el: node("INPUT", "password", 16), reports: 16 },
+    // The script compares `el.type` raw, which only holds because the property
+    // is the canonical keyword however the attribute was written. Pinned here
+    // the way the typeable table pins it, so a rewrite that read the ATTRIBUTE
+    // instead fails on the assertion rather than on the stub.
+    {
+      what: "an input whose type attribute is capitalised",
+      el: { tagName: "INPUT", type: "password", getAttribute: () => "Password", maxLength: 16 },
+      reports: 16,
+    },
     { what: "a textarea", el: node("TEXTAREA", "textarea", 40), reports: 40 },
     // Everything below carries the attribute and is not governed by it. Reading
     // one here would turn an authoring mistake into a fill that never lands.
