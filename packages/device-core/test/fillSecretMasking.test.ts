@@ -407,11 +407,13 @@ describe("fill_secret marking", () => {
       reason: "the field holds only 16 characters" },
     { what: "the field is holding something other than what was typed",
       env: { FAKE_ALTERED: "1" },
-      says: ["not holding what was typed", "not at fault"],
+      // It DID go in — a changed copy is in the field, and saying "not filled"
+      // would leave the caller thinking the page was untouched.
+      says: ["holding a changed copy", "still in the field", "not at fault"],
       // The other one's remedy: it would send the owner to change a credential
       // that is not the problem.
       omits: ["shortened"],
-      reason: "the field changed the value it was given" },
+      reason: "the field is holding a changed copy of the value" },
   ])("refuses a credential fill when $what", async ({ env, says, omits, reason }) => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx(env);

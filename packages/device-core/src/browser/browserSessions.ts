@@ -1082,14 +1082,15 @@ export class BrowserSessions {
           field,
           origin: frameHost,
           selector,
-          reason: "the field changed the value it was given",
+          reason: "the field is holding a changed copy of the value",
         });
         return {
           status: "error",
           error:
-            `${field} was not filled: ${selector} is not holding what was typed into it — the ` +
-            `page changes what goes in. The value in the vault is not at fault, and this field ` +
-            `cannot be filled by an agent.`,
+            `${field} did not go in as stored: ${selector} took it and is holding a changed ` +
+            `copy — the page rewrites what is typed into it. That copy is still in the field; ` +
+            `clear it yourself if it must not be submitted. The value in the vault is not at ` +
+            `fault, and this field cannot be filled by an agent.`,
         };
       }
       if (filled.mask === "moved") {
