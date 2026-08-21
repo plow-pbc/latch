@@ -30,14 +30,18 @@ closeGate();
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("node:fs/promises");
-  const readFile = async (...args: Parameters<typeof actual.readFile>) => {
+  // The gate sits on `open` because that is where a FileOps read now starts:
+  // it opens the path it checked and every byte after that comes off the
+  // descriptor. What is being measured is unchanged — a read is outstanding,
+  // and the loop must keep running while it is.
+  const open = async (...args: Parameters<typeof actual.open>) => {
     if (typeof args[0] === "string" && args[0].includes("gated")) {
       markEntered();
       await gate;
     }
-    return actual.readFile(...args);
+    return actual.open(...args);
   };
-  return { ...actual, default: { ...actual, readFile }, readFile };
+  return { ...actual, default: { ...actual, open }, open };
 });
 
 const { FileOps } = await import("@domo/device-core");

@@ -200,10 +200,28 @@ told to recognise other people's secrets by name. This is one component
 refusing to let anything edit its own configuration, it knows its own home for
 certain, and it holds whatever an approval said.
 
-**Known gaps, deliberately left for their own rounds:** the deny covers *this*
-home, so a from-source run on one branch can still read a sibling
-`Plow-Latch-<other>` home; and `FileOps` canonicalizes and then opens by path,
-which is the same check-then-open race the scope check has always had.
+**The family, not this folder.** A Mac runs one home per checkout —
+`Plow-Latch-<branch>` beside the packaged install's plain `Plow-Latch` — and
+each signs in for its OWN relay credential, so reading the neighbour's
+`settings.json` takes a credential exactly as reading this one's does. Both
+mechanisms refuse the whole name family: the profile with a regex anchored to
+the directory the home sits in (the list of siblings is not knowable when the
+profile is generated — one can appear while a command runs; the name pattern is
+what is fixed), `FileOps` with the same test on the canonical path. A folder
+that merely begins alike — `Plow-Latchkey Notes` — is not a home and stays
+ordinary.
+
+**A name is not a file.** `FileOps` resolved a path, checked it, and then opened
+it: between the two, a directory in the path can become a symlink, and the
+check passes on one file while the open lands on `settings.json`. So the open
+comes first and every byte afterwards goes through the DESCRIPTOR, which cannot
+be redirected once it exists; the descriptor is then proved to be the checked
+file (`O_NOFOLLOW`, the name re-resolving to the same canonical path, and the
+descriptor's device/inode matching the name's). A write opens without
+truncating, because an open that empties the wrong file before it verifies has
+already done the damage. The test opens the window deliberately rather than
+racing for it — a wall-clock race passed against the unfixed code by never
+landing in a window microseconds wide.
 
 **Seatbelt (`sandbox-exec`) with a generated profile.** The profile is not
 authored by anyone — it is *mechanically derived* from the approved capability

@@ -17,4 +17,5 @@ export * from "./deviceAgent.js";
 export * from "./executor.js";
 export * from "./fileOps.js";
 export * from "./identity.js";
+export * from "./plowHome.js";
 export * from "./policyEngine.js";

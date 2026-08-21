@@ -92,6 +92,42 @@ describe("FileOps bounds", () => {
     ).rejects.toThrow(/own home directory/);
   });
 
+  /**
+   * A Mac runs one home per checkout — `Plow-Latch-<branch>` beside the
+   * packaged install's plain `Plow-Latch` — and each signs in for its OWN relay
+   * credential. Reading the neighbour's `settings.json` takes a credential just
+   * as surely as reading this one's, so the refusal covers the name family and
+   * not only the folder this instance happens to be running from.
+   */
+  it("refuses a SIBLING instance's home, which holds a different credential", async () => {
+    const support = tempDir();
+    const mine = path.join(support, "Plow-Latch-my-branch");
+    const theirs = path.join(support, "Plow-Latch-other-branch");
+    const packaged = path.join(support, "Plow-Latch");
+    for (const home of [mine, theirs, packaged]) {
+      fs.mkdirSync(path.join(home, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(home, "app/settings.json"),
+        JSON.stringify({ relayCredential: "plow_sk_do_not_leak_me" }),
+      );
+    }
+    // The whole of Application Support approved as a read root — the widest an
+    // approval could plausibly be — and every home under it is still refused.
+    for (const home of [theirs, packaged]) {
+      await expect(
+        FileOps.read(path.join(home, "app/settings.json"), [support], mine),
+      ).rejects.toThrow(/own home directory/);
+    }
+    // A neighbouring folder that merely starts with something similar is NOT a
+    // home and stays ordinary: this refuses a family, not a prefix.
+    const ordinary = path.join(support, "Plow-Latchkey Notes");
+    fs.mkdirSync(ordinary);
+    fs.writeFileSync(path.join(ordinary, "note.txt"), "ordinary");
+    expect((await FileOps.read(path.join(ordinary, "note.txt"), [support], mine)).toString()).toBe(
+      "ordinary",
+    );
+  });
+
   it("rejects ../ traversal escaping the root", async () => {
     const dir = tempDir();
     const sub = path.join(dir, "sub");

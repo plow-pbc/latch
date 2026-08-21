@@ -2,7 +2,8 @@
  * In-process file operations, bounds-checked against the approved capability
  * paths — twin of DomoDeviceCore/FileOps.swift. Trusted code, which is
  * exactly why every access is canonicalized and scope-checked (symlinks and
- * ".." resolved) before touching the disk.
+ * ".." resolved), and then reads and writes the DESCRIPTOR it proved rather
+ * than the name it checked — see `openVerified`.
  *
  * These are **async and size-capped** because a tunnelled call has a hard time
  * budget. Synchronous reads block the event loop, so a large file or a slow
@@ -10,9 +11,11 @@
  * return late, after the relay had already told the agent the call failed, while
  * this Mac went ahead and did the work anyway.
  */
-import fs from "node:fs/promises";
+import { constants as fsConstants, Stats } from "node:fs";
+import fs, { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { canonicalizeAsync, isWithinRootsAsync } from "@domo/protocol";
+import { isInsidePlowHome } from "./plowHome.js";
 
 /**
  * Largest file these operations will read or write in one call.
@@ -74,8 +77,12 @@ async function resolveInScope(
   // BEFORE the scope check, deliberately: an approval that somehow named this
   // directory must not be the thing that authorizes it. There is no capability
   // set that makes the app's own state an agent's to touch.
+  //
+  // The FAMILY, not just this instance: one Mac runs a home per checkout, each
+  // signed in for its own relay credential, so `Plow-Latch-<other>` beside this
+  // one is somebody's credential too.
   const home = await canonicalizeAsync(deviceHome);
-  if (await isWithinRootsAsync(canonical, [home])) {
+  if (isInsidePlowHome(canonical, home)) {
     throw new FileOpsError(
       "path is inside Plow Latch's own home directory, which agents may not read or write",
       true,
@@ -87,6 +94,57 @@ async function resolveInScope(
   return canonical;
 }
 
+/**
+ * Open the checked path and prove the open landed on the thing that was
+ * checked.
+ *
+ * Resolving a name and then opening it are two trips to the filesystem, and
+ * between them a directory in the path can become a symlink: the check passes
+ * on one file and the open lands on another. Nothing above this can close that
+ * — the approval named a path, and a path is not a file.
+ *
+ * So the open comes first and every byte afterwards goes through the
+ * DESCRIPTOR, which cannot be redirected once it exists, and the descriptor is
+ * then proved to be the checked file two ways:
+ *
+ * - `O_NOFOLLOW` refuses a symlink at the leaf outright, so only an
+ *   intermediate directory is left to swap.
+ * - Resolving the name again must give back the same canonical path (a swap
+ *   that is still in place resolves somewhere else — into DOMO_HOME, which is
+ *   the point of the attack), and the descriptor's own device/inode must match
+ *   the name's (a swap that has been reverted leaves the name innocent but the
+ *   descriptor on the attacker's file).
+ *
+ * Either check failing is a refusal, not a retry: something moved under a path
+ * an approval had already been granted for, and re-running the race is not an
+ * answer to having lost it.
+ */
+async function openVerified(
+  canonical: string,
+  flags: number,
+): Promise<{ handle: FileHandle; stat: Stats }> {
+  const handle = await fs.open(canonical, flags | fsConstants.O_NOFOLLOW);
+  try {
+    const [opened, name, resolved] = await Promise.all([
+      handle.stat(),
+      fs.lstat(canonical),
+      canonicalizeAsync(canonical),
+    ]);
+    if (resolved !== canonical || opened.dev !== name.dev || opened.ino !== name.ino) {
+      throw new FileOpsError(
+        "the path changed underneath this operation and was not the file that was approved",
+        true,
+      );
+    }
+    // The descriptor's own stat, so size and type are read off the thing that
+    // was just proved rather than off the name a second time.
+    return { handle, stat: opened };
+  } catch (error: unknown) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
 export const FileOps = {
   /**
    * `deviceHome` is REQUIRED, not optional with a default. A caller that forgot
@@ -95,24 +153,27 @@ export const FileOps = {
    */
   async read(filePath: string, allowedRoots: string[], deviceHome: string): Promise<Buffer> {
     const canonical = await resolveInScope(filePath, allowedRoots, deviceHome);
-    let size: number;
+    let opened: { handle: FileHandle; stat: Stats };
     try {
-      const info = await fs.stat(canonical);
-      if (info.isDirectory()) throw new FileOpsError(`not a file: ${canonical}`);
-      size = info.size;
+      opened = await openVerified(canonical, fsConstants.O_RDONLY);
     } catch (error: unknown) {
       if (error instanceof FileOpsError) throw error;
       throw new FileOpsError(`read failed: ${error instanceof Error ? error.message : error}`);
     }
-    if (size > MAX_FILE_BYTES) {
-      throw new FileOpsError(
-        `file is ${size} bytes, over the ${MAX_FILE_BYTES}-byte single-call limit`,
-      );
-    }
+    const { handle, stat } = opened;
     try {
-      return await fs.readFile(canonical);
+      if (stat.isDirectory()) throw new FileOpsError(`not a file: ${canonical}`);
+      if (stat.size > MAX_FILE_BYTES) {
+        throw new FileOpsError(
+          `file is ${stat.size} bytes, over the ${MAX_FILE_BYTES}-byte single-call limit`,
+        );
+      }
+      return await handle.readFile();
     } catch (error: unknown) {
+      if (error instanceof FileOpsError) throw error;
       throw new FileOpsError(`read failed: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      await handle.close().catch(() => {});
     }
   },
 
@@ -128,11 +189,25 @@ export const FileOps = {
       );
     }
     const canonical = await resolveInScope(filePath, allowedRoots, deviceHome);
+    let handle: FileHandle;
     try {
       await fs.mkdir(path.dirname(canonical), { recursive: true });
-      await fs.writeFile(canonical, data);
+      // Created if absent, never TRUNCATED here: truncation is destruction, and
+      // it must not happen until the descriptor has been proved to be the file
+      // that was checked. An open that emptied the wrong file and then refused
+      // would have done the damage the refusal is for.
+      handle = (await openVerified(canonical, fsConstants.O_WRONLY | fsConstants.O_CREAT)).handle;
+    } catch (error: unknown) {
+      if (error instanceof FileOpsError) throw error;
+      throw new FileOpsError(`write failed: ${error instanceof Error ? error.message : error}`);
+    }
+    try {
+      await handle.truncate(0);
+      await handle.write(data, 0, data.length, 0);
     } catch (error: unknown) {
       throw new FileOpsError(`write failed: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      await handle.close().catch(() => {});
     }
   },
 };

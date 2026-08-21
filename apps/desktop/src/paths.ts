@@ -21,10 +21,14 @@
  * opens it — see migrateHome.ts, which derives the old name from HOME_PREFIX.
  */
 import path from "node:path";
-import { vaultStoreIdentity } from "@domo/device-core";
+import { HOME_PREFIX, vaultStoreIdentity } from "@domo/device-core";
 
-/** The home's folder-name prefix. migrateHome.ts matches on it — keep them one. */
-export const HOME_PREFIX = "Plow-Latch";
+/**
+ * The home's folder-name prefix. migrateHome.ts matches on it, and the seatbelt
+ * profile and `FileOps` refuse the whole family of folders named from it — one
+ * definition, so what NAMES a home and what DEFENDS one cannot drift.
+ */
+export { HOME_PREFIX };
 
 export interface InstancePaths {
   /** macOS app menu / dock title (set before ready via app.setName). */

@@ -10,6 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { canonicalize } from "@domo/protocol";
+import { homeFamilyRegex } from "./plowHome.js";
 
 const READ_BOILERPLATE = [
   "/usr",
@@ -25,6 +26,23 @@ const READ_BOILERPLATE = [
 
 function quote(p: string): string {
   return '"' + p.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+/**
+ * An SBPL regex literal. `#"..."` is raw — a backslash reaches the regex engine
+ * as a backslash, which is what lets `homeFamilyRegex` escape metacharacters —
+ * so only the quote that would end the literal is escaped here.
+ */
+function regexLiteral(pattern: string): string {
+  return '#"' + pattern.replace(/"/g, '\\"') + '"';
+}
+
+/**
+ * The sibling-home pattern, over the CANONICAL home so it matches the physical
+ * paths seatbelt enforces against (`/private/...`, not `/...`).
+ */
+function canonicalizedFamilyRegex(deviceHome: string): string {
+  return homeFamilyRegex(canonicalize(deviceHome));
 }
 
 export const SandboxProfile = {
@@ -85,9 +103,12 @@ export const SandboxProfile = {
     const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
       (p) => home + "/" + p,
     );
-    const writable = [args.scratch, ...args.writePaths, ...housekeeping].map((p) =>
-      canonicalize(p),
-    );
+    // The scratch directory is NOT in here. It is granted once, after the
+    // DOMO_HOME deny below, because that is the grant that has to survive —
+    // granting it here as well would put the same two lines in every profile
+    // twice and leave the audit of a security-critical, frozen-fixture policy
+    // reading as if either copy were load-bearing.
+    const writable = [...args.writePaths, ...housekeeping].map((p) => canonicalize(p));
     for (const p of writable) {
       lines.push(`(allow file-write* (subpath ${quote(p)}))`);
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
@@ -121,9 +142,19 @@ export const SandboxProfile = {
     // a broader deny that comes after it, so the deny has to name the same
     // operations. A profile-text assertion would not have caught that; the
     // tests run the sandbox.
+    //
+    // TWO denies, because there are two kinds of home to close. The subpath is
+    // this run's own DOMO_HOME, wherever it is — a throwaway root under a test's
+    // temp directory included. The regex is the FAMILY: this Mac runs one home
+    // per checkout, `Plow-Latch-<branch>` beside the packaged install's plain
+    // `Plow-Latch`, and each is signed in for its own relay credential. Reading
+    // the neighbour's `settings.json` takes a credential exactly as reading
+    // one's own does, and a command's own output is how it would leave, so no
+    // read or network capability has to be declared for it.
     const plowHome = quote(canonicalize(args.deviceHome));
-    lines.push(`(deny file-read* (subpath ${plowHome}))`);
-    lines.push(`(deny file-write* (subpath ${plowHome}))`);
+    const family = canonicalizedFamilyRegex(args.deviceHome);
+    lines.push(`(deny file-read* (subpath ${plowHome}) (regex ${regexLiteral(family)}))`);
+    lines.push(`(deny file-write* (subpath ${plowHome}) (regex ${regexLiteral(family)}))`);
     lines.push(`(allow file-read* (subpath ${quote(canonicalize(args.scratch))}))`);
     lines.push(`(allow file-write* (subpath ${quote(canonicalize(args.scratch))}))`);
     return lines.join("\n");

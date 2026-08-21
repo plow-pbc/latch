@@ -139,6 +139,63 @@ describe("real sandboxed execution", () => {
     expect(fs.readFileSync(settings, "utf8")).not.toContain("do anything");
   });
 
+  /**
+   * The neighbour's home, which is a DIFFERENT credential.
+   *
+   * A Mac runs one home per checkout — `Plow-Latch-<branch>` beside the
+   * packaged install's plain `Plow-Latch` — and each signs in for its own relay
+   * credential. The profile's broad `(subpath home)` read covers the lot, and a
+   * command's own OUTPUT is how a credential leaves, so this needs no declared
+   * read path and no network to be a disclosure.
+   */
+  it("refuses a sibling instance's home, which holds another credential", async () => {
+    const support = tempDir();
+    const mine = path.join(support, "Plow-Latch-my-branch");
+    const theirs = path.join(support, "Plow-Latch-other-branch");
+    const packaged = path.join(support, "Plow-Latch");
+    for (const home of [mine, theirs, packaged]) {
+      fs.mkdirSync(path.join(home, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(home, "app/settings.json"),
+        JSON.stringify({ relayCredential: "plow_sk_do_not_leak_me" }),
+      );
+    }
+    const executor = new Executor(path.join(mine, "device/scratch"), mine);
+    const result = await executor.run({
+      argv: ["/bin/cat", path.join(theirs, "app/settings.json"), path.join(packaged, "app/settings.json")],
+      readPaths: [support],
+      writePaths: [],
+      network: false,
+      waitMs: 10_000,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output.toString()).not.toContain("plow_sk_do_not_leak_me");
+  });
+
+  /**
+   * The family is a family of HOMES, not of names beginning with the prefix.
+   * A deny that swallowed the owner's own "Plow-Latchkey Notes" would be a
+   * profile taking away what an approval granted.
+   */
+  it("leaves a neighbouring folder that merely starts alike alone", async () => {
+    const support = tempDir();
+    const mine = path.join(support, "Plow-Latch-my-branch");
+    fs.mkdirSync(mine, { recursive: true });
+    const ordinary = path.join(support, "Plow-Latchkey Notes");
+    fs.mkdirSync(ordinary);
+    fs.writeFileSync(path.join(ordinary, "note.txt"), "ordinary-note");
+    const executor = new Executor(path.join(mine, "device/scratch"), mine);
+    const result = await executor.run({
+      argv: ["/bin/cat", path.join(ordinary, "note.txt")],
+      readPaths: [ordinary],
+      writePaths: [],
+      network: false,
+      waitMs: 10_000,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.output.toString()).toContain("ordinary-note");
+  });
+
   it("still gives the run its scratch directory, which lives inside that home", async () => {
     // The deny would otherwise take the working directory with it — the
     // re-allow after it is what last-match-wins is for.
