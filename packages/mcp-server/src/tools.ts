@@ -23,7 +23,12 @@ import {
   makeIntent,
 } from "@domo/protocol";
 import { ToolAnnotations } from "@modelcontextprotocol/server";
-import { DeviceAgent, MAX_CLICK_TIMEOUT_MS, MAX_FILE_BYTES } from "@domo/device-core";
+import {
+  DeviceAgent,
+  LIVE_WEB_ROUTING,
+  MAX_CLICK_TIMEOUT_MS,
+  MAX_FILE_BYTES,
+} from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 
@@ -155,21 +160,16 @@ const GOAL = {
 };
 
 /**
- * The macOS tooling an agent is told to reach for, in ONE place.
- *
- * It had two homes — this sentence and the instructions block — and every
- * review round since found another facet of that duplication: a guard covering
- * one home, a coupling note pointing at one home, a positive assertion pinning
- * one home. One constant, interpolated into both, removes the class.
+ * The macOS tooling an agent is told to reach for, in ONE place — this sentence
+ * and `plow_run_command`'s description are two consumers of one list.
  *
  * Every name here was RUN under the generated seatbelt profile before being
  * printed: `mdfind`, `sips`, `pbcopy` and `pbpaste` all exit 0 under
  * `(deny default)` + `(allow mach-lookup)`. `osascript` driving another
  * application, `screencapture` and `shortcuts` are deliberately absent — the
  * profile grants no `appleevent-send` and the app ships no automation
- * entitlement or TCC usage strings, so naming them would point an agent at a
- * denial. See the coupling note in device-core's executor.ts before changing
- * either this list or that profile.
+ * entitlement, so naming them would point an agent at a denial. Adding a name
+ * means running it first; see the coupling note in device-core's executor.ts.
  */
 export const MACOS_TOOLING =
   "mdfind for Spotlight search across their files, sips for images, " +
@@ -419,9 +419,8 @@ export const TOOLS: ToolSpec[] = [
     title: "Open a browser on the user's Mac",
     description:
       "Open a browser on the user's own Mac, as the user — use this for reading the live web, "
-    + "not your own fetch. It runs on their network rather than a datacenter address many "
-    + "sites refuse, it renders JavaScript, and it starts on a copy of their own profile, so "
-    + "it is already signed in wherever they are. What you sign into is merged back into their "
+    + `not your own fetch: ${LIVE_WEB_ROUTING}. `
+    + "What you sign into is merged back into their "
     + "profile when the session closes — including when several browsers are open at once. It "
     + "can also "
     + "fill passwords from their vault without returning them to you ('eval' is the exception: "

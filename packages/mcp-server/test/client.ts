@@ -100,26 +100,24 @@ export async function callTool(
 }
 
 /**
- * Read until `done`, or give up.
+ * Read until `done`, or give up after ~2s.
  *
- * Six copies of `for (let i = 0; i < 80 && …; i++) await new Promise(r =>
- * setTimeout(r, 25))` had accumulated across four test files, at two different
- * try counts, and two of them were added while fixing a flake caused by NOT
- * polling. The idiom belongs in one place.
+ * The one home for an idiom that had accumulated eight copies across four test
+ * files at two different try counts. It reads once before waiting, so a
+ * condition already true costs nothing, and RETURNS the last value rather than
+ * throwing on exhaustion — every caller has its own assertion about that value,
+ * and those messages say far more than a generic timeout would.
  *
- * It reads once before waiting, so a condition that is already true costs
- * nothing. It RETURNS the last value rather than throwing on exhaustion:
- * every caller has its own assertion about that value, and those messages say
- * far more than a generic timeout would.
+ * The cadence is fixed rather than a parameter: no caller has ever wanted a
+ * different one, and a knob nobody turns is a branch nobody tests.
  */
 export async function pollUntil<T>(
   read: () => Promise<T>,
   done: (value: T) => boolean,
-  { tries = 80, everyMs = 25 }: { tries?: number; everyMs?: number } = {},
 ): Promise<T> {
   let value = await read();
-  for (let i = 0; i < tries && !done(value); i++) {
-    await new Promise((r) => setTimeout(r, everyMs));
+  for (let i = 0; i < 80 && !done(value); i++) {
+    await new Promise((r) => setTimeout(r, 25));
     value = await read();
   }
   return value;

@@ -13,7 +13,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { BROWSING_SKILL, DeviceAgent, HeadlessPolicy } from "@domo/device-core";
+import {
+  BROWSING_SKILL,
+  DeviceAgent,
+  HeadlessPolicy,
+  LIVE_WEB_ROUTING,
+} from "@domo/device-core";
 import {
   createDomoMcpServer,
   DomoMcpServer,
@@ -248,14 +253,10 @@ function manifestStrings(): { where: string; text: string }[] {
 }
 
 describe("the handshake says what this server is", () => {
-  /**
-   * `serverInfo` rides `initialize` and ONLY `initialize`. The 2026-07-28
-   * `server/discover` result is supportedVersions + capabilities +
-   * instructions — no `Implementation` anywhere in it. So `title`,
-   * `description` and `websiteUrl` reach 2025-era clients (claude.ai's
-   * connector opens that way) and no one else, which is exactly why the
-   * routing contract lives in the instructions block instead of here.
-   */
+  // `serverInfo` rides `initialize` and ONLY `initialize` — the 2026-07-28
+  // `server/discover` result carries no `Implementation` at all. So `title`,
+  // `description` and `websiteUrl` reach 2025-era clients and no one else,
+  // which is why the routing contract lives in the instructions block.
   it("initialize carries a titled, described identity", async () => {
     const info = (await initialize(makeServer())).serverInfo as Record<string, string> | undefined;
     expect(info?.name).toBe("plow-latch");
@@ -335,6 +336,17 @@ describe("what the agent-facing copy must and must not say", () => {
    * TODO forces a rewrite — would have shipped green while the tool that
    * actually runs the commands named no tooling at all.
    */
+  /**
+   * Seam, not words. The live-web rule had three independent wordings and a
+   * regex guard to keep them in step; one constant with three consumers means
+   * the assertion is that they still consume it.
+   */
+  it("all three surfaces interpolate the one live-web routing sentence", async () => {
+    expect(SERVER_INSTRUCTIONS).toContain(LIVE_WEB_ROUTING);
+    expect((await descriptions(makeServer())).plow_browser_open).toContain(LIVE_WEB_ROUTING);
+    expect(BROWSING_SKILL.description).toContain(LIVE_WEB_ROUTING);
+  });
+
   it("both copy homes interpolate the one tooling list", async () => {
     expect(SERVER_INSTRUCTIONS).toContain(MACOS_TOOLING);
     expect((await descriptions(makeServer())).plow_run_command).toContain(MACOS_TOOLING);
@@ -353,17 +365,11 @@ describe("what the agent-facing copy must and must not say", () => {
 
   /**
    * Every fault that must not appear ANYWHERE a model reads, in one table.
+   * `offends` is a predicate rather than a regex so the bare-tool-name sweep —
+   * a function call, not a match — belongs in the same table.
    *
-   * These were four separate loops over `manifestStrings()` differing only in
-   * a check and a message, and the shape kept costing: each new forbidden
-   * class arrived as another copy of the loop, and review kept finding one
-   * whose check was narrower than its own test name promised. `offends` is a
-   * predicate rather than a regex so the bare-tool-name sweep — which calls a
-   * function, not a match — belongs in the same table instead of beside it.
-   *
-   * `open` and `shortcuts` were removed from the tooling copy alongside
-   * `osascript`, but only `shortcuts` is pinned here: `open` is far too common
-   * an English word to assert against a prose corpus without false positives.
+   * `open` was removed from the tooling copy alongside `osascript` but is not
+   * pinned here: too common an English word to assert against prose.
    *
    * An "already signed in" row lived here and is GONE, deliberately. It was
    * written when a session opened on a persistent-but-shared profile, where the

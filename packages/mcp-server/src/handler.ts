@@ -20,7 +20,7 @@ import {
   McpServer,
 } from "@modelcontextprotocol/server";
 import { JSONValue } from "@domo/protocol";
-import { DeviceAgent } from "@domo/device-core";
+import { DeviceAgent, LIVE_WEB_ROUTING } from "@domo/device-core";
 import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 import {
@@ -38,64 +38,30 @@ export const PROTOCOL_REVISION = "2026-07-28";
 /**
  * What this server is FOR, in the agent's own terms.
  *
- * Every tool description used to say only what a tool does. An agent choosing
- * between an instant read in its own workspace and one that might block on a
- * human picked its own every time — correctly, on the information it had,
- * because nothing said the local read was reading the wrong machine. Users had
- * to prefix requests with "with Plow, do X" to get these tools used at all.
+ * The boundary is stated once here rather than thirteen times in thirteen tool
+ * descriptions: these tools reach the user's real computer, the agent's own do
+ * not. Tool descriptions carry a compressed version anyway, because a client
+ * may drop this block — it rides `initialize` (2025 clients) and
+ * `server/discover` (2026-07-28), and neither obliges a client to forward it.
  *
- * So the boundary is stated once, here, rather than thirteen times in thirteen
- * descriptions: these tools reach the user's real computer, the agent's own
- * tools do not. The tool descriptions carry a compressed version of the same
- * thing because not every client forwards this block to the model — it rides
- * `initialize` (2025 clients) and `server/discover` (2026-07-28), and a client
- * is free to drop it.
+ * **No fallbacks, on purpose.** This used to route "general web reading" to the
+ * agent's own tools, on the theory that a fetch is cheaper than a human's
+ * approval. That sends "what's on the homepage of Reddit?" to a datacenter
+ * address the site refuses, and the agent reports failure with nothing telling
+ * it a real browser was one call away. The Reddit example stays verbatim: a
+ * concrete case moves a model where a rule does not.
  *
- * The last paragraph is the approval contract, and it is here because nothing
- * anywhere told an agent what to DO about a pending handle: not to go quiet,
- * and not to re-issue the call — which asks the human a second time.
+ * **Claim only what holds.** The approval sentence ENUMERATES rather than
+ * generalising, because "the user approves anything that touches their machine"
+ * is false — `plow_vault` list/describe builds no intent and asks nobody. Same
+ * reason the pending-handle line defers to the payload instead of describing
+ * it: the handle's own `reason` says what it waits for, and a second copy in
+ * prose was wrong in exactly the states that matter. An instructions block that
+ * overstates its guarantee is worse than one that says less.
  *
- * It DEFERS to the payload rather than describing it. This paragraph used to
- * say a pending handle "means a request is on their screen and nobody has
- * answered yet" — the same claim the pending note itself was corrected for,
- * and false in the same states: the reason may be `running`, or approval may
- * not have been asked for yet. Two copies of a runtime contract in prose is
- * one copy too many; the handle says what it is waiting for, so point at it.
- *
- * The approval sentence ENUMERATES rather than generalising, and that is not
- * style. It said "the user approves anything that touches their machine",
- * which is false: `vault` list/describe is non-deferrable, builds no intent,
- * and reads the vault's inventory (titles, usernames, sites — never a value)
- * with no human in the loop. Whether that carve-out should exist is a product
- * question; describing it accurately is not. An instructions block that
- * overstates the guarantee is worse than one that says less.
- *
- * The web paragraph INVERTED on 2026-08-20, and the reason is worth keeping
- * because the old sentence reads perfectly reasonable. It used to send
- * "general web reading" to the agent's own tools, on the theory that a fetch
- * is faster than a human approval and trivia should not cost one. What that
- * missed is that the agent's fetch leaves a datacenter address, and the sites
- * users actually ask about refuse it. "What's on the homepage of Reddit?" went
- * out to a blocked fetch and came back a failure, with nothing anywhere
- * telling the agent that a real browser on the user's own network was one call
- * away. The example is carried verbatim because a concrete case moves a model
- * where a rule does not.
- *
- * It states the browser's advantages as FACTS and stops short of the one that
- * would be a lie: the profile persists, it is not "signed in". Same reason
- * `plow_browser_open` is guarded against that phrase in toolCopy.test.ts — a
- * persistent profile promises nothing about any particular site.
- *
- * There are no fallbacks here on purpose. Offering the agent's own tools as a
- * faster alternative is what produced the behaviour above; the carve-out is
- * scoped to the agent's own work product instead, which is the one thing it
- * will not route to someone else's machine anyway.
- *
- * The macOS examples are interpolated from `MACOS_TOOLING` rather than written
- * here, because this paragraph and `plow_run_command`'s description are two
- * homes for one list and every review round found another facet of that. The
- * rules about which names may appear — and why `osascript` may not — live on
- * that constant.
+ * `LIVE_WEB_ROUTING` and `MACOS_TOOLING` are interpolated rather than written
+ * here; each has other consumers, and the rules about what may appear in them
+ * (including why `osascript` may not) live on those constants.
  *
  * This is guidance to a model, never a capability claim. Nothing here widens
  * what a tool may do; the enforceable bound is the capability set the human
@@ -103,7 +69,7 @@ export const PROTOCOL_REVISION = "2026-07-28";
  */
 export const SERVER_INSTRUCTIONS = `These tools operate the user's own Mac — their real files, their real applications, their real shell, and a real browser running there. Your own file, shell and web tools act on your workspace: a different machine, on a different network address, that the user cannot see.
 
-Reach for these whenever the question is about the live web or about this user's world. Public pages included: your own fetch leaves a datacenter address that many sites refuse outright, it trips bot walls and consent interstitials, and it sees none of a page that renders in JavaScript. Their browser is a real one on their own network, with a profile that persists between sessions. "What's on the homepage of Reddit?" is a plow_browser_open question.
+Reach for these whenever the question is about the live web or about this user's world. Public pages included: ${LIVE_WEB_ROUTING} — your own fetch does none of that, and trips bot walls and consent interstitials besides. "What's on the homepage of Reddit?" is a plow_browser_open question.
 
 Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: ${MACOS_TOOLING}.
 

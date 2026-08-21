@@ -563,11 +563,12 @@ describe("review findings", () => {
 
       // Hop two: the ready payload is the plow_run_command result, and the job
       // handle is inside it.
-      let poll = first.payload;
-      for (let i = 0; i < 80 && poll.status === "pending"; i++) {
-        await new Promise((r) => setTimeout(r, 25));
-        poll = (await callTool(server, "plow_get_result", { handle: deferredHandle }, AGENT)).payload;
-      }
+      const poll = (
+        await pollUntil(
+          () => callTool(server, "plow_get_result", { handle: deferredHandle }, AGENT),
+          (r) => r.payload.status !== "pending",
+        )
+      ).payload;
       expect(poll.status).toBe("ready");
       // The ready payload is the plow_run_command result. Because wait_ms is capped
       // at the budget, that result is itself the "still running, here is a job
@@ -578,11 +579,12 @@ describe("review findings", () => {
 
       // Hop three, in practice: the inner handle is the JOB handle plow_get_output
       // takes, and that is where the output actually arrives.
-      let out = poll.result;
-      for (let i = 0; i < 80 && out.status === "running"; i++) {
-        await new Promise((r) => setTimeout(r, 25));
-        out = (await callTool(server, "plow_get_output", { handle: poll.result.handle }, AGENT)).payload;
-      }
+      const out = (
+        await pollUntil(
+          () => callTool(server, "plow_get_output", { handle: poll.result.handle }, AGENT),
+          (r) => r.payload.status !== "running",
+        )
+      ).payload;
       expect(out.status).toBe("completed");
       expect(out.exit_code).toBe(0);
       expect(out.output).toContain("done");
