@@ -1,8 +1,8 @@
 /**
- * The reviewer that decides operation intents. It sees the device-built
- * request, the capability bounds, and the owner's purpose text — and nothing
- * earlier: no history, deliberately (see `buildPrompt`). It answers allow /
- * deny / (when a human is behind it) ask. DESIGN.md §4 covers what of the intent leaves the Mac when it runs;
+ * The reviewer that decides operation intents. It sees one operation and
+ * nothing earlier — no history, deliberately — and answers allow / deny /
+ * (when a human is behind it) ask. `buildPrompt` owns what it is shown;
+ * DESIGN.md §4 owns what of that leaves the Mac. DESIGN.md §4 covers what of the intent leaves the Mac when it runs;
  * `reviewPolicy.ts` and `policyEngine.ts` decide whether it runs at all.
  *
  * Inference runs through Plow's OpenAI-shaped `/v1/chat/completions`, billed to
