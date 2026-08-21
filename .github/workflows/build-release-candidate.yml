@@ -7,8 +7,9 @@ run-name: Manual build — ${{ github.ref_name }}@${{ github.sha }}
 # Publishing the draft is the human approval gate — it fires promote-app.yml,
 # which copies the artifacts to the stable keys installed apps poll.
 #
-# Manual dispatch only (no nightly cron): the relay this app dials is still
-# verified against a stand-in, so releases are cut deliberately, not on a timer.
+# Manual dispatch only (no nightly cron): the leg against a real relay has no
+# automated coverage and is verified by hand (README-ts.md § Integration
+# coverage), so releases are cut deliberately, not on a timer.
 #
 # Setup this workflow assumes (shared with Plow's release pipeline):
 #   - a "release" environment with required reviewers, a deployment policy of

@@ -131,14 +131,17 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   it is built on this Mac from an authenticated agent's tool call — so there is
   no third party's signature to verify. That is not a data-locality claim:
   whenever the reviewer runs — adversarial mode's verdict and the default `ask`
-  mode's suggestion hint both call it — the intent is formatted into a prompt
-  with recent audit history and posted to Plow's chat-completion endpoint
-  (`apps/desktop/src/adversarialAgent.ts`), so its contents leave the Mac.
-  WHETHER it runs is decided in precedence order by
-  `packages/device-core/src/policyEngine.ts`, whose stored always-allow rule
-  short-circuits first, and then `apps/desktop/src/reviewPolicy.ts`. What *is*
-  signed is the **Grant**: the device's Ed25519 signature over canonical JSON
-  (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
+  mode's suggestion hint both call it — the agent's display name and id, the
+  request composed on this Mac, and the requested capability bounds are
+  formatted into a prompt and posted to Plow's chat-completion endpoint
+  (`apps/desktop/src/adversarialAgent.ts`), so those leave the Mac. Nothing
+  else does: no goal text, and no audit history — `reviewPolicy.ts` passes
+  `history: []` deliberately, and `buildPrompt` explains why. WHETHER it runs
+  is decided in precedence order by `packages/device-core/src/policyEngine.ts`,
+  whose stored always-allow rule short-circuits first, and then
+  `apps/desktop/src/reviewPolicy.ts`. What *is* signed is the **Grant**: the
+  device's Ed25519 signature over canonical JSON (sorted keys, ISO-8601 dates),
+  the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
 
@@ -290,8 +293,8 @@ repo can prove they broke nothing.
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
-  `denied`, …) — tests assert on it; humans read it; the adversarial reviewer
-  consumes it.
+  `denied`, …) — tests assert on it and humans read it. The adversarial reviewer
+  does NOT: it is handed `history: []` on purpose (§4).
 
 `make test` runs everything. `swift test` builds all executables it spawns.
 
@@ -628,8 +631,9 @@ if update size becomes a problem.
 3. **Remote:** cloud broker (same wire contract), WebSocket transport, pairing
    codes, revocation; iOS approval app.
 4. **Multi-user:** spaces, capability ceilings, cross-owner approvals.
-5. **Adversarial reviewer** — *landed.* An agent consuming the same intent +
-   audit stream, sitting between policy and prompt as an additional gate:
+5. **Adversarial reviewer** — *landed*, though not as planned here: it sits
+   between policy and prompt as an additional gate, but judges the one intent
+   in front of it rather than consuming the audit stream (§4).
    `apps/desktop/src/adversarialAgent.ts`, wired into the approval path at
    `main.ts`.
 

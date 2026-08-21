@@ -1,7 +1,8 @@
 /**
  * Append-only NDJSON audit log — twin of DomoDeviceCore/AuditLog.swift.
  * One event per line: the human record, the test oracle (DESIGN.md §10), and
- * the stream the adversarial reviewer consumes.
+ * and the human record. The adversarial reviewer does NOT read it — it is
+ * handed `history: []` on purpose (DESIGN.md §4).
  */
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
