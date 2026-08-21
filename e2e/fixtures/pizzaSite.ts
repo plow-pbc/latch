@@ -61,14 +61,15 @@ export function createPizzaSite(): Promise<PizzaSite> {
          <script>
            // What a bot defense counts, counted here: character key events the
            // browser itself produced. \`isTrusted\` is false for anything a page
-           // synthesizes, and a chord — the select-all a fill types over, on
-           // whichever of the two modifiers the platform spells it with — is not
-           // a character anyone typed. Each field keeps its own count, so the
-           // visible fill and the credential fill are separate evidence.
+           // synthesizes, and the single-character check keeps the count to
+           // characters rather than the named keys. An assignment fires no key
+           // event at all — which is why the answer was zero before there was
+           // typing. Each field keeps its own count, so the visible fill and the
+           // credential fill are separate evidence.
            for (const id of ["user", "pass"]) {
              const count = document.getElementById(id + "Keys");
              document.getElementById(id).addEventListener("keydown", (e) => {
-               if (e.isTrusted && e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
+               if (e.isTrusted && e.key.length === 1) {
                  count.value = String(Number(count.value) + 1);
                }
              });

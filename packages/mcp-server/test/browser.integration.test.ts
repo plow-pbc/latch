@@ -104,7 +104,10 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
     // itself. `fill()` would have assigned .value and fired a single input
     // event, and the page — like the defense in front of a real sign-in — would
     // have counted none at all. The two fields are counted separately, so
-    // neither can cover for the other.
+    // neither can cover for the other. Both values are shorter than
+    // TYPED_CHARS, so the count is the whole length rather than the typed
+    // tail — a longer fixture credential would land its head as an assignment
+    // and read here as a typing regression.
     expect(site.state.loginAttempts.at(-1)).toEqual({
       user: "jon@example.com",
       pass: "pizza-time-99",
