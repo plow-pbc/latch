@@ -1415,6 +1415,37 @@ describe("which nodes take typing", () => {
   });
 });
 
+// The allowlist is the difference between refusing a value a field genuinely
+// cannot hold and refusing one that lands intact, so it is asserted against the
+// script the browser actually runs rather than through a stub that answers for
+// it. `maxLength` REFLECTS the attribute everywhere; only some kinds enforce it.
+describe("which fields report a cap", () => {
+  const cap = loadScript("FIELD_CAP_JS") as (el: unknown) => number;
+  const node = (tagName: string, type: string | null, maxLength: number) =>
+    ({ tagName, type, maxLength });
+
+  it.each([
+    { what: "a text input", el: node("INPUT", "text", 16), reports: 16 },
+    { what: "a password input", el: node("INPUT", "password", 16), reports: 16 },
+    { what: "an email input", el: node("INPUT", "email", 8), reports: 8 },
+    { what: "a tel input", el: node("INPUT", "tel", 10), reports: 10 },
+    { what: "a textarea", el: node("TEXTAREA", null, 40), reports: 40 },
+    { what: "an input with no type at all", el: node("INPUT", null, 5), reports: 5 },
+    // Everything below carries the attribute and is not governed by it. Reading
+    // one here would turn an authoring mistake into a fill that never lands.
+    { what: "a number input carrying a stray maxlength", el: node("INPUT", "number", 4), reports: -1 },
+    { what: "a date input carrying one", el: node("INPUT", "date", 4), reports: -1 },
+    { what: "a checkbox carrying one", el: node("INPUT", "checkbox", 4), reports: -1 },
+    { what: "a contenteditable host", el: node("DIV", null, 4), reports: -1 },
+    { what: "a select", el: node("SELECT", null, 4), reports: -1 },
+    // -1 is what an uncapped field reports, and what the parser coerces an
+    // invalid attribute value to.
+    { what: "an uncapped text input", el: node("INPUT", "text", -1), reports: -1 },
+  ])("reports $what as $reports", ({ el, reports }) => {
+    expect(cap(el)).toBe(reports);
+  });
+});
+
 describe("the mark the page ends up carrying", () => {
   const mark = loadScript("MASK_JS") as (el: StubEl) => string;
   const unmark = loadScript("UNMASK_JS") as (el: StubEl) => boolean;
