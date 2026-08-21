@@ -849,7 +849,6 @@ app.whenReady().then(async () => {
     // ...and a row collapse arriving at the same moment, which reaches the
     // dialog by a different route than the window teardown does.
     await click(".vaultui .vitem .vrow");
-    win.webContents.send("ui:confirmLeave"); // a third path, same pending question
     await waitAsking();
     const oneDialogForTwoAskers = await js(() =>
       document.querySelectorAll(".vaultui .confirm-overlay").length === 1);
@@ -872,6 +871,21 @@ app.whenReady().then(async () => {
     await waitForNode(() => closeAnswer !== null, "the renderer's answer to main");
     const windowCloseAnswersMain = closeAnswer === true;
 
+    // A forced teardown while a question is open leaves nobody to answer it, so
+    // the pending request must settle itself rather than outlive its window.
+    const orphan = new BrowserWindow({
+      show: false,
+      webPreferences: { preload: path.join(dist, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    await orphan.loadFile(path.join(dist, "renderer/index.html"));
+    await waitFor(orphan, `document.querySelector("#seg")`, "the orphan window to render");
+    let orphanSettled = false;
+    orphan.on("closed", () => { orphanSettled = true; });
+    orphan.webContents.send("ui:confirmLeave"); // never answered
+    orphan.destroy();
+    const destroyedWindowSettles = await waitForNode(() => orphanSettled, "the destroyed window to settle")
+      .then(() => true).catch(() => false);
+
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
@@ -879,6 +893,7 @@ app.whenReady().then(async () => {
       secondEditorAsks, refusedSecondEditorKeepsRow, windowCloseAsks, windowCloseAnswersMain,
       reselectingVaultKeepsTheForm,
       oneDialogForTwoAskers, refusalIsReported, refusedCloseKeepsTheForm,
+      destroyedWindowSettles,
     };
   })();
 
@@ -973,6 +988,7 @@ app.whenReady().then(async () => {
     vaultUnsaved.oneDialogForTwoAskers &&
     vaultUnsaved.refusalIsReported &&
     vaultUnsaved.refusedCloseKeepsTheForm &&
+    vaultUnsaved.destroyedWindowSettles &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

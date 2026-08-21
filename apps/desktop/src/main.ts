@@ -330,7 +330,7 @@ function createMainWindow(): void {
   let allowClose = false;
   mainWindow.on("close", (event) => {
     persist();
-    if (allowClose || cleanedUp || gateClosing) return;
+    if (allowClose || cleanedUp) return;
     event.preventDefault();
     void mayLeaveMain(win).then((mayLeave) => {
       if (!mayLeave || win.isDestroyed()) return;
@@ -340,6 +340,10 @@ function createMainWindow(): void {
   });
   mainWindow.on("closed", () => {
     mainWindow = null;
+    // Nobody consented: the window that was asked is gone. Refusing rather than
+    // approving keeps a destroyed window from authorising someone else's quit,
+    // and frees the promise a later Cmd-W would otherwise inherit still pending.
+    settleLeave?.(false);
   });
 }
 
@@ -790,21 +794,18 @@ const gate = new WindowGate({
   isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
   openMain: () => createMainWindow(),
   openSetup: () => openOnboardingWindow(),
-  // The gate's close is NOT a departure the owner may refuse: it fires when the
-  // relay rejects the credential, and a signed-out Mac is not entitled to a main
-  // window at all — the gate's contract is exactly one window, always. Letting
-  // the discard question cancel THIS close left main open beside Setup. The
-  // unsaved edits are lost, and that is the honest trade: there is no signed-out
-  // state in which that form could have been saved.
+  // destroy(), not close(): the gate's teardown is NOT a departure the owner may
+  // refuse. It fires when the relay rejects the credential, and a signed-out Mac
+  // is not entitled to a main window at all — the gate's contract is exactly one
+  // window, always. `destroy()` says that outright instead of asking `close()`
+  // for permission and then holding a flag to overrule the answer.
   //
-  // The reference is not dropped here — `isMainOpen` reads `isDestroyed()`,
-  // already true the moment the close lands, and 'closed' clears it.
+  // The unsaved edits die with it, which is the honest trade: there is no
+  // signed-out state in which that form could have been saved. Bounds survive —
+  // 'resized'/'moved' persist them as they happen, not at close.
   closeMain: () => {
     const win = mainWindow;
-    if (!win || win.isDestroyed()) return;
-    gateClosing = true;
-    win.close();
-    gateClosing = false;
+    if (win && !win.isDestroyed()) win.destroy();
   },
   // Setup has no form to lose, so its close is immediate and the early drop
   // still buys a truthful `isSetupOpen` before 'closed' arrives.
@@ -1033,16 +1034,19 @@ app.whenReady().then(async () => {
  * not a renderer that failed to reply, and no timer can tell them apart, so
  * silence keeps the window; Force Quit is still there for a wedged one.
  */
-/** Set only while the gate itself is closing main — see closeMain below. */
-let gateClosing = false;
 let leaveInFlight: Promise<boolean> | null = null;
+/** Settles the question above when the window it was asked of dies unanswered. */
+let settleLeave: ((ok: boolean) => void) | null = null;
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);
   leaveInFlight ??= new Promise<boolean>((resolve) => {
-    const onReply = (_e: unknown, ok: boolean) => {
+    const done = (ok: boolean) => {
       ipcMain.removeListener("ui:confirmLeaveReply", onReply);
-      resolve(!!ok);
+      settleLeave = null;
+      resolve(ok);
     };
+    const onReply = (_e: unknown, ok: boolean) => done(!!ok);
+    settleLeave = done;
     ipcMain.on("ui:confirmLeaveReply", onReply);
     // The question is drawn IN the window, so it has to be on screen to be seen.
     if (!win.isVisible()) win.show();
