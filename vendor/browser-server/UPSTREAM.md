@@ -55,7 +55,8 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
   - `fill` types the value in rather than assigning it where it can: everything
     before the last `TYPED_CHARS` is assigned and the tail arrives as one key
     event per character, with `_type_value` owning which nodes and which values
-    that holds for. Upstream's `el.fill()` sets `.value` and fires a single `input`,
+    that holds for, and why the rest are assigned. Upstream's `el.fill()` sets
+    `.value` and fires a single `input`,
     so a password box goes from empty to complete with no keydown/keypress/keyup
     at all, which is what interrogation-style bot defenses (Kasada, Akamai Bot
     Manager) sample — Costco's sign-in answered every credential submit with a

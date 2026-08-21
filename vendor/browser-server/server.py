@@ -98,10 +98,11 @@ SCAN_INTERVAL_MS = 50
 # answer describes where the page ended up rather than where it was mid-flight.
 SETTLE_MS = 1000
 
-# How much of a value arrives as key events. A field that goes from empty to
-# complete with no keydown/keypress/keyup at all is the cheapest signal an
-# interrogating defense has, so a fill ends on real keys wherever it can --
-# `_type_value` owns when it cannot, and why. Keystrokes cost a delay each and
+# What one key waits behind the key before it, and why a fill sends keys at all:
+# a field that goes from empty to complete with no keydown/keypress/keyup is the
+# cheapest signal an interrogating defense has, so a fill ends on real keys
+# wherever it can -- `_type_value` owns which nodes and values those are, and
+# why the rest are assigned. Keystrokes cost a delay each and
 # an agent may fill a field with prose, so only the last TYPED_CHARS are typed
 # and the bulk ahead of them is assigned. The number is a statement about
 # credentials rather than a latency derivation: an ordinary password, a card
