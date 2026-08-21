@@ -418,17 +418,16 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser_open",
     title: "Open a browser on the user's Mac",
     description:
-      "Open a browser on the user's own Mac, as the user — use this for reading the live web, "
-    + `not your own fetch: ${LIVE_WEB_ROUTING}. `
-    + "What you sign into is merged back into their "
-    + "profile when the session closes — including when several browsers are open at once. It "
-    + "can also "
-    + "fill passwords from their vault without returning them to you ('eval' is the exception: "
-    + "it reads page values directly, and must not be pointed at a field you filled). "
-    + "The session id you get back says WHICH browser: pass it on every call and you keep the "
-    + "same window. The Mac runs a few at once — every one of them the user's — and says so "
-    + "plainly when it is full. "
-    + "It is a supervised anti-detection browser, scoped to the listed " +
+      "Open a browser on the user's own Mac, as the user — use this for reading the live web, " +
+      `not your own fetch: ${LIVE_WEB_ROUTING}. ` +
+      "What you sign into is merged back into their profile when the session closes — including " +
+      "when several browsers are open at once. It can also fill passwords from their vault " +
+      "without returning them to you ('eval' is the exception: it reads page values directly, " +
+      "and must not be pointed at a field you filled). " +
+      "The session id you get back says WHICH browser: pass it on every call and you keep the " +
+      "same window. The Mac runs a few at once — every one of them the user's — and says so " +
+      "plainly when it is full. " +
+      "It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
       "permission to list the owner's vault item names (never values). The browser window is " +

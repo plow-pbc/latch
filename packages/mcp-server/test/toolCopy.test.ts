@@ -214,12 +214,8 @@ describe("the browsing skill agrees with the tools it documents", () => {
   // same breath; when they disagreed about who does general web reading, the
   // agent resolved it arbitrarily — the exact inconsistency this work exists to
   // remove.
-  // This assertion INVERTED on 2026-08-20 along with the copy it guards. It
-  // used to require the skill to say general web reading belonged in the
-  // agent's own tools; that is the sentence the whole change exists to remove.
-  it("the skill description claims the live web, and says why it can", () => {
+  it("the skill description claims the live web", () => {
     expect(BROWSING_SKILL.description).toMatch(/reading the live web/i);
-    expect(BROWSING_SKILL.description).toMatch(/datacenter address/i);
     expect(BROWSING_SKILL.description).not.toMatch(/any task that requires visiting/i);
   });
 });
@@ -320,11 +316,12 @@ describe("every tool says what kind of tool it is", () => {
 });
 
 describe("what the agent-facing copy must and must not say", () => {
-  it("the instructions route the live web here, name the mechanism, and give an example", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/datacenter address/i);
+  // The mechanism itself is pinned on LIVE_WEB_ROUTING by the seam test below;
+  // what is this block's own is that the instructions name the tool and carry
+  // the worked example — a concrete case moves a model where a rule does not,
+  // and this one is the request that started the work.
+  it("the instructions name the tool and give the worked example", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_browser_open/);
-    // A concrete case moves a model where a rule does not. This one is the
-    // request that started the work.
     expect(SERVER_INSTRUCTIONS).toMatch(/reddit/i);
   });
 
@@ -342,6 +339,8 @@ describe("what the agent-facing copy must and must not say", () => {
    * the assertion is that they still consume it.
    */
   it("all three surfaces interpolate the one live-web routing sentence", async () => {
+    // The mechanism lives here now, so this is where it is pinned.
+    expect(LIVE_WEB_ROUTING).toMatch(/datacenter address/i);
     expect(SERVER_INSTRUCTIONS).toContain(LIVE_WEB_ROUTING);
     expect((await descriptions(makeServer())).plow_browser_open).toContain(LIVE_WEB_ROUTING);
     expect(BROWSING_SKILL.description).toContain(LIVE_WEB_ROUTING);
