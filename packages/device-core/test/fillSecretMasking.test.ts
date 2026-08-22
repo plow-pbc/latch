@@ -734,63 +734,50 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // where it cannot, CR and CRLF collapse to a single LF either way, and both
   // that rule and the tab guard apply to the TAIL, which is all that gets typed.
   //
-  // A break an input cannot hold means the field ends up with something other
-  // than what was asked for, so it is reported — the comparison is against the
-  // value as it arrived, never the normalized one the keys were sent from. A
-  // stored credential carrying a line break cannot reach a single-line field
-  // intact, and comparing it against the string we settled for would call that
-  // a clean fill.
-  it.each([
-    { what: "an input", scenario: "newline_single_line" },
-    { what: "an input, spelled as CR", scenario: "cr_single_line" },
-  ])("reports that a break did not survive $what", ({ scenario }) => {
-    expect(probed[scenario].result).toMatchObject({ ok: true, altered: true });
-  });
-
-  it("says nothing when a textarea keeps the break", () => {
-    // Nothing was lost, so there is nothing to report.
-    expect(probed.newline_multiline.result).not.toHaveProperty("altered");
-  });
-
   // Every row types. That is the point — the branch this replaced gave the
   // keystrokes up whenever a break appeared, which is the one property issue #86
   // exists for. `typed_has_cr` pins the ORDER: CR becomes LF before the strip,
   // so a CR never reaches `type()`, which would send it as Enter and submit the
   // form with half a credential in the field.
   it.each([
+    // `altered` says whether the value survived that normalization: a break an
+    // input cannot hold means the field ends up with something other than what
+    // was asked for, and a textarea that keeps the break loses nothing. The
+    // comparison behind it is against the value as it ARRIVED, never the
+    // normalized string the keys were sent from — a stored credential carrying
+    // a break would otherwise be graded against what we settled for.
     {
       what: "a break an input cannot hold is dropped, and the rest still typed",
-      scenario: "newline_single_line", typedLen: "onetwo".length,
+      scenario: "newline_single_line", typedLen: "onetwo".length, altered: true,
     },
     {
       what: "the same break spelled as CR, which must not reach the keys",
-      scenario: "cr_single_line", typedLen: "onetwo".length,
+      scenario: "cr_single_line", typedLen: "onetwo".length, altered: true,
     },
     {
       what: "a break a textarea holds as a character is kept",
-      scenario: "newline_multiline", typedLen: "one\ntwo".length,
+      scenario: "newline_multiline", typedLen: "one\ntwo".length, altered: false,
     },
     {
       what: "a CRLF becomes one break, not two Enters",
-      scenario: "crlf_multiline", typedLen: "one\ntwo".length,
+      scenario: "crlf_multiline", typedLen: "one\ntwo".length, altered: true,
     },
     {
       what: "a break in the assigned head leaves the tail typed as it was",
       scenario: "newline_outside_tail", typedLen: probed.constants.typed_chars,
+      altered: true,
     },
     {
       what: "a tab in the assigned head leaves the tail typed as it was",
       scenario: "tab_outside_tail", typedLen: probed.constants.typed_chars,
+      altered: false,
     },
-  ])("$what", ({ scenario, typedLen }) => {
+  ])("$what", ({ scenario, typedLen, altered }) => {
     const run = probed[scenario];
     expect(run.trace).toContain("handle.type");
     expect(run.typed_has_cr).toBe(false);
     expect(run.typed_len).toBe(typedLen);
-    // `altered` rides along wherever normalization changed the value on its way
-    // in — the row above pins which of these that is. What this table is about
-    // is that every one of them still TYPES.
-    expect(run.result).toMatchObject({ ok: true, frame: 0 });
+    expect(run.result).toEqual({ ok: true, frame: 0, ...(altered ? { altered } : {}) });
   });
 
   it("assigns a value carrying a tab, which no key can put in the field", () => {
