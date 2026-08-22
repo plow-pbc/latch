@@ -598,7 +598,9 @@ function describeStep(e: JSONValue): AuditStep {
       state = "ok";
       break;
     case "credential_fill_failed":
-      text = `Credential not typed: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} into `
+      // Not "not typed": the same event covers a field that TOOK the value and
+      // is holding a changed copy of it, so the page is not untouched.
+      text = `Credential fill failed: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} into `
         + `${ev.get("selector").str ?? ""} on ${ev.get("origin").str ?? ""} — `
         + `${ev.get("reason").str ?? ""}`;
       state = "bad";

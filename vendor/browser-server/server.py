@@ -346,22 +346,23 @@ def _respond(payload):
     _RESP.flush()
 
 
-def _collapse_breaks(value):
-    """CR and CRLF become one LF. Shared, so the measure below and the fill
-    that follows it can never disagree about what was sent."""
-    return value.replace("\r\n", "\n").replace("\r", "\n")
+def _as_received(value, kind):
+    """The value as this node will receive it.
 
+    CR and CRLF collapse to one LF, and a node whose kind is not "multiline"
+    loses the break entirely. That is what lets a break-bearing value still go
+    in as real keys, and why the tail can never press Enter at a form -- by
+    construction, rather than by a branch that gives the keystrokes up. The
+    browser behavior underneath is in docs/TESTING-THE-APP.md.
 
-def _arrives_as(value, kind):
-    """The value as this node will receive it, in units.
-
-    A node that is not multiline drops the breaks entirely, so a value carrying
-    one arrives shorter than it was given. Asked of the kind rather than assumed
-    either way: guessing short would let an over-cap value into a textarea and
-    guessing long would refuse one that fits an input.
+    Said once, and it has to be: the cap is measured on this string and the keys
+    are sent from it, so a measure that disagrees with the fill is not something
+    this can express. Two spellings of it is what the last three rounds were --
+    a break counted against a cap the node would never have seen it at, then a
+    guess in the other direction that let an over-cap value into a textarea.
     """
-    arriving = _collapse_breaks(value)
-    return _utf16_units(arriving if kind == "multiline" else arriving.replace("\n", ""))
+    received = value.replace("\r\n", "\n").replace("\r", "\n")
+    return received if kind == "multiline" else received.replace("\n", "")
 
 
 def _utf16_units(value):
@@ -434,18 +435,10 @@ def _type_value(el, value, kind):
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
         return value
     # Everything below compares against `value` -- the prefix test that decides
-    # whether the keys landed, and the assignment that repairs them when they did
-    # not. Each has to speak the string the node will actually HOLD, or it
-    # answers about a value that never existed anywhere.
-    #
-    # CR and CRLF collapse to one LF, and a node whose kind is not "multiline"
-    # loses the break here. That is what lets a break-bearing value
-    # still go in as real keys, and why the tail can never press Enter at a form
-    # -- by construction, rather than by a branch that gives the keystrokes up.
-    # The browser behavior underneath is in docs/TESTING-THE-APP.md.
-    value = _collapse_breaks(value)
-    if kind != "multiline":
-        value = value.replace("\n", "")
+    # whether the keys landed, and the assignment that repairs them when they
+    # did not. Each has to speak the string the node will actually HOLD, which
+    # is the same one the cap was measured on.
+    value = _as_received(value, kind)
     # A tab is the one character no normalization can rescue -- the keys cannot
     # carry it -- so a value holding one in the part that WOULD be typed is
     # assigned whole instead, the path it always had. One in the head is not
@@ -857,7 +850,7 @@ class Session:
             # where "was the field entitled to change it" does.
             kind = el.evaluate(TYPEABLE_JS)
             cap = el.evaluate(FIELD_CAP_JS)
-            if cap >= 0 and _arrives_as(cmd["value"], kind) > cap:
+            if cap >= 0 and _utf16_units(_as_received(cmd["value"], kind)) > cap:
                 return {"ok": False, "mask": "too_long", "cap": cap, "frame": i}
             if cmd.get("mask"):
                 # Marked first, and only typed once the mark is known to have

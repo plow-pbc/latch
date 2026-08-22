@@ -252,7 +252,7 @@ describe.each([
       ts: "2026-08-10T11:00:02Z",
     } as JSONValue,
     status: "Fill failed",
-    says: "Credential not typed",
+    says: "Credential fill failed",
     mentions: ["L1", "#pass", "dominos.com"],
   },
   {
