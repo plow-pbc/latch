@@ -620,7 +620,9 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // multiline never receives the break, so what arrives is "onetwo" and it
     // fits. Measuring the value as given would refuse it and tell the owner to
     // shorten something that was never too long.
-    expect(probed.newline_fits_once_dropped.result).toEqual({ ok: true, frame: 0 });
+    expect(probed.newline_fits_once_dropped.result).toEqual({
+      ok: true, frame: 0, altered: true,
+    });
   });
 
   it("refuses the same value at a textarea, which keeps its breaks", () => {
@@ -732,6 +734,24 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // where it cannot, CR and CRLF collapse to a single LF either way, and both
   // that rule and the tab guard apply to the TAIL, which is all that gets typed.
   //
+  // A break an input cannot hold means the field ends up with something other
+  // than what was asked for, so it is reported — the comparison is against the
+  // value as it arrived, never the normalized one the keys were sent from. A
+  // stored credential carrying a line break cannot reach a single-line field
+  // intact, and comparing it against the string we settled for would call that
+  // a clean fill.
+  it.each([
+    { what: "an input", scenario: "newline_single_line" },
+    { what: "an input, spelled as CR", scenario: "cr_single_line" },
+  ])("reports that a break did not survive $what", ({ scenario }) => {
+    expect(probed[scenario].result).toMatchObject({ ok: true, altered: true });
+  });
+
+  it("says nothing when a textarea keeps the break", () => {
+    // Nothing was lost, so there is nothing to report.
+    expect(probed.newline_multiline.result).not.toHaveProperty("altered");
+  });
+
   // Every row types. That is the point — the branch this replaced gave the
   // keystrokes up whenever a break appeared, which is the one property issue #86
   // exists for. `typed_has_cr` pins the ORDER: CR becomes LF before the strip,
@@ -767,7 +787,10 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     expect(run.trace).toContain("handle.type");
     expect(run.typed_has_cr).toBe(false);
     expect(run.typed_len).toBe(typedLen);
-    expect(run.result).toEqual({ ok: true, frame: 0 });
+    // `altered` rides along wherever normalization changed the value on its way
+    // in — the row above pins which of these that is. What this table is about
+    // is that every one of them still TYPES.
+    expect(run.result).toMatchObject({ ok: true, frame: 0 });
   });
 
   it("assigns a value carrying a tab, which no key can put in the field", () => {

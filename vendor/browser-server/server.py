@@ -375,8 +375,14 @@ def _utf16_units(value):
     return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
 
 
-def _kept(el, attempted):
-    """`{"altered": True}` when the field is not holding what went into it.
+def _kept(el, wanted):
+    """`{"altered": True}` when the field is not holding what was ASKED for.
+
+    Against the value as it arrived, never the normalized one the keys were sent
+    from: a stored credential carrying a line break cannot reach a single-line
+    field intact, and comparing it against the string we settled for would call
+    that a clean fill. The field really is holding something other than what the
+    vault has, and that is the whole thing this reports.
 
     A fact, not a verdict, and absent when there is nothing to say. Whether a
     difference matters depends on what the value means -- a card input renders
@@ -387,15 +393,11 @@ def _kept(el, attempted):
     can see the page. So this says what happened and they decide what it is
     worth.
     """
-    return {} if el.evaluate(HELD_MATCHES_JS, attempted) else {"altered": True}
+    return {} if el.evaluate(HELD_MATCHES_JS, wanted) else {"altered": True}
 
 
 def _type_value(el, value, kind):
     """Put `value` into a resolved node so that the field ends on real keys.
-
-    Returns the string it actually attempted, which is not always the one it was
-    given: a single-line node cannot take a break, so the caller comparing what
-    the field kept has to compare against this rather than against `value`.
 
     The node's KIND -- a text-carrying input, a textarea, or neither -- is asked
     for by the caller, which needs it to measure the cap, and handed in rather
@@ -433,7 +435,7 @@ def _type_value(el, value, kind):
     """
     if not kind:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-        return value
+        return
     # Everything below compares against `value` -- the prefix test that decides
     # whether the keys landed, and the assignment that repairs them when they
     # did not. Each has to speak the string the node will actually HOLD, which
@@ -449,7 +451,7 @@ def _type_value(el, value, kind):
     # stated once there because restating it here put the copies out of step.
     if "\t" in value[-TYPED_CHARS:]:
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-        return value
+        return
     el.fill(value[:-TYPED_CHARS], timeout=DEFAULT_ACTION_TIMEOUT_MS)
     # The whole tail draws on ONE budget, not one per key: a per-key timeout of
     # the tail's own budget would let TYPED_CHARS of them stack up to that many
@@ -465,7 +467,6 @@ def _type_value(el, value, kind):
         # before there were keystrokes at all: it either lands the value or it
         # raises. What it must never do is report a value that is not there.
         el.fill(value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
-    return value
 
 
 def _parse_args():
@@ -867,7 +868,7 @@ class Session:
                     before.dispose()
                     return {"ok": False, "mask": state, "frame": i}
                 try:
-                    attempted = _type_value(el, cmd["value"], kind)
+                    _type_value(el, cmd["value"], kind)
                 except Exception:
                     # Nothing landed: put the node back as it was found.
                     # Something did: it is holding a value nobody can account
@@ -882,14 +883,14 @@ class Session:
                     before.dispose()
                 self.remember_masked(el.evaluate(DOC_TOKEN_JS), sel)
                 return {"ok": True, "mask": state, "frame": i,
-                        **_kept(el, attempted)}
+                        **_kept(el, cmd["value"])}
             # Not a secret. The mark comes off AFTER the value is in, never
             # before: a fill that times out would otherwise leave the node
             # holding the previous secret with nothing left to hide it.
-            attempted = _type_value(el, cmd["value"], kind)
+            _type_value(el, cmd["value"], kind)
             el.evaluate(UNMASK_JS)
             self.forget_masked(el.evaluate(DOC_TOKEN_JS), sel)
-            return {"ok": True, "frame": i, **_kept(el, attempted)}
+            return {"ok": True, "frame": i, **_kept(el, cmd["value"])}
         raise last or RuntimeError("selector not found: %s" % sel)
 
     def handle(self, cmd, screenshots_dir):
