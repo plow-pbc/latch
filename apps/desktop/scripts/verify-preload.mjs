@@ -117,7 +117,12 @@ ipcMain.handle("vault:item", async () => ({
   urls: ["https://notion.so"],
   notes: "",
 }));
-ipcMain.handle("vault:reveal", async () => "revealed-secret");
+// Slowable, so a check can look at the form WHILE a vault call is in flight.
+let revealDelayMs = 0;
+ipcMain.handle("vault:reveal", async () => {
+  if (revealDelayMs) await new Promise((r) => setTimeout(r, revealDelayMs));
+  return "revealed-secret";
+});
 ipcMain.handle("vault:saveItem", async () => ({ id: "itm1" }));
 ipcMain.handle("vault:deleteItem", async () => true);
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
@@ -921,6 +926,31 @@ app.whenReady().then(async () => {
     await leaveTab("rules");
     await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "a clean exit from the vault block");
 
+    // ---- A form with a vault call in flight takes no input ----
+    // Every one of those awaits ends by overwriting or replacing the form, so a
+    // keystroke landing mid-flight is lost. Disabling only the control that was
+    // clicked left that window open three separate times.
+    revealDelayMs = 600;
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the busy check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret .eye")`, "the eye for the busy check");
+    await click(".vaultui .vitem.open .field.secret .eye");
+    // Mid-flight: the NAME box and the Save button are nowhere near the eye, and
+    // both must be inert.
+    const frozenWhileBusy = await js(() => {
+      const name = document.querySelector(".vaultui .vitem.open input[data-name='1']");
+      const gen = document.querySelector(".vaultui .vitem.open .field.secret .gen");
+      return !!name && name.disabled === true && (!gen || gen.disabled === true);
+    });
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
+      "the slow reveal to land");
+    const thawedAfterBusy = await js(() =>
+      document.querySelector(".vaultui .vitem.open input[data-name='1']").disabled === false);
+    revealDelayMs = 0;
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`, "the busy-check row to close");
+
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
@@ -930,6 +960,7 @@ app.whenReady().then(async () => {
       oneDialogForTwoAskers, refusalIsReported, refusedCloseKeepsTheForm,
       consentClosesTheForm,
       editedStillAsks, revertAskedNothing, revealAloneIsClean,
+      frozenWhileBusy, thawedAfterBusy,
     };
   })();
 
@@ -1028,6 +1059,8 @@ app.whenReady().then(async () => {
     vaultUnsaved.editedStillAsks &&
     vaultUnsaved.revertAskedNothing &&
     vaultUnsaved.revealAloneIsClean &&
+    vaultUnsaved.frozenWhileBusy &&
+    vaultUnsaved.thawedAfterBusy &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

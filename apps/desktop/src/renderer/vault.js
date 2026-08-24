@@ -126,15 +126,31 @@ function vbaseline(input) {
 const vchanged = (input) => input.value !== input.dataset.baseline;
 
 /**
- * Freeze the boxes while a save is in flight.
+ * Run a vault call with the whole form inert — every box AND every button it
+ * owns, not just the control that was clicked.
  *
- * The payload is snapshotted before the await, and on success the form is
- * released and the pane reloaded — so anything typed in between is neither
- * saved nor kept, and nothing asks about it. Disabling only the Save button
- * leaves exactly that window open.
+ * Each of these awaits ends by overwriting the form (a reveal) or replacing it
+ * (a save, a delete, and the reload each triggers). Anything typed in between
+ * is therefore lost: not stored, not kept, not asked about. Disabling only the
+ * button that was pressed leaves exactly that window open, which is the same
+ * bug three times over — so the window is closed here, once, for all of them.
+ *
+ * The form comes back only if the call FAILED. On success the caller either
+ * replaces it or has just overwritten it, and handing input back in between
+ * would reopen the window this exists to close.
  */
+async function vbusy(ctx, fn) {
+  vfreeze(ctx, true);
+  try {
+    return await fn();
+  } catch (err) {
+    vfreeze(ctx, false);
+    throw err;
+  }
+}
+
 function vfreeze(ctx, frozen) {
-  for (const i of [...Object.values(ctx.inputs), ...ctx.urlInputs]) i.disabled = frozen;
+  for (const c of ctx.controls) c.disabled = frozen;
 }
 
 /** True when any box on this form differs from what it opened with. */
@@ -170,25 +186,20 @@ function vfield(spec, ctx) {
         return;
       }
       if (held && !input.value) {
-        eye.disabled = true;
-        // Only the eye is disabled while the vault answers, so the box can be
-        // typed into meanwhile. Whatever was written wins: dropping the reveal
-        // on top would erase it AND re-baseline it, losing the edit silently.
-        const before = input.value;
         let revealed;
         try {
-          revealed = await window.domo.vaultReveal(ctx.item.id, spec.key);
+          revealed = await vbusy(ctx, () => window.domo.vaultReveal(ctx.item.id, spec.key));
         } catch (err) {
           vtoast("Could not read it: " + errText(err));
-          eye.disabled = false;
           return;
         }
-        eye.disabled = false;
-        if (input.value !== before) return; // they typed; leave it as their edit
         input.value = revealed;
         // Looking at a secret is not changing it: without re-baselining, merely
         // peeking at a password would ask to save it.
         vbaseline(input);
+        // The only call the form OUTLIVES, so it is the only one that hands the
+        // controls back on success.
+        vfreeze(ctx, false);
       }
       input.setAttribute("type", "text");
       eye.replaceChildren(icon("eyeOff", { class: "vico", strokeWidth: "1.8" }));
@@ -208,6 +219,7 @@ function vfield(spec, ctx) {
     ? el("label", { text: spec.label + " " }, spec.required ? [el("span", { class: "req", text: "*" })] : [])
     : null;
   const hint = spec.hint ? el("span", { class: "gen-hint" }, [icon("generate", { class: "vico", strokeWidth: "1.8" }), el("span", { text: " " + spec.hint })]) : null;
+  ctx.controls.push(input, ...buttons);
   return el("div", { class: "field" + (spec.secret ? " secret" : "") + (spec.half ? "" : " span2") },
     [label, el("div", { class: "inwrap" }, [input, ...buttons]), hint].filter(Boolean));
 }
@@ -239,6 +251,7 @@ function vurls(ctx) {
       input.value = "";
       row.remove();
     });
+    ctx.controls.push(input, drop);
     rows.appendChild(row);
     return input;
   };
@@ -248,6 +261,7 @@ function vurls(ctx) {
 
   const more = el("button", { class: "add-link", attrs: { type: "button" } }, [icon("plus", { class: "vico", strokeWidth: "2" }), el("span", { text: " Add website" })]);
   more.addEventListener("click", () => add().focus());
+  ctx.controls.push(more);
   return el("div", { class: "group" }, [
     el("div", { class: "group-h", text: "Website (URI) " }, [el("span", { class: "req", text: "*" })]),
     rows,
@@ -258,7 +272,7 @@ function vurls(ctx) {
 /** Every group of a type's form, built once and shared by the sheet and the row. */
 function vformBody(type, item) {
   const spec = VAULT_TYPES[type];
-  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [] };
+  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [], controls: [] };
   const name = vfield(
     { key: "name", label: "Item name", required: true, placeholder: spec.placeholder },
     { ...ctx, item: item ? { ...item, fields: { ...item.fields, name: item.name } } : null },
@@ -437,7 +451,7 @@ function vitem(summary, reload) {
         );
         if (!yes) return;
         try {
-          await window.domo.vaultDeleteItem(item.id);
+          await vbusy(ctx, () => window.domo.vaultDeleteItem(item.id));
           release(); // it is gone; do not ask about edits to it
           vtoast("Deleted");
           await reload();
@@ -448,9 +462,9 @@ function vitem(summary, reload) {
       const save = el("button", { class: "btn save", attrs: { type: "button" }, text: "Save" });
       save.addEventListener("click", async () => {
         save.disabled = true;
-        vfreeze(ctx, true);
         try {
-          await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id, revision: item.revision });
+          const input = { ...vpayload(type, ctx), itemId: item.id, revision: item.revision };
+          await vbusy(ctx, () => window.domo.vaultSaveItem(input));
           release(); // stored now — the reload below must not ask about it
           vtoast("Saved");
           await reload();
@@ -458,7 +472,6 @@ function vitem(summary, reload) {
         } catch (err) {
           vtoast("Could not save it: " + errText(err));
         }
-        vfreeze(ctx, false); // it did not land: give the form back
         save.disabled = false;
       });
       inner.replaceChildren(...nodes, el("div", { class: "vfoot" }, [
@@ -537,9 +550,9 @@ async function vsheet(reload) {
     bodyEl.replaceChildren(el("form", { class: "sheet-form", attrs: { autocomplete: "off" } }, nodes));
     save.onclick = async () => {
       save.disabled = true;
-      vfreeze(ctx, true);
       try {
-        await window.domo.vaultSaveItem(vpayload(type, ctx));
+        const input = vpayload(type, ctx);
+        await vbusy(ctx, () => window.domo.vaultSaveItem(input));
         formCtx = null; // stored: nothing left to discard
         close();
         vtoast("Saved");
@@ -548,7 +561,6 @@ async function vsheet(reload) {
       } catch (err) {
         vtoast("Could not save it: " + errText(err));
       }
-      vfreeze(ctx, false); // it did not land: give the form back
       save.disabled = false;
     };
   };
