@@ -959,6 +959,37 @@ app.whenReady().then(async () => {
     await click(".vaultui .vitem .vrow");
     await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`, "the busy-check row to close");
 
+    // ---- Cmd-W during an in-flight call must still get an answer ----
+    // The question is drawn INSIDE the pane, which is inert while a call runs.
+    // Raised then, it could not be answered, and the reload would detach it
+    // unanswered — stranding main's no-timeout wait and every later close.
+    holdReveal = true;
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the close-during-busy check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row for the close-during-busy check");
+    await type(".vaultui .vitem.open input[data-name='1']", "edited-while-busy");
+    await click(".vaultui .vitem.open .field.secret .eye");
+    await waitForNode(() => releaseReveal !== null, "the reveal to be in flight again");
+
+    let busyCloseAnswer = null;
+    const onBusyReply = (_e, ok) => { busyCloseAnswer = ok; };
+    ipcMain.once("ui:confirmLeaveReply", onBusyReply);
+    win.webContents.send("ui:confirmLeave");
+    // No dialog while the pane is inert: it would be unanswerable.
+    const noDialogUnderInert = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
+    releaseReveal();
+    releaseReveal = null;
+    holdReveal = false;
+    // Once the call lands the pane is live again, the question is asked, and the
+    // answer reaches main.
+    await waitAsking();
+    const asksOnceTheCallLands = await asking();
+    await click(DISCARD);
+    const closeAnsweredAfterBusy = await waitForNode(() => busyCloseAnswer !== null,
+      "main's answer after the in-flight call").then(() => busyCloseAnswer === true).catch(() => false);
+    ipcMain.removeListener("ui:confirmLeaveReply", onBusyReply);
+
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
@@ -969,6 +1000,7 @@ app.whenReady().then(async () => {
       consentClosesTheForm,
       editedStillAsks, revertAskedNothing, revealAloneIsClean,
       frozenWhileBusy, thawedAfterBusy,
+      noDialogUnderInert, asksOnceTheCallLands, closeAnsweredAfterBusy,
     };
   })();
 
@@ -1069,6 +1101,9 @@ app.whenReady().then(async () => {
     vaultUnsaved.revealAloneIsClean &&
     vaultUnsaved.frozenWhileBusy &&
     vaultUnsaved.thawedAfterBusy &&
+    vaultUnsaved.noDialogUnderInert &&
+    vaultUnsaved.asksOnceTheCallLands &&
+    vaultUnsaved.closeAnsweredAfterBusy &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

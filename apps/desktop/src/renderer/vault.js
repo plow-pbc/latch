@@ -145,13 +145,20 @@ function vpane() {
   return document.querySelector(".vaultui");
 }
 
+/** The vault call in flight, if any. A leave question waits for it to land. */
+let vinflight = null;
+
 async function vbusy(fn) {
   vpane()?.toggleAttribute("inert", true);
+  const done = fn();
+  vinflight = done.then(() => {}, () => {}); // settles either way, never rejects
   try {
-    return await fn();
+    return await done;
   } catch (err) {
     vpane()?.toggleAttribute("inert", false);
     throw err;
+  } finally {
+    vinflight = null;
   }
 }
 
@@ -379,6 +386,13 @@ function vreleaseEditor(who) {
 /** Asked before anything replaces this pane — a tab switch, or main tearing
     the window down. vmayDiscard() is what keeps it to one dialog. */
 export async function vaultConfirmLeave() {
+  // Wait for any call in flight before asking. The question is drawn INSIDE the
+  // pane, and the pane is inert while a call runs — so a dialog raised now could
+  // not be answered, and the reload after a successful save would detach it
+  // unanswered, leaving main's no-timeout wait stranded and every later close
+  // and quit with it. Waiting also usually removes the question: the save lands,
+  // the form is released, and there is nothing left to discard.
+  if (vinflight) await vinflight;
   const ok = await vmayDiscard();
   if (ok) {
     // Close it, don't just drop the seat. Quit answers this and then spends
