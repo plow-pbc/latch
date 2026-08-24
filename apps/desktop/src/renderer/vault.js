@@ -201,18 +201,13 @@ function vformDirty(ctx) {
  * A key already IN the vault is not read automatically: the value is fetched
  * only when the owner asks, which is the request the vault's audit records.
  */
-const vtickers = new Set();
-
-/** Drop every live countdown. Called before a pane is replaced. */
-function vstopTickers() {
-  vtickers.clear();
-  if (vtickTimer) { clearInterval(vtickTimer); vtickTimer = null; }
-}
-let vtickTimer = null;
-
 function vtotp(input, ctx) {
   const out = el("div", { class: "totp-read" });
-  let showing = null; // { code, period, secondsLeft } while a code is on screen
+  let showing = null; // { code, period, secondsLeft } while a code is counting down
+  // Answers arrive out of order — a keystroke's request can land after the one
+  // that replaced it, and the older answer describes a key the box no longer
+  // holds. Only the newest request may paint.
+  let asked = 0;
 
   const paint = () => {
     if (!showing) return;
@@ -228,44 +223,54 @@ function vtotp(input, ctx) {
     out.classList.toggle("bad", !!bad);
   };
 
-  /** What the box holds right now, as a code — or why it is not one. */
-  const preview = async () => {
-    const typed = input.value.trim();
-    if (!typed) { showing = null; out.replaceChildren(); out.classList.remove("bad"); return; }
+  /**
+   * One request, whoever asked. `showing` is dropped before the await so the
+   * countdown cannot start a second one on top of this: a saved key can sit
+   * behind the Mac asking who is at the keyboard, and a tick-driven retry each
+   * second would be a queue of prompts and a queue of audited reads. The
+   * painted code stays on screen meanwhile — only the ticking stops.
+   */
+  const ask = async (get) => {
+    const mine = ++asked;
+    showing = null;
     try {
-      showing = await window.domo.vaultTotp(null, typed);
+      const code = await get();
+      if (mine !== asked) return; // a newer paste already owns the box
+      showing = code;
       paint();
     } catch (err) {
+      if (mine !== asked) return;
       say(errText(err), true);
     }
+  };
+
+  /** What the box holds right now, as a code — or why it is not one. */
+  const preview = () => {
+    const typed = input.value.trim();
+    if (!typed) {
+      // Emptying the box invalidates whatever is still in flight, or its answer
+      // would paint a code for a key that is no longer there.
+      asked++;
+      showing = null;
+      out.replaceChildren();
+      out.classList.remove("bad");
+      return Promise.resolve();
+    }
+    return ask(() => window.domo.vaultTotp(null, typed));
   };
 
   /** The code a SAVED key is showing — asked for, never taken. */
-  const fromVault = async () => {
-    try {
-      showing = await window.domo.vaultTotp(ctx.item.id);
-      paint();
-    } catch (err) {
-      say(errText(err), true);
-    }
-  };
+  const fromVault = () => ask(() => window.domo.vaultTotp(ctx.item.id));
 
-  // One timer for the whole pane: each second every live readout loses a
-  // second, and refreshes itself when its step turns over.
-  vtickers.add(() => {
-    if (!input.isConnected) return false;
-    if (showing) {
-      showing.secondsLeft -= 1;
-      if (showing.secondsLeft <= 0) (input.value.trim() ? preview() : fromVault());
-      else paint();
-    }
-    return true;
-  });
-  if (!vtickTimer) {
-    vtickTimer = setInterval(() => {
-      for (const tick of [...vtickers]) if (tick() === false) vtickers.delete(tick);
-    }, 1000);
-  }
+  // The countdown owns its own timer and ends with the box it belongs to; a
+  // pane that is replaced detaches the input, and the next tick clears this.
+  const timer = setInterval(() => {
+    if (!input.isConnected) { clearInterval(timer); return; }
+    if (!showing) return;
+    showing.secondsLeft -= 1;
+    if (showing.secondsLeft <= 0) void (input.value.trim() ? preview() : fromVault());
+    else paint();
+  }, 1000);
 
   input.addEventListener("input", preview);
   return { node: out, preview, fromVault };
@@ -744,7 +749,6 @@ export async function renderVault(view, isCurrent = () => true) {
   // this pane on top of theirs.
   if (!isCurrent()) return;
 
-  vstopTickers();
   const pane = el("div", { class: "vaultui" });
   const masthead = el("div", { class: "masthead" }, [
     el("div", {}, [
