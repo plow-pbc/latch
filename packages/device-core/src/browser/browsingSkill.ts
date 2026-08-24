@@ -16,7 +16,11 @@ import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
  *
  * Every clause is a fact the agent's own fetch cannot match, and none of them
  * overstates: the profile really is a copy of the user's, so "already signed
- * in" is description rather than promise.
+ * in" is description rather than promise. DOMO_BROWSER_FRESH_PROFILE=1 is the
+ * one thing that falsifies it, and this copy deliberately does not mention it
+ * — an operator sets it to reproduce a bot block on a run they are watching,
+ * and an agent cannot see it, cannot act on it, and would carry the caveat in
+ * every session that does not have it set.
  */
 export const LIVE_WEB_ROUTING =
   "their browser runs on their own network rather than a datacenter address many sites " +
