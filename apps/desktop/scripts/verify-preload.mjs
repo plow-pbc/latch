@@ -591,13 +591,14 @@ app.whenReady().then(async () => {
       Object.keys(cloudCalls.settings[0]?.settings ?? {}).length === 1,
   };
 
-  cloudProbe = { ...cloudProbe, cloudAgents: [], cloudChats: [], cloudChatsForbidden: true };
+  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent], cloudChats: [], cloudChatsForbidden: true };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector(".cloud-forbidden")`, "the chat-scope degradation");
   const cloudForbidden = await win.webContents.executeJavaScript(`(${() => ({
     asksToReactivate: document.querySelector(".cloud-forbidden")?.textContent.includes("Re-activate to access chats"),
     notEmptyState: !document.querySelector(".cloud-empty"),
+    keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
   })})()`);
 
   // Restore the roster for the screenshot and the existing Agents-pane probes.
@@ -1242,6 +1243,7 @@ app.whenReady().then(async () => {
     cloudSettings.exactSetting &&
     cloudForbidden.asksToReactivate &&
     cloudForbidden.notEmptyState &&
+    cloudForbidden.keepsRoster &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&

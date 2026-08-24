@@ -864,13 +864,19 @@ function cloudNodes(state, redraw) {
     add.disabled = true;
     const reactivate = el("button", { class: "btn", text: "Re-activate" });
     reactivate.addEventListener("click", () => window.domo.onboardingOpen());
-    return [
+    const body = [
       el("div", { class: "cloud-callout cloud-forbidden" }, [
         el("div", { class: "cloud-callout-title", text: "Re-activate to access chats" }),
         el("p", { class: "faint", text: "This Mac signed in before cloud-agent chat access was available." }),
         reactivate,
       ]),
     ];
+    if (state.cloudAgents.length) {
+      body.push(el("div", { class: "cloud-agent-list" }, state.cloudAgents.map((agent) =>
+        cloudAgentRow(agent, state.cloudAgentSettings?.[agent.agentId]?.adversarialReview, redraw),
+      )));
+    }
+    return body;
   }
 
   if (!state.cloudChats.length) {
