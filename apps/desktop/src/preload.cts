@@ -86,6 +86,19 @@ contextBridge.exposeInMainWorld("domo", {
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
+  // Cloud agents (same tab, same state shape, same change channel). Exactly
+  // four calls, and none of them is a poll: provisioning is watched in the main
+  // process, and the renderer just re-reads when told the state changed.
+  // `cloudCreate` answers as soon as the row is on screen in `provisioning`.
+  cloudCreate: (chatUid: string, name: string) =>
+    ipcRenderer.invoke("cloud:create", chatUid, name),
+  cloudDelete: (agentId: string) => ipcRenderer.invoke("cloud:delete", agentId),
+  // Delete then re-create in the same chat; the replacement has a new agent id.
+  cloudRetry: (agentId: string) => ipcRenderer.invoke("cloud:retry", agentId),
+  // Local-only per-agent settings, keyed on the agent id. No restart, no server.
+  cloudSettingsSet: (agentId: string, settings: { adversarialReview: boolean }) =>
+    ipcRenderer.invoke("cloud:settingsSet", agentId, settings),
+
   // Any web page the app links to (client connector cards, Settings' Support
   // section). A KEY, not a URL: main owns the table of what may be opened.
   openExternal: (key: string) => ipcRenderer.invoke("external:open", key),

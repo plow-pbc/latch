@@ -40,6 +40,12 @@ import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
+import { CloudAgentsClient } from "./cloudAgents.js";
+import {
+  CloudAgentState,
+  CloudChatsClient,
+  resolveCloudAgentsEnabled,
+} from "./cloudAgentState.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
@@ -130,6 +136,10 @@ const home = instance.home;
  * developer env-var override a developer exports when they want another relay.
  */
 const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
+/* Tier-3 cloud-agent endpoints are in flight, not deployed, so the whole group
+ * is off unless this run turns it on. Read once: a flag that can change under a
+ * running app is a state nobody tested. */
+const cloudAgentsEnabled = resolveCloudAgentsEnabled(process.env);
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -139,6 +149,7 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
+let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 
@@ -408,6 +419,10 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
   settings.selectedTab = tab;
   saveSettings(home, settings);
+  // Landing on Agents is the one moment the cloud group is certainly about to
+  // be looked at. Not awaited: selecting a tab must never wait on the network,
+  // and the refresh publishes `connect:changed` when it lands.
+  if (tab === "agents") void cloudAgents?.refresh();
 });
 // The account this Mac is signed into. The CREDENTIAL IS NEVER RETURNED — the
 // renderer only learns whether one is set. It is a secret with no reason to
@@ -444,6 +459,9 @@ function signOut(): void {
   // Connect-a-client holds the old account's state too — possibly a shown-once
   // credential still on screen, or a mint in flight.
   connectClient?.signedOut();
+  // And the cloud group: its rows, its chat list and any provision still being
+  // polled all belong to the account that just went away.
+  cloudAgents?.signedOut();
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots the renderer, which calls `begin` and mints the code the
@@ -523,9 +541,53 @@ ipcMain.handle("external:open", async (_e, key: string) => {
   return true;
 });
 
-ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
-ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
-ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());
+// One shape for the whole Agents tab: connect-a-client and the cloud-agent
+// group are two groups on one screen, and a renderer that had to reconcile two
+// asynchronous reads would render them disagreeing.
+ipcMain.handle("connect:get", async () => agentsTabState());
+ipcMain.handle("connect:create", async (_e, name: string) => {
+  await connectClient?.createCredential(name);
+  return agentsTabState();
+});
+ipcMain.handle("connect:dismiss", async () => {
+  connectClient?.dismissCredential();
+  return agentsTabState();
+});
+
+/**
+ * The cloud-agent mutations. Exactly four, and none of them polls: `create`
+ * answers as soon as Plow has issued the receipt and the row is on screen in
+ * `provisioning`; the main process drives it to `active` from there.
+ */
+ipcMain.handle("cloud:create", async (_e, chatUid: string, name: string) => {
+  await cloudAgents?.create(chatUid, name);
+  return agentsTabState();
+});
+ipcMain.handle("cloud:delete", async (_e, agentId: string) => {
+  await cloudAgents?.remove(agentId);
+  return agentsTabState();
+});
+ipcMain.handle("cloud:retry", async (_e, agentId: string) => {
+  await cloudAgents?.retry(agentId);
+  return agentsTabState();
+});
+ipcMain.handle(
+  "cloud:settingsSet",
+  async (_e, agentId: string, settings: { adversarialReview: boolean }) => {
+    cloudAgents?.setAgentSettings(agentId, settings);
+    return agentsTabState();
+  },
+);
+
+/** Connect-a-client's state plus the cloud-agent group's, in one object. The
+ * cloud half is present and empty when the flag is off, so the renderer reads
+ * the same fields either way. */
+function agentsTabState(): Record<string, unknown> | null {
+  const connect = connectClient?.state() ?? null;
+  const cloud = cloudAgents?.state() ?? null;
+  if (!connect) return null;
+  return { ...connect, ...(cloud ?? {}) };
+}
 
 // MARK: IPC for the first-run setup window
 
@@ -945,6 +1007,16 @@ app.whenReady().then(async () => {
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
+    onChange: () => notifyRenderer("connect:changed"),
+  });
+
+  // The cloud-agent group shares the Agents tab's change channel, because it
+  // shares the tab's state shape.
+  cloudAgents = new CloudAgentState({
+    agents: new CloudAgentsClient(apiBaseUrl),
+    chats: new CloudChatsClient(apiBaseUrl),
+    home,
+    enabled: cloudAgentsEnabled,
     onChange: () => notifyRenderer("connect:changed"),
   });
 

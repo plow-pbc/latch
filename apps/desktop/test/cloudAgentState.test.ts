@@ -1,0 +1,781 @@
+/**
+ * The Agents tab's cloud half: what the renderer is handed, and what the four
+ * mutations do to it.
+ *
+ * Two properties are the point of this file. Nothing credential-shaped may
+ * reach the marshalled state — no device credential, no `session_id` — and
+ * every piece of local state hangs off `agent_id`, which survives the
+ * credential rotation that a reconfigure performs by design.
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  CloudAgentState,
+  CloudAgentsApi,
+  CloudChatOption,
+  CloudChatsApi,
+  CloudChatsClient,
+  resolveCloudAgentsEnabled,
+} from "../src/cloudAgentState.js";
+import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
+import { PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
+import { loadSettings, saveSettings } from "../src/settings.js";
+
+const CREDENTIAL = "plow_sk_device_do_not_leak";
+const SESSION = "session_rotates_on_every_reconfigure";
+
+const cleanups: (() => void)[] = [];
+afterEach(() => {
+  while (cleanups.length) cleanups.pop()!();
+});
+
+function tempHome(credential = CREDENTIAL): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-cloud-state-"));
+  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const settings = loadSettings(dir);
+  settings.relayCredential = credential;
+  saveSettings(dir, settings);
+  return dir;
+}
+
+function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
+  return {
+    agentId: "agent_1",
+    chatUid: "cht_1",
+    url: "https://agent.example/internal",
+    provider: "exe:hermes",
+    name: "Kitchen agent",
+    status: "active",
+    failureReason: null,
+    createdAt: "2026-08-24T18:02:11Z",
+    sessionId: SESSION,
+    ...overrides,
+  };
+}
+
+const CHATS: CloudChatOption[] = [{ uid: "cht_1", label: "+15550100 · Ada" }];
+
+/** Let every already-scheduled continuation run — a cancelled poll rejects a
+ * turn after the call that cancelled it returns. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** A deferred, so a test can hold a poll open and look at the screen. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+interface Fakes {
+  agents: CloudAgentsApi & {
+    calls: string[];
+    created: Array<{ chatUid: string; name?: string }>;
+    deleted: string[];
+  };
+  chats: CloudChatsApi;
+}
+
+function fakes(opts: {
+  list?: () => Promise<CloudAgentResource[]>;
+  create?: () => Promise<CloudAgentResource>;
+  remove?: (agentId: string) => Promise<void>;
+  poll?: (
+    receipt: CloudAgentResource,
+    onTransition?: (a: CloudAgentResource) => void | Promise<void>,
+    signal?: AbortSignal,
+  ) => Promise<CloudAgentResource>;
+  chats?: () => Promise<CloudChatOption[]>;
+} = {}): Fakes {
+  const calls: string[] = [];
+  const created: Array<{ chatUid: string; name?: string }> = [];
+  const deleted: string[] = [];
+  return {
+    agents: {
+      calls,
+      created,
+      deleted,
+      async list(credential: string) {
+        calls.push("list");
+        expect(credential).toBe(CREDENTIAL);
+        return opts.list ? opts.list() : [];
+      },
+      async create(credential: string, request) {
+        calls.push("create");
+        expect(credential).toBe(CREDENTIAL);
+        created.push({ chatUid: request.chatUid, name: request.name });
+        return opts.create ? opts.create() : agent({ status: "provisioning" });
+      },
+      async delete(credential: string, agentId: string) {
+        calls.push("delete");
+        expect(credential).toBe(CREDENTIAL);
+        deleted.push(agentId);
+        if (opts.remove) await opts.remove(agentId);
+      },
+      async poll(credential: string, receipt, onTransition, signal) {
+        calls.push("poll");
+        expect(credential).toBe(CREDENTIAL);
+        if (opts.poll) return opts.poll(receipt, onTransition, signal);
+        await onTransition?.(receipt);
+        return receipt;
+      },
+    },
+    chats: {
+      async list(credential: string) {
+        calls.push("chats");
+        expect(credential).toBe(CREDENTIAL);
+        return opts.chats ? opts.chats() : CHATS;
+      },
+    },
+  };
+}
+
+function build(home: string, f: Fakes, enabled = true): CloudAgentState {
+  return new CloudAgentState({ agents: f.agents, chats: f.chats, home, enabled });
+}
+
+describe("the real client", () => {
+  it("still satisfies the interface this state polls through", () => {
+    // Chunk 2 owns `CloudAgentsClient`; this state owns the slice of it it
+    // calls, including the abort signal it hands to `poll`. Structural
+    // assignability is what keeps the two from drifting apart silently.
+    const api: CloudAgentsApi = new CloudAgentsClient("https://api.plow.co");
+    expect(typeof api.poll).toBe("function");
+    expect(api.poll.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("the feature flag", () => {
+  it("is off unless this run turns it on", () => {
+    expect(resolveCloudAgentsEnabled({})).toBe(false);
+    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: "" })).toBe(false);
+    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: "0" })).toBe(false);
+    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: "1" })).toBe(true);
+    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: " TRUE " })).toBe(true);
+  });
+
+  it("keeps the group empty and makes no request while it is off", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(), f, false);
+
+    await state.refresh();
+    await state.create("cht_1", "Kitchen agent");
+
+    expect(f.agents.calls).toEqual([]);
+    expect(state.state()).toMatchObject({
+      cloudEnabled: false,
+      cloudAgents: [],
+      cloudChats: [],
+      cloudChatsLoaded: false,
+      cloudSendTo: null,
+    });
+  });
+});
+
+describe("refresh", () => {
+  it("renders the account's agents with their chat labels and no errors", async () => {
+    const state = build(tempHome(), fakes({ list: async () => [agent()] }));
+
+    await state.refresh();
+
+    const shown = state.state();
+    expect(shown.cloudAgentsError).toBeNull();
+    expect(shown.cloudActionError).toBeNull();
+    expect(shown.cloudChats).toEqual(CHATS);
+    expect(shown.cloudChatsLoaded).toBe(true);
+    expect(shown.cloudAgents).toEqual([
+      {
+        agentId: "agent_1",
+        name: "Kitchen agent",
+        chatUid: "cht_1",
+        chatLabel: "+15550100 · Ada",
+        provider: "exe:hermes",
+        status: "active",
+        failureReason: null,
+        createdAt: "2026-08-24T18:02:11Z",
+      },
+    ]);
+  });
+
+  it("sorts newest first, so a fresh agent is at the top", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [
+          agent({ agentId: "old", createdAt: "2026-08-01T00:00:00Z" }),
+          agent({ agentId: "new", createdAt: "2026-08-24T00:00:00Z" }),
+        ],
+      }),
+    );
+
+    await state.refresh();
+
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["new", "old"]);
+  });
+
+  it("reports a list failure and keeps the rows already on screen", async () => {
+    let fail = false;
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => {
+          if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+          return [agent()];
+        },
+      }),
+    );
+    await state.refresh();
+
+    fail = true;
+    await state.refresh();
+
+    const shown = state.state();
+    expect(shown.cloudAgentsError).toBe("Plow returned 500.");
+    expect(shown.cloudActionError).toBeNull();
+    expect(shown.cloudAgents).toHaveLength(1);
+  });
+
+  it("treats a 403 on the chat list as a failed list, not an empty account", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [agent()],
+        chats: async () => {
+          throw new PlowApiError("forbidden", "Re-activate it to list chats.", 403);
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    const shown = state.state();
+    expect(shown.cloudChats).toEqual([]);
+    // The pair that keeps "no chats" off the screen: not loaded, and an error
+    // that says what to do about it.
+    expect(shown.cloudChatsLoaded).toBe(false);
+    expect(shown.cloudAgentsError).toBe("Re-activate it to list chats.");
+    expect(shown.cloudAgents).toHaveLength(1);
+  });
+
+  it("says the chat list loaded even when the account has none", async () => {
+    const state = build(tempHome(), fakes({ list: async () => [], chats: async () => [] }));
+
+    await state.refresh();
+
+    // The one shape that may be answered with "you have no chats yet".
+    expect(state.state()).toMatchObject({ cloudChats: [], cloudChatsLoaded: true });
+  });
+
+  it("does not call a failed chat list an empty account", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [agent()],
+        chats: async () => {
+          throw new PlowApiError("network", "Couldn't reach Plow.");
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    const shown = state.state();
+    // Empty chats, but NOT loaded: the roster stays, the error explains it, and
+    // nobody is pointed at re-activating over a transient failure.
+    expect(shown.cloudChats).toEqual([]);
+    expect(shown.cloudChatsLoaded).toBe(false);
+    expect(shown.cloudAgentsError).toBe("Couldn't reach Plow.");
+    expect(shown.cloudAgents).toHaveLength(1);
+  });
+
+  it("forgets that the list ever loaded once a chat list fails", async () => {
+    let fail = false;
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+          return CHATS;
+        },
+      }),
+    );
+    await state.refresh();
+    expect(state.state().cloudChatsLoaded).toBe(true);
+
+    fail = true;
+    await state.refresh();
+
+    expect(state.state().cloudChatsLoaded).toBe(false);
+  });
+
+  it("does not claim the list loaded while it is still in flight", async () => {
+    const held = deferred<CloudChatOption[]>();
+    const state = build(tempHome(), fakes({ chats: async () => held.promise }));
+
+    const refreshing = state.refresh();
+    // A request in the air is not an answer, and the empty state may only be
+    // rendered on an answer.
+    expect(state.state().cloudChatsLoaded).toBe(false);
+
+    held.resolve(CHATS);
+    await refreshing;
+    expect(state.state().cloudChatsLoaded).toBe(true);
+  });
+
+  it("shows the number this Mac's activation assigned, and nothing else", async () => {
+    const home = tempHome();
+    const state = build(home, fakes());
+    expect(state.state().cloudSendTo).toBeNull();
+
+    const settings = loadSettings(home);
+    settings.activationSendTo = "+15550100";
+    saveSettings(home, settings);
+
+    expect(state.state().cloudSendTo).toBe("+15550100");
+  });
+
+  it("does nothing at all when this Mac is not signed in", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(""), f);
+
+    await state.refresh();
+
+    // Not "it failed quietly": it never asked. A Mac with no credential has
+    // nothing to authenticate with, and a request that cannot succeed is a 401
+    // on the account for no reason.
+    expect(f.agents.calls).toEqual([]);
+    expect(state.state().cloudAgents).toEqual([]);
+    expect(state.state().cloudAgentsError).toBeNull();
+  });
+});
+
+describe("provisioning", () => {
+  it("puts the row on screen in provisioning before the poll finishes", async () => {
+    const held = deferred<CloudAgentResource>();
+    const receipt = agent({ status: "provisioning", name: null, url: null, sessionId: null });
+    const changes: number[] = [];
+    const f = fakes({ create: async () => receipt, poll: async () => held.promise });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      home: tempHome(),
+      enabled: true,
+      onChange: () => changes.push(1),
+    });
+
+    await state.create("cht_1", "Kitchen agent");
+
+    const shown = state.state();
+    expect(shown.cloudAgents).toHaveLength(1);
+    expect(shown.cloudAgents[0]).toMatchObject({
+      agentId: "agent_1",
+      status: "provisioning",
+      // The create receipt carries no name; the submitted one fills the gap.
+      name: "Kitchen agent",
+    });
+    expect(changes.length).toBeGreaterThan(0);
+    held.resolve(agent());
+  });
+
+  it("keeps a provisioning row that the account listing has not caught up with", async () => {
+    const held = deferred<CloudAgentResource>();
+    const f = fakes({
+      create: async () => agent({ status: "provisioning" }),
+      poll: async () => held.promise,
+      list: async () => [],
+    });
+    const state = build(tempHome(), f);
+
+    await state.create("cht_1", "Kitchen agent");
+    await state.refresh();
+
+    expect(state.state().cloudAgents.map((row) => row.status)).toEqual(["provisioning"]);
+    held.resolve(agent());
+  });
+
+  it("updates the row in place when the poll reaches failed", async () => {
+    const failed = agent({ status: "failed", failureReason: "VM did not start" });
+    const f = fakes({
+      create: async () => agent({ status: "provisioning" }),
+      poll: async (receipt, onTransition) => {
+        await onTransition?.(receipt);
+        await onTransition?.(failed);
+        return failed;
+      },
+      list: async () => [failed],
+    });
+    const state = build(tempHome(), f);
+
+    await state.create("cht_1", "Kitchen agent");
+    await vi.waitFor(() => expect(state.state().cloudAgents[0].status).toBe("failed"));
+
+    expect(state.state().cloudAgents).toHaveLength(1);
+    expect(state.state().cloudAgents[0].failureReason).toBe("VM did not start");
+  });
+
+  it("reports a create failure as an action error, not a list error", async () => {
+    const f = fakes({
+      create: async () => {
+        throw new PlowApiError("provider_unavailable", "Provisioning is unavailable.", 503);
+      },
+    });
+    const state = build(tempHome(), f);
+
+    await state.create("cht_1", "Kitchen agent");
+
+    expect(state.state().cloudActionError).toBe("Provisioning is unavailable.");
+    expect(state.state().cloudAgentsError).toBeNull();
+    expect(state.state().cloudAgents).toEqual([]);
+  });
+
+  it("refuses to create without a chat", async () => {
+    const f = fakes();
+    const state = build(tempHome(), f);
+
+    await state.create("  ", "Kitchen agent");
+
+    expect(f.agents.calls).toEqual([]);
+    expect(state.state().cloudActionError).toBe("Pick the chat this agent will answer in.");
+  });
+});
+
+describe("removing and retrying", () => {
+  it("drops the row and its local settings once the delete lands", async () => {
+    const home = tempHome();
+    let removed = false;
+    const f = fakes({
+      list: async () => (removed ? [] : [agent()]),
+      remove: async () => {
+        removed = true;
+      },
+    });
+    const state = build(home, f);
+    await state.refresh();
+    state.setAgentSettings("agent_1", { adversarialReview: true });
+    expect(state.state().cloudAgents).toHaveLength(1);
+
+    await state.remove("agent_1");
+
+    expect(f.agents.deleted).toEqual(["agent_1"]);
+    expect(state.state().cloudAgents).toEqual([]);
+    expect(state.state().cloudActionError).toBeNull();
+    // Nothing left for them to apply to, and a dead id kept forever is how the
+    // file grows without bound.
+    expect(loadSettings(home).cloudAgentSettings).toEqual({});
+  });
+
+  it("cancels a provision in flight when its agent is deleted", async () => {
+    const held = deferred<CloudAgentResource>();
+    let seen: AbortSignal | undefined;
+    const f = fakes({
+      create: async () => agent({ status: "provisioning" }),
+      poll: async (_receipt, _onTransition, signal) => {
+        seen = signal;
+        return held.promise;
+      },
+      list: async () => [],
+    });
+    const state = build(tempHome(), f);
+    await state.create("cht_1", "Kitchen agent");
+    expect(seen?.aborted).toBe(false);
+
+    await state.remove("agent_1");
+
+    expect(seen?.aborted).toBe(true);
+    held.resolve(agent());
+  });
+
+  it("retries by deleting and re-creating in the same chat, carrying local settings", async () => {
+    const home = tempHome();
+    const replacement = agent({ agentId: "agent_2", status: "provisioning" });
+    const f = fakes({
+      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      create: async () => replacement,
+    });
+    const state = build(home, f);
+    await state.refresh();
+    state.setAgentSettings("agent_1", { adversarialReview: true });
+
+    await state.retry("agent_1");
+
+    expect(f.agents.deleted).toEqual(["agent_1"]);
+    expect(f.agents.created).toEqual([{ chatUid: "cht_1", name: "Kitchen agent" }]);
+    // The replacement has a NEW agent id, and the choice moved onto it.
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_2: { adversarialReview: true },
+    });
+  });
+
+  it("reports a delete failure without dropping the row", async () => {
+    const f = fakes({
+      list: async () => [agent()],
+      remove: async () => {
+        throw new PlowApiError("http", "Plow returned 500.", 500);
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await state.remove("agent_1");
+
+    expect(state.state().cloudActionError).toBe("Plow returned 500.");
+    expect(state.state().cloudAgents).toHaveLength(1);
+  });
+});
+
+describe("local per-agent settings", () => {
+  it("survives the session_id rotation a reconfigure performs", async () => {
+    const home = tempHome();
+    let sessionId = "session_before";
+    const state = build(
+      home,
+      fakes({ list: async () => [agent({ sessionId })] }),
+    );
+    await state.refresh();
+    state.setAgentSettings("agent_1", { adversarialReview: true });
+
+    sessionId = "session_after_reconfigure";
+    await state.refresh();
+
+    expect(state.state().cloudAgentSettings).toEqual({ agent_1: { adversarialReview: true } });
+    expect(loadSettings(home).cloudAgentSettings.agent_1.adversarialReview).toBe(true);
+  });
+
+  it("stores only the one boolean it owns", () => {
+    const home = tempHome();
+    const state = build(home, fakes());
+
+    state.setAgentSettings("agent_1", {
+      adversarialReview: true,
+      ...({ relayAccess: true } as Record<string, unknown>),
+    } as { adversarialReview: boolean });
+
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_1: { adversarialReview: true },
+    });
+  });
+});
+
+describe("the credential boundary", () => {
+  it("marshals no credential and no session id, in any field", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [agent(), agent({ agentId: "agent_2", status: "provisioning" })],
+      }),
+    );
+
+    await state.refresh();
+    const marshalled = JSON.stringify(state.state());
+
+    expect(marshalled).not.toContain(CREDENTIAL);
+    expect(marshalled).not.toContain(SESSION);
+    expect(marshalled).not.toContain("sessionId");
+    expect(marshalled).not.toContain("session_id");
+    // The provider URL is main-process-only too.
+    expect(marshalled).not.toContain("agent.example");
+  });
+
+  it("puts no credential in an error the renderer will read", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => {
+          throw new Error(`fetch failed for Bearer ${CREDENTIAL}`);
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    expect(state.state().cloudAgentsError).toBe("Something went wrong. Try again.");
+    expect(JSON.stringify(state.state())).not.toContain(CREDENTIAL);
+  });
+});
+
+describe("a cancelled provision", () => {
+  it("is silent — the real client rejects with an AbortError, not a message", async () => {
+    // The real `CloudAgentsClient`, so this asserts against what an abort
+    // actually throws (a DOMException named AbortError) rather than a fake's
+    // idea of it.
+    const parked = deferred<void>();
+    let waits = 0;
+    const receipt = {
+      agent_id: "agent_1",
+      chat_uid: "cht_1",
+      status: "provisioning",
+      created_at: "2026-08-24T18:02:11Z",
+    };
+    const json = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    // Server truth: the agent exists while it is provisioning, and the delete
+    // takes it out of the listing.
+    let deleted = false;
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deleted = true;
+        return json(200, {});
+      }
+      if (url.endsWith("/v1/agents/cloud")) {
+        return init?.method === "POST" ? json(202, receipt) : json(200, { data: deleted ? [] : [receipt] });
+      }
+      return json(200, receipt);
+    };
+    // The poll parks in `wait`, so the test can abort it mid-flight.
+    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => {
+      waits += 1;
+      return parked.promise;
+    });
+    const home = tempHome();
+    const state = new CloudAgentState({
+      agents: client,
+      chats: { async list() { return CHATS; } },
+      home,
+      enabled: true,
+    });
+
+    await state.create("cht_1", "Kitchen agent");
+    await vi.waitFor(() => expect(waits).toBe(1));
+    await state.remove("agent_1");
+    parked.resolve();
+    await settle();
+    expect(state.state().cloudAgents).toEqual([]);
+
+    // The cancel was the user's own click. Nothing to report.
+    expect(state.state().cloudActionError).toBeNull();
+    expect(state.state().cloudAgentsError).toBeNull();
+  });
+
+  it("recovers an agent whose receipt was lost, from the next list", async () => {
+    // A create cancelled by a sign-out while the POST was in flight: the agent
+    // exists on the account, and this process never recorded its id.
+    const posting = deferred<CloudAgentResource>();
+    const f = fakes({ create: async () => posting.promise, list: async () => [agent()] });
+    const state = build(tempHome(), f);
+
+    const creating = state.create("cht_1", "Kitchen agent");
+    state.signedOut();
+    posting.resolve(agent({ status: "provisioning" }));
+    await creating;
+    expect(state.state().cloudAgents).toEqual([]);
+
+    await state.refresh();
+
+    // The listing is authoritative, and it is the only way back to an agent
+    // whose id was dropped on the floor.
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_1"]);
+    expect(state.state().cloudActionError).toBeNull();
+  });
+});
+
+describe("signing out", () => {
+  it("clears every row and cancels a provision that is still polling", async () => {
+    const held = deferred<CloudAgentResource>();
+    let seen: AbortSignal | undefined;
+    const f = fakes({
+      create: async () => agent({ status: "provisioning" }),
+      poll: async (_receipt, _onTransition, signal) => {
+        seen = signal;
+        return held.promise;
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.create("cht_1", "Kitchen agent");
+
+    state.signedOut();
+
+    expect(seen?.aborted).toBe(true);
+    expect(state.state()).toMatchObject({
+      cloudAgents: [],
+      cloudChats: [],
+      cloudChatsLoaded: false,
+      cloudAgentsError: null,
+      cloudActionError: null,
+    });
+    held.resolve(agent());
+  });
+
+  it("drops a list that lands after the sign-out", async () => {
+    const held = deferred<CloudAgentResource[]>();
+    const state = build(tempHome(), fakes({ list: async () => held.promise }));
+
+    const refreshing = state.refresh();
+    state.signedOut();
+    held.resolve([agent()]);
+    await refreshing;
+
+    expect(state.state().cloudAgents).toEqual([]);
+  });
+});
+
+describe("CloudChatsClient", () => {
+  function recordingFetch(answer: { status: number; body?: unknown }) {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init: init ?? {} });
+      return new Response(JSON.stringify(answer.body ?? {}), {
+        status: answer.status,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    return { calls, fetchImpl };
+  }
+
+  const chatRow = {
+    uid: "cht_1",
+    status: "active",
+    created_at: "2026-08-20T10:00:00Z",
+    participants: [
+      { type: "agent", line: { provider_key: "+15550100" } },
+      { type: "member", display_name: "Ada", provider_key: "+15550111" },
+    ],
+  };
+
+  it("GETs the chat list with bearer auth and a short timeout", async () => {
+    const { calls, fetchImpl } = recordingFetch({ status: 200, body: { data: [chatRow] } });
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+
+    const chats = await new CloudChatsClient("https://api.plow.co/", fetchImpl).list(CREDENTIAL);
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/chats");
+    expect(calls[0].init.method).toBe("GET");
+    expect(calls[0].init.headers).toMatchObject({ authorization: `Bearer ${CREDENTIAL}` });
+    expect(timeout).toHaveBeenCalledWith(REQUEST_TIMEOUT_MS);
+    // The line the chat runs on, then who is in it — never the chat's own
+    // provider_key, which is the provider's thread id.
+    expect(chats).toEqual([{ uid: "cht_1", label: "+15550100 · Ada" }]);
+    timeout.mockRestore();
+  });
+
+  it("says what to do about a 403, since it has no screen of its own", async () => {
+    const { fetchImpl } = recordingFetch({ status: 403, body: { detail: "missing scope" } });
+
+    await expect(
+      new CloudChatsClient("https://api.plow.co", fetchImpl).list(CREDENTIAL),
+    ).rejects.toMatchObject({
+      kind: "forbidden",
+      status: 403,
+      message: "This Mac signed in before chat access existed. Re-activate it to list chats.",
+    });
+  });
+
+  it("never repeats the credential back in a failure", async () => {
+    const fetchImpl = async () => {
+      throw new Error(`connect ECONNREFUSED with Bearer ${CREDENTIAL}`);
+    };
+
+    await expect(
+      new CloudChatsClient("https://api.plow.co", fetchImpl).list(CREDENTIAL),
+    ).rejects.toMatchObject({ kind: "network", message: "Couldn't reach Plow." });
+  });
+});
