@@ -87,13 +87,30 @@ Three of them, in the order the code reaches them:
 3. An `<input>` **sanitizes an assigned value**, and differently per type. CR
    and LF never survive. Some types will not keep a leading or trailing tab.
 
-The one that bites: **an assignment is not a guarantee the node kept the value,
-and nothing downstream reports the difference** — the tab guard's branch returns
-without asking `KEYS_DROPPED_JS` at all, and on the split path a value that lost
-its *leading* character is not a prefix of what was wanted, so the check answers
-false. The fill answers ok either way. This is `fill()`'s own behavior, older
-than the typing work, and it is the first thing to suspect if a credential lands
-short.
+The one that bites: **an assignment is not a guarantee the node kept the
+value** — the tab guard's branch returns without asking `KEYS_DROPPED_JS` at
+all, and on the split path a value that lost its *leading* character is not a
+prefix of what was wanted, so the check answers false. This is `fill()`'s own
+behavior, older than the typing work, and it is still the first thing to suspect
+if a credential lands short.
+
+What the fill now tells you about it:
+
+- A completed fill carries **`altered`** when the field is holding something
+  other than what went into it — whatever the field did to it, and whether or
+  not the field said it would. It is a fact and not a verdict: a card box
+  rendering the digits it was given with spaces in them has changed nothing that
+  counts, and only a caller who knows what the value means can say. A fill
+  without it landed exactly.
+- A **credential** fill is the case where that is decided for you: the value
+  came out of the vault, so `fillSecret` refuses a field that changed it and
+  says a changed copy is still sitting there. Clearing it is left to whoever can
+  see the page.
+- A value the field says it cannot hold is refused **before the node is
+  touched**, answering `too_long` with the field's own cap, so the page is left
+  exactly as it was found. Measured against what this node will actually
+  receive — a `<textarea>` keeps its breaks and an `<input>` does not, so the
+  same value can fit one and not the other.
 
 Do not trust the specifics above — the per-type details have been written down
 wrong here more than once. **Confirm against the field**: drive the real fill

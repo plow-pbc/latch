@@ -806,6 +806,18 @@ export class BrowserSessions {
     // anything be observed, and says so when one of them would not take. It
     // sends no picture and no field list in that case, and neither does this:
     // an observation that cannot be made safely is not made.
+    // The field says how much it holds and the value is more. Refused before
+    // anything was typed, so the page is as it was found.
+    if (result.ok === false && result.mask === "too_long") {
+      return {
+        status: "error",
+        error:
+          `that field holds only ${jv(result).get("cap").num} characters and the value is ` +
+          `longer, so it was not filled`,
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
+    }
+
     if (result.ok === false && result.mask === "unmasked") {
       this.audit("credential_mask_failed", {
         session: s.auditId,
@@ -1001,6 +1013,45 @@ export class BrowserSessions {
       // nothing was typed: the value would have been legible in every
       // screenshot from that moment on, which is the whole thing this exists to
       // prevent. Refused rather than filled.
+      if (filled.mask === "too_long") {
+        this.audit("credential_fill_failed", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: `the field holds only ${jv(filled).get("cap").num} characters`,
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: ${selector} holds only ${jv(filled).get("cap").num} ` +
+            `characters and this value is longer. It will have to be shortened where it is ` +
+            `stored before an agent can enter it.`,
+        };
+      }
+      // The browser reports that the field is not holding what went into it; it
+      // does not judge whether that matters, because it cannot know what the
+      // value means. Here it can: this came out of the vault, so a field that
+      // changed it did not receive the credential, whatever its reason.
+      if (filled.altered === true) {
+        this.audit("credential_fill_failed", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: "the field is holding a changed copy of the value",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} did not go in as stored: ${selector} took it and is holding a changed ` +
+            `copy — the page rewrites what is typed into it. That copy is still in the field; ` +
+            `clear it yourself if it must not be submitted. The value in the vault is not at ` +
+            `fault, and this field cannot be filled by an agent.`,
+        };
+      }
       if (filled.mask === "moved") {
         this.audit("credential_denied", {
           session: s.auditId,
