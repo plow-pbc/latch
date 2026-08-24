@@ -140,6 +140,36 @@ describe("CloudAgentsClient polling", () => {
     expect(final).toMatchObject({ status: "failed", failureReason: "Provider timed out" });
     expect(calls).toHaveLength(1);
   });
+
+  it("stops after an abort during the wait or GET without publishing another transition", async () => {
+    for (const abortAt of ["wait", "get"] as const) {
+      const controller = new AbortController();
+      const calls: string[] = [];
+      const transitions: string[] = [];
+      const fetchImpl = async (url: string) => {
+        calls.push(url);
+        const isCreate = calls.length === 1;
+        if (!isCreate && abortAt === "get") controller.abort();
+        return new Response(JSON.stringify(resource(isCreate ? "provisioning" : "active")), {
+          status: isCreate ? 202 : 200,
+        });
+      };
+      const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => {
+        if (abortAt === "wait") controller.abort();
+      });
+
+      const stopped = client.createAndPoll(
+        CREDENTIAL,
+        { chatUid: "cht_123" },
+        (agent) => transitions.push(agent.status),
+        controller.signal,
+      );
+
+      await expect(stopped).rejects.toMatchObject({ name: "AbortError" });
+      expect(calls).toHaveLength(abortAt === "get" ? 2 : 1);
+      expect(transitions).toEqual(["provisioning"]);
+    }
+  });
 });
 
 describe("CloudAgentsClient recovery and credential boundary", () => {
@@ -167,6 +197,22 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
       ["POST", "https://api.plow.co/v1/agents/cloud"],
     ]);
     expect(calls[0].init.body).toBe(calls[2].init.body);
+  });
+
+  it.each([
+    "Another create is already in flight.",
+    "This account has no messaging address.",
+    "The user is not a participant in this chat.",
+  ])("does not recover an unrelated 409: %s", async (detail) => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 409, body: { detail } }]);
+    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
+      .create(CREDENTIAL, { chatUid: "cht_123" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(String(error)).toBe(`PlowApiError: ${detail}`);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init.method).toBe("POST");
   });
 
   it("never puts a credential echoed by HTTP or fetch into an error string", async () => {

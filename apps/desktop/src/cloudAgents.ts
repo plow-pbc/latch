@@ -127,8 +127,12 @@ export class CloudAgentsClient {
     deviceCredential: string,
     request: CreateCloudAgentRequest,
     onTransition?: CloudAgentTransition,
+    signal?: AbortSignal,
   ): Promise<CloudAgentResource> {
-    return this.poll(deviceCredential, await this.create(deviceCredential, request), onTransition);
+    signal?.throwIfAborted();
+    const receipt = await this.create(deviceCredential, request);
+    signal?.throwIfAborted();
+    return this.poll(deviceCredential, receipt, onTransition, signal);
   }
 
   /** Continue an existing receipt until Plow reports `active` or `failed`. */
@@ -136,13 +140,19 @@ export class CloudAgentsClient {
     deviceCredential: string,
     receipt: CloudAgentResource,
     onTransition?: CloudAgentTransition,
+    signal?: AbortSignal,
   ): Promise<CloudAgentResource> {
+    signal?.throwIfAborted();
     let current = receipt;
     await onTransition?.(current);
+    signal?.throwIfAborted();
     while (!isTerminalCloudAgent(current)) {
       await this.wait(CLOUD_AGENT_POLL_INTERVAL_MS);
+      signal?.throwIfAborted();
       current = await this.get(deviceCredential, current.agentId);
+      signal?.throwIfAborted();
       await onTransition?.(current);
+      signal?.throwIfAborted();
     }
     return current;
   }
