@@ -117,10 +117,14 @@ ipcMain.handle("vault:item", async () => ({
   urls: ["https://notion.so"],
   notes: "",
 }));
-// Slowable, so a check can look at the form WHILE a vault call is in flight.
-let revealDelayMs = 0;
+// Holdable, so a check can look at the pane WHILE a vault call is in flight.
+// A deferred promise, not a delay: the check runs when the call is provably in
+// flight and releases it explicitly, so no amount of scheduling jitter can let
+// the reveal finish first.
+let holdReveal = false;
+let releaseReveal = null;
 ipcMain.handle("vault:reveal", async () => {
-  if (revealDelayMs) await new Promise((r) => setTimeout(r, revealDelayMs));
+  if (holdReveal) await new Promise((r) => { releaseReveal = r; });
   return "revealed-secret";
 });
 ipcMain.handle("vault:saveItem", async () => ({ id: "itm1" }));
@@ -930,24 +934,28 @@ app.whenReady().then(async () => {
     // Every one of those awaits ends by overwriting or replacing the form, so a
     // keystroke landing mid-flight is lost. Disabling only the control that was
     // clicked left that window open three separate times.
-    revealDelayMs = 600;
+    holdReveal = true;
     await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
     await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the busy check");
     await click(".vaultui .vitem .vrow");
     await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret .eye")`, "the eye for the busy check");
     await click(".vaultui .vitem.open .field.secret .eye");
-    // Mid-flight: the NAME box and the Save button are nowhere near the eye, and
-    // both must be inert.
+    await waitForNode(() => releaseReveal !== null, "the reveal to be in flight");
+    // Mid-flight the WHOLE pane is inert, not just the form that asked: the
+    // reload replaces the pane, so a sibling row edited meanwhile would go with
+    // it. Both the name box and every OTHER row must be inside that subtree.
     const frozenWhileBusy = await js(() => {
-      const name = document.querySelector(".vaultui .vitem.open input[data-name='1']");
-      const gen = document.querySelector(".vaultui .vitem.open .field.secret .gen");
-      return !!name && name.disabled === true && (!gen || gen.disabled === true);
+      const pane = document.querySelector(".vaultui[inert]");
+      return !!pane
+        && !!pane.querySelector("input[data-name='1']")
+        && pane.querySelectorAll(".vrow").length === document.querySelectorAll(".vaultui .vrow").length;
     });
+    releaseReveal();
+    releaseReveal = null;
+    holdReveal = false;
     await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
-      "the slow reveal to land");
-    const thawedAfterBusy = await js(() =>
-      document.querySelector(".vaultui .vitem.open input[data-name='1']").disabled === false);
-    revealDelayMs = 0;
+      "the held reveal to land once released");
+    const thawedAfterBusy = await js(() => !document.querySelector(".vaultui[inert]"));
     await click(".vaultui .vitem .vrow");
     await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`, "the busy-check row to close");
 
