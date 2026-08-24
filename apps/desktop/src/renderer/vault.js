@@ -145,7 +145,12 @@ function vpane() {
   return document.querySelector(".vaultui");
 }
 
-/** The vault call in flight, if any. A leave question waits for it to land. */
+/**
+ * The vault OPERATION in flight, if any — the call AND the pane change it ends
+ * with. A leave question waits for the whole thing: waiting only for the call
+ * lets the question resume between the answer arriving and the reload running,
+ * which is still under the inert pane and still detached unanswered.
+ */
 let vinflight = null;
 
 async function vbusy(fn) {
@@ -195,20 +200,21 @@ function vfield(spec, ctx) {
         return;
       }
       if (held && !input.value) {
-        let revealed;
         try {
-          revealed = await vbusy(() => window.domo.vaultReveal(ctx.item.id, spec.key));
+          await vbusy(async () => {
+            const revealed = await window.domo.vaultReveal(ctx.item.id, spec.key);
+            input.value = revealed;
+            // Looking at a secret is not changing it: without re-baselining,
+            // merely peeking at a password would ask to save it.
+            vbaseline(input);
+            // The only call the pane OUTLIVES, so it is the only one that hands
+            // interaction back on success.
+            vpane()?.toggleAttribute("inert", false);
+          });
         } catch (err) {
           vtoast("Could not read it: " + errText(err));
           return;
         }
-        input.value = revealed;
-        // Looking at a secret is not changing it: without re-baselining, merely
-        // peeking at a password would ask to save it.
-        vbaseline(input);
-        // The only call the pane OUTLIVES, so it is the only one that hands
-        // interaction back on success.
-        vpane()?.toggleAttribute("inert", false);
       }
       input.setAttribute("type", "text");
       eye.replaceChildren(icon("eyeOff", { class: "vico", strokeWidth: "1.8" }));
@@ -464,10 +470,12 @@ function vitem(summary, reload) {
         );
         if (!yes) return;
         try {
-          await vbusy(() => window.domo.vaultDeleteItem(item.id));
-          release(); // it is gone; do not ask about edits to it
-          vtoast("Deleted");
-          await reload();
+          await vbusy(async () => {
+            await window.domo.vaultDeleteItem(item.id);
+            release(); // it is gone; do not ask about edits to it
+            vtoast("Deleted");
+            await reload();
+          });
         } catch (err) {
           vtoast("Could not delete it: " + errText(err));
         }
@@ -477,10 +485,12 @@ function vitem(summary, reload) {
         save.disabled = true;
         try {
           const input = { ...vpayload(type, ctx), itemId: item.id, revision: item.revision };
-          await vbusy(() => window.domo.vaultSaveItem(input));
-          release(); // stored now — the reload below must not ask about it
-          vtoast("Saved");
-          await reload();
+          await vbusy(async () => {
+            await window.domo.vaultSaveItem(input);
+            release(); // stored now — the reload below must not ask about it
+            vtoast("Saved");
+            await reload();
+          });
           return;
         } catch (err) {
           vtoast("Could not save it: " + errText(err));
@@ -565,11 +575,13 @@ async function vsheet(reload) {
       save.disabled = true;
       try {
         const input = vpayload(type, ctx);
-        await vbusy(() => window.domo.vaultSaveItem(input));
-        formCtx = null; // stored: nothing left to discard
-        close();
-        vtoast("Saved");
-        await reload();
+        await vbusy(async () => {
+          await window.domo.vaultSaveItem(input);
+          formCtx = null; // stored: nothing left to discard
+          close();
+          vtoast("Saved");
+          await reload();
+        });
         return;
       } catch (err) {
         vtoast("Could not save it: " + errText(err));

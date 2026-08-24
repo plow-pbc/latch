@@ -127,7 +127,14 @@ ipcMain.handle("vault:reveal", async () => {
   if (holdReveal) await new Promise((r) => { releaseReveal = r; });
   return "revealed-secret";
 });
-ipcMain.handle("vault:saveItem", async () => ({ id: "itm1" }));
+// Holdable like the reveal, so a check can act while a SAVE is in flight — the
+// transaction that ends by replacing the pane, which a held reveal never does.
+let holdSave = false;
+let releaseSave = null;
+ipcMain.handle("vault:saveItem", async () => {
+  if (holdSave) await new Promise((r) => { releaseSave = r; });
+  return { id: "itm1" };
+});
 ipcMain.handle("vault:deleteItem", async () => true);
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 // No browsing session: the audit screen's live thumbnail stays hidden.
@@ -959,36 +966,36 @@ app.whenReady().then(async () => {
     await click(".vaultui .vitem .vrow");
     await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`, "the busy-check row to close");
 
-    // ---- Cmd-W during an in-flight call must still get an answer ----
-    // The question is drawn INSIDE the pane, which is inert while a call runs.
-    // Raised then, it could not be answered, and the reload would detach it
-    // unanswered — stranding main's no-timeout wait and every later close.
-    holdReveal = true;
+    // ---- Cmd-W during an in-flight SAVE must still get an answer ----
+    // The question is drawn INSIDE the pane, which is inert while the call runs.
+    // Raised then it could not be answered, and the reload that ends a
+    // successful save would detach it unanswered — stranding main's no-timeout
+    // wait and every later close. A held SAVE is the transaction that reloads;
+    // a held reveal never replaces the pane and would miss this entirely.
+    holdSave = true;
     await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
-    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the close-during-busy check");
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the close-during-save check");
     await click(".vaultui .vitem .vrow");
-    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row for the close-during-busy check");
-    await type(".vaultui .vitem.open input[data-name='1']", "edited-while-busy");
-    await click(".vaultui .vitem.open .field.secret .eye");
-    await waitForNode(() => releaseReveal !== null, "the reveal to be in flight again");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row for the close-during-save check");
+    await type(".vaultui .vitem.open input[data-name='1']", "edited-then-saved");
+    await click(".vaultui .vitem.open .btn.save");
+    await waitForNode(() => releaseSave !== null, "the save to be in flight");
 
     let busyCloseAnswer = null;
     const onBusyReply = (_e, ok) => { busyCloseAnswer = ok; };
-    ipcMain.once("ui:confirmLeaveReply", onBusyReply);
+    ipcMain.on("ui:confirmLeaveReply", onBusyReply);
     win.webContents.send("ui:confirmLeave");
-    // No dialog while the pane is inert: it would be unanswerable.
     const noDialogUnderInert = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
-    releaseReveal();
-    releaseReveal = null;
-    holdReveal = false;
-    // Once the call lands the pane is live again, the question is asked, and the
-    // answer reaches main.
-    await waitAsking();
-    const asksOnceTheCallLands = await asking();
-    await click(DISCARD);
-    const closeAnsweredAfterBusy = await waitForNode(() => busyCloseAnswer !== null,
-      "main's answer after the in-flight call").then(() => busyCloseAnswer === true).catch(() => false);
+
+    releaseSave();
+    releaseSave = null;
+    holdSave = false;
+    // The save landed and released the form, so there is nothing left to ask
+    // about: main gets its answer, and no dialog is orphaned behind the reload.
+    const closeAnsweredAfterSave = await waitForNode(() => busyCloseAnswer !== null,
+      "main's answer once the save landed").then(() => busyCloseAnswer === true).catch(() => false);
     ipcMain.removeListener("ui:confirmLeaveReply", onBusyReply);
+    const noOrphanedDialog = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
 
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
@@ -1000,7 +1007,7 @@ app.whenReady().then(async () => {
       consentClosesTheForm,
       editedStillAsks, revertAskedNothing, revealAloneIsClean,
       frozenWhileBusy, thawedAfterBusy,
-      noDialogUnderInert, asksOnceTheCallLands, closeAnsweredAfterBusy,
+      noDialogUnderInert, closeAnsweredAfterSave, noOrphanedDialog,
     };
   })();
 
@@ -1102,8 +1109,8 @@ app.whenReady().then(async () => {
     vaultUnsaved.frozenWhileBusy &&
     vaultUnsaved.thawedAfterBusy &&
     vaultUnsaved.noDialogUnderInert &&
-    vaultUnsaved.asksOnceTheCallLands &&
-    vaultUnsaved.closeAnsweredAfterBusy &&
+    vaultUnsaved.closeAnsweredAfterSave &&
+    vaultUnsaved.noOrphanedDialog &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&
