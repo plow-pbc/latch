@@ -929,6 +929,7 @@ db.commit()`,
     cookieStore(path.join(dir, "cookies.sqlite"), ["blocked.example"], 50);
     await sessions.close(handle, "agent");
     expect(signedInto(seed)).toEqual(["his.example"]);
+    expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {

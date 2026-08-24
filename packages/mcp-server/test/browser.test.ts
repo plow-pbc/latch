@@ -53,7 +53,7 @@ function writeVault(dir: string): string {
 
 function makeServer(
   delegate: PolicyDelegate = new HeadlessPolicy({ intent: "allow_once" }),
-): { server: DomoMcpServer; device: DeviceAgent; fillLog: string; argvLog: string } {
+): { server: DomoMcpServer; device: DeviceAgent; fillLog: string; argvLog: string; home: string } {
   const dir = tempDir();
   const fillLog = path.join(dir, "fills.log");
   const argvLog = path.join(dir, "argv.log");
@@ -68,11 +68,12 @@ function makeServer(
     },
     camoufoxInstallDir: null,
   };
-  const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, runtime);
+  const home = path.join(dir, "home");
+  const device = new DeviceAgent(home, "Test Mac", delegate, runtime);
   const server = createDomoMcpServer(device);
   cleanups.push(() => server.close());
   cleanups.push(() => device.shutdown());
-  return { server, device, fillLog, argvLog };
+  return { server, device, fillLog, argvLog, home };
 }
 
 /** How each browser launch was spawned, oldest first. */
@@ -226,6 +227,27 @@ describe("browser tools (fake runtime)", () => {
     expect([quiet.payload.headed, asked.payload.headed]).toEqual(expected);
     expect(launches(argvLog).map((argv) => argv.includes("--headed"))).toEqual(expected);
     expect(openedHeaded(device)).toEqual(expected);
+  });
+
+  // The other half of the window-mode pair above: which profile a session is
+  // built on. A typo in the variable name is invisible without this — the flag
+  // silently does nothing, and a site's block reproducing again looks exactly
+  // like the bug the flag exists to rule out.
+  it.each([
+    ["what a session signs into reaches the owner's profile", undefined, true],
+    ["DOMO_BROWSER_FRESH_PROFILE=1 keeps it out", "1", false],
+  ])("%s", async (_name, env, kept) => {
+    vi.stubEnv("DOMO_BROWSER_FRESH_PROFILE", env);
+    cleanups.push(() => vi.unstubAllEnvs());
+    const { server, home } = makeServer();
+    const browser = path.join(home, "device/browser");
+
+    const session = await open(server, ["pizza.example"]);
+    const clone = path.join(browser, "profiles", fs.readdirSync(path.join(browser, "profiles"))[0]);
+    fs.writeFileSync(path.join(clone, "cookies.sqlite"), "signed in somewhere");
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+
+    expect(fs.existsSync(path.join(browser, "profile", "cookies.sqlite"))).toBe(kept);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {
