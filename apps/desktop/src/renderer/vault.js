@@ -19,7 +19,10 @@ const VAULT_TYPES = {
         { key: "username", label: "Username", placeholder: "you@example.com" },
         { key: "password", label: "Password", secret: true, generate: true, placeholder: "••••••••••••",
           hint: "Use the generator to create a strong, unique password" },
-        { key: "totp", label: "Authenticator key (TOTP)", secret: true, placeholder: "Optional — for 2FA codes" },
+        { key: "totp", label: "Authenticator key (TOTP)", secret: true, totp: true,
+          placeholder: "Optional — e.g. JBSW Y3DP EHPK 3PXP, or otpauth://…",
+          hint: "Paste the setup key the site shows under its QR code, or the whole otpauth:// link. " +
+                "Spaces and capitals do not matter. Not the six digits — those change every 30 seconds." },
       ] },
       { head: "Website (URI)", required: true, urls: true },
       { head: "Notes", fields: [{ key: "notes", placeholder: "Optional", textarea: true }] },
@@ -186,6 +189,97 @@ function vformDirty(ctx) {
   return [...Object.values(ctx.inputs), ...ctx.urlInputs].some(vchanged);
 }
 
+/*
+ * The six digits, shown while the key is still being pasted.
+ *
+ * This is the whole reason a key is hard to store: "TOTP" means the code to
+ * everyone who is not implementing one, the box is masked, and a wrong paste
+ * looks exactly like a right one until a site rejects the number. A live code
+ * settles it on sight — digits ticking means the paste was the key; a sentence
+ * means it was not, while the box is still open.
+ *
+ * A key already IN the vault is not read automatically: the value is fetched
+ * only when the owner asks, which is the request the vault's audit records.
+ */
+function vtotp(input, ctx) {
+  const out = el("div", { class: "totp-read" });
+  let showing = null; // { code, expiresAt } — the code on screen, or nothing
+  // Answers arrive out of order: a keystroke's request can land after the one
+  // that replaced it, describing a key the box no longer holds. Only the
+  // newest request may reach the screen.
+  let asked = 0;
+
+  /*
+   * The one seam. `showing` and the DOM only ever change here, together, so
+   * there is no state in which the box says one thing and the variable another
+   * — which is how expired digits used to survive on screen while `showing`
+   * had already been dropped.
+   *
+   * Seconds come from the clock rather than a tick count: a backgrounded or
+   * throttled renderer gets late, coalesced callbacks, and anything counting
+   * its own ticks reads as alive long after the code died.
+   */
+  const display = (code, message) => {
+    showing = code ?? null;
+    out.classList.toggle("bad", !code && !!message);
+    if (code) {
+      const left = Math.max(0, Math.ceil((code.expiresAt - Date.now()) / 1000));
+      out.replaceChildren(
+        el("span", { class: "totp-code", text: code.code.replace(/^(\d{3})(\d+)$/, "$1 $2") }),
+        el("span", { class: "totp-left", text: `${left}s` }),
+      );
+    } else {
+      out.replaceChildren(...(message ? [el("span", { text: message })] : []));
+    }
+  };
+
+  /**
+   * One request, whoever asked.
+   *
+   * The screen is cleared before the await, not just the variable: whatever
+   * was showing is either expired (a rollover) or describes a key the box no
+   * longer holds (a keystroke), and a saved key can sit behind the Mac asking
+   * who is at the keyboard for as long as it takes. Leaving the old digits up
+   * through that would show a dead code as if it were live — the very thing
+   * counting against the clock exists to prevent. Clearing also stops the
+   * countdown, so it cannot start a second read on top of this one.
+   */
+  const ask = async (get) => {
+    const mine = ++asked;
+    display(null);
+    try {
+      const code = await get();
+      if (mine === asked) display(code);
+    } catch (err) {
+      if (mine === asked) display(null, errText(err));
+    }
+  };
+
+  /** What the box holds right now, as a code — or why it is not one. */
+  const preview = () => {
+    const typed = input.value.trim();
+    // An emptied box invalidates whatever is still in flight, or its answer
+    // would appear under a box holding nothing.
+    if (!typed) { asked++; display(null); return Promise.resolve(); }
+    return ask(() => window.domo.vaultTotp(null, typed));
+  };
+
+  /** The code a SAVED key is showing — asked for, never taken. */
+  const fromVault = () => ask(() => window.domo.vaultTotp(ctx.item.id));
+
+  // The countdown owns its own timer and ends with the box it belongs to: a
+  // replaced pane detaches the input, and the next tick clears this.
+  const timer = setInterval(() => {
+    if (!input.isConnected) { clearInterval(timer); return; }
+    if (!showing) return;
+    if (Date.now() >= showing.expiresAt) void (input.value.trim() ? preview() : fromVault());
+    else display(showing);
+  }, 1000);
+
+  input.addEventListener("input", preview);
+  return { node: out, preview, fromVault };
+}
+
 function vfield(spec, ctx) {
   const input = spec.textarea
     ? el("textarea", { class: "inp", attrs: { placeholder: spec.placeholder ?? "" } })
@@ -204,6 +298,8 @@ function vfield(spec, ctx) {
   ctx.inputs[spec.key] = input;
 
   const buttons = [];
+  // Built before the buttons so the eye and the code button can drive it.
+  const code = spec.totp ? vtotp(input, ctx) : null;
   if (spec.secret) {
     const held = ctx.saved && (ctx.item.secrets || []).includes(spec.key);
     const eye = el("button", { class: "mini eye", attrs: { type: "button", title: "Reveal" } }, [icon("eye", { class: "vico", strokeWidth: "1.8" })]);
@@ -221,6 +317,8 @@ function vfield(spec, ctx) {
             // Looking at a secret is not changing it: without re-baselining,
             // merely peeking at a password would ask to save it.
             vbaseline(input);
+            // The key is on screen now; so is what it is worth.
+            code?.preview();
             // The only call the pane OUTLIVES, so it is the only one that hands
             // interaction back on success.
             vpane()?.toggleAttribute("inert", false);
@@ -234,6 +332,14 @@ function vfield(spec, ctx) {
       eye.replaceChildren(icon("eyeOff", { class: "vico", strokeWidth: "1.8" }));
     });
     buttons.push(eye);
+  }
+  if (spec.totp && ctx.saved && (ctx.item.secrets || []).includes(spec.key)) {
+    // Asking for the CODE is not asking for the key: this shows six digits
+    // that expire, and leaves the key itself masked and unread.
+    const show = el("button", { class: "mini gen", attrs: { type: "button", title: "Show the current code" } },
+      [icon("generate", { class: "vico", strokeWidth: "1.8" })]);
+    show.addEventListener("click", () => code.fromVault());
+    buttons.push(show);
   }
   if (spec.generate) {
     const gen = el("button", { class: "mini gen", attrs: { type: "button", title: "Generate password" } }, [icon("generate", { class: "vico", strokeWidth: "1.8" })]);
@@ -249,7 +355,7 @@ function vfield(spec, ctx) {
     : null;
   const hint = spec.hint ? el("span", { class: "gen-hint" }, [icon("generate", { class: "vico", strokeWidth: "1.8" }), el("span", { text: " " + spec.hint })]) : null;
   return el("div", { class: "field" + (spec.secret ? " secret" : "") + (spec.half ? "" : " span2") },
-    [label, el("div", { class: "inwrap" }, [input, ...buttons]), hint].filter(Boolean));
+    [label, el("div", { class: "inwrap" }, [input, ...buttons]), code?.node, hint].filter(Boolean));
 }
 
 /** The website group: one box per URL the item has, her "Add website", and a
