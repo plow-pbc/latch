@@ -41,6 +41,25 @@ describe("cloud-agent pure mappings", () => {
     expect(JSON.stringify(row)).not.toContain("provider.internal");
   });
 
+  it("scrubs a session id embedded in every renderer-bound display string", () => {
+    const sessionId = "session_sensitive_123";
+    const row = toCloudAgentDisplayRow(
+      agent({
+        agentId: `agent-${sessionId}`,
+        chatUid: `chat-${sessionId}`,
+        name: `name ${sessionId}`,
+        provider: `provider ${sessionId}`,
+        failureReason: `credential ${sessionId} rejected`,
+        createdAt: `created ${sessionId}`,
+        sessionId,
+      }),
+      { chatLabel: `chat label ${sessionId}` },
+    );
+
+    expect(row.failureReason).toBe("credential [credential] rejected");
+    expect(JSON.stringify(row)).not.toContain(sessionId);
+  });
+
   it("recognizes only active and failed as terminal", () => {
     expect(isTerminalCloudAgent(agent({ status: "provisioning" }))).toBe(false);
     expect(isTerminalCloudAgent(agent({ status: "active" }))).toBe(true);

@@ -28,16 +28,22 @@ export function toCloudAgentDisplayRow(
   agent: CloudAgentResource,
   context: CloudAgentDisplayContext = {},
 ): CloudAgentDisplayRow {
+  const scrub = (value: string): string => scrubSessionId(value, agent.sessionId);
   return {
-    agentId: agent.agentId,
-    name: agent.name ?? context.fallbackName ?? "cloud agent",
-    chatUid: agent.chatUid,
-    chatLabel: context.chatLabel ?? agent.chatUid,
-    provider: agent.provider ?? "",
+    agentId: scrub(agent.agentId),
+    name: scrub(agent.name ?? context.fallbackName ?? "cloud agent"),
+    chatUid: scrub(agent.chatUid),
+    chatLabel: scrub(context.chatLabel ?? agent.chatUid),
+    provider: scrub(agent.provider ?? ""),
     status: agent.status,
-    failureReason: agent.failureReason,
-    createdAt: agent.createdAt,
+    failureReason: agent.failureReason === null ? null : scrub(agent.failureReason),
+    createdAt: scrub(agent.createdAt),
   };
+}
+
+function scrubSessionId(value: string, sessionId: string | null): string {
+  if (!sessionId) return value;
+  return value.split(sessionId).join("[credential]");
 }
 
 /** The only KeyInfo field needed to associate a credential with its agent. */

@@ -89,11 +89,17 @@ export class CloudAgentsClient {
     return this.resourceFor(response, deviceCredential);
   }
 
-  async get(deviceCredential: string, agentId: string): Promise<CloudAgentResource> {
+  async get(
+    deviceCredential: string,
+    agentId: string,
+    signal?: AbortSignal,
+  ): Promise<CloudAgentResource> {
     const response = await this.request(
       "GET",
       `/v1/agents/cloud/${encodeURIComponent(agentId)}`,
       deviceCredential,
+      undefined,
+      signal,
     );
     return this.resourceFor(response, deviceCredential);
   }
@@ -149,7 +155,7 @@ export class CloudAgentsClient {
     while (!isTerminalCloudAgent(current)) {
       await this.wait(CLOUD_AGENT_POLL_INTERVAL_MS);
       signal?.throwIfAborted();
-      current = await this.get(deviceCredential, current.agentId);
+      current = await this.get(deviceCredential, current.agentId, signal);
       signal?.throwIfAborted();
       await onTransition?.(current);
       signal?.throwIfAborted();
@@ -171,6 +177,7 @@ export class CloudAgentsClient {
     path: string,
     deviceCredential: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const headers: Record<string, string> = {
       accept: "application/json",
@@ -178,14 +185,19 @@ export class CloudAgentsClient {
     };
     if (body !== undefined) headers["content-type"] = "application/json";
 
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
     try {
       return await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: requestSignal,
       });
     } catch (error) {
+      // A caller abort is lifecycle, not a Plow timeout. Preserve its reason so
+      // the owner of the poll can distinguish cancellation from API failure.
+      signal?.throwIfAborted();
       const name = (error as { name?: unknown })?.name;
       if (name === "TimeoutError" || name === "AbortError") {
         throw new PlowApiError("network", "Plow didn't answer in time. Try again.");

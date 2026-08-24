@@ -170,6 +170,46 @@ describe("CloudAgentsClient polling", () => {
       expect(transitions).toEqual(["provisioning"]);
     }
   });
+
+  it("aborts the fetch signal of an in-flight poll GET", async () => {
+    const controller = new AbortController();
+    let fetched: AbortSignal | null = null;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const fetchImpl = async (_url: string, init?: RequestInit): Promise<Response> => {
+      fetched = init?.signal as AbortSignal;
+      markStarted?.();
+      return new Promise<Response>((resolve, reject) => {
+        fetched?.addEventListener("abort", () => reject(fetched?.reason), { once: true });
+        // On the unfixed client the fetch signal is timeout-only. Let its GET
+        // answer after the caller aborts so the regression fails promptly.
+        controller.signal.addEventListener(
+          "abort",
+          () =>
+            queueMicrotask(() =>
+              resolve(new Response(JSON.stringify(resource("active")), { status: 200 })),
+            ),
+          { once: true },
+        );
+      });
+    };
+    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => undefined);
+
+    const polling = client.poll(
+      CREDENTIAL,
+      fromWire(resource("provisioning")),
+      undefined,
+      controller.signal,
+    );
+    await started;
+    controller.abort();
+
+    await expect(polling).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetched).not.toBeNull();
+    expect(fetched!.aborted).toBe(true);
+  });
 });
 
 describe("CloudAgentsClient recovery and credential boundary", () => {
