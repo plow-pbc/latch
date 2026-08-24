@@ -182,6 +182,20 @@ rm ~/Library/Application\ Support/Plow-Latch-<branch>/app/settings.json  # or re
 `just` recipes default `DOMO_HOME` to this checkout's `Plow-Latch-<branch>` home — your *real* dev one.
 Always pass a throwaway to anything that writes state.
 
+**A new browser session is not a fresh profile.** Every session opens on a clone of the one profile
+under `<DOMO_HOME>/browser/profile` and merges its cookies back on close, which is what keeps you
+signed in across sessions. It also means a site's *verdict about you* persists: bot defenses store
+theirs as an ordinary cookie — Kasada's `KP_UIDz`, Akamai's `_abck` — so once a site decides this
+browser is a bot, closing the session and opening another replays the block instead of retesting it,
+and it looks like a bug that reproduces every time. To test on a browser the site has never seen:
+
+```bash
+DOMO_BROWSER_FRESH_PROFILE=1 just app   # sessions start empty and merge nothing back
+```
+
+Sign-ins do not carry into those sessions and nothing they do follows them out, so use it to
+reproduce a block, not to drive an account.
+
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:
 

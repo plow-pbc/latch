@@ -766,7 +766,7 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
    * in for a runtime whose merge program is missing or broken.
    */
   const signedIn = (
-    opts: { has?: string[]; merger?: string[]; audit?: AuditFn } = {},
+    opts: { has?: string[]; merger?: string[]; audit?: AuditFn; fresh?: boolean } = {},
   ): { sessions: BrowserSessions; seed: string; profiles: string } => {
     const home = fs.mkdtempSync(path.join(ctx.dir, "signed-in-"));
     const seed = path.join(home, "profile");
@@ -781,7 +781,7 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
         {
           ...ctx.browsers,
           profileDir: path.join(home, "profiles"),
-          seedProfile: seed,
+          seedProfile: opts.fresh ? undefined : seed,
           mergeCookiesCommand: opts.merger ?? [PYTHON, MERGE_SCRIPT],
         },
         null,
@@ -913,6 +913,22 @@ db.commit()`,
     await sessions.close(newer, "agent");
     await sessions.close(older, "agent");
     expect(signedInto(seed, true)).toEqual(["first.example=new-token"]);
+  });
+
+  it("signs a session out of everything, both ways, when no profile is configured", async () => {
+    // DOMO_BROWSER_FRESH_PROFILE=1 unsets the seed, and the point is a browser
+    // no site has met: a bot defense's verdict is an ordinary cookie, so a
+    // session cloned from the owner's profile carries the block it is meant to
+    // be retesting. Both directions matter — the clone starts with nothing,
+    // and what it collects never reaches the profile the owner signs in with.
+    const { sessions, seed, profiles } = signedIn({ fresh: true });
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
+    const dir = only(profiles);
+    expect(fs.existsSync(path.join(dir, "cookies.sqlite"))).toBe(false);
+
+    cookieStore(path.join(dir, "cookies.sqlite"), ["blocked.example"], 50);
+    await sessions.close(handle, "agent");
+    expect(signedInto(seed)).toEqual(["his.example"]);
   });
 
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {

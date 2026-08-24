@@ -156,7 +156,15 @@ export class DeviceAgent {
         // below — Firefox locks a profile to one process, so several browsers
         // at once need a directory each — and hand it back when they close.
         profileDir: path.join(browserDir, "profiles"),
-        seedProfile: path.join(browserDir, "profile"),
+        // Unset by DOMO_BROWSER_FRESH_PROFILE=1: sessions then start empty and
+        // merge nothing back. That is what reproducing a bot block needs — the
+        // verdict a site writes is a cookie, so it rides the seed into every
+        // later session and "open a fresh session and try once" replays the
+        // block instead of testing it.
+        seedProfile:
+          process.env.DOMO_BROWSER_FRESH_PROFILE === "1"
+            ? undefined
+            : path.join(browserDir, "profile"),
         mergeCookiesCommand: browserRuntime.mergeCookiesCommand,
         camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
         isolatedHome: path.join(browserDir, "pyhome"),
