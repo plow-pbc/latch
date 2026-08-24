@@ -743,6 +743,8 @@ app.whenReady().then(async () => {
       `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false;
          n.value = ${JSON.stringify(value)}; n.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
     const asking = () => js(() => !!document.querySelector(".vaultui .confirm-overlay"));
+    const leaveTab2 = (tab) => win.webContents.executeJavaScript(
+      `(() => { window.__domoSelectTab(${JSON.stringify(tab)}); return true; })()`);
     const CONFIRM = ".vaultui .confirm-overlay";
     const waitAsking = () => waitFor(win, `document.querySelector("${CONFIRM}")`, "the discard confirmation");
     const waitAnswered = () => waitFor(win, `!document.querySelector("${CONFIRM}")`, "the confirmation to close");
@@ -875,6 +877,52 @@ app.whenReady().then(async () => {
     const consentClosesTheForm = await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`,
       "the approved form to be taken away").then(() => true).catch(() => false);
 
+    // ---- An edit that ends where it started is not an edit ----
+    // Daniel -> Carlos -> Daniel leaves nothing to save, so leaving must not
+    // ask. Start from a row opened clean, so the baseline is what is stored.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the revert check");
+    await click(".vaultui .vitem .vrow");
+    const BOX = ".vaultui .vitem.open input[data-name='1']";
+    await waitFor(win, `document.querySelector("${BOX}")`, "a freshly opened row");
+    const original = await js(() => document.querySelector(".vaultui .vitem.open input[data-name='1']").value);
+
+    // Away from the original, leaving DOES ask - without this the revert below
+    // would pass on a form that simply never went dirty.
+    await type(BOX, original + "-changed");
+    await leaveTab2("rules");
+    await waitAsking();
+    const editedStillAsks = await asking();
+    await click(KEEP);
+    await waitAnswered();
+
+    // Back to the original: nothing to save, so nothing is asked.
+    await type(BOX, original);
+    await leaveTab2("rules");
+    const revertedSwitched = await waitFor(win,
+      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      "the tab to switch with nothing left to save").then(() => true).catch(() => false);
+    const revertAskedNothing = revertedSwitched && !(await asking());
+
+    // Revealing a secret fills the box from the vault. Looking is not editing.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the reveal check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret .eye")`, "the reveal button");
+    await click(".vaultui .vitem.open .field.secret .eye");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
+      "the secret to land in the box");
+    await leaveTab2("rules");
+    const revealSwitched = await waitFor(win,
+      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      "the tab to switch after only looking").then(() => true).catch(() => false);
+    const revealAloneIsClean = revealSwitched && !(await asking());
+    // Leave nothing open behind this block: a dialog still up would deadlock
+    // the next awaited __domoSelectTab in the sections that follow.
+    if (await asking()) { await click(DISCARD); await waitAnswered(); }
+    await leaveTab2("rules");
+    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "a clean exit from the vault block");
+
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
@@ -883,6 +931,7 @@ app.whenReady().then(async () => {
       reselectingVaultKeepsTheForm,
       oneDialogForTwoAskers, refusalIsReported, refusedCloseKeepsTheForm,
       consentClosesTheForm,
+      editedStillAsks, revertAskedNothing, revealAloneIsClean,
     };
   })();
 
@@ -978,6 +1027,9 @@ app.whenReady().then(async () => {
     vaultUnsaved.refusalIsReported &&
     vaultUnsaved.refusedCloseKeepsTheForm &&
     vaultUnsaved.consentClosesTheForm &&
+    vaultUnsaved.editedStillAsks &&
+    vaultUnsaved.revertAskedNothing &&
+    vaultUnsaved.revealAloneIsClean &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

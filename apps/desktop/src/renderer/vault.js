@@ -113,6 +113,37 @@ function generatedPassword() {
  * to it. A secret starts blank — the vault has not handed it over — and the eye
  * asks for it, which is the request the vault's audit records.
  */
+/*
+ * Unsaved edits are decided by COMPARING, not by remembering that a key was
+ * pressed. Type Daniel → Carlos → Daniel and there is nothing left to save, so
+ * nothing should be asked. `baseline` is what the box held when the form opened.
+ */
+function vbaseline(input) {
+  input.dataset.baseline = input.value;
+  delete input.dataset.touched;
+}
+
+/**
+ * Record whether this box now differs from what it opened with.
+ *
+ * `touched` is not cosmetic: vpayload() reads it to tell a blank secret that
+ * means "leave the stored one alone" from one that means "clear it". Latched on
+ * the first keystroke, typing a character into a secret and deleting it again
+ * armed a silent wipe of that secret on the next save. Back to the original is
+ * untouched — here for the same reason it is not an unsaved change.
+ */
+function vtouch(input) {
+  if (input.value === input.dataset.baseline) delete input.dataset.touched;
+  else input.dataset.touched = "1";
+}
+
+/** True when any box on this form differs from what it opened with. */
+function vformDirty(ctx) {
+  return [...Object.values(ctx.inputs), ...ctx.urlInputs].some(
+    (i) => i.value !== i.dataset.baseline,
+  );
+}
+
 function vfield(spec, ctx) {
   const input = spec.textarea
     ? el("textarea", { class: "inp", attrs: { placeholder: spec.placeholder ?? "" } })
@@ -127,6 +158,7 @@ function vfield(spec, ctx) {
       });
   const stored = ctx.item ? (spec.key === "notes" ? ctx.item.notes : ctx.item.fields[spec.key]) : "";
   if (!spec.secret && stored) input.value = stored;
+  vbaseline(input);
   ctx.inputs[spec.key] = input;
 
   const buttons = [];
@@ -143,6 +175,10 @@ function vfield(spec, ctx) {
         eye.disabled = true;
         try {
           input.value = await window.domo.vaultReveal(ctx.item.id, spec.key);
+          // Looking at a secret is not changing it. Without this the box would
+          // read as edited the moment it is revealed, and merely peeking at a
+          // password would ask to save it.
+          vbaseline(input);
         } catch (err) {
           vtoast("Could not read it: " + errText(err));
           eye.disabled = false;
@@ -160,12 +196,11 @@ function vfield(spec, ctx) {
     gen.addEventListener("click", () => {
       input.value = generatedPassword();
       input.setAttribute("type", "text");
-      ctx.onChange?.();
+      vtouch(input);
     });
     buttons.push(gen);
   }
-  // Touched, so an empty box now means "clear this", not "leave it alone".
-  input.addEventListener("input", () => { input.dataset.touched = "1"; ctx.onChange?.(); });
+  input.addEventListener("input", () => vtouch(input));
 
   const label = spec.label
     ? el("label", { text: spec.label + " " }, spec.required ? [el("span", { class: "req", text: "*" })] : [])
@@ -183,9 +218,15 @@ function vurls(ctx) {
   // That is a fact about this list, and vault.css reads it off :only-child
   // rather than anything here keeping a second copy of it in step.
   const rows = el("div", { class: "url-rows" });
-  const add = () => {
+  // `initial` is set BEFORE the baseline is taken: a row drawn from a stored
+  // address opens holding it, so that address is what "unchanged" means. Taking
+  // the baseline first and assigning after would leave every item that has a
+  // website permanently unsaved.
+  const add = (initial = "") => {
     const input = el("input", { class: "inp", attrs: { type: "text", spellcheck: "false", placeholder: "https://" } });
-    input.addEventListener("input", () => ctx.onChange?.());
+    input.value = initial;
+    vbaseline(input);
+    input.addEventListener("input", () => vtouch(input));
     ctx.urlInputs.push(input);
     const drop = el("button", { class: "mini drop", attrs: { type: "button", title: "Remove this website", "aria-label": "Remove this website" } },
       [icon("close", { class: "vico", strokeWidth: "1.8" })]);
@@ -196,14 +237,14 @@ function vurls(ctx) {
       // two rows can hold the same address.
       input.value = "";
       row.remove();
-      ctx.onChange?.();
+      vtouch(input);
     });
     rows.appendChild(row);
     return input;
   };
   const existing = ctx.item ? ctx.item.urls || [] : [];
   if (existing.length === 0) add();
-  else for (const url of existing) add().value = url;
+  else for (const url of existing) add(url);
 
   const more = el("button", { class: "add-link", attrs: { type: "button" } }, [icon("plus", { class: "vico", strokeWidth: "2" }), el("span", { text: " Add website" })]);
   more.addEventListener("click", () => add().focus());
@@ -215,9 +256,9 @@ function vurls(ctx) {
 }
 
 /** Every group of a type's form, built once and shared by the sheet and the row. */
-function vformBody(type, item, onChange) {
+function vformBody(type, item) {
   const spec = VAULT_TYPES[type];
-  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [], onChange };
+  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [] };
   const name = vfield(
     { key: "name", label: "Item name", required: true, placeholder: spec.placeholder },
     { ...ctx, item: item ? { ...item, fields: { ...item.fields, name: item.name } } : null },
@@ -278,12 +319,10 @@ function vconfirm(title, body, confirmLabel) {
 /*
  * Unsaved edits.
  *
- * vformBody() already fires ctx.onChange from every place a form can change —
- * typing, generating a password, adding or dropping a website — so a flag on
- * that hook IS the dirty check. A value-diff is not an option anyway: the vault
- * never hands a stored secret over, so there is nothing to compare a secret
- * box against. That makes this "touched", not "different", which is the same
- * bargain every browser makes with beforeunload.
+ * A form is dirty when a box DIFFERS from what it opened with — not when a key
+ * was pressed in it. Secrets compare too: the box starts blank because the vault
+ * hands nothing over, and revealing one re-baselines it, so the comparison is
+ * against what is actually stored in both states.
  *
  * ONE editor at a time may hold unsaved edits. The screen can show several open
  * rows, but the moment a second one is edited the first has already been asked
@@ -357,7 +396,7 @@ function vitem(summary, reload) {
   const body = el("div", { class: "vbody" }, [inner]);
 
   let loaded = false;
-  let touched = false;
+  let form = null; // the ctx of the open form, or null when the row is shut
   const shut = () => {
     // Closing throws the form away, revealed values included. Keeping it
     // would let a second look at a protected item skip the check the first
@@ -365,10 +404,10 @@ function vitem(summary, reload) {
     article.classList.remove("open");
     inner.replaceChildren();
     loaded = false;
-    touched = false;
+    form = null;
   };
-  const seat = { dirty: () => touched, close: shut };
-  const release = () => { touched = false; vreleaseEditor(seat); };
+  const seat = { dirty: () => form !== null && vformDirty(form), close: shut };
+  const release = () => { form = null; vreleaseEditor(seat); };
   row.addEventListener("click", async () => {
     if (article.classList.contains("open")) {
       // Ask BEFORE anything is torn down, so backing out leaves the form —
@@ -387,7 +426,8 @@ function vitem(summary, reload) {
     inner.replaceChildren(el("p", { class: "use-note", text: "Opening…" }));
     try {
       const item = await window.domo.vaultItem(summary.id);
-      const { nodes, ctx } = vformBody(type, item, () => { touched = true; });
+      const { nodes, ctx } = vformBody(type, item);
+      form = ctx;
       const del = el("button", { class: "btn danger", attrs: { type: "button" }, text: "Delete" });
       del.addEventListener("click", async () => {
         const yes = await vconfirm(
@@ -437,9 +477,9 @@ function vitem(summary, reload) {
 /** Her sheet: pick a type, fill that type's form, save. */
 async function vsheet(reload) {
   const overlay = el("div", { class: "overlay show" });
-  let touched = false;
+  let formCtx = null; // the ctx of the form on screen; the picker holds none
   const close = () => { vreleaseEditor(seat); overlay.remove(); };
-  const seat = { dirty: () => touched, close };
+  const seat = { dirty: () => formCtx !== null && vformDirty(formCtx), close };
   // The sheet is modal, so it holds the seat for its whole life — taking it up
   // front is where an already-dirty row gets asked about, before this covers it.
   if (!(await vtakeEditor(seat))) return;
@@ -463,7 +503,7 @@ async function vsheet(reload) {
   ]);
 
   const picker = () => {
-    touched = false; // the picker holds nothing to lose; the sheet keeps the seat
+    formCtx = null; // the picker holds nothing to lose; the sheet keeps the seat
     title.textContent = "New item";
     tag.setAttribute("hidden", "");
     back.setAttribute("hidden", "");
@@ -490,14 +530,14 @@ async function vsheet(reload) {
     tag.removeAttribute("hidden");
     back.removeAttribute("hidden");
     foot.removeAttribute("hidden");
-    touched = false;
-    const { nodes, ctx } = vformBody(type, null, () => { touched = true; });
+    const { nodes, ctx } = vformBody(type, null);
+    formCtx = ctx;
     bodyEl.replaceChildren(el("form", { class: "sheet-form", attrs: { autocomplete: "off" } }, nodes));
     save.onclick = async () => {
       save.disabled = true;
       try {
         await window.domo.vaultSaveItem(vpayload(type, ctx));
-        touched = false;
+        formCtx = null; // stored: nothing left to discard
         close();
         vtoast("Saved");
         await reload();
