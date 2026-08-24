@@ -68,6 +68,7 @@ export function signOutOfPlow(home: string): void {
     // this Mac can no longer reach.
     s.provisionedChatUid = "";
     s.provisionedChatLabel = "";
+    s.activationSendTo = "";
   });
 }
 
