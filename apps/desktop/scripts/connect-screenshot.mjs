@@ -356,17 +356,14 @@ async function clickCloudRowButton(win, label) {
 }
 
 async function chooseLastChatOption(win) {
-  const point = await win.webContents.executeJavaScript(`(() => {
-    const rect = document.querySelector(".cloud-modal select")?.getBoundingClientRect();
-    return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : null;
+  const changed = await win.webContents.executeJavaScript(`(() => {
+    const select = document.querySelector(".cloud-modal select");
+    if (!select) return false;
+    select.selectedIndex = select.options.length - 1;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
   })()`);
-  if (!point) throw new Error("no chat picker to drive");
-  win.webContents.sendInputEvent({ type: "mouseDown", x: point.x, y: point.y, button: "left", clickCount: 1 });
-  win.webContents.sendInputEvent({ type: "mouseUp", x: point.x, y: point.y, button: "left", clickCount: 1 });
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "End" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "End" });
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+  if (!changed) throw new Error("no chat picker to drive");
 }
 
 async function type(win, selector, text) {
