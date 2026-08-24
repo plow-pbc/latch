@@ -203,17 +203,22 @@ function vformDirty(ctx) {
  */
 function vtotp(input, ctx) {
   const out = el("div", { class: "totp-read" });
-  let showing = null; // { code, period, secondsLeft } while a code is counting down
+  let showing = null; // { code, expiresAt } while a code is on screen
   // Answers arrive out of order — a keystroke's request can land after the one
   // that replaced it, and the older answer describes a key the box no longer
   // holds. Only the newest request may paint.
   let asked = 0;
 
+  /* Against the clock, never against our own ticks: a backgrounded or
+     throttled renderer gets late, coalesced callbacks, and a code counted down
+     one tick at a time would still read as alive long after it died. */
+  const left = () => Math.max(0, Math.ceil((showing.expiresAt - Date.now()) / 1000));
+
   const paint = () => {
     if (!showing) return;
     out.replaceChildren(
       el("span", { class: "totp-code", text: showing.code.replace(/^(\d{3})(\d+)$/, "$1 $2") }),
-      el("span", { class: "totp-left", text: `${showing.secondsLeft}s` }),
+      el("span", { class: "totp-left", text: `${left()}s` }),
     );
     out.classList.remove("bad");
   };
@@ -267,8 +272,7 @@ function vtotp(input, ctx) {
   const timer = setInterval(() => {
     if (!input.isConnected) { clearInterval(timer); return; }
     if (!showing) return;
-    showing.secondsLeft -= 1;
-    if (showing.secondsLeft <= 0) void (input.value.trim() ? preview() : fromVault());
+    if (Date.now() >= showing.expiresAt) void (input.value.trim() ? preview() : fromVault());
     else paint();
   }, 1000);
 

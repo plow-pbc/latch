@@ -28,9 +28,16 @@ export interface TotpParams {
 
 export interface TotpCode {
   code: string;
-  period: number;
-  /** Seconds this code still has. Never 0: a code about to turn over reads 1. */
-  secondsLeft: number;
+  /**
+   * When this code stops being the current one, as epoch milliseconds.
+   *
+   * An absolute moment rather than a countdown, because the only consumer is a
+   * screen: a renderer that is backgrounded, throttled, or on a Mac that slept
+   * gets its timer callbacks late and coalesced, so anything counting its own
+   * ticks drifts and ends up showing a dead code with seconds still on it.
+   * Against the clock there is nothing to drift.
+   */
+  expiresAt: number;
 }
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -151,11 +158,6 @@ function hotp(params: TotpParams, counter: number): string {
  */
 export function totpCode(stored: string, atMs: number = Date.now()): TotpCode {
   const params = totpParams(stored);
-  const seconds = Math.floor(atMs / 1000);
-  const code = hotp(params, Math.floor(seconds / params.period));
-  return {
-    code,
-    period: params.period,
-    secondsLeft: params.period - (seconds % params.period),
-  };
+  const step = Math.floor(Math.floor(atMs / 1000) / params.period);
+  return { code: hotp(params, step), expiresAt: (step + 1) * params.period * 1000 };
 }

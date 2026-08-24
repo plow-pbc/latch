@@ -92,17 +92,28 @@ describe("what an owner is allowed to paste", () => {
   });
 });
 
-describe("how long a code has left", () => {
-  it("counts down inside the step and never reads zero", () => {
-    expect(totpCode(SHA1, 0).secondsLeft).toBe(30);
-    expect(totpCode(SHA1, 1_000).secondsLeft).toBe(29);
-    expect(totpCode(SHA1, 29_000).secondsLeft).toBe(1);
-    expect(totpCode(SHA1, 30_000).secondsLeft).toBe(30);
+describe("when a code dies", () => {
+  /*
+   * An absolute moment, not a countdown. A screen that counts its own ticks
+   * drifts the instant it is backgrounded or its Mac sleeps, and then shows a
+   * dead code with seconds still on it — which is worse than showing nothing,
+   * because it is the number someone types.
+   */
+  it("expires at the end of the step it belongs to, whenever it was asked for", () => {
+    expect(totpCode(SHA1, 0).expiresAt).toBe(30_000);
+    expect(totpCode(SHA1, 1_000).expiresAt).toBe(30_000);
+    expect(totpCode(SHA1, 29_999).expiresAt).toBe(30_000);
+    expect(totpCode(SHA1, 30_000).expiresAt).toBe(60_000);
   });
 
-  it("counts down in the step the link asked for", () => {
+  it("expires on the step the link asked for, not the usual one", () => {
     const uri = `otpauth://totp/x?secret=${SHA1}&period=60`;
-    expect(totpCode(uri, 0).period).toBe(60);
-    expect(totpCode(uri, 45_000).secondsLeft).toBe(15);
+    expect(totpCode(uri, 45_000).expiresAt).toBe(60_000);
+    expect(totpCode(uri, 61_000).expiresAt).toBe(120_000);
+  });
+
+  it("holds one code for the whole step, and a different one after it", () => {
+    expect(totpCode(SHA1, 0).code).toBe(totpCode(SHA1, 29_999).code);
+    expect(totpCode(SHA1, 30_000).code).not.toBe(totpCode(SHA1, 0).code);
   });
 });
