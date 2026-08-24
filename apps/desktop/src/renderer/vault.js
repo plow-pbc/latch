@@ -120,28 +120,14 @@ function generatedPassword() {
  */
 function vbaseline(input) {
   input.dataset.baseline = input.value;
-  delete input.dataset.touched;
 }
 
-/**
- * Record whether this box now differs from what it opened with.
- *
- * `touched` is not cosmetic: vpayload() reads it to tell a blank secret that
- * means "leave the stored one alone" from one that means "clear it". Latched on
- * the first keystroke, typing a character into a secret and deleting it again
- * armed a silent wipe of that secret on the next save. Back to the original is
- * untouched — here for the same reason it is not an unsaved change.
- */
-function vtouch(input) {
-  if (input.value === input.dataset.baseline) delete input.dataset.touched;
-  else input.dataset.touched = "1";
-}
+/** Whether this box holds something other than what it opened with. */
+const vchanged = (input) => input.value !== input.dataset.baseline;
 
 /** True when any box on this form differs from what it opened with. */
 function vformDirty(ctx) {
-  return [...Object.values(ctx.inputs), ...ctx.urlInputs].some(
-    (i) => i.value !== i.dataset.baseline,
-  );
+  return [...Object.values(ctx.inputs), ...ctx.urlInputs].some(vchanged);
 }
 
 function vfield(spec, ctx) {
@@ -173,18 +159,24 @@ function vfield(spec, ctx) {
       }
       if (held && !input.value) {
         eye.disabled = true;
+        // Only the eye is disabled while the vault answers, so the box can be
+        // typed into meanwhile. Whatever was written wins: dropping the reveal
+        // on top would erase it AND re-baseline it, losing the edit silently.
+        const before = input.value;
+        let revealed;
         try {
-          input.value = await window.domo.vaultReveal(ctx.item.id, spec.key);
-          // Looking at a secret is not changing it. Without this the box would
-          // read as edited the moment it is revealed, and merely peeking at a
-          // password would ask to save it.
-          vbaseline(input);
+          revealed = await window.domo.vaultReveal(ctx.item.id, spec.key);
         } catch (err) {
           vtoast("Could not read it: " + errText(err));
           eye.disabled = false;
           return;
         }
         eye.disabled = false;
+        if (input.value !== before) return; // they typed; leave it as their edit
+        input.value = revealed;
+        // Looking at a secret is not changing it: without re-baselining, merely
+        // peeking at a password would ask to save it.
+        vbaseline(input);
       }
       input.setAttribute("type", "text");
       eye.replaceChildren(icon("eyeOff", { class: "vico", strokeWidth: "1.8" }));
@@ -196,11 +188,9 @@ function vfield(spec, ctx) {
     gen.addEventListener("click", () => {
       input.value = generatedPassword();
       input.setAttribute("type", "text");
-      vtouch(input);
     });
     buttons.push(gen);
   }
-  input.addEventListener("input", () => vtouch(input));
 
   const label = spec.label
     ? el("label", { text: spec.label + " " }, spec.required ? [el("span", { class: "req", text: "*" })] : [])
@@ -226,7 +216,6 @@ function vurls(ctx) {
     const input = el("input", { class: "inp", attrs: { type: "text", spellcheck: "false", placeholder: "https://" } });
     input.value = initial;
     vbaseline(input);
-    input.addEventListener("input", () => vtouch(input));
     ctx.urlInputs.push(input);
     const drop = el("button", { class: "mini drop", attrs: { type: "button", title: "Remove this website", "aria-label": "Remove this website" } },
       [icon("close", { class: "vico", strokeWidth: "1.8" })]);
@@ -237,7 +226,6 @@ function vurls(ctx) {
       // two rows can hold the same address.
       input.value = "";
       row.remove();
-      vtouch(input);
     });
     rows.appendChild(row);
     return input;
@@ -290,7 +278,7 @@ function vpayload(type, ctx) {
       // A secret box starts blank because the vault never handed the value
       // over, so blank-and-untouched means "leave the stored one alone" —
       // while blank after the owner edited it means they cleared it.
-      if (field.secret && !input.value && !input.dataset.touched) continue;
+      if (field.secret && !vchanged(input)) continue;
       payload[field.key] = input.value;
     }
   }
