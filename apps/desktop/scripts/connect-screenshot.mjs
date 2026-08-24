@@ -349,13 +349,19 @@ app.whenReady().then(async () => {
       }
     },
     beforeShot: async (w, screen) => {
-      if (!screen.scrollToBottom) return;
-      // The credential and its button can sit below the fold in a 620pt window,
-      // and the modal scrolls itself — so that is what gets scrolled when it is up.
+      if (screen.scrollToBottom) {
+        // The credential and its button can sit below the fold in a 620pt window,
+        // and the modal scrolls itself — so that is what gets scrolled when it is up.
+        await w.webContents.executeJavaScript(
+          `(() => { const p = document.querySelector(".modal") ?? document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
+        );
+      }
+      // DOM state can be ready one frame before Chromium has painted it. The
+      // screenshot is visual evidence, so wait for paint rather than capturing
+      // the previous screen with the new screen's text assertions.
       await w.webContents.executeJavaScript(
-        `(() => { const p = document.querySelector(".modal") ?? document.querySelector(".panel"); if (p) p.scrollTop = p.scrollHeight; })()`,
+        `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
       );
-      await new Promise((r) => setTimeout(r, 200));
     },
   });
 
