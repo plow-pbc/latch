@@ -201,8 +201,14 @@ function vformDirty(ctx) {
  * A key already IN the vault is not read automatically: the value is fetched
  * only when the owner asks, which is the request the vault's audit records.
  */
-function vtotp(input, ctx) {
+function vtotp(input, ctx, held) {
   const out = el("div", { class: "totp-read" });
+  /* An empty box does not mean an empty field: a stored secret is never handed
+     back with the item, so the box reopens blank whether or not a key is
+     saved. Saying which it is costs nothing — the item already lists the
+     fields it holds — and not saying it is what made a saved key read as
+     lost. */
+  const rest = () => (held && !input.value.trim() ? "Authenticator key saved — show the code to check it" : "");
   let showing = null; // { code, expiresAt } — the code on screen, or nothing
   // Answers arrive out of order: a keystroke's request can land after the one
   // that replaced it, describing a key the box no longer holds. Only the
@@ -219,9 +225,9 @@ function vtotp(input, ctx) {
    * throttled renderer gets late, coalesced callbacks, and anything counting
    * its own ticks reads as alive long after the code died.
    */
-  const display = (code, message) => {
+  const display = (code, message, bad) => {
     showing = code ?? null;
-    out.classList.toggle("bad", !code && !!message);
+    out.classList.toggle("bad", !code && !!message && !!bad);
     if (code) {
       const left = Math.max(0, Math.ceil((code.expiresAt - Date.now()) / 1000));
       out.replaceChildren(
@@ -229,7 +235,8 @@ function vtotp(input, ctx) {
         el("span", { class: "totp-left", text: `${left}s` }),
       );
     } else {
-      out.replaceChildren(...(message ? [el("span", { text: message })] : []));
+      const line = message ?? rest();
+      out.replaceChildren(...(line ? [el("span", { text: line })] : []));
     }
   };
 
@@ -251,7 +258,7 @@ function vtotp(input, ctx) {
       const code = await get();
       if (mine === asked) display(code);
     } catch (err) {
-      if (mine === asked) display(null, errText(err));
+      if (mine === asked) display(null, errText(err), true);
     }
   };
 
@@ -260,7 +267,7 @@ function vtotp(input, ctx) {
     const typed = input.value.trim();
     // An emptied box invalidates whatever is still in flight, or its answer
     // would appear under a box holding nothing.
-    if (!typed) { asked++; display(null); return Promise.resolve(); }
+    if (!typed) { asked++; display(null); return Promise.resolve(); } // display() rests
     return ask(() => window.domo.vaultTotp(null, typed));
   };
 
@@ -277,6 +284,7 @@ function vtotp(input, ctx) {
   }, 1000);
 
   input.addEventListener("input", preview);
+  display(null); // opens on the resting line when a key is already saved
   return { node: out, preview, fromVault };
 }
 
@@ -298,10 +306,16 @@ function vfield(spec, ctx) {
   ctx.inputs[spec.key] = input;
 
   const buttons = [];
+  const held = !!(spec.secret && ctx.saved && (ctx.item.secrets || []).includes(spec.key));
+  /* A stored secret reopens as an empty box, so the placeholder is the only
+     thing that can tell "nothing is saved here" apart from "saved, and not
+     shown". The password box's dots always said the second; this one used to
+     advertise itself as empty and optional, which is how a key that WAS
+     saved read as dropped. */
+  if (held) input.setAttribute("placeholder", "Saved — type to replace it");
   // Built before the buttons so the eye and the code button can drive it.
-  const code = spec.totp ? vtotp(input, ctx) : null;
+  const code = spec.totp ? vtotp(input, ctx, held) : null;
   if (spec.secret) {
-    const held = ctx.saved && (ctx.item.secrets || []).includes(spec.key);
     const eye = el("button", { class: "mini eye", attrs: { type: "button", title: "Reveal" } }, [icon("eye", { class: "vico", strokeWidth: "1.8" })]);
     eye.addEventListener("click", async () => {
       if (input.getAttribute("type") === "text") {
@@ -333,7 +347,7 @@ function vfield(spec, ctx) {
     });
     buttons.push(eye);
   }
-  if (spec.totp && ctx.saved && (ctx.item.secrets || []).includes(spec.key)) {
+  if (spec.totp && held) {
     // Asking for the CODE is not asking for the key: this shows six digits
     // that expire, and leaves the key itself masked and unread.
     const show = el("button", { class: "mini gen", attrs: { type: "button", title: "Show the current code" } },
