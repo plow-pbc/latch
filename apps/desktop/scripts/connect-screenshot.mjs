@@ -363,10 +363,10 @@ async function chooseLastChatOption(win) {
   if (!point) throw new Error("no chat picker to drive");
   win.webContents.sendInputEvent({ type: "mouseDown", x: point.x, y: point.y, button: "left", clickCount: 1 });
   win.webContents.sendInputEvent({ type: "mouseUp", x: point.x, y: point.y, button: "left", clickCount: 1 });
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "END" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "END" });
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "ENTER" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "ENTER" });
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "End" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "End" });
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
 }
 
 async function type(win, selector, text) {
