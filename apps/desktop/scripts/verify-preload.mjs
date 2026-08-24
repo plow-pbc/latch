@@ -853,12 +853,15 @@ app.whenReady().then(async () => {
   probeFailRevokeId = null;
   probeRevokeError = null;
   probeRosterError = "Couldn’t reach Plow.";
+  // Away and back, not "agents" twice: `selectTab` returns early when the tab
+  // is already up — it will not throw away an open form for a navigation that
+  // is not one — so re-selecting the tab you are on renders nothing. Leaving
+  // and returning is a real activation, which is what re-reads the roster.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  // Waited for, not slept through. `renderAgents` reads the roster, the
-  // inference state, the purpose statement and the suggestions preference
-  // before it attaches the pane, so a fixed pause reads whatever DOM the
-  // previous render left — rows and all, which is exactly the shape that
-  // makes a missing error look like a passing probe.
+  // Waited for, not slept through: `renderAgents` attaches the pane only after
+  // reading the roster, the inference state, the purpose statement and the
+  // suggestions preference.
   await waitFor(win, `document.querySelector(".roster-error")`,
     "the roster's own error, with the stale rows still under it");
   const staleRoster = await win.webContents.executeJavaScript(`(${() => {
