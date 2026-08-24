@@ -256,7 +256,9 @@ describe("browser tools (fake runtime)", () => {
     // and the only one this runtime's empty mergeCookiesCommand can reach.
     fs.writeFileSync(path.join(clone, "cookies.sqlite"), "signed in somewhere");
     await callTool(server, "plow_browser_close", { session }, AGENT);
-    expect(fs.existsSync(path.join(profile, "cookies.sqlite"))).toBe(kept);
+    expect(fs.readdirSync(profile).sort()).toEqual(
+      kept ? ["cookies.sqlite", "signed-in-already"] : ["signed-in-already"],
+    );
     expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
