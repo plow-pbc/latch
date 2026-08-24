@@ -126,10 +126,16 @@ export interface Activation {
   sendTo: string;
 }
 
-/** One member of the provisioned chat, as the redeem returns it. */
+/**
+ * One HUMAN member of the provisioned chat.
+ *
+ * `participants[]` on the wire is discriminated — the agent participant is a
+ * different shape and carries no `display_name` — so this covers `type:
+ * "member"` only.
+ */
 export interface ActivationChatParticipant {
   displayName: string;
-  /** The member's handle — a phone number, when the server has one. */
+  /** The member's own address — a phone number, when the server has one. */
   providerKey: string | null;
 }
 
@@ -137,15 +143,22 @@ export interface ActivationChatParticipant {
  * The chat the activation created.
  *
  * A chat has no title and no last-activity field, so what identifies it to a
- * human is its line number plus its members' names. Nothing here is a secret:
- * it is the same data `GET /v1/chats` hands back, and the renderer may see it.
+ * human is the number it runs on plus its members' names. Nothing here is a
+ * secret: it is the same data `GET /v1/chats` hands back, and the renderer may
+ * see it.
+ *
+ * **The chat's top-level `provider_key` is deliberately not read.** It is the
+ * provider's own thread id — "chat_5" and the like — not a phone number, and a
+ * field that is never parsed is a field no screen can accidentally show as one.
+ * The number lives on the agent participant's `line`.
  */
 export interface ActivationChat {
   uid: string;
   /** `pending` until the member verifies; `active` after. */
   status: string;
-  /** The line the chat lives on — the number the user just texted. */
-  providerKey: string | null;
+  /** The number the chat runs on: the pool line the user texted. */
+  line: string | null;
+  /** Members only — the humans in the chat. */
   participants: ActivationChatParticipant[];
   createdAt: string;
 }
@@ -176,18 +189,23 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
   const chat = raw as Record<string, unknown>;
   const uid = typeof chat.uid === "string" ? chat.uid : "";
   if (!uid) return null;
-  const participants = Array.isArray(chat.participants)
-    ? chat.participants
-        .filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
-        .map((p) => ({
-          displayName: typeof p.display_name === "string" ? p.display_name : "",
-          providerKey: typeof p.provider_key === "string" ? p.provider_key : null,
-        }))
+  const all = Array.isArray(chat.participants)
+    ? chat.participants.filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
     : [];
+  // The number the chat runs on is the AGENT participant's line, not the
+  // chat's own `provider_key` — that one is the provider's thread id.
+  const agent = all.find((p) => p.type === "agent");
+  const line = (agent?.line ?? null) as Record<string, unknown> | null;
+  const participants = all
+    .filter((p) => p.type === "member")
+    .map((p) => ({
+      displayName: typeof p.display_name === "string" ? p.display_name : "",
+      providerKey: typeof p.provider_key === "string" ? p.provider_key : null,
+    }));
   return {
     uid,
     status: typeof chat.status === "string" ? chat.status : "",
-    providerKey: typeof chat.provider_key === "string" ? chat.provider_key : null,
+    line: line && typeof line.provider_key === "string" ? line.provider_key : null,
     participants,
     createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
   };

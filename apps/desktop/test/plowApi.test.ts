@@ -289,14 +289,33 @@ describe("PlowApi", () => {
         body: {
           status: "verified",
           token: "plow_sess",
+          // The REAL ChatResource. Two traps in it: the chat's own
+          // `provider_key` is the provider's THREAD ID, not a number, and the
+          // phone number lives on the agent participant's `line`.
           chat: {
             uid: "cht_D7hfWNK",
+            object: "chat",
             status: "active",
-            provider_key: "+15559876543",
+            provider_key: "chat_5",
+            failure_reason: null,
             created_at: "2026-08-24T18:02:11Z",
             participants: [
-              { display_name: "Ada Lovelace", provider_key: "+15551230000" },
-              { display_name: "Plow", provider_key: "+15559876543" },
+              {
+                type: "agent",
+                uid: "cpt_agent",
+                object: "chat_participant",
+                line: { uid: "lin_7", provider_type: "linq", provider_key: "+15559876543" },
+              },
+              {
+                type: "member",
+                uid: "cpt_ada",
+                object: "chat_participant",
+                status: "active",
+                display_name: "Ada Lovelace",
+                provider_type: "linq",
+                provider_key: "+15551230000",
+                verified_at: "2026-08-24T18:02:11Z",
+              },
             ],
           },
         },
@@ -310,14 +329,16 @@ describe("PlowApi", () => {
       chat: {
         uid: "cht_D7hfWNK",
         status: "active",
-        providerKey: "+15559876543",
+        // The number, off the agent's line — NOT "chat_5".
+        line: "+15559876543",
         createdAt: "2026-08-24T18:02:11Z",
-        participants: [
-          { displayName: "Ada Lovelace", providerKey: "+15551230000" },
-          { displayName: "Plow", providerKey: "+15559876543" },
-        ],
+        // Members only: the agent participant is not a human in the chat.
+        participants: [{ displayName: "Ada Lovelace", providerKey: "+15551230000" }],
       },
     });
+    // The thread id is not carried at all, so no screen can show it as a
+    // number by mistake.
+    expect(JSON.stringify(result)).not.toContain("chat_5");
   });
 
   it("reads a chat that arrives with fields missing rather than losing the sign-in", () => {
@@ -326,13 +347,26 @@ describe("PlowApi", () => {
     expect(parseActivationChat({ uid: "cht_x" })).toEqual({
       uid: "cht_x",
       status: "",
-      providerKey: null,
+      line: null,
       participants: [],
       createdAt: "",
     });
-    expect(parseActivationChat({ uid: "cht_x", participants: [null, 7, {}] })?.participants).toEqual([
-      { displayName: "", providerKey: null },
-    ]);
+    // An untyped or unknown participant is neither the agent nor a member: no
+    // line comes off it, and it is not shown as a person.
+    expect(
+      parseActivationChat({ uid: "cht_x", participants: [null, 7, {}, { type: "ghost" }] }),
+    ).toEqual({ uid: "cht_x", status: "", line: null, participants: [], createdAt: "" });
+    // An agent participant with no line at all is still not the thread id.
+    expect(
+      parseActivationChat({ uid: "cht_x", provider_key: "chat_5", participants: [{ type: "agent" }] })
+        ?.line,
+    ).toBeNull();
+    expect(
+      parseActivationChat({
+        uid: "cht_x",
+        participants: [{ type: "member", provider_key: "+15551230000" }],
+      })?.participants,
+    ).toEqual([{ displayName: "", providerKey: "+15551230000" }]);
     // No uid is no chat: there would be nothing to join on later.
     expect(parseActivationChat({ status: "active" })).toBeNull();
     expect(parseActivationChat(undefined)).toBeNull();

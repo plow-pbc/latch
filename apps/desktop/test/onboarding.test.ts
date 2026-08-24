@@ -10,7 +10,7 @@ import {
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
-import { ActivationChat, PlowApi, PlowApiError } from "../src/plowApi.js";
+import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
@@ -20,17 +20,14 @@ const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 
-/** The chat a `provision_chat` activation creates: the assigned pool line, and
- * the person who texted it. */
+/** The chat a `provision_chat` activation creates, as `parseActivationChat`
+ * hands it over: the assigned pool line, and the person who texted it. */
 const CHAT: ActivationChat = {
   uid: "cht_D7hfWNK",
   status: "active",
-  providerKey: "+15559876543",
+  line: "+15559876543",
   createdAt: "2026-08-24T18:02:11Z",
-  participants: [
-    { displayName: "Ada Lovelace", providerKey: "+15551230000" },
-    { displayName: "", providerKey: "+15559876543" },
-  ],
+  participants: [{ displayName: "Ada Lovelace", providerKey: "+15551230000" }],
 };
 
 type FakeRedeem =
@@ -258,20 +255,59 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.state().chat).toBeNull();
   });
 
+  it("labels a chat off the wire with the phone number, never the thread id", () => {
+    // The bug this pins: the chat's own `provider_key` is the provider's THREAD
+    // ID ("chat_5"), and the number lives on the agent participant's line.
+    // Reading the wrong one put an opaque id where the user looks for something
+    // to text. Parsed from the real shape rather than a hand-made
+    // `ActivationChat`, because the two halves are only wrong together.
+    const chat = parseActivationChat({
+      uid: "cht_D7hfWNK",
+      object: "chat",
+      status: "active",
+      provider_key: "chat_5",
+      created_at: "2026-08-24T18:02:11Z",
+      participants: [
+        {
+          type: "agent",
+          uid: "cpt_agent",
+          line: { uid: "lin_7", provider_type: "linq", provider_key: "+15559876543" },
+        },
+        {
+          type: "member",
+          uid: "cpt_ada",
+          status: "active",
+          display_name: "Ada Lovelace",
+          provider_key: "+15551230000",
+        },
+      ],
+    })!;
+
+    const label = activationChatLabel(chat);
+    expect(label).toBe("+15559876543 · Ada Lovelace");
+    expect(label).not.toContain("chat_5");
+  });
+
   it("names a chat by its line and its members — a chat has no title", () => {
     expect(activationChatLabel(CHAT)).toBe("+15559876543 · Ada Lovelace");
-    // The line is not repeated as a member, even though Plow is on both sides.
+    // A member whose address IS the line is not said twice.
+    expect(
+      activationChatLabel({
+        ...CHAT,
+        participants: [...CHAT.participants, { displayName: "", providerKey: "+15559876543" }],
+      }),
+    ).toBe("+15559876543 · Ada Lovelace");
     expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+15559876543");
     // A member with no name is still identified by the number we do have.
     expect(
       activationChatLabel({
         ...CHAT,
-        providerKey: null,
+        line: null,
         participants: [{ displayName: "  ", providerKey: "+15551230000" }],
       }),
     ).toBe("+15551230000");
     // Nothing to say but the uid beats an empty line on the last setup screen.
-    expect(activationChatLabel({ ...CHAT, providerKey: null, participants: [] })).toBe("cht_D7hfWNK");
+    expect(activationChatLabel({ ...CHAT, line: null, participants: [] })).toBe("cht_D7hfWNK");
   });
 
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
