@@ -75,8 +75,30 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
-// Connect a client: the same shape `ConnectClient.state()` returns, with no
-// credential minted — the screen this probe renders is the OAuth one.
+const cloudChat = { uid: "chat_probe", label: "+1 (415) 555-0142 · Alex, Sam" };
+const cloudAgent = {
+  agentId: "cag_probe",
+  name: "Household helper",
+  chatUid: cloudChat.uid,
+  chatLabel: cloudChat.label,
+  provider: "anthropic",
+  status: "active",
+  failureReason: null,
+  createdAt: "2026-08-24T18:00:00.000Z",
+};
+let cloudProbe = {
+  cloudAgents: [cloudAgent],
+  cloudAgentsError: null,
+  cloudActionError: null,
+  cloudChats: [cloudChat],
+  cloudChatsForbidden: false,
+  cloudEnabled: true,
+  cloudAgentSettings: {},
+};
+const cloudCalls = { create: [], delete: [], retry: [], settings: [] };
+
+// Connect state also carries the cloud-agent display state. It contains no
+// credential, session id or worker URL.
 ipcMain.handle("connect:get", async () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
@@ -85,7 +107,12 @@ ipcMain.handle("connect:get", async () => ({
   busy: false,
   message: "",
   credential: null,
+  ...cloudProbe,
 }));
+ipcMain.handle("cloud:create", async (_e, chatUid, name) => cloudCalls.create.push({ chatUid, name }));
+ipcMain.handle("cloud:delete", async (_e, agentId) => cloudCalls.delete.push(agentId));
+ipcMain.handle("cloud:retry", async (_e, agentId) => cloudCalls.retry.push(agentId));
+ipcMain.handle("cloud:settingsSet", async (_e, agentId, settings) => cloudCalls.settings.push({ agentId, settings }));
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -512,6 +539,72 @@ app.whenReady().then(async () => {
       ).fontWeight === "400",
     };
   }})()`);
+
+  const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
+    const group = [...document.querySelectorAll("#view .panel.agents > .item")]
+      .find((item) => item.querySelector(":scope > .group-title")?.textContent.trim() === "Cloud agents");
+    const row = group?.querySelector(".cloud-agent-row");
+    return {
+      aboveConnect: group?.nextElementSibling?.querySelector(":scope > .group-title")?.textContent.trim() === "Connect an MCP client",
+      showsName: row?.textContent.includes("Household helper"),
+      showsChat: row?.textContent.includes("+1 (415) 555-0142 · Alex, Sam"),
+      showsProvider: row?.textContent.includes("Anthropic"),
+      status: row?.querySelector(".badge")?.textContent.trim(),
+      hasActions: [...(row?.querySelectorAll("button") ?? [])].map((b) => b.textContent.trim()).join(",") === "Settings,Remove",
+      noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
+    };
+  }})()`);
+
+  // The warning is specific to the first agent on a chat. Remove the fixture
+  // row, remount the pane, and open the picker through the exposed control.
+  cloudProbe = { ...cloudProbe, cloudAgents: [] };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-toolbar button")`, "the cloud-agent setup action");
+  await win.webContents.executeJavaScript(`document.querySelector(".cloud-toolbar button").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-warning")`, "the first-agent warning");
+  const cloudPicker = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      listsEveryChat: [...modal.querySelectorAll("option")].map((o) => o.textContent.trim()).join(",") === "+1 (415) 555-0142 · Alex, Sam",
+      warnsIrreversible: modal.textContent.includes("Removing the agent later will not restore them"),
+      labelsOptionalName: modal.textContent.includes("Name (optional)"),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
+
+  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent] };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the cloud-agent row actions");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel");
+  await win.webContents.executeJavaScript(`(() => {
+    const checkbox = document.querySelector(".cloud-modal input[type=checkbox]");
+    checkbox.click();
+    [...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Apply changes").click();
+  })()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the cloud-agent settings write");
+  const cloudSettings = {
+    stableId: cloudCalls.settings[0]?.agentId === "cag_probe",
+    exactSetting: cloudCalls.settings[0]?.settings?.adversarialReview === true &&
+      Object.keys(cloudCalls.settings[0]?.settings ?? {}).length === 1,
+  };
+
+  cloudProbe = { ...cloudProbe, cloudAgents: [], cloudChats: [], cloudChatsForbidden: true };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-forbidden")`, "the chat-scope degradation");
+  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => ({
+    asksToReactivate: document.querySelector(".cloud-forbidden")?.textContent.includes("Re-activate to access chats"),
+    notEmptyState: !document.querySelector(".cloud-empty"),
+  })})()`);
+
+  // Restore the roster for the screenshot and the existing Agents-pane probes.
+  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent], cloudChats: [cloudChat], cloudChatsForbidden: false };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row")`, "the restored cloud-agent roster");
 
   // The Agents pane gets an image of its own, for the same reason Settings does:
   // every UI change gets one, and this one moved panes.
@@ -1135,6 +1228,20 @@ app.whenReady().then(async () => {
     connect.clientCardArrow &&
     connect.clientNameNotBold &&
     connect.noConnectTab &&
+    cloudRoster.aboveConnect &&
+    cloudRoster.showsName &&
+    cloudRoster.showsChat &&
+    cloudRoster.showsProvider &&
+    cloudRoster.status === "Active" &&
+    cloudRoster.hasActions &&
+    cloudRoster.noCredentialIdentity &&
+    cloudPicker.listsEveryChat &&
+    cloudPicker.warnsIrreversible &&
+    cloudPicker.labelsOptionalName &&
+    cloudSettings.stableId &&
+    cloudSettings.exactSetting &&
+    cloudForbidden.asksToReactivate &&
+    cloudForbidden.notEmptyState &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&
@@ -1207,7 +1314,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudSettings, cloudForbidden, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

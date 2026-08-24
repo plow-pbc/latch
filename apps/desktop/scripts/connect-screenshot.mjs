@@ -22,7 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
+import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -36,6 +36,28 @@ const DEVICE_TOKEN = "plow_EXAMPLEdeviceNOTreal_00000";
 const CLIENT_TOKEN = "plow_EXAMPLEclientNOTreal_00000";
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
+
+const CHAT = { uid: "chat_groceries", label: "+1 (415) 555-0142 · Alex, Sam" };
+const ACTIVE_AGENT = {
+  agentId: "cag_groceries",
+  name: "Household helper",
+  chatUid: CHAT.uid,
+  chatLabel: CHAT.label,
+  provider: "anthropic",
+  status: "active",
+  failureReason: null,
+  createdAt: "2026-08-24T18:00:00.000Z",
+};
+const CLOUD_OFF = {
+  cloudAgents: [],
+  cloudAgentsError: null,
+  cloudActionError: null,
+  cloudChats: [],
+  cloudChatsForbidden: false,
+  cloudEnabled: false,
+  cloudAgentSettings: {},
+};
+let cloudFixture = CLOUD_OFF;
 
 // Nothing is imported or registered at the top level: Electron does not emit
 // `ready` until this entry module finishes evaluating, and a top-level await
@@ -75,9 +97,28 @@ async function setUp() {
 
   // The main window's IPC surface, as far as this screen reaches. `connect:*`
   // are the real handlers from main.ts, pointed at the same class.
-  ipcMain.handle("connect:get", async () => connect.state());
+  ipcMain.handle("connect:get", async () => ({ ...connect.state(), ...cloudFixture }));
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
+  ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
+    cloudFixture = {
+      ...cloudFixture,
+      cloudAgents: [{ ...ACTIVE_AGENT, chatUid, name: name || "Cloud agent", status: "provisioning" }],
+      cloudActionError: null,
+    };
+  });
+  ipcMain.handle("cloud:delete", async (_e, agentId) => {
+    cloudFixture = { ...cloudFixture, cloudAgents: cloudFixture.cloudAgents.filter((a) => a.agentId !== agentId) };
+  });
+  ipcMain.handle("cloud:retry", async (_e, agentId) => {
+    cloudFixture = {
+      ...cloudFixture,
+      cloudAgents: cloudFixture.cloudAgents.map((a) => a.agentId === agentId
+        ? { ...a, status: "provisioning", failureReason: null }
+        : a),
+    };
+  });
+  ipcMain.handle("cloud:settingsSet", async () => {});
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("settings:getInference", async () => readInference(home));
   ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
@@ -89,6 +130,7 @@ async function setUp() {
   ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(home, purpose));
   ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});
+  ipcMain.handle("onboarding:open", async () => {});
   // The main window's boot also asks for the update banner's state; without a
   // handler the invoke rejects and the renderer never finishes booting.
   ipcMain.handle("updates:get", async () => ({
@@ -109,7 +151,92 @@ async function setUp() {
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
   {
+    name: "cloud-roster",
+    cloud: {
+      ...CLOUD_OFF,
+      cloudEnabled: true,
+      cloudChats: [CHAT],
+      cloudAgents: [ACTIVE_AGENT],
+    },
+    prepare: async () => {},
+    expect: ["Cloud agents", "Household helper", CHAT.label, "Anthropic", "Active", "Settings", "Remove"],
+  },
+  {
+    name: "cloud-picker",
+    cloud: {
+      ...CLOUD_OFF,
+      cloudEnabled: true,
+      cloudChats: [CHAT, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
+    },
+    prepare: async (win) => {
+      await clickText(win, "Set up cloud agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
+    },
+    expect: [
+      "Set up a cloud agent",
+      "Choose the chat where this agent will read and reply",
+      CHAT.label,
+      "This changes the chat permanently",
+      "Removing the agent later will not restore them",
+    ],
+  },
+  {
+    name: "cloud-provisioning",
+    cloud: {
+      ...CLOUD_OFF,
+      cloudEnabled: true,
+      cloudChats: [CHAT],
+      cloudAgents: [{ ...ACTIVE_AGENT, status: "provisioning" }],
+    },
+    prepare: async () => {},
+    expect: ["Household helper", "Provisioning…", "Setting up your agent — this takes a minute or two"],
+  },
+  {
+    name: "cloud-failed",
+    cloud: {
+      ...CLOUD_OFF,
+      cloudEnabled: true,
+      cloudChats: [CHAT],
+      cloudAgents: [{ ...ACTIVE_AGENT, status: "failed", failureReason: "The provider could not start this agent." }],
+    },
+    prepare: async () => {},
+    expect: ["Household helper", "Failed", "The provider could not start this agent", "Retry"],
+  },
+  {
+    name: "cloud-settings",
+    cloud: {
+      ...CLOUD_OFF,
+      cloudEnabled: true,
+      cloudChats: [CHAT],
+      cloudAgents: [ACTIVE_AGENT],
+    },
+    prepare: async (win) => {
+      await clickCloudRowButton(win, "Settings");
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel");
+    },
+    expect: [
+      "Household helper settings",
+      "Adversarial review",
+      "applies without restarting your agent",
+      "Apply changes",
+    ],
+  },
+  {
+    name: "cloud-empty",
+    cloud: {
+      ...CLOUD_OFF,
+      cloudEnabled: true,
+    },
+    prepare: async () => {},
+    expect: [
+      "A cloud agent lives in a chat, but this account has no chats yet",
+      "Re-activate this Mac to set up a chat",
+      "Re-activate",
+    ],
+  },
+  {
     name: "oauth",
+    cloud: CLOUD_OFF,
     prepare: async () => {},
     expect: [
       "Connect an MCP client",
@@ -164,6 +291,19 @@ const SCREENS = [
   },
 ];
 
+async function clickCloudRowButton(win, label) {
+  const found = await win.webContents.executeJavaScript(`
+    (() => {
+      const button = [...document.querySelectorAll(".cloud-agent-row button")]
+        .find((b) => b.textContent.trim() === ${JSON.stringify(label)});
+      if (!button) return false;
+      button.click();
+      return true;
+    })()
+  `);
+  if (!found) throw new Error(`no cloud-agent row button labelled ${label}`);
+}
+
 async function type(win, selector, text) {
   const found = await win.webContents.executeJavaScript(`
     (() => {
@@ -200,9 +340,13 @@ app.whenReady().then(async () => {
     screens: SCREENS,
     // A reload re-runs the renderer's boot, which restores the Agents tab — and
     // drops any modal left standing by the screen before it.
-    load: async () => {
+    load: async (screen) => {
+      cloudFixture = screen.cloud ?? CLOUD_OFF;
       await win.loadFile(path.join(dist, "renderer/index.html"));
-      await new Promise((r) => setTimeout(r, 400));
+      await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane");
+      if (cloudFixture.cloudEnabled) {
+        await waitFor(win, `document.querySelector("#view .cloud-toolbar, #view .cloud-empty, #view .cloud-forbidden")`, "the cloud-agent group");
+      }
     },
     beforeShot: async (w, screen) => {
       if (!screen.scrollToBottom) return;

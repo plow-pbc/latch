@@ -672,6 +672,241 @@ function connectNodes(s, redraw) {
   for (const b of box.querySelectorAll("button")) if (s.busy) b.disabled = true;
   return [box];
 }
+
+// ---- Cloud agents ---------------------------------------------------------
+
+/** The cloud-agent dialog, if one is open. It lives outside #view so a state
+    refresh can redraw the roster without taking an in-progress choice away. */
+let cloudModal = null;
+
+function closeCloudModal() {
+  if (!cloudModal) return;
+  const { backdrop, trigger, onKeydown } = cloudModal;
+  document.removeEventListener("keydown", onKeydown, true);
+  backdrop.remove();
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.removeAttribute("inert");
+  }
+  cloudModal = null;
+  if (trigger?.isConnected) trigger.focus();
+}
+
+/** A modal for an ordinary, reversible cloud action. */
+function openCloudModal(trigger, children, focus) {
+  if (cloudModal || staticModal) return null;
+  const panel = el("div", { class: "modal cloud-modal", attrs: { role: "dialog", "aria-modal": "true" } }, children);
+  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
+  const onKeydown = (e) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeCloudModal();
+  };
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) closeCloudModal();
+  });
+  document.addEventListener("keydown", onKeydown, true);
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.setAttribute("inert", "");
+  }
+  document.body.appendChild(backdrop);
+  cloudModal = { backdrop, panel, trigger, onKeydown };
+  (focus ?? panel.querySelector("button, input, select"))?.focus();
+  return panel;
+}
+
+function cloudStatus(status) {
+  if (status === "active") return { tone: "green", label: "Active" };
+  if (status === "failed") return { tone: "red", label: "Failed" };
+  return { tone: "amber", label: "Provisioning…" };
+}
+
+function cloudProvider(provider) {
+  if (!provider) return "Provider unavailable";
+  return provider[0].toUpperCase() + provider.slice(1);
+}
+
+function cloudCreated(createdAt) {
+  const date = new Date(createdAt);
+  return Number.isNaN(date.getTime()) ? "" : `Created ${date.toLocaleDateString()}`;
+}
+
+function openCloudPicker(trigger, state, redraw) {
+  const select = el("select", { class: "text", attrs: { "aria-label": "Chat" } },
+    state.cloudChats.map((chat) => el("option", { text: chat.label, attrs: { value: chat.uid } })),
+  );
+  const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
+  const warning = el("div", { class: "cloud-warning" }, [
+    el("div", { class: "warn cloud-warning-title", text: "This changes the chat permanently" }),
+    el("p", {
+      class: "faint",
+      text: "This agent will take over notifications for the selected chat. Removing the agent later will not restore them.",
+    }),
+  ]);
+  const syncWarning = () => {
+    warning.hidden = state.cloudAgents.some((agent) => agent.chatUid === select.value);
+  };
+  select.addEventListener("change", syncWarning);
+
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  cancel.addEventListener("click", closeCloudModal);
+  const create = el("button", { class: "btn primary", text: "Set up agent" });
+  create.addEventListener("click", async () => {
+    if (!select.value) return;
+    create.disabled = true;
+    cancel.disabled = true;
+    await window.domo.cloudCreate(select.value, name.value.trim());
+    closeCloudModal();
+    await redraw();
+  });
+  openCloudModal(trigger, [
+    el("div", { class: "group-title", text: "Set up a cloud agent" }),
+    el("p", { class: "faint conn-note", text: "Choose the chat where this agent will read and reply." }),
+    el("div", { class: "field" }, [el("label", { text: "Chat" }), select]),
+    el("div", { class: "field" }, [el("label", { text: "Name (optional)" }), name]),
+    warning,
+    el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), create]),
+  ], select);
+  syncWarning();
+}
+
+function openCloudSettings(trigger, agent, adversarialReview, redraw) {
+  const review = el("input", { attrs: { type: "checkbox" } });
+  review.checked = adversarialReview === true;
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  cancel.addEventListener("click", closeCloudModal);
+  const apply = el("button", { class: "btn primary", text: "Apply changes" });
+  apply.addEventListener("click", async () => {
+    apply.disabled = true;
+    cancel.disabled = true;
+    await window.domo.cloudSettingsSet(agent.agentId, { adversarialReview: review.checked });
+    closeCloudModal();
+    await redraw();
+  });
+  openCloudModal(trigger, [
+    el("div", { class: "group-title", text: `${agent.name} settings` }),
+    el("label", { class: "check block cloud-setting" }, [
+      review,
+      el("span", {}, [
+        el("span", { class: "cloud-setting-title", text: "Adversarial review" }),
+        el("span", { class: "faint cloud-setting-copy", text: "Have Latch review this agent's requests before they run on this Mac." }),
+      ]),
+    ]),
+    el("p", { class: "faint cloud-local-note", text: "This is a local setting and applies without restarting your agent." }),
+    el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), apply]),
+  ], review);
+}
+
+function openCloudRemove(trigger, agent, redraw) {
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  cancel.addEventListener("click", closeCloudModal);
+  const remove = el("button", { class: "btn danger", text: "Remove agent" });
+  remove.addEventListener("click", async () => {
+    remove.disabled = true;
+    cancel.disabled = true;
+    await window.domo.cloudDelete(agent.agentId);
+    closeCloudModal();
+    await redraw();
+  });
+  openCloudModal(trigger, [
+    el("div", { class: "group-title", text: `Remove ${agent.name}?` }),
+    el("p", {
+      class: "faint conn-note",
+      text: "The agent will stop reading and replying in this chat. The chat's previous notification setup cannot be restored.",
+    }),
+    el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), remove]),
+  ], cancel);
+}
+
+function cloudAgentRow(agent, adversarialReview, redraw) {
+  const status = cloudStatus(agent.status);
+  const settings = el("button", { class: "btn small", text: "Settings" });
+  settings.addEventListener("click", () => openCloudSettings(settings, agent, adversarialReview, redraw));
+  const remove = el("button", { class: "btn small danger", text: "Remove" });
+  remove.addEventListener("click", () => openCloudRemove(remove, agent, redraw));
+  const actions = [settings, remove];
+  if (agent.status === "failed") {
+    const retry = el("button", { class: "btn small", text: "Retry" });
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      await window.domo.cloudRetry(agent.agentId);
+      await redraw();
+    });
+    actions.unshift(retry);
+  }
+  const details = [agent.chatLabel, cloudProvider(agent.provider), cloudCreated(agent.createdAt)].filter(Boolean);
+  return el("div", { class: `item cloud-agent-row cloud-${agent.status}`, attrs: { "data-cloud-agent-id": agent.agentId } }, [
+    el("div", { class: "row cloud-agent-heading" }, [
+      el("div", { class: "cloud-agent-name", text: agent.name }),
+      badge(status.tone, status.label),
+      el("div", { class: "spacer" }),
+      el("div", { class: "row cloud-agent-actions" }, actions),
+    ]),
+    el("p", { class: "cloud-agent-meta", text: details.join(" · ") }),
+    agent.status === "provisioning"
+      ? el("div", { class: "cloud-progress" }, [
+          el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+          el("span", { text: "Setting up your agent — this takes a minute or two." }),
+        ])
+      : null,
+    agent.status === "failed" && agent.failureReason
+      ? el("p", { class: "cloud-failure", text: agent.failureReason })
+      : null,
+  ]);
+}
+
+function cloudNodes(state, redraw) {
+  const action = el("div", { class: "row cloud-toolbar" });
+  const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
+  action.append(el("div", { class: "spacer" }), add);
+
+  if (state.cloudChatsForbidden) {
+    add.disabled = true;
+    const reactivate = el("button", { class: "btn", text: "Re-activate" });
+    reactivate.addEventListener("click", () => window.domo.onboardingOpen());
+    return [
+      el("div", { class: "cloud-callout cloud-forbidden" }, [
+        el("div", { class: "cloud-callout-title", text: "Re-activate to access chats" }),
+        el("p", { class: "faint", text: "This Mac signed in before cloud-agent chat access was available." }),
+        reactivate,
+      ]),
+    ];
+  }
+
+  if (!state.cloudChats.length) {
+    add.disabled = true;
+    const reactivate = el("button", { class: "btn", text: "Re-activate" });
+    reactivate.addEventListener("click", () => window.domo.onboardingOpen());
+    return [
+      el("div", { class: "empty cloud-empty", text: "A cloud agent lives in a chat, but this account has no chats yet." }),
+      el("p", { class: "faint cloud-empty-note", text: "Re-activate this Mac to set up a chat, then come back here." }),
+      el("div", { class: "cloud-empty-action" }, [reactivate]),
+    ];
+  }
+
+  add.addEventListener("click", () => openCloudPicker(add, state, redraw));
+  const body = [action];
+  if (state.cloudAgentsError) {
+    body.push(el("div", { class: "cloud-callout cloud-error" }, [
+      el("div", { class: "cloud-callout-title", text: "Cloud agents could not be loaded" }),
+      el("p", { class: "faint", text: state.cloudAgentsError }),
+    ]));
+  }
+  if (state.cloudActionError) {
+    body.push(el("div", { class: "cloud-callout cloud-error" }, [
+      el("div", { class: "cloud-callout-title", text: "That change did not finish" }),
+      el("p", { class: "faint", text: state.cloudActionError }),
+    ]));
+  }
+  if (state.cloudAgents.length) {
+    body.push(el("div", { class: "cloud-agent-list" }, state.cloudAgents.map((agent) =>
+      cloudAgentRow(agent, state.cloudAgentSettings?.[agent.agentId]?.adversarialReview, redraw),
+    )));
+  } else if (!state.cloudAgentsError) {
+    body.push(el("div", { class: "empty cloud-empty", text: "No cloud agents yet. Set one up in any available chat." }));
+  }
+  return body;
+}
 /**
  * The mounted Agents pane, while that tab is up. Holds the one refresh
  * `connect:changed` calls, so a mint or a dismissal redraws the flow and
@@ -689,9 +924,25 @@ let agentsMounted = null;
  */
 async function renderAgents() {
   const connectBox = el("div");
+  const cloudBox = el("div");
+  let cloudGroup = null;
   const refreshConnect = async () => {
     const s = await window.domo.connectGet();
     connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
+    if (s?.cloudEnabled) {
+      cloudBox.replaceChildren(...cloudNodes(s, refreshConnect));
+      if (!cloudGroup) {
+        cloudGroup = group(
+          "Cloud agents",
+          "AI assistants that live in a chat and run in the cloud — never on this Mac.",
+          [cloudBox],
+        );
+        document.querySelector("#view .panel.agents")?.prepend(cloudGroup);
+      }
+    } else if (cloudGroup) {
+      cloudGroup.remove();
+      cloudGroup = null;
+    }
     if (s) syncStaticModal(s, refreshConnect);
   };
   await refreshConnect();
@@ -804,6 +1055,7 @@ async function renderAgents() {
   // description are the same furniture Settings uses, and this pane is one of
   // those groups that outgrew the pane it was in.
   view.replaceChildren(el("div", { class: "panel agents settings" }, [
+    cloudGroup,
     group(
       // The designer's title and subtitle.
       "Connect an MCP client",
@@ -1142,7 +1394,7 @@ async function selectTab(tab) {
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
-  if (tab !== "agents") { staticOpen = false; closeStaticModal(); }
+  if (tab !== "agents") { staticOpen = false; closeStaticModal(); closeCloudModal(); }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
   if (tab !== "agents") agentsMounted = null;
