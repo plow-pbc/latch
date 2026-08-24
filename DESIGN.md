@@ -403,8 +403,14 @@ request, one it never saw asked — names nobody and is withheld from the agent
 while the owner still sees it.
 
 **Credentials.** A `credential` capability is separate and explicit on the
-approval card: `access: "metadata"` (list vault item names/field labels —
-never values) or `access: "fill"` with item ids. The vendored
+approval card, and there is exactly one: `access: "fill"` with item ids.
+Inventory — vault item names, usernames, sites and field labels, never values —
+is read through `plow_vault` (`list`/`describe`), which carries no capability
+and asks for no approval; it is recorded in the owner's audit log as
+`credential_metadata` with `source: "vault"`. There was a second, session-scoped
+`access: "metadata"` capability whose grant nothing consumed; it was removed
+rather than wired, so inventory is ungated in one place instead of being
+documented as gated in two. The vendored
 `seed_vault_broker` CLI wraps the bundled `bw` (an agent account scoped to one
 vault's collections). `fill_secret`
 is the strongest gate, in order: item ∈ approved set → the selector is located
