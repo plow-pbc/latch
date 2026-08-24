@@ -125,6 +125,20 @@ function vbaseline(input) {
 /** Whether this box holds something other than what it opened with. */
 const vchanged = (input) => input.value !== input.dataset.baseline;
 
+/*
+ * Who owns a pane mutation.
+ *
+ * vbusy() does, and it is the only thing that does. The invariant is one line:
+ * while a vault operation is running, the pane takes no input and nothing else
+ * may replace it — and "the operation" means the call AND the pane change it
+ * ends with, not the call alone.
+ *
+ * Everything that touches the pane goes through it: reveal, save, delete, and
+ * the reload each of those ends with. A leave question waits on it rather than
+ * racing it. Anything added here that mutates the pane belongs inside it too;
+ * that is the whole rule, and it is why there is no second coordination seam.
+ */
+
 /**
  * Run a vault call with the whole vault PANE inert.
  *
