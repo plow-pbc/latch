@@ -203,12 +203,10 @@ function vformDirty(ctx) {
  */
 function vtotp(input, ctx, held) {
   const out = el("div", { class: "totp-read" });
-  /* An empty box does not mean an empty field: a stored secret is never handed
-     back with the item, so the box reopens blank whether or not a key is
-     saved. Saying which it is costs nothing — the item already lists the
-     fields it holds — and not saying it is what made a saved key read as
-     lost. */
-  const rest = () => (held && !input.value.trim() ? "Authenticator key saved — show the code to check it" : "");
+  /* Nothing to say when there is no key and nothing typed. A stored key does
+     not rest — it shows its code (see `fromVault` below), which is the whole
+     point: the digits ARE the proof the key is saved. */
+  const rest = () => "";
   let showing = null; // { code, expiresAt } — the code on screen, or nothing
   // Answers arrive out of order: a keystroke's request can land after the one
   // that replaced it, describing a key the box no longer holds. Only the
@@ -284,7 +282,18 @@ function vtotp(input, ctx, held) {
   }, 1000);
 
   input.addEventListener("input", preview);
-  display(null); // opens on the resting line when a key is already saved
+  /*
+   * A stored key shows its code the moment the item opens — no reveal, no
+   * click. The code is not the secret: it is six digits derived from the key,
+   * it is worthless in half a minute, and it cannot be turned back into the
+   * key. The KEY stays gated behind the eye, which is the thing worth gating.
+   *
+   * The cost is honest and deliberate: opening an item that holds a key reads
+   * that key, so the vault's audit gets a line for it. That is the owner
+   * looking at their own item, which is what the log should say.
+   */
+  if (held) void fromVault();
+  else display(null);
   return { node: out, preview, fromVault };
 }
 
@@ -307,12 +316,15 @@ function vfield(spec, ctx) {
 
   const buttons = [];
   const held = !!(spec.secret && ctx.saved && (ctx.item.secrets || []).includes(spec.key));
-  /* A stored secret reopens as an empty box, so the placeholder is the only
-     thing that can tell "nothing is saved here" apart from "saved, and not
-     shown". The password box's dots always said the second; this one used to
-     advertise itself as empty and optional, which is how a key that WAS
-     saved read as dropped. */
+  /* Mary drew two states and never let them look alike: a saved secret sat in
+     the box (masked, with the eye), and an empty one read "Not set". This app
+     never hands a secret back to the window, so both states rendered as the
+     same blank box — which is how a key that WAS saved read as dropped.
+     Her distinction, kept, with what we are allowed to show: a saved key is
+     evidenced by the live code beneath it, and the box says only what typing
+     into it would do. An existing item with no key gets her word. */
   if (held) input.setAttribute("placeholder", "Saved — type to replace it");
+  else if (spec.secret && ctx.saved) input.setAttribute("placeholder", "Not set");
   // Built before the buttons so the eye and the code button can drive it.
   const code = spec.totp ? vtotp(input, ctx, held) : null;
   if (spec.secret) {
@@ -346,14 +358,6 @@ function vfield(spec, ctx) {
       eye.replaceChildren(icon("eyeOff", { class: "vico", strokeWidth: "1.8" }));
     });
     buttons.push(eye);
-  }
-  if (spec.totp && held) {
-    // Asking for the CODE is not asking for the key: this shows six digits
-    // that expire, and leaves the key itself masked and unread.
-    const show = el("button", { class: "mini gen", attrs: { type: "button", title: "Show the current code" } },
-      [icon("generate", { class: "vico", strokeWidth: "1.8" })]);
-    show.addEventListener("click", () => code.fromVault());
-    buttons.push(show);
   }
   if (spec.generate) {
     const gen = el("button", { class: "mini gen", attrs: { type: "button", title: "Generate password" } }, [icon("generate", { class: "vico", strokeWidth: "1.8" })]);
