@@ -159,7 +159,11 @@ export class VaultClient {
     const { key } = await this.open();
     const stored = decryptField(await this.cleared(await this.cipher(itemId)), key, "totp");
     const code = totpCode(stored);
-    this.audit(itemId, "totp", "CODE SHOWN in app");
+    // What this line can honestly claim is the ACCESS: the key was decrypted
+    // here and a code derived from it. Whether the window ever put those
+    // digits on screen is not knowable from here — a superseded answer is
+    // discarded by the renderer — so the audit does not say "shown".
+    this.audit(itemId, "totp", "CODE READ in app");
     return code;
   }
 

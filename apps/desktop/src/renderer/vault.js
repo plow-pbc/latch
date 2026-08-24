@@ -203,77 +203,77 @@ function vformDirty(ctx) {
  */
 function vtotp(input, ctx) {
   const out = el("div", { class: "totp-read" });
-  let showing = null; // { code, expiresAt } while a code is on screen
-  // Answers arrive out of order — a keystroke's request can land after the one
-  // that replaced it, and the older answer describes a key the box no longer
-  // holds. Only the newest request may paint.
+  let showing = null; // { code, expiresAt } — the code on screen, or nothing
+  // Answers arrive out of order: a keystroke's request can land after the one
+  // that replaced it, describing a key the box no longer holds. Only the
+  // newest request may reach the screen.
   let asked = 0;
 
-  /* Against the clock, never against our own ticks: a backgrounded or
-     throttled renderer gets late, coalesced callbacks, and a code counted down
-     one tick at a time would still read as alive long after it died. */
-  const left = () => Math.max(0, Math.ceil((showing.expiresAt - Date.now()) / 1000));
-
-  const paint = () => {
-    if (!showing) return;
-    out.replaceChildren(
-      el("span", { class: "totp-code", text: showing.code.replace(/^(\d{3})(\d+)$/, "$1 $2") }),
-      el("span", { class: "totp-left", text: `${left()}s` }),
-    );
-    out.classList.remove("bad");
-  };
-  const say = (message, bad) => {
-    showing = null;
-    out.replaceChildren(el("span", { text: message }));
-    out.classList.toggle("bad", !!bad);
+  /*
+   * The one seam. `showing` and the DOM only ever change here, together, so
+   * there is no state in which the box says one thing and the variable another
+   * — which is how expired digits used to survive on screen while `showing`
+   * had already been dropped.
+   *
+   * Seconds come from the clock rather than a tick count: a backgrounded or
+   * throttled renderer gets late, coalesced callbacks, and anything counting
+   * its own ticks reads as alive long after the code died.
+   */
+  const display = (code, message) => {
+    showing = code ?? null;
+    out.classList.toggle("bad", !code && !!message);
+    if (code) {
+      const left = Math.max(0, Math.ceil((code.expiresAt - Date.now()) / 1000));
+      out.replaceChildren(
+        el("span", { class: "totp-code", text: code.code.replace(/^(\d{3})(\d+)$/, "$1 $2") }),
+        el("span", { class: "totp-left", text: `${left}s` }),
+      );
+    } else {
+      out.replaceChildren(...(message ? [el("span", { text: message })] : []));
+    }
   };
 
   /**
-   * One request, whoever asked. `showing` is dropped before the await so the
-   * countdown cannot start a second one on top of this: a saved key can sit
-   * behind the Mac asking who is at the keyboard, and a tick-driven retry each
-   * second would be a queue of prompts and a queue of audited reads. The
-   * painted code stays on screen meanwhile — only the ticking stops.
+   * One request, whoever asked.
+   *
+   * The screen is cleared before the await, not just the variable: whatever
+   * was showing is either expired (a rollover) or describes a key the box no
+   * longer holds (a keystroke), and a saved key can sit behind the Mac asking
+   * who is at the keyboard for as long as it takes. Leaving the old digits up
+   * through that would show a dead code as if it were live — the very thing
+   * counting against the clock exists to prevent. Clearing also stops the
+   * countdown, so it cannot start a second read on top of this one.
    */
   const ask = async (get) => {
     const mine = ++asked;
-    showing = null;
+    display(null);
     try {
       const code = await get();
-      if (mine !== asked) return; // a newer paste already owns the box
-      showing = code;
-      paint();
+      if (mine === asked) display(code);
     } catch (err) {
-      if (mine !== asked) return;
-      say(errText(err), true);
+      if (mine === asked) display(null, errText(err));
     }
   };
 
   /** What the box holds right now, as a code — or why it is not one. */
   const preview = () => {
     const typed = input.value.trim();
-    if (!typed) {
-      // Emptying the box invalidates whatever is still in flight, or its answer
-      // would paint a code for a key that is no longer there.
-      asked++;
-      showing = null;
-      out.replaceChildren();
-      out.classList.remove("bad");
-      return Promise.resolve();
-    }
+    // An emptied box invalidates whatever is still in flight, or its answer
+    // would appear under a box holding nothing.
+    if (!typed) { asked++; display(null); return Promise.resolve(); }
     return ask(() => window.domo.vaultTotp(null, typed));
   };
 
   /** The code a SAVED key is showing — asked for, never taken. */
   const fromVault = () => ask(() => window.domo.vaultTotp(ctx.item.id));
 
-  // The countdown owns its own timer and ends with the box it belongs to; a
-  // pane that is replaced detaches the input, and the next tick clears this.
+  // The countdown owns its own timer and ends with the box it belongs to: a
+  // replaced pane detaches the input, and the next tick clears this.
   const timer = setInterval(() => {
     if (!input.isConnected) { clearInterval(timer); return; }
     if (!showing) return;
     if (Date.now() >= showing.expiresAt) void (input.value.trim() ? preview() : fromVault());
-    else paint();
+    else display(showing);
   }, 1000);
 
   input.addEventListener("input", preview);
