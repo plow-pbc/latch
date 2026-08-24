@@ -138,7 +138,7 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
   it("logs in, orders, pays in the iframe, confirms — secrets never cross MCP", async () => {
     const opened = await callTool(
       server, "plow_browser_open",
-      { origins: ["127.0.0.1"], credentials_metadata: true, goal: "order a pizza on the test site" },
+      { origins: ["127.0.0.1"], goal: "order a pizza on the test site" },
       AGENT,
     );
     expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);

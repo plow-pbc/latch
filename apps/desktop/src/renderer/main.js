@@ -838,9 +838,7 @@ function capText(c) {
     case "tool": return "tool: " + (c.tool || "?");
     case "browser": return "browse: " + (c.origins || []).join(", ");
     case "credential":
-      return c.access === "metadata"
-        ? "credentials: list names/labels"
-        : "credentials: fill " + (c.items || []).join(", ");
+      return "credentials: fill " + (c.items || []).join(", ");
     default: return c.kind;
   }
 }

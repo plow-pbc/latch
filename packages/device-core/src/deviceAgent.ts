@@ -477,21 +477,12 @@ export class DeviceAgent {
       return { status: "error", error: "no browser runtime installed on this device" };
     }
     const origins = intent.capabilities.find((c) => c.kind === "browser")?.origins ?? [];
-    const metadata = intent.capabilities.some(
-      (c) => c.kind === "credential" && c.access === "metadata",
-    );
     const items =
       intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
 
     const session = jv(payload).get("session").str;
     if (session !== null) {
-      return this.browserSessions.extend(
-        intent.intentId,
-        session,
-        origins,
-        items,
-        metadata,
-      );
+      return this.browserSessions.extend(intent.intentId, session, origins, items);
     }
     if (origins.length === 0) {
       return { status: "error", error: "plow_browser_open requires at least one origin" };
@@ -504,7 +495,6 @@ export class DeviceAgent {
       intent.intentId,
       intent.agentId,
       origins,
-      metadata,
       headed ?? undefined,
     );
   }

@@ -54,7 +54,6 @@ interface Session {
   handle: string;
   agentId: string;
   origins: string[];
-  credentialMetadata: boolean;
   credentialItems: Set<string>;
   lastActivity: number;
   lastUrl: string;
@@ -232,7 +231,6 @@ export class BrowserSessions {
     intentId: string,
     agentId: string,
     origins: string[],
-    credentialMetadata: boolean,
     headed?: boolean,
   ): Promise<JSONValue> {
     // The claim is made BEFORE anything is awaited. Registering after the
@@ -274,7 +272,6 @@ export class BrowserSessions {
       closing: null,
       agentId,
       origins: origins.map(normalizeOrigin),
-      credentialMetadata,
       credentialItems: new Set(),
       lastActivity: Date.now(),
       lastUrl: "",
@@ -317,7 +314,6 @@ export class BrowserSessions {
         intentId,
         session: session.auditId,
         origins: session.origins,
-        credential_metadata: credentialMetadata,
         headed: host.headed,
       });
     } catch (error: unknown) {
@@ -341,7 +337,6 @@ export class BrowserSessions {
     handle: string,
     origins: string[],
     items: string[],
-    credentialMetadata: boolean,
   ): JSONValue {
     const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
@@ -368,7 +363,6 @@ export class BrowserSessions {
     });
     s.origins = widened;
     s.credentialItems = widenedItems;
-    if (credentialMetadata) s.credentialMetadata = true;
     s.lastActivity = Date.now();
     return {
       status: "completed",
@@ -871,42 +865,6 @@ export class BrowserSessions {
     } catch {
       /* sweep is best-effort; the per-action check still guards content */
     }
-  }
-
-  private async listCredentials(s: Session): Promise<JSONValue> {
-    if (!this.credentials) return { status: "error", error: "credential broker not available" };
-    if (!s.credentialMetadata) {
-      return {
-        status: "error",
-        error:
-          "credential metadata was not approved for this session — " +
-          "open with credentials_metadata or use plow_browser_request",
-      };
-    }
-    const items = await this.credentials.whatsHere(s.lastUrl || "https://invalid.invalid/");
-    this.audit("credential_metadata", { session: s.auditId, op: "list" });
-    return {
-      status: "completed",
-      items: items.map((i) => ({
-        id: i.id,
-        title: i.title,
-        category: i.category,
-        username: i.username,
-        urls: i.urls,
-        matches_this_page: i.matchesThisPage,
-      })),
-    };
-  }
-
-  private async describeItem(s: Session, itemId: string): Promise<JSONValue> {
-    if (!this.credentials) return { status: "error", error: "credential broker not available" };
-    if (itemId === "") return { status: "error", error: "missing item" };
-    if (!s.credentialMetadata && !s.credentialItems.has(itemId)) {
-      return { status: "error", error: "no credential access approved for this item" };
-    }
-    const item = await this.credentials.describeItem(itemId);
-    this.audit("credential_metadata", { session: s.auditId, op: "describe", item: itemId });
-    return { status: "completed", ...item };
   }
 
   /**

@@ -82,13 +82,8 @@ const launches = (argvLog: string): string[] =>
 const events = (device: DeviceAgent): string[] =>
   device.audit.entries().map((e) => jv(e as JSONValue).get("event").str ?? "");
 
-async function open(server: DomoMcpServer, origins: string[], metadata = true): Promise<string> {
-  const { payload, isError } = await callTool(
-    server,
-    "plow_browser_open",
-    { origins, credentials_metadata: metadata },
-    AGENT,
-  );
+async function open(server: DomoMcpServer, origins: string[]): Promise<string> {
+  const { payload, isError } = await callTool(server, "plow_browser_open", { origins }, AGENT);
   expect(isError, JSON.stringify(payload)).toBe(false);
   return payload.session as string;
 }
@@ -192,7 +187,7 @@ describe("browser tools (fake runtime)", () => {
 
   it("denyKinds credential blocks fill grants while browsing still works", async () => {
     const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once", denyKinds: ["credential"] }));
-    const session = await open(server, ["pizza.example"], false);
+    const session = await open(server, ["pizza.example"]);
     expect((await act(server, session, "goto", { url: "https://pizza.example/" })).isError).toBe(false);
     const denied = await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
     expect(denied.isError).toBe(true);
