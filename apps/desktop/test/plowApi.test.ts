@@ -246,6 +246,42 @@ describe("PlowApi", () => {
     });
   });
 
+  it("does not blame the SMS provider when activation 503s with no line to assign", async () => {
+    // Asking for a chat makes this endpoint assign a pool line, so an exhausted
+    // pool 503s here — the same status the OTP calls use for "texts are down".
+    // The OTP sentence would send the user to wait on the wrong thing.
+    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
+    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
+      .createActivation("This Mac")
+      .catch((e) => e)) as PlowApiError;
+
+    expect(error.kind).toBe("provider_unavailable");
+    expect(error.message).toBe("Plow couldn't start setup right now. Try again in a minute.");
+    expect(error.message).not.toContain("text messages");
+  });
+
+  it("still prefers the server's own reason for that 503", async () => {
+    // The server knows which 503 this was; we are guessing.
+    const { fetchImpl } = recordingFetch([
+      { status: 503, body: { detail: "No phone lines are available." } },
+    ]);
+    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
+      .createActivation("This Mac")
+      .catch((e) => e)) as PlowApiError;
+
+    expect(error.message).toBe("No phone lines are available.");
+  });
+
+  it("leaves the OTP 503 saying what it has always said", async () => {
+    // The override is one call's, not a change to what 503 means everywhere.
+    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
+    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
+      .requestOtp("+15551110000")
+      .catch((e) => e)) as PlowApiError;
+
+    expect(error.message).toBe("Plow can't send text messages right now.");
+  });
+
   it("keeps the chat the verified redeem carries — it is answered exactly once", async () => {
     const { fetchImpl } = recordingFetch([
       {

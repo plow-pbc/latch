@@ -218,7 +218,17 @@ export class PlowApi {
     const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
       "POST",
       "/v1/auth/activate",
-      { body: { name, provision_chat: true } },
+      {
+        body: { name, provision_chat: true },
+        // 503 means something else here than it does on the OTP calls. Asking
+        // for a chat makes this endpoint assign a pool line, and an exhausted
+        // pool answers 503 — nothing to do with the SMS provider. The shared
+        // fallback would tell the user their texts are down and send them to
+        // wait on the wrong thing, so this call brings its own sentence. Only
+        // the fallback: a server that wrote a `detail` still wins, because it
+        // knows which 503 this was and we are guessing.
+        unavailableMessage: "Plow couldn't start setup right now. Try again in a minute.",
+      },
     );
     return {
       displayCode: data.display_code,
@@ -377,11 +387,11 @@ export class PlowApi {
   private async call<T>(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown } = {},
+    opts: { token?: string; body?: unknown; unavailableMessage?: string } = {},
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 
-    if (!response.ok) throw await this.errorFor(response);
+    if (!response.ok) throw await this.errorFor(response, opts.unavailableMessage);
     if (response.status === 204) return undefined as T;
     try {
       return (await response.json()) as T;
@@ -430,7 +440,13 @@ export class PlowApi {
     }
   }
 
-  private async errorFor(response: Response): Promise<PlowApiError> {
+  /**
+   * `unavailableMessage` replaces the 503 fallback for one call. A 503 means
+   * whatever the endpoint that sent it means by it, and only the caller knows
+   * that; the default reads as "the SMS provider is down" because that is what
+   * it is on the OTP calls, which are most of them.
+   */
+  private async errorFor(response: Response, unavailableMessage?: string): Promise<PlowApiError> {
     // `detail` is the FastAPI convention. It is server-authored and never
     // echoes a request header, so it is safe to surface.
     let detail = "";
@@ -448,7 +464,7 @@ export class PlowApi {
     if (response.status === 503) {
       return new PlowApiError(
         "provider_unavailable",
-        detail || "Plow can't send text messages right now.",
+        detail || unavailableMessage || "Plow can't send text messages right now.",
         503,
       );
     }
