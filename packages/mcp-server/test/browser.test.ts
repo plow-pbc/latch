@@ -242,6 +242,9 @@ describe("browser tools (fake runtime)", () => {
     const { server, home } = makeServer();
     const browser = path.join(home, "device/browser");
 
+    // This Mac has never browsed, so the profile is made by copy rather than
+    // merged into — the branch a first sign-in takes, and the only one this
+    // runtime's empty mergeCookiesCommand can reach.
     const session = await open(server, ["pizza.example"]);
     const clone = path.join(browser, "profiles", fs.readdirSync(path.join(browser, "profiles"))[0]);
     fs.writeFileSync(path.join(clone, "cookies.sqlite"), "signed in somewhere");
