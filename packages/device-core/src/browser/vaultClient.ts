@@ -30,6 +30,7 @@ import {
   VaultItemSummary,
   VaultKey,
 } from "./vaultItems.js";
+import { totpCode, totpParams, type TotpCode } from "./vaultTotp.js";
 
 /** What this client needs from the vault it belongs to. */
 export interface OwnVault {
@@ -146,6 +147,22 @@ export class VaultClient {
     return value;
   }
 
+  /**
+   * The code this item's authenticator key is showing right now.
+   *
+   * The key is what the vault stores; the code is what a site asks for, and
+   * until this existed the Vault tab could only hand back the key — which is
+   * not a thing anyone can type into a login form. Audited as a reading of the
+   * key, because that is what it is.
+   */
+  async totp(itemId: string): Promise<TotpCode> {
+    const { key } = await this.open();
+    const stored = decryptField(await this.cleared(await this.cipher(itemId)), key, "totp");
+    const code = totpCode(stored);
+    this.audit(itemId, "totp", "CODE SHOWN in app");
+    return code;
+  }
+
   /** Create an item, or change one that is already there. */
   async save(input: VaultItemInput): Promise<{ id: string; title: string }> {
     const { key } = await this.open();
@@ -168,6 +185,21 @@ export class VaultClient {
       const typed = checkedUrls(input.urls.filter((u) => u.trim() !== ""));
       let at = 0;
       input = { ...input, urls: input.urls.map((u) => (u.trim() === "" ? "" : typed[at++])) };
+    }
+    // A key that cannot make a code is refused HERE, while the owner is still
+    // looking at the box they pasted into. Stored, it is indistinguishable
+    // from a working one until a site rejects the number — and the six-digit
+    // code is the thing people paste by mistake, because it is what "TOTP"
+    // means to everyone who is not implementing one. Blank still clears it.
+    if (typeof input.totp === "string" && input.totp.trim() !== "") {
+      try {
+        totpParams(input.totp);
+      } catch (err) {
+        throw new Error(
+          `that is not an authenticator key: ${err instanceof Error ? err.message : String(err)}. ` +
+            "Paste the setup key the site showed under its QR code, or the whole otpauth:// link.",
+        );
+      }
     }
     // Omitted means "leave it as it is"; supplied and blank means the owner
     // cleared the one field the list has to show, which is not a save.
