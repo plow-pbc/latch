@@ -573,6 +573,37 @@ app.whenReady().then(async () => {
       labelsOptionalName: modal.textContent.includes("Name (optional)"),
     };
   }})()`);
+  const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
+    const visibleSelect = document.querySelector(".cloud-modal select");
+    const trigger = document.querySelector(".cloud-toolbar button");
+    const selectPrototype = HTMLSelectElement.prototype;
+    const addEventListener = selectPrototype.addEventListener;
+    let blockedSelect = null;
+    selectPrototype.addEventListener = function (type, ...args) {
+      if (type === "change" && this !== visibleSelect) blockedSelect = this;
+      return addEventListener.call(this, type, ...args);
+    };
+    try {
+      trigger.click();
+    } finally {
+      selectPrototype.addEventListener = addEventListener;
+    }
+    if (!blockedSelect) return { ignored: false, keptOriginal: false };
+    let error = null;
+    const onError = (event) => {
+      error = event.error ?? new Error(event.message);
+      event.preventDefault();
+    };
+    window.addEventListener("error", onError, { once: true });
+    blockedSelect.value = "__new_chat__";
+    blockedSelect.dispatchEvent(new Event("change"));
+    await new Promise((resolve) => setTimeout(resolve));
+    window.removeEventListener("error", onError);
+    return {
+      ignored: error === null,
+      keptOriginal: document.querySelector(".cloud-modal select") === visibleSelect,
+    };
+  }})()`);
   await win.webContents.executeJavaScript(`(() => {
     const select = document.querySelector(".cloud-modal select");
     select.value = "__new_chat__";
@@ -1300,6 +1331,8 @@ app.whenReady().then(async () => {
     cloudPicker.listsEveryChat &&
     cloudPicker.warnsIrreversible &&
     cloudPicker.labelsOptionalName &&
+    cloudModalGuard.ignored &&
+    cloudModalGuard.keptOriginal &&
     cloudNewChat.twoRoutes &&
     cloudNewChat.serverNumber &&
     cloudNewChat.groupRoute &&
@@ -1386,7 +1419,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudNewChat, cloudSettings, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettings, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

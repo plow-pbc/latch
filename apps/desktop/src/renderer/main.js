@@ -777,11 +777,13 @@ function openCloudPicker(trigger, state, redraw) {
   ];
   let panel = null;
   const showPicker = () => {
+    if (!panel) return;
     panel.replaceChildren(...pickerChildren);
     syncWarning();
     select.focus();
   };
   const showExplainer = () => {
+    if (!panel) return;
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
     const verify = el("button", { class: "btn primary", text: "Verify a new Plow number" });
@@ -820,6 +822,7 @@ function openCloudPicker(trigger, state, redraw) {
     else syncWarning();
   });
   panel = openCloudModal(trigger, pickerChildren, select);
+  if (!panel) return;
   syncWarning();
 }
 
