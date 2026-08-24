@@ -230,27 +230,34 @@ describe("browser tools (fake runtime)", () => {
   });
 
   // The other half of the window-mode pair above: which profile a session is
-  // built on. A typo in the variable name is invisible without this — the flag
-  // silently does nothing, and a site's block reproducing again looks exactly
-  // like the bug the flag exists to rule out.
+  // built on. Both directions of the one line the flag changes, at the only
+  // seam that produces an unset seed in production — a typo in the variable
+  // name is invisible without this, and a site's block reproducing again
+  // looks exactly like the bug the flag exists to rule out.
   it.each([
-    ["what a session signs into reaches the owner's profile", undefined, true],
-    ["DOMO_BROWSER_FRESH_PROFILE=1 keeps it out", "1", false],
+    ["a session is the owner's own browser, both ways", undefined, true],
+    ["DOMO_BROWSER_FRESH_PROFILE=1 cuts both", "1", false],
   ])("%s", async (_name, env, kept) => {
     vi.stubEnv("DOMO_BROWSER_FRESH_PROFILE", env);
     cleanups.push(() => vi.unstubAllEnvs());
     const { server, home } = makeServer();
     const browser = path.join(home, "device/browser");
+    const profile = path.join(browser, "profile");
+    fs.mkdirSync(profile, { recursive: true });
+    fs.writeFileSync(path.join(profile, "signed-in-already"), "the owner's");
 
-    // This Mac has never browsed, so the profile is made by copy rather than
-    // merged into — the branch a first sign-in takes, and the only one this
-    // runtime's empty mergeCookiesCommand can reach.
     const session = await open(server, ["pizza.example"]);
-    const clone = path.join(browser, "profiles", fs.readdirSync(path.join(browser, "profiles"))[0]);
+    const profiles = path.join(browser, "profiles");
+    const clone = path.join(profiles, fs.readdirSync(profiles)[0]);
+    expect(fs.existsSync(path.join(clone, "signed-in-already"))).toBe(kept);
+
+    // The owner's profile holds no cookie store yet, so what the session signs
+    // into is copied rather than merged — the branch a first sign-in takes,
+    // and the only one this runtime's empty mergeCookiesCommand can reach.
     fs.writeFileSync(path.join(clone, "cookies.sqlite"), "signed in somewhere");
     await callTool(server, "plow_browser_close", { session }, AGENT);
-
-    expect(fs.existsSync(path.join(browser, "profile", "cookies.sqlite"))).toBe(kept);
+    expect(fs.existsSync(path.join(profile, "cookies.sqlite"))).toBe(kept);
+    expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {

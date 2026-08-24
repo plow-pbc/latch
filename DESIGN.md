@@ -328,7 +328,11 @@ inside a session sticks, and two browsers signed into two different sites both
 keep theirs. Replacing the profile wholesale, which is the obvious version of
 this, would let the last browser to close decide what the user is signed into.
 Ceiling: cookies only, so a site that keeps its session in localStorage still
-signs out with the clone. The pieces:
+signs out with the clone. One deliberate exception: `DOMO_BROWSER_FRESH_PROFILE=1`
+leaves that profile unset, so sessions start empty and merge nothing back — what
+reproducing a bot block needs, since the verdict is a cookie like any other and a
+clone carries it, and the no-merge half is what keeps the reproduction from
+costing the user the logins it was testing against. The pieces:
 
 **Session grants.** Browser work is hundreds of small actions; per-action
 intents would be approval spam and "always allow browser_goto" would be an
