@@ -431,8 +431,8 @@ export const TOOLS: ToolSpec[] = [
       "plainly when it is full. " +
       "It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
-      "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
-      "permission to list the owner's vault item names (never values). The browser window is " +
+      "wildcard: 'dominos.com', '*.dominos.com'). Vault item names are listed by 'plow_vault'. " +
+      "The browser window is " +
       "hidden by default; pass headed:true only when the owner asked to watch it run. " +
       "Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
       "skill first.",
@@ -444,10 +444,6 @@ export const TOOLS: ToolSpec[] = [
           type: "array",
           items: { type: "string" },
           description: "Host patterns: 'example.com' or '*.example.com'",
-        },
-        credentials_metadata: {
-          type: "boolean",
-          description: "Also request vault metadata listing (default false)",
         },
         headed: {
           type: "boolean",
@@ -467,9 +463,6 @@ export const TOOLS: ToolSpec[] = [
       const origins = strings(a.get("origins").arr);
       if (origins.length === 0) throw new ToolError("missing 'origins'");
       const capabilities: Capability[] = [{ kind: "browser", origins }];
-      if (a.get("credentials_metadata").bool === true) {
-        capabilities.push({ kind: "credential", access: "metadata" });
-      }
       // The owner does not see the browser unless this session asks for a
       // window: say when one is coming in the line they read, and carry the
       // choice as payload — it bounds nothing.

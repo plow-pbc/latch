@@ -838,8 +838,12 @@ function capText(c) {
     case "tool": return "tool: " + (c.tool || "?");
     case "browser": return "browse: " + (c.origins || []).join(", ");
     case "credential":
+      // A rule saved before the metadata capability was removed can still be
+      // sitting in rules.json. Nothing requests that shape any more, so it
+      // grants nothing — but the owner should read back what they actually
+      // approved, not see it relabelled as a fill grant they never gave.
       return c.access === "metadata"
-        ? "credentials: list names/labels"
+        ? "credentials: list names/labels (no longer requested)"
         : "credentials: fill " + (c.items || []).join(", ");
     default: return c.kind;
   }

@@ -129,9 +129,9 @@ const audited = (): string =>
 
 /** Open a session already approved for both items and both origins. */
 async function session(): Promise<string> {
-  const opened = await ctx.sessions.open("i1", "agent-1", ["pizza.example", "payframe.example"], false);
+  const opened = await ctx.sessions.open("i1", "agent-1", ["pizza.example", "payframe.example"]);
   const handle = (opened as { session: string }).session;
-  ctx.sessions.extend("i2", handle, [], ["L1", "C1", "I1"], false);
+  ctx.sessions.extend("i2", handle, [], ["L1", "C1", "I1"]);
   await ctx.sessions.command(handle, {
     action: "goto",
     url: "https://pizza.example/login",
@@ -240,9 +240,9 @@ describe("fill_secret marking", () => {
       new CredentialBroker({ command: [process.execPath, broken] }),
       (event, fields) => ctx.events.push({ event, fields }),
     );
-    const opened = await sessions.open("i1", "agent-1", ["pizza.example"], false);
+    const opened = await sessions.open("i1", "agent-1", ["pizza.example"]);
     const h = (opened as { session: string }).session;
-    sessions.extend("i2", h, [], ["L1"], false);
+    sessions.extend("i2", h, [], ["L1"]);
     await sessions.command(h, { action: "goto", url: "https://pizza.example/login" });
     const before = fills().length;
     const result = await sessions.command(h, {
@@ -432,7 +432,7 @@ describe("fill_secret marking", () => {
     });
     await new Promise((r) => setTimeout(r, 150));
     await ctx.sessions.close(handle, "agent");
-    const reopened = await ctx.sessions.open("i9", "agent-2", ["other.example"], false);
+    const reopened = await ctx.sessions.open("i9", "agent-2", ["other.example"]);
     expect(jv(reopened).get("session").str).not.toBe(handle);
 
     const result = await inFlight;

@@ -91,11 +91,13 @@ describe("browser/credential capability normalization", () => {
     const wider = RuleKey.compute("agent", "device", [
       { kind: "browser", origins: ["dominos.com", "paypal.com"] },
     ]);
-    const metadata = RuleKey.compute("agent", "device", [{ kind: "credential", access: "metadata" }]);
     const fill = RuleKey.compute("agent", "device", [
       { kind: "credential", access: "fill", items: ["a"] },
     ]);
-    expect(new Set([base, wider, metadata, fill]).size).toBe(4);
+    const otherItem = RuleKey.compute("agent", "device", [
+      { kind: "credential", access: "fill", items: ["b"] },
+    ]);
+    expect(new Set([base, wider, fill, otherItem]).size).toBe(4);
   });
 });
 
@@ -106,10 +108,7 @@ describe("capabilityDisplay", () => {
     );
   });
 
-  it("credential distinguishes metadata from fill", () => {
-    expect(capabilityDisplay({ kind: "credential", access: "metadata" })).toBe(
-      "Credentials: list vault item names & field labels (no secret values)",
-    );
+  it("credential names the items it may fill", () => {
     expect(capabilityDisplay({ kind: "credential", access: "fill", items: ["a1", "b2"] })).toBe(
       "Credentials: fill a1, b2 into approved sites (typed on this Mac; the agent can see the page it types into)",
     );
