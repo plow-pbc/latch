@@ -610,6 +610,7 @@ textarea.text { min-height: 70px; resize: vertical; }
   display: flex; align-items: center; gap: 8px;
   margin-top: 10px; color: var(--muted); font-size: 12px;
 }
+.cloud-loading { margin: 4px 0 12px; }
 .cloud-spinner {
   width: 13px; height: 13px; flex: none; border-radius: 50%;
   border: 2px solid var(--border-strong); border-top-color: var(--blue-fg);
@@ -635,14 +636,20 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cloud-callout .btn { margin-top: 10px; }
 .cloud-error { border-color: var(--red-bd); background: var(--red-bg); }
 .cloud-error .cloud-callout-title { color: var(--red-fg); }
-.cloud-forbidden { border-color: var(--amber-bd); background: var(--amber-bg); }
 .cloud-empty { padding: 24px 16px 8px; }
-.item p.cloud-empty-note { text-align: center; }
-.cloud-empty-action { display: flex; justify-content: center; margin-top: 12px; }
 
 .cloud-modal .field { margin-bottom: 12px; }
 .cloud-modal .cloud-warning { margin-top: 4px; border-color: var(--amber-bd); background: var(--amber-bg); }
 .cloud-modal-actions { margin-top: 18px; }
+.cloud-route {
+  padding: 11px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg);
+}
+.cloud-route + .cloud-route { margin-top: 10px; }
+.cloud-route-title { font-weight: 600; }
+.cloud-route p { margin: 4px 0 0; }
+.cloud-route .btn { margin-top: 10px; }
+.cloud-route .cloud-route-number { color: var(--fg); }
 .cloud-setting { align-items: flex-start; margin-top: 2px; }
 .cloud-setting input { margin-top: 2px; }
 .cloud-setting-title, .cloud-setting-copy { display: block; }

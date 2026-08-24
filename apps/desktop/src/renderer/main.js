@@ -732,8 +732,12 @@ function cloudCreated(createdAt) {
 }
 
 function openCloudPicker(trigger, state, redraw) {
+  const newChatValue = "__new_chat__";
   const select = el("select", { class: "text", attrs: { "aria-label": "Chat" } },
-    state.cloudChats.map((chat) => el("option", { text: chat.label, attrs: { value: chat.uid } })),
+    [
+      ...state.cloudChats.map((chat) => el("option", { text: chat.label, attrs: { value: chat.uid } })),
+      el("option", { text: "New chat…", attrs: { value: newChatValue } }),
+    ],
   );
   const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
   const warning = el("div", { class: "cloud-warning" }, [
@@ -744,29 +748,78 @@ function openCloudPicker(trigger, state, redraw) {
     }),
   ]);
   const syncWarning = () => {
-    warning.hidden = state.cloudAgents.some((agent) => agent.chatUid === select.value);
+    warning.hidden = select.value === newChatValue ||
+      state.cloudAgents.some((agent) => agent.chatUid === select.value);
   };
-  select.addEventListener("change", syncWarning);
 
   const cancel = el("button", { class: "btn", text: "Cancel" });
   cancel.addEventListener("click", closeCloudModal);
   const create = el("button", { class: "btn primary", text: "Set up agent" });
   create.addEventListener("click", async () => {
     if (!select.value) return;
+    if (select.value === newChatValue) {
+      showExplainer();
+      return;
+    }
     create.disabled = true;
     cancel.disabled = true;
     await window.domo.cloudCreate(select.value, name.value.trim());
     closeCloudModal();
     await redraw();
   });
-  openCloudModal(trigger, [
+  const pickerChildren = [
     el("div", { class: "group-title", text: "Set up a cloud agent" }),
     el("p", { class: "faint conn-note", text: "Choose the chat where this agent will read and reply." }),
     el("div", { class: "field" }, [el("label", { text: "Chat" }), select]),
     el("div", { class: "field" }, [el("label", { text: "Name (optional)" }), name]),
     warning,
     el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), create]),
-  ], select);
+  ];
+  let panel = null;
+  const showPicker = () => {
+    panel.replaceChildren(...pickerChildren);
+    syncWarning();
+    select.focus();
+  };
+  const showExplainer = () => {
+    const back = el("button", { class: "btn", text: "Back" });
+    back.addEventListener("click", showPicker);
+    const verify = el("button", { class: "btn primary", text: "Verify a new Plow number" });
+    verify.addEventListener("click", async () => {
+      closeCloudModal();
+      await window.domo.onboardingOpen();
+    });
+    const number = state.cloudSendTo
+      ? el("p", { class: "cloud-route-number" }, [
+          document.createTextNode("Number to text: "),
+          el("span", { class: "mono", text: state.cloudSendTo }),
+        ])
+      : null;
+    panel.replaceChildren(
+      el("div", { class: "group-title", text: "Create a new chat" }),
+      el("p", { class: "faint conn-note", text: "There are two ways to make another chat available here." }),
+      el("div", { class: "cloud-route" }, [
+        el("div", { class: "cloud-route-title", text: "Verify a new Plow number" }),
+        el("p", { class: "faint", text: "Run activation again, then text the code to the number Plow provides." }),
+        number,
+        verify,
+      ]),
+      el("div", { class: "cloud-route" }, [
+        el("div", { class: "cloud-route-title", text: "Start a group thread" }),
+        el("p", {
+          class: "faint",
+          text: "Add a verified Plow number to a group thread with other people. The chat appears here once someone speaks.",
+        }),
+      ]),
+      el("div", { class: "row cloud-modal-actions" }, [back]),
+    );
+    back.focus();
+  };
+  select.addEventListener("change", () => {
+    if (select.value === newChatValue) showExplainer();
+    else syncWarning();
+  });
+  panel = openCloudModal(trigger, pickerChildren, select);
   syncWarning();
 }
 
@@ -855,61 +908,65 @@ function cloudAgentRow(agent, adversarialReview, redraw) {
   ]);
 }
 
+function cloudAgentList(state, redraw) {
+  if (!state.cloudAgents.length) return null;
+  return el("div", { class: "cloud-agent-list" }, state.cloudAgents.map((agent) =>
+    cloudAgentRow(agent, state.cloudAgentSettings?.[agent.agentId]?.adversarialReview, redraw),
+  ));
+}
+
+function cloudErrorBanner(message) {
+  if (!message) return null;
+  return el("div", { class: "cloud-callout cloud-error" }, [
+    el("div", { class: "cloud-callout-title", text: "Cloud agents could not be refreshed" }),
+    el("p", { class: "faint", text: message }),
+  ]);
+}
+
 function cloudNodes(state, redraw) {
   const action = el("div", { class: "row cloud-toolbar" });
   const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
   action.append(el("div", { class: "spacer" }), add);
 
-  if (state.cloudChatsForbidden) {
-    add.disabled = true;
-    const reactivate = el("button", { class: "btn", text: "Re-activate" });
-    reactivate.addEventListener("click", () => window.domo.onboardingOpen());
-    const body = [
-      el("div", { class: "cloud-callout cloud-forbidden" }, [
-        el("div", { class: "cloud-callout-title", text: "Re-activate to access chats" }),
-        el("p", { class: "faint", text: "This Mac signed in before cloud-agent chat access was available." }),
-        reactivate,
-      ]),
-    ];
-    if (state.cloudAgents.length) {
-      body.push(el("div", { class: "cloud-agent-list" }, state.cloudAgents.map((agent) =>
-        cloudAgentRow(agent, state.cloudAgentSettings?.[agent.agentId]?.adversarialReview, redraw),
-      )));
+  add.addEventListener("click", () => openCloudPicker(add, state, redraw));
+
+  // An empty array is also what main exposes before a chat-list attempt lands,
+  // and after a failed one. Neither says the account has no chats. Keep any
+  // known agents and the failure that explains why setup is unavailable.
+  if (!state.cloudChatsLoaded) {
+    const listError = state.cloudAgentsError ||
+      (state.cloudChatsForbidden ? "Chats could not be loaded." : null);
+    const body = [action];
+    if (listError) body.push(cloudErrorBanner(listError));
+    else body.push(el("div", { class: "cloud-progress cloud-loading" }, [
+          el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+          el("span", { text: "Loading chats…" }),
+        ]));
+    if (state.cloudActionError) {
+      body.push(el("div", { class: "cloud-callout cloud-error" }, [
+        el("div", { class: "cloud-callout-title", text: "That change did not finish" }),
+        el("p", { class: "faint", text: state.cloudActionError }),
+      ]));
     }
+    const roster = cloudAgentList(state, redraw);
+    if (roster) body.push(roster);
     return body;
   }
 
-  if (!state.cloudChats.length) {
-    add.disabled = true;
-    const reactivate = el("button", { class: "btn", text: "Re-activate" });
-    reactivate.addEventListener("click", () => window.domo.onboardingOpen());
-    return [
-      el("div", { class: "empty cloud-empty", text: "A cloud agent lives in a chat, but this account has no chats yet." }),
-      el("p", { class: "faint cloud-empty-note", text: "Re-activate this Mac to set up a chat, then come back here." }),
-      el("div", { class: "cloud-empty-action" }, [reactivate]),
-    ];
-  }
-
-  add.addEventListener("click", () => openCloudPicker(add, state, redraw));
   const body = [action];
-  if (state.cloudAgentsError) {
-    body.push(el("div", { class: "cloud-callout cloud-error" }, [
-      el("div", { class: "cloud-callout-title", text: "Cloud agents could not be loaded" }),
-      el("p", { class: "faint", text: state.cloudAgentsError }),
-    ]));
-  }
+  const refreshError = cloudErrorBanner(state.cloudAgentsError);
+  if (refreshError) body.push(refreshError);
   if (state.cloudActionError) {
     body.push(el("div", { class: "cloud-callout cloud-error" }, [
       el("div", { class: "cloud-callout-title", text: "That change did not finish" }),
       el("p", { class: "faint", text: state.cloudActionError }),
     ]));
   }
-  if (state.cloudAgents.length) {
-    body.push(el("div", { class: "cloud-agent-list" }, state.cloudAgents.map((agent) =>
-      cloudAgentRow(agent, state.cloudAgentSettings?.[agent.agentId]?.adversarialReview, redraw),
-    )));
+  const roster = cloudAgentList(state, redraw);
+  if (roster) {
+    body.push(roster);
   } else if (!state.cloudAgentsError) {
-    body.push(el("div", { class: "empty cloud-empty", text: "No cloud agents yet. Set one up in any available chat." }));
+    body.push(el("div", { class: "empty cloud-empty", text: "No agents." }));
   }
   return body;
 }

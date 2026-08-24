@@ -92,6 +92,8 @@ let cloudProbe = {
   cloudActionError: null,
   cloudChats: [cloudChat],
   cloudChatsForbidden: false,
+  cloudChatsLoaded: true,
+  cloudSendTo: "+1 (415) 555-0199",
   cloudEnabled: true,
   cloudAgentSettings: {},
 };
@@ -566,11 +568,27 @@ app.whenReady().then(async () => {
   const cloudPicker = await win.webContents.executeJavaScript(`(${() => {
     const modal = document.querySelector(".cloud-modal");
     return {
-      listsEveryChat: [...modal.querySelectorAll("option")].map((o) => o.textContent.trim()).join(",") === "+1 (415) 555-0142 · Alex, Sam",
+      listsEveryChat: [...modal.querySelectorAll("option")].map((o) => o.textContent.trim()).join(",") === "+1 (415) 555-0142 · Alex, Sam,New chat…",
       warnsIrreversible: modal.textContent.includes("Removing the agent later will not restore them"),
       labelsOptionalName: modal.textContent.includes("Name (optional)"),
     };
   }})()`);
+  await win.webContents.executeJavaScript(`(() => {
+    const select = document.querySelector(".cloud-modal select");
+    select.value = "__new_chat__";
+    select.dispatchEvent(new Event("change"));
+  })()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+  const cloudNewChat = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      twoRoutes: [...modal.querySelectorAll(".cloud-route-title")].map((n) => n.textContent.trim()).join(",") ===
+        "Verify a new Plow number,Start a group thread",
+      serverNumber: modal.textContent.includes("Number to text: +1 (415) 555-0199"),
+      groupRoute: modal.textContent.includes("The chat appears here once someone speaks"),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
 
   cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent] };
@@ -591,18 +609,61 @@ app.whenReady().then(async () => {
       Object.keys(cloudCalls.settings[0]?.settings ?? {}).length === 1,
   };
 
-  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent], cloudChats: [], cloudChatsForbidden: true };
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudAgentsError: "Couldn't reach Plow.",
+    cloudChats: [],
+    cloudChatsForbidden: false,
+    cloudChatsLoaded: false,
+  };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-forbidden")`, "the chat-scope degradation");
-  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => ({
-    asksToReactivate: document.querySelector(".cloud-forbidden")?.textContent.includes("Re-activate to access chats"),
+  await waitFor(win, `document.querySelector(".cloud-error")`, "the failed chat-list banner");
+  const cloudChatFailure = await win.webContents.executeJavaScript(`(${() => ({
+    showsError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
     notEmptyState: !document.querySelector(".cloud-empty"),
     keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
   })})()`);
 
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentsError: "This Mac isn't allowed to list chats.",
+    cloudChatsForbidden: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-error")`, "the 403 chat-list banner");
+  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => ({
+    ordinaryError: document.querySelector(".cloud-error")?.textContent.includes("This Mac isn't allowed to list chats"),
+    noSpecialState: !document.querySelector(".cloud-forbidden") && !document.body.innerText.includes("Re-activate to access chats"),
+    keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+  })})()`);
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudAgentsError: null,
+    cloudChatsForbidden: false,
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-empty")`, "the literal cloud-agent empty state");
+  const cloudEmpty = await win.webContents.executeJavaScript(`(${() => ({
+    literal: document.querySelector(".cloud-empty")?.textContent.trim() === "No agents.",
+    noNumber: !document.querySelector("#view .panel.agents > .item")?.textContent.includes("+1 (415) 555-0199"),
+    noExplanation: !document.querySelector(".cloud-empty")?.textContent.includes("chat"),
+  })})()`);
+
   // Restore the roster for the screenshot and the existing Agents-pane probes.
-  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent], cloudChats: [cloudChat], cloudChatsForbidden: false };
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudChats: [cloudChat],
+    cloudChatsForbidden: false,
+    cloudChatsLoaded: true,
+  };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector(".cloud-agent-row")`, "the restored cloud-agent roster");
@@ -1239,11 +1300,20 @@ app.whenReady().then(async () => {
     cloudPicker.listsEveryChat &&
     cloudPicker.warnsIrreversible &&
     cloudPicker.labelsOptionalName &&
+    cloudNewChat.twoRoutes &&
+    cloudNewChat.serverNumber &&
+    cloudNewChat.groupRoute &&
     cloudSettings.stableId &&
     cloudSettings.exactSetting &&
-    cloudForbidden.asksToReactivate &&
-    cloudForbidden.notEmptyState &&
+    cloudChatFailure.showsError &&
+    cloudChatFailure.notEmptyState &&
+    cloudChatFailure.keepsRoster &&
+    cloudForbidden.ordinaryError &&
+    cloudForbidden.noSpecialState &&
     cloudForbidden.keepsRoster &&
+    cloudEmpty.literal &&
+    cloudEmpty.noNumber &&
+    cloudEmpty.noExplanation &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&
@@ -1316,7 +1386,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudSettings, cloudForbidden, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudNewChat, cloudSettings, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

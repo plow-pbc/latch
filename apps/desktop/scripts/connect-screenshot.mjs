@@ -54,8 +54,16 @@ const CLOUD_OFF = {
   cloudActionError: null,
   cloudChats: [],
   cloudChatsForbidden: false,
+  cloudChatsLoaded: false,
+  cloudSendTo: null,
   cloudEnabled: false,
   cloudAgentSettings: {},
+};
+const CLOUD_READY = {
+  ...CLOUD_OFF,
+  cloudEnabled: true,
+  cloudChatsLoaded: true,
+  cloudSendTo: "+1 (415) 555-0199",
 };
 let cloudFixture = CLOUD_OFF;
 
@@ -153,8 +161,7 @@ const SCREENS = [
   {
     name: "cloud-roster",
     cloud: {
-      ...CLOUD_OFF,
-      cloudEnabled: true,
+      ...CLOUD_READY,
       cloudChats: [CHAT],
       cloudAgents: [ACTIVE_AGENT],
     },
@@ -164,13 +171,18 @@ const SCREENS = [
   {
     name: "cloud-picker",
     cloud: {
-      ...CLOUD_OFF,
-      cloudEnabled: true,
+      ...CLOUD_READY,
       cloudChats: [CHAT, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
       await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
+      const options = await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll(".cloud-modal select option")].map((o) => o.textContent.trim())`,
+      );
+      if (options.join("|") !== `${CHAT.label}|+1 (415) 555-0188 · Family group|New chat…`) {
+        throw new Error(`wrong chat options: ${JSON.stringify(options)}`);
+      }
     },
     expect: [
       "Set up a cloud agent",
@@ -181,10 +193,29 @@ const SCREENS = [
     ],
   },
   {
+    name: "cloud-new-chat",
+    cloud: {
+      ...CLOUD_READY,
+      cloudChats: [CHAT, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
+    },
+    prepare: async (win) => {
+      await clickText(win, "Set up cloud agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
+      await chooseLastChatOption(win);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+    },
+    expect: [
+      "Create a new chat",
+      "Verify a new Plow number",
+      "Number to text: +1 (415) 555-0199",
+      "Start a group thread",
+      "The chat appears here once someone speaks",
+    ],
+  },
+  {
     name: "cloud-provisioning",
     cloud: {
-      ...CLOUD_OFF,
-      cloudEnabled: true,
+      ...CLOUD_READY,
       cloudChats: [CHAT],
       cloudAgents: [{ ...ACTIVE_AGENT, status: "provisioning" }],
     },
@@ -194,8 +225,7 @@ const SCREENS = [
   {
     name: "cloud-failed",
     cloud: {
-      ...CLOUD_OFF,
-      cloudEnabled: true,
+      ...CLOUD_READY,
       cloudChats: [CHAT],
       cloudAgents: [{ ...ACTIVE_AGENT, status: "failed", failureReason: "The provider could not start this agent." }],
     },
@@ -205,8 +235,7 @@ const SCREENS = [
   {
     name: "cloud-settings",
     cloud: {
-      ...CLOUD_OFF,
-      cloudEnabled: true,
+      ...CLOUD_READY,
       cloudChats: [CHAT],
       cloudAgents: [ACTIVE_AGENT],
     },
@@ -222,17 +251,39 @@ const SCREENS = [
     ],
   },
   {
+    name: "cloud-chat-error",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [ACTIVE_AGENT],
+      cloudAgentsError: "Couldn't reach Plow.",
+      cloudChats: [],
+      cloudChatsLoaded: false,
+    },
+    prepare: async (win) => {
+      const correct = await win.webContents.executeJavaScript(`(() => ({
+        hasError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
+        keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+        noEmptyState: !document.querySelector(".cloud-empty"),
+      }))()`);
+      if (!correct.hasError || !correct.keepsRoster || !correct.noEmptyState) {
+        throw new Error(`wrong failed-chat-list render: ${JSON.stringify(correct)}`);
+      }
+    },
+    expect: ["Cloud agents could not be refreshed", "Couldn't reach Plow", "Household helper", "Active"],
+  },
+  {
     name: "cloud-empty",
     cloud: {
-      ...CLOUD_OFF,
-      cloudEnabled: true,
+      ...CLOUD_READY,
     },
-    prepare: async () => {},
-    expect: [
-      "A cloud agent lives in a chat, but this account has no chats yet",
-      "Re-activate this Mac to set up a chat",
-      "Re-activate",
-    ],
+    prepare: async (win) => {
+      const text = await win.webContents.executeJavaScript(`document.querySelector(".cloud-empty")?.textContent.trim()`);
+      const body = await win.webContents.executeJavaScript(`document.querySelector("#view .panel.agents > .item")?.textContent`);
+      if (text !== "No agents." || body.includes("+1 (415) 555-0199")) {
+        throw new Error(`empty state is not literal: ${JSON.stringify({ text, body })}`);
+      }
+    },
+    expect: ["No agents.", "Set up cloud agent"],
   },
   {
     name: "oauth",
@@ -304,6 +355,20 @@ async function clickCloudRowButton(win, label) {
   if (!found) throw new Error(`no cloud-agent row button labelled ${label}`);
 }
 
+async function chooseLastChatOption(win) {
+  const point = await win.webContents.executeJavaScript(`(() => {
+    const rect = document.querySelector(".cloud-modal select")?.getBoundingClientRect();
+    return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : null;
+  })()`);
+  if (!point) throw new Error("no chat picker to drive");
+  win.webContents.sendInputEvent({ type: "mouseDown", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  win.webContents.sendInputEvent({ type: "mouseUp", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "END" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "END" });
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "ENTER" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "ENTER" });
+}
+
 async function type(win, selector, text) {
   const found = await win.webContents.executeJavaScript(`
     (() => {
@@ -345,7 +410,7 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(dist, "renderer/index.html"));
       await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane");
       if (cloudFixture.cloudEnabled) {
-        await waitFor(win, `document.querySelector("#view .cloud-toolbar, #view .cloud-empty, #view .cloud-forbidden")`, "the cloud-agent group");
+        await waitFor(win, `document.querySelector("#view .cloud-toolbar, #view .cloud-empty, #view .cloud-forbidden, #view .cloud-error, #view .cloud-loading")`, "the cloud-agent group");
       }
     },
     beforeShot: async (w, screen) => {
