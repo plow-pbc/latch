@@ -45,6 +45,7 @@ import {
   CloudAgentState,
   CloudChatsClient,
   resolveCloudAgentsEnabled,
+  tabShowsCloudAgents,
 } from "./cloudAgentState.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
@@ -410,6 +411,13 @@ ipcMain.handle("rules:remove", async (_e, key: string) => {
 });
 ipcMain.handle("ui:getTab", async () => {
   const tab = loadSettings(home).selectedTab;
+  // Renderer boot: it asks which tab to restore and then selects it directly,
+  // without the `ui:setTab` that a click makes — so this, not that, is the only
+  // signal that the Agents tab is about to appear on a fresh launch. Without it
+  // a new home, which defaults to Agents, shows an empty cloud group until the
+  // user navigates away and back. Not awaited: the read must not wait on the
+  // network, and the refresh publishes `connect:changed` when it lands.
+  if (tabShowsCloudAgents(tab)) void cloudAgents?.refresh();
   // "connect" was this tab's key before the content went to Settings and came
   // back as "agents". Anyone who left the app on it lands where that content
   // lives now, rather than silently on the default tab.
@@ -419,10 +427,11 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
   settings.selectedTab = tab;
   saveSettings(home, settings);
-  // Landing on Agents is the one moment the cloud group is certainly about to
-  // be looked at. Not awaited: selecting a tab must never wait on the network,
-  // and the refresh publishes `connect:changed` when it lands.
-  if (tab === "agents") void cloudAgents?.refresh();
+  // Landing on Agents is a moment the cloud group is certainly about to be
+  // looked at; renderer boot (`ui:getTab`) is the other. Not awaited: selecting
+  // a tab must never wait on the network, and the refresh publishes
+  // `connect:changed` when it lands.
+  if (tabShowsCloudAgents(tab)) void cloudAgents?.refresh();
 });
 // The account this Mac is signed into. The CREDENTIAL IS NEVER RETURNED — the
 // renderer only learns whether one is set. It is a secret with no reason to

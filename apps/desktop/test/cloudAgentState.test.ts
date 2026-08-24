@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   CloudAgentState,
+  tabShowsCloudAgents,
   CloudAgentsApi,
   CloudChatOption,
   CloudChatsApi,
@@ -149,6 +150,20 @@ describe("the real client", () => {
     const api: CloudAgentsApi = new CloudAgentsClient("https://api.plow.co");
     expect(typeof api.poll).toBe("function");
     expect(api.poll.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("which tab refreshes the group", () => {
+  it("counts renderer boot's stored tab, including the key it used to have", () => {
+    // Boot restores the stored tab and selects it directly — no `ui:setTab` —
+    // so a predicate that only knew about a click would leave a fresh launch
+    // showing an empty group.
+    expect(tabShowsCloudAgents("agents")).toBe(true);
+    // "connect" is the Agents tab's old key; a home stored on it lands here.
+    expect(tabShowsCloudAgents("connect")).toBe(true);
+    expect(tabShowsCloudAgents("audit")).toBe(false);
+    expect(tabShowsCloudAgents("settings")).toBe(false);
+    expect(tabShowsCloudAgents("")).toBe(false);
   });
 });
 
@@ -293,6 +308,77 @@ describe("refresh", () => {
     expect(shown.cloudChatsLoaded).toBe(false);
     expect(shown.cloudAgentsError).toBe("Couldn't reach Plow.");
     expect(shown.cloudAgents).toHaveLength(1);
+  });
+
+  it("keeps a chat failure and its error together when the agent list succeeds", async () => {
+    // The two requests run concurrently. The agent list finishing last used to
+    // clear the shared error field, leaving "no chats loaded" with nothing on
+    // screen to explain it — which reads as an empty account.
+    const agentsAnswer = deferred<CloudAgentResource[]>();
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => agentsAnswer.promise,
+        chats: async () => {
+          throw new PlowApiError(
+            "forbidden",
+            "This Mac signed in before chat access existed. Re-activate it to list chats.",
+            403,
+          );
+        },
+      }),
+    );
+
+    const refreshing = state.refresh();
+    await settle();
+    agentsAnswer.resolve([agent()]);
+    await refreshing;
+
+    const shown = state.state();
+    expect(shown.cloudChatsLoaded).toBe(false);
+    expect(shown.cloudAgentsError).toBe(
+      "This Mac signed in before chat access existed. Re-activate it to list chats.",
+    );
+    expect(shown.cloudAgents).toHaveLength(1);
+  });
+
+  it("lets a chat failure clear once the chats come back", async () => {
+    let fail = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+          return CHATS;
+        },
+      }),
+    );
+    await state.refresh();
+    expect(state.state().cloudAgentsError).toBe("Plow returned 500.");
+
+    fail = false;
+    await state.refresh();
+
+    expect(state.state()).toMatchObject({ cloudAgentsError: null, cloudChatsLoaded: true });
+  });
+
+  it("shows the agent list's failure ahead of the chat list's", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => {
+          throw new PlowApiError("http", "Plow returned 500.", 500);
+        },
+        chats: async () => {
+          throw new PlowApiError("network", "Couldn't reach Plow.", undefined);
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    // One banner, and an empty roster is the louder failure.
+    expect(state.state().cloudAgentsError).toBe("Plow returned 500.");
   });
 
   it("forgets that the list ever loaded once a chat list fails", async () => {
@@ -447,6 +533,85 @@ describe("provisioning", () => {
 });
 
 describe("removing and retrying", () => {
+  it("stops polling before the delete round trip, not after it", async () => {
+    const held = deferred<CloudAgentResource>();
+    const deleting = deferred<void>();
+    let seen: AbortSignal | undefined;
+    let abortedWhenDeleteBegan: boolean | undefined;
+    const f = fakes({
+      create: async () => agent({ status: "provisioning" }),
+      poll: async (_receipt, _onTransition, signal) => {
+        seen = signal;
+        return held.promise;
+      },
+      remove: async () => {
+        abortedWhenDeleteBegan = seen?.aborted;
+        return deleting.promise;
+      },
+      list: async () => [],
+    });
+    const state = build(tempHome(), f);
+    await state.create("cht_1", "Kitchen agent");
+
+    const removing = state.remove("agent_1");
+    deleting.resolve();
+    await removing;
+
+    // The poll must already be cancelled when the DELETE goes out: a delete is
+    // a round trip, and a poll running across it keeps asking Plow about a
+    // machine that is being torn down.
+    expect(abortedWhenDeleteBegan).toBe(true);
+    held.resolve(agent());
+  });
+
+  it("does not let a listing from before a delete put the row back", async () => {
+    const listing = deferred<CloudAgentResource[]>();
+    let first = true;
+    const f = fakes({
+      // Only the first listing is held open — the delete's own refresh must be
+      // free to answer, or nothing ever finishes.
+      list: async () => {
+        if (!first) return [];
+        first = false;
+        return listing.promise;
+      },
+      chats: async () => CHATS,
+    });
+    const state = build(tempHome(), f);
+
+    // A refresh in the air, started before the user clicked Remove…
+    const refreshing = state.refresh();
+    await state.remove("agent_1");
+    // …answering only now, with the agent still in it.
+    listing.resolve([agent()]);
+    await refreshing;
+
+    expect(f.agents.deleted).toEqual(["agent_1"]);
+    // The delete is newer than the listing. A resurrected row reads as a delete
+    // that silently failed.
+    expect(state.state().cloudAgents).toEqual([]);
+  });
+
+  it("still applies a listing started after the delete", async () => {
+    let deleted = false;
+    const f = fakes({
+      list: async () => (deleted ? [] : [agent()]),
+      remove: async () => {
+        deleted = true;
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+    expect(state.state().cloudAgents).toHaveLength(1);
+
+    await state.remove("agent_1");
+    deleted = false;
+    await state.refresh();
+
+    // Ordering, not a permanent block: server truth after the mutation wins.
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_1"]);
+  });
+
   it("drops the row and its local settings once the delete lands", async () => {
     const home = tempHome();
     let removed = false;

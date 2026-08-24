@@ -46,6 +46,19 @@ export function resolveCloudAgentsEnabled(env: Record<string, string | undefined
   return raw === "1" || raw === "true" || raw === "on";
 }
 
+/**
+ * Does landing on this tab put the cloud group on screen?
+ *
+ * The renderer reaches the Agents tab two ways — a click, which persists the
+ * tab, and boot, which restores it — and both have to refresh. Kept here rather
+ * than written twice in `main.ts`, because "agents" is not the only answer:
+ * `"connect"` is the tab's old key, still in older homes, and a home stored on
+ * it lands on Agents.
+ */
+export function tabShowsCloudAgents(tab: string): boolean {
+  return tab === "agents" || tab === "connect";
+}
+
 /** One pickable chat. Display data — the same shape setup already shows. */
 export interface CloudChatOption {
   uid: string;
@@ -149,6 +162,17 @@ export class CloudAgentState {
    */
   private polls = new Map<string, AbortController>();
   private agentsError: string | null = null;
+  /**
+   * Held apart from `agentsError` deliberately.
+   *
+   * The two requests run concurrently and used to share one field, so a chat
+   * failure that wrote it could be cleared by an agent list that succeeded a
+   * moment later — leaving `cloudChatsLoaded: false` with no error beside it,
+   * which is precisely the "you have no chats" reading this exists to prevent.
+   * Written only where `chatsLoaded` is written, so the pair can never
+   * disagree; `state()` is what merges them for the screen.
+   */
+  private chatsError: string | null = null;
   private actionError: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
@@ -158,6 +182,16 @@ export class CloudAgentState {
    * sign-out is dropped rather than shown to the next account.
    */
   private generation = 0;
+  /**
+   * How many times the row set has been changed from here.
+   *
+   * The account generation is not enough: a list started before a delete can
+   * land after it and put the removed agent back on screen, which reads as a
+   * delete that silently failed. A refresh remembers the count it read at and
+   * drops its listing if anything changed underneath it — the mutation is
+   * newer, and it is the one the user just performed.
+   */
+  private mutations = 0;
 
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
@@ -167,7 +201,9 @@ export class CloudAgentState {
     return {
       cloudEnabled: true,
       cloudAgents: [...this.rows.values()].sort(byNewestFirst),
-      cloudAgentsError: this.agentsError,
+      // One banner, whichever list failed. The agent list speaks first: an
+      // empty roster is the louder failure.
+      cloudAgentsError: this.agentsError ?? this.chatsError,
       cloudActionError: this.actionError,
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
@@ -188,8 +224,9 @@ export class CloudAgentState {
     const credential = this.credential();
     if (!credential) return;
     const generation = this.generation;
+    const mutations = this.mutations;
     await Promise.all([
-      this.refreshAgents(credential, generation),
+      this.refreshAgents(credential, generation, mutations),
       this.refreshChats(credential, generation),
     ]);
     if (generation === this.generation) this.publish();
@@ -226,6 +263,7 @@ export class CloudAgentState {
       return null;
     }
     if (generation !== this.generation) return null;
+    this.mutations += 1;
     this.pending.add(receipt.agentId);
     this.observe(receipt, requested);
     const controller = new AbortController();
@@ -247,6 +285,11 @@ export class CloudAgentState {
     }
 
     const generation = this.generation;
+    // BEFORE the delete, not after it. The delete is a round trip, and a poll
+    // left running across it keeps asking Plow about a machine that is being
+    // torn down — and can publish a transition for an agent the user has
+    // already removed.
+    this.abortPoll(id);
     try {
       await this.deps.agents.delete(credential, id);
     } catch (error) {
@@ -254,7 +297,7 @@ export class CloudAgentState {
       return;
     }
     if (generation !== this.generation) return;
-    this.abortPoll(id);
+    this.mutations += 1;
     this.rows.delete(id);
     this.pending.delete(id);
     // The agent is gone for good, so its local settings have nothing left to
@@ -288,6 +331,8 @@ export class CloudAgentState {
 
     const generation = this.generation;
     const carried = this.readAgentSettings(id);
+    // Same order as `remove`, and for the same reason.
+    this.abortPoll(id);
     try {
       await this.deps.agents.delete(credential, id);
     } catch (error) {
@@ -295,7 +340,7 @@ export class CloudAgentState {
       return;
     }
     if (generation !== this.generation) return;
-    this.abortPoll(id);
+    this.mutations += 1;
     this.rows.delete(id);
     this.pending.delete(id);
     this.writeAgentSettings(id, null);
@@ -329,6 +374,7 @@ export class CloudAgentState {
     this.pending.clear();
     this.chats = [];
     this.chatsLoaded = false;
+    this.chatsError = null;
     this.agentsError = null;
     this.actionError = null;
     this.publish();
@@ -370,10 +416,18 @@ export class CloudAgentState {
     controller.abort();
   }
 
-  private async refreshAgents(credential: string, generation: number): Promise<void> {
+  private async refreshAgents(
+    credential: string,
+    generation: number,
+    mutations: number,
+  ): Promise<void> {
     try {
       const agents = await this.deps.agents.list(credential);
       if (generation !== this.generation) return;
+      // A create or a delete happened while this listing was in the air. It is
+      // older than what the user just did, and applying it would put a deleted
+      // agent back on screen. The mutation's own refresh follows it.
+      if (mutations !== this.mutations) return;
       const listed = new Map(
         agents.map((agent) => [agent.agentId, this.rowFor(agent)] as const),
       );
@@ -408,6 +462,7 @@ export class CloudAgentState {
       // Only here: the one place a list actually came back. An empty answer is
       // still an answer, and it is the only one the empty state may render.
       this.chatsLoaded = true;
+      this.chatsError = null;
       // Labels arrive with the chats, so rows resolve theirs on this pass.
       this.relabelRows();
     } catch (error) {
@@ -418,7 +473,7 @@ export class CloudAgentState {
       // have no chats" — which is why `chatsLoaded` and the error travel
       // together, and why the roster stays where it is.
       this.chatsLoaded = false;
-      if (!this.agentsError) this.agentsError = messageOf(error);
+      this.chatsError = messageOf(error);
     }
   }
 
