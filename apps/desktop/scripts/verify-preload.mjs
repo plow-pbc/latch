@@ -854,7 +854,13 @@ app.whenReady().then(async () => {
   probeRevokeError = null;
   probeRosterError = "Couldn’t reach Plow.";
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await new Promise((r) => setTimeout(r, 250));
+  // Waited for, not slept through. `renderAgents` reads the roster, the
+  // inference state, the purpose statement and the suggestions preference
+  // before it attaches the pane, so a fixed pause reads whatever DOM the
+  // previous render left — rows and all, which is exactly the shape that
+  // makes a missing error look like a passing probe.
+  await waitFor(win, `document.querySelector(".roster-error")`,
+    "the roster's own error, with the stale rows still under it");
   const staleRoster = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     return {
