@@ -287,6 +287,9 @@ function approvalId(request: ApprovalRequest): string {
 }
 
 function createMainWindow(): void {
+  // Shutting down: a window opened now would be an editable Vault nobody will
+  // ask about again, restorable from the tray or the Dock mid-quit.
+  if (quitting) return;
   if (mainWindow) {
     mainWindow.show();
     return;
@@ -323,11 +326,27 @@ function createMainWindow(): void {
   };
   mainWindow.on("resized", persist);
   mainWindow.on("moved", persist);
-  mainWindow.on("close", persist);
-  // Only if it is still the current one: 'closed' can arrive after the gate has
-  // already dropped the reference and opened a replacement.
+  // Cmd-W destroys the form as surely as Quit does, so it asks the same
+  // question. `allowClose` is what lets the second, answered close through, and
+  // `cleanedUp` is the quit that already asked — NOT `quitting`, which only
+  // means a quit is in progress and may still be waiting on its answer.
+  let allowClose = false;
+  mainWindow.on("close", (event) => {
+    persist();
+    if (allowClose || cleanedUp) return;
+    event.preventDefault();
+    void mayLeaveMain(win).then((mayLeave) => {
+      if (!mayLeave || win.isDestroyed()) return;
+      allowClose = true;
+      win.close();
+    });
+  });
   mainWindow.on("closed", () => {
-    if (mainWindow === win) mainWindow = null;
+    mainWindow = null;
+    // Nobody consented: the window that was asked is gone. Refusing rather than
+    // approving keeps a destroyed window from authorising someone else's quit,
+    // and frees the promise a later Cmd-W would otherwise inherit still pending.
+    settleLeave?.(false);
   });
 }
 
@@ -801,14 +820,21 @@ const gate = new WindowGate({
   isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
   openMain: () => createMainWindow(),
   openSetup: () => openOnboardingWindow(),
-  // Drop the reference before closing, so `isMainOpen`/`isSetupOpen` answer
-  // truthfully straight away: 'closed' is not guaranteed to have fired by the
-  // time `close()` returns.
+  // destroy(), not close(): the gate's teardown is NOT a departure the owner may
+  // refuse. It fires when the relay rejects the credential, and a signed-out Mac
+  // is not entitled to a main window at all — the gate's contract is exactly one
+  // window, always. `destroy()` says that outright instead of asking `close()`
+  // for permission and then holding a flag to overrule the answer.
+  //
+  // The unsaved edits die with it, which is the honest trade: there is no
+  // signed-out state in which that form could have been saved. Bounds survive —
+  // 'resized'/'moved' persist them as they happen, not at close.
   closeMain: () => {
     const win = mainWindow;
-    mainWindow = null;
-    if (win && !win.isDestroyed()) win.close();
+    if (win && !win.isDestroyed()) win.destroy();
   },
+  // Setup has no form to lose, so its close is immediate and the early drop
+  // still buys a truthful `isSetupOpen` before 'closed' arrives.
   closeSetup: () => {
     const win = onboardingWindow;
     onboardingWindow = null;
@@ -1021,6 +1047,46 @@ app.whenReady().then(async () => {
   });
 });
 
+/**
+ * The one gate every teardown of the main window goes through — Cmd-W, Quit,
+ * and the relay gate's closeMain() all end here, and nothing else may destroy
+ * that window.
+ *
+ * One question at a time: a second path arriving while it is up waits on the
+ * same answer instead of stacking a dialog or — the bug this shape exists to
+ * make unrepresentable — reading "a question is pending" as a yes.
+ *
+ * There is no timeout and no assumed answer. A person reading the question is
+ * not a renderer that failed to reply, and no timer can tell them apart, so
+ * silence keeps the window; Force Quit is still there for a wedged one.
+ */
+let leaveInFlight: Promise<boolean> | null = null;
+/** Settles the question above when the window it was asked of dies unanswered. */
+let settleLeave: ((ok: boolean) => void) | null = null;
+function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
+  if (!win || win.isDestroyed()) return Promise.resolve(true);
+  leaveInFlight ??= new Promise<boolean>((resolve) => {
+    const done = (ok: boolean) => {
+      ipcMain.removeListener("ui:confirmLeaveReply", onReply);
+      settleLeave = null;
+      resolve(ok);
+    };
+    const onReply = (_e: unknown, ok: boolean) => done(!!ok);
+    settleLeave = done;
+    ipcMain.on("ui:confirmLeaveReply", onReply);
+    // The question is drawn IN the window, so it has to be on screen to be seen.
+    if (!win.isVisible()) win.show();
+    // ...and it has to be asked of a renderer that is already listening: the
+    // bridge uses ipcRenderer.on, which does not replay, so a question sent
+    // mid-load is one nobody will ever answer — and this promise is shared, so
+    // that would strand every later close behind it. Same wait as showSettings.
+    const ask = () => win.webContents.send("ui:confirmLeave");
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", ask);
+    else ask();
+  }).finally(() => { leaveInFlight = null; });
+  return leaveInFlight;
+}
+
 let quitting = false;
 let cleanedUp = false;
 app.on("before-quit", (event) => {
@@ -1032,11 +1098,22 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitting) return;
   quitting = true;
-  // Kill any live Camoufox session/process group so Firefox children don't outlive us.
-  // Every step of it is timeout-bounded, so this waits seconds, not forever.
-  void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
-    cleanedUp = true;
-    app.quit();
+  void mayLeaveMain(mainWindow).then((mayLeave) => {
+    if (!mayLeave) {
+      quitting = false; // they went back to their form; this quit never happened
+      return;
+    }
+    // Take the window away before cleanup, not after. The answer covered what
+    // was on screen at THAT moment, and shutting the browsers down takes
+    // seconds — seconds in which another editor could be opened and typed into,
+    // and destroyed by the quit below without ever being asked about.
+    mainWindow?.destroy();
+    // Kill any live Camoufox session/process group so Firefox children don't
+    // outlive us. Every step is timeout-bounded, so this waits seconds, not forever.
+    void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
+      cleanedUp = true;
+      app.quit();
+    });
   });
 });
 
@@ -1100,7 +1177,11 @@ function refreshTray(): void {
  * the outcome — the passive answer to what Sparkle does with a modal.
  */
 function checkForUpdatesFromMenu(): void {
-  updates?.checkNow();
+  // The check is NOT started here. Settings is the only place its outcome — up
+  // to date, or an error — is ever shown, and the renderer can refuse to go
+  // there (an open Vault form with unsaved edits gets asked first). Starting
+  // the check before knowing that would hide the answer on a screen the owner
+  // never reached, so the renderer starts it once it has arrived.
   // Through the gate: a Mac that is not signed in has no main window to show
   // the outcome in, and must not be given one from here. `mainWindow` is null
   // in that case and the send below is a no-op.

@@ -10,14 +10,17 @@ import {
 } from "./approvals.js";
 
 import { el, icon } from "./dom.js";
-import { renderVault } from "./vault.js";
+import { renderVault, vaultConfirmLeave } from "./vault.js";
 
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 
-let currentTab = "audit";
+// Null until boot() picks one: the HTML marks Audit active for the first paint,
+// but boot must still RENDER that pane, and "already on this tab" now returns
+// early — so the starting value cannot be a tab boot might legitimately select.
+let currentTab = null;
 let filter = "all";
 // The mounted Settings pane, while that tab is up. Holds a `refresh` that
 // updates the display nodes in place, so a relay reconnect cannot reset the
@@ -964,8 +967,12 @@ function capText(c) {
     case "tool": return "tool: " + (c.tool || "?");
     case "browser": return "browse: " + (c.origins || []).join(", ");
     case "credential":
+      // A rule saved before the metadata capability was removed can still be
+      // sitting in rules.json. Nothing requests that shape any more, so it
+      // grants nothing — but the owner should read back what they actually
+      // approved, not see it relabelled as a fill grant they never gave.
       return c.access === "metadata"
-        ? "credentials: list names/labels"
+        ? "credentials: list names/labels (no longer requested)"
         : "credentials: fill " + (c.items || []).join(", ");
     default: return c.kind;
   }
@@ -1253,7 +1260,14 @@ function render() {
   else if (currentTab === "settings") renderSettings();
 }
 
-function selectTab(tab) {
+// Returns whether the switch actually happened. Leaving the Vault replaces the
+// whole pane, so an open form with unsaved edits gets a say first — and a caller
+// must not persist a tab the owner backed out of.
+async function selectTab(tab) {
+  // Already there: a rebuild would throw away an open form for no navigation at
+  // all, which is the loss this guard exists to prevent.
+  if (tab === currentTab) return true;
+  if (currentTab === "vault" && !(await vaultConfirmLeave())) return false;
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
@@ -1263,16 +1277,16 @@ function selectTab(tab) {
   if (tab !== "agents") agentsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
+  return true;
 }
 
 // Let the headless preload probe drive the tabs without synthesising clicks.
 window.__domoSelectTab = selectTab;
 
-seg.addEventListener("mousedown", (e) => {
+seg.addEventListener("mousedown", async (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
-  selectTab(btn.dataset.tab);
-  window.domo.uiSetTab(btn.dataset.tab); // persist across launches
+  if (await selectTab(btn.dataset.tab)) window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
@@ -1298,7 +1312,16 @@ window.domo.onUpdatesChanged(() => {
   if (currentTab === "settings") settingsMounted?.refreshUpdates();
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
-window.domo.onShowSettings(() => selectTab("settings"));
+// Closing the window or quitting throws an open Vault form away too, so main
+// asks here first. Anything outside the Vault has nothing to lose.
+window.domo.onConfirmLeave(async () => {
+  window.domo.confirmLeaveReply(currentTab === "vault" ? await vaultConfirmLeave() : true);
+});
+
+// Only check once Settings is actually on screen — see checkForUpdatesFromMenu.
+window.domo.onShowSettings(async () => {
+  if (await selectTab("settings")) window.domo.updatesCheck();
+});
 // Granting Full Disk Access happens in System Settings, and no event reaches
 // this app when it does — the moment the pane can learn the outcome is when
 // the person comes back.

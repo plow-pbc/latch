@@ -33,6 +33,15 @@ export const FRAME_RESPONSE = "relay.response";
 export const HEARTBEAT_INTERVAL_MS = 15_000;
 
 /**
+ * How long the relay's pending future waits before it abandons a tunnelled
+ * exchange. Theirs, not ours — which is why it lives here with the rest of what
+ * a relay implementation must agree with, rather than beside the timeout it
+ * constrains. `@domo/mcp-server`'s `CALL_BUDGET_MS` is chosen against it, and
+ * `test/wire.test.ts` checks the two still leave room to deliver.
+ */
+export const RELAY_TIMEOUT_MS = 25_000;
+
+/**
  * Headers that must not be tunnelled in either direction.
  *
  * The first eight are the RFC 9110 hop-by-hop set: per-connection, meaningless

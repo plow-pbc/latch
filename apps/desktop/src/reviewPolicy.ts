@@ -70,7 +70,11 @@ export interface DecideDeps {
   settings: Settings;
   /** Plow API origin. Baked into the build, never a setting. */
   apiBaseUrl: string;
-  /** The audit log's current entries, for the reviewer's history context. */
+  /**
+   * The audit log's current entries. NOT review context any more — nothing
+   * below reads this, and the reviewer is handed `history: []` (DESIGN.md
+   * §4). It comes out with `ReviewArgs.history` (#140).
+   */
   auditEntries: () => JSONValue[];
   record: (event: string, fields: Record<string, JSONValue>) => void;
   review: (

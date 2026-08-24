@@ -9,7 +9,14 @@
  * security property, not a formatting preference.
  */
 import { describe, expect, it } from "vitest";
-import { FRAME_REQUEST, HOP_BY_HOP, isRequestFrame, stripHopByHop } from "../src/wire.js";
+import { CALL_BUDGET_MS } from "@domo/mcp-server";
+import {
+  FRAME_REQUEST,
+  HOP_BY_HOP,
+  isRequestFrame,
+  RELAY_TIMEOUT_MS,
+  stripHopByHop,
+} from "../src/wire.js";
 
 describe("stripHopByHop", () => {
   it("strips hop-by-hop headers in both directions, but keeps Host", () => {
@@ -43,6 +50,17 @@ describe("stripHopByHop", () => {
 
   it("survives a frame with no headers at all", () => {
     expect(stripHopByHop(undefined as unknown as Record<string, string>)).toEqual({});
+  });
+});
+
+describe("the relay's ceiling and this Mac's budget", () => {
+  it("leaves enough of the exchange for delivery after the budget is spent", () => {
+    // What is left is not slack: registering the handle, framing the response,
+    // and the relay matching it to the exchange still waiting all have to fit.
+    // A floor, expressed here rather than exported — it is our sizing choice,
+    // not something a relay implementation has to agree with.
+    const DELIVERY_MARGIN_MS = 10_000;
+    expect(RELAY_TIMEOUT_MS - CALL_BUDGET_MS).toBeGreaterThanOrEqual(DELIVERY_MARGIN_MS);
   });
 });
 

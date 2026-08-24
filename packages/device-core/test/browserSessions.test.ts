@@ -108,8 +108,8 @@ async function holdLateRefusal(sessions: BrowserSessions, handle: string) {
   expect(await sessions.viewFrame()).not.toBeNull();
 }
 
-async function openSession(origins: string[], metadata = true): Promise<string> {
-  const r = jv(await ctx.sessions.open("int-1", AGENT, origins, metadata));
+async function openSession(origins: string[]): Promise<string> {
+  const r = jv(await ctx.sessions.open("int-1", AGENT, origins));
   expect(r.get("status").str).toBe("completed");
   return r.get("session").str!;
 }
@@ -192,11 +192,11 @@ describe("session lifecycle", () => {
     // is tested at its real value: no knob, no seam.
     const handles: string[] = [];
     for (let i = 0; i < 8; i++) {
-      const r = jv(await ctx.sessions.open(`int-${i}`, `capped-${i}`, ["pizza.example"], false));
+      const r = jv(await ctx.sessions.open(`int-${i}`, `capped-${i}`, ["pizza.example"]));
       expect(r.get("status").str).toBe("completed");
       handles.push(r.get("session").str!);
     }
-    const tooMany = jv(await ctx.sessions.open("int-9", "capped-9", ["a.example"], false));
+    const tooMany = jv(await ctx.sessions.open("int-9", "capped-9", ["a.example"]));
     expect(tooMany.get("status").str).toBe("error");
     expect(tooMany.get("error").str).toContain("already running 8 browsers");
     // And the three that were here first are untouched.
@@ -212,7 +212,7 @@ describe("session lifecycle", () => {
     // two agents one: the second was refused and told to reuse the first's
     // session, and then drove it. Every open is its own browser now.
     const first = await openSession(["pizza.example"]);
-    const r = jv(await ctx.sessions.open("int-2", AGENT, ["b.example"], false));
+    const r = jv(await ctx.sessions.open("int-2", AGENT, ["b.example"]));
     expect(r.get("status").str).toBe("completed");
     const second = r.get("session").str!;
     expect(second).not.toBe(first);
@@ -353,7 +353,7 @@ describe("origin scope", () => {
     const locked = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(locked.get("status").str).toBe("error");
 
-    const ext = jv(ctx.sessions.extend("int-2", s, ["popup.example"], [], false));
+    const ext = jv(ctx.sessions.extend("int-2", s, ["popup.example"], []));
     expect(ext.get("status").str).toBe("completed");
     const text = jv(await ctx.sessions.command(s, { action: "text" }));
     expect(text.get("status").str).toBe("completed");
@@ -481,7 +481,7 @@ describe("credentials", () => {
     // reaches the agent, the secret is in model context, transcripts and any
     // provider that sees them.
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-3", s, [], ["L1"], false);
+    ctx.sessions.extend("int-3", s, [], ["L1"]);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(s, {
@@ -501,7 +501,7 @@ describe("credentials", () => {
 
   it("fill_secret types the value on-device and never returns it", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, [], ["L1"], false);
+    ctx.sessions.extend("int-2", s, [], ["L1"]);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(s, {
@@ -524,7 +524,7 @@ describe("credentials", () => {
 
   it("fill_secret is refused when the item belongs to another site (op origin check)", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, [], ["X1"], false);
+    ctx.sessions.extend("int-2", s, [], ["X1"]);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/login" });
     const r = jv(
       await ctx.sessions.command(s, {
@@ -543,7 +543,7 @@ describe("credentials", () => {
 
   it("fill_secret refuses frames outside the session scope, allows approved card frames", async () => {
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, [], ["C1"], false);
+    ctx.sessions.extend("int-2", s, [], ["C1"]);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/checkout" });
     // Scripted: "#card*" selectors live in a frame on payframe.example.
     const denied = jv(
@@ -557,7 +557,7 @@ describe("credentials", () => {
     expect(denied.get("status").str).toBe("error");
     expect(denied.get("error").str).toContain("payframe.example");
 
-    ctx.sessions.extend("int-3", s, ["payframe.example"], [], false);
+    ctx.sessions.extend("int-3", s, ["payframe.example"], []);
     const ok = jv(
       await ctx.sessions.command(s, {
         action: "fill_secret",
@@ -605,11 +605,11 @@ describe("access the owner's log could not record is not granted", () => {
 
   it("does not widen a session it could not record", async () => {
     const sessions = failingAudit("browser_session_extended");
-    const opened = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const opened = jv(await sessions.open("int-1", AGENT, ["pizza.example"]));
     const handle = opened.get("session").str!;
 
     expect(() =>
-      sessions.extend("int-2", handle, ["paypal.example"], ["L1"], true),
+      sessions.extend("int-2", handle, ["paypal.example"], ["L1"]),
     ).toThrow(/audit append failed/);
 
     // The agent must not be left holding origins and credential items that the
@@ -622,7 +622,7 @@ describe("access the owner's log could not record is not granted", () => {
 
   it("does not open a session it could not record, and stays usable after", async () => {
     const sessions = failingAudit("browser_session_opened");
-    await expect(sessions.open("int-1", AGENT, ["pizza.example"], true)).rejects.toThrow(
+    await expect(sessions.open("int-1", AGENT, ["pizza.example"])).rejects.toThrow(
       /audit append failed/,
     );
     // A live session with no opening event is a browser being used that the
@@ -636,7 +636,7 @@ describe("access the owner's log could not record is not granted", () => {
     // and only resetBreaker() clears it, so a retry could publish a session
     // whose every command then failed with "browser host is shut down" — a
     // successful open the agent cannot use.
-    const retry = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true));
+    const retry = jv(await sessions.open("int-1", AGENT, ["pizza.example"]));
     expect(retry.get("status").str).toBe("completed");
     const r = jv(
       await sessions.command(retry.get("session").str!, {
@@ -667,7 +667,7 @@ describe("access the owner's log could not record is not granted", () => {
     };
     const events: Ctx["events"] = [];
     const sessions = new BrowserSessions(browsers, null, (event, fields) => events.push({ event, fields }), 60_000);
-    const handle = jv(await sessions.open("int-1", AGENT, ["pizza.example"], true))
+    const handle = jv(await sessions.open("int-1", AGENT, ["pizza.example"]))
       .get("session")
       .str!;
     // A refusal the device is holding when the shutdown throws is exactly when
@@ -678,7 +678,7 @@ describe("access the owner's log could not record is not granted", () => {
     const closed = events.filter((e) => e.event === "browser_session_closed").pop();
     expect(closed?.fields.failed_requests).toEqual([LATE_REFUSAL]);
 
-    const retry = jv(await sessions.open("int-2", AGENT, ["pizza.example"], true));
+    const retry = jv(await sessions.open("int-2", AGENT, ["pizza.example"]));
     expect(retry.get("status").str).toBe("completed");
     const r = jv(
       await sessions.command(retry.get("session").str!, {
@@ -697,7 +697,7 @@ describe("the handle is a capability, so the log never carries it", () => {
     // and serialised into the reviewer prompt that leaves this Mac. A handle
     // there is a browser anybody who reads it can drive.
     const s = await openSession(["pizza.example"]);
-    ctx.sessions.extend("int-2", s, ["b.example"], ["L1"], true);
+    ctx.sessions.extend("int-2", s, ["b.example"], ["L1"]);
     await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/menu" });
     await ctx.sessions.command(s, { action: "eval", expression: "1" });
     await ctx.sessions.close(s, "test");
@@ -828,7 +828,7 @@ db.commit()`,
     // that opens signed out is a browser they have to sign in again.
     const { sessions, profiles } = signedIn();
     for (const i of [1, 2]) {
-      expect(jv(await sessions.open(`int-${i}`, `agent-${i}`, ["pizza.example"], false)).get("status").str)
+      expect(jv(await sessions.open(`int-${i}`, `agent-${i}`, ["pizza.example"])).get("status").str)
         .toBe("completed");
     }
     const dirs = fs.readdirSync(profiles);
@@ -847,9 +847,9 @@ db.commit()`,
     // the user was signed into; the other one's sign-in was simply gone. Two
     // browsers, two different sites, and the user keeps all three logins.
     const { sessions, seed, profiles } = signedIn();
-    const first = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const first = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
     const dirs = fs.readdirSync(profiles);
-    const second = jv(await sessions.open("int-2", AGENT, ["b.example"], false)).get("session").str!;
+    const second = jv(await sessions.open("int-2", AGENT, ["b.example"])).get("session").str!;
     const secondDir = fs.readdirSync(profiles).find((d) => !dirs.includes(d))!;
     // Each signs into its own site, inside its own browser.
     cookieStore(path.join(profiles, dirs[0], "cookies.sqlite"), ["a.example"], 50);
@@ -867,9 +867,9 @@ db.commit()`,
     // of a token over the fresh one another browser had just been given —
     // signing the user out by doing nothing.
     const { sessions, seed, profiles } = signedIn({ has: ["site.example=old-token"] });
-    const refreshed = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const refreshed = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
     const refreshedDir = only(profiles);
-    const stale = jv(await sessions.open("int-2", AGENT, ["a.example"], false)).get("session").str!;
+    const stale = jv(await sessions.open("int-2", AGENT, ["a.example"])).get("session").str!;
     const staleDir = path.join(profiles, fs.readdirSync(profiles).find((d) => path.join(profiles, d) !== refreshedDir)!);
 
     // One session is handed a new token; the other only reads the same site,
@@ -887,7 +887,7 @@ db.commit()`,
     // out by a month renews the expiry, and a logout removes the row
     // altogether. Both are things the session did, and both have to land.
     const { sessions, seed, profiles } = signedIn({ has: ["renewed.example", "leaving.example"] });
-    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
     const store = path.join(only(profiles), "cookies.sqlite");
     cookieStore(store, ["renewed.example"], 50, 99_999);
     signOut(store, "leaving.example");
@@ -903,9 +903,9 @@ db.commit()`,
     // them can also be open at once, on the same site: the first close makes
     // the profile, and the second must not put its older token over the newer.
     const { sessions, seed, profiles } = signedIn({ has: [] });
-    const newer = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const newer = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
     const newerDir = only(profiles);
-    const older = jv(await sessions.open("int-2", AGENT, ["a.example"], false)).get("session").str!;
+    const older = jv(await sessions.open("int-2", AGENT, ["a.example"])).get("session").str!;
     const olderDir = path.join(profiles, fs.readdirSync(profiles).find((d) => path.join(profiles, d) !== newerDir)!);
     cookieStore(path.join(newerDir, "cookies.sqlite"), ["first.example=new-token"], 90);
     cookieStore(path.join(olderDir, "cookies.sqlite"), ["first.example=old-token"], 10);
@@ -923,7 +923,7 @@ db.commit()`,
       merger: [PYTHON, "-c", "raise SystemExit('disk is full')"],
       audit: (event) => events.push(event),
     });
-    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
     const dir = only(profiles);
     cookieStore(path.join(dir, "cookies.sqlite"), ["rescue.example"], 50);
 
@@ -939,7 +939,7 @@ db.commit()`,
     // A crash is nobody's call, so nothing awaits it — but the quit still
     // must not leave while that session's sign-ins are being written.
     const { sessions, seed, profiles } = signedIn();
-    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
     cookieStore(path.join(only(profiles), "cookies.sqlite"), ["crashed.example"], 50);
 
     sessions.noteCrash(handle);
@@ -951,7 +951,7 @@ db.commit()`,
   it("has taken every profile with it by the time a quit's closeAll resolves", async () => {
     // What quitting relies on: it holds the app open until this promise
     // settles, so anything still on disk afterwards outlives the app.
-    for (let i = 0; i < 3; i++) await ctx.sessions.open(`int-${i}`, `agent-${i}`, ["a.example"], false);
+    for (let i = 0; i < 3; i++) await ctx.sessions.open(`int-${i}`, `agent-${i}`, ["a.example"]);
     expect(fs.readdirSync(path.join(ctx.dir, "profiles")).length).toBe(3);
 
     await ctx.sessions.closeAll("shutdown");
@@ -972,7 +972,7 @@ db.commit()`,
       (event, fields) => ctx.events.push({ event, fields }),
       60_000,
     );
-    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"], false)).get("session").str!;
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
     const before = ctx.events.length;
 
     const agentClose = sessions.close(handle, "agent");
@@ -990,7 +990,7 @@ db.commit()`,
     // An intent can sit waiting for the owner and be approved mid-quit. The
     // browser it would start is one nobody is left to close.
     await ctx.sessions.closeAll("shutdown");
-    const late = jv(await ctx.sessions.open("int-late", AGENT, ["a.example"], false));
+    const late = jv(await ctx.sessions.open("int-late", AGENT, ["a.example"]));
     expect(late.get("status").str).toBe("error");
     expect(late.get("error").str).toContain("shutting down");
     // Refused before anything is claimed: no profile, so nothing to leave.
@@ -1012,7 +1012,7 @@ db.commit()`,
       },
       60_000,
     );
-    for (let i = 0; i < 2; i++) await sessions.open(`int-${i}`, `agent-${i}`, ["a.example"], false);
+    for (let i = 0; i < 2; i++) await sessions.open(`int-${i}`, `agent-${i}`, ["a.example"]);
 
     await expect(sessions.closeAll("shutdown")).rejects.toThrow("audit log is full");
     expect(fs.readdirSync(path.join(ctx.dir, "profiles"))).toEqual([]);
@@ -1034,7 +1034,7 @@ describe("three agents, three browsers, at once", () => {
     // Opened in parallel, the way three agents would arrive.
     const opened = await Promise.all(
       agents.map((agent, i) =>
-        ctx.sessions.open(`int-${i}`, agent, [sites[i]], false).then((r) => jv(r)),
+        ctx.sessions.open(`int-${i}`, agent, [sites[i]]).then((r) => jv(r)),
       ),
     );
     const handles = opened.map((r) => {

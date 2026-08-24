@@ -1,7 +1,7 @@
 /**
  * Browser session store and the enforcement core.
  *
- * A session is created/widened only by an approved signed intent; every
+ * A session is created/widened only by an approved intent; every
  * subsequent command is validated here against the session's approved bound:
  * - navigation targets must match the origin allowlist (checked BEFORE goto);
  * - after every action the observed URL is re-checked (clicks and page JS
@@ -54,7 +54,6 @@ interface Session {
   handle: string;
   agentId: string;
   origins: string[];
-  credentialMetadata: boolean;
   credentialItems: Set<string>;
   lastActivity: number;
   lastUrl: string;
@@ -143,7 +142,8 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
 
 /**
  * Longest a single `wait` action may park an exchange. The relay abandons a
- * tunnelled call at ~20s and `browser` is non-deferrable, so every action must
+ * tunnelled call at its own ceiling (`CLAUDE.md` § Layout owns the value) and
+ * `browser` is non-deferrable, so every action must
  * answer well inside that; `wait` and `goto` are the only ones that can run
  * long by design and are bounded (here and in server.py / BrowserHost). A
  * longer pause is expressed as several waits.
@@ -231,7 +231,6 @@ export class BrowserSessions {
     intentId: string,
     agentId: string,
     origins: string[],
-    credentialMetadata: boolean,
     headed?: boolean,
   ): Promise<JSONValue> {
     // The claim is made BEFORE anything is awaited. Registering after the
@@ -273,7 +272,6 @@ export class BrowserSessions {
       closing: null,
       agentId,
       origins: origins.map(normalizeOrigin),
-      credentialMetadata,
       credentialItems: new Set(),
       lastActivity: Date.now(),
       lastUrl: "",
@@ -298,7 +296,7 @@ export class BrowserSessions {
 
     // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
     // start (~30s) absorbs into the deferred handle; every later `browser`
-    // action is non-deferrable and must answer well inside the relay's ~20s
+    // action is non-deferrable and must answer well inside the relay's
     // per-exchange ceiling, which it can only do against an already-running
     // browser. Failing here (no runtime, crash-looped) is an honest open error.
     try {
@@ -316,7 +314,6 @@ export class BrowserSessions {
         intentId,
         session: session.auditId,
         origins: session.origins,
-        credential_metadata: credentialMetadata,
         headed: host.headed,
       });
     } catch (error: unknown) {
@@ -340,7 +337,6 @@ export class BrowserSessions {
     handle: string,
     origins: string[],
     items: string[],
-    credentialMetadata: boolean,
   ): JSONValue {
     const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
@@ -367,7 +363,6 @@ export class BrowserSessions {
     });
     s.origins = widened;
     s.credentialItems = widenedItems;
-    if (credentialMetadata) s.credentialMetadata = true;
     s.lastActivity = Date.now();
     return {
       status: "completed",
@@ -811,6 +806,18 @@ export class BrowserSessions {
     // anything be observed, and says so when one of them would not take. It
     // sends no picture and no field list in that case, and neither does this:
     // an observation that cannot be made safely is not made.
+    // The field says how much it holds and the value is more. Refused before
+    // anything was typed, so the page is as it was found.
+    if (result.ok === false && result.mask === "too_long") {
+      return {
+        status: "error",
+        error:
+          `that field holds only ${jv(result).get("cap").num} characters and the value is ` +
+          `longer, so it was not filled`,
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
+    }
+
     if (result.ok === false && result.mask === "unmasked") {
       this.audit("credential_mask_failed", {
         session: s.auditId,
@@ -870,42 +877,6 @@ export class BrowserSessions {
     } catch {
       /* sweep is best-effort; the per-action check still guards content */
     }
-  }
-
-  private async listCredentials(s: Session): Promise<JSONValue> {
-    if (!this.credentials) return { status: "error", error: "credential broker not available" };
-    if (!s.credentialMetadata) {
-      return {
-        status: "error",
-        error:
-          "credential metadata was not approved for this session — " +
-          "open with credentials_metadata or use plow_browser_request",
-      };
-    }
-    const items = await this.credentials.whatsHere(s.lastUrl || "https://invalid.invalid/");
-    this.audit("credential_metadata", { session: s.auditId, op: "list" });
-    return {
-      status: "completed",
-      items: items.map((i) => ({
-        id: i.id,
-        title: i.title,
-        category: i.category,
-        username: i.username,
-        urls: i.urls,
-        matches_this_page: i.matchesThisPage,
-      })),
-    };
-  }
-
-  private async describeItem(s: Session, itemId: string): Promise<JSONValue> {
-    if (!this.credentials) return { status: "error", error: "credential broker not available" };
-    if (itemId === "") return { status: "error", error: "missing item" };
-    if (!s.credentialMetadata && !s.credentialItems.has(itemId)) {
-      return { status: "error", error: "no credential access approved for this item" };
-    }
-    const item = await this.credentials.describeItem(itemId);
-    this.audit("credential_metadata", { session: s.auditId, op: "describe", item: itemId });
-    return { status: "completed", ...item };
   }
 
   /**
@@ -1042,6 +1013,45 @@ export class BrowserSessions {
       // nothing was typed: the value would have been legible in every
       // screenshot from that moment on, which is the whole thing this exists to
       // prevent. Refused rather than filled.
+      if (filled.mask === "too_long") {
+        this.audit("credential_fill_failed", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: `the field holds only ${jv(filled).get("cap").num} characters`,
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: ${selector} holds only ${jv(filled).get("cap").num} ` +
+            `characters and this value is longer. It will have to be shortened where it is ` +
+            `stored before an agent can enter it.`,
+        };
+      }
+      // The browser reports that the field is not holding what went into it; it
+      // does not judge whether that matters, because it cannot know what the
+      // value means. Here it can: this came out of the vault, so a field that
+      // changed it did not receive the credential, whatever its reason.
+      if (filled.altered === true) {
+        this.audit("credential_fill_failed", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector,
+          reason: "the field is holding a changed copy of the value",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} did not go in as stored: ${selector} took it and is holding a changed ` +
+            `copy — the page rewrites what is typed into it. That copy is still in the field; ` +
+            `clear it yourself if it must not be submitted. The value in the vault is not at ` +
+            `fault, and this field cannot be filled by an agent.`,
+        };
+      }
       if (filled.mask === "moved") {
         this.audit("credential_denied", {
           session: s.auditId,

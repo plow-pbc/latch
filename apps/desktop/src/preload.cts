@@ -56,6 +56,10 @@ contextBridge.exposeInMainWorld("domo", {
   onUpdatesChanged: (cb: () => void) => ipcRenderer.on("updates:changed", cb),
   // The menu-bar "Check for Updates…" lands the window on the Settings tab.
   onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
+  // Main asks before it tears the window down; the renderer answers once the
+  // owner has had their say about anything unsaved.
+  onConfirmLeave: (cb: () => void) => ipcRenderer.on("ui:confirmLeave", cb),
+  confirmLeaveReply: (ok: boolean) => ipcRenderer.send("ui:confirmLeaveReply", ok),
 
   // First-run setup window. Every call returns the whole state, so the screen
   // renders from one shape and never has to reconcile two.

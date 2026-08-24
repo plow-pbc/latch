@@ -43,7 +43,7 @@ the page; that is the one way round it, and it is not one you have any reason to
 
 ## Sessions and scope
 
-- \`plow_browser_open {origins: ["dominos.com", "*.dominos.com"], credentials_metadata: true, goal}\`
+- \`plow_browser_open {origins: ["dominos.com", "*.dominos.com"], goal}\`
   asks the owner to approve a browsing session bound to those site origins. List every
   domain you expect up front — the apex and the wildcard are separate entries.
 - The window is **hidden by default** — the browser runs in the background and does not
@@ -89,6 +89,11 @@ url, title, links, forms, tables, pages.
   carries them too — that is usually the reason it failed. You are told the host, not the
   path, and only for your approved origins. One can also settle late and ride the next
   result. Do not instrument the page with \`eval\` to find this out; this is that answer.
+- **\`altered\` on a fill means the field is not holding what you typed.** Pages
+  rewrite what goes into them — a card box adds spaces to the digits, a phone box
+  drops the dashes — and that is usually fine. It is not fine when the value had
+  to arrive intact. You are told the difference happened, not whether it matters;
+  screenshot the field and decide. A fill without it landed exactly.
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after
@@ -117,7 +122,7 @@ item's, and \`fill_secret\` types them into the page the same way.
 
 1. \`plow_vault {action: "list"}\` to see what is there; \`plow_vault {action: "describe", item: "<id>"}\`
    names the fields that item holds.
-2. Open the session with \`credentials_metadata: true\` (or add it later via plow_browser_request).
+2. Open the session on the merchant's origins.
 3. Pick the right item by reading the page.
 4. Ask for fill rights: \`plow_browser_request {session, credential_items: ["<item-id>"]}\` —
    the owner approves the named items.
@@ -142,7 +147,7 @@ item's, and \`fill_secret\` types them into the page the same way.
 
 ## Order of operations for a purchase
 
-vault list → open (merchant origins + credentials_metadata) → browse/choose items → at login:
+vault list → open (merchant origins) → browse/choose items → at login:
 vault describe → plow_browser_request (login item) → fill_secret → at checkout:
 plow_browser_request (card item; plus payment-provider origins if a popup appears) →
 fill_secret each card field → confirm → screenshot the confirmation → plow_browser_close.`,

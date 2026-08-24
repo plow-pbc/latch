@@ -14,15 +14,20 @@ decisions and their rationale; `CLAUDE.md` carries the invariants a change must
 not break. Read the **base-branch** copies of both before judging an
 architectural tradeoff.
 
-**Stage:** pre-PMF, and mid-rebuild. The old in-repo broker has been removed; a
-Mac now dials *out* to the Plow relay, which exists — see `CLAUDE.md`
-§ Layout, "Being rebuilt", for where it lives and what is still verified by hand.
+**Stage:** pre-PMF; the broker is gone and a Mac dials out to the relay, which
+exists — see `CLAUDE.md` § Layout, "Rebuilt: a Mac dials out", for where it
+lives and what is still verified by hand.
 
 **Agents do reach a Mac through this app today.** This paragraph said the
 opposite for as long as the relay was unbuilt, and that sentence was
 load-bearing: it is what tells you whether a reachability-gated finding is
-theoretical or live. It is live. A finding that depends on a remote agent
-actually reaching this Mac gets graded as reachable, not hypothetical.
+theoretical or live. It is live.
+
+That changes whether a finding is REAL. It does not change how much defensive
+code one earns. A reachable path still has to clear the carve-out below to be
+worth a branch, and everything outside that list is still judged at
+single-digit-users. "An agent could reach this" is the start of the argument,
+not the end of it.
 
 **Userbase:** single-digit, internal. One engineer plus a handful of alpha
 machines. The signed/notarized DMG and the S3 update feed exist and work, but
@@ -45,8 +50,11 @@ they serve that same group — a packaged release is not evidence of scale.
   every browser on this Mac is the owner's (`CLAUDE.md`, and
   `BrowserSessions.validate()`). Treat handle-authority as intended, not as a
   cross-agent gap.
-- **Nothing may block past the 20s relay call budget** — that is why file ops
-  are async and size-capped, and why slow tools return a deferred handle.
+- **Nothing may block past the relay call budget** — `RELAY_TIMEOUT_MS` lives
+  with the rest of the cross-repo contract in `@domo/relay-client`'s `wire.ts`;
+  `CALL_BUDGET_MS` in `@domo/mcp-server` is what this Mac allows itself inside
+  it. That is why file ops are async and size-capped, and why slow tools return
+  a deferred handle.
 - The renderer is sandboxed (`contextIsolation` on, `nodeIntegration` off,
   strict CSP, no remote content) and reaches main only through `preload.cts`.
 - Everything honors `DOMO_HOME`, so tests use throwaway roots.

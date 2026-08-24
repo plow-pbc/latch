@@ -25,7 +25,7 @@ export interface Capability {
   allowed?: boolean; // network
   tool?: string; // tool
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
-  access?: "metadata" | "fill"; // credential: list names/labels vs type values into pages
+  access?: "fill"; // credential: type values into pages
   items?: string[]; // credential(fill): vault item ids
   reason?: string; // display-only justification
 }
@@ -62,9 +62,7 @@ export function capabilityDisplay(c: Capability): string {
     case "browser":
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":
-      return c.access === "metadata"
-        ? "Credentials: list vault item names & field labels (no secret values)"
-        : `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
+      return `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
   }
 }
 
