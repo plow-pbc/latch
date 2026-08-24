@@ -125,6 +125,18 @@ function vbaseline(input) {
 /** Whether this box holds something other than what it opened with. */
 const vchanged = (input) => input.value !== input.dataset.baseline;
 
+/**
+ * Freeze the boxes while a save is in flight.
+ *
+ * The payload is snapshotted before the await, and on success the form is
+ * released and the pane reloaded — so anything typed in between is neither
+ * saved nor kept, and nothing asks about it. Disabling only the Save button
+ * leaves exactly that window open.
+ */
+function vfreeze(ctx, frozen) {
+  for (const i of [...Object.values(ctx.inputs), ...ctx.urlInputs]) i.disabled = frozen;
+}
+
 /** True when any box on this form differs from what it opened with. */
 function vformDirty(ctx) {
   return [...Object.values(ctx.inputs), ...ctx.urlInputs].some(vchanged);
@@ -436,6 +448,7 @@ function vitem(summary, reload) {
       const save = el("button", { class: "btn save", attrs: { type: "button" }, text: "Save" });
       save.addEventListener("click", async () => {
         save.disabled = true;
+        vfreeze(ctx, true);
         try {
           await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id, revision: item.revision });
           release(); // stored now — the reload below must not ask about it
@@ -445,6 +458,7 @@ function vitem(summary, reload) {
         } catch (err) {
           vtoast("Could not save it: " + errText(err));
         }
+        vfreeze(ctx, false); // it did not land: give the form back
         save.disabled = false;
       });
       inner.replaceChildren(...nodes, el("div", { class: "vfoot" }, [
@@ -523,6 +537,7 @@ async function vsheet(reload) {
     bodyEl.replaceChildren(el("form", { class: "sheet-form", attrs: { autocomplete: "off" } }, nodes));
     save.onclick = async () => {
       save.disabled = true;
+      vfreeze(ctx, true);
       try {
         await window.domo.vaultSaveItem(vpayload(type, ctx));
         formCtx = null; // stored: nothing left to discard
@@ -533,6 +548,7 @@ async function vsheet(reload) {
       } catch (err) {
         vtoast("Could not save it: " + errText(err));
       }
+      vfreeze(ctx, false); // it did not land: give the form back
       save.disabled = false;
     };
   };
