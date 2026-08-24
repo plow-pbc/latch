@@ -84,6 +84,21 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
+  /**
+   * The chat this Mac's activation provisioned, kept for display.
+   *
+   * The uid is the join key — the server stays authoritative on what the chat
+   * *is*, and a cloud-agent screen lists chats rather than trusting this. The
+   * label is display text derived at redeem time, cached because the redeem
+   * that carried the chat answers exactly once: re-reading it is impossible, so
+   * a setup window reopened later would otherwise have nothing to show.
+   *
+   * Neither is a secret. Both are empty on a Mac that activated before
+   * `provision_chat`, which is why nothing may treat them as a signal that the
+   * account has no chat.
+   */
+  provisionedChatUid: string;
+  provisionedChatLabel: string;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -107,6 +122,8 @@ export function loadSettings(home: string): Settings {
     approvalMode: "ask",
     showAgentSuggestions: true,
     agentPurpose: "",
+    provisionedChatUid: "",
+    provisionedChatLabel: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     launchAtLoginDefaulted: false,

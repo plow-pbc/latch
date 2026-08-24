@@ -6,10 +6,11 @@ import {
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
+  activationChatLabel,
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
-import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
+import { ActivationChat, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
@@ -18,6 +19,23 @@ const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
+
+/** The chat a `provision_chat` activation creates: the assigned pool line, and
+ * the person who texted it. */
+const CHAT: ActivationChat = {
+  uid: "cht_D7hfWNK",
+  status: "active",
+  providerKey: "+15559876543",
+  createdAt: "2026-08-24T18:02:11Z",
+  participants: [
+    { displayName: "Ada Lovelace", providerKey: "+15551230000" },
+    { displayName: "", providerKey: "+15559876543" },
+  ],
+};
+
+type FakeRedeem =
+  | { status: "pending" }
+  | { status: "verified"; token: string | null; chat?: ActivationChat | null };
 
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
@@ -29,8 +47,10 @@ class FakePlow {
 
   /** Activations minted, newest last — one per `POST /v1/auth/activate`. */
   activations: string[] = [];
-  /** Redeem answers, consumed in order; the last one repeats forever. */
-  redeems: Array<ActivationRedeem | PlowApiError> = [{ status: "pending" }];
+  /** Redeem answers, consumed in order; the last one repeats forever. `chat`
+   * is optional here and defaults to none, so a test only names it when the
+   * chat is what it is about. */
+  redeems: Array<FakeRedeem | PlowApiError> = [{ status: "pending" }];
   redeemCalls: string[] = [];
 
   api(): PlowApi {
@@ -65,7 +85,8 @@ class FakePlow {
     this.redeemCalls.push(secret);
     const next = this.redeems.length > 1 ? this.redeems.shift()! : this.redeems[0];
     if (next instanceof PlowApiError) throw next;
-    return next;
+    if (next.status === "pending") return next;
+    return { status: "verified", token: next.token, chat: next.chat ?? null };
   }
 
   async requestOtp(phone: string): Promise<void> {
@@ -181,6 +202,76 @@ describe("activation — the path a brand-new user takes", () => {
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
+  });
+
+  it("keeps the chat the redeem carried, and shows the number the server assigned", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+
+    const shown = await onboarding.begin();
+    // The screen shows the line THIS activation was assigned. The chat is only
+    // provisioned if the code lands on that line, so a number chosen here would
+    // sign the user in and silently create nothing.
+    expect(shown.activation?.sendTo).toBe("+15550001111");
+    await settle();
+
+    // Read once and kept: the redeem hands the chat back exactly once, so a
+    // later window has no way to ask for it again.
+    const settings = loadSettings(home);
+    expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
+    expect(settings.provisionedChatLabel).toBe("+15559876543 · Ada Lovelace");
+    expect(onboarding.state().chat).toEqual({
+      uid: "cht_D7hfWNK",
+      label: "+15559876543 · Ada Lovelace",
+    });
+    // A fresh window on the same home still knows about it.
+    expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
+  });
+
+  it("leaves a stored chat alone when a redeem carries none", async () => {
+    // "This redeem carried no chat" is not "the account has no chat": the
+    // phone-code path never carries one, and neither does a redeem from a Plow
+    // that predates chats. Blanking on that answer would erase a chat the
+    // account really has, and nothing can re-read the redeem to get it back.
+    const seeded = loadSettings(home);
+    seeded.provisionedChatUid = "cht_ALREADY";
+    seeded.provisionedChatLabel = "+15559876543 · Ada Lovelace";
+    saveSettings(home, seeded);
+
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(loadSettings(home).provisionedChatUid).toBe("cht_ALREADY");
+    expect(onboarding.state().chat?.uid).toBe("cht_ALREADY");
+  });
+
+  it("has no chat to show on a Mac whose activation never made one", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(onboarding.state().chat).toBeNull();
+  });
+
+  it("names a chat by its line and its members — a chat has no title", () => {
+    expect(activationChatLabel(CHAT)).toBe("+15559876543 · Ada Lovelace");
+    // The line is not repeated as a member, even though Plow is on both sides.
+    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+15559876543");
+    // A member with no name is still identified by the number we do have.
+    expect(
+      activationChatLabel({
+        ...CHAT,
+        providerKey: null,
+        participants: [{ displayName: "  ", providerKey: "+15551230000" }],
+      }),
+    ).toBe("+15551230000");
+    // Nothing to say but the uid beats an empty line on the last setup screen.
+    expect(activationChatLabel({ ...CHAT, providerKey: null, participants: [] })).toBe("cht_D7hfWNK");
   });
 
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
@@ -706,6 +797,22 @@ describe("signing out", () => {
     plow.redeems = [{ status: "pending" }];
     return onboarding;
   }
+
+  it("forgets the chat too — the next sign-in may be a different account", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    expect(loadSettings(home).provisionedChatUid).toBe("cht_D7hfWNK");
+
+    signOutOfPlow(home);
+
+    // Leaving it would name a chat this Mac can no longer reach on the setup
+    // screen of whatever account signs in next.
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).provisionedChatLabel).toBe("");
+    expect(onboarding.reset().chat).toBeNull();
+  });
 
   it("the reported path: signing out leaves a window that is NOT connected", async () => {
     // The instance outlives the sign-out, and the constructor is the only other

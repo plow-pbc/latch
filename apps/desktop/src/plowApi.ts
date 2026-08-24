@@ -116,9 +116,38 @@ export interface Activation {
   displayCode: string;
   /** A SECRET: it is the poll credential. Never rendered, never logged. */
   activationSecret: string;
-  /** Per-environment config — the managed phone, or the assigned chat line.
-   * Render what the API returned; a hardcoded number is wrong somewhere. */
+  /**
+   * The pool line this activation was assigned. **Render this and nothing
+   * else.** The chat is provisioned only if the code arrives *on the assigned
+   * line*, so texting the right code to a number the app picked activates the
+   * account and silently provisions no chat — a failure with no symptom until
+   * the cloud-agent screen has nothing to point at.
+   */
   sendTo: string;
+}
+
+/** One member of the provisioned chat, as the redeem returns it. */
+export interface ActivationChatParticipant {
+  displayName: string;
+  /** The member's handle — a phone number, when the server has one. */
+  providerKey: string | null;
+}
+
+/**
+ * The chat the activation created.
+ *
+ * A chat has no title and no last-activity field, so what identifies it to a
+ * human is its line number plus its members' names. Nothing here is a secret:
+ * it is the same data `GET /v1/chats` hands back, and the renderer may see it.
+ */
+export interface ActivationChat {
+  uid: string;
+  /** `pending` until the member verifies; `active` after. */
+  status: string;
+  /** The line the chat lives on — the number the user just texted. */
+  providerKey: string | null;
+  participants: ActivationChatParticipant[];
+  createdAt: string;
 }
 
 /**
@@ -131,7 +160,38 @@ export interface Activation {
  */
 export type ActivationRedeem =
   | { status: "pending" }
-  | { status: "verified"; token: string | null };
+  | { status: "verified"; token: string | null; chat: ActivationChat | null };
+
+/**
+ * Read the chat out of a verified redeem, tolerating a server that sends less
+ * than we expect.
+ *
+ * Defensive on purpose: this is display data on the last screen of setup, and a
+ * field arriving in an unexpected shape must not throw away a sign-in that has
+ * already succeeded. Anything unreadable becomes `null` — "no chat to show" —
+ * never an error.
+ */
+export function parseActivationChat(raw: unknown): ActivationChat | null {
+  if (!raw || typeof raw !== "object") return null;
+  const chat = raw as Record<string, unknown>;
+  const uid = typeof chat.uid === "string" ? chat.uid : "";
+  if (!uid) return null;
+  const participants = Array.isArray(chat.participants)
+    ? chat.participants
+        .filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
+        .map((p) => ({
+          displayName: typeof p.display_name === "string" ? p.display_name : "",
+          providerKey: typeof p.provider_key === "string" ? p.provider_key : null,
+        }))
+    : [];
+  return {
+    uid,
+    status: typeof chat.status === "string" ? chat.status : "",
+    providerKey: typeof chat.provider_key === "string" ? chat.provider_key : null,
+    participants,
+    createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
+  };
+}
 
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -146,12 +206,19 @@ export class PlowApi {
    * Start an activation: the server mints a code, the user texts it, and the
    * account is created from that text. Outbound, so it works for a phone number
    * that has never touched Plow and cannot be used to probe who has an account.
+   *
+   * `provision_chat` is what makes the account have a chat at all. Without it
+   * the server falls back to the managed phone, which is not a pool line, so
+   * the text activates and creates nothing — and a 1:1 sent to a pool line with
+   * no chat behind it is dropped, so there is no second way in later. With it,
+   * a pool line is assigned, comes back as `send_to`, and the webhook
+   * provisions the chat when the code lands there.
    */
   async createActivation(name: string): Promise<Activation> {
     const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
       "POST",
       "/v1/auth/activate",
-      { body: { name } },
+      { body: { name, provision_chat: true } },
     );
     return {
       displayCode: data.display_code,
@@ -164,14 +231,20 @@ export class PlowApi {
    * Has the text arrived yet? `410` means the code expired *without* being
    * completed — the server honours a completion that raced past the deadline,
    * so a 410 is authoritative and a local clock is not.
+   *
+   * The verified answer also carries the chat the activation provisioned. Like
+   * the token it is read exactly once, so it is kept here rather than parsed
+   * away: a second redeem cannot get it back.
    */
   async redeemActivation(activationSecret: string): Promise<ActivationRedeem> {
-    const data = await this.call<{ status: string; token?: string }>(
+    const data = await this.call<{ status: string; token?: string; chat?: unknown }>(
       "POST",
       "/v1/auth/activate/redeem",
       { body: { activation_secret: activationSecret } },
     );
-    if (data.status === "verified") return { status: "verified", token: data.token ?? null };
+    if (data.status === "verified") {
+      return { status: "verified", token: data.token ?? null, chat: parseActivationChat(data.chat) };
+    }
     return { status: "pending" };
   }
 

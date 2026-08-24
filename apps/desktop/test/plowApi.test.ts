@@ -5,6 +5,7 @@ import {
   PlowApi,
   REQUEST_TIMEOUT_MS,
   PlowApiError,
+  parseActivationChat,
   relaySocketUrl,
   resolveApiBaseUrl,
 } from "../src/plowApi.js";
@@ -209,7 +210,13 @@ describe("PlowApi", () => {
     const activation = await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac");
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "This Mac" });
+    // `provision_chat` is what makes the account have a chat at all: without it
+    // the server hands back the managed phone, which is not a pool line, so the
+    // activation text creates no chat and there is no second way to make one.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      name: "This Mac",
+      provision_chat: true,
+    });
     // Unauthenticated by design — this is how an account that does not exist yet
     // gets created.
     expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
@@ -229,13 +236,71 @@ describe("PlowApi", () => {
     });
     expect(
       await api([{ status: 200, body: { status: "verified", token: "plow_sess" } }]).redeemActivation("s"),
-    ).toEqual({ status: "verified", token: "plow_sess" });
+    ).toEqual({ status: "verified", token: "plow_sess", chat: null });
     // A second redeem after hand-off: `token` is absent, not null. Normalised
     // to null here so callers have one shape to check.
     expect(await api([{ status: 200, body: { status: "verified" } }]).redeemActivation("s")).toEqual({
       status: "verified",
       token: null,
+      chat: null,
     });
+  });
+
+  it("keeps the chat the verified redeem carries — it is answered exactly once", async () => {
+    const { fetchImpl } = recordingFetch([
+      {
+        status: 200,
+        body: {
+          status: "verified",
+          token: "plow_sess",
+          chat: {
+            uid: "cht_D7hfWNK",
+            status: "active",
+            provider_key: "+15559876543",
+            created_at: "2026-08-24T18:02:11Z",
+            participants: [
+              { display_name: "Ada Lovelace", provider_key: "+15551230000" },
+              { display_name: "Plow", provider_key: "+15559876543" },
+            ],
+          },
+        },
+      },
+    ]);
+    const result = await new PlowApi("https://api.plow.co", fetchImpl).redeemActivation("s");
+
+    expect(result).toEqual({
+      status: "verified",
+      token: "plow_sess",
+      chat: {
+        uid: "cht_D7hfWNK",
+        status: "active",
+        providerKey: "+15559876543",
+        createdAt: "2026-08-24T18:02:11Z",
+        participants: [
+          { displayName: "Ada Lovelace", providerKey: "+15551230000" },
+          { displayName: "Plow", providerKey: "+15559876543" },
+        ],
+      },
+    });
+  });
+
+  it("reads a chat that arrives with fields missing rather than losing the sign-in", () => {
+    // This is display data on the last screen of setup; a shape we did not
+    // expect must never throw away a login that has already succeeded.
+    expect(parseActivationChat({ uid: "cht_x" })).toEqual({
+      uid: "cht_x",
+      status: "",
+      providerKey: null,
+      participants: [],
+      createdAt: "",
+    });
+    expect(parseActivationChat({ uid: "cht_x", participants: [null, 7, {}] })?.participants).toEqual([
+      { displayName: "", providerKey: null },
+    ]);
+    // No uid is no chat: there would be nothing to join on later.
+    expect(parseActivationChat({ status: "active" })).toBeNull();
+    expect(parseActivationChat(undefined)).toBeNull();
+    expect(parseActivationChat("cht_x")).toBeNull();
   });
 
   it("gives an expired activation its own kind, so the app can offer a fresh code", async () => {
