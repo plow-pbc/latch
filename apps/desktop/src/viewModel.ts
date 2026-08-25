@@ -403,20 +403,19 @@ function classifyActivity(
         ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
         : { status: "Scope blocked", tone: "amber", category: "failed" };
     }
-    // Sign-ins the owner does not get back, same as a failed merge above —
-    // that one by accident, this one on purpose, and they filter on outcome.
-    // Ranked under the credential and scope cases, though: this Mac refusing
-    // the agent something is a stronger claim about a session than the agent
-    // deciding to start over. The page's own refusals rank below, being the
-    // far side's word rather than ours.
+    // Sign-ins the owner does not get back — deliberately, unlike the failed
+    // merge, but they filter on the outcome. Where it sits in this chain is
+    // pinned by tests rather than argued here: four rounds of review went into
+    // rewriting an enumeration of the neighbouring cases, and each correction
+    // drifted against a different one. The order is behaviour, so it is a test.
     if (has("browser_profile_reset")) {
       return closed
         ? { status: "Closed · started over", tone: "amber", category: "failed" }
         : { status: "Started over", tone: "amber", category: "failed" };
     }
-    // The page's own server refused what the agent asked it to do — ranked
-    // under a crash, a scope block and a profile reset, all stronger claims
-    // about the session, but well above "Browsing".
+    // The page's own server refused what the agent asked it to do: well above
+    // "Browsing", and under the cases that say something happened to the
+    // session itself.
     if (events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0)) {
       return closed
         ? { status: "Closed · requests refused", tone: "amber", category: "failed" }

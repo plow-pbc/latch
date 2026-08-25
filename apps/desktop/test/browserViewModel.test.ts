@@ -216,10 +216,22 @@ describe("audit grouping for browser sessions", () => {
     },
     // And it stays under a refusal: the cage stopping the agent outranks the
     // agent deciding to start over. Unpinned, that order drifts back silently.
+    // Both directions, because the comment that used to argue this drifted
+    // four rounds running. What this Mac refused the agent outranks the agent
+    // starting over; what the far side refused does not.
     {
       when: "outranked by a scope block",
       close: [{ event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:04Z" }],
       status: "Scope blocked",
+    },
+    {
+      when: "outranking the page's own refusals",
+      close: [{
+        event: "browser_session_closed", session: "S", reason: "agent",
+        failed_requests: [{ status: 403, method: "GET", origin: "costco.com" }],
+        ts: "2026-08-10T10:00:09Z",
+      }],
+      status: "Closed · started over",
     },
   ])("a session that threw its profile away does not read as ordinary browsing ($when)", ({ close, status }) => {
     // Sign-ins the owner does not get back, same as a failed merge — on
