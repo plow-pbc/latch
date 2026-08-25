@@ -122,7 +122,7 @@ function run(dir: string, script: string, args: string[] = [], failing?: string)
       // git themselves, so it has to hold on this side too. The row that needs
       // no repository above it then fails as "the fixture is not what this
       // needs" rather than as a lookup regression.
-      ...hermeticEnv(fs.realpathSync(tmp)),
+      ...hermeticEnv(tmp),
       PATH: `${stubBin}:${process.env.PATH}`,
       JUST_FAIL: failing ?? "",
     },

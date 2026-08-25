@@ -11,6 +11,7 @@
  * run from inside a git hook was building its fixtures in the outer repo.
  */
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 /**
@@ -25,9 +26,12 @@ const DISCOVERY_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX
 
 /**
  * `process.env` with anything that would point git out of the fixture removed.
- * Pass `root` — the directory the fixtures live in, a real path — and discovery
- * is also stopped from climbing above it, for a TMPDIR that itself sits inside
- * a working tree; some CI images do this.
+ * Pass `root` — the directory the fixtures live in — and discovery is also
+ * stopped from climbing above it, for a TMPDIR that itself sits inside a
+ * working tree; some CI images do this. Resolved here rather than by callers:
+ * git real_paths ceiling entries, so an unresolved one is silently ignored
+ * instead of failing, and the first call site added after that obligation was
+ * left with callers duly forgot it.
  *
  * The deletes are unconditional because those variables answer for another
  * repository wherever they are set. The bound is only wanted where a lookup may
@@ -45,7 +49,7 @@ const DISCOVERY_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX
 export function hermeticEnv(root?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const v of DISCOVERY_VARS) delete env[v];
-  if (root) env.GIT_CEILING_DIRECTORIES = path.dirname(root);
+  if (root) env.GIT_CEILING_DIRECTORIES = path.dirname(fs.realpathSync(root));
   return env;
 }
 

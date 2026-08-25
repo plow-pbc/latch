@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { git, hermeticEnv } from "./gitFixture.js";
 
 const script = fileURLToPath(new URL("../scripts/worktree-name.sh", import.meta.url));
@@ -25,7 +25,7 @@ function nameIn(cwd: string, ...args: string[]): string {
   return execFileSync("sh", [script, ...args], {
     cwd,
     encoding: "utf8",
-    env: hermeticEnv(fs.realpathSync(tmp)),
+    env: hermeticEnv(tmp),
   }).trim();
 }
 
@@ -51,13 +51,39 @@ describe("hermeticEnv", () => {
     fs.mkdirSync(root, { recursive: true });
     git(outer, "init", "-q", "-b", "main");
 
-    const said = execFileSync("sh", [script, "--branch"], {
-      cwd: root,
-      encoding: "utf8",
-      env: hermeticEnv(root),
-    }).trim();
+    const say = (env: NodeJS.ProcessEnv) =>
+      execFileSync("sh", [script, "--branch"], { cwd: root, encoding: "utf8", env }).trim();
 
-    expect(said).toBe("");
+    expect(say(hermeticEnv(root))).toBe("");
+    // The premise, without which the line above passes for any reason at all —
+    // a misplaced init, a root moved out from under `outer` — while pinning
+    // nothing. Same guard the setup suite puts on its own comparison: the outer
+    // repository has to be REACHABLE but for the ceiling.
+    expect(say({ ...hermeticEnv(root), GIT_CEILING_DIRECTORIES: fs.realpathSync(root) })).toBe("main");
+  });
+
+  it("keeps an ambient GIT_DIR from swallowing a fixture's own init", () => {
+    // The other half, and the half that started all of this: git exports these
+    // to every hook it runs, so a suite run from the post-commit hook built its
+    // fixtures in the outer repository — an init that inits nothing, a commit
+    // that lands elsewhere. Verified by hand once and held by prose until now,
+    // which is exactly what was wrong with the ceiling.
+    const hooked = path.join(tmp, "hooked");
+    fs.mkdirSync(hooked, { recursive: true });
+    git(hooked, "init", "-q", "-b", "main");
+    const fresh = path.join(tmp, "fresh");
+    fs.mkdirSync(fresh, { recursive: true });
+
+    vi.stubEnv("GIT_DIR", path.join(hooked, ".git"));
+    try {
+      git(fresh, "init", "-q", "-b", "main");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    // Emptied of the deletes, the init operates on the ambient GIT_DIR and this
+    // never appears.
+    expect(fs.existsSync(path.join(fresh, ".git"))).toBe(true);
   });
 });
 
