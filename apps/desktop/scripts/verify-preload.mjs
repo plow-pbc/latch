@@ -167,8 +167,24 @@ ipcMain.handle("vault:item", async () => ({
   urls: ["https://notion.so"],
   notes: "",
 }));
-ipcMain.handle("vault:reveal", async () => "revealed-secret");
-ipcMain.handle("vault:saveItem", async () => ({ id: "itm1" }));
+// Holdable, so a check can look at the pane WHILE a vault call is in flight.
+// A deferred promise, not a delay: the check runs when the call is provably in
+// flight and releases it explicitly, so no amount of scheduling jitter can let
+// the reveal finish first.
+let holdReveal = false;
+let releaseReveal = null;
+ipcMain.handle("vault:reveal", async () => {
+  if (holdReveal) await new Promise((r) => { releaseReveal = r; });
+  return "revealed-secret";
+});
+// Holdable like the reveal, so a check can act while a SAVE is in flight — the
+// transaction that ends by replacing the pane, which a held reveal never does.
+let holdSave = false;
+let releaseSave = null;
+ipcMain.handle("vault:saveItem", async () => {
+  if (holdSave) await new Promise((r) => { releaseSave = r; });
+  return { id: "itm1" };
+});
 ipcMain.handle("vault:deleteItem", async () => true);
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 // No browsing session: the audit screen's live thumbnail stays hidden.
@@ -939,6 +955,10 @@ app.whenReady().then(async () => {
       `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false;
          n.value = ${JSON.stringify(value)}; n.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
     const asking = () => js(() => !!document.querySelector(".vaultui .confirm-overlay"));
+    // Fire-and-forget: selectTab's promise stays pending until the confirm is
+    // answered, so awaiting it would deadlock against the click that answers it.
+    const leaveTab = (tab) => win.webContents.executeJavaScript(
+      `(() => { window.__domoSelectTab(${JSON.stringify(tab)}); return true; })()`);
     const CONFIRM = ".vaultui .confirm-overlay";
     const waitAsking = () => waitFor(win, `document.querySelector("${CONFIRM}")`, "the discard confirmation");
     const waitAnswered = () => waitFor(win, `!document.querySelector("${CONFIRM}")`, "the confirmation to close");
@@ -997,11 +1017,7 @@ app.whenReady().then(async () => {
     await waitAnswered();
     const rowStaysOpenOnKeep = await js(() => !!document.querySelector(".vaultui .vitem.open"));
 
-    // And so is walking off the tab entirely. Fire-and-forget on purpose:
-    // selectTab's promise stays pending until the confirm is answered, so
-    // awaiting it here would deadlock against the click that answers it.
-    const leaveTab = (tab) => win.webContents.executeJavaScript(
-      `(() => { window.__domoSelectTab(${JSON.stringify(tab)}); return true; })()`);
+    // And so is walking off the tab entirely.
     await leaveTab("rules");
     await waitAsking();
     const dirtyBlocksTabSwitch =
@@ -1071,6 +1087,112 @@ app.whenReady().then(async () => {
     const consentClosesTheForm = await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`,
       "the approved form to be taken away").then(() => true).catch(() => false);
 
+    // ---- An edit that ends where it started is not an edit ----
+    // Daniel -> Carlos -> Daniel leaves nothing to save, so leaving must not
+    // ask. Start from a row opened clean, so the baseline is what is stored.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the revert check");
+    await click(".vaultui .vitem .vrow");
+    const BOX = ".vaultui .vitem.open input[data-name='1']";
+    await waitFor(win, `document.querySelector("${BOX}")`, "a freshly opened row");
+    const original = await js(() => document.querySelector(".vaultui .vitem.open input[data-name='1']").value);
+
+    // Away from the original, leaving DOES ask - without this the revert below
+    // would pass on a form that simply never went dirty.
+    await type(BOX, original + "-changed");
+    await leaveTab("rules");
+    await waitAsking();
+    const editedStillAsks = await asking();
+    await click(KEEP);
+    await waitAnswered();
+
+    // Back to the original: nothing to save, so nothing is asked.
+    await type(BOX, original);
+    await leaveTab("rules");
+    const revertedSwitched = await waitFor(win,
+      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      "the tab to switch with nothing left to save").then(() => true).catch(() => false);
+    const revertAskedNothing = revertedSwitched && !(await asking());
+
+    // Revealing a secret fills the box from the vault. Looking is not editing.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the reveal check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret .eye")`, "the reveal button");
+    await click(".vaultui .vitem.open .field.secret .eye");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
+      "the secret to land in the box");
+    await leaveTab("rules");
+    const revealSwitched = await waitFor(win,
+      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      "the tab to switch after only looking").then(() => true).catch(() => false);
+    const revealAloneIsClean = revealSwitched && !(await asking());
+    // Leave nothing open behind this block: a dialog still up would deadlock
+    // the next awaited __domoSelectTab in the sections that follow.
+    if (await asking()) { await click(DISCARD); await waitAnswered(); }
+    await leaveTab("rules");
+    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "a clean exit from the vault block");
+
+    // ---- A form with a vault call in flight takes no input ----
+    // Every one of those awaits ends by overwriting or replacing the form, so a
+    // keystroke landing mid-flight is lost. Disabling only the control that was
+    // clicked left that window open three separate times.
+    holdReveal = true;
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the busy check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret .eye")`, "the eye for the busy check");
+    await click(".vaultui .vitem.open .field.secret .eye");
+    await waitForNode(() => releaseReveal !== null, "the reveal to be in flight");
+    // Mid-flight the WHOLE pane is inert, not just the form that asked: the
+    // reload replaces the pane, so a sibling row edited meanwhile would go with
+    // it. Both the name box and every OTHER row must be inside that subtree.
+    const frozenWhileBusy = await js(() => {
+      const pane = document.querySelector(".vaultui[inert]");
+      return !!pane
+        && !!pane.querySelector("input[data-name='1']")
+        && pane.querySelectorAll(".vrow").length === document.querySelectorAll(".vaultui .vrow").length;
+    });
+    releaseReveal();
+    releaseReveal = null;
+    holdReveal = false;
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
+      "the held reveal to land once released");
+    const thawedAfterBusy = await js(() => !document.querySelector(".vaultui[inert]"));
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`, "the busy-check row to close");
+
+    // ---- Cmd-W during an in-flight SAVE must still get an answer ----
+    // The question is drawn INSIDE the pane, which is inert while the call runs.
+    // Raised then it could not be answered, and the reload that ends a
+    // successful save would detach it unanswered — stranding main's no-timeout
+    // wait and every later close. A held SAVE is the transaction that reloads;
+    // a held reveal never replaces the pane and would miss this entirely.
+    holdSave = true;
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the close-during-save check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row for the close-during-save check");
+    await type(".vaultui .vitem.open input[data-name='1']", "edited-then-saved");
+    await click(".vaultui .vitem.open .btn.save");
+    await waitForNode(() => releaseSave !== null, "the save to be in flight");
+
+    let busyCloseAnswer = null;
+    const onBusyReply = (_e, ok) => { busyCloseAnswer = ok; };
+    ipcMain.on("ui:confirmLeaveReply", onBusyReply);
+    win.webContents.send("ui:confirmLeave");
+    const noDialogUnderInert = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
+
+    releaseSave();
+    releaseSave = null;
+    holdSave = false;
+    // The save landed and released the form, so there is nothing left to ask
+    // about: main gets its answer, and no dialog is orphaned behind the reload.
+    const closeAnsweredAfterSave = await waitForNode(() => busyCloseAnswer !== null,
+      "main's answer once the save landed").then(() => busyCloseAnswer === true).catch(() => false);
+    ipcMain.removeListener("ui:confirmLeaveReply", onBusyReply);
+    const noOrphanedDialog = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
+
     vaultItemsReply = { locked: true, reason: "undecryptable" };
     return {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
@@ -1079,6 +1201,9 @@ app.whenReady().then(async () => {
       reselectingVaultKeepsTheForm,
       oneDialogForTwoAskers, refusalIsReported, refusedCloseKeepsTheForm,
       consentClosesTheForm,
+      editedStillAsks, revertAskedNothing, revealAloneIsClean,
+      frozenWhileBusy, thawedAfterBusy,
+      noDialogUnderInert, closeAnsweredAfterSave, noOrphanedDialog,
     };
   })();
 
@@ -1174,6 +1299,14 @@ app.whenReady().then(async () => {
     vaultUnsaved.refusalIsReported &&
     vaultUnsaved.refusedCloseKeepsTheForm &&
     vaultUnsaved.consentClosesTheForm &&
+    vaultUnsaved.editedStillAsks &&
+    vaultUnsaved.revertAskedNothing &&
+    vaultUnsaved.revealAloneIsClean &&
+    vaultUnsaved.frozenWhileBusy &&
+    vaultUnsaved.thawedAfterBusy &&
+    vaultUnsaved.noDialogUnderInert &&
+    vaultUnsaved.closeAnsweredAfterSave &&
+    vaultUnsaved.noOrphanedDialog &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&

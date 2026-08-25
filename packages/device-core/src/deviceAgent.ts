@@ -28,6 +28,7 @@ import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
+import { registerWhatsappSkill } from "./whatsappSkill.js";
 
 /**
  * A delegate that denies because the adversarial reviewer could not run for
@@ -128,13 +129,30 @@ export class DeviceAgent {
     name: string,
     private readonly delegate: PolicyDelegate,
     browserRuntime?: ResolvedBrowserRuntime | null,
+    /**
+     * The owner's real home — where their apps put their data, which is NOT
+     * `home` (a DOMO_HOME a test points at a throwaway root). Defaults to
+     * `home` rather than `os.homedir()` so nothing in here reads ambient OS
+     * state: the desktop app is the only caller that knows the real one, and
+     * it passes it. A test or a non-desktop caller gets its own isolated root
+     * and a manifest that does not depend on the machine running the suite.
+     */
+    ownerHome: string = home,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"));
     this.skills = new SkillRegistry();
-    this.skills.loadDir(path.join(home, "device/skills"));
+    // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
+    // messages on the real machine, while `home` is a DOMO_HOME a test points
+    // at a throwaway root. It is a parameter rather than an `os.homedir()` read
+    // in here so construction stays hermetic: otherwise a DeviceAgent built in
+    // a test publishes a different manifest depending on whether the developer
+    // happens to have WhatsApp installed. Presence is sampled ONCE, here — the
+    // same start-time answer `browserRuntime` gives, so installing WhatsApp
+    // while the app is running needs a restart to publish the skill.
+    registerWhatsappSkill(this.skills, ownerHome);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -232,6 +250,12 @@ export class DeviceAgent {
       this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(this.browserConfig, credentials, auditFn);
     }
+    // LAST, so the owner's own file wins. `register` is a Map.set, so whoever
+    // goes last takes the name — and a skill the owner wrote into their own
+    // DOMO_HOME is a deliberate act that a built-in default should not
+    // silently discard. Built-ins are what this Mac ships; these are what its
+    // owner said instead.
+    this.skills.loadDir(path.join(home, "device/skills"));
   }
 
   /**

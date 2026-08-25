@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("domo", {
   vaultItems: () => ipcRenderer.invoke("vault:items"),
   vaultItem: (itemId: string) => ipcRenderer.invoke("vault:item", itemId),
   vaultReveal: (itemId: string, field: string) => ipcRenderer.invoke("vault:reveal", itemId, field),
+  // The code the key produces — with `key` set, for one being typed.
+  vaultTotp: (itemId: string | null, key?: string) => ipcRenderer.invoke("vault:totp", itemId, key),
   vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
   vaultDeleteItem: (itemId: string) => ipcRenderer.invoke("vault:deleteItem", itemId),
   // What the owner says agents are for. The renderer's only route to the text
