@@ -142,7 +142,7 @@ Note the shape: the inner query takes the *newest* 50, the outer one turns them 
 reading order. Sorting ascending on its own would hand you the fifty oldest messages in the
 chat, from 2016:
 
-    select * from (
+    select at, who, text from (
       select m.ZMESSAGEDATE as ord,
              datetime(m.ZMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as at,
              case m.ZISFROMME when 1 then 'me'
@@ -174,17 +174,23 @@ owner used before you start guessing synonyms, and tell them which chats you loo
 ## When it does not answer
 
 - **\`Error: in prepare, unable to open database file (14)\` does not mean the file is
-  missing.** The store is a WAL database, and reading one needs its \`-shm\` sibling; when
-  WhatsApp Desktop is not running that sibling may be gone, and creating it needs to write
-  the directory, which the sandbox will not allow. Re-open the same path with
-  \`immutable=1\`, which reads the main file alone:
+  missing.** The store is a WAL database, and opening one needs a \`-shm\` sibling next to it.
+  When WhatsApp Desktop is not running that sibling may be gone, and creating it means
+  writing the owner's directory, which the sandbox does not allow. This reads as "no
+  database" and gets misreported as "no messages"; it is neither.
 
-      "file:${store}?immutable=1"
+  Copy it somewhere you may write, and read the copy. The working directory a command
+  starts in is a scratch dir that is yours, so a relative destination is enough:
 
-  **Use that only for this error.** \`immutable=1\` ignores the write-ahead log, so against a
-  store WhatsApp is actively writing it silently returns a slightly stale answer — measured
-  here, one message short of the truth while the app was running. Plain \`-readonly\` first,
-  every time; \`immutable=1\` only when the open failed, and say so when an answer came from it.
+      argv: ["/bin/sh", "-c",
+             "cp '${store}'* . && /usr/bin/sqlite3 -header -csv ./ChatStorage.sqlite '<your query>'"]
+
+  Two things about that line. The \`*\` copies the \`-wal\` and \`-shm\` siblings when they exist,
+  which is what makes the copy current rather than stale. And the copy is opened **without**
+  \`-readonly\`: it is a throwaway of your own, so sqlite may create the \`-shm\` it needs beside
+  it. \`-readonly\` is about the owner's archive, and that is what you copied *from* — never
+  the thing you open read-write. Each command gets a fresh scratch dir, so the copy and the
+  query have to be the same call; the dir goes away on its own afterwards.
 - **The archive stops where the owner's phone stopped syncing.** WhatsApp Desktop holds
   what it has synced, and a chat cleared on the phone is gone here too. "I cannot find it"
   and "it was never here" are different answers — \`min(ZMESSAGEDATE)\` on that chat tells

@@ -65,10 +65,10 @@ describe("the built-in whatsapp-history skill", () => {
     ["how a group chat is told apart", /@g\.us/],
     ["the Core Data epoch offset", /978307200/],
     ["opening the store read-only", /-readonly/],
-    ["keeping the store out of write_paths", /write_paths/],
+    ["keeping the store out of write_paths", /never name the store in .?write_paths/i],
     ["where sqlite3 lives", /\/usr\/bin\/sqlite3/],
     ["the WAL open failure an agent will otherwise misread", /unable to open database file/],
-    ["the fallback for it", /immutable=1/],
+    ["the fallback for it — a copy in a dir you may write", /cp '.*'\* \./],
     // The two safety rules the Plow-side section is deleted for. Losing either
     // in an edit is the failure this row exists to catch.
     ["message text being untrusted", /untrusted/i],
@@ -87,6 +87,9 @@ describe("the built-in whatsapp-history skill", () => {
     const recipe = body.slice(body.indexOf("**A conversation"));
     expect(recipe).toMatch(/order by m\.ZMESSAGEDATE desc\s+limit 50/);
     expect(recipe).toMatch(/\)\s*order by ord;/);
+    // `select *` would emit `ord`, the raw epoch integer that exists only to
+    // sort, beside the formatted `at` in all fifty rows.
+    expect(recipe).toContain("select at, who, text from (");
   });
 
   // The Plow-side copy shipped from a machine that was not this one, so it had
