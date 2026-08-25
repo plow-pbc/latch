@@ -42,12 +42,7 @@ import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
-import {
-  CloudAgentState,
-  CloudChatsClient,
-  resolveCloudAgentsEnabled,
-  tabShowsCloudAgents,
-} from "./cloudAgentState.js";
+import { CloudAgentState, CloudChatsClient, tabShowsCloudAgents } from "./cloudAgentState.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
@@ -143,10 +138,6 @@ const home = instance.home;
  * developer env-var override a developer exports when they want another relay.
  */
 const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
-/* Tier-3 cloud-agent endpoints are in flight, not deployed, so the whole group
- * is off unless this run turns it on. Read once: a flag that can change under a
- * running app is a state nobody tested. */
-const cloudAgentsEnabled = resolveCloudAgentsEnabled(process.env);
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -1058,7 +1049,6 @@ app.whenReady().then(async () => {
     agents: new CloudAgentsClient(apiBaseUrl),
     chats: new CloudChatsClient(apiBaseUrl),
     home,
-    enabled: cloudAgentsEnabled,
     onChange: () => notifyRenderer("connect:changed"),
   });
 

@@ -35,18 +35,6 @@ import {
 import { CloudAgentLocalSettings, loadSettings, saveSettings } from "./settings.js";
 
 /**
- * The feature flag. Tier-3 endpoints are in flight, not deployed, so the whole
- * group is **off** unless a developer turns it on for this run — there is no
- * user-facing setting to leave in the wrong position when the API lands.
- */
-export const CLOUD_AGENTS_ENV = "DOMO_CLOUD_AGENTS";
-
-export function resolveCloudAgentsEnabled(env: Record<string, string | undefined>): boolean {
-  const raw = ((env ?? {})[CLOUD_AGENTS_ENV] ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "on";
-}
-
-/**
  * Does landing on this tab put the cloud group on screen?
  *
  * The renderer reaches the Agents tab two ways — a click, which persists the
@@ -74,7 +62,6 @@ export interface CloudChatOption {
  * failure that makes setup unavailable or mislabel a background refresh.
  */
 export interface CloudAgentsUiState {
-  cloudEnabled: boolean;
   cloudAgents: CloudAgentDisplayRow[];
   /** An agent-list failure, and nothing else. */
   cloudAgentsError: string | null;
@@ -132,22 +119,8 @@ export interface CloudAgentStateDeps {
   agents: CloudAgentsApi;
   chats: CloudChatsApi;
   home: string;
-  /** The feature flag, read once at construction. */
-  enabled: boolean;
   onChange?: () => void;
 }
-
-const EMPTY_STATE: CloudAgentsUiState = Object.freeze({
-  cloudEnabled: false,
-  cloudAgents: [],
-  cloudAgentsError: null,
-  cloudChatsError: null,
-  cloudActionError: null,
-  cloudChats: [],
-  cloudChatsLoaded: false,
-  cloudSendTo: null,
-  cloudAgentSettings: {},
-});
 
 export class CloudAgentState {
   /** Keyed on `agent_id`, which is stable for the agent's whole life. */
@@ -199,10 +172,8 @@ export class CloudAgentState {
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
   state(): CloudAgentsUiState {
-    if (!this.deps.enabled) return { ...EMPTY_STATE };
     const settings = loadSettings(this.deps.home);
     return {
-      cloudEnabled: true,
       cloudAgents: [...this.rows.values()].sort(byNewestFirst),
       cloudAgentsError: this.agentsError,
       cloudChatsError: this.chatsError,
@@ -222,7 +193,6 @@ export class CloudAgentState {
    * 403s still leaves the roster on screen.
    */
   async refresh(): Promise<void> {
-    if (!this.deps.enabled) return;
     const credential = this.credential();
     if (!credential) return;
     const generation = this.generation;
@@ -242,7 +212,6 @@ export class CloudAgentState {
    * `agent_id` comes back so `retry` can carry local settings onto it.
    */
   async create(chatUid: string, name: string): Promise<string | null> {
-    if (!this.deps.enabled) return null;
     this.actionError = null;
     const chat = (chatUid ?? "").trim();
     if (!chat) return this.failAction("Pick the chat this agent will answer in.");
@@ -276,7 +245,6 @@ export class CloudAgentState {
 
   /** Remove an agent — the machine and its hold on the chat, not just a key. */
   async remove(agentId: string): Promise<void> {
-    if (!this.deps.enabled) return;
     this.actionError = null;
     const id = (agentId ?? "").trim();
     if (!id) return;
@@ -317,7 +285,6 @@ export class CloudAgentState {
    * user made about an agent they think of as the same one.
    */
   async retry(agentId: string): Promise<void> {
-    if (!this.deps.enabled) return;
     this.actionError = null;
     const id = (agentId ?? "").trim();
     const row = id ? this.rows.get(id) : undefined;
@@ -376,7 +343,6 @@ export class CloudAgentState {
    * source of truth about the agent.
    */
   async apply(agentId: string, settings: { adversarialReview: boolean }): Promise<void> {
-    if (!this.deps.enabled) return;
     const id = (agentId ?? "").trim();
     if (!id) return;
 
@@ -625,9 +591,10 @@ export class CloudChatsClient implements CloudChatsApi {
     }
 
     if (response.status === 403) {
-      // A 403 does not say whether the credential or the deployment lacks the
-      // required scope. State the limitation, then offer the one local remedy
-      // as something to try rather than claiming it will fix the server.
+      // 403 has no screen of its own, so the remedy has to be in the sentence.
+      // What it must NOT do is name a cause: a credential minted before
+      // `chats:use` is the likely one, but the server says only that this
+      // token was refused, and re-activating is the move either way.
       throw new PlowApiError(
         "forbidden",
         "This Mac cannot list chats yet. Try re-activating it, then try again.",

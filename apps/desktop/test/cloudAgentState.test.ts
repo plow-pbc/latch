@@ -18,7 +18,6 @@ import {
   CloudChatOption,
   CloudChatsApi,
   CloudChatsClient,
-  resolveCloudAgentsEnabled,
 } from "../src/cloudAgentState.js";
 import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
 import { PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
@@ -138,8 +137,8 @@ function fakes(opts: {
   };
 }
 
-function build(home: string, f: Fakes, enabled = true): CloudAgentState {
-  return new CloudAgentState({ agents: f.agents, chats: f.chats, home, enabled });
+function build(home: string, f: Fakes): CloudAgentState {
+  return new CloudAgentState({ agents: f.agents, chats: f.chats, home });
 }
 
 describe("the real client", () => {
@@ -167,29 +166,25 @@ describe("which tab refreshes the group", () => {
   });
 });
 
-describe("the feature flag", () => {
-  it("is off unless this run turns it on", () => {
-    expect(resolveCloudAgentsEnabled({})).toBe(false);
-    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: "" })).toBe(false);
-    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: "0" })).toBe(false);
-    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: "1" })).toBe(true);
-    expect(resolveCloudAgentsEnabled({ DOMO_CLOUD_AGENTS: " TRUE " })).toBe(true);
-  });
-
-  it("keeps the group empty and makes no request while it is off", async () => {
+describe("before anything has been read", () => {
+  it("claims nothing about the account rather than reporting it empty", async () => {
     const f = fakes({ list: async () => [agent()] });
-    const state = build(tempHome(), f, false);
+    const state = build(tempHome(), f);
 
-    await state.refresh();
-    await state.create("cht_1", "Kitchen agent");
-
+    // Constructed and not yet refreshed: no request has been made, so there is
+    // nothing to say. `cloudChatsLoaded` false is what keeps this from reading
+    // as "this account has no chats" — the same distinction a failed list
+    // relies on.
     expect(f.agents.calls).toEqual([]);
-    expect(state.state()).toMatchObject({
-      cloudEnabled: false,
+    expect(state.state()).toEqual({
       cloudAgents: [],
+      cloudAgentsError: null,
+      cloudChatsError: null,
+      cloudActionError: null,
       cloudChats: [],
       cloudChatsLoaded: false,
       cloudSendTo: null,
+      cloudAgentSettings: {},
     });
   });
 });
@@ -459,7 +454,6 @@ describe("provisioning", () => {
       agents: f.agents,
       chats: f.chats,
       home: tempHome(),
-      enabled: true,
       onChange: () => changes.push(1),
     });
 
@@ -870,7 +864,6 @@ describe("the local settings write", () => {
     const state = new CloudAgentState({
       ...fakes({ list: async () => [agent()] }),
       home: tempHome(),
-      enabled: true,
       onChange: () => changes.push(1),
     });
     const before = changes.length;
@@ -935,17 +928,6 @@ describe("the local settings write", () => {
     await state.refresh();
 
     expect(state.state().cloudAgentSettings.agent_1.adversarialReview).toBe(true);
-  });
-
-  it("writes nothing while the flag is off", async () => {
-    const home = tempHome();
-    const f = fakes();
-    const state = build(home, f, false);
-
-    await state.apply("agent_1", { adversarialReview: true });
-
-    expect(f.agents.calls).toEqual([]);
-    expect(loadSettings(home).cloudAgentSettings).toEqual({});
   });
 
   it("ignores an empty agent id", async () => {
@@ -1049,7 +1031,6 @@ describe("a cancelled provision", () => {
       agents: client,
       chats: { async list() { return CHATS; } },
       home,
-      enabled: true,
     });
 
     await state.create("cht_1", "Kitchen agent");
@@ -1174,8 +1155,7 @@ describe("a 403 from the real chat endpoint", () => {
         // elsewhere in this file stand in for.
         chats: new CloudChatsClient("https://api.plow.co", fetchLike),
         home,
-        enabled: true,
-      }),
+        }),
     };
   }
 
