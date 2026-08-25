@@ -151,6 +151,17 @@ describe("CloudAgentsClient request contracts", () => {
     expect(JSON.stringify(calls)).not.toContain(`/${CREDENTIAL}`);
   });
 
+  it("accepts both bare and enveloped list responses", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 200, body: [] },
+      { status: 200, body: { object: "list", data: [resource("active")], has_more: false } },
+    ]);
+    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
+
+    await expect(client.list(CREDENTIAL)).resolves.toEqual([]);
+    await expect(client.list(CREDENTIAL)).resolves.toEqual([fromWire(resource("active"))]);
+  });
+
   it("treats deleting an already-gone agent as success", async () => {
     const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Not found" } }]);
     await expect(

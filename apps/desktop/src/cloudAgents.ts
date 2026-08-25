@@ -127,10 +127,15 @@ export class CloudAgentsClient {
     if (!response.ok) throw errorFor(response.status, await decodeJson(response), deviceCredential);
 
     const decoded = await decodeJson(response);
-    if (!isRecord(decoded) || !Array.isArray(decoded.data)) {
+    const data = Array.isArray(decoded)
+      ? decoded
+      : isRecord(decoded) && Array.isArray(decoded.data)
+        ? decoded.data
+        : null;
+    if (!data) {
       throw invalidResponse(response.status);
     }
-    return decoded.data.map((entry) => parseResource(entry, deviceCredential, response.status));
+    return data.map((entry) => parseResource(entry, deviceCredential, response.status));
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
