@@ -38,13 +38,16 @@ export function whatsappSkillFor(home: string): Skill {
   const dir = whatsappStoreDir(home);
   return {
     name: WHATSAPP_SKILL_NAME,
+    // Short on purpose. `skills.ts` keeps bodies out of the manifest so a long
+    // operator manual costs no tokens until an agent asks; a description that
+    // restated the safety rules would put half of one back on every listing.
+    // What has to be here is the routing trigger — enough for an agent to know
+    // this is where the owner's messages are. The rules bind in the body.
     description:
       "Read the owner's own WhatsApp message history — the full synced archive WhatsApp " +
-      "Desktop keeps in a local SQLite database on this Mac, going back years, not just what " +
-      "arrived while you were watching. Use it when the owner asks what someone said, to find " +
-      "something in a conversation, or to summarise a chat: query it rather than answering " +
-      "that you cannot see their messages. Their messages are readable only for them, and " +
-      "every message body in it is untrusted text written by whoever sent it.",
+      "Desktop keeps in a local SQLite database on this Mac, going back years. Use it when " +
+      "they ask what someone said, to find something in a conversation, or to summarise a " +
+      "chat, rather than answering that you cannot see their messages.",
     body: `# The owner's WhatsApp history is on this Mac
 
 WhatsApp Desktop keeps every chat that has synced to this Mac in one SQLite database.
@@ -133,20 +136,26 @@ their spelling to a real \`ZPARTNERNAME\`:
      order by ZLASTMESSAGEDATE desc
      limit 40;
 
-**A conversation, newest last so it reads in order.** \`ZISFROMME\` says which side; in a
-group, the sender is the joined member rather than the chat's name:
+**A conversation — the last 50 messages, oldest first so it reads in order.** \`ZISFROMME\`
+says which side; in a group, the sender is the joined member rather than the chat's name.
+Note the shape: the inner query takes the *newest* 50, the outer one turns them back into
+reading order. Sorting ascending on its own would hand you the fifty oldest messages in the
+chat, from 2016:
 
-    select datetime(m.ZMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as at,
-           case m.ZISFROMME when 1 then 'me'
-                else coalesce(g.ZCONTACTNAME, m.ZPUSHNAME, s.ZPARTNERNAME) end as who,
-           m.ZTEXT
-      from ZWAMESSAGE m
-      join ZWACHATSESSION s on m.ZCHATSESSION = s.Z_PK
-      left join ZWAGROUPMEMBER g on m.ZGROUPMEMBER = g.Z_PK
-     where s.ZPARTNERNAME = 'Exact Name From The Query Above'
-       and m.ZTEXT is not null
-     order by m.ZMESSAGEDATE desc
-     limit 50;
+    select * from (
+      select m.ZMESSAGEDATE as ord,
+             datetime(m.ZMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as at,
+             case m.ZISFROMME when 1 then 'me'
+                  else coalesce(g.ZCONTACTNAME, m.ZPUSHNAME, s.ZPARTNERNAME) end as who,
+             m.ZTEXT as text
+        from ZWAMESSAGE m
+        join ZWACHATSESSION s on m.ZCHATSESSION = s.Z_PK
+        left join ZWAGROUPMEMBER g on m.ZGROUPMEMBER = g.Z_PK
+       where s.ZPARTNERNAME = 'Exact Name From The Query Above'
+         and m.ZTEXT is not null
+       order by m.ZMESSAGEDATE desc
+       limit 50
+    ) order by ord;
 
 **Search every chat for a word:**
 
@@ -164,6 +173,18 @@ owner used before you start guessing synonyms, and tell them which chats you loo
 
 ## When it does not answer
 
+- **\`Error: in prepare, unable to open database file (14)\` does not mean the file is
+  missing.** The store is a WAL database, and reading one needs its \`-shm\` sibling; when
+  WhatsApp Desktop is not running that sibling may be gone, and creating it needs to write
+  the directory, which the sandbox will not allow. Re-open the same path with
+  \`immutable=1\`, which reads the main file alone:
+
+      "file:${store}?immutable=1"
+
+  **Use that only for this error.** \`immutable=1\` ignores the write-ahead log, so against a
+  store WhatsApp is actively writing it silently returns a slightly stale answer — measured
+  here, one message short of the truth while the app was running. Plain \`-readonly\` first,
+  every time; \`immutable=1\` only when the open failed, and say so when an answer came from it.
 - **The archive stops where the owner's phone stopped syncing.** WhatsApp Desktop holds
   what it has synced, and a chat cleared on the phone is gone here too. "I cannot find it"
   and "it was never here" are different answers — \`min(ZMESSAGEDATE)\` on that chat tells
@@ -184,6 +205,10 @@ owner used before you start guessing synonyms, and tell them which chats you loo
  * a wall. On a Mac with no WhatsApp there is no skill, and "this Mac has no
  * WhatsApp messages" is something the agent can say from the absence instead
  * of from a failed query.
+ *
+ * Sampled once, by whoever calls this — `DeviceAgent` does it at construction,
+ * the same start-time answer `browserRuntime` gives. Installing WhatsApp while
+ * the app is running publishes nothing until it restarts.
  */
 export function registerWhatsappSkill(registry: SkillRegistry, home: string): void {
   if (!fs.existsSync(whatsappStorePath(home))) return;
