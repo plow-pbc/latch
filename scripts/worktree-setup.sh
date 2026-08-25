@@ -101,11 +101,12 @@ else
         [ -d "$candidate" ] || continue
         candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
         usable "$candidate" || continue
-        # Worth naming only if it has something to give; whether that something
-        # is current is settled by the build, not here. An `if` rather than a
-        # `&&`: this is the loop's last command, so under `set -e` a final
-        # candidate that does not qualify would abort the whole setup.
-        if [ -d "$candidate/vendor/python-runtime" ]; then
+        # Worth naming only if it has something to give — the first payload
+        # stands for that, being the one every runtime has and the slow half to
+        # rebuild. An `if` rather than a `&&`: this is the loop's last command,
+        # so under `set -e` a final candidate that does not qualify would abort
+        # the whole setup.
+        if [ -e "$candidate/vendor/${payloads%% *}" ]; then
           printf '%s\n' "$candidate"
         fi
       done
@@ -119,7 +120,12 @@ else
       echo "  without a runtime. Nearby checkouts with one to copy:" >&2
       # One path per line, unsplit: a checkout directory may contain spaces.
       printf '%s\n' "$candidates" | while IFS= read -r candidate; do
-        [ -n "$candidate" ] && echo "    $candidate" >&2
+        # `if`, for the reason the scan above uses one: this is the last command
+        # of the loop, the loop is the right half of a pipeline, and pipefail
+        # would hand a false test straight to errexit.
+        if [ -n "$candidate" ]; then
+          echo "    $candidate" >&2
+        fi
       done
       exit 1
     fi

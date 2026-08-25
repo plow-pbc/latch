@@ -20,16 +20,19 @@ import { git } from "./gitFixture.js";
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPTS = ["worktree-setup.sh", "worktree-name.sh"];
 /** The vendor dirs a runtime is made of, as the script under test names them. */
-const PAYLOADS = /payloads="([^"]+)"/
-  .exec(fs.readFileSync(path.join(repo, "scripts/worktree-setup.sh"), "utf8"))![1]
-  .split(" ");
+const PAYLOADS = (() => {
+  const m = /^payloads="([^"]+)"$/m.exec(fs.readFileSync(path.join(repo, "scripts/worktree-setup.sh"), "utf8"));
+  // Loudly, and naming the cause: a reformat of that assignment would otherwise
+  // surface as an unreadable TypeError at module load.
+  if (!m) throw new Error("could not find the payloads= assignment in worktree-setup.sh");
+  return m[1].split(" ");
+})();
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const stubBin = path.join(tmp, "bin");
 
-/** A checkout carrying this repo's real scripts and the two real pin files. */
 /** This repo's real scripts and pin files, in a directory that is to run them. */
 function stage(dir: string): void {
   fs.mkdirSync(path.join(dir, "vendor", "browser-server"), { recursive: true });
@@ -307,6 +310,18 @@ describe("worktree-setup.sh", () => {
       donor: (parent) => checkout(parent, "slot1", ["downloads"]),
       says: "no vendor/python-runtime to clone",
       landed: "downloads",
+    },
+    {
+      why: "beside a sibling that is a checkout but has nothing to give",
+      // The other outcome the errexit bug destroyed: no donor to inherit, one
+      // neighbour that qualifies as a checkout but has no runtime, so there is
+      // nothing to offer and setup carries on rather than refusing — or, as it
+      // did, aborting on the scan's own last test.
+      donor: (parent) => {
+        checkout(parent, "slot1", []);
+        return undefined;
+      },
+      says: "nothing nearby to copy from",
     },
     {
       why: "with nothing nearby to name at all",
