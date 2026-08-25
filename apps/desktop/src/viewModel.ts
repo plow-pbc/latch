@@ -614,6 +614,12 @@ function describeStep(e: JSONValue): AuditStep {
         + `could not be kept hidden on screen, so ${ev.get("action").str ?? "the view"} was refused`;
       state = "bad";
       break;
+    case "browser_profile_reset":
+      // The one destructive thing a browser session does on its own authority,
+      // so the timeline has to say what it cost rather than print a token.
+      text = "Browser signed out and started over — a site had flagged it. Nothing it does now is saved.";
+      state = "bad";
+      break;
     case "browser_crashed":
       text = `Browser crashed (code ${ev.get("code").int ?? -1})`;
       state = "bad";

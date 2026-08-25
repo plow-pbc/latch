@@ -709,8 +709,13 @@ export const TOOLS: ToolSpec[] = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    deferrable: false,
-    async run(args, ctx) {
+    // A close asks nobody anything, but it now waits behind a reset in flight —
+    // which is a browser start, the one thing here that can outlast the relay's
+    // per-exchange ceiling. Deferring costs nothing when it doesn't: a handle
+    // is only minted once the budget is actually spent.
+    deferrable: true,
+    async run(args, ctx, progress) {
+      progress.decided();
       const session = jv(args).get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
       // The device answers with an error for a handle it does not know, and
