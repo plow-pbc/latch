@@ -38,7 +38,12 @@ checkout=$(sh scripts/worktree-name.sh --branch)
 # Named on the command line, or inherited when this is a linked worktree.
 # runtime-donor.sh owns both, and what makes one usable.
 donor=${1:-}
-if [ -n "$donor" ]; then
+# An explicit "set up without one" — for a checkout that will fetch its own, or
+# whose neighbours you would rather not copy. Without it a refusal has no way
+# past, and the refusal happens before install and build.
+if [ "$donor" = "--no-donor" ]; then
+  donor=""
+elif [ -n "$donor" ]; then
   sh scripts/runtime-donor.sh --check "$donor" || {
     echo "error: $donor is not a usable donor for this checkout." >&2
     echo "  It needs vendor/python-runtime built from these pins, and any" >&2
@@ -49,17 +54,23 @@ if [ -n "$donor" ]; then
   donor=$(cd "$donor" && pwd -P)
 else
   donor=$(sh scripts/runtime-donor.sh)
-  # Nothing to inherit. If something nearby WOULD serve, that is the human's
+  # Nothing inherited. If something nearby WOULD serve, that is the human's
   # call to make and not this script's — see runtime-donor.sh. With nothing
   # nearby either there is nothing to choose between, so carry on and let the
   # per-payload notes below say what did not come across.
   if [ -z "$donor" ]; then
     candidates=$(sh scripts/runtime-donor.sh --candidates)
     if [ -n "$candidates" ]; then
-      echo "error: this checkout is not a linked worktree, so it has no donor to" >&2
-      echo "  inherit. Pass one. Nearby checkouts with a runtime built from these" >&2
-      echo "  pins:" >&2
-      printf '    %s\n' $candidates >&2
+      # Two ways to get here — not a linked worktree, or one whose parent
+      # checkout has no usable runtime either — and the answer is the same, so
+      # say what is true of both rather than guessing which.
+      echo "error: this checkout has no donor to inherit, and will not adopt a" >&2
+      echo "  neighbour on its own. Name one, or pass --no-donor to set up" >&2
+      echo "  without a runtime. Nearby checkouts built from these pins:" >&2
+      # One path per line, unsplit: a checkout directory may contain spaces.
+      printf '%s\n' "$candidates" | while IFS= read -r candidate; do
+        [ -n "$candidate" ] && echo "    $candidate" >&2
+      done
       exit 1
     fi
   fi

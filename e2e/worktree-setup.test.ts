@@ -24,11 +24,13 @@ const PAYLOADS = execFileSync("sh", [path.join(repo, "scripts/runtime-donor.sh")
 })
   .trim()
   .split("\n");
-/** The file each payload's build writes last — see runtime-donor.sh. */
-const MARKERS: Record<string, string> = {
-  "python-runtime": ".stamp",
-  "camoufox-browser": "arm64/.sha256",
-  "vault-server": ".web-vault.sha256",
+/** Every file a payload needs before it counts as built — see runtime-donor.sh. */
+const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
+const MARKERS: Record<string, string[]> = {
+  "python-runtime": [".stamp"],
+  "camoufox-browser": [`${ARCH}/.sha256`],
+  "vault-server": [".web-vault.sha256", `${ARCH}/.commit`],
+  "vault-cli": [`${ARCH}/.sha256`],
 };
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
@@ -54,11 +56,11 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
     // Named so a copy that landed a directory deeper is distinguishable from
     // one that landed right — the dir itself exists either way.
     fs.writeFileSync(path.join(dir, "vendor", p, "payload-marker"), p);
-    const marker = MARKERS[p];
-    if (!marker) continue;
-    const at = path.join(dir, "vendor", p, marker);
-    fs.mkdirSync(path.dirname(at), { recursive: true });
-    fs.writeFileSync(at, "built\n");
+    for (const marker of MARKERS[p] ?? []) {
+      const at = path.join(dir, "vendor", p, marker);
+      fs.mkdirSync(path.dirname(at), { recursive: true });
+      fs.writeFileSync(at, "built\n");
+    }
   }
   git(dir, "init", "-q", "-b", branch ?? "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
@@ -133,11 +135,29 @@ describe("worktree-setup.sh", () => {
 
     const { stdout, stderr } = runSetupExpectingRefusal(asking);
 
-    expect(stderr).toMatch(/not a linked worktree/);
+    expect(stderr).toMatch(/will not adopt a\s+neighbour on its own/);
     expect(stderr).toContain(fs.realpathSync(neighbour));
     // And it stopped before the work, rather than building over a copy it
     // never made.
     expect(stdout).not.toContain("stub just");
+  });
+
+  it("sets up with no runtime at all when told to", () => {
+    // The way past the refusal above. Without it a checkout beside any usable
+    // neighbour could not be set up at all, since the refusal precedes install
+    // and build — a worse trap than the one it was guarding against.
+    const parent = fs.mkdtempSync(path.join(tmp, "nodonorflag-"));
+    checkout(parent, "slot1", PAYLOADS);
+    const asking = checkout(parent, "slot0", []);
+
+    const out = runSetup(asking, "--no-donor");
+
+    expect(out).toContain("nothing nearby to copy from");
+    expect(out).toContain("no vendor/vault-server to clone");
+    expect(out).toContain("stub just build");
+    expect(out).toContain("is ready.");
+    // Named as a flag, not adopted as a path.
+    expect(fs.existsSync(path.join(asking, "vendor", "python-runtime"))).toBe(false);
   });
 
   it("refuses a named donor whose runtime is not usable here", () => {

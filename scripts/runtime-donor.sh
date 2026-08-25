@@ -42,13 +42,25 @@ self=$(cd "$root" && pwd -P)
 # donor simply cannot give, while a present one without its marker is a fetch
 # still in flight — and copying that hands over a payload missing most of
 # itself, which the recipient's `already present` arm then keeps forever.
+# What browserRuntime.ts will look for. Only this arch's trees matter: a donor
+# holding the other one carries nothing this checkout can run.
+arch=$(uname -m)
+
 unfinished() {
   case $2 in
     python-runtime) [ ! -f "$1/vendor/python-runtime/.stamp" ] ;;
-    # Per-arch, or the lipo-fused universal tree — whichever this donor built.
-    camoufox-browser) ! ls "$1"/vendor/camoufox-browser/*/.sha256 >/dev/null 2>&1 ;;
-    vault-server) [ ! -f "$1/vendor/vault-server/.web-vault.sha256" ] ;;
-    # vault-cli is an unpacked archive and writes no marker of its own.
+    # Per-arch, or the lipo-fused universal tree — camoufoxIn() takes either,
+    # in that order, so a donor needs whichever of the two it built.
+    camoufox-browser)
+      [ ! -f "$1/vendor/camoufox-browser/$arch/.sha256" ] &&
+        [ ! -f "$1/vendor/camoufox-browser/universal/.sha256" ] ;;
+    # Two builds, and the cheap one finishes first: fetchVaultWebUi() runs
+    # ahead of the vaultwarden compile, so .web-vault.sha256 alone would call a
+    # donor ready while the Rust build it needs is still running.
+    vault-server)
+      [ ! -f "$1/vendor/vault-server/.web-vault.sha256" ] ||
+        [ ! -f "$1/vendor/vault-server/$arch/.commit" ] ;;
+    vault-cli) [ ! -f "$1/vendor/vault-cli/$arch/.sha256" ] ;;
     *) false ;;
   esac
 }

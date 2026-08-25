@@ -45,11 +45,17 @@ const OURS = '{"python":"3.12"}';
 const THEIRS = '{"python":"3.11"}';
 const OUR_REQS = "camoufox==1\n";
 
-/** The file each payload's build writes last, relative to its vendor dir. */
-const MARKERS: Record<string, string> = {
-  "python-runtime": ".stamp",
-  "camoufox-browser": "arm64/.sha256",
-  "vault-server": ".web-vault.sha256",
+/**
+ * Every file that has to exist before a payload counts as built, relative to
+ * its vendor dir. vault-server takes two: the web UI is fetched before the
+ * vaultwarden compile, so its marker alone would call a donor ready mid-build.
+ */
+const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
+const MARKERS: Record<string, string[]> = {
+  "python-runtime": [".stamp"],
+  "camoufox-browser": [`${ARCH}/.sha256`],
+  "vault-server": [".web-vault.sha256", `${ARCH}/.commit`],
+  "vault-cli": [`${ARCH}/.sha256`],
 };
 
 interface Spec {
@@ -57,8 +63,12 @@ interface Spec {
   payloads: string[];
   lock?: string;
   reqs?: string;
-  /** A payload to leave without its marker — a fetch caught in flight. */
+  /** A payload to leave with none of its markers — a fetch caught in flight. */
   unfinished?: string;
+  /** One marker path to withhold, when the payload's others should stay. */
+  withoutMarker?: string;
+  /** One extra marker path to write, for the trees a donor may build instead. */
+  alsoMarker?: string;
 }
 
 function checkout(parent: string, spec: Spec): string {
@@ -68,9 +78,16 @@ function checkout(parent: string, spec: Spec): string {
   fs.writeFileSync(path.join(dir, "vendor/browser-server/requirements.txt"), spec.reqs ?? OUR_REQS);
   for (const payload of spec.payloads) {
     fs.mkdirSync(path.join(dir, "vendor", payload), { recursive: true });
-    const marker = MARKERS[payload];
-    if (!marker || payload === spec.unfinished) continue;
-    const at = path.join(dir, "vendor", payload, marker);
+    if (payload === spec.unfinished) continue;
+    for (const marker of MARKERS[payload] ?? []) {
+      const at = path.join(dir, "vendor", payload, marker);
+      fs.mkdirSync(path.dirname(at), { recursive: true });
+      fs.writeFileSync(at, "built\n");
+    }
+  }
+  if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker));
+  if (spec.alsoMarker) {
+    const at = path.join(dir, "vendor", spec.alsoMarker);
     fs.mkdirSync(path.dirname(at), { recursive: true });
     fs.writeFileSync(at, "built\n");
   }
@@ -174,6 +191,31 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       why: "refuses one whose vault server is still being written",
       spec: { name: "d", payloads: FULL, unfinished: "vault-server" },
       usable: false,
+    },
+    {
+      why: "refuses one whose vault binary is compiling behind a fetched web UI",
+      // The half that made this a High: fetchVaultWebUi() runs before the
+      // vaultwarden compile, so the web marker is there for the whole of a
+      // slow Rust build that has produced no binary yet.
+      spec: { name: "d", payloads: FULL, withoutMarker: `vault-server/${ARCH}/.commit` },
+      usable: false,
+    },
+    {
+      why: "refuses one whose vault CLI is still being unpacked",
+      spec: { name: "d", payloads: FULL, unfinished: "vault-cli" },
+      usable: false,
+    },
+    {
+      why: "takes one whose Camoufox is the fused universal tree",
+      // camoufoxIn() accepts either, so a donor that ran --browser-both is
+      // usable even with no per-arch tree of its own.
+      spec: {
+        name: "d",
+        payloads: FULL,
+        withoutMarker: `camoufox-browser/${ARCH}/.sha256`,
+        alsoMarker: "camoufox-browser/universal/.sha256",
+      },
+      usable: true,
     },
   ];
 
