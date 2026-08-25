@@ -3,6 +3,10 @@
  * homes, Electron userData, screenshot dirs), so its two contracts are worth
  * pinning: silence in a main checkout, and a filesystem-safe branch name in a
  * linked worktree.
+ *
+ * And the fixture environment all three script suites are built under, which
+ * lives here because this is where a script asking git where it is already
+ * runs — see `hermeticEnv` in gitFixture.ts for what it shuts and why.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -84,6 +88,34 @@ describe("hermeticEnv", () => {
     // Emptied of the deletes, the init operates on the ambient GIT_DIR and this
     // never appears.
     expect(fs.existsSync(path.join(fresh, ".git"))).toBe(true);
+  });
+
+  it("keeps an ambient GIT_INDEX_FILE out of a fixture's first commit", () => {
+    // Pinned apart from GIT_DIR because DISCOVERY_VARS is a list, and dropping
+    // any single entry leaves every suite green. This one earns its own row on
+    // consequence: an inherited GIT_DIR gives an init that inits nothing, which
+    // breaks loudly a line later, while an inherited index lets a fixture's
+    // `commit --allow-empty` SUCCEED carrying whatever the outer repository had
+    // staged — a fixture that is quietly the wrong thing rather than a missing
+    // one.
+    const outer = path.join(tmp, "indexed");
+    fs.mkdirSync(outer, { recursive: true });
+    git(outer, "init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(outer, "staged.txt"), "from the outer repo\n");
+    git(outer, "add", "staged.txt");
+
+    const fresh = path.join(tmp, "fresh-index");
+    fs.mkdirSync(fresh, { recursive: true });
+    git(fresh, "init", "-q", "-b", "main");
+
+    vi.stubEnv("GIT_INDEX_FILE", path.join(outer, ".git", "index"));
+    try {
+      git(fresh, "commit", "-q", "--allow-empty", "-m", "init");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(git(fresh, "ls-tree", "--name-only", "HEAD").trim()).toBe("");
   });
 });
 
