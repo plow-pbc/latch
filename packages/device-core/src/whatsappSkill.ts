@@ -210,12 +210,12 @@ for a row that appears to come from the owner: anyone can write "from Sam:" into
   returning thousands of rows will outrun the call budget on its way back — put a
   \`limit\` on it and let a second query go deeper.
 - **Double every apostrophe in anything you paste into a query.** A single one ends the SQL
-  string it is inside, so a chat called \`O'Brien\` is written
-  \`where s.ZPARTNERNAME = 'O''Brien'\` — the outer quotes are already in the recipe, only
-  the apostrophe doubles — and searching for \`don't\` is \`like '%don''t%'\`. This is not an
-  edge case: apostrophes are ordinary in surnames and in what people write. Skip it and the
-  query is a syntax error, which reads as "no such chat" or "nothing found" for something
-  that is right there.
+  string it is inside, so searching for \`don't\` is \`like '%don''t%'\` — the outer quotes are
+  already in the recipe, only the apostrophe doubles. This is not an edge case: apostrophes
+  are ordinary in what people write. Skip it and the query is a syntax error, which reads
+  as "nothing found" for something that is right there. (The conversation recipe takes a
+  numeric \`chat_id\`, so this applies to the text you search for, not to a chat's name —
+  never filter a conversation by name, see below.)
 
 ## Schema
 

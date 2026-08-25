@@ -121,9 +121,8 @@ function makeStore(dir: string): string {
         " ZMEMBERJID text, ZCHATSESSION integer);",
       "create table ZWAMESSAGE (ZMESSAGEDATE integer, ZTEXT text, ZCHATSESSION integer," +
         " ZISFROMME integer, ZGROUPMEMBER integer, ZPUSHNAME text);",
-      // Apostrophes in contact names are ordinary, and the conversation recipe
-      // puts the name inside a quoted SQL literal. On the DIRECT chat, because
-      // a surname the owner types is the path that matters.
+      // An apostrophe in a name the search recipe RETURNS: it rides through
+      // the -csv assertions, which is where the quoting has to hold.
       `insert into ZWACHATSESSION values(1, 'O''Brien', '15551234@s.whatsapp.net', ${at(base + 3600)});`,
       `insert into ZWACHATSESSION values(2, 'Book Club', '99887@g.us', ${at(base + 5000)});`,
       `insert into ZWACHATSESSION values(3, 'Wren', '15557777@s.whatsapp.net', ${at(base + 4000)});`,
@@ -205,7 +204,7 @@ describe("the recipes the skill publishes", () => {
   // One case, both renderings. The parsing helper reads with -list; the skill
   // teaches -header -csv, and an agent runs THAT — and the body's claim for it
   // is that it survives commas in message text, so the fixture has one.
-  it("finds a word across chats, and survives the -header -csv it teaches", () => {
+  it("finds a word across chats, survives -header -csv, and breaks on a bare apostrophe", () => {
     const rows = query(store, WHATSAPP_QUERIES.search);
     // Two chats, newest first — the property that distinguishes this recipe
     // from `conversation` is that it spans sessions.
