@@ -229,7 +229,6 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       spec: {
         name: "d",
         payloads: FULL,
-        unfinished: "camoufox-browser",
         withoutPath: `camoufox-browser/${ARCH}`,
         alsoDir: `camoufox-browser/${ARCH}`,
         alsoMarker: "camoufox-browser/universal/.sha256",

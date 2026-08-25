@@ -24,11 +24,12 @@ export const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
  * unfinished.
  */
 export const CONTENTS: Record<string, string[]> = {
-  // In the order fetchBrowser() writes them: the extracted tree first, then
-  // config.json once that finishes, and .sha256 (a MARKER) last of all, after
-  // an addon it pulls over the network. A row can drop either to sit at a
-  // chosen point in the window.
-  "camoufox-browser": [`${ARCH}/browsers/official/placeholder`, `${ARCH}/config.json`],
+  // In the order fetchBrowser() writes them: something inside the extracted
+  // tree first (its real shape is browsers/<repo>/<version>-<sha>/…, which
+  // nothing here needs to match), then config.json once the extraction
+  // finishes, and .sha256 — a MARKER, not listed here — last of all, after an
+  // addon pulled over the network. A row drops one to sit at a chosen point.
+  "camoufox-browser": [`${ARCH}/browsers/extracted-file`, `${ARCH}/config.json`],
 };
 
 /** Every file that must exist before a payload counts as built, under its dir. */
