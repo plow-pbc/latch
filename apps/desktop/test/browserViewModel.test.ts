@@ -205,6 +205,27 @@ describe("audit grouping for browser sessions", () => {
     expect(closeRow.text).toBe(closeText);
   });
 
+  it("a session that threw its profile away does not read as ordinary browsing", () => {
+    // Sign-ins the owner does not get back, same as a failed merge — on
+    // purpose rather than by accident, but they filter on the outcome. Green
+    // here would hide the one destructive thing a session does on its own
+    // authority, and the raw event token is what the row renders without a
+    // case for it, which nothing else would notice.
+    const acts = auditActivities([
+      { event: "browser_session_opened", session: "S", origins: ["costco.com"], ts: "2026-08-10T10:00:00Z" },
+      { event: "browser_profile_reset", session: "S", origins: ["costco.com"], ts: "2026-08-10T10:00:03Z" },
+      { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:09Z" },
+    ]);
+    expect(acts[0]!.status).toBe("Closed · started over");
+    expect(acts[0]!.tone).toBe("amber");
+    expect(acts[0]!.category).toBe("failed");
+    const row = acts[0]!.timeline.find((t) => t.text.includes("started over"))!;
+    expect(row.text).toBe(
+      "Browser started over on an empty profile — costco.com — signed out, and nothing it does now is saved.",
+    );
+    expect(row.state).toBe("bad");
+  });
+
   it("a browser death stands beside the session it took down, not inside it", () => {
     // What production writes when a browser dies under a live session: the
     // session closes as crashed, and BrowserHost separately audits the death

@@ -297,6 +297,13 @@ describe("browser tools (fake runtime)", () => {
     expect((deferrable as (a: JSONValue) => boolean)({ action })).toBe(expected);
   });
 
+  // close() waits on a reset in flight, and a reset is a browser start — the
+  // one thing here that can outlast the relay's per-exchange ceiling. Reverted
+  // to false, the agent gets a torn exchange and no close result.
+  it("plow_browser_close can outlast an exchange, so it defers", () => {
+    expect(TOOLS.find((t) => t.name === "plow_browser_close")!.deferrable).toBe(true);
+  });
+
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const runOnce = async () => {
