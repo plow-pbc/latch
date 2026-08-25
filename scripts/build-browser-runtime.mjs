@@ -561,21 +561,15 @@ function fetchBrowser(arch) {
   // for the whole download+extract, which is exactly what runtime-donor.sh
   // reads to decide a donor is ready. Gone before the work, not after it.
   fs.rmSync(marker, { force: true });
-  // The fused tree's marker too. It records both arch hashes, so a rebuild
-  // that lands the same bytes would leave it honest — but until this one
-  // finishes there is no way to know that, and runtime-donor.sh falls back to
-  // it whenever no per-arch dir exists, which is every moment of this function
-  // before mkdirSync creates one. That is exactly the --browser-both donor
-  // that kept no per-arch tree. Re-earned on the next merge, not assumed —
-  // which costs a re-fuse (minutes of lipo/ditto) when the fused tree was in
-  // fact still good. Worth it: the alternative is handing a recipient a
-  // half-built browser it would then keep.
-  //
-  // The tree, not just its marker, and for the same reason the per-arch tree
-  // below is removed rather than written over: camoufoxIn() resolves on
-  // config.json and never reads .sha256, so a fused tree left standing is a
-  // live candidate the moment no per-arch dir exists — which, on the
-  // single-arch path, nothing would ever come back to rebuild.
+  // And the fused tree, which this rebuild may invalidate. runtime-donor.sh
+  // falls back to it whenever no per-arch dir exists — every moment of this
+  // function before mkdirSync creates one — and camoufoxIn() resolves on
+  // config.json, so leaving it standing keeps it both donor-ready and
+  // runnable while it may be stale. Gone before the download rather than
+  // after, unlike the per-arch tree below, which is kept until the bytes are
+  // in hand so a failed download leaves a working browser: the fused tree has
+  // no such window, because the gate is reading it throughout. Costs a re-fuse
+  // when it was in fact still good; cheaper than serving the old browser.
   fs.rmSync(universalDir, { recursive: true, force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
