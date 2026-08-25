@@ -738,6 +738,17 @@ function cloudCreated(createdAt) {
   return Number.isNaN(date.getTime()) ? "" : `Created ${date.toLocaleDateString()}`;
 }
 
+const pendingCloudCreates = new Map();
+let pendingCloudCreateId = 0;
+
+function visibleCloudAgents(state) {
+  const serverChats = new Set(state.cloudAgents.map((agent) => agent.chatUid));
+  return [
+    ...[...pendingCloudCreates.values()].filter((agent) => !serverChats.has(agent.chatUid)),
+    ...state.cloudAgents,
+  ];
+}
+
 function openCloudPicker(trigger, state, redraw) {
   const newChatValue = "__new_chat__";
   const select = el("select", { class: "text", attrs: { "aria-label": "Chat" } },
@@ -756,7 +767,7 @@ function openCloudPicker(trigger, state, redraw) {
   ]);
   const syncWarning = () => {
     warning.hidden = select.value === newChatValue ||
-      state.cloudAgents.some((agent) => agent.chatUid === select.value);
+      visibleCloudAgents(state).some((agent) => agent.chatUid === select.value);
   };
 
   const cancel = el("button", { class: "btn", text: "Cancel" });
@@ -774,9 +785,31 @@ function openCloudPicker(trigger, state, redraw) {
       el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
       el("span", { text: "Setting up…" }),
     );
-    await window.domo.cloudCreate(select.value, name.value.trim());
+    const chatUid = select.value;
+    const requestedName = name.value.trim();
+    const chat = state.cloudChats.find((option) => option.uid === chatUid);
+    const pendingId = `pending-cloud-${++pendingCloudCreateId}`;
+    pendingCloudCreates.set(pendingId, {
+      agentId: pendingId,
+      name: requestedName || "Cloud agent",
+      chatUid,
+      chatLabel: chat?.label || chatUid,
+      provider: "",
+      status: "provisioning",
+      failureReason: null,
+      createdAt: "",
+      localPending: true,
+    });
+    const request = window.domo.cloudCreate(chatUid, requestedName);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     closeCloudModal();
     await redraw();
+    try {
+      await request;
+    } finally {
+      pendingCloudCreates.delete(pendingId);
+      await redraw();
+    }
   });
   const pickerChildren = [
     el("div", { class: "group-title", text: "Set up a cloud agent" }),
@@ -901,8 +934,14 @@ function cloudAgentRow(agent, state, redraw) {
   settings.addEventListener("click", () => openCloudSettings(settings, agent, state, redraw));
   const remove = el("button", { class: "btn small danger", text: "Remove" });
   remove.addEventListener("click", () => openCloudRemove(remove, agent, redraw));
+  settings.disabled = !!agent.localPending;
+  remove.disabled = !!agent.localPending;
   const actions = [settings, remove];
-  const details = [agent.chatLabel, cloudProvider(agent.provider), cloudCreated(agent.createdAt)].filter(Boolean);
+  const details = [
+    agent.chatLabel,
+    agent.localPending ? null : cloudProvider(agent.provider),
+    cloudCreated(agent.createdAt),
+  ].filter(Boolean);
   return el("div", { class: `item cloud-agent-row cloud-${agent.status}`, attrs: { "data-cloud-agent-id": agent.agentId } }, [
     el("div", { class: "row cloud-agent-heading" }, [
       el("div", { class: "cloud-agent-name", text: agent.name }),
@@ -921,8 +960,9 @@ function cloudAgentRow(agent, state, redraw) {
 }
 
 function cloudAgentList(state, redraw) {
-  if (!state.cloudAgents.length) return null;
-  return el("div", { class: "cloud-agent-list" }, state.cloudAgents.map((agent) =>
+  const agents = visibleCloudAgents(state);
+  if (!agents.length) return null;
+  return el("div", { class: "cloud-agent-list" }, agents.map((agent) =>
     cloudAgentRow(agent, state, redraw),
   ));
 }

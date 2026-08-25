@@ -616,6 +616,9 @@ textarea.text { min-height: 70px; resize: vertical; }
   border: 2px solid var(--border-strong); border-top-color: var(--blue-fg);
   animation: cloud-spin 0.8s linear infinite;
 }
+.btn.primary .cloud-spinner {
+  border-color: rgba(255, 255, 255, 0.45); border-top-color: white;
+}
 @keyframes cloud-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .cloud-spinner { animation: none; }

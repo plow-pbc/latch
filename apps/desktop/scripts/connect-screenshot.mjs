@@ -63,6 +63,9 @@ const CLOUD_READY = {
   cloudSendTo: "+1 (415) 555-0199",
 };
 let cloudFixture = CLOUD_EMPTY;
+let holdCloudCreate = false;
+let releaseCloudCreate = null;
+let cloudCreateInFlight = false;
 
 // Nothing is imported or registered at the top level: Electron does not emit
 // `ready` until this entry module finishes evaluating, and a top-level await
@@ -106,11 +109,19 @@ async function setUp() {
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
-    cloudFixture = {
-      ...cloudFixture,
-      cloudAgents: [{ ...ACTIVE_AGENT, chatUid, name: name || "Cloud agent", status: "provisioning" }],
-      cloudActionError: null,
-    };
+    cloudCreateInFlight = true;
+    try {
+      if (holdCloudCreate) {
+        await new Promise((resolve) => { releaseCloudCreate = resolve; });
+      }
+      cloudFixture = {
+        ...cloudFixture,
+        cloudAgents: [{ ...ACTIVE_AGENT, chatUid, name: name || "Cloud agent", status: "provisioning" }],
+        cloudActionError: null,
+      };
+    } finally {
+      cloudCreateInFlight = false;
+    }
   });
   ipcMain.handle("cloud:delete", async (_e, agentId) => {
     cloudFixture = { ...cloudFixture, cloudAgents: cloudFixture.cloudAgents.filter((a) => a.agentId !== agentId) };
@@ -217,9 +228,23 @@ const SCREENS = [
     cloud: {
       ...CLOUD_READY,
       cloudChats: [CHAT],
-      cloudAgents: [{ ...ACTIVE_AGENT, status: "provisioning" }],
+      cloudAgents: [],
     },
-    prepare: async () => {},
+    prepare: async (win) => {
+      holdCloudCreate = true;
+      await clickText(win, "Set up cloud agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
+      await type(win, `input[aria-label="Agent name"]`, "Household helper");
+      await clickText(win, "Set up agent", 0);
+      await waitFor(win, `!document.querySelector(".cloud-modal")`, "the picker to close during create");
+      await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-spinner")`, "the pending agent row");
+    },
+    after: async () => {
+      releaseCloudCreate?.();
+      while (cloudCreateInFlight) await new Promise((resolve) => setTimeout(resolve, 10));
+      holdCloudCreate = false;
+      releaseCloudCreate = null;
+    },
     expect: ["Household helper", "Setting up…", "Setting up your agent — this takes a minute or two"],
   },
   {
