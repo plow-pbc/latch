@@ -55,6 +55,8 @@ interface Spec {
   unfinished?: string;
   /** One marker path to withhold, when the payload's others should stay. */
   withoutMarker?: string;
+  /** A directory under vendor/ to remove entirely, after markers are written. */
+  withoutPayloadDir?: string;
   /** One extra marker path to write, for the trees a donor may build instead. */
   alsoMarker?: string;
 }
@@ -69,6 +71,9 @@ function checkout(parent: string, spec: Spec): string {
     if (payload !== spec.unfinished) markBuilt(dir, payload);
   }
   if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker));
+  if (spec.withoutPayloadDir) {
+    fs.rmSync(path.join(dir, "vendor", spec.withoutPayloadDir), { recursive: true, force: true });
+  }
   if (spec.alsoMarker) writeMarker(dir, spec.alsoMarker);
   git(dir, "init", "-q", "-b", "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
@@ -185,16 +190,31 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       usable: false,
     },
     {
-      why: "takes one whose Camoufox is the fused universal tree",
-      // camoufoxIn() accepts either, so a donor that ran --browser-both is
-      // usable even with no per-arch tree of its own.
+      why: "takes one whose Camoufox is only the fused universal tree",
+      // A donor that ran --browser-both and kept no per-arch tree. camoufoxIn()
+      // falls through to universal, so this is usable.
+      spec: {
+        name: "d",
+        payloads: FULL,
+        withoutPayloadDir: `camoufox-browser/${ARCH}`,
+        withoutMarker: `camoufox-browser/${ARCH}/.sha256`,
+        alsoMarker: "camoufox-browser/universal/.sha256",
+      },
+      usable: true,
+    },
+    {
+      why: "refuses a mid-extract Camoufox that an older universal tree excuses",
+      // The gap a bare "some marker exists" check leaves open. The per-arch
+      // tree is half-written and the universal one beside it is finished and
+      // stale — and camoufoxIn() PREFERS the per-arch tree, so this is the
+      // browser the recipient would actually load.
       spec: {
         name: "d",
         payloads: FULL,
         withoutMarker: `camoufox-browser/${ARCH}/.sha256`,
         alsoMarker: "camoufox-browser/universal/.sha256",
       },
-      usable: true,
+      usable: false,
     },
   ];
 

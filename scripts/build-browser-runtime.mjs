@@ -872,6 +872,10 @@ function fetchVaultWebUi() {
   const tgz = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
   download(asset.url, asset.sha256, tgz);
   log("extracting vault web ui");
+  // Cleared with the tree it describes, not merely rewritten after: it lives a
+  // level above web-vault/, so leaving it would mark a re-extraction complete
+  // for the whole of its duration — and runtime-donor.sh reads exactly that.
+  fs.rmSync(marker, { force: true });
   fs.rmSync(webRoot, { recursive: true, force: true });
   fs.mkdirSync(webRoot, { recursive: true });
   // The tarball holds a single web-vault/ top level; strip it.
