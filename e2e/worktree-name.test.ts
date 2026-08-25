@@ -97,11 +97,10 @@ describe("hermeticEnv", () => {
     // breaks loudly a line later, while an inherited index lets a fixture's
     // `commit --allow-empty` SUCCEED carrying whatever the outer repository had
     // staged — a fixture that is quietly the wrong thing rather than a missing
-    // one. The fixture has to earn that word: see the blob written below.
-    // One literal, used both places. The mechanism rests on the two being the
-    // SAME bytes — the borrowed index entry's oid has to resolve here — so two
-    // copies two lines apart would let a reword of one silently put the row
-    // back to dying in cache_tree_update, which is what it was just fixed for.
+    // one.
+    //
+    // One literal for both repositories, because the borrowed index entry's oid
+    // only resolves in the second one if the bytes are identical.
     const STAGED = "from the outer repo\n";
     const outer = path.join(tmp, "indexed");
     fs.mkdirSync(outer, { recursive: true });
@@ -112,20 +111,17 @@ describe("hermeticEnv", () => {
     const fresh = path.join(tmp, "fresh-index");
     fs.mkdirSync(fresh, { recursive: true });
     git(fresh, "init", "-q", "-b", "main");
-    // The same bytes, hashed into THIS repo's object database — same content,
-    // same oid, and its own index still empty. Without it the borrowed index
-    // names a blob that lives only in the other repo, `commit` dies building
-    // trees, and the row goes red on the spawn instead of on the assertion —
-    // red for the wrong reason, and proving nothing about the tree.
+    // Hashed into THIS repo's object database, its own index left empty. The
+    // borrowed index names a blob that otherwise lives only in the other repo,
+    // and `commit` would die building trees — red on the spawn rather than on
+    // the assertion, proving nothing about the tree.
     fs.writeFileSync(path.join(fresh, "staged.txt"), STAGED);
     git(fresh, "hash-object", "-w", "staged.txt");
 
-    // The premise, stated here rather than in the comment above: the borrowed
-    // index names a blob THIS repo can resolve. Without it the mutation below
-    // dies building trees and the row goes red without reaching its assertion —
-    // green today either way, which is what makes it worth saying. `cat-file
-    // -e` exits non-zero on an absent object, so this throws rather than fails.
-    git(fresh, "cat-file", "-e", git(outer, "rev-parse", ":staged.txt").trim());
+    // That premise, said in the suite rather than only here — it holds green
+    // either way today, which is what makes it worth asserting.
+    const stagedOid = git(outer, "rev-parse", ":staged.txt").trim();
+    expect(() => git(fresh, "cat-file", "-e", stagedOid)).not.toThrow();
 
     vi.stubEnv("GIT_INDEX_FILE", path.join(outer, ".git", "index"));
     try {
