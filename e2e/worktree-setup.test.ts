@@ -457,15 +457,23 @@ describe("termic-setup.sh", () => {
       // main checkout is a perfectly good git checkout — a `.git` test passes
       // it — and setup still refuses it. So do the layouts that resolve to no
       // checkout at all: a bare clone hosting worktrees, --separate-git-dir.
-      why: "what it resolves to is not a checkout of this repo",
+      why: "what it resolves to is a checkout setup would refuse",
       make: (parent) => {
         const { main, wt } = worktreeOf(parent, PAYLOADS);
-        fs.rmSync(path.join(main, "vendor/browser-server/runtime.lock.json"));
+        fs.rmSync(path.join(main, DONOR_MARKER));
         return wt;
       },
       // And it names the checkout to go and fix, which setup's banner cannot:
       // that offers "name one", which this caller has no way to do.
       says: /note: .*\/main is where this worktree's runtime would come from/,
+    },
+    {
+      // Nothing for the lookup to answer with, and the redirect that keeps
+      // git's own `fatal:` out of Termic's setup log is on the lookup for it —
+      // on the `cd` it read as though it covered this and did not, since
+      // expansions run before redirections. Silence is the whole assertion.
+      why: "there is no repository to ask",
+      make: (parent) => populate(path.join(parent, "loose"), []),
     },
   ];
 
@@ -475,10 +483,11 @@ describe("termic-setup.sh", () => {
     const { stdout: out, stderr } = run(make(parent), "termic-setup.sh");
 
     expect(out).toContain("donor:    none");
-    // Reported only where there is something to report, so the ordinary
-    // main-checkout run stays quiet.
+    // Reported only where there is something to report, and the rest is
+    // silence — not merely "no note", which a stray `fatal:` from the lookup
+    // would satisfy.
     if (says) expect(stderr).toMatch(says);
-    else expect(stderr).not.toContain("note:");
+    else expect(stderr).toBe("");
     // The whole point of not passing a refused donor: these still happen.
     const lines = out.split("\n");
     expect(lines).toContain("stub just install");
