@@ -611,7 +611,12 @@ export const TOOLS: ToolSpec[] = [
     // It carries no image block, so nothing is lost by deferring it.
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     deferrable: (args) => jv(args).get("action").str === "fresh_profile",
-    async run(args, ctx) {
+    async run(args, ctx, progress) {
+      // Nobody is asked about anything here — this rides the session grant and
+      // builds no intent. Left unsaid, a deferred reset mints its handle as
+      // `awaiting_approval` and the envelope tells the owner to expect a
+      // dialog that will never appear.
+      progress.decided();
       const a = jv(args);
       const session = a.get("session").str;
       if (session === null) throw new ToolError("missing 'session'");

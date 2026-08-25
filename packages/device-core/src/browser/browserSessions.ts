@@ -57,6 +57,8 @@ interface Session {
   idleTimer: NodeJS.Timeout | null;
   /** The teardown, once one starts: everybody else waits on this one. */
   closing: Promise<void> | null;
+  /** The profile swap, while one is in flight: same contract as `closing`. */
+  resetting: Promise<void> | null;
 
   handle: string;
   agentId: string;
@@ -277,6 +279,7 @@ export class BrowserSessions {
       handle,
       host,
       fresh,
+      resetting: null,
       profile,
       auditId: digest(handle),
       idleTimer: null,
@@ -391,32 +394,83 @@ export class BrowserSessions {
    * earned, which is why this is an action rather than something chosen at
    * open. Nothing is merged: what this profile holds is the thing being
    * escaped, and the whole point is that it reaches neither the owner's
-   * profile nor the next session. It grants nothing, so it asks nobody; the
-   * owner's log is where it shows up.
+   * profile nor the next session. It grants nothing, so it asks nobody.
+   *
+   * Shaped like close(): the swap is published on the session BEFORE the first
+   * await, because requests are served concurrently and everything here is
+   * destructive. Without it a second reset — the agent's natural move when the
+   * first one is slow — tears down and re-creates again, leaving the browser
+   * in between running with nobody to close it and its profile deleted out
+   * from under it. Ordinary actions refuse in that window too (see validate).
    */
   async freshProfile(handle: string): Promise<JSONValue> {
     const s = this.sessions.get(handle);
     if (!s) return { status: "error", error: "unknown session" };
-    // A session on its way out has already published its teardown; swapping a
-    // browser under it would leave one running that nobody will close.
     if (s.closing) return { status: "error", error: "session is closing" };
-    // The shutdown below is deliberate. Left armed, the old host's crash hook
-    // would read it as a death and finalize the session we are reviving.
-    s.host.onCrash = undefined;
-    const headed = s.host.headed;
-    await s.host.shutdown();
-    if (this.browser.profileDir) {
-      fs.rmSync(path.join(this.browser.profileDir, s.profile), { recursive: true, force: true });
+    // A second caller joins the first rather than racing it, and gets the same
+    // answer: one reset happened, and the session is on a clean profile.
+    if (s.resetting) {
+      await s.resetting;
+      return { status: "completed", session: handle, origins: s.origins };
     }
-    // Both halves, before the new browser exists: the close path must not
-    // merge this session back either, whichever way it ends.
-    s.fresh = true;
-    s.host = this.newHost(s.profile, true);
-    s.host.onCrash = () => this.noteCrash(handle);
-    await s.host.ensureReady(headed);
+    // Before the destructive step, the same order extend() uses: the owner's
+    // log must not be missing the line for a session that stopped owning
+    // anything, and after a failed reset there may be no session left to write
+    // it. A reset that then fails is followed by its own closed line.
     this.audit("browser_profile_reset", { session: s.auditId, origins: s.origins });
-    s.lastActivity = Date.now();
+
+    const swap = (async () => {
+      // The shutdown is deliberate; left armed, the old host's crash hook would
+      // read it as a death and finalize the session we are reviving.
+      s.host.onCrash = undefined;
+      const headed = s.host.headed;
+      await s.host.shutdown();
+      for (const dir of this.sessionDirs(s.profile)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+      // Both halves, before the new browser exists: the close path must not
+      // merge this session back either, whichever way it ends.
+      s.fresh = true;
+      // The new browser is on one blank page. Left stale, the session stays
+      // locked out against a URL that no longer exists, shows the owner's
+      // viewer a page it is not on, and audits its first navigation as a
+      // transition from somewhere it has never been.
+      s.lastUrl = "";
+      s.knownPageCount = 1;
+      s.host = this.newHost(s.profile, true);
+      s.host.onCrash = () => this.noteCrash(handle);
+      await s.host.ensureReady(headed);
+      s.lastActivity = Date.now();
+    })();
+    s.resetting = swap;
+    try {
+      await swap;
+    } catch (error: unknown) {
+      // The profile is already gone and the browser did not come back. A
+      // session left registered here holds one of this Mac's few browser slots
+      // with a dead host behind it, so it goes the way any dead session goes.
+      s.resetting = null;
+      s.closing = this.finalize(s, "reset failed");
+      await s.closing;
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "error", error: `browser failed to restart: ${message}` };
+    } finally {
+      s.resetting = null;
+    }
     return { status: "completed", session: handle, origins: s.origins };
+  }
+
+  /**
+   * Everything this session wrote that a site could recognise it by, which is
+   * everything named after its profile: the profile itself and the isolated
+   * HOME the browser process caches into. Screenshots are the owner's record
+   * of what was done for them, not the site's view of who they are, and stay.
+   */
+  private sessionDirs(profile: string): string[] {
+    return [
+      ...(this.browser.profileDir ? [path.join(this.browser.profileDir, profile)] : []),
+      ...(this.browser.isolatedHome ? [path.join(this.browser.isolatedHome, profile)] : []),
+    ];
   }
 
   /** A browser on this session's own clone of the user's profile. */
@@ -688,6 +742,9 @@ export class BrowserSessions {
     // its way out, and the widening would be audited for a session that ends
     // a moment later.
     if (s.closing) return "this browser is closing";
+    // Same window, same reason: the host this action would be sent to is being
+    // torn down and replaced, and its profile directory deleted underneath it.
+    if (s.resetting) return "this browser is starting over on a fresh profile";
     return s;
   }
 

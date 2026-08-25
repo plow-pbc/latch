@@ -940,6 +940,44 @@ db.commit()`,
     expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
+  it("one reset happens however many ask for it, and nothing drives the browser mid-swap", async () => {
+    // A slow reset is exactly when the agent tries again, and every step of it
+    // is destructive: without a published marker the second caller tears down
+    // the browser the first just started and deletes the profile under it.
+    const events: string[] = [];
+    const { sessions, profiles } = signedIn({ audit: (event) => events.push(event) });
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
+
+    const [first, second] = await Promise.all([
+      sessions.freshProfile(handle),
+      sessions.freshProfile(handle),
+    ]);
+    expect(jv(first).get("status").str).toBe("completed");
+    expect(jv(second).get("status").str).toBe("completed");
+    // One reset, one browser, one profile — not two of any of them.
+    expect(events.filter((e) => e === "browser_profile_reset")).toHaveLength(1);
+    expect(fs.readdirSync(profiles)).toHaveLength(1);
+
+    // And the session still works afterwards, which is the point of resetting
+    // in place rather than opening another one.
+    const acted = await sessions.command(handle, { action: "url" });
+    expect(jv(acted).get("status").str).toBe("completed");
+  });
+
+  it.each([
+    ["a handle nobody holds", "unknown session"],
+    ["a session already closing", "session is closing"],
+  ])("refuses to reset %s", async (_name, expected) => {
+    const { sessions } = signedIn();
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
+    const target = expected === "unknown session" ? "no-such-handle" : handle;
+    if (target === handle) void sessions.close(handle, "agent");
+
+    const result = jv(await sessions.freshProfile(target));
+    expect(result.get("status").str).toBe("error");
+    expect(result.get("error").str).toBe(expected);
+  });
+
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {
     // A swallowed merge failure that also removed the clone would lose the
     // sign-in silently — the exact thing this feature exists to prevent.

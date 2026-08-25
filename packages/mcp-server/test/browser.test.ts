@@ -289,8 +289,12 @@ describe("browser tools (fake runtime)", () => {
     ["fresh_profile", true],
     ["screenshot", false],
   ])("%s decides deferral on what it was asked to do", (action, expected) => {
-    const spec = TOOLS.find((t) => t.name === "plow_browser")!;
-    expect(typeof spec.deferrable === "function" && spec.deferrable({ action })).toBe(expected);
+    const { deferrable } = TOOLS.find((t) => t.name === "plow_browser")!;
+    // Asserted on its own: folded into the row below as `typeof x === "function"
+    // && x(...)`, a revert to a plain `false` — the bug this exists to catch —
+    // leaves the screenshot row green and only fails the other one.
+    expect(typeof deferrable).toBe("function");
+    expect((deferrable as (a: JSONValue) => boolean)({ action })).toBe(expected);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {

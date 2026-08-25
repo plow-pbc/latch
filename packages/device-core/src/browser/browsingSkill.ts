@@ -8,22 +8,6 @@ import { Skill } from "../skills.js";
 import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
 
 /**
- * Why this Mac's browser is the one that answers a live-web question, in ONE
- * place. Three surfaces said it in three independent wordings — the server
- * instructions, `plow_browser_open`, and the skill description below — which
- * meant three prose edits and a regex guard to keep them in step. They
- * interpolate this instead.
- *
- * Every clause is a fact the agent's own fetch cannot match, and none of them
- * overstates: the profile really is a copy of the user's, so "already signed
- * in" is description rather than promise. DOMO_BROWSER_FRESH_PROFILE=1 is the
- * one thing that falsifies it, and this copy deliberately does not mention it
- * — an operator sets it to reproduce a bot block on a run they are watching,
- * and an agent cannot see it, cannot act on it, and would carry the caveat in
- * every session that does not have it set. The skill body below is where the
- * agent learns it can drop the profile itself, which it CAN see and act on.
- */
-/**
  * What `plow_browser` will accept as an `action`, in ONE place.
  *
  * Same reason as LIVE_WEB_ROUTING below: three surfaces named these — the JSON
@@ -39,6 +23,22 @@ export const BROWSER_ACTIONS = [
   "fresh_profile",
 ] as const;
 
+/**
+ * Why this Mac's browser is the one that answers a live-web question, in ONE
+ * place. Three surfaces said it in three independent wordings — the server
+ * instructions, `plow_browser_open`, and the skill description below — which
+ * meant three prose edits and a regex guard to keep them in step. They
+ * interpolate this instead.
+ *
+ * Every clause is a fact the agent's own fetch cannot match, and none of them
+ * overstates: the profile really is a copy of the user's, so "already signed
+ * in" is description rather than promise. DOMO_BROWSER_FRESH_PROFILE=1 is the
+ * one thing that falsifies it, and this copy deliberately does not mention it
+ * — an operator sets it to reproduce a bot block on a run they are watching,
+ * and an agent cannot see it, cannot act on it, and would carry the caveat in
+ * every session that does not have it set. The skill body below is where the
+ * agent learns it can drop the profile itself, which it CAN see and act on.
+ */
 export const LIVE_WEB_ROUTING =
   "their browser runs on their own network rather than a datacenter address many sites " +
   "refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is " +

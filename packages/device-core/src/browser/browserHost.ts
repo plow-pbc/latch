@@ -181,15 +181,16 @@ export class BrowserHost {
 
   /**
    * Start the browser if it isn't already running and resolve once it's ready.
-   * Called from plow_browser_open (a deferrable tool) so the ~30s cold start is paid
-   * there, absorbed by the deferred handle, rather than by a later
-   * non-deferrable action that would blow the relay's per-exchange ceiling.
+   * Called only from tools that can absorb the ~30s cold start in a deferred
+   * handle — plow_browser_open, and plow_browser's `fresh_profile`, which is
+   * deferrable for this reason alone. A non-deferrable caller would blow the
+   * relay's per-exchange ceiling.
    *
    * `headed` is the session's choice; a session that says nothing gets the app
    * default back, so one agent's window mode never becomes everybody's.
-   * Camoufox fixes the window mode at launch, and this is the only caller, so
-   * the mode is simply chosen for the next start — closing a session already
-   * shut the previous browser down.
+   * Camoufox fixes the window mode at launch, so the mode is chosen here for
+   * the next start — every caller has already shut the previous browser down,
+   * whether by closing the session or by resetting its profile.
    */
   ensureReady(headed?: boolean): Promise<void> {
     this.headedNow = headed ?? this.cfg.headed === true;
