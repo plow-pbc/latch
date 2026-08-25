@@ -1,6 +1,6 @@
 #!/bin/bash
-# scripts/worktree-setup.sh — everything needed to make a second checkout
-# buildable and runnable alongside the ones already here:
+# scripts/worktree-setup.sh [donor-checkout] — everything needed to make a
+# second checkout buildable and runnable alongside the ones already here:
 #
 #   1. copies the gitignored browser runtime (Python + Camoufox + download
 #      cache + vault server/CLI payloads, ~500 MB+) from a checkout that
@@ -9,8 +9,10 @@
 #   2. installs workspace dependencies and builds everything
 #
 # Works in any checkout — a linked worktree or a plain clone beside the others.
-# Nothing here is worktree-specific except where the donor is found, and that
-# now falls back to the siblings.
+# A worktree inherits its donor from the checkout it was made out of; a plain
+# clone inherits nothing and is given one, because a donor's payloads get
+# executed here (runtime-donor.sh's header has the reasoning). Run it with no
+# argument and it will list the candidates it can see.
 #
 # State is keyed on the normalized BRANCH name (scripts/worktree-name.sh) — for
 # EVERY checkout, the main one included; only the packaged install uses the
@@ -32,13 +34,39 @@ cd "$(dirname "$0")/.."
 
 checkout=$(sh scripts/worktree-name.sh --branch)
 
-# --- browser runtime: clone it from a checkout that already has one --------
-# Which one, and why that one, is runtime-donor.sh's whole job; empty means
-# nothing nearby qualifies, which is the ordinary answer and not an error.
-donor=$(sh scripts/runtime-donor.sh)
+# --- browser runtime: copy it from the donor -------------------------------
+# Named on the command line, or inherited when this is a linked worktree.
+# runtime-donor.sh owns both, and what makes one usable.
+donor=${1:-}
+if [ -n "$donor" ]; then
+  sh scripts/runtime-donor.sh --check "$donor" || {
+    echo "error: $donor is not a usable donor for this checkout." >&2
+    echo "  It needs vendor/python-runtime built from these pins, and any" >&2
+    echo "  payload it carries finished. Run \`just fetch-browser-runtime" >&2
+    echo "  fetch-browser\` there, or name another." >&2
+    exit 1
+  }
+  donor=$(cd "$donor" && pwd -P)
+else
+  donor=$(sh scripts/runtime-donor.sh)
+  # Nothing to inherit. If something nearby WOULD serve, that is the human's
+  # call to make and not this script's — see runtime-donor.sh. With nothing
+  # nearby either there is nothing to choose between, so carry on and let the
+  # per-payload notes below say what did not come across.
+  if [ -z "$donor" ]; then
+    candidates=$(sh scripts/runtime-donor.sh --candidates)
+    if [ -n "$candidates" ]; then
+      echo "error: this checkout is not a linked worktree, so it has no donor to" >&2
+      echo "  inherit. Pass one. Nearby checkouts with a runtime built from these" >&2
+      echo "  pins:" >&2
+      printf '    %s\n' $candidates >&2
+      exit 1
+    fi
+  fi
+fi
 
 echo "checkout: $checkout"
-echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
+echo "donor:    ${donor:-none — nothing nearby to copy from}"
 
 # The payloads runtime-donor.sh gates on, which owns that list, plus the
 # download cache — a donor without the cache still qualifies, so it is named

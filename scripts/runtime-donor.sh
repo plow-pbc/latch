@@ -1,38 +1,30 @@
 #!/bin/sh
-# Prints the path of a nearby checkout this one can copy its browser runtime
-# from, or nothing (exit 0) when there is none. "No output" is how
-# worktree-setup.sh knows to tell the owner to fetch one instead.
+# Which checkout this one may copy its browser runtime from.
 #
-#   (no args)    the donor's path, or nothing
-#   --payloads   the vendor/ dirs a complete donor carries, one per line. One
-#                owner for the list: worktree-setup.sh copies these (plus its
-#                download cache) and the suite reads them, so a payload added
-#                to the build only has to be named here. Reading rather than
-#                restating means the suite follows this list wherever it goes,
-#                so it names the two load-bearing members once to catch a list
-#                that loses one.
+#   (no args)      the donor this checkout INHERITS — the one a linked worktree
+#                  was created out of — or nothing. A plain clone inherits none.
+#   --check DIR    exit 0 if DIR is a donor this checkout can use
+#   --candidates   nearby checkouts that would qualify, one per line. Advice for
+#                  the human choosing one; never a choice this script makes.
+#   --payloads     the vendor dirs a complete donor carries, one per line. One
+#                  owner for the list: worktree-setup.sh copies these (plus its
+#                  download cache) and the suite reads them, so a payload added
+#                  to the build only has to be named here.
 #
-# Where to look. A linked worktree shares its git dir with the checkout it was
-# made from, so that one is the obvious donor. A plain clone beside the others
-# shares nothing — its git-common-dir is its own — so there is nobody to ask but
-# the siblings themselves. Both are tried, in that order.
+# Why a plain clone has to be told rather than shown. A donor's payloads are
+# executed: the bundled Python runs the browser server and vaultwarden is
+# spawned, both outside the seatbelt and both with this checkout's vault and
+# relay credential within reach. Qualification is cheap to forge — four
+# directories and an empty marker file, 8 KB — so choosing a donor by scanning
+# whatever sits nearby would let anything able to write ONE checkout put code
+# in the next, and a checkout is an ordinary thing to hand an agent. A linked
+# worktree already inherits that trust from the checkout it was made out of. A
+# plain clone inherits nothing, so a human names its donor.
 #
-# What qualifies. The donor must declare OUR pins: a runtime is only valid for
-# the lock file it was built from, and one copied across a pin change is the
-# quiet kind of broken — every path still resolves, the wrong versions run.
-#
-# Comparing the two pin files is not the whole story, and deliberately so. The
-# build's own stamp covers a third input (PRUNE_VERSION, in
-# build-browser-runtime.mjs), so a donor that pulled a pin bump without
-# re-running `just fetch-browser` still declares pins it has not built. Nothing
-# downstream re-checks: worktree-setup.sh runs install and build, never a fetch.
-# Comparing stamps outright would catch it, at the cost of a `--print-stamp`
-# flag on the build script and synthetic stamps through both suites — not worth
-# it while the failure is a version mismatch that surfaces on use rather than a
-# silent wrong answer. What IS caught: a donor pinning something else entirely,
-# and — via the one stamp — a python build that never finished. The `--browser`
-# payloads carry their own markers and are checked only for existence, so a
-# neighbour interrupted during THAT pass can still qualify.
+# What qualifies, once designated. The donor must declare OUR pins — a runtime
+# is only valid for the lock file it was built from — and every payload it
+# carries must be finished. Neither is a trust boundary any more; both are the
+# difference between a copy that works and one that fails confusingly later.
 payloads() {
   printf '%s\n' python-runtime camoufox-browser vault-server vault-cli
 }
@@ -43,42 +35,63 @@ if [ "${1:-}" = "--payloads" ]; then
 fi
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
 self=$(cd "$root" && pwd -P)
 
-# Complete first, then the Python runtime alone. A donor carrying only what
-# `just fetch-browser-runtime` builds cannot give this checkout a browser or a
-# vault, so it must never beat a complete one next door — but it is still worth
-# taking when nothing complete is nearby: it is the ~5 min, ~200 MB half of the
-# fetch, its stamp comes with it, and the copy loop already reports per dir what
-# did not come across. Refusing it would cost that rebuild and change nothing
-# else.
-for required in "$(payloads | tr '\n' ' ')" "python-runtime"; do
-  for candidate in "$(dirname "$common")" "$(dirname "$self")"/*; do
-    [ -d "$candidate" ] || continue
-    # A sibling that cannot be entered is one more unsuitable candidate, not a
-    # reason to stop looking.
-    candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
-    # Ourselves: the git-common-dir of a plain clone is its own, so this is the
-    # ordinary case rather than a corner one.
-    [ "$candidate" != "$self" ] || continue
-    for payload in $required; do
-      [ -d "$candidate/vendor/$payload" ] || continue 2
-    done
-    # A payload directory exists from the moment a fetch starts extracting into
-    # it. build-browser-runtime.mjs writes this stamp last, after the build it
-    # describes finished, so it separates a donor from a neighbour mid-fetch.
-    [ -f "$candidate/vendor/python-runtime/.stamp" ] || continue
-    cmp -s "$candidate/vendor/browser-server/runtime.lock.json" \
-      "$self/vendor/browser-server/runtime.lock.json" || continue
-    cmp -s "$candidate/vendor/browser-server/requirements.txt" \
-      "$self/vendor/browser-server/requirements.txt" || continue
-    printf '%s\n' "$candidate"
-    exit 0
-  done
-done
+# A payload directory exists from the moment its fetch starts extracting into
+# it; the build writes these markers last. So an absent payload is one this
+# donor simply cannot give, while a present one without its marker is a fetch
+# still in flight — and copying that hands over a payload missing most of
+# itself, which the recipient's `already present` arm then keeps forever.
+unfinished() {
+  case $2 in
+    python-runtime) [ ! -f "$1/vendor/python-runtime/.stamp" ] ;;
+    # Per-arch, or the lipo-fused universal tree — whichever this donor built.
+    camoufox-browser) ! ls "$1"/vendor/camoufox-browser/*/.sha256 >/dev/null 2>&1 ;;
+    vault-server) [ ! -f "$1/vendor/vault-server/.web-vault.sha256" ] ;;
+    # vault-cli is an unpacked archive and writes no marker of its own.
+    *) false ;;
+  esac
+}
 
-# Finding nobody is the ordinary answer in a fresh clone, not a failure — and
-# worktree-setup.sh reads this under `set -e`, so leaving the status to whatever
-# the loops happened to end on is a trap for the next guard added above.
+qualifies() {
+  # The Python runtime is the floor: the browser server runs on it, and it is
+  # the slow half to rebuild. A donor without it has nothing worth copying.
+  [ -d "$1/vendor/python-runtime" ] || return 1
+  cmp -s "$1/vendor/browser-server/runtime.lock.json" \
+    "$self/vendor/browser-server/runtime.lock.json" || return 1
+  cmp -s "$1/vendor/browser-server/requirements.txt" \
+    "$self/vendor/browser-server/requirements.txt" || return 1
+  for payload in $(payloads); do
+    [ -d "$1/vendor/$payload" ] || continue
+    ! unfinished "$1" "$payload" || return 1
+  done
+  return 0
+}
+
+case "${1:-}" in
+  --check)
+    [ -n "${2:-}" ] || exit 1
+    dir=$(cd "$2" 2>/dev/null && pwd -P) || exit 1
+    [ "$dir" != "$self" ] || exit 1
+    qualifies "$dir" || exit 1
+    exit 0
+    ;;
+  --candidates)
+    for candidate in "$(dirname "$self")"/*; do
+      [ -d "$candidate" ] || continue
+      candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
+      [ "$candidate" != "$self" ] || continue
+      qualifies "$candidate" && printf '%s\n' "$candidate"
+    done
+    exit 0
+    ;;
+esac
+
+# Inheritance, and only inheritance. A linked worktree shares its git dir with
+# the checkout it was made out of; a plain clone's common dir is its own, which
+# is why the equality check leaves it with no donor rather than with itself.
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+parent=$(cd "$(dirname "$common")" 2>/dev/null && pwd -P) || exit 0
+[ "$parent" != "$self" ] || exit 0
+qualifies "$parent" && printf '%s\n' "$parent"
 exit 0

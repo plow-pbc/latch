@@ -155,12 +155,20 @@ Use `just` (run `just` to list recipes):
   check that the sandboxed preload bridge and the renderer still render.
 
 **Checkouts run side by side with main.** In any second checkout — a linked
-worktree or a plain clone beside the others — run `./scripts/worktree-setup.sh`:
-it clones the gitignored browser runtime from a nearby checkout that already has
-one built from the same pins (`scripts/runtime-donor.sh` picks it; APFS clones,
-no re-download), then installs and builds. Without that runtime there is no
-browser and no vault, and the app says so at startup rather than leaving the
-Vault tab to report a vault that has not started. All state is keyed on the
+worktree or a plain clone beside the others — run `./scripts/worktree-setup.sh`
+to clone the gitignored browser runtime from a checkout that already has one
+(APFS clones, no re-download), then install and build. A linked worktree
+inherits its donor from the checkout it was made out of; **a plain clone is
+given one**: `./scripts/worktree-setup.sh ~/Hacking/domo-desktop4`. Run with no
+argument it lists the candidates it can see. It will not pick one for you — a
+donor's payloads are executed here, outside the seatbelt and within reach of
+this checkout's vault and relay credential, and qualification is cheap to forge,
+so anything able to write one checkout could otherwise put code in the next.
+`scripts/runtime-donor.sh` owns that reasoning and what makes a donor usable.
+
+Without that runtime there is no browser and no vault, and the app says so at
+startup rather than leaving the Vault tab to report a vault that has not
+started. All state is keyed on the
 normalized **branch** name (`scripts/worktree-name.sh --branch`) — for every
 checkout, main included: `~/Library/Application Support/Plow-Latch-<branch>`,
 holding everything including Electron's userData (`<home>/electron`); the app

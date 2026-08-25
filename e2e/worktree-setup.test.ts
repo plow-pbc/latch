@@ -19,23 +19,33 @@ import { git } from "./gitFixture.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPTS = ["worktree-setup.sh", "runtime-donor.sh", "worktree-name.sh"];
+const PAYLOADS = execFileSync("sh", [path.join(repo, "scripts/runtime-donor.sh"), "--payloads"], {
+  encoding: "utf8",
+})
+  .trim()
+  .split("\n");
+/** The file each payload's build writes last — see runtime-donor.sh. */
+const MARKERS: Record<string, string> = {
+  "python-runtime": ".stamp",
+  "camoufox-browser": "arm64/.sha256",
+  "vault-server": ".web-vault.sha256",
+};
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-/** A `just` that records nothing and succeeds, so `install`/`build` are inert. */
+/** A `just` that succeeds and says so, so `install`/`build` are inert but visible. */
 const stubBin = path.join(tmp, "bin");
 fs.mkdirSync(stubBin);
 fs.writeFileSync(path.join(stubBin, "just"), '#!/bin/sh\necho "stub just $*"\n');
 fs.chmodSync(path.join(stubBin, "just"), 0o755);
 
-/** A checkout carrying this repo's real scripts and the two pin files. */
+/** A checkout carrying this repo's real scripts and the two real pin files. */
 function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
   const dir = path.join(parent, name);
   fs.mkdirSync(path.join(dir, "vendor", "browser-server"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   for (const s of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", s), path.join(dir, "scripts", s));
-  // The real pin files, so a donor beside it compares equal on the genuine ones.
   for (const f of ["runtime.lock.json", "requirements.txt"]) {
     fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(dir, "vendor/browser-server", f));
   }
@@ -44,60 +54,66 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
     // Named so a copy that landed a directory deeper is distinguishable from
     // one that landed right — the dir itself exists either way.
     fs.writeFileSync(path.join(dir, "vendor", p, "payload-marker"), p);
-  }
-  // What build-browser-runtime.mjs writes last, once the build it describes
-  // finished — the donor gate reads it to tell a built payload from a fetch
-  // still in progress.
-  if (payloads.includes("python-runtime")) {
-    fs.writeFileSync(path.join(dir, "vendor/python-runtime/.stamp"), "stamped\n");
+    const marker = MARKERS[p];
+    if (!marker) continue;
+    const at = path.join(dir, "vendor", p, marker);
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, "built\n");
   }
   git(dir, "init", "-q", "-b", branch ?? "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
   return dir;
 }
 
-function runSetup(dir: string): string {
-  return execFileSync("bash", [path.join(dir, "scripts", "worktree-setup.sh")], {
+function runSetup(dir: string, donor?: string): string {
+  return execFileSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
     cwd: dir,
     encoding: "utf8",
     env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}` },
   });
 }
 
+/** Run a setup that must refuse, and hand back what it said on the way out. */
+function runSetupExpectingRefusal(dir: string, donor?: string): { stdout: string; stderr: string } {
+  try {
+    runSetup(dir, donor);
+  } catch (e) {
+    const err = e as { stdout?: Buffer | string; stderr?: Buffer | string };
+    expect(err.stdout).toBeDefined();
+    expect(err.stderr).toBeDefined();
+    return { stdout: String(err.stdout), stderr: String(err.stderr) };
+  }
+  throw new Error("setup was expected to refuse, and did not");
+}
+
 describe("worktree-setup.sh", () => {
-  it("copies the donor's payloads and signs off with this checkout's own name", () => {
+  it("copies the named donor's payloads and signs off with this checkout's own name", () => {
     const parent = fs.mkdtempSync(path.join(tmp, "run-"));
-    const payloads = execFileSync("sh", [path.join(repo, "scripts/runtime-donor.sh"), "--payloads"], {
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n");
-    checkout(parent, "slot1", [...payloads, "downloads"]);
+    const donor = checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
     const asking = checkout(parent, "slot0", [], "feature/vault-fix");
     // One payload already built here. The branch that leaves it alone guards a
-    // ~500 MB tree from being overwritten by a donor's copy of it, so the proof
-    // has to be that this file is still here afterwards.
-    fs.mkdirSync(path.join(asking, "vendor", payloads[0]), { recursive: true });
-    fs.writeFileSync(path.join(asking, "vendor", payloads[0], "ours"), "keep me");
+    // ~500 MB tree from being overwritten, so the proof is that this survives.
+    fs.mkdirSync(path.join(asking, "vendor", PAYLOADS[0]), { recursive: true });
+    fs.writeFileSync(path.join(asking, "vendor", PAYLOADS[0], "ours"), "keep me");
     // What a ^C'd run leaves behind. The copy clears its staging dir before
     // each attempt, so this must not end up inside the payload that lands.
-    fs.mkdirSync(path.join(asking, "vendor", `${payloads[1]}.partial`), { recursive: true });
-    fs.writeFileSync(path.join(asking, "vendor", `${payloads[1]}.partial`, "junk"), "from a killed run");
+    fs.mkdirSync(path.join(asking, "vendor", `${PAYLOADS[1]}.partial`), { recursive: true });
+    fs.writeFileSync(path.join(asking, "vendor", `${PAYLOADS[1]}.partial`, "junk"), "from a killed run");
 
-    const out = runSetup(asking);
+    const out = runSetup(asking, donor);
 
     // Everything the donor had, at the depth it had it — all but the payload
-    // this checkout already had, which the branch below is about. Asserting the
-    // donor's marker rather than the directory is what separates a copy renamed
-    // into place from one nested inside its own staging dir.
-    for (const p of [...payloads.slice(1), "downloads"]) {
+    // this checkout already carried. Asserting the donor's marker rather than
+    // the directory is what separates a copy renamed into place from one
+    // nested inside its own staging dir.
+    for (const p of [...PAYLOADS.slice(1), "downloads"]) {
       expect(fs.readFileSync(path.join(asking, "vendor", p, "payload-marker"), "utf8")).toBe(p);
     }
-    expect(fs.readFileSync(path.join(asking, "vendor", payloads[0], "ours"), "utf8")).toBe("keep me");
-    expect(fs.existsSync(path.join(asking, "vendor", payloads[1], "junk"))).toBe(false);
-    expect(out).toContain(`vendor/${payloads[0]} already present`);
-    // The install and build are the point of running setup at all, and the stub
-    // is what makes them observable — so assert they were reached.
+    expect(fs.readFileSync(path.join(asking, "vendor", PAYLOADS[0], "ours"), "utf8")).toBe("keep me");
+    // The already-present branch's contract is "nothing of the donor's landed
+    // here", not merely "ours survived a merge into it".
+    expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[0], "payload-marker"))).toBe(false);
+    expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[1], "junk"))).toBe(false);
     expect(out).toContain("stub just install");
     expect(out).toContain("stub just build");
     // The closing hand-off names this checkout's branch and its real home. This
@@ -107,16 +123,50 @@ describe("worktree-setup.sh", () => {
     expect(out).not.toContain("Plow-Latch-downloads");
   });
 
-  it("carries on when nothing nearby qualifies, and says so per payload", () => {
+  it("refuses to pick a neighbour, and names the ones it can see instead", () => {
+    // The security posture, from the caller's side: a perfectly good neighbour
+    // sits right there and setup still will not take it unasked. It says which
+    // one it would have been, because listing is not choosing.
+    const parent = fs.mkdtempSync(path.join(tmp, "unasked-"));
+    const neighbour = checkout(parent, "slot1", PAYLOADS);
+    const asking = checkout(parent, "slot0", []);
+
+    const { stdout, stderr } = runSetupExpectingRefusal(asking);
+
+    expect(stderr).toMatch(/not a linked worktree/);
+    expect(stderr).toContain(fs.realpathSync(neighbour));
+    // And it stopped before the work, rather than building over a copy it
+    // never made.
+    expect(stdout).not.toContain("stub just");
+  });
+
+  it("refuses a named donor whose runtime is not usable here", () => {
+    const parent = fs.mkdtempSync(path.join(tmp, "baddonor-"));
+    const asking = checkout(parent, "slot0", []);
+    // Every payload present, none of it built — the shape a fetch caught in
+    // flight leaves, and the one a human would most plausibly name by mistake.
+    const midFetch = path.join(parent, "slot1");
+    checkout(parent, "slot1", PAYLOADS);
+    fs.rmSync(path.join(midFetch, "vendor/python-runtime/.stamp"));
+
+    const { stdout, stderr } = runSetupExpectingRefusal(asking, midFetch);
+
+    expect(stderr).toMatch(/not a usable donor/);
+    expect(stdout).not.toContain("stub just");
+  });
+
+  it("carries on with no donor when there is nothing nearby to name", () => {
+    // A first checkout on a machine has nothing to inherit and nothing to be
+    // offered, so there is no choice being withheld — install and build still
+    // have to run, and the notes say what did not come across.
     const parent = fs.mkdtempSync(path.join(tmp, "nodonor-"));
     const asking = checkout(parent, "slot0", []);
 
     const out = runSetup(asking);
 
-    expect(out).toContain("none nearby has a runtime built from these pins");
+    expect(out).toContain("nothing nearby to copy from");
     expect(out).toContain("no vendor/vault-server to clone");
-    // A checkout with no donor is the ordinary first case, so setup still has
-    // to reach the end — the install and build are the point of running it.
+    expect(out).toContain("stub just build");
     expect(out).toContain("is ready.");
   });
 });
