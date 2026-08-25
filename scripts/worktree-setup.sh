@@ -186,10 +186,11 @@ just build
 # what does not match. A good copy makes this a no-op; a stale or half-built one
 # costs the rebuild it should have.
 #
-# Only when there is a runtime here to check. A checkout with none is not a
-# reason to start a cold build: that is ~200 MB of Python, a 320 MB browser and
-# a cargo build of vaultwarden, needing a Rust toolchain that setting a checkout
-# up has never needed.
+# Only when some payload is here to check — ANY of them, not the whole set. A
+# partial landing is exactly what wants completing, and the build knows which
+# half is missing. A checkout with none is the case this skips: starting a cold
+# build there is ~200 MB of Python, a 320 MB browser and a cargo build of
+# vaultwarden, needing a Rust toolchain that setting a checkout up never has.
 #
 # After install and build so a failure here costs only the validation — the
 # checkout is left with its dependencies and its compiled output either way —

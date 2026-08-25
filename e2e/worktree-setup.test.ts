@@ -221,6 +221,11 @@ describe("worktree-setup.sh", () => {
     expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[0]))).toBe(false);
     // The rest still came, so this is the one payload being declined.
     expect(fs.readFileSync(path.join(asking, "vendor", PAYLOADS[1], "payload-marker"), "utf8")).toBe(PAYLOADS[1]);
+    // And a partial landing is still something to check: the gate asks whether
+    // any payload is here, not whether the whole runtime is, so the build runs
+    // and completes what is missing. Keyed on the first payload instead, this
+    // checkout would finish "ready" holding half a runtime nothing had looked at.
+    expect(out.split("\n")).toContain("stub just fetch-browser");
   });
 
   it("refuses to be its own donor", () => {
