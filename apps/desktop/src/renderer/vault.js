@@ -190,18 +190,20 @@ function vformDirty(ctx) {
 }
 
 /*
- * The six digits, shown while the key is still being pasted.
+ * The six digits — the only thing about an authenticator key anyone can read.
  *
- * This is the whole reason a key is hard to store: "TOTP" means the code to
- * everyone who is not implementing one, the box is masked, and a wrong paste
- * looks exactly like a right one until a site rejects the number. A live code
- * settles it on sight — digits ticking means the paste was the key; a sentence
- * means it was not, while the box is still open.
+ * While a key is being pasted, they settle on sight whether the paste was the
+ * key at all: "TOTP" means the code to everyone who is not implementing one,
+ * the box is masked, and a wrong paste looks exactly like a right one until a
+ * site rejects the number. Digits ticking means it was a key; a sentence means
+ * it was not, while the box is still open.
  *
- * A key already IN the vault is not read automatically: the value is fetched
- * only when the owner asks, which is the request the vault's audit records.
+ * For a key already IN the vault they are the proof it is saved, so a held key
+ * shows its code as soon as the form opens. The KEY itself stays behind the
+ * eye; the code is derived from it, dead in half a minute, and cannot be
+ * turned back into it.
  */
-function vtotp(input, ctx) {
+function vtotp(input, ctx, held) {
   const out = el("div", { class: "totp-read" });
   let showing = null; // { code, expiresAt } — the code on screen, or nothing
   // Answers arrive out of order: a keystroke's request can land after the one
@@ -277,7 +279,18 @@ function vtotp(input, ctx) {
   }, 1000);
 
   input.addEventListener("input", preview);
-  return { node: out, preview, fromVault };
+  /*
+   * A stored key shows its code the moment the item opens — no reveal, no
+   * click. The code is not the secret: it is six digits derived from the key,
+   * it is worthless in half a minute, and it cannot be turned back into the
+   * key. The KEY stays gated behind the eye, which is the thing worth gating.
+   *
+   * The cost is honest and deliberate: opening an item that holds a key reads
+   * that key, so the vault's audit gets a line for it. That is the owner
+   * looking at their own item, which is what the log should say.
+   */
+  if (held) void fromVault();
+  return { node: out, preview };
 }
 
 function vfield(spec, ctx) {
@@ -298,10 +311,19 @@ function vfield(spec, ctx) {
   ctx.inputs[spec.key] = input;
 
   const buttons = [];
+  const held = !!(spec.secret && ctx.saved && (ctx.item.secrets || []).includes(spec.key));
+  /* Mary drew two states and never let them look alike: a saved secret sat in
+     the box (masked, with the eye), and an empty one read "Not set". This app
+     never hands a secret back to the window, so both states rendered as the
+     same blank box — which is how a key that WAS saved read as dropped.
+     Her distinction, kept, with what we are allowed to show: a saved key is
+     evidenced by the live code beneath it, and the box says only what typing
+     into it would do. An existing item with no key gets her word. */
+  if (held) input.setAttribute("placeholder", "Saved — type to replace it");
+  else if (spec.secret && ctx.saved) input.setAttribute("placeholder", "Not set");
   // Built before the buttons so the eye and the code button can drive it.
-  const code = spec.totp ? vtotp(input, ctx) : null;
+  const code = spec.totp ? vtotp(input, ctx, held) : null;
   if (spec.secret) {
-    const held = ctx.saved && (ctx.item.secrets || []).includes(spec.key);
     const eye = el("button", { class: "mini eye", attrs: { type: "button", title: "Reveal" } }, [icon("eye", { class: "vico", strokeWidth: "1.8" })]);
     eye.addEventListener("click", async () => {
       if (input.getAttribute("type") === "text") {
@@ -332,14 +354,6 @@ function vfield(spec, ctx) {
       eye.replaceChildren(icon("eyeOff", { class: "vico", strokeWidth: "1.8" }));
     });
     buttons.push(eye);
-  }
-  if (spec.totp && ctx.saved && (ctx.item.secrets || []).includes(spec.key)) {
-    // Asking for the CODE is not asking for the key: this shows six digits
-    // that expire, and leaves the key itself masked and unread.
-    const show = el("button", { class: "mini gen", attrs: { type: "button", title: "Show the current code" } },
-      [icon("generate", { class: "vico", strokeWidth: "1.8" })]);
-    show.addEventListener("click", () => code.fromVault());
-    buttons.push(show);
   }
   if (spec.generate) {
     const gen = el("button", { class: "mini gen", attrs: { type: "button", title: "Generate password" } }, [icon("generate", { class: "vico", strokeWidth: "1.8" })]);
