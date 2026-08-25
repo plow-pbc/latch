@@ -75,33 +75,24 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
-const cloudChat = { uid: "chat_probe", label: "+1 (415) 555-0142 · Alex, Sam" };
-const cloudAgent = {
-  agentId: "cag_probe",
-  name: "Household helper",
-  chatUid: cloudChat.uid,
-  chatLabel: cloudChat.label,
-  provider: "anthropic",
-  status: "active",
-  failureReason: null,
-  createdAt: "2026-08-24T18:00:00.000Z",
+const throwawayCapabilities = [
+  "Reads and replies in that one chat, and no other.",
+  "Can ask to run things on this Mac through the relay — every request still goes through the normal approval and sandbox rules.",
+  "Can spend inference on your account.",
+];
+let throwawayProbe = {
+  chatUid: "chat_probe",
+  chatLabel: "+1 (415) 555-0142 · Alex, Sam",
+  sendTo: "+1 (415) 555-0199",
+  logPath: path.join(probeHome, "throwaway-agent.log"),
+  ready: true,
+  busy: false,
+  error: null,
+  agent: null,
+  capabilities: throwawayCapabilities,
 };
-let cloudProbe = {
-  cloudAgents: [cloudAgent],
-  cloudAgentsError: null,
-  cloudChatsError: null,
-  cloudActionError: null,
-  cloudChats: [cloudChat],
-  cloudChatsLoaded: true,
-  cloudSendTo: "+1 (415) 555-0199",
-  cloudAgentSettings: {
-    cag_probe: { relay: true, inference: false, adversarialReview: false },
-  },
-};
-const cloudCalls = { create: [], delete: [], retry: [], apply: [] };
+const throwawayCalls = { create: [], delete: 0 };
 
-// Connect state also carries the cloud-agent display state. It contains no
-// credential, session id or worker URL.
 ipcMain.handle("connect:get", async () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
@@ -110,21 +101,28 @@ ipcMain.handle("connect:get", async () => ({
   busy: false,
   message: "",
   credential: null,
-  ...cloudProbe,
 }));
-ipcMain.handle("cloud:create", async (_e, chatUid, name) => cloudCalls.create.push({ chatUid, name }));
-ipcMain.handle("cloud:delete", async (_e, agentId) => cloudCalls.delete.push(agentId));
-ipcMain.handle("cloud:retry", async (_e, agentId) => cloudCalls.retry.push(agentId));
-ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
-  cloudCalls.apply.push({ agentId, settings });
-  const previous = cloudProbe.cloudAgentSettings[agentId];
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentSettings: {
-      ...cloudProbe.cloudAgentSettings,
-      [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
+ipcMain.handle("throwaway:get", async () => throwawayProbe);
+ipcMain.handle("throwaway:create", async (_e, name) => {
+  throwawayCalls.create.push(name);
+  throwawayProbe = { ...throwawayProbe, busy: true, error: null };
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  throwawayProbe = {
+    ...throwawayProbe,
+    busy: false,
+    agent: {
+      agentId: "agent_probe",
+      provider: "exe:hermes",
+      createdAt: "2026-08-25T09:00:00Z",
+      status: "active",
     },
   };
+  return throwawayProbe;
+});
+ipcMain.handle("throwaway:delete", async () => {
+  throwawayCalls.delete += 1;
+  throwawayProbe = { ...throwawayProbe, agent: null, error: null };
+  return throwawayProbe;
 });
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
@@ -553,215 +551,71 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
+  const throwawayBefore = await win.webContents.executeJavaScript(`(${() => {
     const group = [...document.querySelectorAll("#view .panel.agents > .item")]
-      .find((item) => item.querySelector(":scope > .group-title")?.textContent.trim() === "Cloud agents");
-    const row = group?.querySelector(".cloud-agent-row");
+      .find((item) => item.querySelector(":scope > .group-title")?.textContent.trim() === "Get an agent");
+    const text = group?.innerText ?? "";
     return {
       aboveConnect: group?.nextElementSibling?.querySelector(":scope > .group-title")?.textContent.trim() === "Connect an MCP client",
-      showsName: row?.textContent.includes("Household helper"),
-      showsChat: row?.textContent.includes("+1 (415) 555-0142 · Alex, Sam"),
-      showsProvider: row?.textContent.includes("Anthropic"),
-      status: row?.querySelector(".badge")?.textContent.trim(),
-      hasActions: [...(row?.querySelectorAll("button") ?? [])].map((b) => b.textContent.trim()).join(",") === "Settings,Remove",
-      noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
+      chat: text.includes("+1 (415) 555-0142 · Alex, Sam"),
+      phone: text.includes("+1 (415) 555-0199"),
+      capabilities: [...(group?.querySelectorAll(".throwaway-capabilities li") ?? [])].map((node) => node.textContent.trim()),
+      logPath: text.includes("throwaway-agent.log"),
+      getButton: [...(group?.querySelectorAll("button") ?? [])].some((button) => button.textContent.trim() === "Get an agent"),
+      noPicker: !group?.querySelector("select"),
+      noRoster: !group?.querySelector(".cloud-agent-list"),
     };
   }})()`);
+  const throwawayBusy = await win.webContents.executeJavaScript(`(${() => {
+    const button = [...document.querySelectorAll("button")].find((node) => node.textContent.trim() === "Get an agent");
+    button.click();
+    return {
+      disabled: button.disabled,
+      spinner: !!button.querySelector(".cloud-spinner"),
+      honestCopy: button.textContent.includes("Getting an agent…"),
+    };
+  }})()`);
+  await waitFor(win, `document.body.innerText.includes("agent_probe")`, "the synchronous throwaway-agent result");
+  const throwawayAfter = await win.webContents.executeJavaScript(`(${() => {
+    const group = [...document.querySelectorAll("#view .panel.agents > .item")]
+      .find((item) => item.querySelector(":scope > .group-title")?.textContent.trim() === "Get an agent");
+    const text = group?.innerText ?? "";
+    return {
+      id: text.includes("agent_probe"),
+      provider: text.includes("exe:hermes"),
+      created: text.includes("2026"),
+      deleteButton: [...(group?.querySelectorAll("button") ?? [])].some((button) => button.textContent.trim() === "Delete"),
+    };
+  }})()`);
+  const throwawayCreateName = throwawayCalls.create[0] === "Cloud agent";
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("button")].find((button) => button.textContent.trim() === "Delete").click()`);
+  await waitFor(win, `[...document.querySelectorAll("button")].some((button) => button.textContent.trim() === "Get an agent")`,
+    "the throwaway agent to be deleted");
+  const throwawayDeleted = throwawayCalls.delete === 1;
 
-  // The warning is specific to the first agent on a chat. Remove the fixture
-  // row, remount the pane, and open the picker through the exposed control.
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [],
-    cloudChats: [cloudChat, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
-  };
+  throwawayProbe = { ...throwawayProbe, error: "chat 'chat_probe' not found." };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-toolbar button")`, "the cloud-agent setup action");
-  await win.webContents.executeJavaScript(`document.querySelector(".cloud-toolbar button").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-warning")`, "the first-agent warning");
-  const cloudPicker = await win.webContents.executeJavaScript(`(${() => {
-    const modal = document.querySelector(".cloud-modal");
-    return {
-      listsEveryChat: [...modal.querySelectorAll("option")].map((o) => o.textContent.trim()).join(",") ===
-        "+1 (415) 555-0142 · Alex, Sam,+1 (415) 555-0188 · Family group,New chat…",
-      warnsIrreversible: modal.textContent.includes("Removing the agent later will not restore them"),
-      labelsOptionalName: modal.textContent.includes("Name (optional)"),
-    };
-  }})()`);
-  const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
-    const visibleSelect = document.querySelector(".cloud-modal select");
-    const trigger = document.querySelector(".cloud-toolbar button");
-    const selectPrototype = HTMLSelectElement.prototype;
-    const addEventListener = selectPrototype.addEventListener;
-    let blockedSelect = null;
-    selectPrototype.addEventListener = function (type, ...args) {
-      if (type === "change" && this !== visibleSelect) blockedSelect = this;
-      return addEventListener.call(this, type, ...args);
-    };
-    try {
-      trigger.click();
-    } finally {
-      selectPrototype.addEventListener = addEventListener;
-    }
-    if (!blockedSelect) return { ignored: false, keptOriginal: false };
-    let error = null;
-    const onError = (event) => {
-      error = event.error ?? new Error(event.message);
-      event.preventDefault();
-    };
-    window.addEventListener("error", onError, { once: true });
-    blockedSelect.value = "__new_chat__";
-    blockedSelect.dispatchEvent(new Event("change"));
-    await new Promise((resolve) => setTimeout(resolve));
-    window.removeEventListener("error", onError);
-    return {
-      ignored: error === null,
-      keptOriginal: document.querySelector(".cloud-modal select") === visibleSelect,
-    };
-  }})()`);
-  await win.webContents.executeJavaScript(`(() => {
-    const select = document.querySelector(".cloud-modal select");
-    select.value = "__new_chat__";
-    select.dispatchEvent(new Event("change"));
-  })()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
-  const cloudNewChat = await win.webContents.executeJavaScript(`(${() => {
-    const modal = document.querySelector(".cloud-modal");
-    return {
-      twoRoutes: [...modal.querySelectorAll(".cloud-route-title")].map((n) => n.textContent.trim()).join(",") ===
-        "Verify a new Plow number,Start a group thread",
-      serverNumber: modal.textContent.includes("Number to text: +1 (415) 555-0199"),
-      groupRoute: modal.textContent.includes("The chat appears here once someone speaks"),
-    };
-  }})()`);
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
-
-  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent] };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the cloud-agent row actions");
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel");
-  const cloudSettingsPanel = await win.webContents.executeJavaScript(`(${() => {
-    const modal = document.querySelector(".cloud-modal");
-    const checked = Object.fromEntries([...modal.querySelectorAll(".cloud-setting")].map((label) => [
-      label.querySelector(".cloud-setting-title")?.textContent.trim(),
-      label.querySelector("input")?.checked,
-    ]));
-    return {
-      oneControl: Object.keys(checked).join(",") === "Adversarial review",
-      storedValue: checked["Adversarial review"] === false,
-      noServerSection: !modal.querySelector(".cloud-server-settings"),
-      noPermissionCopy: !modal.textContent.includes("Relay access") &&
-        !modal.textContent.includes("May spend inference") &&
-        !modal.textContent.includes("current permissions"),
-      noRestartCopy: !/restart/i.test(modal.textContent),
-      localCopy: modal.querySelector(".cloud-local-settings")?.textContent.includes("Stored on this Mac and applies immediately."),
-      appliesTogether: [...modal.querySelectorAll("button")].some((button) => button.textContent.trim() === "Apply changes"),
-    };
-  }})()`);
-  await win.webContents.executeJavaScript(`(() => {
-    const modal = document.querySelector(".cloud-modal");
-    modal.querySelector(".cloud-local-settings input").click();
-    [...modal.querySelectorAll("button")].find((b) => b.textContent.trim() === "Apply changes").click();
-  })()`);
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the local cloud-agent settings save");
-  const applied = cloudCalls.apply[0];
-  const cloudSettings = {
-    stableId: applied?.agentId === "cag_probe",
-    exactSettings: applied?.settings?.adversarialReview === true &&
-      Object.keys(applied?.settings ?? {}).join(",") === "adversarialReview",
-    persisted: cloudProbe.cloudAgentSettings.cag_probe?.adversarialReview === true,
-  };
-
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [cloudAgent],
-    cloudAgentsError: null,
-    cloudChatsError: "Couldn't reach Plow.",
-    cloudChats: [],
-    cloudChatsLoaded: false,
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-error")`, "the failed chat-list banner");
-  const cloudChatFailure = await win.webContents.executeJavaScript(`(${() => ({
-    showsError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
-    setupDisabled: document.querySelector(".cloud-toolbar button")?.disabled === true,
-    notEmptyState: !document.querySelector(".cloud-empty"),
-    keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+  await waitFor(win, `document.body.innerText.includes("chat 'chat_probe' not found.")`, "the verbatim throwaway error");
+  const throwawayError = await win.webContents.executeJavaScript(`(${() => ({
+    verbatim: document.querySelector(".throwaway-error p")?.textContent === "chat 'chat_probe' not found.",
   })})()`);
 
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentsError: "Method Not Allowed",
-    cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
+  // Keep the useful post-create state on screen for the Agents screenshot.
+  throwawayProbe = {
+    ...throwawayProbe,
+    error: null,
+    agent: {
+      agentId: "agent_probe",
+      provider: "exe:hermes",
+      createdAt: "2026-08-25T09:00:00Z",
+      status: "active",
+    },
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-error")`, "the 403 chat-list banner");
-  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => {
-    const setup = document.querySelector(".cloud-toolbar button");
-    setup.click();
-    return {
-      chatErrorVisible: document.body.innerText.includes(
-        "This Mac cannot list chats yet. Try re-activating it, then try again.",
-      ),
-      rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
-      transportCopy: document.body.innerText.includes("Plow couldn't complete that request. Try again."),
-      setupDisabled: setup.disabled === true,
-      pickerBlocked: !document.querySelector(".cloud-modal"),
-      keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
-      notEmptyState: !document.querySelector(".cloud-empty"),
-    };
-  }})()`);
+  await waitFor(win, `document.body.innerText.includes("agent_probe")`, "the restored throwaway-agent card");
 
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentsError: "Cloud capacity is full for this account.",
-    cloudChatsError: null,
-    cloudChats: [cloudChat],
-    cloudChatsLoaded: true,
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.body.innerText.includes("Cloud capacity is full for this account.")`,
-    "the server-authored cloud error detail");
-  const cloudServerDetail = await win.webContents.executeJavaScript(`(${() => ({
-    preserved: document.body.innerText.includes("Cloud capacity is full for this account."),
-    notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
-  })})()`);
-
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [],
-    cloudAgentsError: null,
-    cloudChatsError: null,
-    cloudChatsLoaded: true,
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-empty")`, "the literal cloud-agent empty state");
-  const cloudEmpty = await win.webContents.executeJavaScript(`(${() => ({
-    literal: document.querySelector(".cloud-empty")?.textContent.trim() === "No agents.",
-    noNumber: !document.querySelector("#view .panel.agents > .item")?.textContent.includes("+1 (415) 555-0199"),
-    noExplanation: !document.querySelector(".cloud-empty")?.textContent.includes("chat"),
-  })})()`);
-
-  // Restore the roster for the screenshot and the existing Agents-pane probes.
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [cloudAgent],
-    cloudChats: [cloudChat],
-    cloudAgentsError: null,
-    cloudChatsError: null,
-    cloudChatsLoaded: true,
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-agent-row")`, "the restored cloud-agent roster");
 
   // The Agents pane gets an image of its own, for the same reason Settings does:
   // every UI change gets one, and this one moved panes.
@@ -1385,47 +1239,27 @@ app.whenReady().then(async () => {
     connect.clientCardArrow &&
     connect.clientNameNotBold &&
     connect.noConnectTab &&
-    cloudRoster.aboveConnect &&
-    cloudRoster.showsName &&
-    cloudRoster.showsChat &&
-    cloudRoster.showsProvider &&
-    cloudRoster.status === "Active" &&
-    cloudRoster.hasActions &&
-    cloudRoster.noCredentialIdentity &&
-    cloudPicker.listsEveryChat &&
-    cloudPicker.warnsIrreversible &&
-    cloudPicker.labelsOptionalName &&
-    cloudModalGuard.ignored &&
-    cloudModalGuard.keptOriginal &&
-    cloudNewChat.twoRoutes &&
-    cloudNewChat.serverNumber &&
-    cloudNewChat.groupRoute &&
-    cloudSettingsPanel.oneControl &&
-    cloudSettingsPanel.storedValue &&
-    cloudSettingsPanel.noServerSection &&
-    cloudSettingsPanel.noPermissionCopy &&
-    cloudSettingsPanel.noRestartCopy &&
-    cloudSettingsPanel.localCopy &&
-    cloudSettingsPanel.appliesTogether &&
-    cloudSettings.stableId &&
-    cloudSettings.exactSettings &&
-    cloudSettings.persisted &&
-    cloudChatFailure.showsError &&
-    cloudChatFailure.setupDisabled &&
-    cloudChatFailure.notEmptyState &&
-    cloudChatFailure.keepsRoster &&
-    cloudForbidden.chatErrorVisible &&
-    cloudForbidden.rawReasonHidden &&
-    cloudForbidden.transportCopy &&
-    cloudForbidden.setupDisabled &&
-    cloudForbidden.pickerBlocked &&
-    cloudForbidden.keepsRoster &&
-    cloudForbidden.notEmptyState &&
-    cloudServerDetail.preserved &&
-    cloudServerDetail.notReplaced &&
-    cloudEmpty.literal &&
-    cloudEmpty.noNumber &&
-    cloudEmpty.noExplanation &&
+    throwawayBefore.aboveConnect &&
+    throwawayBefore.chat &&
+    throwawayBefore.phone &&
+    throwawayBefore.capabilities.length === 3 &&
+    throwawayBefore.capabilities.join(" ").includes("one chat, and no other") &&
+    throwawayBefore.capabilities.join(" ").includes("approval and sandbox rules") &&
+    throwawayBefore.capabilities.join(" ").includes("inference") &&
+    throwawayBefore.logPath &&
+    throwawayBefore.getButton &&
+    throwawayBefore.noPicker &&
+    throwawayBefore.noRoster &&
+    throwawayBusy.disabled &&
+    throwawayBusy.spinner &&
+    throwawayBusy.honestCopy &&
+    throwawayAfter.id &&
+    throwawayAfter.provider &&
+    throwawayAfter.created &&
+    throwawayAfter.deleteButton &&
+    throwawayCreateName &&
+    throwawayDeleted &&
+    throwawayError.verbatim &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&
@@ -1498,7 +1332,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudSettings, cloudChatFailure, cloudForbidden, cloudServerDetail, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, throwawayBefore, throwawayBusy, throwawayAfter, throwawayCreateName, throwawayDeleted, throwawayError, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
