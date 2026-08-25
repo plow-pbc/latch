@@ -10,19 +10,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { git } from "./gitFixture.js";
 
 const script = fileURLToPath(new URL("../scripts/worktree-name.sh", import.meta.url));
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-wt-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
-
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync(
-    "git",
-    ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args],
-    { cwd, encoding: "utf8" },
-  );
-}
 
 function nameIn(cwd: string, ...args: string[]): string {
   return execFileSync("sh", [script, ...args], { cwd, encoding: "utf8" }).trim();

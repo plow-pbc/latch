@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { git } from "./gitFixture.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPTS = ["worktree-setup.sh", "runtime-donor.sh", "worktree-name.sh"];
@@ -27,14 +28,6 @@ const stubBin = path.join(tmp, "bin");
 fs.mkdirSync(stubBin);
 fs.writeFileSync(path.join(stubBin, "just"), '#!/bin/sh\necho "stub just $*"\n');
 fs.chmodSync(path.join(stubBin, "just"), 0o755);
-
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync(
-    "git",
-    ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args],
-    { cwd, encoding: "utf8" },
-  );
-}
 
 /** A checkout carrying this repo's real scripts and the two pin files. */
 function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
@@ -136,6 +129,17 @@ describe("worktree-setup.sh", () => {
     const asking = checkout(parent, "slot0", []);
     fs.writeFileSync(path.join(asking, "scripts", "runtime-donor.sh"), stub);
 
-    expect(() => runSetup(asking)).toThrow(says);
+    let thrown: { stdout?: Buffer | string } | undefined;
+    expect(() => {
+      try {
+        runSetup(asking);
+      } catch (e) {
+        thrown = e as { stdout?: Buffer | string };
+        throw e;
+      }
+    }).toThrow(says);
+    // Stopping is only half of it: the point is stopping BEFORE the work, so
+    // nobody watches a build succeed on a checkout that copied nothing.
+    expect(String(thrown?.stdout ?? "")).not.toContain("stub just");
   });
 });
