@@ -323,25 +323,30 @@ describe("worktree-setup.sh", () => {
     expect(out.split("\n")).toContain("stub just fetch-browser");
 
     // The failure must not attribute the payloads to a source: the gate arms on
-    // presence, so it is reached with nothing copied. Asserted as SAMENESS
-    // rather than as forbidden words — any provenance claim ("came from X",
-    // "the copy", "cloned from X") reads differently between a run that copied
-    // and one that did not, so identical output is the absence of one. Three
-    // word-shaped versions of this guard each let the next synonym through.
-    // A checkout that has NOT been set up yet, so this run genuinely copies —
-    // comparing two already-populated runs would compare two identical shapes
-    // and prove nothing.
+    // presence, so it is reached with nothing copied.
+    //
+    // Two halves, because neither covers the class alone. Sameness catches a
+    // claim that NAMES the source — the name differs between a run that copied
+    // and one that did not — and cannot catch one worded as a constant, since
+    // "the copied payloads" reads identically either way. The word list catches
+    // that second shape and only that; three earlier versions of this guard
+    // were the list alone, and each let the next synonym through, so it matches
+    // stems rather than the spellings that happened to be tried.
+    //
+    // Only the error block is compared: the copying run's `cp` can write to
+    // stderr on a filesystem without clonefile, which is not the message.
     const fresh = checkout(parent, "slot9", []);
     const copied = runSetupExpectingFailure(fresh, donor, "fetch-browser");
     const notCopied = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
+    const complaint = (r: Ran) => r.stderr.slice(r.stderr.indexOf("error:"));
 
-    expect(copied.stderr).toMatch(/the runtime in vendor\/ did not check out/);
-    expect(notCopied.stderr).toBe(copied.stderr);
-    // Sameness catches a claim that names the source, because the name differs
-    // between these two. It cannot catch one worded as a constant — "the copied
-    // payloads" reads the same in both — so the vocabulary the script uses for
-    // copying is excluded too. Neither alone is the guard.
-    expect(copied.stderr).not.toMatch(/copied|cloned|donor|came from/i);
+    // The premise: that run has to have copied, or the two sides are the same
+    // shape and the comparison says nothing. This is the invariant that broke
+    // silently once already.
+    expect(copied.stdout).toMatch(/cloning vendor\//);
+    expect(complaint(copied)).toMatch(/the runtime in vendor\/ did not check out/);
+    expect(complaint(notCopied)).toBe(complaint(copied));
+    expect(complaint(copied)).not.toMatch(/cop(y|ies|ied|ying)|clon(e|es|ed|ing)|donor|came from/i);
   });
 
   // Four ways to arrive with nothing worth checking, one contract: setup
