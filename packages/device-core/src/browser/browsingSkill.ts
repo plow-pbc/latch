@@ -20,7 +20,8 @@ import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
  * one thing that falsifies it, and this copy deliberately does not mention it
  * — an operator sets it to reproduce a bot block on a run they are watching,
  * and an agent cannot see it, cannot act on it, and would carry the caveat in
- * every session that does not have it set.
+ * every session that does not have it set. The skill body below is where the
+ * agent learns it can drop the profile itself, which it CAN see and act on.
  */
 export const LIVE_WEB_ROUTING =
   "their browser runs on their own network rather than a datacenter address many sites " +
@@ -73,6 +74,12 @@ browser profile — their cookies, their logins — so check whether a site is a
 in before signing in again. What you sign into is merged back into their profile when the
 session closes, so it is still signed in for the next browser — and browsers open at the
 same time do not overwrite each other. When you do have to sign in, use \`fill_secret\`.
+
+**When a site decides you are a bot, take a browser it has never seen.** A wall, a challenge
+that never passes, a login refusing a password you know is right: that verdict is a cookie, so
+opening a new session brings it along. \`fresh_profile\` drops this session's profile and carries
+on with the same handle — signed out of everything, and nothing it does afterwards reaches their
+profile. It is for a site that blocked you, not for starting over on one that did not.
 
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,

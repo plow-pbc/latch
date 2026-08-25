@@ -194,7 +194,9 @@ DOMO_BROWSER_FRESH_PROFILE=1 just app   # sessions start empty and merge nothing
 ```
 
 Sign-ins do not carry into those sessions and nothing they do follows them out, so use it to
-reproduce a block, not to drive an account.
+reproduce a block, not to drive an account. That flag is the blunt, whole-run version; an agent
+that runs into a wall mid-task asks for the same thing one session at a time with `plow_browser`'s
+`fresh_profile`, which is the path a real block actually takes.
 
 **See the logs.** Main-process `console.log` (including `[relay]` and `[onboarding]`) goes to the
 terminal you launched from. Renderer console does not — subscribe to it:
