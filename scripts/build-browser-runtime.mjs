@@ -561,16 +561,11 @@ function fetchBrowser(arch) {
   // for the whole download+extract, which is exactly what runtime-donor.sh
   // reads to decide a donor is ready. Gone before the work, not after it.
   fs.rmSync(marker, { force: true });
-  // And the fused tree, which this rebuild may invalidate. runtime-donor.sh
-  // falls back to it whenever no per-arch dir exists — every moment of this
-  // function before mkdirSync creates one — and camoufoxIn() resolves on
-  // config.json, so leaving it standing keeps it both donor-ready and
-  // runnable while it may be stale. Gone before the download rather than
-  // after, unlike the per-arch tree below, which is kept until the bytes are
-  // in hand so a failed download leaves a working browser: the fused tree has
-  // no such window, because the gate is reading it throughout. Costs a re-fuse
-  // when it was in fact still good; cheaper than serving the old browser.
-  fs.rmSync(universalDir, { recursive: true, force: true });
+  // And the fused tree's marker, for the same reason and on the same schedule:
+  // runtime-donor.sh falls back to it when this checkout has no per-arch tree
+  // at all — the --browser-both donor shape — and across the rm/mkdir below.
+  // Its bytes go later, once the replacement is in hand.
+  fs.rmSync(universalMarker, { force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
   const version = dash === -1 ? fullVersion : fullVersion.slice(0, dash);
@@ -582,6 +577,13 @@ function fetchBrowser(arch) {
   download(asset.url, asset.sha256, zipDest);
   log(`extracting camoufox (${arch})`);
   fs.rmSync(installRoot, { recursive: true, force: true });
+  // Now, not before the download: camoufoxIn() resolves on config.json and
+  // never reads .sha256, so a fused tree left standing stays selectable
+  // whenever no per-arch tree exists — and on the single-arch path nothing
+  // ever comes back to rebuild it. Removed here rather than up top for the
+  // reason installRoot is: until the bytes are in hand, an interrupted fetch
+  // should leave a working browser rather than none at all.
+  fs.rmSync(universalDir, { recursive: true, force: true });
   fs.mkdirSync(installPath, { recursive: true });
   run("ditto", ["-x", "-k", zipDest, installPath]); // preserves symlinks + exec bits
 
