@@ -23,7 +23,19 @@ export interface Capability {
   argv?: string[]; // process.exec (argv[0] is the executable)
   cwd?: string; // process.exec
   allowed?: boolean; // network
-  tool?: string; // tool
+  tool?: string; // tool: the action, e.g. "slack.messages.list"
+  /**
+   * tool: WHAT the action acts on — "<account>" or "<account>/<channel>".
+   *
+   * The target belongs to the capability and the content does not, exactly
+   * as `paths` holds an fs.write's path while the bytes ride the payload.
+   * Without it a rule key covers only "may send Slack messages", so one
+   * "always allow" authorises every channel in every workspace forever and
+   * the approval dialog names no target to judge. With it, two channels are
+   * two rules — and message text, which would make every key unique, stays
+   * out of the key.
+   */
+  target?: string;
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
   access?: "fill"; // credential: type values into pages
   items?: string[]; // credential(fill): vault item ids
@@ -57,8 +69,12 @@ export function capabilityDisplay(c: Capability): string {
     }
     case "network":
       return c.allowed ? "Network: allowed" : "Network: denied";
-    case "tool":
-      return `Slack: ${(c.tool ?? "?").replace(/^slack\./, "")}`;
+    case "tool": {
+      const action = (c.tool ?? "?").replace(/^slack\./, "");
+      // The target is what the owner is actually authorising. A capability
+      // carrying none names no scope, and must not imply one.
+      return c.target ? `Slack: ${action} in ${c.target}` : `Slack: ${action}`;
+    }
     case "browser":
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":
