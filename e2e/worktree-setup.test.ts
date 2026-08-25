@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "./gitFixture.js";
+import { markBuilt } from "./payloadFixture.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPTS = ["worktree-setup.sh", "runtime-donor.sh", "worktree-name.sh"];
@@ -24,14 +25,6 @@ const PAYLOADS = execFileSync("sh", [path.join(repo, "scripts/runtime-donor.sh")
 })
   .trim()
   .split("\n");
-/** Every file a payload needs before it counts as built — see runtime-donor.sh. */
-const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
-const MARKERS: Record<string, string[]> = {
-  "python-runtime": [".stamp"],
-  "camoufox-browser": [`${ARCH}/.sha256`],
-  "vault-server": [".web-vault.sha256", `${ARCH}/.commit`],
-  "vault-cli": [`${ARCH}/.sha256`],
-};
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -56,11 +49,7 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
     // Named so a copy that landed a directory deeper is distinguishable from
     // one that landed right — the dir itself exists either way.
     fs.writeFileSync(path.join(dir, "vendor", p, "payload-marker"), p);
-    for (const marker of MARKERS[p] ?? []) {
-      const at = path.join(dir, "vendor", p, marker);
-      fs.mkdirSync(path.dirname(at), { recursive: true });
-      fs.writeFileSync(at, "built\n");
-    }
+    markBuilt(dir, p);
   }
   git(dir, "init", "-q", "-b", branch ?? "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
@@ -152,7 +141,9 @@ describe("worktree-setup.sh", () => {
 
     const out = runSetup(asking, "--no-donor");
 
-    expect(out).toContain("nothing nearby to copy from");
+    // Not "nothing nearby" — there is, and saying otherwise would be the one
+    // thing that is untrue on this path.
+    expect(out).toContain("asked for, so nothing is being copied");
     expect(out).toContain("no vendor/vault-server to clone");
     expect(out).toContain("stub just build");
     expect(out).toContain("is ready.");

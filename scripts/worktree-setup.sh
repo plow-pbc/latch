@@ -1,6 +1,6 @@
 #!/bin/bash
-# scripts/worktree-setup.sh [donor-checkout] — everything needed to make a
-# second checkout buildable and runnable alongside the ones already here:
+# scripts/worktree-setup.sh [donor-checkout | --no-donor] — everything needed to
+# make a second checkout buildable and runnable alongside the ones already here:
 #
 #   1. copies the gitignored browser runtime (Python + Camoufox + download
 #      cache + vault server/CLI payloads, ~500 MB+) from a checkout that
@@ -43,6 +43,7 @@ donor=${1:-}
 # past, and the refusal happens before install and build.
 if [ "$donor" = "--no-donor" ]; then
   donor=""
+  refused=1
 elif [ -n "$donor" ]; then
   sh scripts/runtime-donor.sh --check "$donor" || {
     echo "error: $donor is not a usable donor for this checkout." >&2
@@ -77,7 +78,13 @@ else
 fi
 
 echo "checkout: $checkout"
-echo "donor:    ${donor:-none — nothing nearby to copy from}"
+if [ -n "$donor" ]; then
+  echo "donor:    $donor"
+elif [ -n "${refused:-}" ]; then
+  echo "donor:    none — asked for, so nothing is being copied"
+else
+  echo "donor:    none — nothing nearby to copy from"
+fi
 
 # The payloads runtime-donor.sh gates on, which owns that list, plus the
 # download cache — a donor without the cache still qualifies, so it is named

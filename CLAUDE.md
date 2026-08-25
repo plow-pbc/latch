@@ -160,10 +160,11 @@ to clone the gitignored browser runtime from a checkout that already has one
 (APFS clones, no re-download), then install and build. A linked worktree
 inherits its donor from the checkout it was made out of; **a plain clone is
 given one**: `./scripts/worktree-setup.sh ~/Hacking/domo-desktop4`. Run with no
-argument it lists the candidates it can see. It will not pick one for you — a
-donor's payloads are executed here, outside the seatbelt and within reach of
-this checkout's vault and relay credential, and qualification is cheap to forge,
-so anything able to write one checkout could otherwise put code in the next.
+argument it lists the candidates it can see, and `--no-donor` sets up without
+one. It will not pick one for you: a donor's payloads are executed here, outside
+the seatbelt and within reach of this checkout's vault and relay credential, and
+qualification is cheap to forge, so anything able to write one checkout could
+otherwise put code in the next.
 `scripts/runtime-donor.sh` owns that reasoning and what makes a donor usable.
 
 Without that runtime there is no browser and no vault, and the app says so at

@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "./gitFixture.js";
+import { ARCH, markBuilt, writeMarker } from "./payloadFixture.js";
 
 const script = fileURLToPath(new URL("../scripts/runtime-donor.sh", import.meta.url));
 
@@ -45,18 +46,6 @@ const OURS = '{"python":"3.12"}';
 const THEIRS = '{"python":"3.11"}';
 const OUR_REQS = "camoufox==1\n";
 
-/**
- * Every file that has to exist before a payload counts as built, relative to
- * its vendor dir. vault-server takes two: the web UI is fetched before the
- * vaultwarden compile, so its marker alone would call a donor ready mid-build.
- */
-const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
-const MARKERS: Record<string, string[]> = {
-  "python-runtime": [".stamp"],
-  "camoufox-browser": [`${ARCH}/.sha256`],
-  "vault-server": [".web-vault.sha256", `${ARCH}/.commit`],
-  "vault-cli": [`${ARCH}/.sha256`],
-};
 
 interface Spec {
   name: string;
@@ -78,19 +67,10 @@ function checkout(parent: string, spec: Spec): string {
   fs.writeFileSync(path.join(dir, "vendor/browser-server/requirements.txt"), spec.reqs ?? OUR_REQS);
   for (const payload of spec.payloads) {
     fs.mkdirSync(path.join(dir, "vendor", payload), { recursive: true });
-    if (payload === spec.unfinished) continue;
-    for (const marker of MARKERS[payload] ?? []) {
-      const at = path.join(dir, "vendor", payload, marker);
-      fs.mkdirSync(path.dirname(at), { recursive: true });
-      fs.writeFileSync(at, "built\n");
-    }
+    if (payload !== spec.unfinished) markBuilt(dir, payload);
   }
   if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker));
-  if (spec.alsoMarker) {
-    const at = path.join(dir, "vendor", spec.alsoMarker);
-    fs.mkdirSync(path.dirname(at), { recursive: true });
-    fs.writeFileSync(at, "built\n");
-  }
+  if (spec.alsoMarker) writeMarker(dir, spec.alsoMarker);
   git(dir, "init", "-q", "-b", "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
   return dir;
