@@ -29,6 +29,11 @@ import {
 } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
 
+// The cases that run a real command go through seatbelt (`sandbox-exec`),
+// which is the Mac's own; off it the spawn fails before the case's own claim
+// is ever exercised.
+const ON_MAC = process.platform === "darwin";
+
 const cleanups: (() => void)[] = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
@@ -130,7 +135,7 @@ describe("a tool call end to end, in process", () => {
     expect(jv(received).get("goal").str).toBe("check the greeting");
   });
 
-  it("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
+  it.skipIf(!ON_MAC)("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
     const { server } = makeServer();
     const allowed = tempDir();
     const offLimits = tempDir();
@@ -547,7 +552,7 @@ describe("review findings", () => {
   // 5 — the wait_ms cap does not produce a direct job handle. Pin what really
   // happens so the claim cannot drift back to the wrong one.
   describe("a command outrunning the budget defers, then yields its job handle", () => {
-    it("takes two hops: pending handle, then a ready payload containing the job handle", async () => {
+    it.skipIf(!ON_MAC)("takes two hops: pending handle, then a ready payload containing the job handle", async () => {
       const { server, device } = makeServer(new ScriptedPolicy("allow_once", 0), 30);
       const first = await callTool(
         server,
@@ -670,7 +675,7 @@ describe("per-agent isolation (§4.4)", () => {
     return handle;
   }
 
-  it("one agent cannot read another's job output — even sharing a name", async () => {
+  it.skipIf(!ON_MAC)("one agent cannot read another's job output — even sharing a name", async () => {
     const { server } = makeServer();
     const handle = await startJob(server, ALICE, "alice-secret");
 
@@ -691,7 +696,7 @@ describe("per-agent isolation (§4.4)", () => {
     expect(owner.payload.output).toContain("alice-secret");
   });
 
-  it("one agent's read cannot advance another's cursor", async () => {
+  it.skipIf(!ON_MAC)("one agent's read cannot advance another's cursor", async () => {
     const { server } = makeServer();
     const aliceHandle = await startJob(server, ALICE, "alice");
     const malloryHandle = await startJob(server, MALLORY, "mallory");
