@@ -63,7 +63,7 @@ unfinished() {
     # produces ever leaves — a donor in that shape is refused too, and that is
     # the same trade.
     camoufox-browser)
-      if [ -e "$1/vendor/camoufox-browser/$arch" ]; then
+      if [ -d "$1/vendor/camoufox-browser/$arch" ]; then
         [ ! -f "$1/vendor/camoufox-browser/$arch/.sha256" ]
       else
         [ ! -f "$1/vendor/camoufox-browser/universal/.sha256" ]

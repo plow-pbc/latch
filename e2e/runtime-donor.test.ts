@@ -57,6 +57,8 @@ interface Spec {
   withoutMarker?: string;
   /** A path under vendor/ to remove entirely, after the markers are written. */
   withoutPath?: string;
+  /** An empty directory to leave behind, after any removal above. */
+  alsoDir?: string;
   /** One extra marker path to write, for the trees a donor may build instead. */
   alsoMarker?: string;
 }
@@ -75,6 +77,7 @@ function checkout(parent: string, spec: Spec): string {
   if (spec.withoutPath) {
     fs.rmSync(path.join(dir, "vendor", spec.withoutPath), { recursive: true, force: true });
   }
+  if (spec.alsoDir) fs.mkdirSync(path.join(dir, "vendor", spec.alsoDir), { recursive: true });
   if (spec.alsoMarker) writeMarker(dir, spec.alsoMarker);
   git(dir, "init", "-q", "-b", "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
@@ -203,16 +206,32 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       usable: true,
     },
     {
-      why: "refuses a Camoufox still extracting, whatever sits beside it",
-      // The earlier half of the same window: fetchBrowser() has rm'd the
-      // per-arch tree and made it again, and nothing has landed in it yet — so
-      // there is no config.json, and a finished universal tree next door must
-      // not answer for the empty shell sitting where the browser will go.
+      why: "refuses a Camoufox mid-extract that an older universal tree excuses",
+      // The dominant half of the window, and the reason the gate does not ask
+      // after config.json: the tree is half unpacked and has no config.json
+      // yet, while a finished universal tree from an earlier --browser-both
+      // sits beside it. camoufoxIn() would still reach for this one.
       spec: {
         name: "d",
         payloads: FULL,
         unfinished: "camoufox-browser",
         withoutPath: `camoufox-browser/${ARCH}/config.json`,
+        alsoMarker: "camoufox-browser/universal/.sha256",
+      },
+      usable: false,
+    },
+    {
+      why: "refuses a stray empty per-arch dir, which is the accepted cost",
+      // Not a hazard — camoufoxIn() would skip an empty tree and use universal.
+      // The gate refuses it anyway, because telling this apart from a tree one
+      // file into its extraction is not worth the branch. Pinned so the trade
+      // is visible as a choice rather than read as the security property.
+      spec: {
+        name: "d",
+        payloads: FULL,
+        unfinished: "camoufox-browser",
+        withoutPath: `camoufox-browser/${ARCH}`,
+        alsoDir: `camoufox-browser/${ARCH}`,
         alsoMarker: "camoufox-browser/universal/.sha256",
       },
       usable: false,
