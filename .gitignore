@@ -17,7 +17,8 @@ vendor/camoufox-browser/
 vendor/vault-cli/
 vendor/downloads/
 vendor/vault-server/
+# worktree-setup.sh stages each payload here before renaming it into place.
+vendor/*.partial/
 
 # a stray bw run once defaulted its app data here
 Library/
-vendor/*.partial/

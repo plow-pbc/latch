@@ -39,7 +39,12 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
   for (const f of ["runtime.lock.json", "requirements.txt"]) {
     fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(dir, "vendor/browser-server", f));
   }
-  for (const p of payloads) fs.mkdirSync(path.join(dir, "vendor", p), { recursive: true });
+  for (const p of payloads) {
+    fs.mkdirSync(path.join(dir, "vendor", p), { recursive: true });
+    // Named so a copy that landed a directory deeper is distinguishable from
+    // one that landed right — the dir itself exists either way.
+    fs.writeFileSync(path.join(dir, "vendor", p, "payload-marker"), p);
+  }
   // What build-browser-runtime.mjs writes last, once the build it describes
   // finished — the donor gate reads it to tell a built payload from a fetch
   // still in progress.
@@ -77,9 +82,12 @@ describe("worktree-setup.sh", () => {
 
     const out = runSetup(asking);
 
-    // Everything the donor had, actually on disk — not merely reported.
-    for (const p of [...payloads, "downloads"]) {
-      expect(fs.existsSync(path.join(asking, "vendor", p))).toBe(true);
+    // Everything the donor had, at the depth it had it — all but the payload
+    // this checkout already had, which the branch below is about. Asserting the
+    // donor's marker rather than the directory is what separates a copy renamed
+    // into place from one nested inside its own staging dir.
+    for (const p of [...payloads.slice(1), "downloads"]) {
+      expect(fs.readFileSync(path.join(asking, "vendor", p, "payload-marker"), "utf8")).toBe(p);
     }
     expect(fs.readFileSync(path.join(asking, "vendor", payloads[0], "ours"), "utf8")).toBe("keep me");
     expect(out).toContain(`vendor/${payloads[0]} already present`);

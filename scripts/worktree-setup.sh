@@ -23,8 +23,9 @@
 #   screenshots       /tmp/plow-latch-<branch>                    (main: /tmp)
 #
 # What is deliberately NOT copied: settings.json and the relay credential in
-# it. The relay does not support two devices on one credential, so the first
-# `just app` in a new checkout opens sign-in and it gets its own.
+# it. A checkout whose branch is its own gets its own credential on first
+# `just app`; one sharing a branch inherits the home above, credential and all,
+# which is why that case wants its own DOMO_HOME.
 # `just package` stays main-only (shared electron-builder caches + keychain).
 set -euo pipefail
 cd "$(dirname "$0")/.."

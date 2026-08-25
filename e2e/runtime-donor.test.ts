@@ -132,7 +132,16 @@ describe("runtime-donor.sh, among siblings", () => {
       winner: "",
     },
     {
-      why: "passes over a sibling still in the middle of its fetch",
+      why: "passes over a sibling rebuilding Python under an older browser set",
+      // buildRuntime() runs on both passes and deletes vendor/python-runtime
+      // outright when the stamp no longer matches, so a re-fetch after a pin
+      // bump leaves all four dirs with the Python one mid-rebuild. This is the
+      // dangerous one: every dir is present, so the complete tier would take it.
+      siblings: [{ name: "slot1", payloads: FULL, stamped: false }],
+      winner: "",
+    },
+    {
+      why: "passes over a sibling still in the middle of its first fetch",
       // The Python build runs first and stamps itself when it finishes, so an
       // unstamped python-runtime with nothing else beside it is what a fetch
       // caught in its first pass actually looks like — and the tier that would
