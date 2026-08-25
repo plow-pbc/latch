@@ -73,7 +73,8 @@ function checkout(parent: string, spec: Spec): string {
     if (payload === spec.unfinished) markStarted(dir, payload);
     else markBuilt(dir, payload);
   }
-  if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker));
+  // force, so the two removal knobs compose whichever order a row needs.
+  if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker), { force: true });
   if (spec.withoutPath) {
     fs.rmSync(path.join(dir, "vendor", spec.withoutPath), { recursive: true, force: true });
   }
@@ -208,9 +209,13 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
     {
       why: "refuses a Camoufox mid-extract that an older universal tree excuses",
       // The dominant half of the window, and the reason the gate does not ask
-      // after config.json: the tree is half unpacked and has no config.json
-      // yet, while a finished universal tree from an earlier --browser-both
-      // sits beside it. camoufoxIn() would still reach for this one.
+      // after config.json: the tree is half unpacked and has none yet, while a
+      // finished universal tree from an earlier --browser-both sits beside it.
+      // The harm is not that camoufoxIn() prefers this tree — with no
+      // config.json it skips it — but that the half-extracted tree is COPIED,
+      // and the recipient's `already present` arm then keeps it forever,
+      // leaving a per-arch tree that can never resolve while the stale
+      // universal one answers in its place.
       spec: {
         name: "d",
         payloads: FULL,

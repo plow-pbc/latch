@@ -18,14 +18,15 @@ export const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
 
 /**
  * What a build leaves behind before it writes its marker — the files that make
- * a payload look inhabited while it is still being filled in.
+ * a payload look inhabited while it is still being filled in. For camoufox
+ * that is the extracted tree, and then config.json once the extraction is
+ * done, so the two straddle the slow half of fetchBrowser().
  */
 export const CONTENTS: Record<string, string[]> = {
-  // In the order fetchBrowser() writes them: something inside the extracted
-  // tree first (its real shape is browsers/<repo>/<version>-<sha>/…, which
-  // nothing here needs to match), then config.json once the extraction
-  // finishes, and .sha256 — a MARKER, not listed here — last of all, after an
-  // addon pulled over the network. A row drops one to sit at a chosen point.
+  // Write order, so a row can drop one and sit at a chosen point in the
+  // window. The first entry stands for the extracted tree (really
+  // browsers/<repo>/<version>-<sha>/…, which nothing here needs to match);
+  // .sha256 closes the window and is a MARKER, so it is not a member here.
   "camoufox-browser": [`${ARCH}/browsers/extracted-file`, `${ARCH}/config.json`],
 };
 
