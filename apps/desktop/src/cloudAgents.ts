@@ -5,6 +5,7 @@ import {
   REQUEST_TIMEOUT_MS,
   normalizeApiBaseUrl,
 } from "./plowApi.js";
+import type { PlowApiErrorKind } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 
@@ -38,6 +39,22 @@ export interface CreateCloudAgentRequest {
 export interface ReconfigureCloudAgentRequest {
   scopes?: string[];
   chatUid?: string;
+}
+
+/** A server answer whose `accepted` flag says whether its effect is uncertain. */
+export class CloudAgentResponseError extends PlowApiError {
+  constructor(
+    kind: PlowApiErrorKind,
+    message: string,
+    status: number,
+    readonly accepted: boolean,
+  ) {
+    super(kind, message, status);
+  }
+}
+
+export function isCloudAgentRefusal(error: unknown): error is CloudAgentResponseError {
+  return error instanceof CloudAgentResponseError && error.accepted === false;
 }
 
 export type CloudAgentTransition = (
@@ -290,32 +307,47 @@ function parseResource(
       (value) => typeof value === "string" && echoesCredential(value, deviceCredential),
     )
   ) {
-    throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
+    throw new CloudAgentResponseError(
+      "http",
+      "Plow returned an unsafe cloud-agent response.",
+      statusCode,
+      true,
+    );
   }
   return resource;
 }
 
-function errorFor(status: number, decoded: unknown, deviceCredential: string): PlowApiError {
+function errorFor(
+  status: number,
+  decoded: unknown,
+  deviceCredential: string,
+): CloudAgentResponseError {
   const detail =
     isRecord(decoded) &&
     typeof decoded.detail === "string" &&
     !echoesCredential(decoded.detail, deviceCredential)
       ? decoded.detail
       : "";
-  if (status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", status);
-  if (status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", status);
+  const refusal = (kind: PlowApiErrorKind, message: string) =>
+    new CloudAgentResponseError(kind, message, status, false);
+  if (status === 401) return refusal("unauthorized", detail || "Not authorized.");
+  if (status === 403) return refusal("forbidden", detail || "Not permitted.");
   if (status === 503) {
-    return new PlowApiError(
+    return refusal(
       "provider_unavailable",
       detail || "Cloud-agent provisioning is unavailable right now.",
-      status,
     );
   }
-  return new PlowApiError("http", detail || `Plow returned ${status}.`, status);
+  return refusal("http", detail || `Plow returned ${status}.`);
 }
 
-function invalidResponse(status: number): PlowApiError {
-  return new PlowApiError("http", "Plow returned an invalid cloud-agent response.", status);
+function invalidResponse(status: number): CloudAgentResponseError {
+  return new CloudAgentResponseError(
+    "http",
+    "Plow returned an invalid cloud-agent response.",
+    status,
+    true,
+  );
 }
 
 function recoverableAgentId(decoded: unknown): string | null {

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CLOUD_AGENT_POLL_INTERVAL_MS,
+  CloudAgentResponseError,
   CloudAgentResource,
   CloudAgentsClient,
+  isCloudAgentRefusal,
 } from "../src/cloudAgents.js";
 import { PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 
@@ -135,8 +137,50 @@ describe("CloudAgentsClient request contracts", () => {
       name: "PlowApiError",
       kind: "http",
       status: 202,
+      accepted: true,
       message: "Plow returned an invalid cloud-agent response.",
     });
+  });
+
+  it("tags a malformed create receipt as an invalid 2xx response", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 202, body: {} }]);
+    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
+      .create(CREDENTIAL, { chatUid: "cht_123" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CloudAgentResponseError);
+    expect(error).toMatchObject({
+      kind: "http",
+      status: 202,
+      accepted: true,
+    });
+    expect(isCloudAgentRefusal(error)).toBe(false);
+  });
+
+  it("tags create and reconfigure non-2xx responses as refusals", async () => {
+    const invoke = [
+      (client: CloudAgentsClient) => client.create(CREDENTIAL, { chatUid: "cht_123" }),
+      (client: CloudAgentsClient) =>
+        client.reconfigure(CREDENTIAL, "agent_123", { scopes: ["chats:use"] }),
+    ];
+
+    for (const call of invoke) {
+      const { fetchImpl } = recordingFetch([
+        { status: 422, body: { detail: "That scope set is not allowed." } },
+      ]);
+      const error = await call(new CloudAgentsClient("https://api.plow.co", fetchImpl)).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBeInstanceOf(CloudAgentResponseError);
+      expect(error).toMatchObject({
+        kind: "http",
+        status: 422,
+        accepted: false,
+        message: "That scope set is not allowed.",
+      });
+      expect(isCloudAgentRefusal(error)).toBe(true);
+    }
   });
 
   it("treats deleting an already-gone agent as success", async () => {
