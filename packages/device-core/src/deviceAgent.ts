@@ -382,7 +382,7 @@ export class DeviceAgent {
       return this.executeBrowserIntent(intent, payload);
     }
     const tool = intent.capabilities.find((c) => c.kind === "tool");
-    if (tool) return this.executeToolIntent(tool, payload);
+    if (tool) return this.executeToolIntent(intent, tool, payload);
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
@@ -398,23 +398,32 @@ export class DeviceAgent {
    * new dispatch site.
    */
   private async executeToolIntent(
+    intent: Intent,
     cap: { tool?: string },
     payload: JSONValue,
   ): Promise<JSONValue> {
     const name = cap.tool ?? "";
     if (!name.startsWith("slack.")) {
-      return { status: "error", error: `unknown tool capability: ${name || "(none)"}` };
+      const error = `unknown tool capability: ${name || "(none)"}`;
+      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error });
+      return { status: "error", error };
     }
     if (!this.connectors) {
-      return { status: "error", error: "this Mac is not paired with Plow" };
+      const error = "this Mac is not paired with Plow";
+      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error });
+      return { status: "error", error };
     }
     const action = name.slice("slack.".length);
     try {
-      return action === "status"
-        ? await this.connectors.status()
-        : await this.connectors.call(action, payload);
+      const result =
+        action === "status" ? await this.connectors.status() : await this.connectors.call(action, payload);
+      this.audit.record("tool_call", { intentId: intent.intentId, tool: name });
+      return result;
     } catch (e) {
-      if (e instanceof ConnectorError) return { status: "error", error: e.message };
+      if (e instanceof ConnectorError) {
+        this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: e.message });
+        return { status: "error", error: e.message };
+      }
       throw e;
     }
   }

@@ -47,6 +47,39 @@ describe("tool capability execution", () => {
     expect(response).toMatchObject({ ts: "1.2", channel: "C1" });
   });
 
+  it("routes a slack.status capability to ConnectorClient.status(), not call()", async () => {
+    const calls: { action: string; body: unknown }[] = [];
+    const connectors = {
+      call: async (action: string, body: unknown) => {
+        calls.push({ action, body });
+        return { status: "error", error: "call() should not have been invoked" };
+      },
+      status: async () => ({ connected: true, team: "T1" }),
+    };
+    const device = new DeviceAgent(
+      tempDir(),
+      "Test Mac",
+      new HeadlessPolicy({ intent: "allow_once" }),
+      null,
+      undefined,
+      connectors,
+    );
+
+    const intent = makeIntent({
+      agentId: "a1",
+      agentDisplay: "Agent",
+      deviceId: device.identity.deviceId,
+      request: "check slack connection status",
+      capabilities: [{ kind: "tool", tool: "slack.status" }],
+      sessionId: "s1",
+    });
+
+    const response = await device.handleIntent(intent, {});
+
+    expect(calls).toEqual([]);
+    expect(response).toMatchObject({ connected: true, team: "T1" });
+  });
+
   it("reports a clear error when no connector client is configured", async () => {
     const device = new DeviceAgent(
       tempDir(),
