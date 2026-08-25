@@ -685,6 +685,152 @@ describe("removing and retrying", () => {
     });
   });
 
+  it("carries a toggle made while the retry was in flight", async () => {
+    const home = tempHome();
+    const creating = deferred<CloudAgentResource>();
+    const replacement = agent({ agentId: "agent_2", status: "provisioning" });
+    const f = fakes({
+      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      create: async () => creating.promise,
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: false });
+
+    const retrying = state.retry("agent_1");
+    // The panel is open across both round trips, and the user reaches it.
+    await state.apply("agent_1", { adversarialReview: true });
+    creating.resolve(replacement);
+    await retrying;
+    await settle();
+
+    // What they last chose, not what was on disk when Retry was pressed.
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_2: { adversarialReview: true },
+    });
+  });
+
+  it("carries a toggle made while the REPLACEMENT was being created", async () => {
+    const home = tempHome();
+    const creating = deferred<CloudAgentResource>();
+    let creatingNow: () => void = () => {};
+    const entered = new Promise<void>((resolve) => {
+      creatingNow = resolve;
+    });
+    const f = fakes({
+      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      create: async () => {
+        creatingNow();
+        return creating.promise;
+      },
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: false });
+
+    const retrying = state.retry("agent_1");
+    // Not during the delete this time — the second round trip, with the
+    // replacement already asked for and not yet answered.
+    await entered;
+    await state.apply("agent_1", { adversarialReview: true });
+    creating.resolve(agent({ agentId: "agent_2", status: "provisioning" }));
+    await retrying;
+    await settle();
+
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_2: { adversarialReview: true },
+    });
+  });
+
+  it("carries a toggle switched OFF while the retry was in flight", async () => {
+    const home = tempHome();
+    const creating = deferred<CloudAgentResource>();
+    const f = fakes({
+      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      create: async () => creating.promise,
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: true });
+
+    const retrying = state.retry("agent_1");
+    await state.apply("agent_1", { adversarialReview: false });
+    creating.resolve(agent({ agentId: "agent_2", status: "provisioning" }));
+    await retrying;
+    await settle();
+
+    // The move is not "keep whatever was on", it is "keep what they chose".
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_2: { adversarialReview: false },
+    });
+  });
+
+  it("leaves no entry behind on the id the retry replaced", async () => {
+    const home = tempHome();
+    const f = fakes({
+      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      create: async () => agent({ agentId: "agent_2", status: "provisioning" }),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: true });
+
+    await state.retry("agent_1");
+    await settle();
+
+    // An id no row will ever carry again is an entry nothing can ever read.
+    expect(loadSettings(home).cloudAgentSettings.agent_1).toBeUndefined();
+  });
+
+  it("drops the entry when the replacement never arrives", async () => {
+    const home = tempHome();
+    const f = fakes({
+      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      create: async () => {
+        throw new PlowApiError("http", "Plow returned 500.", 500);
+      },
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: true });
+
+    await state.retry("agent_1");
+    await settle();
+
+    // The old agent is gone from the account either way, so its settings have
+    // nothing left to apply to.
+    expect(loadSettings(home).cloudAgentSettings).toEqual({});
+    expect(state.state().cloudActionError).toBe("Plow returned 500.");
+  });
+
+  it("keeps a toggle made on an agent the retry did not touch", async () => {
+    const home = tempHome();
+    const creating = deferred<CloudAgentResource>();
+    const f = fakes({
+      list: async () => [
+        agent({ status: "failed", failureReason: "VM did not start" }),
+        agent({ agentId: "agent_other", createdAt: "2026-08-01T00:00:00Z" }),
+      ],
+      create: async () => creating.promise,
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: true });
+
+    const retrying = state.retry("agent_1");
+    await state.apply("agent_other", { adversarialReview: true });
+    creating.resolve(agent({ agentId: "agent_2", status: "provisioning" }));
+    await retrying;
+    await settle();
+
+    // The move touches two entries — the one it takes from and the one it
+    // gives to. Every other agent's settings are none of its business.
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_2: { adversarialReview: true },
+      agent_other: { adversarialReview: true },
+    });
+  });
+
   it("reports a delete failure without dropping the row", async () => {
     const f = fakes({
       list: async () => [agent()],

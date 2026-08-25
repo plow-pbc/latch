@@ -332,7 +332,6 @@ export class CloudAgentState {
     }
 
     const generation = this.generation;
-    const carried = this.readAgentSettings(id);
     // Same order as `remove`, and for the same reason.
     this.abortPoll(id);
     try {
@@ -345,12 +344,19 @@ export class CloudAgentState {
     this.mutations += 1;
     this.rows.delete(id);
     this.pending.delete(id);
-    this.writeAgentSettings(id, null);
+    // The row goes, the local settings stay. A retry is two round trips, and
+    // the panel is open across both of them: an entry deleted here would take
+    // a toggle made in the meantime with it, and one snapshotted before them
+    // would overwrite that toggle with a stale value. The entry moves once,
+    // below, when there is somewhere for it to go.
     this.publish();
 
     const replacement = await this.create(row.chatUid, row.name);
-    if (generation !== this.generation || !replacement || !carried) return;
-    this.writeAgentSettings(replacement, carried);
+    if (generation !== this.generation) return;
+    // Read at the last possible moment, so what moves is whatever the user
+    // last chose — including a toggle that landed while this was in the air.
+    // A null replacement means the agent is gone with nowhere to carry to.
+    this.moveAgentSettings(id, replacement);
     this.publish();
   }
 
@@ -517,6 +523,23 @@ export class CloudAgentState {
 
   private readAgentSettings(agentId: string): CloudAgentLocalSettings | null {
     return loadSettings(this.deps.home).cloudAgentSettings[agentId] ?? null;
+  }
+
+  /**
+   * Move one agent's local settings onto its replacement, or drop them.
+   *
+   * One load and one save, so the read and the two writes cannot be split by
+   * anything: whatever is on disk when this runs is what moves. `toId` of
+   * `null` — a retry whose replacement never came — deletes the entry, because
+   * an id no row will ever carry again can never be read.
+   */
+  private moveAgentSettings(fromId: string, toId: string | null): void {
+    const settings = loadSettings(this.deps.home);
+    if (!(fromId in settings.cloudAgentSettings)) return;
+    const carried = settings.cloudAgentSettings[fromId];
+    delete settings.cloudAgentSettings[fromId];
+    if (toId) settings.cloudAgentSettings[toId] = carried;
+    saveSettings(this.deps.home, settings);
   }
 
   private writeAgentSettings(agentId: string, value: CloudAgentLocalSettings | null): void {
