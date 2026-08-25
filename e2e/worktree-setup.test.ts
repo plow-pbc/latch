@@ -328,11 +328,20 @@ describe("worktree-setup.sh", () => {
     // "the copy", "cloned from X") reads differently between a run that copied
     // and one that did not, so identical output is the absence of one. Three
     // word-shaped versions of this guard each let the next synonym through.
-    const copied = runSetupExpectingFailure(asking, donor, "fetch-browser");
+    // A checkout that has NOT been set up yet, so this run genuinely copies —
+    // comparing two already-populated runs would compare two identical shapes
+    // and prove nothing.
+    const fresh = checkout(parent, "slot9", []);
+    const copied = runSetupExpectingFailure(fresh, donor, "fetch-browser");
     const notCopied = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
 
     expect(copied.stderr).toMatch(/the runtime in vendor\/ did not check out/);
     expect(notCopied.stderr).toBe(copied.stderr);
+    // Sameness catches a claim that names the source, because the name differs
+    // between these two. It cannot catch one worded as a constant — "the copied
+    // payloads" reads the same in both — so the vocabulary the script uses for
+    // copying is excluded too. Neither alone is the guard.
+    expect(copied.stderr).not.toMatch(/copied|cloned|donor|came from/i);
   });
 
   // Four ways to arrive with nothing worth checking, one contract: setup

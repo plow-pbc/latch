@@ -201,7 +201,8 @@ just build
 #
 # After install and build so a failure here costs only the validation — the
 # checkout keeps its dependencies and its compiled output either way — and NOT
-# suppressed: this is the only content-aware look at what is in vendor/, and
+# suppressed: nothing else compares what is in vendor/ against what it should
+# be, and
 # browserRuntime.ts accepts payloads on path existence alone — camoufox on a
 # config.json, the vault on its binary and web-vault dir, nothing on what is
 # inside any of them. Swallowing this would sign the
