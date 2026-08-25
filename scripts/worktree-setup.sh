@@ -110,25 +110,33 @@ for payload in $payloads downloads; do
       cp -Rp "$donor/$dir" "$dir.partial"
     }
     mv "$dir.partial" "$dir"
+    seeded=1
   else
     echo "note: no $dir to clone — run \`just fetch-browser-runtime fetch-browser\` if you need the browser stack"
   fi
 done
 
 # --- deps + build ----------------------------------------------------------
-# The donor was a cache seed, not an authority: whatever came across is checked
-# here by the build that owns it, whose stamps compare content rather than
-# existence and which repairs exactly what does not match. A good copy makes
-# both of these no-ops; a stale or half-built one costs the rebuild it should.
-# Only when something was copied — with no donor there is nothing to validate,
-# and a fetch from scratch is a different (and much longer) errand.
-if [[ -n "$donor" ]]; then
-  just fetch-browser-runtime
-  just fetch-browser
-fi
-
 just install
 just build
+
+# The donor was a cache seed, not an authority, so what came across is checked
+# by the build that owns it — stamps that compare content and repair exactly
+# what does not match. A good copy makes this a no-op; a stale or half-built one
+# costs the rebuild it should have.
+#
+# Only when something was actually copied. A donor that had nothing to give is
+# not a reason to start a cold build here: that is ~200 MB of Python, a 320 MB
+# browser and a cargo build of vaultwarden, needing a Rust toolchain that
+# setting a checkout up has never needed.
+#
+# And after the build, reporting rather than aborting: everything above is what
+# makes this checkout work, and a network flake or a missing toolchain must not
+# leave it with no node_modules and nothing compiled. `--browser` runs the
+# Python build too, so it is the only recipe needed here.
+if [[ -n "${seeded:-}" ]]; then
+  just fetch-browser || echo "note: could not check the copied runtime — run \`just fetch-browser\` when you can" >&2
+fi
 
 echo ""
 echo "Checkout '$checkout' is ready."

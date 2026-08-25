@@ -103,12 +103,13 @@ describe("worktree-setup.sh", () => {
     // here", not merely "ours survived a merge into it".
     expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[0], "payload-marker"))).toBe(false);
     expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[1], "junk"))).toBe(false);
-    // The donor was a seed, so the build that owns readiness runs over it —
-    // a good copy makes these no-ops, a stale one costs the rebuild it should.
-    expect(out).toContain("stub just fetch-browser-runtime");
-    expect(out).toContain("stub just fetch-browser");
     expect(out).toContain("stub just install");
     expect(out).toContain("stub just build");
+    // Something was copied, so the build that owns readiness runs over it — a
+    // good copy makes this a no-op, a stale one costs the rebuild it should.
+    // After install and build, so a flake there cannot leave the checkout
+    // without node_modules.
+    expect(out.indexOf("stub just fetch-browser")).toBeGreaterThan(out.indexOf("stub just build"));
     // The closing hand-off names this checkout's branch and its real home. This
     // is the line the shadowing bug corrupted, and it is what the owner copies.
     expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
@@ -167,6 +168,23 @@ describe("worktree-setup.sh", () => {
 
     expect(stderr).toMatch(/not a checkout of this repo/);
     expect(stdout).not.toContain("stub just");
+  });
+
+  it("does not start a cold build for a donor that had nothing to give", () => {
+    // A worktree inherits its donor whether or not that checkout ever built a
+    // runtime. Copying nothing is not a reason to fetch ~500 MB and cargo-build
+    // vaultwarden here — setting a checkout up has never needed a Rust
+    // toolchain, and the errand belongs to whoever wants the browser stack.
+    const parent = fs.mkdtempSync(path.join(tmp, "emptydonor-"));
+    const empty = checkout(parent, "slot1", []);
+    const asking = checkout(parent, "slot0", []);
+
+    const out = runSetup(asking, empty);
+
+    expect(out).toContain("no vendor/python-runtime to clone");
+    expect(out).not.toContain("stub just fetch-browser");
+    expect(out).toContain("stub just build");
+    expect(out).toContain("is ready.");
   });
 
   it("carries on with no donor when there is nothing nearby to name", () => {
