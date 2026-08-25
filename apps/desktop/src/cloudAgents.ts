@@ -82,7 +82,15 @@ export class CloudAgentsClient {
       const staleAgentId = recoverableAgentId(failure);
       if (!staleAgentId) throw errorFor(response.status, failure, deviceCredential);
 
-      await this.delete(deviceCredential, staleAgentId);
+      try {
+        await this.delete(deviceCredential, staleAgentId);
+      } catch (error) {
+        throw new PlowApiError(
+          "http",
+          `Cloud agent ${staleAgentId} could not be removed. This chat cannot be provisioned until that agent is removed.`,
+          error instanceof PlowApiError ? error.status : undefined,
+        );
+      }
       response = await this.request("POST", "/v1/agents/cloud", deviceCredential, body);
     }
 

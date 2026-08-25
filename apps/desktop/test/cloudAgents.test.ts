@@ -239,6 +239,30 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
     expect(calls[0].init.body).toBe(calls[2].init.body);
   });
 
+  it("stops with the stuck agent id when prescribed recovery cannot delete it", async () => {
+    const staleId = "dead_agent_456";
+    const { calls, fetchImpl } = recordingFetch([
+      {
+        status: 409,
+        body: {
+          detail: `This chat has an unfinished cloud agent (${staleId}). Delete it with DELETE /v1/agents/cloud/${staleId} and provision again.`,
+        },
+      },
+      { status: 500, body: { detail: "Database unavailable." } },
+    ]);
+
+    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
+      .create(CREDENTIAL, { chatUid: "cht_123" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(error).toMatchObject({ kind: "http", status: 500 });
+    expect(String(error)).toBe(
+      `PlowApiError: Cloud agent ${staleId} could not be removed. This chat cannot be provisioned until that agent is removed.`,
+    );
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST", "DELETE"]);
+  });
+
   it("does not delete a live agent named by a provider-switch 409", async () => {
     const liveId = "live_agent_789";
     const detail = `This chat already has a hermes agent (${liveId}). Delete it with DELETE /v1/agents/cloud/${liveId} before provisioning a codex one.`;
