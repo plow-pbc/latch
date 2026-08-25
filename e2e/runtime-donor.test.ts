@@ -168,5 +168,9 @@ it("says nothing outside a git repository, rather than failing", () => {
   // would abort a setup before it installed anything.
   const parent = fs.mkdtempSync(path.join(tmp, "nogit-"));
   const loose = checkout(parent, { name: "loose", payloads: [], git: false });
+  // Assert the premise, or this passes for the wrong reason: a tmpdir that
+  // happens to sit inside a repository would send the script down the ordinary
+  // "in a repo, nothing qualifies" path, which also answers "" with status 0.
+  expect(() => git(loose, "rev-parse", "--show-toplevel")).toThrow();
   expect(donorFor(loose)).toBe("");
 });

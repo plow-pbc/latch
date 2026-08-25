@@ -948,10 +948,18 @@ app.whenReady().then(async () => {
   // that there is nothing here to start, so the line above cannot print at all
   // — and a silence that also means "fine" is what sent someone to debug a
   // vault that had never been installed.
-  if (!browserRuntime) {
+  //
+  // Gated on the vault, not on the runtime, because they are separate payloads
+  // from separate recipes: `just fetch-browser-runtime` resolves a runtime with
+  // no vault behind it, and keying this on the runtime would leave that state
+  // saying nothing at all — the very silence being removed. The remedy differs
+  // too, so the two cases get their own words.
+  if (!device.vaultServer) {
     console.log(
-      "[browser] no runtime installed — the browser and the vault are off. " +
-        "Run scripts/worktree-setup.sh, or `just fetch-browser-runtime fetch-browser`.",
+      browserRuntime
+        ? "[vault] not installed — this runtime has no vault payload. Run `just fetch-browser`."
+        : "[browser] no runtime installed — the browser and the vault are off. " +
+            "Run scripts/worktree-setup.sh, or `just fetch-browser-runtime fetch-browser`.",
     );
   }
   // Live-refresh the audit view whenever a new event is recorded.

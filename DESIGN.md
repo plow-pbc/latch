@@ -547,6 +547,19 @@ distinguishes empty / locked / ok, because a Keychain reset or a Mac restored
 from backup lands in exactly this state, and "The vault has not started yet"
 sends people to debug a server that is running fine.
 
+A vault that was never installed is a fourth such fact, and it collapsed the
+same way for the same reason: a build with no vault payload has no server, no
+account and nothing to start, which reaching the tab as "has not started yet"
+sent someone to debug a vault that had never existed. `vault:items` answers it
+as its own shape. The tab says only that there is no vault — whether the whole
+browser runtime is absent or only its vault payload is, it cannot tell — and
+carries no remedy, because a packaged install always bundles one and its owner
+has a broken install rather than a recipe to run. The remedy is deliberately
+terminal-only, where the from-source run that needs it is the only reader, and
+it is gated on the vault rather than the runtime: they are separate payloads
+from separate recipes, so gating on the runtime would go silent in exactly the
+state that needs `just fetch-browser`.
+
 ### 11a-ii. A filled secret is masked from what the agent sees
 
 `fill_secret` types a vault value into a page, and the value then sits in

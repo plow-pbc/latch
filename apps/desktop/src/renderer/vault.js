@@ -794,12 +794,15 @@ export async function renderVault(view, isCurrent = () => true) {
         : locked
           ? "This Mac can't unlock its vault account."
           : "The vault has not started yet." }),
-      // The vault ships inside the browser runtime, so "no runtime" and "no
-      // vault" are one fact. No remedy here: a packaged install always bundles
-      // one, so an owner reading this has a broken install, not a `just` recipe
-      // to run — the from-source case gets the command on the terminal instead.
+      // Lead with what is certain and claim no more, the same care the
+      // `undecryptable` note below takes. All this state says is that there is
+      // no vault here; whether the browser runtime around it is missing too, or
+      // merely missing its vault payload, is a distinction this side cannot
+      // make. No remedy either: a packaged install always bundles one, so an
+      // owner reading this has a broken install rather than a recipe to run,
+      // and the from-source case gets the command on the terminal instead.
       missing
-        ? el("p", { class: "use-note", text: "The vault ships with the browser runtime, and this build does not have one. Nothing is lost — a build with the runtime will open whatever is already here." })
+        ? el("p", { class: "use-note", text: "Nothing is lost — a build that includes the vault will open whatever is already here." })
         : null,
       // No invented recovery, and no asserting a cause the code cannot tell
       // apart: `undecryptable` is one `catch` covering a wrong key AND a
