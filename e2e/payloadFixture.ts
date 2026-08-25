@@ -32,7 +32,7 @@ export function writeMarker(checkout: string, relative: string): void {
   fs.writeFileSync(at, "built\n");
 }
 
-/** Mark a payload finished: what a started one has, plus its markers. */
+/** Mark a payload finished, by writing the markers its build writes last. */
 export function markBuilt(checkout: string, payload: string): void {
   for (const marker of MARKERS[payload] ?? []) writeMarker(checkout, path.join(payload, marker));
 }

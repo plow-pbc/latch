@@ -642,6 +642,7 @@ function mergeCamoufoxUniversal() {
     log("camoufox universal up to date");
     return;
   }
+  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
 
   // The sweep below requires the two per-arch trees to be byte-identical outside
   // Mach-O, so patch both before comparing them: one cached (already patched)
