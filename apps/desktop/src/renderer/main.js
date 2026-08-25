@@ -9,7 +9,6 @@ import {
 } from "./approvals.js";
 
 import { el, icon } from "./dom.js";
-import { throwawayAgentNodes } from "./throwawayAgent.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 
 const view = document.getElementById("view");
@@ -1037,23 +1036,16 @@ let agentsMounted = null;
  */
 async function renderAgents() {
   const connectBox = el("div");
-  const throwawayBox = el("div");
-  const throwawayGroup = group(
-    "Get an agent",
-    "One cloud agent for the chat this Mac was activated in.",
-    [throwawayBox],
+  const cloudBox = el("div");
+  const cloudGroup = group(
+    "Cloud agents",
+    "AI assistants that live in a chat and run in the cloud — never on this Mac.",
+    [cloudBox],
   );
   const refreshConnect = async () => {
-    const [s, temporary] = await Promise.all([
-      window.domo.connectGet(),
-      window.domo.throwawayGet(),
-    ]);
+    const s = await window.domo.connectGet();
     connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
-    throwawayBox.replaceChildren(...throwawayAgentNodes(temporary, {
-      create: () => window.domo.throwawayCreate("Cloud agent"),
-      remove: () => window.domo.throwawayDelete(),
-      redraw: refreshConnect,
-    }));
+    cloudBox.replaceChildren(...(s ? cloudNodes(s, refreshConnect) : []));
     if (s) syncStaticModal(s, refreshConnect);
     return s;
   };
@@ -1180,7 +1172,7 @@ async function renderAgents() {
   // description are the same furniture Settings uses, and this pane is one of
   // those groups that outgrew the pane it was in.
   view.replaceChildren(el("div", { class: "panel agents settings" }, [
-    throwawayGroup,
+    cloudGroup,
     group(
       // The designer's title and subtitle.
       "Connect an MCP client",
