@@ -41,19 +41,26 @@ function tempHome(credential = CREDENTIAL): string {
   return dir;
 }
 
-function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
+/**
+ * `status` is widened to a string on purpose: the shipped enum is
+ * `provisioning | running | teardown`, and the client's union is catching up.
+ * Tests speak the server's language, not the draft's.
+ */
+function agent(
+  overrides: Partial<Omit<CloudAgentResource, "status">> & { status?: string } = {},
+): CloudAgentResource {
   return {
     agentId: "agent_1",
     chatUid: "cht_1",
     url: "https://agent.example/internal",
     provider: "exe:hermes",
     name: "Kitchen agent",
-    status: "active",
+    status: "running",
     failureReason: null,
     createdAt: "2026-08-24T18:02:11Z",
     sessionId: SESSION,
     ...overrides,
-  };
+  } as CloudAgentResource;
 }
 
 const CHATS: CloudChatOption[] = [{ uid: "cht_1", label: "+15550100 · Ada" }];
@@ -213,7 +220,7 @@ describe("refresh", () => {
         chatUid: "cht_1",
         chatLabel: "+15550100 · Ada",
         provider: "exe:hermes",
-        status: "active",
+        status: "running",
         failureReason: null,
         createdAt: "2026-08-24T18:02:11Z",
       },
@@ -449,6 +456,99 @@ describe("refresh", () => {
   });
 });
 
+describe("a stuck teardown", () => {
+  it("asks for the delete again rather than showing a live agent", async () => {
+    let deleted = false;
+    const f = fakes({
+      list: async () => (deleted ? [] : [agent({ status: "teardown" })]),
+      remove: async () => {
+        deleted = true;
+      },
+    });
+    const state = build(tempHome(), f);
+
+    await state.refresh();
+    await settle();
+
+    // `teardown` is a delete that failed provider-side, not a resting state.
+    // Nothing else will ask again, so this does.
+    expect(f.agents.deleted).toEqual(["agent_1"]);
+    expect(state.state().cloudAgents).toEqual([]);
+  });
+
+  it("does not pile a second DELETE onto the same agent", async () => {
+    const held = deferred<void>();
+    const f = fakes({
+      list: async () => [agent({ status: "teardown" })],
+      remove: async () => held.promise,
+    });
+    const state = build(tempHome(), f);
+
+    await state.refresh();
+    await state.refresh();
+    await state.refresh();
+    await settle();
+
+    // One attempt at a time: a slow teardown must not collect a DELETE per
+    // refresh.
+    expect(f.agents.deleted).toEqual(["agent_1"]);
+    held.resolve();
+  });
+
+  it("tries again on the next refresh when the retry itself fails", async () => {
+    let failing = true;
+    const f = fakes({
+      list: async () => [agent({ status: "teardown" })],
+      remove: async () => {
+        if (failing) throw new PlowApiError("http", "Plow returned 500.", 500);
+      },
+    });
+    const state = build(tempHome(), f);
+
+    await state.refresh();
+    await settle();
+    expect(f.agents.deleted).toEqual(["agent_1"]);
+    // Nobody clicked anything, so a failure here is not the user's to read.
+    expect(state.state().cloudActionError).toBeNull();
+    expect(state.state().cloudAgentsError).toBeNull();
+
+    failing = false;
+    await state.refresh();
+    await settle();
+
+    expect(f.agents.deleted).toEqual(["agent_1", "agent_1"]);
+  });
+
+  it("drops the agent's local settings once the delete finally lands", async () => {
+    const home = tempHome();
+    let deleted = false;
+    const f = fakes({
+      list: async () => (deleted ? [] : [agent({ status: "teardown" })]),
+      remove: async () => {
+        deleted = true;
+      },
+    });
+    const state = build(home, f);
+    await state.apply("agent_1", { adversarialReview: true });
+
+    await state.refresh();
+    await settle();
+
+    expect(loadSettings(home).cloudAgentSettings).toEqual({});
+  });
+
+  it("leaves a running agent alone", async () => {
+    const f = fakes({ list: async () => [agent({ status: "running" })] });
+    const state = build(tempHome(), f);
+
+    await state.refresh();
+    await settle();
+
+    expect(f.agents.deleted).toEqual([]);
+    expect(state.state().cloudAgents.map((row) => row.status)).toEqual(["running"]);
+  });
+});
+
 describe("provisioning", () => {
   it("puts the row on screen in provisioning before the poll finishes", async () => {
     const held = deferred<CloudAgentResource>();
@@ -492,24 +592,26 @@ describe("provisioning", () => {
     held.resolve(agent());
   });
 
-  it("updates the row in place when the poll reaches failed", async () => {
-    const failed = agent({ status: "failed", failureReason: "VM did not start" });
+  it("updates the row in place when the poll reaches running", async () => {
+    // `running` is the healthy steady state an agent sits in for its whole
+    // life. There is no `failed` to reach: a failed provision cleans itself up
+    // and surfaces as an error on create, never as a row.
+    const running = agent({ status: "running" });
     const f = fakes({
       create: async () => agent({ status: "provisioning" }),
       poll: async (receipt, onTransition) => {
         await onTransition?.(receipt);
-        await onTransition?.(failed);
-        return failed;
+        await onTransition?.(running);
+        return running;
       },
-      list: async () => [failed],
+      list: async () => [running],
     });
     const state = build(tempHome(), f);
 
     await state.create("cht_1", "Kitchen agent");
-    await vi.waitFor(() => expect(state.state().cloudAgents[0].status).toBe("failed"));
+    await vi.waitFor(() => expect(state.state().cloudAgents[0].status).toBe("running"));
 
     expect(state.state().cloudAgents).toHaveLength(1);
-    expect(state.state().cloudAgents[0].failureReason).toBe("VM did not start");
   });
 
   it("reports a create failure as an action error, not a list error", async () => {
@@ -676,7 +778,7 @@ describe("removing and retrying", () => {
     const home = tempHome();
     const replacement = agent({ agentId: "agent_2", status: "provisioning" });
     const f = fakes({
-      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      list: async () => [agent({ status: "running" })],
       create: async () => replacement,
     });
     const state = build(home, f);
@@ -700,7 +802,7 @@ describe("removing and retrying", () => {
     const creating = deferred<CloudAgentResource>();
     const replacement = agent({ agentId: "agent_2", status: "provisioning" });
     const f = fakes({
-      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      list: async () => [agent({ status: "running" })],
       create: async () => creating.promise,
     });
     const state = build(home, f);
@@ -728,7 +830,7 @@ describe("removing and retrying", () => {
       creatingNow = resolve;
     });
     const f = fakes({
-      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      list: async () => [agent({ status: "running" })],
       create: async () => {
         creatingNow();
         return creating.promise;
@@ -756,7 +858,7 @@ describe("removing and retrying", () => {
     const home = tempHome();
     const creating = deferred<CloudAgentResource>();
     const f = fakes({
-      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      list: async () => [agent({ status: "running" })],
       create: async () => creating.promise,
     });
     const state = build(home, f);
@@ -778,7 +880,7 @@ describe("removing and retrying", () => {
   it("leaves no entry behind on the id the retry replaced", async () => {
     const home = tempHome();
     const f = fakes({
-      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      list: async () => [agent({ status: "running" })],
       create: async () => agent({ agentId: "agent_2", status: "provisioning" }),
     });
     const state = build(home, f);
@@ -795,7 +897,7 @@ describe("removing and retrying", () => {
   it("drops the entry when the replacement never arrives", async () => {
     const home = tempHome();
     const f = fakes({
-      list: async () => [agent({ status: "failed", failureReason: "VM did not start" })],
+      list: async () => [agent({ status: "running" })],
       create: async () => {
         throw new PlowApiError("http", "Plow returned 500.", 500);
       },
@@ -818,7 +920,7 @@ describe("removing and retrying", () => {
     const creating = deferred<CloudAgentResource>();
     const f = fakes({
       list: async () => [
-        agent({ status: "failed", failureReason: "VM did not start" }),
+        agent({ status: "running" }),
         agent({ agentId: "agent_other", createdAt: "2026-08-01T00:00:00Z" }),
       ],
       create: async () => creating.promise,

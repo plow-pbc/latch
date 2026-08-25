@@ -177,6 +177,8 @@ export class CloudAgentState {
    * newer, and it is the one the user just performed.
    */
   private mutations = 0;
+  /** Agents whose stuck delete is being retried right now — one at a time each. */
+  private tearingDown = new Set<string>();
 
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
@@ -288,7 +290,7 @@ export class CloudAgentState {
   }
 
   /**
-   * Retry a failed agent: delete it, then create another in the same chat.
+   * Start an agent over: delete it, then create another in the same chat.
    *
    * The new agent gets a NEW `agent_id`, so the old one's local settings are
    * carried across explicitly — otherwise Retry silently resets choices the
@@ -366,6 +368,7 @@ export class CloudAgentState {
    */
   signedOut(): void {
     this.generation += 1;
+    this.tearingDown.clear();
     // Before the rows go: these polls are authorised with a credential that is
     // no longer this Mac's, so every further request they make is a 401.
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
@@ -408,6 +411,36 @@ export class CloudAgentState {
     if (generation === this.generation && !signal.aborted) await this.refresh();
   }
 
+  /**
+   * Ask again for a delete the provider did not finish.
+   *
+   * Silent on failure, deliberately: nobody clicked anything here, so a banner
+   * about it would be a report on work the user did not ask for. The agent
+   * stays in `teardown`, and the next refresh tries again. One attempt at a
+   * time per agent, or every refresh during a slow teardown piles another
+   * DELETE onto the same machine.
+   */
+  private retryTeardown(credential: string, agentId: string, generation: number): void {
+    if (this.tearingDown.has(agentId)) return;
+    this.tearingDown.add(agentId);
+    void (async () => {
+      try {
+        await this.deps.agents.delete(credential, agentId);
+        if (generation !== this.generation) return;
+        this.mutations += 1;
+        this.rows.delete(agentId);
+        this.pending.delete(agentId);
+        // Gone for good now, so its local settings have nothing left to apply to.
+        this.moveAgentSettings(agentId, null);
+        this.publish();
+      } catch {
+        // Still in teardown. The next refresh will find it and try again.
+      } finally {
+        this.tearingDown.delete(agentId);
+      }
+    })();
+  }
+
   private abortPoll(agentId: string): void {
     const controller = this.polls.get(agentId);
     if (!controller) return;
@@ -445,6 +478,12 @@ export class CloudAgentState {
       }
       this.rows = listed;
       this.agentsError = null;
+      // `teardown` is not a state an agent rests in — it is a delete that
+      // failed provider-side and is waiting to be asked again. Nothing else
+      // will ask, so this does, from whichever refresh sees it.
+      for (const agent of agents) {
+        if (isTeardown(agent.status)) this.retryTeardown(credential, agent.agentId, generation);
+      }
     } catch (error) {
       if (generation !== this.generation) return;
       // The rows already on screen are kept: stale truth with a banner beats an
@@ -547,6 +586,17 @@ export class CloudAgentState {
 function byNewestFirst(a: CloudAgentDisplayRow, b: CloudAgentDisplayRow): number {
   if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
   return a.agentId < b.agentId ? -1 : 1;
+}
+
+/**
+ * A delete that failed on the provider's side and needs asking again.
+ *
+ * Read as a widened string: the client's status union is catching up with the
+ * shipped enum, and an unrecognised status must never be a compile error here
+ * — it is the server's word, not ours.
+ */
+function isTeardown(status: string): boolean {
+  return status === "teardown";
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */
