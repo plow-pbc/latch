@@ -678,7 +678,6 @@ function connectNodes(s, redraw) {
 /** The cloud-agent dialog, if one is open. It lives outside #view so a state
     refresh can redraw the roster without taking an in-progress choice away. */
 let cloudModal = null;
-let cloudModalSync = null;
 
 function closeCloudModal() {
   if (!cloudModal) return;
@@ -689,7 +688,6 @@ function closeCloudModal() {
     node.removeAttribute("inert");
   }
   cloudModal = null;
-  cloudModalSync = null;
   if (trigger?.isConnected) trigger.focus();
 }
 
@@ -830,158 +828,28 @@ function openCloudPicker(trigger, state, redraw) {
 
 function openCloudSettings(trigger, agent, state, redraw) {
   const stored = state.cloudAgentSettings?.[agent.agentId];
-  const permissionsKnown = typeof stored?.relay === "boolean" && typeof stored?.inference === "boolean";
-  const previous = {
-    relay: permissionsKnown ? stored.relay : false,
-    inference: permissionsKnown ? stored.inference : false,
-    adversarialReview: stored?.adversarialReview === true,
-  };
-  const relay = el("input", { attrs: { type: "checkbox" } });
-  relay.checked = previous.relay;
-  relay.indeterminate = !permissionsKnown;
-  const inference = el("input", { attrs: { type: "checkbox" } });
-  inference.checked = previous.inference;
-  inference.indeterminate = !permissionsKnown;
   const review = el("input", { attrs: { type: "checkbox" } });
-  review.checked = previous.adversarialReview;
-  const touched = { relay: false, inference: false };
-  const relayUnknown = el("span", { class: "cloud-setting-unknown", text: "Unknown" });
-  const inferenceUnknown = el("span", { class: "cloud-setting-unknown", text: "Unknown" });
-  const unknownNote = el("p", {
-    class: "faint cloud-unknown-note",
-    text: "Plow doesn't report an agent's current permissions; applying will set them.",
-  });
-  unknownNote.hidden = permissionsKnown;
-  const chooseBoth = el("p", {
-    class: "cloud-choose-note",
-    text: "Choose both permissions before applying.",
-  });
-  chooseBoth.hidden = true;
-  const saveErrorMessage = state.cloudSaveError?.agentId === agent.agentId
-    ? state.cloudSaveError.message
-    : null;
+  review.checked = stored?.adversarialReview === true;
   const cancel = el("button", { class: "btn", text: "Cancel" });
   cancel.addEventListener("click", closeCloudModal);
   const apply = el("button", { class: "btn primary", text: "Apply changes" });
-  const saveError = el("div", { class: "cloud-callout cloud-error cloud-save-error" }, [
-    el("div", { class: "cloud-callout-title", text: "Agent settings were not changed" }),
-    el("p", { class: "faint", text: saveErrorMessage ?? "" }),
-  ]);
-  saveError.hidden = !saveErrorMessage;
-  const controls = [relay, inference, review];
-  let isUpdating = false;
-  const syncControls = () => {
-    const relayChosen = touched.relay && (!permissionsKnown || relay.checked !== previous.relay);
-    const inferenceChosen = touched.inference && (!permissionsKnown || inference.checked !== previous.inference);
-    const incompleteChoice = relayChosen !== inferenceChosen;
-    for (const control of controls) control.disabled = isUpdating;
-    cancel.disabled = false;
-    apply.disabled = isUpdating || incompleteChoice;
-    apply.textContent = isUpdating ? "Updating agent…" : "Apply changes";
-    relayUnknown.hidden = !relay.indeterminate;
-    inferenceUnknown.hidden = !inference.indeterminate;
-    chooseBoth.hidden = !incompleteChoice;
-  };
-  const setUpdating = (nextUpdating) => {
-    isUpdating = !!nextUpdating;
-    syncControls();
-  };
-  relay.addEventListener("change", () => {
-    relay.indeterminate = false;
-    touched.relay = true;
-    syncControls();
-  });
-  inference.addEventListener("change", () => {
-    inference.indeterminate = false;
-    touched.inference = true;
-    syncControls();
-  });
-  const restoreStored = (nextState) => {
-    const saved = nextState.cloudAgentSettings?.[agent.agentId];
-    const known = typeof saved?.relay === "boolean" && typeof saved?.inference === "boolean";
-    relay.checked = known ? saved.relay : false;
-    relay.indeterminate = !known;
-    inference.checked = known ? saved.inference : false;
-    inference.indeterminate = !known;
-    review.checked = saved?.adversarialReview ?? previous.adversarialReview;
-    touched.relay = false;
-    touched.inference = false;
-    unknownNote.hidden = known;
-    syncControls();
-  };
-  let submitted = false;
-  let panel = null;
-  const syncState = (nextState) => {
-    if (!panel?.isConnected) return;
-    if (nextState.cloudSaving === agent.agentId) {
-      setUpdating(true);
-      return;
-    }
-    if (!submitted) {
-      setUpdating(false);
-      return;
-    }
-    const nextError = nextState.cloudSaveError?.agentId === agent.agentId
-      ? nextState.cloudSaveError.message
-      : null;
-    if (!nextError) {
-      closeCloudModal();
-      return;
-    }
-    restoreStored(nextState);
-    saveError.querySelector("p").textContent = nextError;
-    saveError.hidden = false;
-    submitted = false;
-    setUpdating(false);
-  };
   apply.addEventListener("click", async () => {
-    saveError.hidden = true;
-    submitted = true;
-    setUpdating(true);
-    const permissionValue = (name, input) => {
-      if (!touched[name]) return null;
-      if (permissionsKnown && input.checked === previous[name]) return null;
-      return input.checked;
-    };
+    review.disabled = true;
+    apply.disabled = true;
     try {
       await window.domo.cloudApply(agent.agentId, {
-        relay: permissionValue("relay", relay),
-        inference: permissionValue("inference", inference),
         adversarialReview: review.checked,
       });
-    } catch {
-      // Main owns the safe error text in cloudSaveError. Re-read it rather
-      // than drawing an exception that could contain request details.
+      closeCloudModal();
+      await redraw();
+    } finally {
+      if (review.isConnected) review.disabled = false;
+      if (apply.isConnected) apply.disabled = false;
     }
-    syncState(await redraw());
   });
-  panel = openCloudModal(trigger, [
+  openCloudModal(trigger, [
     el("div", { class: "group-title", text: `${agent.name} settings` }),
-    el("div", { class: "cloud-settings-section cloud-server-settings" }, [
-      el("label", { class: "check block cloud-setting" }, [
-        relay,
-        el("span", {}, [
-          el("span", { class: "cloud-setting-title", text: "Relay access" }),
-          el("span", { class: "faint cloud-setting-copy", text: "Allow this agent to call tools through the Plow relay." }),
-          relayUnknown,
-        ]),
-      ]),
-      el("label", { class: "check block cloud-setting" }, [
-        inference,
-        el("span", {}, [
-          el("span", { class: "cloud-setting-title", text: "May spend inference" }),
-          el("span", { class: "faint cloud-setting-copy", text: "Allow this agent to use Plow-hosted inference." }),
-          inferenceUnknown,
-        ]),
-      ]),
-      unknownNote,
-      chooseBoth,
-      el("p", {
-        class: "faint cloud-restart-note",
-        text: "Changing relay or inference access restarts the cloud agent. Your agent will restart briefly.",
-      }),
-    ]),
-    el("div", { class: "cloud-settings-section cloud-local-settings" }, [
+    el("div", { class: "cloud-local-settings" }, [
       el("label", { class: "check block cloud-setting" }, [
         review,
         el("span", {}, [
@@ -989,15 +857,10 @@ function openCloudSettings(trigger, agent, state, redraw) {
           el("span", { class: "faint cloud-setting-copy", text: "Have Latch review this agent's requests before they run on this Mac." }),
         ]),
       ]),
-      el("p", { class: "faint cloud-local-note", text: "Stored on this Mac and applies immediately without restarting your agent." }),
+      el("p", { class: "faint cloud-local-note", text: "Stored on this Mac and applies immediately." }),
     ]),
-    saveError,
     el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), apply]),
-  ], relay);
-  if (!panel) return;
-  cloudModalSync = syncState;
-  syncControls();
-  syncState(state);
+  ], review);
 }
 
 function openCloudRemove(trigger, agent, redraw) {
@@ -1157,7 +1020,6 @@ async function renderAgents() {
       cloudGroup = null;
     }
     if (s) syncStaticModal(s, refreshConnect);
-    if (s) cloudModalSync?.(s);
     return s;
   };
   await refreshConnect();

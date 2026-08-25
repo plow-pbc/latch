@@ -98,11 +98,8 @@ let cloudProbe = {
   cloudAgentSettings: {
     cag_probe: { relay: true, inference: false, adversarialReview: false },
   },
-  cloudSaving: null,
-  cloudSaveError: null,
 };
 const cloudCalls = { create: [], delete: [], retry: [], apply: [] };
-let cloudApplyFails = false;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -121,33 +118,14 @@ ipcMain.handle("cloud:delete", async (_e, agentId) => cloudCalls.delete.push(age
 ipcMain.handle("cloud:retry", async (_e, agentId) => cloudCalls.retry.push(agentId));
 ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
   cloudCalls.apply.push({ agentId, settings });
-  if (cloudApplyFails) {
-    const previous = cloudProbe.cloudAgentSettings[agentId];
-    cloudProbe = {
-      ...cloudProbe,
-      cloudAgentSettings: {
-        ...cloudProbe.cloudAgentSettings,
-        [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
-      },
-      cloudSaving: null,
-      cloudSaveError: { agentId, message: "Plow could not update this agent." },
-    };
-    return;
-  }
-  if (settings.relay === null && settings.inference === null) {
-    const previous = cloudProbe.cloudAgentSettings[agentId];
-    cloudProbe = {
-      ...cloudProbe,
-      cloudAgentSettings: {
-        ...cloudProbe.cloudAgentSettings,
-        [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
-      },
-      cloudSaving: null,
-      cloudSaveError: null,
-    };
-    return;
-  }
-  cloudProbe = { ...cloudProbe, cloudSaving: agentId, cloudSaveError: null };
+  const previous = cloudProbe.cloudAgentSettings[agentId];
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentSettings: {
+      ...cloudProbe.cloudAgentSettings,
+      [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
+    },
+  };
 });
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
@@ -669,169 +647,29 @@ app.whenReady().then(async () => {
       label.querySelector("input")?.checked,
     ]));
     return {
-      threeControls: Object.keys(checked).join(",") === "Relay access,May spend inference,Adversarial review",
-      storedValues: checked["Relay access"] === true &&
-        checked["May spend inference"] === false && checked["Adversarial review"] === false,
-      restartScoped: modal.querySelector(".cloud-server-settings")?.textContent.includes("Your agent will restart briefly") &&
-        !modal.querySelector(".cloud-local-settings")?.textContent.includes("restart briefly"),
-      localWithoutRestart: modal.querySelector(".cloud-local-settings")?.textContent.includes("without restarting your agent"),
+      oneControl: Object.keys(checked).join(",") === "Adversarial review",
+      storedValue: checked["Adversarial review"] === false,
+      noServerSection: !modal.querySelector(".cloud-server-settings"),
+      noPermissionCopy: !modal.textContent.includes("Relay access") &&
+        !modal.textContent.includes("May spend inference") &&
+        !modal.textContent.includes("current permissions"),
+      noRestartCopy: !/restart/i.test(modal.textContent),
+      localCopy: modal.querySelector(".cloud-local-settings")?.textContent.includes("Stored on this Mac and applies immediately."),
       appliesTogether: [...modal.querySelectorAll("button")].some((button) => button.textContent.trim() === "Apply changes"),
     };
   }})()`);
   await win.webContents.executeJavaScript(`(() => {
     const modal = document.querySelector(".cloud-modal");
-    const relay = modal.querySelector(".cloud-server-settings input");
-    relay.click();
-    relay.click();
-    [...modal.querySelectorAll("button")].find((b) => b.textContent.trim() === "Apply changes").click();
-  })()`);
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the unchanged known-permissions save");
-  const knownRoundTrip = cloudCalls.apply[0];
-  const cloudKnownRoundTrip = {
-    stableId: knownRoundTrip?.agentId === "cag_probe",
-    unchangedIsUntouched: knownRoundTrip?.settings?.relay === null &&
-      knownRoundTrip?.settings?.inference === null,
-    noRestart: cloudProbe.cloudSaving === null,
-  };
-
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel after the no-op save");
-  await win.webContents.executeJavaScript(`(() => {
-    const checks = [...document.querySelectorAll(".cloud-modal input[type=checkbox]")];
-    checks.forEach((check) => check.click());
-    [...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Apply changes").click();
-  })()`);
-  await waitFor(win, `[...document.querySelectorAll(".cloud-modal button")].some((b) => b.textContent.trim() === "Updating agent…")`,
-    "the cloud-agent updating state");
-  const cloudUpdating = await win.webContents.executeJavaScript(`(${() => ({
-    exactCopy: [...document.querySelectorAll(".cloud-modal button")]
-      .some((button) => button.textContent.trim() === "Updating agent…"),
-    controlsDisabled: [...document.querySelectorAll(".cloud-modal input")].every((input) => input.disabled),
-    canClose: [...document.querySelectorAll(".cloud-modal button")]
-      .some((button) => button.textContent.trim() === "Cancel" && !button.disabled),
-    rowStillListed: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
-  })})()`);
-  const applied = cloudCalls.apply[1];
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentSettings: {
-      ...cloudProbe.cloudAgentSettings,
-      cag_probe: { ...applied.settings },
-    },
-    cloudSaving: null,
-  };
-  win.webContents.send("connect:changed");
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the successful cloud-agent settings write");
-  const cloudSettings = {
-    stableId: applied?.agentId === "cag_probe",
-    exactSettings: applied?.settings?.relay === false && applied?.settings?.inference === true &&
-      applied?.settings?.adversarialReview === true && Object.keys(applied?.settings ?? {}).length === 3,
-  };
-
-  cloudApplyFails = true;
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel for a failed save");
-  await win.webContents.executeJavaScript(`(() => {
-    const checks = [...document.querySelectorAll(".cloud-modal input[type=checkbox]")];
-    checks.forEach((check) => check.click());
-    [...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Apply changes").click();
-  })()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-save-error:not([hidden])")`,
-    "the failed cloud-agent settings write");
-  const cloudSettingsFailure = await win.webContents.executeJavaScript(`(${() => {
-    const checks = [...document.querySelectorAll(".cloud-modal input[type=checkbox]")];
-    return {
-      showsFailure: document.querySelector(".cloud-save-error")?.textContent.includes("Plow could not update this agent"),
-      priorServerSettings: checks[0]?.checked === false && checks[1]?.checked === true,
-      localSettingApplied: checks[2]?.checked === false,
-      controlsEnabled: checks.every((input) => !input.disabled),
-      rowStillListed: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
-    };
-  }})()`);
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
-  cloudApplyFails = false;
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentSettings: { cag_probe: { adversarialReview: false } },
-    cloudSaveError: { agentId: "cag_someone_else", message: "This belongs to another agent." },
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the unknown-permissions row");
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-unknown-note")`, "the unknown-permissions panel");
-  const cloudUnknown = await win.webContents.executeJavaScript(`(${() => {
-    const modal = document.querySelector(".cloud-modal");
-    const permissions = [...modal.querySelectorAll(".cloud-server-settings input")];
-    return {
-      bothIndeterminate: permissions.length === 2 && permissions.every((input) => input.indeterminate),
-      bothNamedUnknown: [...modal.querySelectorAll(".cloud-setting-unknown:not([hidden])")].length === 2,
-      explainsUnknown: modal.querySelector(".cloud-unknown-note")?.textContent.trim() ===
-        "Plow doesn't report an agent's current permissions; applying will set them.",
-      noOtherAgentError: !modal.textContent.includes("This belongs to another agent"),
-      localOnlyAllowed: [...modal.querySelectorAll("button")]
-        .some((button) => button.textContent.trim() === "Apply changes" && !button.disabled),
-    };
-  }})()`);
-  const cloudUnknownChoice = await win.webContents.executeJavaScript(`(${() => {
-    const modal = document.querySelector(".cloud-modal");
-    const permissions = [...modal.querySelectorAll(".cloud-server-settings input")];
-    const apply = [...modal.querySelectorAll("button")].find((button) => button.textContent.trim() === "Apply changes");
-    permissions[0].click();
-    const oneChoiceBlocked = apply.disabled &&
-      modal.querySelector(".cloud-choose-note")?.textContent.includes("Choose both permissions");
-    permissions[0].click();
-    permissions[1].click();
-    permissions[1].click();
-    const bothChoicesAllowed = !apply.disabled;
-    const noLongerGuesses = permissions.every((input) => !input.indeterminate);
-    apply.click();
-    return {
-      oneChoiceBlocked,
-      bothChoicesAllowed,
-      noLongerGuesses,
-    };
-  }})()`);
-  await waitFor(win, `[...document.querySelectorAll(".cloud-modal button")].some((b) => b.textContent.trim() === "Updating agent…")`,
-    "the unknown-permissions round-trip restart");
-  const unknownRoundTrip = cloudCalls.apply[3];
-  const cloudUnknownRoundTrip = {
-    stableId: unknownRoundTrip?.agentId === "cag_probe",
-    deliberateValuesKept: unknownRoundTrip?.settings?.relay === false &&
-      unknownRoundTrip?.settings?.inference === false,
-  };
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentSettings: {
-      ...cloudProbe.cloudAgentSettings,
-      cag_probe: { ...unknownRoundTrip.settings },
-    },
-    cloudSaving: null,
-  };
-  win.webContents.send("connect:changed");
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the unknown-permissions round-trip save");
-
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentSettings: { cag_probe: { adversarialReview: false } },
-    cloudSaveError: null,
-  };
-  win.webContents.send("connect:changed");
-  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the unknown-permissions row to refresh");
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-unknown-note")`, "the local-only unknown-permissions panel");
-  await win.webContents.executeJavaScript(`(() => {
-    const modal = document.querySelector(".cloud-modal");
     modal.querySelector(".cloud-local-settings input").click();
     [...modal.querySelectorAll("button")].find((b) => b.textContent.trim() === "Apply changes").click();
   })()`);
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the local-only unknown-permissions save");
-  const localOnly = cloudCalls.apply[4];
-  const cloudUnknownLocalOnly = {
-    stableId: localOnly?.agentId === "cag_probe",
-    untouchedPermissions: localOnly?.settings?.relay === null && localOnly?.settings?.inference === null,
-    reviewApplied: localOnly?.settings?.adversarialReview === true,
-    noRestart: cloudProbe.cloudSaving === null,
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the local cloud-agent settings save");
+  const applied = cloudCalls.apply[0];
+  const cloudSettings = {
+    stableId: applied?.agentId === "cag_probe",
+    exactSettings: applied?.settings?.adversarialReview === true &&
+      Object.keys(applied?.settings ?? {}).join(",") === "adversarialReview",
+    persisted: cloudProbe.cloudAgentSettings.cag_probe?.adversarialReview === true,
   };
 
   cloudProbe = {
@@ -1530,39 +1368,16 @@ app.whenReady().then(async () => {
     cloudNewChat.twoRoutes &&
     cloudNewChat.serverNumber &&
     cloudNewChat.groupRoute &&
-    cloudSettingsPanel.threeControls &&
-    cloudSettingsPanel.storedValues &&
-    cloudSettingsPanel.restartScoped &&
-    cloudSettingsPanel.localWithoutRestart &&
+    cloudSettingsPanel.oneControl &&
+    cloudSettingsPanel.storedValue &&
+    cloudSettingsPanel.noServerSection &&
+    cloudSettingsPanel.noPermissionCopy &&
+    cloudSettingsPanel.noRestartCopy &&
+    cloudSettingsPanel.localCopy &&
     cloudSettingsPanel.appliesTogether &&
-    cloudKnownRoundTrip.stableId &&
-    cloudKnownRoundTrip.unchangedIsUntouched &&
-    cloudKnownRoundTrip.noRestart &&
-    cloudUpdating.exactCopy &&
-    cloudUpdating.controlsDisabled &&
-    cloudUpdating.canClose &&
-    cloudUpdating.rowStillListed &&
     cloudSettings.stableId &&
     cloudSettings.exactSettings &&
-    cloudSettingsFailure.showsFailure &&
-    cloudSettingsFailure.priorServerSettings &&
-    cloudSettingsFailure.localSettingApplied &&
-    cloudSettingsFailure.controlsEnabled &&
-    cloudSettingsFailure.rowStillListed &&
-    cloudUnknown.bothIndeterminate &&
-    cloudUnknown.bothNamedUnknown &&
-    cloudUnknown.explainsUnknown &&
-    cloudUnknown.noOtherAgentError &&
-    cloudUnknown.localOnlyAllowed &&
-    cloudUnknownChoice.oneChoiceBlocked &&
-    cloudUnknownChoice.bothChoicesAllowed &&
-    cloudUnknownChoice.noLongerGuesses &&
-    cloudUnknownRoundTrip.stableId &&
-    cloudUnknownRoundTrip.deliberateValuesKept &&
-    cloudUnknownLocalOnly.stableId &&
-    cloudUnknownLocalOnly.untouchedPermissions &&
-    cloudUnknownLocalOnly.reviewApplied &&
-    cloudUnknownLocalOnly.noRestart &&
+    cloudSettings.persisted &&
     cloudChatFailure.showsError &&
     cloudChatFailure.notEmptyState &&
     cloudChatFailure.keepsRoster &&
@@ -1644,7 +1459,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudKnownRoundTrip, cloudUpdating, cloudSettings, cloudSettingsFailure, cloudUnknown, cloudUnknownChoice, cloudUnknownRoundTrip, cloudUnknownLocalOnly, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudSettings, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
