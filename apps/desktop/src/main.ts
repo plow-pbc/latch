@@ -589,19 +589,15 @@ ipcMain.handle("cloud:retry", async (_e, agentId: string) => {
  */
 ipcMain.handle(
   "cloud:apply",
-  async (_e, agentId: string, controls: { relay: boolean; inference: boolean; adversarialReview: boolean }) => {
+  async (
+    _e,
+    agentId: string,
+    controls: { relay: boolean | null; inference: boolean | null; adversarialReview: boolean },
+  ) => {
     await cloudAgents?.apply(agentId, controls);
     return agentsTabState();
   },
 );
-ipcMain.handle(
-  "cloud:settingsSet",
-  async (_e, agentId: string, settings: { adversarialReview: boolean }) => {
-    cloudAgents?.setAgentSettings(agentId, settings);
-    return agentsTabState();
-  },
-);
-
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
  * cloud half is present and empty when the flag is off, so the renderer reads
  * the same fields either way. */

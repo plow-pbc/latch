@@ -95,15 +95,13 @@ contextBridge.exposeInMainWorld("domo", {
   cloudDelete: (agentId: string) => ipcRenderer.invoke("cloud:delete", agentId),
   // Delete then re-create in the same chat; the replacement has a new agent id.
   cloudRetry: (agentId: string) => ipcRenderer.invoke("cloud:retry", agentId),
-  // Local-only per-agent settings, keyed on the agent id. No restart, no server.
-  cloudSettingsSet: (agentId: string, settings: { adversarialReview: boolean }) =>
-    ipcRenderer.invoke("cloud:settingsSet", agentId, settings),
   // Apply changes: the whole settings panel in one call. Relay access and
   // inference go to Plow and restart the agent; adversarial review is local and
-  // applies at once — and a save that touched only it makes no call at all.
+  // applies at once. `null` on a permission means the user did not touch it —
+  // and a save that touched neither makes no network call at all.
   cloudApply: (
     agentId: string,
-    controls: { relay: boolean; inference: boolean; adversarialReview: boolean },
+    controls: { relay: boolean | null; inference: boolean | null; adversarialReview: boolean },
   ) => ipcRenderer.invoke("cloud:apply", agentId, controls),
 
   // Any web page the app links to (client connector cards, Settings' Support
