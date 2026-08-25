@@ -215,10 +215,14 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export class PlowApi {
+  readonly baseUrl: ApiBaseUrl;
+
   constructor(
-    readonly baseUrl: ApiBaseUrl,
+    baseUrl: ApiBaseUrl,
     private readonly fetchImpl: FetchLike = fetch,
-  ) {}
+  ) {
+    this.baseUrl = normalizeApiBaseUrl(baseUrl);
+  }
 
   /**
    * Start an activation: the server mints a code, the user texts it, and the
@@ -424,25 +428,44 @@ export class PlowApi {
    * written here rather than forwarded. Returns the response whatever its
    * status — deciding what a status *means* belongs to the caller.
    */
-  private async request(
+  async request(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown; signal?: AbortSignal } = {},
+    opts: {
+      token?: string;
+      body?: unknown;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      callerAbortIsLifecycle?: boolean;
+    } = {},
   ): Promise<Response> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (opts.body !== undefined) headers["content-type"] = "application/json";
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+
+    // A caller-owned signal remains its whole budget unless the endpoint also
+    // supplies a request timeout. Cloud-agent polling needs both: sign-out or
+    // removal must cancel it, and one stuck GET must still end after 15s.
+    const timeout =
+      opts.timeoutMs !== undefined || !opts.signal
+        ? AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS)
+        : null;
+    const signal =
+      opts.signal && timeout
+        ? AbortSignal.any([opts.signal, timeout])
+        : (opts.signal ?? timeout ?? undefined);
 
     try {
       return await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        // No caller may wait forever. A caller that owns a budget passes its
-        // own signal; everyone else gets REQUEST_TIMEOUT_MS.
-        signal: opts.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal,
       });
     } catch (error) {
+      // Lifecycle cancellation is not a transport failure. Only endpoints
+      // whose owner can distinguish it opt into preserving the abort reason.
+      if (opts.callerAbortIsLifecycle) opts.signal?.throwIfAborted();
       // The cause carries a hostname at most, but it is not ours to vouch for,
       // so the message is written here rather than forwarded.
       //

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
-import { PlowApiError } from "../src/plowApi.js";
+import { PlowApi, PlowApiError } from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
 
@@ -41,7 +41,7 @@ describe("CloudAgentsClient destructive actions", () => {
       { status: 204 },
       { status: 404, body: { detail: "Not found" } },
     ]);
-    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
+    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
 
     await expect(client.delete(CREDENTIAL, "agent/with space")).resolves.toBeUndefined();
     await expect(client.delete(CREDENTIAL, "gone")).resolves.toBeUndefined();
@@ -65,10 +65,9 @@ describe("CloudAgentsClient destructive actions", () => {
       { status: 202, body: resource("provisioning", { agent_id: "replacement" }) },
     ]);
 
-    const created = await new CloudAgentsClient("https://api.plow.co", fetchImpl).create(
-      CREDENTIAL,
-      { chatUid: "cht_123" },
-    );
+    const created = await new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+    ).create(CREDENTIAL, { chatUid: "cht_123" });
 
     expect(created.agentId).toBe("replacement");
     expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
@@ -91,7 +90,7 @@ describe("CloudAgentsClient destructive actions", () => {
       { status: 500, body: { detail: "Database unavailable." } },
     ]);
 
-    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .create(CREDENTIAL, { chatUid: "cht_123" })
       .catch((caught: unknown) => caught);
 
@@ -107,7 +106,7 @@ describe("CloudAgentsClient destructive actions", () => {
     const detail = `This chat already has a hermes agent (${liveId}). Delete it with DELETE /v1/agents/cloud/${liveId} before provisioning a codex one.`;
     const { calls, fetchImpl } = recordingFetch([{ status: 409, body: { detail } }]);
 
-    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .create(CREDENTIAL, { chatUid: "cht_123", provider: "exe:codex" })
       .catch((caught: unknown) => caught);
 
@@ -132,7 +131,10 @@ describe("CloudAgentsClient cancellation", () => {
         fetched?.addEventListener("abort", () => reject(fetched?.reason), { once: true });
       });
     };
-    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => undefined);
+    const client = new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => undefined,
+    );
 
     const polling = client.poll(
       CREDENTIAL,
@@ -166,9 +168,9 @@ describe("CloudAgentsClient credential boundary", () => {
       });
 
     for (const client of [
-      new CloudAgentsClient("https://api.plow.co", echoed),
-      new CloudAgentsClient("https://api.plow.co", nestedEcho),
-      new CloudAgentsClient("https://api.plow.co", transportEcho),
+      new CloudAgentsClient(new PlowApi("https://api.plow.co", echoed)),
+      new CloudAgentsClient(new PlowApi("https://api.plow.co", nestedEcho)),
+      new CloudAgentsClient(new PlowApi("https://api.plow.co", transportEcho)),
     ]) {
       const error = await client.list(CREDENTIAL).catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(PlowApiError);
@@ -182,8 +184,7 @@ describe("CloudAgentsClient credential boundary", () => {
       { status: 200, body: resource("running", { failure_reason: `provider echoed ${CREDENTIAL}` }) },
     ]);
     const error = await new CloudAgentsClient(
-      "https://api.plow.co",
-      fetchImpl,
+      new PlowApi("https://api.plow.co", fetchImpl),
       async () => undefined,
     )
       .poll(CREDENTIAL, fromWire(resource("provisioning")))

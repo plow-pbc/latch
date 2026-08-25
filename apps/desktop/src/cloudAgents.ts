@@ -1,9 +1,7 @@
 import {
-  ApiBaseUrl,
-  FetchLike,
+  PlowApi,
   PlowApiError,
   REQUEST_TIMEOUT_MS,
-  normalizeApiBaseUrl,
 } from "./plowApi.js";
 
 /**
@@ -70,15 +68,10 @@ export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">):
  * to a long-running POST.
  */
 export class CloudAgentsClient {
-  private readonly baseUrl: ApiBaseUrl;
-
   constructor(
-    baseUrl: ApiBaseUrl,
-    private readonly fetchImpl: FetchLike = fetch,
+    private readonly api: PlowApi,
     private readonly wait: Wait = defaultWait,
-  ) {
-    this.baseUrl = normalizeApiBaseUrl(baseUrl);
-  }
+  ) {}
 
   async create(
     deviceCredential: string,
@@ -91,13 +84,10 @@ export class CloudAgentsClient {
       ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
     };
 
-    let response = await this.request(
+    let response = await this.api.request(
       "POST",
       "/v1/agents/cloud",
-      deviceCredential,
-      body,
-      undefined,
-      CREATE_REQUEST_TIMEOUT_MS,
+      { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
     );
     if (response.status === 409) {
       const failure = await decodeJson(response);
@@ -113,13 +103,10 @@ export class CloudAgentsClient {
           error instanceof PlowApiError ? error.status : undefined,
         );
       }
-      response = await this.request(
+      response = await this.api.request(
         "POST",
         "/v1/agents/cloud",
-        deviceCredential,
-        body,
-        undefined,
-        CREATE_REQUEST_TIMEOUT_MS,
+        { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
       );
     }
 
@@ -127,7 +114,9 @@ export class CloudAgentsClient {
   }
 
   async list(deviceCredential: string): Promise<CloudAgentResource[]> {
-    const response = await this.request("GET", "/v1/agents/cloud", deviceCredential);
+    const response = await this.api.request("GET", "/v1/agents/cloud", {
+      token: deviceCredential,
+    });
     if (!response.ok) throw errorFor(response.status, await decodeJson(response), deviceCredential);
 
     const decoded = await decodeJson(response);
@@ -143,10 +132,10 @@ export class CloudAgentsClient {
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
-    const response = await this.request(
+    const response = await this.api.request(
       "DELETE",
       `/v1/agents/cloud/${encodeURIComponent(agentId)}`,
-      deviceCredential,
+      { token: deviceCredential },
     );
     // Delete is retry-safe from the app's perspective: a record already gone
     // is the requested outcome even though the API reports it as 404.
@@ -169,12 +158,15 @@ export class CloudAgentsClient {
     while (!isTerminalCloudAgent(current)) {
       await this.wait(CLOUD_AGENT_POLL_INTERVAL_MS);
       signal?.throwIfAborted();
-      const response = await this.request(
+      const response = await this.api.request(
         "GET",
         `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
-        deviceCredential,
-        undefined,
-        signal,
+        {
+          token: deviceCredential,
+          signal,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          callerAbortIsLifecycle: true,
+        },
       );
       current = await this.resourceFor(response, deviceCredential);
       signal?.throwIfAborted();
@@ -193,42 +185,6 @@ export class CloudAgentsClient {
     return parseResource(decoded, deviceCredential, response.status);
   }
 
-  private async request(
-    method: string,
-    path: string,
-    deviceCredential: string,
-    body?: unknown,
-    signal?: AbortSignal,
-    timeoutMs: number = REQUEST_TIMEOUT_MS,
-  ): Promise<Response> {
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${deviceCredential}`,
-    };
-    if (body !== undefined) headers["content-type"] = "application/json";
-
-    const timeout = AbortSignal.timeout(timeoutMs);
-    const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    try {
-      return await this.fetchImpl(`${this.baseUrl}${path}`, {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: requestSignal,
-      });
-    } catch (error) {
-      // A caller abort is lifecycle, not a Plow timeout. Preserve its reason so
-      // the owner of the poll can distinguish cancellation from API failure.
-      signal?.throwIfAborted();
-      const name = (error as { name?: unknown })?.name;
-      if (name === "TimeoutError" || name === "AbortError") {
-        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
-      }
-      // A fetch implementation may put its entire Request, including headers,
-      // in the cause. Only fixed text is allowed across this boundary.
-      throw new PlowApiError("network", "Couldn't reach Plow.");
-    }
-  }
 }
 
 async function decodeJson(response: Response): Promise<unknown> {
