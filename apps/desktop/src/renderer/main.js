@@ -830,37 +830,82 @@ function openCloudPicker(trigger, state, redraw) {
 
 function openCloudSettings(trigger, agent, state, redraw) {
   const stored = state.cloudAgentSettings?.[agent.agentId];
+  const permissionsKnown = typeof stored?.relay === "boolean" && typeof stored?.inference === "boolean";
   const previous = {
-    relay: stored?.relay ?? true,
-    inference: stored?.inference ?? true,
+    relay: permissionsKnown ? stored.relay : false,
+    inference: permissionsKnown ? stored.inference : false,
     adversarialReview: stored?.adversarialReview === true,
   };
   const relay = el("input", { attrs: { type: "checkbox" } });
   relay.checked = previous.relay;
+  relay.indeterminate = !permissionsKnown;
   const inference = el("input", { attrs: { type: "checkbox" } });
   inference.checked = previous.inference;
+  inference.indeterminate = !permissionsKnown;
   const review = el("input", { attrs: { type: "checkbox" } });
   review.checked = previous.adversarialReview;
+  const touched = { relay: false, inference: false };
+  const relayUnknown = el("span", { class: "cloud-setting-unknown", text: "Unknown" });
+  const inferenceUnknown = el("span", { class: "cloud-setting-unknown", text: "Unknown" });
+  const unknownNote = el("p", {
+    class: "faint cloud-unknown-note",
+    text: "Plow doesn't report an agent's current permissions; applying will set them.",
+  });
+  unknownNote.hidden = permissionsKnown;
+  const chooseBoth = el("p", {
+    class: "cloud-choose-note",
+    text: "Choose both permissions before applying.",
+  });
+  chooseBoth.hidden = true;
+  const saveErrorMessage = state.cloudSaveError?.agentId === agent.agentId
+    ? state.cloudSaveError.message
+    : null;
   const cancel = el("button", { class: "btn", text: "Cancel" });
   cancel.addEventListener("click", closeCloudModal);
   const apply = el("button", { class: "btn primary", text: "Apply changes" });
   const saveError = el("div", { class: "cloud-callout cloud-error cloud-save-error" }, [
     el("div", { class: "cloud-callout-title", text: "Agent settings were not changed" }),
-    el("p", { class: "faint", text: state.cloudSaveError ?? "" }),
+    el("p", { class: "faint", text: saveErrorMessage ?? "" }),
   ]);
-  saveError.hidden = !state.cloudSaveError;
+  saveError.hidden = !saveErrorMessage;
   const controls = [relay, inference, review];
-  const setUpdating = (updating) => {
-    for (const control of controls) control.disabled = updating;
-    cancel.disabled = updating;
-    apply.disabled = updating;
-    apply.textContent = updating ? "Updating agent…" : "Apply changes";
+  let isUpdating = false;
+  const syncControls = () => {
+    const incompleteChoice = touched.relay !== touched.inference;
+    for (const control of controls) control.disabled = isUpdating;
+    cancel.disabled = false;
+    apply.disabled = isUpdating || incompleteChoice;
+    apply.textContent = isUpdating ? "Updating agent…" : "Apply changes";
+    relayUnknown.hidden = !relay.indeterminate;
+    inferenceUnknown.hidden = !inference.indeterminate;
+    chooseBoth.hidden = !incompleteChoice;
   };
+  const setUpdating = (nextUpdating) => {
+    isUpdating = !!nextUpdating;
+    syncControls();
+  };
+  relay.addEventListener("change", () => {
+    relay.indeterminate = false;
+    touched.relay = true;
+    syncControls();
+  });
+  inference.addEventListener("change", () => {
+    inference.indeterminate = false;
+    touched.inference = true;
+    syncControls();
+  });
   const restoreStored = (nextState) => {
     const saved = nextState.cloudAgentSettings?.[agent.agentId];
-    relay.checked = saved?.relay ?? previous.relay;
-    inference.checked = saved?.inference ?? previous.inference;
+    const known = typeof saved?.relay === "boolean" && typeof saved?.inference === "boolean";
+    relay.checked = known ? saved.relay : false;
+    relay.indeterminate = !known;
+    inference.checked = known ? saved.inference : false;
+    inference.indeterminate = !known;
     review.checked = saved?.adversarialReview ?? previous.adversarialReview;
+    touched.relay = false;
+    touched.inference = false;
+    unknownNote.hidden = known;
+    syncControls();
   };
   let submitted = false;
   let panel = null;
@@ -874,12 +919,15 @@ function openCloudSettings(trigger, agent, state, redraw) {
       setUpdating(false);
       return;
     }
-    if (!nextState.cloudSaveError) {
+    const nextError = nextState.cloudSaveError?.agentId === agent.agentId
+      ? nextState.cloudSaveError.message
+      : null;
+    if (!nextError) {
       closeCloudModal();
       return;
     }
     restoreStored(nextState);
-    saveError.querySelector("p").textContent = nextState.cloudSaveError;
+    saveError.querySelector("p").textContent = nextError;
     saveError.hidden = false;
     submitted = false;
     setUpdating(false);
@@ -890,8 +938,8 @@ function openCloudSettings(trigger, agent, state, redraw) {
     setUpdating(true);
     try {
       await window.domo.cloudApply(agent.agentId, {
-        relay: relay.checked,
-        inference: inference.checked,
+        relay: touched.relay ? relay.checked : null,
+        inference: touched.inference ? inference.checked : null,
         adversarialReview: review.checked,
       });
     } catch {
@@ -908,6 +956,7 @@ function openCloudSettings(trigger, agent, state, redraw) {
         el("span", {}, [
           el("span", { class: "cloud-setting-title", text: "Relay access" }),
           el("span", { class: "faint cloud-setting-copy", text: "Allow this agent to call tools through the Plow relay." }),
+          relayUnknown,
         ]),
       ]),
       el("label", { class: "check block cloud-setting" }, [
@@ -915,8 +964,11 @@ function openCloudSettings(trigger, agent, state, redraw) {
         el("span", {}, [
           el("span", { class: "cloud-setting-title", text: "May spend inference" }),
           el("span", { class: "faint cloud-setting-copy", text: "Allow this agent to use Plow-hosted inference." }),
+          inferenceUnknown,
         ]),
       ]),
+      unknownNote,
+      chooseBoth,
       el("p", {
         class: "faint cloud-restart-note",
         text: "Changing relay or inference access restarts the cloud agent. Your agent will restart briefly.",
@@ -937,6 +989,7 @@ function openCloudSettings(trigger, agent, state, redraw) {
   ], relay);
   if (!panel) return;
   cloudModalSync = syncState;
+  syncControls();
   syncState(state);
 }
 

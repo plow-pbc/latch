@@ -130,7 +130,20 @@ ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
         [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
       },
       cloudSaving: null,
-      cloudSaveError: "Plow could not update this agent.",
+      cloudSaveError: { agentId, message: "Plow could not update this agent." },
+    };
+    return;
+  }
+  if (settings.relay === null && settings.inference === null) {
+    const previous = cloudProbe.cloudAgentSettings[agentId];
+    cloudProbe = {
+      ...cloudProbe,
+      cloudAgentSettings: {
+        ...cloudProbe.cloudAgentSettings,
+        [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
+      },
+      cloudSaving: null,
+      cloudSaveError: null,
     };
     return;
   }
@@ -667,9 +680,7 @@ app.whenReady().then(async () => {
   }})()`);
   await win.webContents.executeJavaScript(`(() => {
     const checks = [...document.querySelectorAll(".cloud-modal input[type=checkbox]")];
-    checks[0].checked = false;
-    checks[1].checked = true;
-    checks[2].checked = true;
+    checks.forEach((check) => check.click());
     [...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Apply changes").click();
   })()`);
   await waitFor(win, `[...document.querySelectorAll(".cloud-modal button")].some((b) => b.textContent.trim() === "Updating agent…")`,
@@ -678,6 +689,8 @@ app.whenReady().then(async () => {
     exactCopy: [...document.querySelectorAll(".cloud-modal button")]
       .some((button) => button.textContent.trim() === "Updating agent…"),
     controlsDisabled: [...document.querySelectorAll(".cloud-modal input")].every((input) => input.disabled),
+    canClose: [...document.querySelectorAll(".cloud-modal button")]
+      .some((button) => button.textContent.trim() === "Cancel" && !button.disabled),
     rowStillListed: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
   })})()`);
   const applied = cloudCalls.apply[0];
@@ -702,9 +715,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel for a failed save");
   await win.webContents.executeJavaScript(`(() => {
     const checks = [...document.querySelectorAll(".cloud-modal input[type=checkbox]")];
-    checks[0].checked = true;
-    checks[1].checked = false;
-    checks[2].checked = false;
+    checks.forEach((check) => check.click());
     [...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Apply changes").click();
   })()`);
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-save-error:not([hidden])")`,
@@ -721,7 +732,63 @@ app.whenReady().then(async () => {
   }})()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
   cloudApplyFails = false;
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentSettings: { cag_probe: { adversarialReview: false } },
+    cloudSaveError: { agentId: "cag_someone_else", message: "This belongs to another agent." },
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the unknown-permissions row");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-unknown-note")`, "the unknown-permissions panel");
+  const cloudUnknown = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const permissions = [...modal.querySelectorAll(".cloud-server-settings input")];
+    return {
+      bothIndeterminate: permissions.length === 2 && permissions.every((input) => input.indeterminate),
+      bothNamedUnknown: [...modal.querySelectorAll(".cloud-setting-unknown:not([hidden])")].length === 2,
+      explainsUnknown: modal.querySelector(".cloud-unknown-note")?.textContent.trim() ===
+        "Plow doesn't report an agent's current permissions; applying will set them.",
+      noOtherAgentError: !modal.textContent.includes("This belongs to another agent"),
+      localOnlyAllowed: [...modal.querySelectorAll("button")]
+        .some((button) => button.textContent.trim() === "Apply changes" && !button.disabled),
+    };
+  }})()`);
+  const cloudUnknownChoice = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const permissions = [...modal.querySelectorAll(".cloud-server-settings input")];
+    const apply = [...modal.querySelectorAll("button")].find((button) => button.textContent.trim() === "Apply changes");
+    permissions[0].click();
+    const oneChoiceBlocked = apply.disabled &&
+      modal.querySelector(".cloud-choose-note")?.textContent.includes("Choose both permissions");
+    permissions[1].click();
+    return {
+      oneChoiceBlocked,
+      bothChoicesAllowed: !apply.disabled,
+      noLongerGuesses: permissions.every((input) => !input.indeterminate),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
+
   cloudProbe = { ...cloudProbe, cloudSaveError: null };
+  win.webContents.send("connect:changed");
+  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the unknown-permissions row to refresh");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-unknown-note")`, "the local-only unknown-permissions panel");
+  await win.webContents.executeJavaScript(`(() => {
+    const modal = document.querySelector(".cloud-modal");
+    modal.querySelector(".cloud-local-settings input").click();
+    [...modal.querySelectorAll("button")].find((b) => b.textContent.trim() === "Apply changes").click();
+  })()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the local-only unknown-permissions save");
+  const localOnly = cloudCalls.apply[2];
+  const cloudUnknownLocalOnly = {
+    stableId: localOnly?.agentId === "cag_probe",
+    untouchedPermissions: localOnly?.settings?.relay === null && localOnly?.settings?.inference === null,
+    reviewApplied: localOnly?.settings?.adversarialReview === true,
+    noRestart: cloudProbe.cloudSaving === null,
+  };
 
   cloudProbe = {
     ...cloudProbe,
@@ -1426,6 +1493,7 @@ app.whenReady().then(async () => {
     cloudSettingsPanel.appliesTogether &&
     cloudUpdating.exactCopy &&
     cloudUpdating.controlsDisabled &&
+    cloudUpdating.canClose &&
     cloudUpdating.rowStillListed &&
     cloudSettings.stableId &&
     cloudSettings.exactSettings &&
@@ -1434,6 +1502,18 @@ app.whenReady().then(async () => {
     cloudSettingsFailure.localSettingApplied &&
     cloudSettingsFailure.controlsEnabled &&
     cloudSettingsFailure.rowStillListed &&
+    cloudUnknown.bothIndeterminate &&
+    cloudUnknown.bothNamedUnknown &&
+    cloudUnknown.explainsUnknown &&
+    cloudUnknown.noOtherAgentError &&
+    cloudUnknown.localOnlyAllowed &&
+    cloudUnknownChoice.oneChoiceBlocked &&
+    cloudUnknownChoice.bothChoicesAllowed &&
+    cloudUnknownChoice.noLongerGuesses &&
+    cloudUnknownLocalOnly.stableId &&
+    cloudUnknownLocalOnly.untouchedPermissions &&
+    cloudUnknownLocalOnly.reviewApplied &&
+    cloudUnknownLocalOnly.noRestart &&
     cloudChatFailure.showsError &&
     cloudChatFailure.notEmptyState &&
     cloudChatFailure.keepsRoster &&
@@ -1515,7 +1595,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudUpdating, cloudSettings, cloudSettingsFailure, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudUpdating, cloudSettings, cloudSettingsFailure, cloudUnknown, cloudUnknownChoice, cloudUnknownLocalOnly, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

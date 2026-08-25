@@ -659,7 +659,14 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cloud-setting input { margin-top: 2px; }
 .cloud-setting-title, .cloud-setting-copy { display: block; }
 .cloud-setting-title { font-weight: 600; color: var(--fg); margin-bottom: 2px; }
+.cloud-setting-unknown {
+  display: inline-block; margin-top: 5px; padding: 1px 6px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  color: var(--muted); font-size: 11px;
+}
 .cloud-restart-note, .cloud-local-note { margin: 10px 0 0; }
+.cloud-unknown-note { margin: 10px 0 0; }
+.cloud-choose-note { margin: 8px 0 0; color: var(--amber-fg); }
 .cloud-restart-note {
   padding: 8px 10px; border: 1px solid var(--amber-bd);
   border-radius: var(--radius-sm); background: var(--amber-bg);

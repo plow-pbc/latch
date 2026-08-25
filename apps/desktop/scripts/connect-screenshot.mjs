@@ -129,9 +129,15 @@ async function setUp() {
     };
   });
   ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
+    const previous = cloudFixture.cloudAgentSettings[agentId];
     cloudFixture = {
       ...cloudFixture,
-      cloudAgentSettings: { ...cloudFixture.cloudAgentSettings, [agentId]: settings },
+      cloudAgentSettings: {
+        ...cloudFixture.cloudAgentSettings,
+        [agentId]: settings.relay === null && settings.inference === null
+          ? { ...previous, adversarialReview: settings.adversarialReview }
+          : settings,
+      },
       cloudSaving: null,
       cloudSaveError: null,
     };
@@ -266,6 +272,43 @@ const SCREENS = [
     ],
   },
   {
+    name: "cloud-settings-unknown",
+    cloud: {
+      ...CLOUD_READY,
+      cloudChats: [CHAT],
+      cloudAgents: [ACTIVE_AGENT],
+      cloudAgentSettings: {
+        [ACTIVE_AGENT.agentId]: { adversarialReview: false },
+      },
+    },
+    prepare: async (win) => {
+      await clickCloudRowButton(win, "Settings");
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-unknown-note")`,
+        "the unknown cloud-agent settings panel");
+      const unknown = await win.webContents.executeJavaScript(`(() => {
+        const modal = document.querySelector(".cloud-modal");
+        const permissions = [...modal.querySelectorAll(".cloud-server-settings input")];
+        return {
+          indeterminate: permissions.length === 2 && permissions.every((input) => input.indeterminate),
+          labels: [...modal.querySelectorAll(".cloud-setting-unknown:not([hidden])")].length,
+          applyEnabled: [...modal.querySelectorAll("button")]
+            .some((button) => button.textContent.trim() === "Apply changes" && !button.disabled),
+        };
+      })()`);
+      if (!unknown.indeterminate || unknown.labels !== 2 || !unknown.applyEnabled) {
+        throw new Error(`permissions were guessed instead of unknown: ${JSON.stringify(unknown)}`);
+      }
+    },
+    expect: [
+      "Household helper settings",
+      "Relay access",
+      "May spend inference",
+      "Unknown",
+      "Plow doesn't report an agent's current permissions; applying will set them",
+      "Apply changes",
+    ],
+  },
+  {
     name: "cloud-settings-updating",
     cloud: {
       ...CLOUD_READY,
@@ -284,6 +327,10 @@ const SCREENS = [
         `[...document.querySelectorAll(".cloud-modal input")].every((input) => input.disabled)`,
       );
       if (!disabled) throw new Error("cloud settings remained editable while updating");
+      const canClose = await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll(".cloud-modal button")].some((button) => button.textContent.trim() === "Cancel" && !button.disabled)`,
+      );
+      if (!canClose) throw new Error("cloud settings could not be closed while updating");
     },
     expect: ["Household helper settings", "Relay access", "May spend inference", "Adversarial review", "Updating agent…"],
   },
@@ -296,7 +343,7 @@ const SCREENS = [
       cloudAgentSettings: {
         [ACTIVE_AGENT.agentId]: { relay: false, inference: true, adversarialReview: false },
       },
-      cloudSaveError: "Plow could not update this agent.",
+      cloudSaveError: { agentId: ACTIVE_AGENT.agentId, message: "Plow could not update this agent." },
     },
     prepare: async (win) => {
       await clickCloudRowButton(win, "Settings");
