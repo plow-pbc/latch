@@ -553,6 +553,10 @@ function fetchBrowser(arch) {
     log(`camoufox ${arch} up to date`);
     return;
   }
+  // Stale from here on, and a rebuild is not instant: leaving it says "built"
+  // for the whole download+extract, which is exactly what runtime-donor.sh
+  // reads to decide a donor is ready. Gone before the work, not after it.
+  fs.rmSync(marker, { force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
   const version = dash === -1 ? fullVersion : fullVersion.slice(0, dash);
@@ -823,6 +827,7 @@ function fetchVaultServer(arch) {
     log(`vault server ${arch} up to date`);
     return;
   }
+  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
   const srcDir = path.join(downloadsDir, "vaultwarden-src");
   if (!fs.existsSync(path.join(srcDir, ".git"))) {
     fs.rmSync(srcDir, { recursive: true, force: true });
@@ -869,13 +874,10 @@ function fetchVaultWebUi() {
     log("vault web ui up to date");
     return;
   }
+  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
   const tgz = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
   download(asset.url, asset.sha256, tgz);
   log("extracting vault web ui");
-  // Cleared with the tree it describes, not merely rewritten after: it lives a
-  // level above web-vault/, so leaving it would mark a re-extraction complete
-  // for the whole of its duration — and runtime-donor.sh reads exactly that.
-  fs.rmSync(marker, { force: true });
   fs.rmSync(webRoot, { recursive: true, force: true });
   fs.mkdirSync(webRoot, { recursive: true });
   // The tarball holds a single web-vault/ top level; strip it.
@@ -916,6 +918,7 @@ function fetchVaultCli(arch) {
     log(`vault cli ${arch} up to date`);
     return;
   }
+  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
   const zipDest = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
   download(asset.url, asset.sha256, zipDest);
   log(`extracting vault cli (${arch})`);

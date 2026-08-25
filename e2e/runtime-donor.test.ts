@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "./gitFixture.js";
-import { ARCH, markBuilt, markStarted, writeMarker } from "./payloadFixture.js";
+import { ARCH, markBuilt, writeMarker } from "./payloadFixture.js";
 
 const script = fileURLToPath(new URL("../scripts/runtime-donor.sh", import.meta.url));
 
@@ -70,8 +70,7 @@ function checkout(parent: string, spec: Spec): string {
   fs.writeFileSync(path.join(dir, "vendor/browser-server/requirements.txt"), spec.reqs ?? OUR_REQS);
   for (const payload of spec.payloads) {
     fs.mkdirSync(path.join(dir, "vendor", payload), { recursive: true });
-    if (payload === spec.unfinished) markStarted(dir, payload);
-    else markBuilt(dir, payload);
+    if (payload !== spec.unfinished) markBuilt(dir, payload);
   }
   // force, so the two removal knobs compose whichever order a row needs.
   if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker), { force: true });
@@ -170,28 +169,21 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       usable: false,
     },
     {
-      why: "refuses one whose Camoufox is still being written",
-      // The dir appears when extraction starts and the marker when it ends, so
-      // this window is minutes wide and copying it hands over a broken browser.
-      spec: { name: "d", payloads: FULL, unfinished: "camoufox-browser" },
-      usable: false,
-    },
-    {
-      why: "refuses one whose vault server is still being written",
-      spec: { name: "d", payloads: FULL, unfinished: "vault-server" },
-      usable: false,
-    },
-    {
-      why: "refuses one whose vault binary is compiling behind a fetched web UI",
-      // The half that made this a High: fetchVaultWebUi() runs before the
-      // vaultwarden compile, so the web marker is there for the whole of a
-      // slow Rust build that has produced no binary yet.
-      spec: { name: "d", payloads: FULL, withoutMarker: `vault-server/${ARCH}/.commit` },
-      usable: false,
-    },
-    {
-      why: "refuses one whose vault CLI is still being unpacked",
-      spec: { name: "d", payloads: FULL, unfinished: "vault-cli" },
+      why: "refuses a per-arch Camoufox tree without its completion marker",
+      // Every way a fetch can be caught — mid-extract, addon still downloading,
+      // a stray empty dir left behind — is one donor-observable state: <arch>
+      // is there and its marker is not. The gate answers that state, so one row
+      // is the coverage where three were three fixtures for one predicate. The
+      // finished universal tree beside it is the point: it must not answer for
+      // a per-arch tree, because worktree-setup copies both and the recipient's
+      // `already present` arm then keeps whatever landed.
+      spec: {
+        name: "d",
+        payloads: FULL,
+        unfinished: "camoufox-browser",
+        alsoDir: `camoufox-browser/${ARCH}`,
+        alsoMarker: "camoufox-browser/universal/.sha256",
+      },
       usable: false,
     },
     {
@@ -207,51 +199,20 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       usable: true,
     },
     {
-      why: "refuses a Camoufox mid-extract that an older universal tree excuses",
-      // The dominant half of the window, and the reason the gate does not ask
-      // after config.json: the tree is half unpacked and has none yet, while a
-      // finished universal tree from an earlier --browser-both sits beside it.
-      // The harm is not that camoufoxIn() prefers this tree — with no
-      // config.json it skips it — but that the half-extracted tree is COPIED,
-      // and the recipient's `already present` arm then keeps it forever,
-      // leaving a per-arch tree that can never resolve while the stale
-      // universal one answers in its place.
-      spec: {
-        name: "d",
-        payloads: FULL,
-        unfinished: "camoufox-browser",
-        withoutPath: `camoufox-browser/${ARCH}/config.json`,
-        alsoMarker: "camoufox-browser/universal/.sha256",
-      },
+      why: "refuses one whose vault server is still being written",
+      spec: { name: "d", payloads: FULL, unfinished: "vault-server" },
       usable: false,
     },
     {
-      why: "refuses a stray empty per-arch dir, which is the accepted cost",
-      // Not a hazard — camoufoxIn() would skip an empty tree and use universal.
-      // The gate refuses it anyway, because telling this apart from a tree one
-      // file into its extraction is not worth the branch. Pinned so the trade
-      // is visible as a choice rather than read as the security property.
-      spec: {
-        name: "d",
-        payloads: FULL,
-        withoutPath: `camoufox-browser/${ARCH}`,
-        alsoDir: `camoufox-browser/${ARCH}`,
-        alsoMarker: "camoufox-browser/universal/.sha256",
-      },
+      why: "refuses one whose vault binary is compiling behind a fetched web UI",
+      // fetchVaultWebUi() runs before the vaultwarden compile, so the web
+      // marker is there for the whole of a slow Rust build with no binary yet.
+      spec: { name: "d", payloads: FULL, withoutMarker: `vault-server/${ARCH}/.commit` },
       usable: false,
     },
     {
-      why: "refuses a Camoufox fetching its addon that an older universal tree excuses",
-      // The gap a bare "some marker exists" check leaves open. The per-arch
-      // tree is half-written and the universal one beside it is finished and
-      // stale — and camoufoxIn() PREFERS the per-arch tree, so this is the
-      // browser the recipient would actually load.
-      spec: {
-        name: "d",
-        payloads: FULL,
-        withoutMarker: `camoufox-browser/${ARCH}/.sha256`,
-        alsoMarker: "camoufox-browser/universal/.sha256",
-      },
+      why: "refuses one whose vault CLI is still being unpacked",
+      spec: { name: "d", payloads: FULL, unfinished: "vault-cli" },
       usable: false,
     },
   ];

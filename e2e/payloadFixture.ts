@@ -5,8 +5,9 @@
  * Shared because both of them need the same fact and it is not obvious: a
  * payload directory exists from the moment its fetch starts extracting, so the
  * marker its build writes at the end is the only thing separating a finished
- * payload from one still being written. Getting these wrong is what let a
- * donor mid-Rust-build read as ready — vault-server takes two, because the web
+ * payload from one still being written — and which phase of the fetch it was
+ * caught in makes no difference to that. Getting these wrong is what let a
+ * donor mid-Rust-build read as ready; vault-server takes two, because the web
  * interface is fetched before the vaultwarden compile it sits beside.
  */
 import fs from "node:fs";
@@ -15,20 +16,6 @@ import path from "node:path";
 
 /** The arch whose trees this machine can actually run — see browserRuntime.ts. */
 export const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
-
-/**
- * What a build leaves behind before it writes its marker — the files that make
- * a payload look inhabited while it is still being filled in. For camoufox
- * that is the extracted tree, and then config.json once the extraction is
- * done, so the two straddle the slow half of fetchBrowser().
- */
-export const CONTENTS: Record<string, string[]> = {
-  // Write order, so a row can drop one and sit at a chosen point in the
-  // window. The first entry stands for the extracted tree (really
-  // browsers/<repo>/<version>-<sha>/…, which nothing here needs to match);
-  // .sha256 closes the window and is a MARKER, so it is not a member here.
-  "camoufox-browser": [`${ARCH}/browsers/extracted-file`, `${ARCH}/config.json`],
-};
 
 /** Every file that must exist before a payload counts as built, under its dir. */
 export const MARKERS: Record<string, string[]> = {
@@ -45,13 +32,7 @@ export function writeMarker(checkout: string, relative: string): void {
   fs.writeFileSync(at, "built\n");
 }
 
-/** The files a build leaves behind before its marker — an in-flight payload. */
-export function markStarted(checkout: string, payload: string): void {
-  for (const f of CONTENTS[payload] ?? []) writeMarker(checkout, path.join(payload, f));
-}
-
 /** Mark a payload finished: what a started one has, plus its markers. */
 export function markBuilt(checkout: string, payload: string): void {
-  markStarted(checkout, payload);
   for (const marker of MARKERS[payload] ?? []) writeMarker(checkout, path.join(payload, marker));
 }
