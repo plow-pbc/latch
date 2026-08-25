@@ -101,6 +101,7 @@ let cloudProbe = {
 const cloudCalls = { create: [], delete: [], apply: [] };
 let releaseCloudCreate = null;
 let cloudCreatePending = false;
+let relaySignOutCalls = 0;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -136,6 +137,7 @@ ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
     },
   };
 });
+ipcMain.handle("settings:signOut", async () => { relaySignOutCalls += 1; });
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -468,7 +470,7 @@ app.whenReady().then(async () => {
     approvalMode: "ask",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
   await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && !c.classList.contains("disabled"))`,
     "the AI Reviewer chip to render enabled");
   // The credential goes AFTER the pane rendered, with no notification — so the
@@ -687,6 +689,7 @@ app.whenReady().then(async () => {
     ...cloudProbe,
     cloudAgentsError: "Method Not Allowed",
     cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
+    cloudChats: [cloudChat],
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
@@ -696,11 +699,22 @@ app.whenReady().then(async () => {
     setup.click();
     return {
       rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
-      setupDisabled: setup.disabled === true,
-      pickerBlocked: !document.querySelector(".cloud-modal"),
+      setupEnabled: setup.disabled === false,
       notEmptyState: !document.querySelector(".cloud-empty"),
     };
   }})()`);
+  await waitFor(win, `document.querySelector(".cloud-modal select")`, "the activation-chat fallback picker");
+  cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal option")].some((option) => option.value === "chat_probe")`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-error button")].find((button) => button.textContent.trim() === "Sign out and re-activate").click()`,
+  );
+  await waitForNode(() => relaySignOutCalls === 1, "the re-activate action to use sign-out");
+  cloudForbidden.reactivatesThroughSignOut = relaySignOutCalls === 1;
 
   cloudProbe = {
     ...cloudProbe,
@@ -746,7 +760,7 @@ app.whenReady().then(async () => {
     agentPurpose: "Groceries and calendar only.",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
   await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
     "the Approvals card in its reviewer state");
   const approvalsReviewer = await win.webContents.executeJavaScript(`(${() => {
@@ -754,7 +768,7 @@ app.whenReady().then(async () => {
     const field = pane.querySelector("textarea.text");
     return {
       chipLabels: [...pane.querySelectorAll(".chips .chip")].map((c) => c.textContent.trim()),
-      inAgentsPane: !!pane.querySelector(".panel.agents"),
+      inRulesPane: !!pane.querySelector(".panel.rules"),
       // The stored text, in the field, and the two things said beside it.
       showsStoredPurpose: !!field && field.checkVisibility() && field.value === "Groceries and calendar only.",
       purposeExampleHasBoundary: field?.placeholder.endsWith(
@@ -794,13 +808,13 @@ app.whenReady().then(async () => {
     };
   }})()`);
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
-    const title = [...document.querySelectorAll(".agents .item > .group-title")]
+    const title = [...document.querySelectorAll(".rules .item > .group-title")]
       .find((t) => t.textContent.trim() === "Approvals");
     title?.scrollIntoView({ block: "start" });
     return true;
   })()`);
   await scrollToApprovals();
-  const approvalsShot = process.env.APPROVALS_OUT ?? "/tmp/agents-approvals.png";
+  const approvalsShot = process.env.APPROVALS_OUT ?? "/tmp/rules-approvals.png";
   await win.webContents.executeJavaScript(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
@@ -908,15 +922,17 @@ app.whenReady().then(async () => {
     "the Ask card to go back to offering the suggestion");
 
   await scrollToApprovals();
-  const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/agents-approvals-ask.png";
+  const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/rules-approvals-ask.png";
   await win.webContents.executeJavaScript(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
   fs.writeFileSync(approvalsShotAsk, (await win.webContents.capturePage()).toPNG());
 
-  // …and the same pane with the static-credential fallback EXPANDED. It is the
+  // …and the Agents pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
   // form must read as the quiet alternative, not the main event.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane for static credential setup");
   await win.webContents.executeJavaScript(`(() => {
     const link = [...document.querySelectorAll(".linkbtn")].find((b) =>
       b.textContent.includes("static credential"),
@@ -1373,8 +1389,9 @@ app.whenReady().then(async () => {
     cloudChatFailure.notEmptyState &&
     cloudChatFailure.keepsRoster &&
     cloudForbidden.rawReasonHidden &&
-    cloudForbidden.setupDisabled &&
-    cloudForbidden.pickerBlocked &&
+    cloudForbidden.setupEnabled &&
+    cloudForbidden.offersActivationChat &&
+    cloudForbidden.reactivatesThroughSignOut &&
     cloudForbidden.notEmptyState &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
@@ -1408,7 +1425,7 @@ app.whenReady().then(async () => {
     optimisticMode.purposeFieldStillOffered &&
     approvalsReviewer.chipLabels.join(",") ===
       "Ask me every time,AI Reviewer decides,Approve everything,Deny everything" &&
-    approvalsReviewer.inAgentsPane &&
+    approvalsReviewer.inRulesPane &&
     approvalsReviewer.showsStoredPurpose &&
     approvalsReviewer.purposeExampleHasBoundary &&
     approvalsReviewer.labelled &&

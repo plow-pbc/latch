@@ -62,6 +62,26 @@ const CLOUD_READY = {
   ...CLOUD_EMPTY,
   cloudSendTo: "+1 (415) 555-0199",
 };
+const RULES = [
+  {
+    ruleKey: "rule-research",
+    agentId: "agent-research",
+    agentDisplay: "Research assistant",
+    capabilities: [
+      { kind: "fs.read", paths: ["~/Documents/Atlas"] },
+      { kind: "browser", origins: ["arxiv.org"] },
+    ],
+  },
+  {
+    ruleKey: "rule-ops",
+    agentId: "agent-ops",
+    agentDisplay: "Ops helper",
+    capabilities: [
+      { kind: "tool", tool: "calendar.list" },
+      { kind: "fs.read", paths: ["~/Documents/Receipts"] },
+    ],
+  },
+];
 let cloudFixture = CLOUD_EMPTY;
 let holdCloudCreate = false;
 let releaseCloudCreate = null;
@@ -74,7 +94,7 @@ const DEVICE_SETTINGS = {
   relayCredential: DEVICE_TOKEN,
   accountUid: "u_7Qk2p9",
   mcpUrl: MCP_URL,
-  // The Approvals card shares this tab, and its interesting state is the one
+  // The Rules tab's Approvals card uses its interesting state here: the one
   // with a reviewer running and a purpose written for it to read.
   approvalMode: "adversarial",
   agentPurpose: "Help with grocery orders and calendar. Never touch code or SSH keys.",
@@ -83,9 +103,8 @@ const DEVICE_SETTINGS = {
 async function setUp() {
   const { ConnectClient } = await import(path.join(dist, "connectClient.js"));
   const { saveSettings, loadSettings } = await import(path.join(dist, "settings.js"));
-  // The Agents tab carries the Approvals card too, so this screen now needs the
-  // reviewer's state and the purpose statement. Real actions against the same
-  // throwaway home, for the reason the connect handlers are real.
+  // The Rules screenshot carries the Approvals card, so this harness also
+  // serves the reviewer's state and purpose statement from the throwaway home.
   const { readAgentPurpose, readInference, setAgentPurpose, setApprovalMode } = await import(
     path.join(dist, "settingsActions.js")
   );
@@ -137,6 +156,8 @@ async function setUp() {
     };
   });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
+  ipcMain.handle("rules:list", async () => RULES);
+  ipcMain.handle("rules:remove", async () => {});
   ipcMain.handle("settings:getInference", async () => readInference(home));
   ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
   // The Approvals card reads this for its suggestions checkbox. A missing
@@ -145,6 +166,7 @@ async function setUp() {
   ipcMain.handle("settings:setShowSuggestions", async () => {});
   ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
   ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(home, purpose));
+  ipcMain.handle("settings:signOut", async () => {});
   ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});
   ipcMain.handle("onboarding:open", async () => {});
@@ -277,7 +299,7 @@ const SCREENS = [
       cloudAgents: [ACTIVE_AGENT],
       cloudAgentsError: "Method Not Allowed",
       cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
-      cloudChats: [],
+      cloudChats: [CHAT],
       cloudChatsLoaded: false,
     },
     prepare: async () => {},
@@ -286,9 +308,25 @@ const SCREENS = [
       "This Mac cannot list chats yet. Try re-activating it, then try again.",
       "Cloud agents could not be refreshed",
       "Plow couldn't complete that request. Try again.",
+      "Sign out and re-activate",
       "Household helper",
       "Ready",
     ],
+  },
+  {
+    name: "cloud-chat-fallback-picker",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [ACTIVE_AGENT],
+      cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
+      cloudChats: [CHAT],
+      cloudChatsLoaded: false,
+    },
+    prepare: async (win) => {
+      await clickText(win, "Set up cloud agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the fallback chat picker");
+    },
+    expect: ["Set up a cloud agent", CHAT.label, "Set up agent"],
   },
   {
     name: "cloud-empty",
@@ -313,7 +351,16 @@ const SCREENS = [
       // The shortcut to where the URL gets pasted.
       "Open Claude",
       "Can't use OAuth? Create a static credential",
-      // Approvals moved onto this tab with the clients it governs.
+    ],
+  },
+  {
+    name: "rules-approvals",
+    cloud: CLOUD_EMPTY,
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
+      await waitFor(win, `document.querySelector("#view .panel.rules")`, "the Rules pane");
+    },
+    expect: [
       "Approvals",
       "What happens when an agent asks to do something on this Mac.",
       "The reviewer sees which agent is asking, what it's asking to do, the exact bounds it would get, and the purpose you wrote for it.",
@@ -324,8 +371,11 @@ const SCREENS = [
       // readily as it narrows it. This line used to pin the opposite promise.
       "it can widen what gets approved as easily as narrow it",
       "Requests that fit may be approved without asking you.",
-      // The suggestions toggle, re-homed onto this card from Settings.
       "Let the reviewer suggest an answer when an approval window opens",
+      "Always-allow rules",
+      "Research assistant",
+      "Ops helper",
+      "Revoke Rule",
     ],
   },
   {

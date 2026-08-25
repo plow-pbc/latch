@@ -379,8 +379,137 @@ function detailFor(a) {
 
 // ---- Rules ----
 
+let rulesMounted = null;
+
 async function renderRules() {
   const rules = await window.domo.rulesList();
+
+  // ---- Approvals: what happens when one of those agents asks for something.
+  //
+  // It sits above the stored rules because both controls answer what agents
+  // may do. The stored mode values are untouched — every label below is
+  // display only.
+  let inference = await window.domo.inferenceGet();
+  const modeChips = el("div", { class: "chips" });
+  const modeNote = el("p", { class: "faint chip-note", text: "" });
+  const modeHintLine = el("p", { class: "faint mode-hint", text: "" });
+
+  // The purpose statement, and the two things that have to be said beside it.
+  // Device-owner text: it is read and written through the settings IPC pair and
+  // nowhere else, and it reaches no rule key, grant, or sandbox profile.
+  const purposeInput = el("textarea", {
+    class: "text",
+    attrs: { placeholder: PURPOSE_PLACEHOLDER },
+  });
+  purposeInput.value = await window.domo.agentPurposeGet();
+  // On commit only — blur or Enter: an `input` handler would persist every
+  // half-written sentence on the way to the real one. The stored value is
+  // what goes back on screen, so the field shows what the reviewer will read.
+  purposeInput.addEventListener("change", async () => {
+    purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
+  });
+  const purposeBlock = el("div", { class: "revealed" }, [
+    el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
+    ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
+  ]);
+
+  // Whether the reviewer may speak up in Ask mode. It sits in this card because
+  // the mode it depends on is set here: the suggestion is only ever shown when
+  // a human is being asked, and only a reviewer with a credential can produce
+  // one, so both of its conditions are one row above it.
+  const suggestCheck = el("input", { attrs: { type: "checkbox" } });
+  suggestCheck.checked = await window.domo.showSuggestionsGet();
+  const suggestLabel = el("label", { class: "check block" }, [
+    suggestCheck,
+    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
+  ]);
+  suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
+
+  // The four reads above can outlive a quick tab switch. Do not let the
+  // completed Rules render replace the pane the user switched to meanwhile.
+  if (currentTab !== "rules") return;
+
+  // What a reviewer with no credential costs, said rather than enforced — the
+  // mode is still the owner's to choose, and choosing it is not an error to
+  // prevent.
+
+  const renderApprovals = () => {
+    const mode = inference.approvalMode;
+    const hasKey = inference.available;
+    // How to get a reviewer. One reviewer, one answer — and the two sentences
+    // below both end in it, so they cannot come to disagree about the remedy.
+    const remedy = ": sign in to Plow in Settings.";
+    // Only worth saying when the owner has actually asked the reviewer to
+    // decide. The second half is the part people get wrong: a denial here is
+    // not a freeze, because a rule already approved is a decision they made.
+    modeNote.textContent =
+      mode === "adversarial" && !hasKey
+        ? `The AI Reviewer has no credential${remedy} ` +
+          "Until then it denies anything it is asked to decide — requests already " +
+          "covered by an always-allow rule keep running, unless the agent has its own " +
+          "AI Reviewer switched on."
+        : "";
+    // The suggestion is only ever shown in Ask mode, and only by a reviewer
+    // that can run. Dead rather than hidden: a checkbox that vanished would
+    // read as a setting the app lost.
+    const suggestOn = mode === "ask" && hasKey;
+    suggestCheck.disabled = !suggestOn;
+    suggestLabel.classList.toggle("disabled", !suggestOn);
+    const chip = (value, label) => {
+      const chip = el("span", {
+        class: "chip" + (mode === value ? " active" : ""),
+      }, [el("span", { text: label })]);
+      chip.addEventListener("click", async () => {
+        // What MAIN stored, not what was asked for. Main takes any known mode
+        // now, but it is still the one that decides what is on disk, and the
+        // pane must show that rather than what it optimistically asked for.
+        await window.domo.approvalModeSet(value);
+        inference = await window.domo.inferenceGet();
+        renderApprovals();
+      });
+      return chip;
+    };
+    modeChips.replaceChildren(
+      chip("ask", "Ask me every time"),
+      chip("adversarial", "AI Reviewer decides"),
+      chip("approve", "Approve everything"),
+      chip("deny", "Deny everything"),
+    );
+    purposeBlock.hidden = mode !== "adversarial";
+    // Ask mode's hint points at the checkbox below it. With no credential that
+    // checkbox is dead, so pointing at it is an instruction that cannot be
+    // followed — say what is actually true instead.
+    if (mode === "ask" && !hasKey) {
+      modeHintLine.textContent =
+        "Any request a rule doesn't already cover opens an approval window. " +
+        `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
+    } else if (mode === "approve") {
+      // "Every request" was true until a cloud agent could carry its own
+      // reviewer. Saying it still would describe the one case the switch exists
+      // to create as though the switch did nothing.
+      modeHintLine.textContent =
+        "Every request is allowed without asking you and without review — except from an " +
+        "agent with its own AI Reviewer switched on, which is reviewed every time.";
+    } else if (mode === "deny") {
+      modeHintLine.textContent =
+        "Any request a rule doesn't already cover is refused without asking you.";
+    } else {
+      // Unknown stored values keep the card useful by falling back to Ask.
+      modeHintLine.textContent = mode === "adversarial" ? "" :
+        "Any request a rule doesn't already cover opens an approval window. " +
+        "The AI Reviewer can still suggest an answer — turn that on below.";
+    }
+    modeHintLine.hidden = mode === "adversarial";
+  };
+  renderApprovals();
+
+  // Signing in or out changes what the reviewer can do, not what the owner
+  // chose — the stored mode stays put — so this only re-reads and redraws.
+  const refreshApprovals = async () => {
+    inference = await window.domo.inferenceGet();
+    renderApprovals();
+  };
+  rulesMounted = { refreshApprovals };
 
   const ruleItems = rules.length
     ? rules.map((r) => {
@@ -394,7 +523,17 @@ async function renderRules() {
       })
     : [el("div", { class: "empty", text: "No always-allow rules." })];
 
-  view.replaceChildren(el("div", { class: "panel" }, [
+  view.replaceChildren(el("div", { class: "panel rules settings" }, [
+    group(
+      "Approvals",
+      "What happens when an agent asks to do something on this Mac. Requests already covered " +
+        "by an always-allow rule skip this — unless the agent has its own AI Reviewer switched " +
+        "on, which is reviewed every time — manage those in Rules. The reviewer sees which " +
+        "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
+        "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
+        "agent hasn't asked for.",
+      [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
+    ),
     el("div", { class: "section-label", text: "Always-allow rules" }),
     ...ruleItems,
   ]));
@@ -1002,11 +1141,24 @@ function cloudErrorBanner(message, title = "Cloud agents could not be refreshed"
   ]);
 }
 
+function cloudChatsErrorBanner(message) {
+  const reactivate = el("button", { class: "btn", text: "Sign out and re-activate" });
+  reactivate.addEventListener("click", async () => {
+    reactivate.disabled = true;
+    await window.domo.relaySignOut();
+  });
+  return el("div", { class: "cloud-callout cloud-error" }, [
+    el("div", { class: "cloud-callout-title", text: "Chats could not be loaded" }),
+    el("p", { class: "faint", text: cloudErrorCopy(message) }),
+    reactivate,
+  ]);
+}
+
 function cloudNodes(state, redraw) {
   const action = el("div", { class: "row cloud-toolbar" });
   const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
   action.append(el("div", { class: "spacer" }), add);
-  add.disabled = !state.cloudChatsLoaded;
+  add.disabled = !state.cloudChats.length;
 
   add.addEventListener("click", () => openCloudPicker(add, state, redraw));
 
@@ -1016,7 +1168,7 @@ function cloudNodes(state, redraw) {
   if (!state.cloudChatsLoaded) {
     const body = [action];
     if (state.cloudChatsError) {
-      body.push(cloudErrorBanner(state.cloudChatsError, "Chats could not be loaded"));
+      body.push(cloudChatsErrorBanner(state.cloudChatsError));
     }
     else body.push(el("div", { class: "cloud-progress cloud-loading" }, [
           el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
@@ -1084,128 +1236,7 @@ async function renderAgents() {
   };
   await refreshConnect();
 
-  // ---- Approvals: what happens when one of those agents asks for something.
-  //
-  // It sits here, under the clients, because that is the order of the two
-  // questions: what can reach this Mac, and what it may do when it does. The
-  // stored mode values are untouched — every label below is display only.
-  let inference = await window.domo.inferenceGet();
-  const modeChips = el("div", { class: "chips" });
-  const modeNote = el("p", { class: "faint chip-note", text: "" });
-  const modeHintLine = el("p", { class: "faint mode-hint", text: "" });
-
-  // The purpose statement, and the two things that have to be said beside it.
-  // Device-owner text: it is read and written through the settings IPC pair and
-  // nowhere else, and it reaches no rule key, grant, or sandbox profile.
-  const purposeInput = el("textarea", {
-    class: "text",
-    attrs: { placeholder: PURPOSE_PLACEHOLDER },
-  });
-  purposeInput.value = await window.domo.agentPurposeGet();
-  // On commit only — blur or Enter: an `input` handler would persist every
-  // half-written sentence on the way to the real one. The stored value is
-  // what goes back on screen, so the field shows what the reviewer will read.
-  purposeInput.addEventListener("change", async () => {
-    purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
-  });
-  const purposeBlock = el("div", { class: "revealed" }, [
-    el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
-    ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
-  ]);
-
-  // Whether the reviewer may speak up in Ask mode. It sits in this card because
-  // the mode it depends on is set here: the suggestion is only ever shown when
-  // a human is being asked, and only a reviewer with a credential can produce
-  // one, so both of its conditions are one row above it.
-  const suggestCheck = el("input", { attrs: { type: "checkbox" } });
-  suggestCheck.checked = await window.domo.showSuggestionsGet();
-  const suggestLabel = el("label", { class: "check block" }, [
-    suggestCheck,
-    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
-  ]);
-  suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
-
-  // What a reviewer with no credential costs, said rather than enforced — the
-  // mode is still the owner's to choose, and choosing it is not an error to
-  // prevent.
-
-  const renderApprovals = () => {
-    const mode = inference.approvalMode;
-    const hasKey = inference.available;
-    // How to get a reviewer. One reviewer, one answer — and the two sentences
-    // below both end in it, so they cannot come to disagree about the remedy.
-    const remedy = ": sign in to Plow in Settings.";
-    // Only worth saying when the owner has actually asked the reviewer to
-    // decide. The second half is the part people get wrong: a denial here is
-    // not a freeze, because a rule already approved is a decision they made.
-    modeNote.textContent =
-      mode === "adversarial" && !hasKey
-        ? `The AI Reviewer has no credential${remedy} ` +
-          "Until then it denies anything it is asked to decide — requests already " +
-          "covered by an always-allow rule keep running, unless the agent has its own " +
-          "AI Reviewer switched on."
-        : "";
-    // The suggestion is only ever shown in Ask mode, and only by a reviewer
-    // that can run. Dead rather than hidden: a checkbox that vanished would
-    // read as a setting the app lost.
-    const suggestOn = mode === "ask" && hasKey;
-    suggestCheck.disabled = !suggestOn;
-    suggestLabel.classList.toggle("disabled", !suggestOn);
-    const chip = (value, label) => {
-      const chip = el("span", {
-        class: "chip" + (mode === value ? " active" : ""),
-      }, [el("span", { text: label })]);
-      chip.addEventListener("click", async () => {
-        // What MAIN stored, not what was asked for. Main takes any known mode
-        // now, but it is still the one that decides what is on disk, and the
-        // pane must show that rather than what it optimistically asked for.
-        await window.domo.approvalModeSet(value);
-        inference = await window.domo.inferenceGet();
-        renderApprovals();
-      });
-      return chip;
-    };
-    modeChips.replaceChildren(
-      chip("ask", "Ask me every time"),
-      chip("adversarial", "AI Reviewer decides"),
-      chip("approve", "Approve everything"),
-      chip("deny", "Deny everything"),
-    );
-    purposeBlock.hidden = mode !== "adversarial";
-    // Ask mode's hint points at the checkbox below it. With no credential that
-    // checkbox is dead, so pointing at it is an instruction that cannot be
-    // followed — say what is actually true instead.
-    if (mode === "ask" && !hasKey) {
-      modeHintLine.textContent =
-        "Any request a rule doesn't already cover opens an approval window. " +
-        `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
-    } else if (mode === "approve") {
-      // "Every request" was true until a cloud agent could carry its own
-      // reviewer. Saying it still would describe the one case the switch exists
-      // to create as though the switch did nothing.
-      modeHintLine.textContent =
-        "Every request is allowed without asking you and without review — except from an " +
-        "agent with its own AI Reviewer switched on, which is reviewed every time.";
-    } else if (mode === "deny") {
-      modeHintLine.textContent =
-        "Any request a rule doesn't already cover is refused without asking you.";
-    } else {
-      // Unknown stored values keep the card useful by falling back to Ask.
-      modeHintLine.textContent = mode === "adversarial" ? "" :
-        "Any request a rule doesn't already cover opens an approval window. " +
-        "The AI Reviewer can still suggest an answer — turn that on below.";
-    }
-    modeHintLine.hidden = mode === "adversarial";
-  };
-  renderApprovals();
-
-  // Signing in or out changes what the reviewer can do, not what the owner
-  // chose — the stored mode stays put — so this only re-reads and redraws.
-  const refreshApprovals = async () => {
-    inference = await window.domo.inferenceGet();
-    renderApprovals();
-  };
-  agentsMounted = { refreshConnect, refreshApprovals };
+  agentsMounted = { refreshConnect };
 
   // `settings` alongside `agents` on purpose: the group card, its title and its
   // description are the same furniture Settings uses, and this pane is one of
@@ -1217,16 +1248,6 @@ async function renderAgents() {
       "Connect an MCP client",
       "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
       [connectBox],
-    ),
-    group(
-      "Approvals",
-      "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip this — unless the agent has its own AI Reviewer switched " +
-        "on, which is reviewed every time — manage those in Rules. The reviewer sees which " +
-        "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
-        "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
-        "agent hasn't asked for.",
-      [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
     ),
   ]));
 }
@@ -1554,6 +1575,7 @@ async function selectTab(tab) {
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
   if (tab !== "agents") agentsMounted = null;
+  if (tab !== "rules") rulesMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
   return true;
@@ -1575,12 +1597,10 @@ window.domo.onStatusChanged(() => {
   // pane has to re-read — main fires this saying "Settings re-reads what
   // changed", and until now only the header did.
   if (currentTab === "settings") settingsMounted?.refresh();
-  // Signing in or out changes whether the flow has a URL to show at all — and,
-  // since the Approvals card moved here, whether the reviewer can run.
-  if (currentTab === "agents") {
-    agentsMounted?.refreshConnect();
-    agentsMounted?.refreshApprovals();
-  }
+  // Signing in or out changes whether the Agents flow has a URL to show at all,
+  // and whether the reviewer shown in Rules can run.
+  if (currentTab === "agents") agentsMounted?.refreshConnect();
+  if (currentTab === "rules") rulesMounted?.refreshApprovals();
 });
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
