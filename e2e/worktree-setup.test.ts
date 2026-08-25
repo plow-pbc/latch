@@ -63,39 +63,50 @@ fs.writeFileSync(
 );
 fs.chmodSync(path.join(stubBin, "just"), 0o755);
 
-/**
- * Run setup and hand back both streams, separately. The notes it writes when it
- * declines to do something go to stderr and are half of what it promises, so
- * neither stream alone is the whole answer — and merging them would put the
- * note after the "ready" line it precedes, and fuse the two at the seam.
- */
 interface Ran {
   stdout: string;
   stderr: string;
 }
 
+/** What runSetup throws when the script exits non-zero — its own streams. */
+class SetupFailed extends Error implements Ran {
+  constructor(
+    readonly stdout: string,
+    readonly stderr: string,
+  ) {
+    super(`worktree-setup.sh exited non-zero.\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`);
+  }
+}
+
+/**
+ * Run setup and hand back both streams, separately. The notes it writes when it
+ * declines to do something go to stderr and are half of what it promises, so
+ * neither stream alone is the whole answer — and merging them would put a note
+ * after the line it precedes, and fuse the two at the seam.
+ */
 function runSetup(dir: string, donor?: string, failing?: string): Ran {
   const r = spawnSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
     cwd: dir,
     encoding: "utf8",
     env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}`, JUST_FAIL: failing ?? "" },
   });
-  // A spawn that never happened, or a child killed on maxBuffer, reports here
-  // and leaves both streams null — losing it would surface as a mismatched
-  // assertion on the string "null" rather than as the thing that went wrong.
+  // A spawn that never happened, or a child killed on maxBuffer: reported here
+  // rather than through `status`, and both streams may be null. Raised as
+  // itself, and NOT caught below — a broken environment is not a refusal.
   if (r.error) throw r.error;
-  if (r.status !== 0) throw Object.assign(new Error(r.stderr || r.stdout), { stdout: r.stdout, stderr: r.stderr });
+  if (r.status !== 0) throw new SetupFailed(r.stdout, r.stderr);
   return { stdout: r.stdout, stderr: r.stderr };
 }
 
-/** Run a setup that must refuse, and hand back what it said on the way out. */
-function runSetupExpectingRefusal(dir: string, donor?: string, failing?: string): Ran {
+/** Run a setup that must exit non-zero, and hand back what it said on the way. */
+function runSetupExpectingFailure(dir: string, donor?: string, failing?: string): Ran {
   try {
     runSetup(dir, donor, failing);
   } catch (e) {
-    return e as unknown as Ran;
+    if (e instanceof SetupFailed) return e;
+    throw e;
   }
-  throw new Error("setup was expected to refuse, and did not");
+  throw new Error("setup was expected to fail, and did not");
 }
 
 describe("worktree-setup.sh", () => {
@@ -153,7 +164,7 @@ describe("worktree-setup.sh", () => {
     const neighbour = checkout(parent, "slot1", PAYLOADS);
     const asking = checkout(parent, "slot0", []);
 
-    const { stdout, stderr } = runSetupExpectingRefusal(asking);
+    const { stdout, stderr } = runSetupExpectingFailure(asking);
 
     expect(stderr).toMatch(/will not adopt a\s+neighbour on its own/);
     expect(stderr).toContain(fs.realpathSync(neighbour));
@@ -171,7 +182,7 @@ describe("worktree-setup.sh", () => {
     const stranger = path.join(parent, "elsewhere");
     fs.mkdirSync(stranger, { recursive: true });
 
-    const { stdout, stderr } = runSetupExpectingRefusal(asking, stranger);
+    const { stdout, stderr } = runSetupExpectingFailure(asking, stranger);
 
     expect(stderr).toMatch(/not a checkout of this repo/);
     expect(stdout).not.toContain("stub just");
@@ -188,20 +199,28 @@ describe("worktree-setup.sh", () => {
     const donor = checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
     const asking = checkout(parent, "slot0", []);
 
-    const { stdout } = runSetupExpectingRefusal(asking, donor, "fetch-browser");
+    const { stdout, stderr } = runSetupExpectingFailure(asking, donor, "fetch-browser");
     const lines = stdout.split("\n");
 
     expect(lines).toContain("stub just fetch-browser");
+    // The dependencies and the build survived, which is what its position buys.
+    expect(lines).toContain("stub just install");
     expect(lines).toContain("stub just build");
+    // And it says so, rather than stopping with only the recipe's own error.
+    expect(stderr).toMatch(/did not check out, so this checkout is NOT/);
     expect(stdout).not.toContain("is ready.");
   });
-
-
 
   // Four ways to arrive with nothing worth checking, one contract: setup
   // finishes, and the build that validates a seed does not run because there is
   // no seed. Each row keeps only what distinguishes it.
-  const noSeed: { why: string; donor: (parent: string) => string | undefined; says: string }[] = [
+  const noSeed: {
+    why: string;
+    donor: (parent: string) => string | undefined;
+    says: string;
+    /** A vendor dir that must still have been copied, where one is. */
+    landed?: string;
+  }[] = [
     {
       why: "told not to take one",
       donor: (parent) => {
@@ -221,9 +240,11 @@ describe("worktree-setup.sh", () => {
     {
       why: "given one carrying only the download cache",
       // Not a payload — it is what a fetch downloads FROM, so on its own it
-      // leaves this checkout nothing to validate.
+      // leaves this checkout nothing to validate. It still gets copied, which
+      // is what separates this row from the empty donor above.
       donor: (parent) => checkout(parent, "slot1", ["downloads"]),
       says: "no vendor/python-runtime to clone",
+      landed: "downloads",
     },
     {
       why: "with nothing nearby to name at all",
@@ -234,7 +255,7 @@ describe("worktree-setup.sh", () => {
     },
   ];
 
-  it.each(noSeed)("finishes without a fetch when $why", ({ donor, says }) => {
+  it.each(noSeed)("finishes without a fetch when $why", ({ donor, says, landed }) => {
     const parent = fs.mkdtempSync(path.join(tmp, "noseed-"));
     const named = donor(parent);
     const asking = checkout(parent, "slot0", []);
@@ -242,6 +263,7 @@ describe("worktree-setup.sh", () => {
     const { stdout: out } = runSetup(asking, named);
 
     expect(out).toContain(says);
+    if (landed) expect(fs.existsSync(path.join(asking, "vendor", landed))).toBe(true);
     expect(out).not.toContain("stub just fetch-browser");
     expect(out.split("\n")).toContain("stub just build");
     expect(out).toContain("is ready.");

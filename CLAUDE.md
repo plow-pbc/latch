@@ -168,8 +168,10 @@ anything able to write one checkout could otherwise put code in the next.
 whether the copy is any good — the donor is a cache seed, and setup runs
 `just fetch-browser` over any payload that arrived — the download cache alone
 does not count — once it has installed and built, so
-a stale or half-built payload costs a rebuild rather than a refusal, and a
-failed fetch leaves a working checkout rather than aborting one.
+a stale or half-built payload costs a rebuild rather than a refusal. That check
+is not skippable: it is the only look at what arrived, so setup stops rather
+than call a checkout ready over an unvalidated runtime — after installing and
+building, so what it costs is the validation and not the checkout.
 
 Without that runtime there is no browser and no vault, and the app says so at
 startup rather than leaving the Vault tab to report a vault that has not

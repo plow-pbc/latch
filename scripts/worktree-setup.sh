@@ -140,7 +140,14 @@ just build
 # it would sign the checkout off as ready over a runtime nothing has checked.
 # `--browser` runs the Python build too, so it is the only recipe needed here.
 if [[ -n "${seeded:-}" ]]; then
-  just fetch-browser
+  just fetch-browser || {
+    echo "" >&2
+    echo "error: the copied runtime did not check out, so this checkout is NOT" >&2
+    echo "  ready — its dependencies and build are in place, but the payloads" >&2
+    echo "  that came from $donor have not been validated. Fix the fetch above" >&2
+    echo "  and re-run \`just fetch-browser\`, or set up with --no-donor." >&2
+    exit 1
+  }
 fi
 
 echo ""
