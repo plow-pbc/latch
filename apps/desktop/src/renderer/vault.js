@@ -190,23 +190,21 @@ function vformDirty(ctx) {
 }
 
 /*
- * The six digits, shown while the key is still being pasted.
+ * The six digits — the only thing about an authenticator key anyone can read.
  *
- * This is the whole reason a key is hard to store: "TOTP" means the code to
- * everyone who is not implementing one, the box is masked, and a wrong paste
- * looks exactly like a right one until a site rejects the number. A live code
- * settles it on sight — digits ticking means the paste was the key; a sentence
- * means it was not, while the box is still open.
+ * While a key is being pasted, they settle on sight whether the paste was the
+ * key at all: "TOTP" means the code to everyone who is not implementing one,
+ * the box is masked, and a wrong paste looks exactly like a right one until a
+ * site rejects the number. Digits ticking means it was a key; a sentence means
+ * it was not, while the box is still open.
  *
- * A key already IN the vault is not read automatically: the value is fetched
- * only when the owner asks, which is the request the vault's audit records.
+ * For a key already IN the vault they are the proof it is saved, so a held key
+ * shows its code as soon as the form opens. The KEY itself stays behind the
+ * eye; the code is derived from it, dead in half a minute, and cannot be
+ * turned back into it.
  */
 function vtotp(input, ctx, held) {
   const out = el("div", { class: "totp-read" });
-  /* Nothing to say when there is no key and nothing typed. A stored key does
-     not rest — it shows its code (see `fromVault` below), which is the whole
-     point: the digits ARE the proof the key is saved. */
-  const rest = () => "";
   let showing = null; // { code, expiresAt } — the code on screen, or nothing
   // Answers arrive out of order: a keystroke's request can land after the one
   // that replaced it, describing a key the box no longer holds. Only the
@@ -223,9 +221,9 @@ function vtotp(input, ctx, held) {
    * throttled renderer gets late, coalesced callbacks, and anything counting
    * its own ticks reads as alive long after the code died.
    */
-  const display = (code, message, bad) => {
+  const display = (code, message) => {
     showing = code ?? null;
-    out.classList.toggle("bad", !code && !!message && !!bad);
+    out.classList.toggle("bad", !code && !!message);
     if (code) {
       const left = Math.max(0, Math.ceil((code.expiresAt - Date.now()) / 1000));
       out.replaceChildren(
@@ -233,8 +231,7 @@ function vtotp(input, ctx, held) {
         el("span", { class: "totp-left", text: `${left}s` }),
       );
     } else {
-      const line = message ?? rest();
-      out.replaceChildren(...(line ? [el("span", { text: line })] : []));
+      out.replaceChildren(...(message ? [el("span", { text: message })] : []));
     }
   };
 
@@ -256,7 +253,7 @@ function vtotp(input, ctx, held) {
       const code = await get();
       if (mine === asked) display(code);
     } catch (err) {
-      if (mine === asked) display(null, errText(err), true);
+      if (mine === asked) display(null, errText(err));
     }
   };
 
@@ -265,7 +262,7 @@ function vtotp(input, ctx, held) {
     const typed = input.value.trim();
     // An emptied box invalidates whatever is still in flight, or its answer
     // would appear under a box holding nothing.
-    if (!typed) { asked++; display(null); return Promise.resolve(); } // display() rests
+    if (!typed) { asked++; display(null); return Promise.resolve(); }
     return ask(() => window.domo.vaultTotp(null, typed));
   };
 
@@ -293,8 +290,7 @@ function vtotp(input, ctx, held) {
    * looking at their own item, which is what the log should say.
    */
   if (held) void fromVault();
-  else display(null);
-  return { node: out, preview, fromVault };
+  return { node: out, preview };
 }
 
 function vfield(spec, ctx) {
