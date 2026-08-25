@@ -68,16 +68,18 @@ export interface CloudChatOption {
 /**
  * Everything the Agents tab renders about cloud agents, in one shape.
  *
- * The two error fields are deliberately separate: a list that failed says the
- * screen may be out of date, while an action that failed says the thing the
- * user just clicked did not happen. Collapsing them would put "couldn't remove
- * that agent" on screen every time a background refresh hiccuped.
+ * The three error fields are deliberately separate: the agent list and chat
+ * list are independent requests, while an action failure says the thing the
+ * user just clicked did not happen. Collapsing either pair can hide the chat
+ * failure that makes setup unavailable or mislabel a background refresh.
  */
 export interface CloudAgentsUiState {
   cloudEnabled: boolean;
   cloudAgents: CloudAgentDisplayRow[];
-  /** A LIST failure, and nothing else. */
+  /** An agent-list failure, and nothing else. */
   cloudAgentsError: string | null;
+  /** A chat-list failure, and nothing else. */
+  cloudChatsError: string | null;
   /** A create/delete/retry failure, and nothing else. */
   cloudActionError: string | null;
   cloudChats: CloudChatOption[];
@@ -139,6 +141,7 @@ const EMPTY_STATE: CloudAgentsUiState = Object.freeze({
   cloudEnabled: false,
   cloudAgents: [],
   cloudAgentsError: null,
+  cloudChatsError: null,
   cloudActionError: null,
   cloudChats: [],
   cloudChatsLoaded: false,
@@ -201,9 +204,8 @@ export class CloudAgentState {
     return {
       cloudEnabled: true,
       cloudAgents: [...this.rows.values()].sort(byNewestFirst),
-      // One banner, whichever list failed. The agent list speaks first: an
-      // empty roster is the louder failure.
-      cloudAgentsError: this.agentsError ?? this.chatsError,
+      cloudAgentsError: this.agentsError,
+      cloudChatsError: this.chatsError,
       cloudActionError: this.actionError,
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,

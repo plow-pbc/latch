@@ -202,6 +202,7 @@ describe("refresh", () => {
 
     const shown = state.state();
     expect(shown.cloudAgentsError).toBeNull();
+    expect(shown.cloudChatsError).toBeNull();
     expect(shown.cloudActionError).toBeNull();
     expect(shown.cloudChats).toEqual(CHATS);
     expect(shown.cloudChatsLoaded).toBe(true);
@@ -275,7 +276,8 @@ describe("refresh", () => {
     // The pair that keeps "no chats" off the screen: not loaded, and an error
     // that says what to do about it.
     expect(shown.cloudChatsLoaded).toBe(false);
-    expect(shown.cloudAgentsError).toBe("Re-activate it to list chats.");
+    expect(shown.cloudAgentsError).toBeNull();
+    expect(shown.cloudChatsError).toBe("Re-activate it to list chats.");
     expect(shown.cloudAgents).toHaveLength(1);
   });
 
@@ -306,7 +308,8 @@ describe("refresh", () => {
     // nobody is pointed at re-activating over a transient failure.
     expect(shown.cloudChats).toEqual([]);
     expect(shown.cloudChatsLoaded).toBe(false);
-    expect(shown.cloudAgentsError).toBe("Couldn't reach Plow.");
+    expect(shown.cloudAgentsError).toBeNull();
+    expect(shown.cloudChatsError).toBe("Couldn't reach Plow.");
     expect(shown.cloudAgents).toHaveLength(1);
   });
 
@@ -336,7 +339,8 @@ describe("refresh", () => {
 
     const shown = state.state();
     expect(shown.cloudChatsLoaded).toBe(false);
-    expect(shown.cloudAgentsError).toBe(
+    expect(shown.cloudAgentsError).toBeNull();
+    expect(shown.cloudChatsError).toBe(
       "This Mac signed in before chat access existed. Re-activate it to list chats.",
     );
     expect(shown.cloudAgents).toHaveLength(1);
@@ -354,15 +358,15 @@ describe("refresh", () => {
       }),
     );
     await state.refresh();
-    expect(state.state().cloudAgentsError).toBe("Plow returned 500.");
+    expect(state.state().cloudChatsError).toBe("Plow returned 500.");
 
     fail = false;
     await state.refresh();
 
-    expect(state.state()).toMatchObject({ cloudAgentsError: null, cloudChatsLoaded: true });
+    expect(state.state()).toMatchObject({ cloudChatsError: null, cloudChatsLoaded: true });
   });
 
-  it("shows the agent list's failure ahead of the chat list's", async () => {
+  it("keeps simultaneous agent-list and chat-list failures separate", async () => {
     const state = build(
       tempHome(),
       fakes({
@@ -377,8 +381,11 @@ describe("refresh", () => {
 
     await state.refresh();
 
-    // One banner, and an empty roster is the louder failure.
-    expect(state.state().cloudAgentsError).toBe("Plow returned 500.");
+    expect(state.state()).toMatchObject({
+      cloudAgentsError: "Plow returned 500.",
+      cloudChatsError: "Couldn't reach Plow.",
+      cloudChatsLoaded: false,
+    });
   });
 
   it("forgets that the list ever loaded once a chat list fails", async () => {
@@ -943,8 +950,15 @@ describe("signing out", () => {
         seen = signal;
         return held.promise;
       },
+      chats: async () => {
+        throw new PlowApiError("forbidden", "Re-activate it to list chats.", 403);
+      },
     });
     const state = build(tempHome(), f);
+    // A failure belonging to the account that is about to go away: it must not
+    // be waiting on screen for whoever signs in next.
+    await state.refresh();
+    expect(state.state().cloudChatsError).not.toBeNull();
     await state.create("cht_1", "Kitchen agent");
 
     state.signedOut();
@@ -955,6 +969,7 @@ describe("signing out", () => {
       cloudChats: [],
       cloudChatsLoaded: false,
       cloudAgentsError: null,
+      cloudChatsError: null,
       cloudActionError: null,
     });
     held.resolve(agent());
@@ -970,6 +985,118 @@ describe("signing out", () => {
     await refreshing;
 
     expect(state.state().cloudAgents).toEqual([]);
+  });
+});
+
+describe("a 403 from the real chat endpoint", () => {
+  /** What this deployment actually answers `GET /v1/chats` with. */
+  const FORBIDDEN_BODY = { detail: "Token does not have access to chats:use" };
+
+  function fetchImpl(chatsStatus: number, agentsStatus = 200) {
+    return async (url: string) => {
+      if (url.endsWith("/v1/chats")) {
+        return new Response(JSON.stringify(chatsStatus === 200 ? { data: [] } : FORBIDDEN_BODY), {
+          status: chatsStatus,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: agentsStatus,
+        headers: { "content-type": "application/json" },
+      });
+    };
+  }
+
+  function stateWith(fetchLike: (url: string) => Promise<Response>, agents?: CloudAgentsApi) {
+    const home = tempHome();
+    return {
+      home,
+      state: new CloudAgentState({
+        agents: agents ?? {
+          async create() {
+            throw new Error("not used");
+          },
+          async list() {
+            return [];
+          },
+          async delete() {},
+          async poll(_credential, receipt) {
+            return receipt;
+          },
+        },
+        // The REAL client, so this covers the HTTP status handling the fakes
+        // elsewhere in this file stand in for.
+        chats: new CloudChatsClient("https://api.plow.co", fetchLike),
+        home,
+        enabled: true,
+      }),
+    };
+  }
+
+  it("reaches the screen as a chat-list failure, not as an empty account", async () => {
+    const { state } = stateWith(fetchImpl(403));
+
+    await state.refresh();
+
+    const shown = state.state();
+    expect(shown.cloudChatsLoaded).toBe(false);
+    expect(shown.cloudChatsError).toBe(
+      "This Mac signed in before chat access existed. Re-activate it to list chats.",
+    );
+    expect(shown.cloudChats).toEqual([]);
+    // The agent list is fine, and must not be blamed for this.
+    expect(shown.cloudAgentsError).toBeNull();
+  });
+
+  it("survives the agent list failing at the same time", async () => {
+    // The deployment that found this: `GET /v1/chats` 403s while the agent
+    // list answers 405. One shared error field meant the agent list's message
+    // won and the 403 vanished, so the picker opened empty with no reason.
+    const { state } = stateWith(fetchImpl(403), {
+      async create() {
+        throw new Error("not used");
+      },
+      async list() {
+        throw new PlowApiError("http", "Plow returned 405.", 405);
+      },
+      async delete() {},
+      async poll(_credential, receipt) {
+        return receipt;
+      },
+    });
+
+    await state.refresh();
+
+    expect(state.state()).toMatchObject({
+      cloudAgentsError: "Plow returned 405.",
+      cloudChatsError:
+        "This Mac signed in before chat access existed. Re-activate it to list chats.",
+      cloudChatsLoaded: false,
+    });
+  });
+
+  it("repeats neither the credential nor the server's own wording", async () => {
+    const { state } = stateWith(fetchImpl(403));
+
+    await state.refresh();
+
+    const marshalled = JSON.stringify(state.state());
+    expect(marshalled).not.toContain(CREDENTIAL);
+    // The server's sentence names a scope; it is written for an API consumer,
+    // not for the person looking at the screen.
+    expect(marshalled).not.toContain("chats:use");
+  });
+
+  it("clears once the chats come back", async () => {
+    let forbidden = true;
+    const { state } = stateWith(async (url: string) => fetchImpl(forbidden ? 403 : 200)(url));
+    await state.refresh();
+    expect(state.state().cloudChatsError).not.toBeNull();
+
+    forbidden = false;
+    await state.refresh();
+
+    expect(state.state()).toMatchObject({ cloudChatsError: null, cloudChatsLoaded: true });
   });
 });
 
