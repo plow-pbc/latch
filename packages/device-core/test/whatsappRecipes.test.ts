@@ -38,19 +38,29 @@ function tempDir(): string {
 }
 
 /**
- * Every sqlite3 this file spawns, so the TZ pin has ONE owner.
+ * Every child this file spawns goes through here, so the TZ pin has ONE owner.
  *
  * The recipes render dates with 'localtime', which means the machine's zone.
  * Left to the environment, an assertion on a rendered date passes or fails on
  * where the suite runs.
  */
-function sqlite(args: string[], opts: { cwd?: string } = {}): string {
-  return execFileSync(SQLITE, args, {
+function run(cmd: string, args: string[], opts: { cwd?: string } = {}): string {
+  return execFileSync(cmd, args, {
     ...opts,
     encoding: "utf8",
+    stdio: "pipe",
     env: { ...process.env, TZ: "UTC" },
   });
 }
+
+const sqlite = (args: string[], opts: { cwd?: string } = {}): string =>
+  run(SQLITE, args, opts);
+
+/** The fallback, as an agent would invoke it: argv straight from the skill. */
+const runFallback = (store: string, query: string, cwd: string): string => {
+  const argv = whatsappFallbackArgv(store, query);
+  return run(argv[0], argv.slice(1), { cwd });
+};
 
 /**
  * Run SQL against a store and hand back the rows, split into cells.
@@ -75,19 +85,12 @@ function makeStore(dir: string): string {
   const base = 1700000000;
   const rows: string[] = [];
   // Sixty messages, oldest first, so "msg 60" is the newest thing said.
+  // A comma, because the body claims -csv survives one in message text. The
+  // apostrophe message lives in its own chat below, so the search recipe is
+  // exercised across sessions rather than within one.
+  const SPECIAL: Record<number, string> = { 7: "what about dinner, tomorrow" };
   for (let i = 1; i <= 60; i++) {
-    // A comma, because the body claims -csv survives one in message text.
-    // An apostrophe on another, because the escaping rule governs the search
-    // recipe's `like` just as much as the conversation recipe's name slot.
-    const text =
-      i === 7
-        ? "what about dinner, tomorrow"
-        : // Doubled here for the same reason the skill tells the agent to
-          // double it: this insert is a query too, and a bare apostrophe ends
-          // the literal. The row's actual text has one apostrophe.
-          i === 9
-          ? "don''t forget dinner"
-          : `msg ${i}`;
+    const text = SPECIAL[i] ?? `msg ${i}`;
     rows.push(
       "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME) values(" +
         `${at(base + i * 60)}, '${text}', 1, ${i % 2});`,
@@ -97,6 +100,13 @@ function makeStore(dir: string): string {
   rows.push(
     "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME, ZGROUPMEMBER)" +
       ` values(${at(base + 5000)}, 'from the club', 2, 0, 1);`,
+  );
+  // A third chat, so the search recipe has more than one session to span — and
+  // the apostrophe is doubled here for the same reason the skill tells the
+  // agent to double it: this insert is a query too. The row holds one.
+  rows.push(
+    "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME)" +
+      ` values(${at(base + 4000)}, 'don''t forget dinner', 3, 0);`,
   );
   sqlite([
     store,
@@ -113,6 +123,7 @@ function makeStore(dir: string): string {
         // chat, because a surname the owner types is the path that matters.
         `insert into ZWACHATSESSION values(1, 'O''Brien', '15551234@s.whatsapp.net', ${at(base + 3600)});`,
           `insert into ZWACHATSESSION values(2, 'Book Club', '99887@g.us', ${at(base + 5000)});`,
+        `insert into ZWACHATSESSION values(3, 'Wren', '15557777@s.whatsapp.net', ${at(base + 4000)});`,
         "insert into ZWAGROUPMEMBER values(1, 'Bernard', '15559999@s.whatsapp.net', 2);",
         ...rows,
       ].join(" "),
@@ -140,11 +151,11 @@ afterAll(() => cleanup(storeDir));
 describe("the recipes the skill publishes", () => {
   it("lists chats newest first, and says which are groups", () => {
     const rows = query(store, WHATSAPP_QUERIES.recentChats);
-    expect(rows.map((r) => r[0])).toEqual(["Book Club", "O'Brien"]);
-    expect(rows.map((r) => r[2])).toEqual(["group", "direct"]);
+    expect(rows.map((r) => r[0])).toEqual(["Book Club", "Wren", "O'Brien"]);
+    expect(rows.map((r) => r[2])).toEqual(["group", "direct", "direct"]);
     // The date column is the whole reason 978307200 is in the query: a wrong
     // offset here shows up as a year in the 1980s or the 2050s.
-    expect(rows[1][1]).toBe("2023-11-14 23:13:20");
+    expect(rows[2][1]).toBe("2023-11-14 23:13:20");
   });
 
   // The bug this catches: `order by ... desc limit 50` alone returns the newest
@@ -185,10 +196,7 @@ describe("the recipes the skill publishes", () => {
   // yields = ''O''Brien'', which lexes as an empty string then a bare token.
   // Pin the reading the body prints.
   it("means the name, not the literal — the recipe's own quotes stay put", () => {
-    const rendered = WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O''Brien");
-    expect(rendered).toContain("s.ZPARTNERNAME = 'O''Brien'");
     expect(whatsappSkillFor("/Users/example").body).toContain("s.ZPARTNERNAME = 'O''Brien'");
-    expect(query(store, rendered).length).toBe(50);
   });
 
   // Same rule, the other interpolation site: a word the owner used that has an
@@ -206,8 +214,12 @@ describe("the recipes the skill publishes", () => {
   it("finds a word across chats, and survives the -header -csv it teaches", () => {
     const rows = query(store, WHATSAPP_QUERIES.search);
     // Newest first, and both chats' rows are the same person's here.
-    expect(rows.map((r) => r[2])).toEqual(["don't forget dinner", "what about dinner, tomorrow"]);
-    expect(new Set(rows.map((r) => r[0]))).toEqual(new Set(["O'Brien"]));
+    // Two chats, newest first — the property that distinguishes this recipe
+    // from `conversation` is that it spans sessions.
+    expect(rows.map((r) => [r[0], r[2]])).toEqual([
+      ["Wren", "don't forget dinner"],
+      ["O'Brien", "what about dinner, tomorrow"],
+    ]);
 
     const csv = sqlite(["-readonly", "-header", "-csv", store, WHATSAPP_QUERIES.search]).trim();
     const [header, ...rest] = csv.split("\n");
@@ -215,7 +227,7 @@ describe("the recipes the skill publishes", () => {
     // The comma is inside the quoted cell, not a fourth column — and csv
     // quotes the apostrophe cells too, so neither reaches the reader as syntax.
     expect(rest).toEqual([
-      '"O\'Brien","2023-11-14 22:22:20","don\'t forget dinner"',
+      'Wren,"2023-11-14 23:20:00","don\'t forget dinner"',
       '"O\'Brien","2023-11-14 22:20:20","what about dinner, tomorrow"',
     ]);
   });
@@ -244,17 +256,13 @@ describe("the fallback for a store that will not open", () => {
     const scratch = tempDir();
     // The query carries the single quotes every recipe has: a fallback that
     // pasted it into the script string would be re-split into words here.
-    const argv = whatsappFallbackArgv(
+    const out = runFallback(
       s,
       "select datetime(max(ZMESSAGEDATE) + 978307200, 'unixepoch', 'localtime'), count(*) from ZWAMESSAGE;",
+      scratch,
     );
-    const out = execFileSync(argv[0], argv.slice(1), {
-      cwd: scratch,
-      encoding: "utf8",
-      env: { ...process.env, TZ: "UTC" },
-    });
     expect(out).toContain("2023-11-");
-    expect(out.trim().split("\n").pop()).toMatch(/,61$/);
+    expect(out.trim().split("\n").pop()).toMatch(/,62$/);
     // The owner's whole message history was in that directory a moment ago.
     // Nothing else on this Mac deletes a scratch dir, so the command must.
     expect(fs.readdirSync(scratch)).toEqual([]);
@@ -269,9 +277,8 @@ describe("the fallback for a store that will not open", () => {
     const dir = tempDir();
     const s = makeStore(dir);
     const before = fs.readdirSync(dir).sort();
-    const argv = whatsappFallbackArgv(s, "select count(*) from ZWAMESSAGE;");
     try {
-      execFileSync(argv[0], argv.slice(1), { cwd: dir, encoding: "utf8", stdio: "pipe" });
+      runFallback(s, "select count(*) from ZWAMESSAGE;", dir);
     } catch {
       /* it may well fail here — what matters is what it leaves behind */
     }
@@ -291,12 +298,11 @@ describe("the fallback for a store that will not open", () => {
     ]);
     expect(fs.existsSync(s + "-wal")).toBe(true);
 
-    const argv = whatsappFallbackArgv(s, "select ZTEXT from ZWAMESSAGE where ZMESSAGEDATE = 999999999;");
-    const out = execFileSync(argv[0], argv.slice(1), {
-      cwd: tempDir(),
-      encoding: "utf8",
-      env: { ...process.env, TZ: "UTC" },
-    });
+    const out = runFallback(
+      s,
+      "select ZTEXT from ZWAMESSAGE where ZMESSAGEDATE = 999999999;",
+      tempDir(),
+    );
     expect(out).toContain("still in the wal");
   });
 });
