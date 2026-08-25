@@ -113,13 +113,14 @@ for payload in $payloads downloads; do
   else
     echo "note: no $dir to clone — run \`just fetch-browser\` if you need the browser stack"
   fi
-  # Present, however it got here — copied just now or already in place. The
+  # Present, however it got here — copied just now or already in place, and
+  # `-e` so this agrees with the skip arm above on what present means. The
   # download cache does not count: it is what a fetch downloads FROM, so on its
   # own it leaves nothing to validate. Keyed on presence rather than on having
   # copied this run, because otherwise a second run of this script finds every
   # payload already there, skips the check, and signs the checkout off over
   # exactly the copy that failed it the first time.
-  [[ "$payload" = downloads || ! -d "$dir" ]] || have_runtime=1
+  [[ "$payload" = downloads || ! -e "$dir" ]] || have_runtime=1
 done
 
 # --- deps + build ----------------------------------------------------------

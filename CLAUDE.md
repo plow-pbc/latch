@@ -166,8 +166,9 @@ the seatbelt and within reach of this checkout's vault and relay credential, so
 anything able to write one checkout could otherwise put code in the next.
 `scripts/runtime-donor.sh` owns that reasoning. What it does **not** decide is
 whether the copy is any good — the donor is a cache seed, and setup runs
-`just fetch-browser` over any payload that arrived — the download cache alone
-does not count — once it has installed and built, so
+`just fetch-browser` over whatever runtime is in `vendor/` — copied just now or
+already there, the download cache alone not counting — once it has installed
+and built, so
 a stale or half-built payload costs a rebuild rather than a refusal. That check
 is not skippable: it is the only look at what arrived, so setup stops rather
 than call a checkout ready over an unvalidated runtime — after installing and

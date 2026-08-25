@@ -208,11 +208,25 @@ describe("worktree-setup.sh", () => {
     expect(lines).toContain("stub just install");
     expect(lines).toContain("stub just build");
     // And it says so, rather than stopping with only the recipe's own error.
-    // Provenance-neutral: the gate fires on a runtime being present, which
-    // includes runs that copied nothing, so the reason must not claim one.
     expect(stderr).toMatch(/the runtime in vendor\/ did not check out/);
-    expect(stderr).not.toMatch(/came from/);
     expect(stdout).not.toContain("is ready.");
+  });
+
+  it("blames no donor when it validated a runtime it did not copy", () => {
+    // The gate fires on presence, so it fires on runs that copied nothing —
+    // here --no-donor over payloads a previous run left. A message naming where
+    // they "came from" would name nothing at all, which is the one path where
+    // provenance is genuinely unknown and so the one worth pinning.
+    const parent = fs.mkdtempSync(path.join(tmp, "noprov-"));
+    const donor = checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
+    const asking = checkout(parent, "slot0", []);
+    runSetup(asking, donor);
+
+    const { stderr } = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
+
+    expect(stderr).toMatch(/the runtime in vendor\/ did not check out/);
+    // Nothing standing in for a donor that was never consulted.
+    expect(stderr).not.toMatch(/came from|donor/);
   });
 
   it("checks again on a re-run, over payloads it did not copy this time", () => {
