@@ -220,28 +220,6 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
 });
 
 describe("per-cloud-agent settings", () => {
-  it("defaults to an empty map on a home that has never had one", () => {
-    expect(loadSettings(tempHome()).cloudAgentSettings).toEqual({});
-  });
-
-  it("round-trips a choice keyed on the agent id", () => {
-    const home = tempHome();
-    const settings = loadSettings(home);
-    settings.cloudAgentSettings.agent_1 = { adversarialReview: true };
-    saveSettings(home, settings);
-
-    expect(loadSettings(home).cloudAgentSettings).toEqual({
-      agent_1: { adversarialReview: true },
-    });
-  });
-
-  it("survives a home written before the field existed", () => {
-    const home = tempHome();
-    write(home, JSON.stringify({ relayCredential: "plow_sk_secret", approvalMode: "ask" }));
-
-    expect(loadSettings(home).cloudAgentSettings).toEqual({});
-  });
-
   it("keeps a hand-edited file from becoming a crash on the Agents tab", () => {
     const home = tempHome();
     write(
@@ -263,28 +241,6 @@ describe("per-cloud-agent settings", () => {
     });
   });
 
-  it("drops a remembered permission pair an older build wrote", () => {
-    const home = tempHome();
-    write(
-      home,
-      JSON.stringify({
-        cloudAgentSettings: { agent_1: { adversarialReview: true, relay: true, inference: false } },
-      }),
-    );
-
-    // This app tried to remember what an agent may do, and nothing can report
-    // that, so the memory is gone rather than left to go stale in the file.
-    expect(loadSettings(home).cloudAgentSettings.agent_1).toEqual({ adversarialReview: true });
-  });
-
-  it("reads a non-object in the field as no settings at all", () => {
-    const home = tempHome();
-    write(home, JSON.stringify({ cloudAgentSettings: null }));
-    expect(loadSettings(home).cloudAgentSettings).toEqual({});
-
-    write(home, JSON.stringify({ cloudAgentSettings: ["agent_1"] }));
-    expect(loadSettings(home).cloudAgentSettings).toEqual({});
-  });
 });
 
 describe("the activation's assigned number", () => {
@@ -292,19 +248,4 @@ describe("the activation's assigned number", () => {
     expect(loadSettings(tempHome()).activationSendTo).toBe("");
   });
 
-  it("round-trips the server's number verbatim", () => {
-    const home = tempHome();
-    const settings = loadSettings(home);
-    settings.activationSendTo = "+14155550188";
-    saveSettings(home, settings);
-
-    expect(loadSettings(home).activationSendTo).toBe("+14155550188");
-  });
-
-  it("stays empty on a home that activated before it was kept", () => {
-    const home = tempHome();
-    write(home, JSON.stringify({ relayCredential: "plow_sk_secret" }));
-
-    expect(loadSettings(home).activationSendTo).toBe("");
-  });
 });

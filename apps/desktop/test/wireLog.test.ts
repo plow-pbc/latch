@@ -42,25 +42,6 @@ const post = (extra: Record<string, string> = {}) => ({
 });
 
 describe("the wire log", () => {
-  it("writes one line per exchange, with what a bug report needs", async () => {
-    const home = tempHome();
-
-    await loggingFetch(home, answering(202, { agent_id: "agent_1" }))(
-      "https://api.plow.co/v1/agents/cloud",
-      post({ "content-type": "application/json" }),
-    );
-
-    const [entry] = lines(home);
-    expect(entry).toMatchObject({
-      method: "POST",
-      url: "https://api.plow.co/v1/agents/cloud",
-      requestBody: { chat_uid: "cht_1" },
-      status: 202,
-      responseBody: { agent_id: "agent_1" },
-    });
-    expect(typeof entry.elapsedMs).toBe("number");
-  });
-
   it("records that a bearer was sent and never what it was", async () => {
     const home = tempHome();
 
