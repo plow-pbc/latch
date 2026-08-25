@@ -586,10 +586,12 @@ ipcMain.handle("settings:getInference", async () => readInference(home));
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
   const server = device?.vaultServer;
-  // Nothing to start, rather than not started yet: this build has no browser
-  // runtime, so no vault was ever installed. The remedy is a different one, and
-  // "has not started yet" tells the owner to wait for something that is never
-  // coming — the same mistake the locked case below already had to fix.
+  // Nothing to start, rather than not started yet: no vault was ever installed
+  // here. Says nothing about the browser runtime — it may be absent, or present
+  // without its vault payload, and this side cannot tell. The remedy is a
+  // different one either way, and "has not started yet" tells the owner to wait
+  // for something that is never coming — the same mistake the locked case below
+  // already had to fix.
   if (!vault || !server) return { missing: true };
   // Locked and empty are different facts and the screen says different words.
   // An account that is on disk and will not open must never be reported as a

@@ -42,7 +42,15 @@ echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
 # download cache — a donor without the cache still qualifies, so it is named
 # here and not there. A donor may be carrying only some of these (see the
 # script's fallback), which is why each dir reports for itself below.
-for dir in $(sh scripts/runtime-donor.sh --payloads | sed 's|^|vendor/|') vendor/downloads; do
+#
+# Bound to a variable rather than substituted straight into the `for` word
+# list, where neither a non-zero exit nor empty output is examined: this loop
+# copying nothing at all, silently, is the failure this whole script is here to
+# stop happening.
+payloads=$(sh scripts/runtime-donor.sh --payloads)
+[[ -n "$payloads" ]] || { echo "error: runtime-donor.sh --payloads named nothing" >&2; exit 1; }
+
+for dir in $(printf '%s\n' "$payloads" | sed 's|^|vendor/|') vendor/downloads; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -n "$donor" && -d "$donor/$dir" ]]; then
