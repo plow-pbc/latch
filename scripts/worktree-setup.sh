@@ -46,9 +46,12 @@ echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
 # Bound to a variable rather than substituted straight into the `for` word
 # list, where neither a non-zero exit nor empty output is examined: this loop
 # copying nothing at all, silently, is the failure this whole script is here to
-# stop happening.
-payloads=$(sh scripts/runtime-donor.sh --payloads)
-[[ -n "$payloads" ]] || { echo "error: runtime-donor.sh --payloads named nothing" >&2; exit 1; }
+# stop happening. Both halves report — errexit would take the non-zero one on
+# its own, but it exits without printing anything, which is the same silence.
+payloads=$(sh scripts/runtime-donor.sh --payloads) && [[ -n "$payloads" ]] || {
+  echo "error: runtime-donor.sh --payloads failed or named nothing" >&2
+  exit 1
+}
 
 for name in $payloads downloads; do
   dir="vendor/$name"
