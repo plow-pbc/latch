@@ -566,7 +566,10 @@ function fetchBrowser(arch) {
   // finishes there is no way to know that, and runtime-donor.sh falls back to
   // it whenever no per-arch dir exists, which is every moment of this function
   // before mkdirSync creates one. That is exactly the --browser-both donor
-  // that kept no per-arch tree. Re-earned on the next merge, not assumed.
+  // that kept no per-arch tree. Re-earned on the next merge, not assumed —
+  // which costs a re-fuse (minutes of lipo/ditto) when the fused tree was in
+  // fact still good. Worth it: the alternative is handing a recipient a
+  // half-built browser it would then keep.
   fs.rmSync(universalMarker, { force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
