@@ -188,7 +188,7 @@ describe("the recipes the skill publishes", () => {
   it("breaks on an apostrophe that was not doubled, which is why the body says to", () => {
     expect(() =>
       query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O'Brien")),
-    ).toThrow(/syntax error|unrecognized token/);
+    ).toThrow(/syntax error/);
   });
 
   // The body shows the rendered predicate, not a quoted literal, because the
@@ -203,7 +203,7 @@ describe("the recipes the skill publishes", () => {
   // apostrophe in it. "nothing found" for something right there is the misread.
   it("escapes an apostrophe in a search term too", () => {
     const bare = WHATSAPP_QUERIES.search.replace("dinner", "don't");
-    expect(() => query(store, bare)).toThrow(/syntax error|unrecognized token/);
+    expect(() => query(store, bare)).toThrow(/syntax error/);
     const rows = query(store, WHATSAPP_QUERIES.search.replace("dinner", "don''t"));
     expect(rows.map((r) => r[2])).toEqual(["don't forget dinner"]);
   });
