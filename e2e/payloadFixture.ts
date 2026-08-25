@@ -17,11 +17,8 @@ import path from "node:path";
 export const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
 
 /**
- * Files a payload's build writes BEFORE its marker — the ones that make a tree
- * look inhabited while it is still being filled in. fetchBrowser() writes
- * camoufox's config.json after the extraction and before the addon it fetches
- * over the network, so a tree holding one is past the slow half and still
- * unfinished.
+ * What a build leaves behind before it writes its marker — the files that make
+ * a payload look inhabited while it is still being filled in.
  */
 export const CONTENTS: Record<string, string[]> = {
   // In the order fetchBrowser() writes them: something inside the extracted
