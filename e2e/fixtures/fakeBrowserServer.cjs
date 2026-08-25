@@ -8,6 +8,10 @@
  * Knobs (env):
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
+ *   NO_READY_IF=path   never emit the ready line once that path exists — the
+ *                      same failure, but armed from the test between two
+ *                      launches, so a RESTART can fail where the first start
+ *                      succeeded without a clock to race
  *   CRASH_AFTER=n      after n commands, say one last thing (a 599 refusal),
  *                      then exit(9) a beat later so the parent reads the line
  *                      before the death — collapsing that beat re-opens a race
@@ -262,7 +266,8 @@ function main() {
     fs.appendFileSync(process.env.FAKE_ARGV_LOG, process.argv.slice(2).join(" ") + "\n");
   }
   const start = () => {
-    if (process.env.NO_READY !== "1") {
+    const armed = process.env.NO_READY_IF;
+    if (process.env.NO_READY !== "1" && !(armed && fs.existsSync(armed))) {
       respond({ status: "ready", pid: process.pid, browser_version: "fake-152.0.4" });
     }
   };

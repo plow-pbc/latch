@@ -31,6 +31,12 @@ import { CredentialBroker, CredentialError, CredentialRelease } from "./credenti
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
+/**
+ * The one way a reset ends that is not a failure: the Mac is going down, and
+ * the session ends for that reason rather than for a restart that never was.
+ */
+const QUITTING = new Error("this Mac is shutting down");
+
 interface Session {
   /** This session's own browser. One per session is the whole point. */
   host: BrowserHost;
@@ -443,10 +449,13 @@ export class BrowserSessions {
       // browser was going down, so starting a new one would leave a Firefox
       // and a profile belonging to a session nobody holds. Thrown rather than
       // returned — answering "completed" here would tell the agent it has a
-      // clean browser when it has no browser at all.
-      // (A close cannot reach this: close() waits on the swap, and the only
-      // other deleter, noteCrash, is unreachable with both hosts' hooks off.)
-      if (this.quitting) throw new Error("this Mac is shutting down");
+      // clean browser when it has no browser at all — and thrown as itself, so
+      // the owner's log records a session the Mac shut down rather than one
+      // whose restart failed.
+      // (A close cannot reach this: close() waits on the swap, and the old
+      // host's crash hook was cleared before the first await while the new
+      // host does not exist yet, so noteCrash cannot have deleted it either.)
+      if (this.quitting) throw QUITTING;
       // The new browser is on one blank page. Left stale, the session stays
       // locked out against a URL that no longer exists, shows the owner's
       // viewer a page it is not on, and audits its first navigation as a
@@ -464,10 +473,13 @@ export class BrowserSessions {
     } catch (error: unknown) {
       // The profile is already gone and the browser did not come back. A
       // session left registered here holds one of this Mac's few browser slots
-      // with a dead host behind it, so it goes the way any dead session goes.
+      // with a dead host behind it, so it goes the way any dead session goes —
+      // under the reason it actually ended for.
       s.resetting = null;
-      s.closing = this.finalize(s, "reset failed");
+      const quitting = error === QUITTING;
+      s.closing = this.finalize(s, quitting ? "shutdown" : "reset failed");
       await s.closing;
+      if (quitting) return { status: "error", error: "this Mac is shutting down" };
       const message = error instanceof Error ? error.message : String(error);
       return { status: "error", error: `browser failed to restart: ${message}` };
     } finally {

@@ -766,7 +766,7 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
    * in for a runtime whose merge program is missing or broken.
    */
   const signedIn = (
-    opts: { has?: string[]; merger?: string[]; audit?: AuditFn } = {},
+    opts: { has?: string[]; merger?: string[]; audit?: AuditFn; serverEnv?: Record<string, string> } = {},
   ): { sessions: BrowserSessions; seed: string; profiles: string } => {
     const home = fs.mkdtempSync(path.join(ctx.dir, "signed-in-"));
     const seed = path.join(home, "profile");
@@ -782,6 +782,9 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
           ...ctx.browsers,
           profileDir: path.join(home, "profiles"),
           seedProfile: seed,
+          ...(opts.serverEnv
+            ? { env: { ...ctx.browsers.env, ...opts.serverEnv }, startTimeoutMs: 1_000 }
+            : {}),
           mergeCookiesCommand: opts.merger ?? [PYTHON, MERGE_SCRIPT],
         },
         null,
@@ -976,6 +979,53 @@ db.commit()`,
     const result = jv(await sessions.freshProfile(target));
     expect(result.get("status").str).toBe("error");
     expect(result.get("error").str).toBe(expected);
+  });
+
+  it("a close that lands mid-swap ends the session once, not twice", async () => {
+    // freshProfile publishes s.resetting synchronously, before the first await
+    // yields — so a close issued on the next line genuinely parks on the swap
+    // rather than racing it, with no timing knob involved. What it must not do
+    // is resume past a gate it cleared before the swap published anything.
+    const events: { event: string; fields: { [k: string]: JSONValue } }[] = [];
+    const { sessions, profiles } = signedIn({ audit: (event, fields) => events.push({ event, fields }) });
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
+
+    const reset = sessions.freshProfile(handle);
+    const closed = sessions.close(handle, "agent");
+    const [, c] = await Promise.all([reset, closed]);
+
+    expect(jv(c).get("status").str).toBe("completed");
+    const ends = events.filter((e) => e.event === "browser_session_closed");
+    expect(ends).toHaveLength(1);
+    // The close's own reason, not the swap's — the session ended because it
+    // was closed, and the owner's log is what says so.
+    expect(ends[0].fields.reason).toBe("agent");
+    // Nothing of this session is left on the Mac, profile or isolated HOME.
+    expect(fs.readdirSync(profiles)).toEqual([]);
+  });
+
+  it("a close parked on a swap that then fails still ends the session once", async () => {
+    // The case the re-check exists for, and the only one that reaches it: a
+    // failing swap publishes its OWN teardown while a close is parked, so that
+    // close resumes having cleared a gate that was true when it checked and is
+    // not any more. The restart is made to fail by taking away the directory
+    // it must create — no mocking, and nothing waits on a clock.
+    const events: { event: string; fields: { [k: string]: JSONValue } }[] = [];
+    const arm = path.join(ctx.dir, "no-ready-after-this");
+    const { sessions } = signedIn({
+      audit: (event, fields) => events.push({ event, fields }),
+      serverEnv: { NO_READY_IF: arm },
+    });
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
+
+    const reset = sessions.freshProfile(handle);
+    fs.writeFileSync(arm, "the restart will not come up");
+    const closed = sessions.close(handle, "agent");
+    const [r, c] = await Promise.all([reset, closed]);
+
+    expect(jv(r).get("status").str).toBe("error");
+    expect(jv(c).get("status").str).toBe("completed");
+    expect(events.filter((e) => e.event === "browser_session_closed")).toHaveLength(1);
   });
 
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {
