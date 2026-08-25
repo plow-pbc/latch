@@ -55,8 +55,8 @@ interface Spec {
   unfinished?: string;
   /** One marker path to withhold, when the payload's others should stay. */
   withoutMarker?: string;
-  /** A directory under vendor/ to remove entirely, after markers are written. */
-  withoutPayloadDir?: string;
+  /** A path under vendor/ to remove entirely, after the markers are written. */
+  withoutPath?: string;
   /** One extra marker path to write, for the trees a donor may build instead. */
   alsoMarker?: string;
 }
@@ -72,8 +72,8 @@ function checkout(parent: string, spec: Spec): string {
     else markBuilt(dir, payload);
   }
   if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker));
-  if (spec.withoutPayloadDir) {
-    fs.rmSync(path.join(dir, "vendor", spec.withoutPayloadDir), { recursive: true, force: true });
+  if (spec.withoutPath) {
+    fs.rmSync(path.join(dir, "vendor", spec.withoutPath), { recursive: true, force: true });
   }
   if (spec.alsoMarker) writeMarker(dir, spec.alsoMarker);
   git(dir, "init", "-q", "-b", "main");
@@ -197,21 +197,22 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       spec: {
         name: "d",
         payloads: FULL,
-        withoutPayloadDir: `camoufox-browser/${ARCH}`,
+        withoutPath: `camoufox-browser/${ARCH}`,
         alsoMarker: "camoufox-browser/universal/.sha256",
       },
       usable: true,
     },
     {
       why: "refuses a Camoufox still extracting, whatever sits beside it",
-      // The earlier half of the same window: the per-arch tree has been made
-      // and `ditto` is still filling it, so there is no config.json yet and a
-      // finished universal tree next door must not answer for it.
+      // The earlier half of the same window: fetchBrowser() has rm'd the
+      // per-arch tree and made it again, and nothing has landed in it yet — so
+      // there is no config.json, and a finished universal tree next door must
+      // not answer for the empty shell sitting where the browser will go.
       spec: {
         name: "d",
         payloads: FULL,
         unfinished: "camoufox-browser",
-        withoutPayloadDir: `camoufox-browser/${ARCH}/config.json`,
+        withoutPath: `camoufox-browser/${ARCH}/config.json`,
         alsoMarker: "camoufox-browser/universal/.sha256",
       },
       usable: false,
