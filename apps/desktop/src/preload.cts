@@ -98,6 +98,13 @@ contextBridge.exposeInMainWorld("domo", {
   // Local-only per-agent settings, keyed on the agent id. No restart, no server.
   cloudSettingsSet: (agentId: string, settings: { adversarialReview: boolean }) =>
     ipcRenderer.invoke("cloud:settingsSet", agentId, settings),
+  // Apply changes: the whole settings panel in one call. Relay access and
+  // inference go to Plow and restart the agent; adversarial review is local and
+  // applies at once — and a save that touched only it makes no call at all.
+  cloudApply: (
+    agentId: string,
+    controls: { relay: boolean; inference: boolean; adversarialReview: boolean },
+  ) => ipcRenderer.invoke("cloud:apply", agentId, controls),
 
   // Any web page the app links to (client connector cards, Settings' Support
   // section). A KEY, not a URL: main owns the table of what may be opened.

@@ -59,6 +59,35 @@ export function tabShowsCloudAgents(tab: string): boolean {
   return tab === "agents" || tab === "connect";
 }
 
+/**
+ * The three controls one Apply changes button writes.
+ *
+ * Two of them are the agent's permissions, which only Plow can change; the
+ * third is ours and local. They travel together because the user sets them
+ * together, not because they go to the same place.
+ */
+export interface CloudAgentControls {
+  relay: boolean;
+  inference: boolean;
+  adversarialReview: boolean;
+}
+
+/**
+ * The scope set for an agent with these permissions.
+ *
+ * **Derived, never accumulated.** Reconfigure replaces the whole set, so this
+ * builds it from the two switches and nothing else — `chats:use` is what makes
+ * it an agent that can read its chat at all, so it is always present, and there
+ * is no third scope a control can reach. Widening past the agent role would
+ * hand a cloud machine something the user never asked it for.
+ */
+export function cloudAgentScopes(controls: Pick<CloudAgentControls, "relay" | "inference">): string[] {
+  const scopes = ["chats:use"];
+  if (controls.relay) scopes.push("relay:call");
+  if (controls.inference) scopes.push("llm:chat");
+  return scopes;
+}
+
 /** One pickable chat. Display data — the same shape setup already shows. */
 export interface CloudChatOption {
   uid: string;
@@ -101,6 +130,22 @@ export interface CloudAgentsUiState {
    * part of a row because it is ours, not Plow's: a row is server truth.
    */
   cloudAgentSettings: Record<string, CloudAgentLocalSettings>;
+  /**
+   * The `agent_id` whose permissions are being applied right now, else null.
+   *
+   * Only a reconfigure sets it: it mints a fresh credential and restarts the
+   * machine, so it is the one save with a visible middle. A local-only save
+   * never touches this — there is nothing to wait for.
+   */
+  cloudSaving: string | null;
+  /**
+   * Why the last Apply changes did not take.
+   *
+   * Its own field, beside the list error and the create/delete error, because
+   * it is a third sentence about a third thing: the agent is listed, it is
+   * running on its old credential, and the change did not happen.
+   */
+  cloudSaveError: string | null;
 }
 
 /** The slice of `CloudAgentsClient` this state needs. */
@@ -108,6 +153,16 @@ export interface CloudAgentsApi {
   create(deviceCredential: string, request: CreateCloudAgentRequest): Promise<CloudAgentResource>;
   list(deviceCredential: string): Promise<CloudAgentResource[]>;
   delete(deviceCredential: string, agentId: string): Promise<void>;
+  /**
+   * Replace what the agent may do. Answers with the same receipt shape as
+   * create — `agent_id` unchanged, `session_id` rotated, status back to
+   * `provisioning` while the machine restarts.
+   */
+  reconfigure(
+    deviceCredential: string,
+    agentId: string,
+    request: { scopes?: string[]; chatUid?: string },
+  ): Promise<CloudAgentResource>;
   /**
    * The `signal` is how a provision in flight is called off — a sign-out, or a
    * delete of the very agent being polled. A client that does not take one yet
@@ -144,6 +199,8 @@ const EMPTY_STATE: CloudAgentsUiState = Object.freeze({
   cloudChatsLoaded: false,
   cloudSendTo: null,
   cloudAgentSettings: {},
+  cloudSaving: null,
+  cloudSaveError: null,
 });
 
 export class CloudAgentState {
@@ -174,6 +231,10 @@ export class CloudAgentState {
    */
   private chatsError: string | null = null;
   private actionError: string | null = null;
+  private saveError: string | null = null;
+  /** The agent whose reconfigure is in flight — POST and the restart poll that
+   * follows it. One at a time is all the panel can ask for. */
+  private saving: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
   /**
@@ -209,6 +270,8 @@ export class CloudAgentState {
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
       cloudAgentSettings: settings.cloudAgentSettings,
+      cloudSaving: this.saving,
+      cloudSaveError: this.saveError,
     };
   }
 
@@ -352,6 +415,140 @@ export class CloudAgentState {
     this.publish();
   }
 
+  /**
+   * Apply the settings panel: the two permissions and the local review switch.
+   *
+   * The two halves go to different places and fail differently. Adversarial
+   * review is ours — it is written here, takes effect at once, and cannot fail.
+   * Relay access and inference are Plow's: changing them replaces the agent's
+   * scope set, which mints a fresh credential and restarts the machine, so they
+   * are worth a restart only when they actually changed.
+   *
+   * **A save that changes only the local switch makes no network call at all.**
+   * That is the whole reason the last applied pair is remembered: without it,
+   * ticking a local checkbox would restart a running agent.
+   */
+  async apply(agentId: string, controls: CloudAgentControls): Promise<void> {
+    if (!this.deps.enabled) return;
+    this.saveError = null;
+    const id = (agentId ?? "").trim();
+    if (!id) return;
+
+    const wanted = {
+      relay: controls?.relay === true,
+      inference: controls?.inference === true,
+      adversarialReview: controls?.adversarialReview === true,
+    };
+    const stored = this.readAgentSettings(id);
+
+    // First, and unconditionally: it is local, it is immediate, and it has no
+    // dependency on anything below. A network failure after this point must not
+    // take it back — the two are separate promises to the user.
+    this.writeAgentSettings(id, { ...stored, adversarialReview: wanted.adversarialReview });
+
+    // Nothing Plow owns has changed. `stored` having both booleans is what
+    // makes this knowable; absent, the permissions are unknown and the save
+    // goes through rather than being guessed at.
+    if (stored?.relay === wanted.relay && stored?.inference === wanted.inference) {
+      this.publish();
+      return;
+    }
+
+    const credential = this.credential();
+    if (!credential) {
+      this.saveError = "This Mac isn't signed in yet.";
+      this.publish();
+      return;
+    }
+
+    const generation = this.generation;
+    this.saving = id;
+    this.publish();
+    let receipt: CloudAgentResource;
+    try {
+      receipt = await this.deps.agents.reconfigure(credential, id, {
+        scopes: cloudAgentScopes(wanted),
+      });
+    } catch (error) {
+      if (generation !== this.generation) return;
+      this.saving = null;
+      // The API guarantees a failed change leaves the old credential live, so
+      // the agent is still listed and still running on what it had.
+      if (!isAbort(error)) this.saveError = messageOf(error);
+      this.publish();
+      return;
+    }
+    // A sign-out landed while the POST was in the air. `reconfigure` takes no
+    // signal — deliberately, since a half-applied scope change is worse than a
+    // completed one — so the agent may well have restarted with the new scopes
+    // and nothing here recorded it. That is the same shape as a cancelled
+    // create: the account listing is the recovery path, and the permissions
+    // stay unknown so the next save asks again rather than assuming.
+    if (generation !== this.generation) return;
+
+    // The row's status went back to `provisioning` while it restarts, so a
+    // listing older than this must not paint `active` over it.
+    this.mutations += 1;
+    this.pending.add(id);
+    this.observe(receipt, this.rows.get(id)?.name ?? "");
+    // Any poll already watching this agent belongs to the shape it had before.
+    this.abortPoll(id);
+    const controller = new AbortController();
+    this.polls.set(id, controller);
+    void this.watchRestart(credential, receipt, wanted, generation, controller.signal);
+  }
+
+  /**
+   * Follow a reconfigured agent back to `active`.
+   *
+   * The applied permissions are written **only** once it gets there. A restart
+   * that fails leaves the agent running on its old credential, so the panel has
+   * to keep showing what the agent actually has — and the next save must know
+   * the change never took.
+   */
+  private async watchRestart(
+    credential: string,
+    receipt: CloudAgentResource,
+    wanted: CloudAgentControls,
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const agentId = receipt.agentId;
+    let settled: CloudAgentResource | null = null;
+    try {
+      settled = await this.deps.agents.poll(
+        credential,
+        receipt,
+        (agent) => {
+          if (generation === this.generation) this.observe(agent, "");
+        },
+        signal,
+      );
+    } catch (error) {
+      // A cancel is a sign-out or a delete — this side asked for it.
+      if (generation === this.generation && !signal.aborted && !isAbort(error)) {
+        this.saveError = messageOf(error);
+      }
+    } finally {
+      this.pending.delete(agentId);
+      if (this.polls.get(agentId)?.signal === signal) this.polls.delete(agentId);
+      if (generation === this.generation && this.saving === agentId) this.saving = null;
+    }
+    if (generation !== this.generation || signal.aborted) return;
+
+    if (settled?.status === "active") {
+      this.writeAgentSettings(agentId, {
+        adversarialReview: this.readAgentSettings(agentId)?.adversarialReview === true,
+        relay: wanted.relay,
+        inference: wanted.inference,
+      });
+    } else if (settled?.status === "failed") {
+      this.saveError = settled.failureReason ?? "The agent didn't come back up.";
+    }
+    this.publish();
+    await this.refresh();
+  }
+
   /** Write one agent's local settings. Keyed on `agent_id`, never a session. */
   setAgentSettings(agentId: string, settings: { adversarialReview: boolean }): void {
     if (!this.deps.enabled) return;
@@ -377,6 +574,8 @@ export class CloudAgentState {
     this.chatsError = null;
     this.agentsError = null;
     this.actionError = null;
+    this.saveError = null;
+    this.saving = null;
     this.publish();
   }
 

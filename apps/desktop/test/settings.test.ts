@@ -263,6 +263,48 @@ describe("per-cloud-agent settings", () => {
     });
   });
 
+  it("round-trips the permissions a reconfigure last applied", () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.cloudAgentSettings.agent_1 = {
+      adversarialReview: false,
+      relay: true,
+      inference: false,
+    };
+    saveSettings(home, settings);
+
+    expect(loadSettings(home).cloudAgentSettings.agent_1).toEqual({
+      adversarialReview: false,
+      relay: true,
+      inference: false,
+    });
+  });
+
+  it("treats a permission that is not a boolean as unknown, not as off", () => {
+    const home = tempHome();
+    write(
+      home,
+      JSON.stringify({
+        cloudAgentSettings: {
+          agent_1: { adversarialReview: true, relay: "yes", inference: null },
+        },
+      }),
+    );
+
+    // Absent, not false: an unknown permission has to be re-applied rather
+    // than assumed, or a save would skip the reconfigure that grants it.
+    expect(loadSettings(home).cloudAgentSettings.agent_1).toEqual({ adversarialReview: true });
+  });
+
+  it("leaves the permissions absent on an entry that predates them", () => {
+    const home = tempHome();
+    write(home, JSON.stringify({ cloudAgentSettings: { agent_1: { adversarialReview: true } } }));
+
+    const entry = loadSettings(home).cloudAgentSettings.agent_1;
+    expect(entry.relay).toBeUndefined();
+    expect(entry.inference).toBeUndefined();
+  });
+
   it("reads a non-object in the field as no settings at all", () => {
     const home = tempHome();
     write(home, JSON.stringify({ cloudAgentSettings: null }));

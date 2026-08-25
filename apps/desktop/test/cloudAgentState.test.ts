@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   CloudAgentState,
+  cloudAgentScopes,
   tabShowsCloudAgents,
   CloudAgentsApi,
   CloudChatOption,
@@ -64,6 +65,22 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * A poll that behaves like the real client: it publishes the receipt, then the
+ * terminal state it settles on. The default fake merely echoes, which never
+ * reaches a terminal status.
+ */
+function settlesOn(final: CloudAgentResource) {
+  return async (
+    receipt: CloudAgentResource,
+    onTransition?: (a: CloudAgentResource) => void | Promise<void>,
+  ) => {
+    await onTransition?.(receipt);
+    await onTransition?.(final);
+    return final;
+  };
+}
+
 /** A deferred, so a test can hold a poll open and look at the screen. */
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -80,6 +97,7 @@ interface Fakes {
     calls: string[];
     created: Array<{ chatUid: string; name?: string }>;
     deleted: string[];
+    reconfigured: Array<{ agentId: string; scopes?: string[]; chatUid?: string }>;
   };
   chats: CloudChatsApi;
 }
@@ -93,16 +111,19 @@ function fakes(opts: {
     onTransition?: (a: CloudAgentResource) => void | Promise<void>,
     signal?: AbortSignal,
   ) => Promise<CloudAgentResource>;
+  reconfigure?: (agentId: string) => Promise<CloudAgentResource>;
   chats?: () => Promise<CloudChatOption[]>;
 } = {}): Fakes {
   const calls: string[] = [];
   const created: Array<{ chatUid: string; name?: string }> = [];
   const deleted: string[] = [];
+  const reconfigured: Array<{ agentId: string; scopes?: string[]; chatUid?: string }> = [];
   return {
     agents: {
       calls,
       created,
       deleted,
+      reconfigured,
       async list(credential: string) {
         calls.push("list");
         expect(credential).toBe(CREDENTIAL);
@@ -119,6 +140,14 @@ function fakes(opts: {
         expect(credential).toBe(CREDENTIAL);
         deleted.push(agentId);
         if (opts.remove) await opts.remove(agentId);
+      },
+      async reconfigure(credential: string, agentId: string, request) {
+        calls.push("reconfigure");
+        expect(credential).toBe(CREDENTIAL);
+        reconfigured.push({ agentId, scopes: request.scopes, chatUid: request.chatUid });
+        return opts.reconfigure
+          ? opts.reconfigure(agentId)
+          : agent({ status: "provisioning", sessionId: "session_after_reconfigure" });
       },
       async poll(credential: string, receipt, onTransition, signal) {
         calls.push("poll");
@@ -692,6 +721,379 @@ describe("removing and retrying", () => {
 
     expect(state.state().cloudActionError).toBe("Plow returned 500.");
     expect(state.state().cloudAgents).toHaveLength(1);
+  });
+});
+
+describe("the derived scope set", () => {
+  it("always carries chats:use, and nothing the controls did not ask for", () => {
+    // `chats:use` is what makes it an agent that can read its chat at all.
+    expect(cloudAgentScopes({ relay: false, inference: false })).toEqual(["chats:use"]);
+    expect(cloudAgentScopes({ relay: true, inference: false })).toEqual([
+      "chats:use",
+      "relay:call",
+    ]);
+    expect(cloudAgentScopes({ relay: false, inference: true })).toEqual(["chats:use", "llm:chat"]);
+    expect(cloudAgentScopes({ relay: true, inference: true })).toEqual([
+      "chats:use",
+      "relay:call",
+      "llm:chat",
+    ]);
+  });
+
+  it("never widens past the agent role, for any controls at all", () => {
+    // The guarantee, not one example of it: whatever the panel sends, the
+    // request can only ever carry scopes from this set. Anything outside it
+    // hands a cloud machine something the user never asked it for — and the
+    // device's own `relay:device` is the one that would matter.
+    const ALLOWED = new Set(["chats:use", "relay:call", "llm:chat"]);
+    const seen = new Set<string>();
+    for (const relay of [true, false]) {
+      for (const inference of [true, false]) {
+        const scopes = cloudAgentScopes({ relay, inference });
+        for (const scope of scopes) {
+          expect(ALLOWED.has(scope)).toBe(true);
+          seen.add(scope);
+        }
+        // No duplicates either — a set replaces the agent's scopes wholesale.
+        expect(new Set(scopes).size).toBe(scopes.length);
+      }
+    }
+    // And every one of them is reachable, so the set is exactly these three.
+    expect(seen).toEqual(ALLOWED);
+  });
+
+  it("ignores anything the controls carry beyond the two switches", () => {
+    const scopes = cloudAgentScopes({
+      relay: false,
+      inference: false,
+      ...({ scopes: ["relay:device"], admin: true } as Record<string, unknown>),
+    } as { relay: boolean; inference: boolean });
+
+    expect(scopes).toEqual(["chats:use"]);
+  });
+
+  it("is what apply actually sends, for every combination", async () => {
+    const ALLOWED = new Set(["chats:use", "relay:call", "llm:chat"]);
+    for (const relay of [true, false]) {
+      for (const inference of [true, false]) {
+        const f = fakes({ list: async () => [agent()] });
+        const state = build(tempHome(), f);
+        await state.refresh();
+
+        await state.apply("agent_1", { relay, inference, adversarialReview: false });
+
+        const sent = f.agents.reconfigured[0].scopes ?? [];
+        expect(sent).toEqual(cloudAgentScopes({ relay, inference }));
+        for (const scope of sent) expect(ALLOWED.has(scope)).toBe(true);
+      }
+    }
+  });
+});
+
+describe("Apply changes", () => {
+  it("sends the derived scopes for the two permissions", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await state.apply("agent_1", { relay: true, inference: false, adversarialReview: false });
+
+    expect(f.agents.reconfigured).toEqual([
+      { agentId: "agent_1", scopes: ["chats:use", "relay:call"], chatUid: undefined },
+    ]);
+  });
+
+  it("makes NO network call when only adversarial review changed", async () => {
+    const home = tempHome();
+    const f = fakes({ list: async () => [agent()], poll: settlesOn(agent({ status: "active" })) });
+    const state = build(home, f);
+    await state.refresh();
+    // A first save establishes what the agent's permissions are.
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    await settle();
+    const callsAfterFirst = [...f.agents.calls];
+
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: true });
+
+    // Not one request: ticking a local checkbox must not restart a running
+    // agent.
+    expect(f.agents.calls).toEqual(callsAfterFirst);
+    expect(f.agents.reconfigured).toHaveLength(1);
+    expect(state.state().cloudSaving).toBeNull();
+    expect(loadSettings(home).cloudAgentSettings.agent_1.adversarialReview).toBe(true);
+  });
+
+  it("reconfigures when the permissions are unknown, rather than guessing", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    // Nothing has ever been applied, so nothing is known about the agent's
+    // permissions — the save has to go through.
+    await state.apply("agent_1", { relay: false, inference: false, adversarialReview: false });
+
+    expect(f.agents.reconfigured).toHaveLength(1);
+  });
+
+  it("writes the local switch immediately, before any restart finishes", async () => {
+    const home = tempHome();
+    const held = deferred<CloudAgentResource>();
+    const f = fakes({ list: async () => [agent()], poll: async () => held.promise });
+    const state = build(home, f);
+    await state.refresh();
+
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: true });
+
+    // Local, immediate, and independent of the machine coming back.
+    expect(loadSettings(home).cloudAgentSettings.agent_1.adversarialReview).toBe(true);
+    expect(state.state().cloudSaving).toBe("agent_1");
+    held.resolve(agent());
+  });
+
+  it("says which agent is being applied, and stops saying it when it is back", async () => {
+    const held = deferred<CloudAgentResource>();
+    const f = fakes({ list: async () => [agent()], poll: async () => held.promise });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    expect(state.state().cloudSaving).toBe("agent_1");
+    expect(state.state().cloudSaveError).toBeNull();
+
+    held.resolve(agent({ status: "active" }));
+    await settle();
+
+    expect(state.state().cloudSaving).toBeNull();
+  });
+
+  it("keeps the local switch through the session_id rotation a restart causes", async () => {
+    const home = tempHome();
+    const rotated = agent({ status: "active", sessionId: "session_after_reconfigure" });
+    const f = fakes({
+      list: async () => [rotated],
+      reconfigure: async () =>
+        agent({ status: "provisioning", sessionId: "session_after_reconfigure" }),
+      poll: settlesOn(rotated),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    state.setAgentSettings("agent_1", { adversarialReview: true });
+
+    await state.apply("agent_1", { relay: false, inference: true, adversarialReview: true });
+    await settle();
+
+    // A reconfigure mints a fresh credential by design. `agent_id` is what the
+    // settings hang off, so nothing here notices.
+    expect(loadSettings(home).cloudAgentSettings.agent_1).toEqual({
+      adversarialReview: true,
+      relay: false,
+      inference: true,
+    });
+    expect(JSON.stringify(state.state())).not.toContain("session_after_reconfigure");
+  });
+
+  it("leaves the previous permissions on screen when the reconfigure fails", async () => {
+    const home = tempHome();
+    let fail = false;
+    const f = fakes({
+      list: async () => [agent()],
+      reconfigure: async () => {
+        if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+        return agent({ status: "active" });
+      },
+      poll: settlesOn(agent({ status: "active" })),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    await settle();
+
+    fail = true;
+    await state.apply("agent_1", { relay: false, inference: false, adversarialReview: false });
+    await settle();
+
+    const shown = state.state();
+    expect(shown.cloudSaveError).toBe("Plow returned 500.");
+    expect(shown.cloudSaving).toBeNull();
+    // The old credential stays live and the agent keeps running, so the panel
+    // must keep showing what it actually has.
+    expect(loadSettings(home).cloudAgentSettings.agent_1).toMatchObject({
+      relay: true,
+      inference: true,
+    });
+    expect(shown.cloudAgents).toHaveLength(1);
+    // A save failure is not a list failure and not a create/delete failure.
+    expect(shown.cloudAgentsError).toBeNull();
+    expect(shown.cloudActionError).toBeNull();
+  });
+
+  it("does not record permissions the restart never delivered", async () => {
+    const home = tempHome();
+    const broken = agent({ status: "failed", failureReason: "VM did not come back" });
+    const f = fakes({
+      list: async () => [broken],
+      poll: settlesOn(broken),
+    });
+    const state = build(home, f);
+    await state.refresh();
+
+    await state.apply("agent_1", { relay: true, inference: false, adversarialReview: false });
+    await settle();
+
+    expect(state.state().cloudSaveError).toBe("VM did not come back");
+    expect(state.state().cloudSaving).toBeNull();
+    // Nothing was applied, so the next save must still know it has to ask.
+    expect(loadSettings(home).cloudAgentSettings.agent_1.relay).toBeUndefined();
+  });
+
+  it("clears the previous save error when a new save starts", async () => {
+    const home = tempHome();
+    let fail = true;
+    const f = fakes({
+      list: async () => [agent()],
+      reconfigure: async () => {
+        if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+        return agent({ status: "active" });
+      },
+      poll: settlesOn(agent({ status: "active" })),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    await settle();
+    expect(state.state().cloudSaveError).toBe("Plow returned 500.");
+
+    fail = false;
+    await state.apply("agent_1", { relay: true, inference: false, adversarialReview: false });
+    await settle();
+
+    expect(state.state().cloudSaveError).toBeNull();
+  });
+
+  it("is silent when a sign-out cancels the restart it was watching", async () => {
+    const held = deferred<CloudAgentResource>();
+    let seen: AbortSignal | undefined;
+    const f = fakes({
+      list: async () => [agent()],
+      poll: async (_receipt, _onTransition, signal) => {
+        seen = signal;
+        await held.promise;
+        // What the real client does on resuming: throws the signal's reason,
+        // an AbortError.
+        signal?.throwIfAborted();
+        return agent();
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+
+    state.signedOut();
+    held.resolve(agent());
+    await settle();
+
+    expect(seen?.aborted).toBe(true);
+    expect(state.state().cloudSaving).toBeNull();
+    expect(state.state().cloudSaveError).toBeNull();
+  });
+
+  it("is silent when removing the agent cancels the restart it was watching", async () => {
+    // A delete cancels the poll without changing accounts, so nothing stands
+    // between the AbortError and the panel except the check that it was asked
+    // for. The user removed the agent; there is nothing to report.
+    const held = deferred<void>();
+    let deleted = false;
+    const f = fakes({
+      list: async () => (deleted ? [] : [agent()]),
+      remove: async () => {
+        deleted = true;
+      },
+      poll: async (_receipt, _onTransition, signal) => {
+        await held.promise;
+        // What the real client does on resuming a cancelled poll.
+        signal?.throwIfAborted();
+        return agent();
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    expect(state.state().cloudSaving).toBe("agent_1");
+
+    await state.remove("agent_1");
+    held.resolve();
+    await settle();
+
+    expect(state.state().cloudSaveError).toBeNull();
+    expect(state.state().cloudSaving).toBeNull();
+    expect(state.state().cloudAgents).toEqual([]);
+  });
+
+  it("recovers from a sign-out during the POST by listing, not by assuming", async () => {
+    const home = tempHome();
+    const posting = deferred<CloudAgentResource>();
+    const restarted = agent({ status: "active", sessionId: "session_after_reconfigure" });
+    const f = fakes({ list: async () => [restarted], reconfigure: async () => posting.promise });
+    const state = build(home, f);
+    await state.refresh();
+
+    const saving = state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    // `reconfigure` takes no signal, so the agent restarts with the new scopes
+    // whatever happens here.
+    state.signedOut();
+    posting.resolve(agent({ status: "provisioning", sessionId: "session_after_reconfigure" }));
+    await saving;
+    await settle();
+    expect(state.state().cloudAgents).toEqual([]);
+
+    await state.refresh();
+
+    // The listing is the way back — nothing was recorded locally, so the row
+    // comes from the account and the permissions stay unknown.
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_1"]);
+    expect(state.state().cloudSaveError).toBeNull();
+    expect(state.state().cloudSaving).toBeNull();
+    const entry = loadSettings(home).cloudAgentSettings.agent_1;
+    expect(entry.relay).toBeUndefined();
+    expect(entry.inference).toBeUndefined();
+  });
+
+  it("asks again after a cancelled save, rather than assuming it took", async () => {
+    const home = tempHome();
+    const posting = deferred<CloudAgentResource>();
+    const f = fakes({ list: async () => [agent()], reconfigure: async () => posting.promise });
+    const state = build(home, f);
+    await state.refresh();
+    const saving = state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    state.signedOut();
+    posting.resolve(agent({ status: "provisioning" }));
+    await saving;
+    await settle();
+
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+
+    // Two requests, because the first one's outcome was never learned.
+    expect(f.agents.reconfigured).toHaveLength(2);
+  });
+
+  it("refuses to save while the flag is off, and asks for nothing", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(), f, false);
+
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: true });
+
+    expect(f.agents.calls).toEqual([]);
+    expect(state.state().cloudSaveError).toBeNull();
+  });
+
+  it("says so rather than calling Plow when this Mac is not signed in", async () => {
+    const f = fakes();
+    const state = build(tempHome(""), f);
+
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+
+    expect(f.agents.calls).toEqual([]);
+    expect(state.state().cloudSaveError).toBe("This Mac isn't signed in yet.");
   });
 });
 

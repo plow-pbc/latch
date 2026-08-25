@@ -580,6 +580,20 @@ ipcMain.handle("cloud:retry", async (_e, agentId: string) => {
   await cloudAgents?.retry(agentId);
   return agentsTabState();
 });
+/**
+ * Apply changes: the two permissions and the local review switch, together.
+ *
+ * Answers as soon as the decision is made — a local-only save is already
+ * written, and a reconfigure has its receipt — while the restart is watched
+ * here. `cloudSaving` in the state is what the panel reads meanwhile.
+ */
+ipcMain.handle(
+  "cloud:apply",
+  async (_e, agentId: string, controls: { relay: boolean; inference: boolean; adversarialReview: boolean }) => {
+    await cloudAgents?.apply(agentId, controls);
+    return agentsTabState();
+  },
+);
 ipcMain.handle(
   "cloud:settingsSet",
   async (_e, agentId: string, settings: { adversarialReview: boolean }) => {
