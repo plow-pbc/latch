@@ -35,6 +35,15 @@ import {
 import { CloudAgentLocalSettings, loadSettings, saveSettings } from "./settings.js";
 
 /**
+ * The provider every cloud agent is created on.
+ *
+ * Explicit, because plow's own default is `cloudflare` and prod 503s on it —
+ * a missing `worker.mjs` bundle. Sending nothing is not "no opinion", it is an
+ * opinion about a provider that does not currently work.
+ */
+export const CLOUD_AGENT_PROVIDER = "exe:hermes";
+
+/**
  * Does landing on this tab put the cloud group on screen?
  *
  * The renderer reaches the Agents tab two ways — a click, which persists the
@@ -224,6 +233,7 @@ export class CloudAgentState {
     try {
       receipt = await this.deps.agents.create(credential, {
         chatUid: chat,
+        provider: CLOUD_AGENT_PROVIDER,
         ...(requested ? { name: requested } : {}),
       });
     } catch (error) {

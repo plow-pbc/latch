@@ -20,6 +20,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { CLOUD_AGENT_PROVIDER } from "./cloudAgentState.js";
 import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
 import { FetchLike, PlowApiError } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
@@ -234,8 +235,9 @@ export class ThrowawayAgent {
    *
    * **Synchronous, and no polling.** Prod's create returns the finished
    * resource, so whatever status comes back is the status — this cannot report
-   * progress and must not pretend to. It sends no scopes: plow's default for a
-   * chat agent is what `THROWAWAY_AGENT_CAPABILITIES` describes.
+   * progress and must not pretend to. It sends no scopes — plow's default for
+   * a chat agent is what `THROWAWAY_AGENT_CAPABILITIES` describes — but it does
+   * name the provider, because plow's default one 503s in prod.
    */
   async create(name: string): Promise<ThrowawayAgentState> {
     if (this.busy) return this.state();
@@ -252,6 +254,7 @@ export class ThrowawayAgent {
       const trimmed = (name ?? "").trim();
       const created = await this.deps.agents.create(credential, {
         chatUid,
+        provider: CLOUD_AGENT_PROVIDER,
         ...(trimmed ? { name: trimmed } : {}),
       });
       writeStore(this.deps.home, {

@@ -12,6 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  CLOUD_AGENT_PROVIDER,
   CloudAgentState,
   tabShowsCloudAgents,
   CloudAgentsApi,
@@ -77,7 +78,7 @@ function deferred<T>() {
 interface Fakes {
   agents: CloudAgentsApi & {
     calls: string[];
-    created: Array<{ chatUid: string; name?: string }>;
+    created: Array<{ chatUid: string; name?: string; provider?: string | null }>;
     deleted: string[];
   };
   chats: CloudChatsApi;
@@ -95,7 +96,7 @@ function fakes(opts: {
   chats?: () => Promise<CloudChatOption[]>;
 } = {}): Fakes {
   const calls: string[] = [];
-  const created: Array<{ chatUid: string; name?: string }> = [];
+  const created: Array<{ chatUid: string; name?: string; provider?: string | null }> = [];
   const deleted: string[] = [];
   return {
     agents: {
@@ -110,7 +111,11 @@ function fakes(opts: {
       async create(credential: string, request) {
         calls.push("create");
         expect(credential).toBe(CREDENTIAL);
-        created.push({ chatUid: request.chatUid, name: request.name });
+        created.push({
+          chatUid: request.chatUid,
+          name: request.name,
+          provider: request.provider,
+        });
         return opts.create ? opts.create() : agent({ status: "provisioning" });
       },
       async delete(credential: string, agentId: string) {
@@ -522,6 +527,15 @@ describe("provisioning", () => {
     expect(state.state().cloudAgents).toEqual([]);
   });
 
+  it("names the provider, because plow's default one 503s in prod", async () => {
+    const f = fakes({ create: async () => agent({ status: "provisioning" }) });
+    const state = build(tempHome(), f);
+
+    await state.create("cht_1", "Kitchen agent");
+
+    expect(f.agents.created[0].provider).toBe("exe:hermes");
+  });
+
   it("refuses to create without a chat", async () => {
     const f = fakes();
     const state = build(tempHome(), f);
@@ -672,7 +686,9 @@ describe("removing and retrying", () => {
     await state.retry("agent_1");
 
     expect(f.agents.deleted).toEqual(["agent_1"]);
-    expect(f.agents.created).toEqual([{ chatUid: "cht_1", name: "Kitchen agent" }]);
+    expect(f.agents.created).toEqual([
+      { chatUid: "cht_1", name: "Kitchen agent", provider: CLOUD_AGENT_PROVIDER },
+    ]);
     // The replacement has a NEW agent id, and the choice moved onto it.
     expect(loadSettings(home).cloudAgentSettings).toEqual({
       agent_2: { adversarialReview: true },

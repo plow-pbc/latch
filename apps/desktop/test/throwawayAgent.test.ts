@@ -15,6 +15,7 @@ import {
   throwawayLogPath,
 } from "../src/throwawayAgent.js";
 import { CloudAgentResource } from "../src/cloudAgents.js";
+import { CLOUD_AGENT_PROVIDER } from "../src/cloudAgentState.js";
 import { PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
@@ -57,12 +58,22 @@ function fakes(opts: {
   create?: () => Promise<CloudAgentResource>;
   remove?: () => Promise<void>;
 } = {}) {
-  const created: Array<{ chatUid: string; name?: string; scopes?: string[] }> = [];
+  const created: Array<{
+    chatUid: string;
+    name?: string;
+    scopes?: string[];
+    provider?: string | null;
+  }> = [];
   const deleted: string[] = [];
   const agents: ThrowawayAgentsApi = {
     async create(credential, request) {
       expect(credential).toBe(CREDENTIAL);
-      created.push({ chatUid: request.chatUid, name: request.name, scopes: request.scopes });
+      created.push({
+        chatUid: request.chatUid,
+        name: request.name,
+        scopes: request.scopes,
+        provider: request.provider,
+      });
       return opts.create ? opts.create() : resource();
     },
     async delete(credential, agentId) {
@@ -114,7 +125,9 @@ describe("Get an agent", () => {
 
     const state = await build(home, f).create("Kitchen agent");
 
-    expect(f.created).toEqual([{ chatUid: "cht_1", name: "Kitchen agent", scopes: undefined }]);
+    expect(f.created).toEqual([
+      { chatUid: "cht_1", name: "Kitchen agent", scopes: undefined, provider: "exe:hermes" },
+    ]);
     expect(state.agent).toEqual({
       agentId: "agent_1",
       provider: "exe:hermes",
@@ -134,6 +147,15 @@ describe("Get an agent", () => {
     // The capability copy describes that default. Sending a set here would be
     // this app deciding what the agent may do, which it has no basis to do.
     expect(f.created[0].scopes).toBeUndefined();
+  });
+
+  it("names the provider, because plow's default one 503s in prod", async () => {
+    const f = fakes();
+
+    await build(tempHome(), f).create("Kitchen agent");
+
+    expect(f.created[0].provider).toBe(CLOUD_AGENT_PROVIDER);
+    expect(f.created[0].provider).toBe("exe:hermes");
   });
 
   it("takes the synchronous answer as final and never polls", async () => {
