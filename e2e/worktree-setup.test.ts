@@ -212,6 +212,22 @@ describe("worktree-setup.sh", () => {
     expect(stdout).not.toContain("is ready.");
   });
 
+  it("checks again on a re-run, over payloads it did not copy this time", () => {
+    // The gate keys on a runtime being present, not on having copied one. Keyed
+    // on the copy, a second run would find every payload already there, skip the
+    // only content-aware look at them, and sign the checkout off — which is the
+    // way past the gate that the failure message would otherwise be handing out.
+    const parent = fs.mkdtempSync(path.join(tmp, "rerun-"));
+    const donor = checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
+    const asking = checkout(parent, "slot0", []);
+    runSetup(asking, donor);
+
+    const { stdout: out } = runSetup(asking, donor);
+
+    expect(out).toContain(`vendor/${PAYLOADS[0]} already present`);
+    expect(out.split("\n")).toContain("stub just fetch-browser");
+  });
+
   // Four ways to arrive with nothing worth checking, one contract: setup
   // finishes, and the build that validates a seed does not run because there is
   // no seed. Each row keeps only what distinguishes it.

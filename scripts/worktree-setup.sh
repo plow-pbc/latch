@@ -110,13 +110,16 @@ for payload in $payloads downloads; do
       cp -Rp "$donor/$dir" "$dir.partial"
     }
     mv "$dir.partial" "$dir"
-    # The download cache is not a payload: arriving alone it gives this
-    # checkout nothing to validate, and starting a cold fetch over it is the
-    # errand the gate below exists to avoid.
-    [ "$payload" = downloads ] || seeded=1
   else
     echo "note: no $dir to clone — run \`just fetch-browser\` if you need the browser stack"
   fi
+  # Present, however it got here — copied just now or already in place. The
+  # download cache does not count: it is what a fetch downloads FROM, so on its
+  # own it leaves nothing to validate. Keyed on presence rather than on having
+  # copied this run, because otherwise a second run of this script finds every
+  # payload already there, skips the check, and signs the checkout off over
+  # exactly the copy that failed it the first time.
+  [[ "$payload" = downloads || ! -d "$dir" ]] || have_runtime=1
 done
 
 # --- deps + build ----------------------------------------------------------
@@ -128,10 +131,10 @@ just build
 # what does not match. A good copy makes this a no-op; a stale or half-built one
 # costs the rebuild it should have.
 #
-# Only when something was actually copied. A donor that had nothing to give is
-# not a reason to start a cold build here: that is ~200 MB of Python, a 320 MB
-# browser and a cargo build of vaultwarden, needing a Rust toolchain that
-# setting a checkout up has never needed.
+# Only when there is a runtime here to check. A checkout with none is not a
+# reason to start a cold build: that is ~200 MB of Python, a 320 MB browser and
+# a cargo build of vaultwarden, needing a Rust toolchain that setting a checkout
+# up has never needed.
 #
 # After install and build so a failure here costs only the validation — the
 # checkout is left with its dependencies and its compiled output either way —
@@ -139,17 +142,16 @@ just build
 # and browserRuntime.ts accepts payloads on path existence alone, so swallowing
 # it would sign the checkout off as ready over a runtime nothing has checked.
 # `--browser` runs the Python build too, so it is the only recipe needed here.
-if [[ -n "${seeded:-}" ]]; then
+if [[ -n "${have_runtime:-}" ]]; then
   just fetch-browser || {
     echo "" >&2
     echo "error: the copied runtime did not check out, so this checkout is NOT" >&2
     echo "  ready — its dependencies and build are in place, but the payloads" >&2
     echo "  that came from $donor have not been validated." >&2
     echo "" >&2
-    echo "  Fix whatever the fetch reported and run \`just fetch-browser\` here." >&2
-    echo "  The payloads are already in vendor/, so re-running this script — or" >&2
-    echo "  passing --no-donor — leaves them in place and unchecked; to start" >&2
-    echo "  over, remove them first." >&2
+    echo "  Fix whatever the fetch reported and run \`just fetch-browser\` here," >&2
+    echo "  or remove the payloads from vendor/ to start over. Re-running this" >&2
+    echo "  script will check them again either way." >&2
     exit 1
   }
 fi
