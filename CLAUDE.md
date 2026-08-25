@@ -154,10 +154,14 @@ Use `just` (run `just` to list recipes):
 - `just app` — launch the desktop app. `just verify-preload` is the headless
   check that the sandboxed preload bridge and the renderer still render.
 
-**Git worktrees run side by side with main.** After `git worktree add`, run
-`./scripts/worktree-setup.sh` in the new checkout: it clones the gitignored browser
-runtime from the main checkout (APFS clones, no re-download), then installs and
-builds. All per-checkout state is keyed on the normalized branch name
+**Checkouts run side by side with main.** In any second checkout — a linked
+worktree or a plain clone beside the others — run `./scripts/worktree-setup.sh`:
+it clones the gitignored browser runtime from a nearby checkout that already has
+one built from the same pins (`scripts/runtime-donor.sh` picks it; APFS clones,
+no re-download), then installs and builds. Without that runtime there is no
+browser and no vault, and the app says so at startup rather than leaving the
+Vault tab to report a vault that has not started. All per-checkout state is
+keyed on the normalized branch name
 (`scripts/worktree-name.sh --branch`) — for **every** checkout, main included:
 one folder per instance, `~/Library/Application Support/Plow-Latch-<branch>`, which
 holds everything including Electron's userData (`<home>/electron`); the app

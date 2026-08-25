@@ -4,9 +4,11 @@
 # Two modes:
 #   (no args)   Prints the name only when the checkout is a linked git
 #               worktree; prints nothing (and exits 0) in the main checkout or
-#               outside a git repository. "No output" is how worktree-setup.sh
-#               and the justfile's main-only guard (`just package`) know they
-#               are on main.
+#               outside a git repository. "No output" is how the justfile's
+#               main-only guard (`just package`) and its screenshot dir know
+#               they are on main. Note that a plain clone beside the main
+#               checkout reads as main here — it is not a linked worktree —
+#               so this answers "is this a worktree", not "is this main".
 #   --branch    Prints the name in ANY checkout, main included. This keys the
 #               per-branch dev state (app home ~/Library/Application
 #               Support/Plow-Latch-<branch>, Electron userData suffix), so every

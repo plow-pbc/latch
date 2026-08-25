@@ -9,8 +9,8 @@
 root    := justfile_directory()
 # Empty in the main checkout; the normalized branch name in a linked git
 # worktree. Only "is this a worktree at all" still keys on this — the
-# main-only guard under `just package`, worktree-setup.sh, and the screenshot
-# dir. App state is keyed on the branch name below.
+# main-only guard under `just package` and the screenshot dir. App state is
+# keyed on the branch name below.
 worktree := `sh scripts/worktree-name.sh`
 # The normalized branch name of THIS checkout — main or worktree. Every
 # from-source run keeps its state in ~/Library/Application Support under a
