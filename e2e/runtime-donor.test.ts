@@ -47,6 +47,7 @@ interface Spec {
   payloads: string[];
   lock?: string;
   reqs?: string;
+  stamped?: boolean;
   git?: boolean;
 }
 
@@ -60,6 +61,11 @@ function checkout(parent: string, spec: Spec): string {
   fs.writeFileSync(path.join(dir, "vendor/browser-server/runtime.lock.json"), spec.lock ?? OURS);
   fs.writeFileSync(path.join(dir, "vendor/browser-server/requirements.txt"), spec.reqs ?? OUR_REQS);
   for (const payload of spec.payloads) fs.mkdirSync(path.join(dir, "vendor", payload));
+  // Written last by build-browser-runtime.mjs, so its presence is what says the
+  // build finished; `stamped: false` is a checkout caught mid-fetch.
+  if (spec.payloads.includes("python-runtime") && spec.stamped !== false) {
+    fs.writeFileSync(path.join(dir, "vendor/python-runtime/.stamp"), "stamped\n");
+  }
   if (spec.git !== false) {
     git(dir, "init", "-q", "-b", "main");
     git(dir, "commit", "-q", "--allow-empty", "-m", "init");
@@ -123,6 +129,13 @@ describe("runtime-donor.sh, among siblings", () => {
       // The pins move two ways, and a Python dependency bump with an unchanged
       // lock file is the one a single-file comparison would wave through.
       siblings: [{ name: "slot1", payloads: FULL, reqs: "camoufox==2\n" }],
+      winner: "",
+    },
+    {
+      why: "passes over a sibling still in the middle of its fetch",
+      // The dirs are all there — extraction creates them first — and only the
+      // stamp says whether anything finished writing into them.
+      siblings: [{ name: "slot1", payloads: FULL, stamped: false }],
       winner: "",
     },
     {

@@ -23,12 +23,14 @@
 #
 # Comparing the two pin files is not the whole story, and deliberately so. The
 # build's own stamp covers a third input (PRUNE_VERSION, in
-# build-browser-runtime.mjs), a donor that pulled a pin bump without re-running
-# `just fetch-browser` still declares pins it has not built, and a directory
-# that exists may be a fetch that was interrupted half-way. Nothing downstream
-# re-checks: worktree-setup.sh runs install and build, never a fetch. So what
-# is caught is the donor pinning something else entirely — the one that costs a
-# debugging session — and what is not is a neighbour mid-fetch or overdue one.
+# build-browser-runtime.mjs), so a donor that pulled a pin bump without
+# re-running `just fetch-browser` still declares pins it has not built. Nothing
+# downstream re-checks: worktree-setup.sh runs install and build, never a fetch.
+# Comparing stamps outright would catch it, at the cost of a `--print-stamp`
+# flag on the build script and synthetic stamps through both suites — not worth
+# it while the failure is a version mismatch that surfaces on use rather than a
+# silent wrong answer. What IS caught: a donor pinning something else entirely,
+# and (via the stamp's existence) one interrupted mid-fetch.
 payloads() {
   printf '%s\n' python-runtime camoufox-browser vault-server vault-cli
 }
@@ -61,6 +63,10 @@ for required in "$(payloads | tr '\n' ' ')" "python-runtime"; do
     for payload in $required; do
       [ -d "$candidate/vendor/$payload" ] || continue 2
     done
+    # A payload directory exists from the moment a fetch starts extracting into
+    # it. build-browser-runtime.mjs writes this stamp last, after the build it
+    # describes finished, so it separates a donor from a neighbour mid-fetch.
+    [ -f "$candidate/vendor/python-runtime/.stamp" ] || continue
     cmp -s "$candidate/vendor/browser-server/runtime.lock.json" \
       "$self/vendor/browser-server/runtime.lock.json" || continue
     cmp -s "$candidate/vendor/browser-server/requirements.txt" \

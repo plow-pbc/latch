@@ -160,14 +160,18 @@ it clones the gitignored browser runtime from a nearby checkout that already has
 one built from the same pins (`scripts/runtime-donor.sh` picks it; APFS clones,
 no re-download), then installs and builds. Without that runtime there is no
 browser and no vault, and the app says so at startup rather than leaving the
-Vault tab to report a vault that has not started. All per-checkout state is
-keyed on the normalized branch name
-(`scripts/worktree-name.sh --branch`) — for **every** checkout, main included:
-one folder per instance, `~/Library/Application Support/Plow-Latch-<branch>`, which
-holds everything including Electron's userData (`<home>/electron`); the app
+Vault tab to report a vault that has not started. All state is keyed on the
+normalized **branch** name (`scripts/worktree-name.sh --branch`) — for every
+checkout, main included: `~/Library/Application Support/Plow-Latch-<branch>`,
+holding everything including Electron's userData (`<home>/electron`); the app
 name gains a `(<branch>)` suffix on screen. Only the packaged install uses the
-unsuffixed `Plow-Latch` home, so no from-source run can touch its state. Each
-checkout signs in for its own relay credential — never copy
-`settings.json` between homes (the relay does not support two devices on one
-credential). `just package` refuses to run from a worktree; package from main
+unsuffixed `Plow-Latch` home, so no from-source run can touch its state.
+
+The key is the branch, not the checkout, and git only enforces those to be the
+same thing for linked worktrees — a branch cannot be checked out in two of
+them. **Two plain clones on one branch therefore share a home**: one relay
+credential, one device identity, one audit log, one browser profile, and the
+relay does not support two devices on one credential. Give one of them its own
+`DOMO_HOME` (or put them on different branches) before running both. Never copy
+`settings.json` between homes. `just package` refuses to run from a worktree; package from main
 (`just package-unnotarized`, the local-check build, runs from any checkout).

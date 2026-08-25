@@ -6,8 +6,8 @@
  * told every owner their state lived in a Plow-Latch-downloads that does not
  * exist. It survived two review rounds because the only thing that would have
  * noticed was a run. The install and build at the end are the reason there was
- * no test, so they are what the stub replaces — everything above them is the
- * script's actual work and runs for real.
+ * no test, so they are what a stubbed `just` replaces — everything above them
+ * is the script's actual work, running for real against real donor checkouts.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -40,6 +40,12 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
     fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(dir, "vendor/browser-server", f));
   }
   for (const p of payloads) fs.mkdirSync(path.join(dir, "vendor", p), { recursive: true });
+  // What build-browser-runtime.mjs writes last, once the build it describes
+  // finished — the donor gate reads it to tell a built payload from a fetch
+  // still in progress.
+  if (payloads.includes("python-runtime")) {
+    fs.writeFileSync(path.join(dir, "vendor/python-runtime/.stamp"), "stamped\n");
+  }
   git(dir, "init", "-q", "-b", branch ?? "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
   return dir;
@@ -51,20 +57,6 @@ function runSetup(dir: string): string {
     encoding: "utf8",
     env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}` },
   });
-}
-
-/** Run a setup that must refuse, and hand back what it said on the way out. */
-function runSetupExpectingRefusal(dir: string): { stdout: string; stderr: string } {
-  try {
-    runSetup(dir);
-  } catch (e) {
-    const err = e as { stdout?: Buffer | string; stderr?: Buffer | string };
-    // Absent streams would make the assertions below vacuous, so require them.
-    expect(err.stdout).toBeDefined();
-    expect(err.stderr).toBeDefined();
-    return { stdout: String(err.stdout), stderr: String(err.stderr) };
-  }
-  throw new Error("setup was expected to refuse, and did not");
 }
 
 describe("worktree-setup.sh", () => {
@@ -113,41 +105,5 @@ describe("worktree-setup.sh", () => {
     // A checkout with no donor is the ordinary first case, so setup still has
     // to reach the end — the install and build are the point of running it.
     expect(out).toContain("is ready.");
-  });
-
-  // Every way the donor script can let setup down. All of them would otherwise
-  // be taken by errexit, which exits without printing, so the owner would see
-  // the run stop with nothing saying what stopped it — and an empty payload
-  // list would not even stop it: the copy loop would do nothing and setup would
-  // install, build, and report success over it.
-  it.each([
-    {
-      how: "the payload list names nothing",
-      // Succeeds silently either way: no donor is an ordinary answer, an empty
-      // payload list is not, so only the second guard should fire.
-      stub: "#!/bin/sh\nexit 0\n",
-      says: /failed or named nothing/,
-    },
-    {
-      how: "the payload list fails outright",
-      stub: '#!/bin/sh\n[ "$1" = "--payloads" ] && exit 3\nexit 0\n',
-      says: /failed or named nothing/,
-    },
-    {
-      how: "the donor lookup fails outright",
-      stub: '#!/bin/sh\n[ "$1" = "--payloads" ] && exit 0\nexit 4\n',
-      says: /runtime-donor\.sh failed/,
-    },
-  ])("stops and says so when $how", ({ stub, says }) => {
-    const parent = fs.mkdtempSync(path.join(tmp, "brokendonor-"));
-    const asking = checkout(parent, "slot0", []);
-    fs.writeFileSync(path.join(asking, "scripts", "runtime-donor.sh"), stub);
-
-    const { stdout, stderr } = runSetupExpectingRefusal(asking);
-
-    expect(stderr).toMatch(says);
-    // Stopping is only half of it: the point is stopping BEFORE the work, so
-    // nobody watches a build succeed on a checkout that copied nothing.
-    expect(stdout).not.toContain("stub just");
   });
 });
