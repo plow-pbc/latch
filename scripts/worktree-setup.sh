@@ -38,11 +38,11 @@ donor=$(sh scripts/runtime-donor.sh)
 echo "checkout: $name"
 echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
 
-# All but vendor/downloads are what runtime-donor.sh gates a donor on; that one
-# is a download cache, so a donor without it still qualifies. A payload added
-# here that the app needs at runtime has to be added to that list as well, or an
-# incomplete donor starts winning the search again.
-for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads vendor/vault-server vendor/vault-cli; do
+# The payloads runtime-donor.sh gates on, which owns that list, plus the
+# download cache — a donor without the cache still qualifies, so it is named
+# here and not there. A donor may be carrying only some of these (see the
+# script's fallback), which is why each dir reports for itself below.
+for dir in $(sh scripts/runtime-donor.sh --payloads | sed 's|^|vendor/|') vendor/downloads; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -n "$donor" && -d "$donor/$dir" ]]; then
