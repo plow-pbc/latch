@@ -562,9 +562,10 @@ function fetchBrowser(arch) {
   // reads to decide a donor is ready. Gone before the work, not after it.
   fs.rmSync(marker, { force: true });
   // And the fused tree's marker, for the same reason and on the same schedule:
-  // runtime-donor.sh falls back to it when this checkout has no per-arch tree
-  // at all — the --browser-both donor shape — and across the rm/mkdir below.
-  // Its bytes go later, once the replacement is in hand.
+  // runtime-donor.sh falls back to it whenever this checkout's per-arch tree is
+  // absent, which includes the rm/mkdir below. Only the marker goes here — the
+  // tree itself belongs to whoever rebuilds it, which is the single-arch branch
+  // in the main block, or mergeCamoufoxUniversal() on the --browser-both path.
   fs.rmSync(universalMarker, { force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
