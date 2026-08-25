@@ -27,6 +27,7 @@ import {
 import { ToolAnnotations } from "@modelcontextprotocol/server";
 import {
   DeviceAgent,
+  BROWSER_ACTIONS,
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
@@ -77,8 +78,12 @@ export interface ToolSpec {
    * Whether this tool constructs an intent and can therefore block on a human.
    * The three that cannot — retrieving output, listing tools, polling a handle
    * — must never be deferred: deferring the poller would be absurd.
+   *
+   * A predicate where one tool's answer depends on what it was asked to do:
+   * `plow_browser` is non-deferrable for the sake of `screenshot` alone, and
+   * that was only ever right because every other action was fast.
    */
-  deferrable: boolean;
+  deferrable: boolean | ((args: JSONValue) => boolean);
   run(args: JSONValue, ctx: ToolContext, progress: Progress): Promise<JSONValue>;
 }
 
@@ -548,9 +553,7 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser",
     title: "Drive the user's browser",
     description:
-      "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
-      "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages, " +
-      "fresh_profile. " +
+      `Act within an approved browser session. Actions: ${BROWSER_ACTIONS.join(", ")}. ` +
       "'screenshot' returns an image of the page — take one after " +
       "every navigation to see where you are. When a 'click' fails, give it a longer " +
       "'timeout_ms' — never synthesize the click with 'eval', which sites detect. A click " +
@@ -582,11 +585,7 @@ export const TOOLS: ToolSpec[] = [
         session: { type: "string", description: "Your browser, from plow_browser_open. Pass the same one to keep the same window; it is a secret — do not share or log it." },
         action: {
           type: "string",
-          enum: [
-            "goto", "click", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
-            "screenshot", "text", "url", "title", "links", "forms", "tables", "pages",
-            "fresh_profile",
-          ],
+          enum: [...BROWSER_ACTIONS],
         },
         url: { type: "string", description: "goto: target URL (within approved origins)" },
         selector: { type: "string", description: "click / fill / fill_secret: CSS selector" },
@@ -605,9 +604,13 @@ export const TOOLS: ToolSpec[] = [
     },
     // Rides the session grant — no new intent, no approval. Non-deferrable so a
     // screenshot's image block reaches the agent directly (a deferred result
-    // would be re-serialized as text by plow_get_result).
+    // would be re-serialized as text by plow_get_result) — and every page
+    // action is quick enough to answer inside the relay's per-exchange ceiling.
+    // `fresh_profile` is neither: it pays a browser teardown and a cold
+    // Camoufox start, the ~30s that plow_browser_open is deferrable to absorb.
+    // It carries no image block, so nothing is lost by deferring it.
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    deferrable: false,
+    deferrable: (args) => jv(args).get("action").str === "fresh_profile",
     async run(args, ctx) {
       const a = jv(args);
       const session = a.get("session").str;

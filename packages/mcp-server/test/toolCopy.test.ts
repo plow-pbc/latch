@@ -118,29 +118,6 @@ describe("the server tells the agent what it is for", () => {
   });
 });
 
-describe("what the agent can call and what it is told it can call are the same set", () => {
-  /** The schema is the authority: ajv refuses anything not in here. */
-  const actionEnum = (): string[] => {
-    const tool = TOOLS.find((t) => t.name === "plow_browser")!;
-    const props = tool.inputSchema.properties as { action: { enum: string[] } };
-    return props.action.enum;
-  };
-
-  // Two prose lists summarise that enum — the tool description and the skill
-  // body — and nothing kept either honest. An action missing from them is
-  // callable but undiscoverable; one lingering after a rename is a call the
-  // agent will make and ajv will refuse. This file's own history is the
-  // argument: five stale tool names shipped here while the tests stayed green.
-  it.each([
-    ["the plow_browser description", () => TOOLS.find((t) => t.name === "plow_browser")!.description],
-    ["the browsing skill body", () => BROWSING_SKILL.body],
-  ])("%s lists exactly the actions the schema allows", (_name, copy) => {
-    const listed = copy().match(/actions:([^.]*)\./i)?.[1] ?? "";
-    const named = listed.split(",").map((w) => w.trim()).filter(Boolean);
-    expect(named.sort()).toEqual([...actionEnum()].sort());
-  });
-});
-
 describe("every tool with a strong built-in alternative says whose Mac this is", () => {
   // The three where the agent's own tool is obvious, frictionless, and wrong:
   // its sandbox filesystem, its sandbox shell, its own web fetch.

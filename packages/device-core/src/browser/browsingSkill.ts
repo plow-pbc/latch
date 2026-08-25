@@ -23,6 +23,22 @@ import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
  * every session that does not have it set. The skill body below is where the
  * agent learns it can drop the profile itself, which it CAN see and act on.
  */
+/**
+ * What `plow_browser` will accept as an `action`, in ONE place.
+ *
+ * Same reason as LIVE_WEB_ROUTING below: three surfaces named these — the JSON
+ * schema the SDK validates against, the tool description, and the skill body's
+ * call shape — and the first two drifted from the third twice in the commit
+ * that added `fresh_profile`, leaving an action that was callable and
+ * undiscoverable. A list that cannot disagree with itself beats a test that
+ * notices when it does.
+ */
+export const BROWSER_ACTIONS = [
+  "goto", "click", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
+  "screenshot", "text", "url", "title", "links", "forms", "tables", "pages",
+  "fresh_profile",
+] as const;
+
 export const LIVE_WEB_ROUTING =
   "their browser runs on their own network rather than a datacenter address many sites " +
   "refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is " +
@@ -82,8 +98,7 @@ on with the same handle — signed out of everything, and nothing it does afterw
 profile. It is for a site that blocked you, not for starting over on one that did not.
 
 \`plow_browser {session, action, ...}\` — actions:
-goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
-url, title, links, forms, tables, pages, fresh_profile.
+${BROWSER_ACTIONS.join(", ")}.
 
 1. \`goto\` a URL → 2. \`wait\` 2–3 s → 3. \`screenshot\` (you receive the image — LOOK at it)
 → 4. decide → 5. \`click\`/\`fill\`/\`scroll\` → 6. screenshot again.

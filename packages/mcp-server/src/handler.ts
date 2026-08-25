@@ -275,7 +275,11 @@ export function createDomoMcpServer(
             const body = (progress: Progress) =>
               spec.run((args ?? null) as JSONValue, toolCtx, progress);
             try {
-              const result = spec.deferrable
+              const deferrable =
+                typeof spec.deferrable === "function"
+                  ? spec.deferrable((args ?? null) as JSONValue)
+                  : spec.deferrable;
+              const result = deferrable
                 ? await deferred.run(agent.agentId, body)
                 : await body({ decided: () => {} });
               // Most results are one text block; a screenshot expands into an

@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy, PolicyDelegate, ResolvedBrowserRuntime } from "@domo/device-core";
-import { createDomoMcpServer, DomoMcpServer, RelayAuth } from "@domo/mcp-server";
+import { createDomoMcpServer, DomoMcpServer, RelayAuth, TOOLS } from "@domo/mcp-server";
 import { callTool, parse, rpc } from "./client.js";
 
 const fixtures = fileURLToPath(new URL("../../../e2e/fixtures", import.meta.url));
@@ -277,6 +277,20 @@ describe("browser tools (fake runtime)", () => {
 
     const after = await act(server, session, "goto", { url: "https://pizza.example/" });
     expect(after.isError, JSON.stringify(after.payload)).toBe(false);
+  });
+
+  // A reset pays a browser teardown and a cold Camoufox start — the ~30s that
+  // plow_browser_open is deferrable to absorb — while every page action answers
+  // in milliseconds. Get this wrong and the exchange tears with the reset still
+  // running on the Mac, and the agent cannot tell whether its session survived.
+  // Not reachable end-to-end here: this runtime starts instantly, so nothing
+  // ever exceeds the budget that would mint a handle.
+  it.each([
+    ["fresh_profile", true],
+    ["screenshot", false],
+  ])("%s decides deferral on what it was asked to do", (action, expected) => {
+    const spec = TOOLS.find((t) => t.name === "plow_browser")!;
+    expect(typeof spec.deferrable === "function" && spec.deferrable({ action })).toBe(expected);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {
