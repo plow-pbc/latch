@@ -617,7 +617,9 @@ function describeStep(e: JSONValue): AuditStep {
     case "browser_profile_reset":
       // The one destructive thing a browser session does on its own authority,
       // so the timeline has to say what it cost rather than print a token.
-      text = "Browser signed out and started over — a site had flagged it. Nothing it does now is saved.";
+      // Says what happened, not why: the event records the reset, and the
+      // agent's reason for asking is not something this Mac can vouch for.
+      text = "Browser started over on an empty profile — signed out, and nothing it does now is saved.";
       state = "bad";
       break;
     case "browser_crashed":
