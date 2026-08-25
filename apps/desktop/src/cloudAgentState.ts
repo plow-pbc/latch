@@ -448,13 +448,19 @@ export class CloudAgentState {
       this.relabelRows();
     } catch (error) {
       if (generation !== this.generation) return;
-      this.chats = [];
       // Every failure is the same failure, 403 included: the account's chats
       // are unknown. What must never happen is the screen reading that as "you
       // have no chats" — which is why `chatsLoaded` and the error travel
       // together, and why the roster stays where it is.
       this.chatsLoaded = false;
       this.chatsError = messageOf(error);
+      // But "unknown" is not "none". Activation left us one chat, and it is
+      // still the account's chat whatever the list endpoint just did — so a
+      // credential minted before `chats:use` can still provision an agent
+      // rather than face a dead end and a re-activation it may not need.
+      // Offered, never asserted: `chatsLoaded` stays false, so nothing reads
+      // this as a complete account.
+      this.chats = this.activationChat();
     }
   }
 
@@ -477,6 +483,21 @@ export class CloudAgentState {
       const label = this.chats.find((chat) => chat.uid === row.chatUid)?.label;
       if (label && label !== row.chatLabel) this.rows.set(agentId, { ...row, chatLabel: label });
     }
+  }
+
+  /**
+   * The chat activation provisioned, as a one-entry list, or nothing.
+   *
+   * Cached at redeem time and never re-read — the redeem that carried it
+   * answers exactly once — so this is the only chat a Mac can be sure of
+   * without the list endpoint. Empty on a Mac that activated before
+   * `provision_chat`, which is why it may only ever be a fallback.
+   */
+  private activationChat(): CloudChatOption[] {
+    const settings = loadSettings(this.deps.home);
+    const uid = settings.provisionedChatUid.trim();
+    if (!uid) return [];
+    return [{ uid, label: settings.provisionedChatLabel.trim() || uid }];
   }
 
   private readAgentSettings(agentId: string): CloudAgentLocalSettings | null {

@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld("domo", {
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),
+  // Sign out. Also the "Sign out and re-activate" button on the chat-list
+  // error: signing out IS re-activating, because main tears the window down
+  // and opens setup in its place. One channel, because it is one behaviour —
+  // a second name for it would be a second thing to keep in step.
   relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
   onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),

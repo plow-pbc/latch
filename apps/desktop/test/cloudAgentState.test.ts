@@ -35,6 +35,9 @@ function tempHome(credential = CREDENTIAL): string {
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   const settings = loadSettings(dir);
   settings.relayCredential = credential;
+  // What activation leaves behind on every signed-in Mac since chunk 1.
+  settings.provisionedChatUid = "cht_1";
+  settings.provisionedChatLabel = "+15550100 · Ada";
   saveSettings(dir, settings);
   return dir;
 }
@@ -231,6 +234,83 @@ describe("refresh", () => {
     expect(state.state().cloudSendTo).toBe("+15550100");
   });
 
+});
+
+describe("the activation chat fallback", () => {
+  it("offers the chat activation left when the list fails", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [agent()],
+        chats: async () => {
+          throw new PlowApiError(
+            "forbidden",
+            "This Mac cannot list chats yet. Try re-activating it, then try again.",
+            403,
+          );
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    const shown = state.state();
+    // A credential minted before `chats:use` can still provision an agent
+    // instead of facing a dead end.
+    expect(shown.cloudChats).toEqual([{ uid: "cht_1", label: "+15550100 · Ada" }]);
+    // Offered, never asserted: this is not a list that came back.
+    expect(shown.cloudChatsLoaded).toBe(false);
+    expect(shown.cloudChatsError).toBe(
+      "This Mac cannot list chats yet. Try re-activating it, then try again.",
+    );
+  });
+
+  it("offers nothing on a Mac whose activation left no chat", async () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.provisionedChatUid = "";
+    settings.provisionedChatLabel = "";
+    saveSettings(home, settings);
+    const state = build(
+      home,
+      fakes({
+        chats: async () => {
+          throw new PlowApiError("network", "Couldn't reach Plow.");
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    // Nothing to fall back to, and nothing invented.
+    expect(state.state().cloudChats).toEqual([]);
+    expect(state.state().cloudChatsError).toBe("Couldn't reach Plow.");
+  });
+
+  it("gives way to the real list as soon as one comes back", async () => {
+    let failing = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          if (failing) throw new PlowApiError("http", "Plow returned 500.", 500);
+          return [
+            { uid: "cht_1", label: "+15550100 · Ada" },
+            { uid: "cht_2", label: "+15550188 · Family" },
+          ];
+        },
+      }),
+    );
+    await state.refresh();
+    expect(state.state().cloudChats).toHaveLength(1);
+
+    failing = false;
+    await state.refresh();
+
+    // Server truth wins the moment there is any.
+    expect(state.state().cloudChats).toHaveLength(2);
+    expect(state.state().cloudChatsLoaded).toBe(true);
+  });
 });
 
 describe("a stuck teardown", () => {
@@ -617,7 +697,9 @@ describe("a 403 from the real chat endpoint", () => {
     expect(shown.cloudChatsError).toBe(
       "This Mac cannot list chats yet. Try re-activating it, then try again.",
     );
-    expect(shown.cloudChats).toEqual([]);
+    // The activation chat, offered so this is not a dead end — but the list
+    // itself did not come back, and `cloudChatsLoaded` still says so.
+    expect(shown.cloudChats).toEqual([{ uid: "cht_1", label: "+15550100 · Ada" }]);
     // The agent list is fine, and must not be blamed for this.
     expect(shown.cloudAgentsError).toBeNull();
   });
