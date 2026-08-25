@@ -9,7 +9,7 @@
  * no test, so they are what a stubbed `just` replaces — everything above them
  * is the script's actual work, running for real against real donor checkouts.
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,12 +18,11 @@ import { afterAll, describe, expect, it } from "vitest";
 import { git } from "./gitFixture.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
-const SCRIPTS = ["worktree-setup.sh", "runtime-donor.sh", "worktree-name.sh"];
-const PAYLOADS = execFileSync("sh", [path.join(repo, "scripts/runtime-donor.sh"), "--payloads"], {
-  encoding: "utf8",
-})
-  .trim()
-  .split("\n");
+const SCRIPTS = ["worktree-setup.sh", "worktree-name.sh"];
+/** The vendor dirs a runtime is made of, as the script under test names them. */
+const PAYLOADS = /payloads="([^"]+)"/
+  .exec(fs.readFileSync(path.join(repo, "scripts/worktree-setup.sh"), "utf8"))![1]
+  .split(" ");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -157,6 +156,33 @@ describe("worktree-setup.sh", () => {
     expect(out).not.toContain("Plow-Latch-downloads");
   });
 
+  it("inherits the checkout a linked worktree was made out of, unasked", () => {
+    // The one donor that needs no naming: a worktree already runs on that
+    // checkout's git dir, so the trust is one it was created with. This is the
+    // other half of the posture — refusing neighbours is not refusing everyone.
+    const main = checkout(fs.mkdtempSync(path.join(tmp, "main-")), "repo", [...PAYLOADS, "downloads"]);
+    const wt = path.join(fs.mkdtempSync(path.join(tmp, "far-")), "wt");
+    git(main, "worktree", "add", "-q", "-b", "feature/inherited", wt);
+    fs.mkdirSync(path.join(wt, "vendor", "browser-server"), { recursive: true });
+    for (const f of ["runtime.lock.json", "requirements.txt"]) {
+      fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(wt, "vendor/browser-server", f));
+    }
+    fs.mkdirSync(path.join(wt, "scripts"), { recursive: true });
+    for (const sc of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", sc), path.join(wt, "scripts", sc));
+
+    const { stdout: out } = runSetup(wt);
+
+    expect(out).toContain(`donor:    ${fs.realpathSync(main)}`);
+    expect(fs.readFileSync(path.join(wt, "vendor", PAYLOADS[0], "payload-marker"), "utf8")).toBe(PAYLOADS[0]);
+  });
+
+  it("refuses to be its own donor", () => {
+    const parent = fs.mkdtempSync(path.join(tmp, "selfdonor-"));
+    const asking = checkout(parent, "slot0", PAYLOADS);
+    const { stderr } = runSetupExpectingFailure(asking, asking);
+    expect(stderr).toMatch(/not a checkout of this repo/);
+  });
+
   it("refuses to pick a neighbour, and names the ones it can see instead", () => {
     // The security posture, from the caller's side: a perfectly good neighbour
     // sits right there and setup still will not take it unasked. It says which
@@ -212,23 +238,6 @@ describe("worktree-setup.sh", () => {
     expect(stdout).not.toContain("is ready.");
   });
 
-  it("blames no donor when it validated a runtime it did not copy", () => {
-    // The gate fires on presence, so it fires on runs that copied nothing —
-    // here --no-donor over payloads a previous run left. A message naming where
-    // they "came from" would name nothing at all, which is the one path where
-    // provenance is genuinely unknown and so the one worth pinning.
-    const parent = fs.mkdtempSync(path.join(tmp, "noprov-"));
-    const donor = checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
-    const asking = checkout(parent, "slot0", []);
-    runSetup(asking, donor);
-
-    const { stderr } = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
-
-    expect(stderr).toMatch(/the runtime in vendor\/ did not check out/);
-    // Nothing standing in for a donor that was never consulted.
-    expect(stderr).not.toMatch(/came from|donor/);
-  });
-
   it("checks again on a re-run, over payloads it did not copy this time", () => {
     // The gate keys on a runtime being present, not on having copied one. Keyed
     // on the copy, a second run would find every payload already there, skip the
@@ -243,6 +252,12 @@ describe("worktree-setup.sh", () => {
 
     expect(out).toContain(`vendor/${PAYLOADS[0]} already present`);
     expect(out.split("\n")).toContain("stub just fetch-browser");
+
+    // And with --no-donor, where nothing was consulted: the check still runs,
+    // and its failure must not name a source it never had.
+    const { stderr } = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
+    expect(stderr).toMatch(/the runtime in vendor\/ did not check out/);
+    expect(stderr).not.toMatch(/came from|donor/);
   });
 
   // Four ways to arrive with nothing worth checking, one contract: setup

@@ -11,7 +11,7 @@
 # Works in any checkout — a linked worktree or a plain clone beside the others.
 # A worktree inherits its donor from the checkout it was made out of; a plain
 # clone inherits nothing and is given one, because a donor's payloads get
-# executed here (runtime-donor.sh's header has the reasoning). Run it with no
+# executed here (the reasoning is beside the donor block below). Run it with no
 # argument and it will list the candidates it can see.
 #
 # State is keyed on the normalized BRANCH name (scripts/worktree-name.sh) — for
@@ -33,10 +33,32 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 checkout=$(sh scripts/worktree-name.sh --branch)
+self=$(pwd -P)
+
+# The vendor dirs a runtime is made of. The download cache is not one of them:
+# it is what a fetch downloads FROM, so it is copied but never counted.
+payloads="python-runtime camoufox-browser vault-server vault-cli"
+
+# A checkout of this repo, and not this one. Nothing about its payloads — a
+# directory with none copies nothing, and the build below fills it in.
+usable() {
+  [ "$1" != "$self" ] || return 1
+  [ -f "$1/vendor/browser-server/runtime.lock.json" ] || return 1
+}
 
 # --- browser runtime: copy it from the donor -------------------------------
-# Named on the command line, or inherited when this is a linked worktree.
-# runtime-donor.sh owns both, and what makes one usable.
+#
+# Who may hand this checkout a runtime, which is the one part of this that
+# cannot be delegated. A donor's payloads are executed here — the bundled
+# Python runs the browser server, vaultwarden is spawned — outside the seatbelt
+# and within reach of this checkout's vault and relay credential. So a plain
+# clone is TOLD its donor rather than finding one: scanning whatever sits
+# nearby would let anything able to write ONE checkout put code in the next,
+# and a checkout is an ordinary thing to hand an agent. A linked worktree
+# inherits that trust from the checkout it was made out of; everything else a
+# human names.
+#
+# Whether what arrives is any GOOD is not decided here — see the build below.
 donor=${1:-}
 # An explicit "set up without one" — for a checkout that will fetch its own, or
 # whose neighbours you would rather not copy. Without it a refusal has no way
@@ -45,19 +67,41 @@ if [ "$donor" = "--no-donor" ]; then
   donor=""
   refused=1
 elif [ -n "$donor" ]; then
-  sh scripts/runtime-donor.sh --check "$donor" || {
+  donor=$(cd "$donor" 2>/dev/null && pwd -P) || {
+    echo "error: ${1} is not a directory." >&2
+    exit 1
+  }
+  usable "$donor" || {
     echo "error: $donor is not a checkout of this repo." >&2
     exit 1
   }
-  donor=$(cd "$donor" && pwd -P)
 else
-  donor=$(sh scripts/runtime-donor.sh)
+  # Inheritance, and only inheritance. A linked worktree shares its git dir
+  # with the checkout it was made out of; a plain clone's common dir is its
+  # own, which is why `usable` leaves it with no donor rather than with itself.
+  donor=""
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$common" ]; then
+    parent=$(cd "$(dirname "$common")" 2>/dev/null && pwd -P || true)
+    [ -n "$parent" ] && usable "$parent" && donor=$parent
+  fi
   # Nothing inherited. If something nearby WOULD serve, that is the human's
-  # call to make and not this script's — see runtime-donor.sh. With nothing
-  # nearby either there is nothing to choose between, so carry on and let the
-  # per-payload notes below say what did not come across.
+  # call to make and not this script's. With nothing nearby either there is
+  # nothing to choose between, so carry on and let the per-payload notes below
+  # say what did not come across.
   if [ -z "$donor" ]; then
-    candidates=$(sh scripts/runtime-donor.sh --candidates)
+    # Advice, never a choice: the neighbours a human could name. Listing is
+    # not choosing, which is the whole point of the paragraph above.
+    candidates=$(
+      for candidate in "$(dirname "$self")"/*; do
+        [ -d "$candidate" ] || continue
+        candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
+        usable "$candidate" || continue
+        # Worth naming only if it has something to give; whether that something
+        # is current is settled by the build, not here.
+        [ -d "$candidate/vendor/python-runtime" ] && printf '%s\n' "$candidate"
+      done
+    )
     if [ -n "$candidates" ]; then
       # Two ways to get here — not a linked worktree, or one whose parent
       # checkout has no usable runtime either — and the answer is the same, so
@@ -82,12 +126,6 @@ elif [ -n "${refused:-}" ]; then
 else
   echo "donor:    none — nothing nearby to copy from"
 fi
-
-# The payloads a runtime is made of — runtime-donor.sh owns that list — plus the
-# download cache, which is not a payload and so is named here. A donor may be
-# carrying only some of them, which is why each reports for itself below and why
-# the build afterwards is what settles whether the set is complete.
-payloads=$(sh scripts/runtime-donor.sh --payloads)
 
 for payload in $payloads downloads; do
   dir="vendor/$payload"

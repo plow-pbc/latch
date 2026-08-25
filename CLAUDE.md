@@ -164,7 +164,7 @@ argument it lists the candidates it can see, and `--no-donor` sets up without
 one. It will not pick one for you: a donor's payloads are executed here, outside
 the seatbelt and within reach of this checkout's vault and relay credential, so
 anything able to write one checkout could otherwise put code in the next.
-`scripts/runtime-donor.sh` owns that reasoning. What it does **not** decide is
+The reasoning sits beside the code that does it. What setup does **not** decide is
 whether the copy is any good — the donor is a cache seed, and setup runs
 `just fetch-browser` over whatever runtime is in `vendor/` — copied just now or
 already there, the download cache alone not counting — once it has installed
