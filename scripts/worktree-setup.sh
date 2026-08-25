@@ -71,6 +71,10 @@ elif [ -n "$donor" ]; then
     echo "error: ${1} is not a directory." >&2
     exit 1
   }
+  if [ "$donor" = "$self" ]; then
+    echo "error: a checkout cannot be its own donor." >&2
+    exit 1
+  fi
   usable "$donor" || {
     echo "error: $donor is not a checkout of this repo." >&2
     exit 1
@@ -98,8 +102,12 @@ else
         candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
         usable "$candidate" || continue
         # Worth naming only if it has something to give; whether that something
-        # is current is settled by the build, not here.
-        [ -d "$candidate/vendor/python-runtime" ] && printf '%s\n' "$candidate"
+        # is current is settled by the build, not here. An `if` rather than a
+        # `&&`: this is the loop's last command, so under `set -e` a final
+        # candidate that does not qualify would abort the whole setup.
+        if [ -d "$candidate/vendor/python-runtime" ]; then
+          printf '%s\n' "$candidate"
+        fi
       done
     )
     if [ -n "$candidates" ]; then

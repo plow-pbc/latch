@@ -30,14 +30,19 @@ afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const stubBin = path.join(tmp, "bin");
 
 /** A checkout carrying this repo's real scripts and the two real pin files. */
-function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
-  const dir = path.join(parent, name);
+/** This repo's real scripts and pin files, in a directory that is to run them. */
+function stage(dir: string): void {
   fs.mkdirSync(path.join(dir, "vendor", "browser-server"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   for (const s of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", s), path.join(dir, "scripts", s));
   for (const f of ["runtime.lock.json", "requirements.txt"]) {
     fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(dir, "vendor/browser-server", f));
   }
+}
+
+function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
+  const dir = path.join(parent, name);
+  stage(dir);
   for (const p of payloads) {
     fs.mkdirSync(path.join(dir, "vendor", p), { recursive: true });
     // Named so a copy that landed a directory deeper is distinguishable from
@@ -109,6 +114,14 @@ function runSetupExpectingFailure(dir: string, donor?: string, failing?: string)
   throw new Error("setup was expected to fail, and did not");
 }
 
+it("names the payloads the browser and the vault live in", () => {
+  // PAYLOADS is read from the script, so everything derived from it agrees with
+  // it by construction — including a list that lost an entry. These two are the
+  // point of copying anything at all, so they are named once, here.
+  expect(PAYLOADS).toContain("vault-server");
+  expect(PAYLOADS).toContain("camoufox-browser");
+});
+
 describe("worktree-setup.sh", () => {
   it("copies the named donor's payloads and signs off with this checkout's own name", () => {
     const parent = fs.mkdtempSync(path.join(tmp, "run-"));
@@ -163,12 +176,7 @@ describe("worktree-setup.sh", () => {
     const main = checkout(fs.mkdtempSync(path.join(tmp, "main-")), "repo", [...PAYLOADS, "downloads"]);
     const wt = path.join(fs.mkdtempSync(path.join(tmp, "far-")), "wt");
     git(main, "worktree", "add", "-q", "-b", "feature/inherited", wt);
-    fs.mkdirSync(path.join(wt, "vendor", "browser-server"), { recursive: true });
-    for (const f of ["runtime.lock.json", "requirements.txt"]) {
-      fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(wt, "vendor/browser-server", f));
-    }
-    fs.mkdirSync(path.join(wt, "scripts"), { recursive: true });
-    for (const sc of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", sc), path.join(wt, "scripts", sc));
+    stage(wt);
 
     const { stdout: out } = runSetup(wt);
 
@@ -180,7 +188,7 @@ describe("worktree-setup.sh", () => {
     const parent = fs.mkdtempSync(path.join(tmp, "selfdonor-"));
     const asking = checkout(parent, "slot0", PAYLOADS);
     const { stderr } = runSetupExpectingFailure(asking, asking);
-    expect(stderr).toMatch(/not a checkout of this repo/);
+    expect(stderr).toMatch(/cannot be its own donor/);
   });
 
   it("refuses to pick a neighbour, and names the ones it can see instead", () => {
@@ -189,12 +197,17 @@ describe("worktree-setup.sh", () => {
     // one it would have been, because listing is not choosing.
     const parent = fs.mkdtempSync(path.join(tmp, "unasked-"));
     const neighbour = checkout(parent, "slot1", PAYLOADS);
+    // A second neighbour with nothing to give: listing it would send someone to
+    // a checkout that saves them nothing, so the list is filtered, not just
+    // enumerated. Named last so it is also the loop's final candidate.
+    const barren = checkout(parent, "slot2", []);
     const asking = checkout(parent, "slot0", []);
 
     const { stdout, stderr } = runSetupExpectingFailure(asking);
 
     expect(stderr).toMatch(/will not adopt a\s+neighbour on its own/);
     expect(stderr).toContain(fs.realpathSync(neighbour));
+    expect(stderr).not.toContain(fs.realpathSync(barren));
     // And it stopped before the work, rather than building over a copy it
     // never made.
     expect(stdout).not.toContain("stub just");
