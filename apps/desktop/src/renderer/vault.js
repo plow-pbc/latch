@@ -779,16 +779,28 @@ export async function renderVault(view, isCurrent = () => true) {
     ]),
   ]);
 
-  if ((items === null || (items && items.locked)) && !failure) {
-    // Locked and empty are different facts and get different words. A vault
-    // whose key has moved — a Keychain reset, a Mac restored from backup — used
-    // to render as "has not started yet", which sent people looking for a
-    // server that was running fine.
+  if ((items === null || (items && (items.locked || items.missing))) && !failure) {
+    // Locked, missing and not-yet-started are three different facts and get
+    // three different words. A vault whose key has moved — a Keychain reset, a
+    // Mac restored from backup — used to render as "has not started yet", which
+    // sent people looking for a server that was running fine; a build with no
+    // runtime rendered the same way, and sent someone looking for a server that
+    // had never been installed.
     const locked = !!(items && items.locked);
+    const missing = !!(items && items.missing);
     pane.replaceChildren(masthead, el("div", { class: "col" }, [
-      el("div", { class: "empty", text: locked
-        ? "This Mac can't unlock its vault account."
-        : "The vault has not started yet." }),
+      el("div", { class: "empty", text: missing
+        ? "This build has no vault installed."
+        : locked
+          ? "This Mac can't unlock its vault account."
+          : "The vault has not started yet." }),
+      // The vault ships inside the browser runtime, so "no runtime" and "no
+      // vault" are one fact. No remedy here: a packaged install always bundles
+      // one, so an owner reading this has a broken install, not a `just` recipe
+      // to run — the from-source case gets the command on the terminal instead.
+      missing
+        ? el("p", { class: "use-note", text: "The vault ships with the browser runtime, and this build does not have one. Nothing is lost — a build with the runtime will open whatever is already here." })
+        : null,
       // No invented recovery, and no asserting a cause the code cannot tell
       // apart: `undecryptable` is one `catch` covering a wrong key AND a
       // damaged file, so the copy leads with what is certain, names the likely

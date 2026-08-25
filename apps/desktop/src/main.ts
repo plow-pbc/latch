@@ -586,7 +586,11 @@ ipcMain.handle("settings:getInference", async () => readInference(home));
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
   const server = device?.vaultServer;
-  if (!vault || !server) return null;
+  // Nothing to start, rather than not started yet: this build has no browser
+  // runtime, so no vault was ever installed. The remedy is a different one, and
+  // "has not started yet" tells the owner to wait for something that is never
+  // coming — the same mistake the locked case below already had to fix.
+  if (!vault || !server) return { missing: true };
   // Locked and empty are different facts and the screen says different words.
   // An account that is on disk and will not open must never be reported as a
   // vault that has not started — that sent people to debug a running server.
@@ -897,11 +901,12 @@ app.whenReady().then(async () => {
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
+  const browserRuntime = resolveBrowserRuntime(process.resourcesPath);
   device = new DeviceAgent(
     home,
     hostName(),
     approvals,
-    resolveBrowserRuntime(process.resourcesPath),
+    browserRuntime,
     // The owner's real home, resolved here because this is the only caller that
     // knows it. `home` above is the app's own (branch-suffixed in a from-source
     // run); this is where WhatsApp and everything else of theirs actually lives.
@@ -936,6 +941,17 @@ app.whenReady().then(async () => {
     console.log(
       `[vault] account: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
+    );
+  }
+  // The other reason the vault screen looks wrong, and from the outside the two
+  // are identical: no server, no account, nothing to say. The difference is
+  // that there is nothing here to start, so the line above cannot print at all
+  // — and a silence that also means "fine" is what sent someone to debug a
+  // vault that had never been installed.
+  if (!browserRuntime) {
+    console.log(
+      "[browser] no runtime installed — the browser and the vault are off. " +
+        "Run scripts/worktree-setup.sh, or `just fetch-browser-runtime fetch-browser`.",
     );
   }
   // Live-refresh the audit view whenever a new event is recorded.
