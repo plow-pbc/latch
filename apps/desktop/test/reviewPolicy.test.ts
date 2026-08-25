@@ -211,6 +211,88 @@ describe("decideIntent — modes that never reach the reviewer", () => {
   });
 });
 
+/**
+ * The per-agent switch, which was a promise nothing kept: the settings panel
+ * offered "Adversarial review" for one cloud agent, and under global Approve
+ * every request from it was auto-allowed without a review ever running.
+ *
+ * It can only ever ADD a review. Deny still denies, and Ask still asks — a
+ * review the owner wanted is not a reason to stop putting the human in front
+ * of it.
+ */
+describe("decideIntent — per-agent adversarial review", () => {
+  /** Review switched on for the agent the harness's intent comes from. */
+  const forAgent = (over: Partial<Settings> = {}) =>
+    settings({
+      approvalMode: "approve",
+      relayCredential: PLOW_CREDENTIAL,
+      cloudAgentSettings: { "agent-1": { adversarialReview: true } },
+      ...over,
+    });
+
+  it("reviews under Approve instead of auto-allowing, and honours the verdict", async () => {
+    const h = harness(forAgent(), { verdict: "allow" });
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "adversarial" });
+    expect(h.review).toHaveBeenCalledTimes(1);
+    // Approve shows no dialog, so the reviewer is the only decider there is.
+    expect(h.openApproval).not.toHaveBeenCalled();
+    expect(h.reviewCalls[0].humanAvailable).toBe(false);
+  });
+
+  it("lets that review DENY what Approve would have allowed", async () => {
+    const h = harness(forAgent(), { verdict: "deny" });
+    expect(await h.run()).toEqual({ decision: "deny", source: "adversarial" });
+  });
+
+  it("denies rather than auto-allowing when the reviewer cannot run", async () => {
+    // The fail-closed half. Auto-approving here would hand the agent exactly
+    // the access the switch was turned on to gate.
+    const h = harness(forAgent({ relayCredential: "" }));
+    expect(await h.run()).toEqual({ decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("denies when the review reaches no verdict", async () => {
+    const h = harness(forAgent(), { verdict: "ask", cause: "unavailable" });
+    expect((await h.run()).decision).toBe("deny");
+  });
+
+  it("leaves another agent's requests on the auto-allow path", async () => {
+    // The switch is keyed on `agentId` — the isolation key — so it says nothing
+    // about anyone else's requests.
+    const h = harness(
+      forAgent({ cloudAgentSettings: { "agent-2": { adversarialReview: true } } }),
+    );
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("treats the switch turned OFF as no switch at all", async () => {
+    const h = harness(forAgent({ cloudAgentSettings: { "agent-1": { adversarialReview: false } } }));
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("does not override global Deny", async () => {
+    const h = harness(forAgent({ approvalMode: "deny" }));
+    expect(await h.run()).toEqual({ decision: "deny", source: "policy" });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("does not take the dialog away under global Ask", async () => {
+    const h = harness(forAgent({ approvalMode: "ask" }), { decision: "allow_once" });
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
+    expect(h.openApproval).toHaveBeenCalledTimes(1);
+    // Still a hint, not a decider: the human was always the one answering.
+    expect(h.reviewCalls[0].humanAvailable).toBe(true);
+  });
+
+  it("survives a settings file with no cloud-agent map at all", async () => {
+    const h = harness(settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }));
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
+  });
+});
+
 describe("decideIntent — adversarial mode", () => {
   const adversarial = (over: Partial<Settings> = {}) =>
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
