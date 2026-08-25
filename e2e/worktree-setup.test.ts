@@ -112,7 +112,17 @@ function run(dir: string, script: string, args: string[] = [], failing?: string)
   const r = spawnSync("bash", [path.join(dir, "scripts", script), ...args], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}`, JUST_FAIL: failing ?? "" },
+    env: {
+      ...process.env,
+      PATH: `${stubBin}:${process.env.PATH}`,
+      JUST_FAIL: failing ?? "",
+      // Ambient config neutralised the way gitFixture neutralises the rest of
+      // it: a TMPDIR pointed inside a working tree — some CI images do this —
+      // would otherwise let discovery climb out of the fixture, and the row
+      // that needs no repository above it would fail as a lookup regression
+      // rather than as the fixture not being what it needs.
+      GIT_CEILING_DIRECTORIES: fs.realpathSync(tmp),
+    },
   });
   // A spawn that never happened, or a child killed on maxBuffer: reported here
   // rather than through `status`, and both streams may be null. Raised as
@@ -440,7 +450,13 @@ describe("termic-setup.sh", () => {
     // handing over a donor setup now refuses — before the install and build.
     // It pins the path and not the shape, so a condition ADDED to setup's donor
     // block still owes a case below.
-    expect(fs.readFileSync(path.join(repo, "scripts/termic-setup.sh"), "utf8")).toContain(`$donor/${DONOR_MARKER}`);
+    //
+    // The predicate, not the path: that file explains itself at length and now
+    // names the lockfile in its note as well, so a substring match over the
+    // whole of it is satisfied by prose while the two predicates have diverged.
+    expect(fs.readFileSync(path.join(repo, "scripts/termic-setup.sh"), "utf8")).toContain(
+      `[ ! -f "$donor/${DONOR_MARKER}" ]`,
+    );
   });
 
   // Three ways the lookup comes back with no donor to name, one contract:
@@ -448,13 +464,14 @@ describe("termic-setup.sh", () => {
   // lands before the install and the build, so it would leave the worktree with
   // no dependencies and nothing compiled — worse off than the missing runtime
   // this hook exists to fix, which at least left a built checkout.
-  const noDonor: { why: string; make: (parent: string) => string; says?: RegExp }[] = [
+  const noDonor: { why: string; make: (parent: string) => string; banner: RegExp; says?: RegExp }[] = [
     {
       // What git names from inside a plain checkout is that checkout, and
       // setup refuses a donor that is itself. Nothing to report: there is no
       // other checkout to point anyone at.
       why: "what it resolves to is this checkout",
       make: (parent) => checkout(parent, "slot0", []),
+      banner: /^checkout: main$/m,
     },
     {
       // The guard has to ask setup's question, not a neighbouring one. This
@@ -467,9 +484,12 @@ describe("termic-setup.sh", () => {
         fs.rmSync(path.join(main, DONOR_MARKER));
         return wt;
       },
+      banner: /^checkout: feature-vault-fix$/m,
       // And it names the checkout to go and fix, which setup's banner cannot:
-      // that offers "name one", which this caller has no way to do.
-      says: /note: .*\/main is where this worktree's runtime would come from/,
+      // that offers "name one", which this caller has no way to do. The whole
+      // sentence, because half of it was the claim that was wrong: this donor
+      // IS a checkout of this repo, and what is true of it is the missing file.
+      says: /^note: \S+\/main holds no vendor\/browser-server\/runtime\.lock\.json, so there\n {2}is no runtime/m,
     },
     {
       // Nothing for the lookup to answer with, and the redirect that keeps
@@ -478,20 +498,31 @@ describe("termic-setup.sh", () => {
       // expansions run before redirections. Silence is the whole assertion.
       why: "there is no repository to ask",
       make: (parent) => populate(path.join(parent, "loose"), []),
+      // Degenerate, and pinned as degenerate rather than blessed: outside a
+      // repository `worktree-name.sh --branch` prints nothing, so this run and
+      // every other one like it share a "Plow-Latch-" home, credential and
+      // audit log included. Termic cannot reach this — it runs in a worktree it
+      // just made — and the branch-name fallback belongs to worktree-name.sh,
+      // where the detached-HEAD one already lives. Filed, not fixed here.
+      banner: /^checkout: $/m,
     },
   ];
 
-  it.each(noDonor)("hands setup no donor when $why", ({ make, says }) => {
+  it.each(noDonor)("hands setup no donor when $why", ({ make, says, banner }) => {
     const parent = fs.mkdtempSync(path.join(tmp, "termic-none-"));
 
     const { stdout: out, stderr } = run(make(parent), "termic-setup.sh");
 
     expect(out).toContain("donor:    none");
+    expect(out).toMatch(banner);
     // Reported only where there is something to report, and the rest is
-    // silence — not merely "no note", which a stray `fatal:` from the lookup
-    // would satisfy.
+    // silence. Asserted on both branches, not just the quiet one: the lookup
+    // runs for real wherever there IS a repository, so the row carrying a note
+    // is exactly where a future change to it would start talking, and toMatch
+    // alone would let a `fatal:` ride along beside the note.
     if (says) expect(stderr).toMatch(says);
     else expect(stderr).toBe("");
+    expect(stderr).not.toContain("fatal:");
     // The whole point of not passing a refused donor: these still happen.
     const lines = out.split("\n");
     expect(lines).toContain("stub just install");

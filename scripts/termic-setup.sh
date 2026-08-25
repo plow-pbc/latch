@@ -41,8 +41,15 @@ elif [ ! -f "$donor/vendor/browser-server/runtime.lock.json" ]; then
   # "name one", which is advice this caller structurally cannot take — the hook
   # exists because Termic's setup hook passes no argument. Without this the log
   # reads as though no runtime was ever there to copy.
-  echo "note: $donor is where this worktree's runtime would come from, and it" >&2
-  echo "  is not a checkout of this repo. Starting without a browser or a vault." >&2
+  #
+  # The tested fact, not setup's wording for it. "Not a checkout of this repo"
+  # is plausible for a donor a human typed and wrong for one git resolved: the
+  # case this predicate was chosen for — a main checkout parked on a commit
+  # before the lockfile — IS a checkout of this repo, and the layouts that land
+  # on a parent directory are not anywhere a runtime would come from. Naming
+  # the file is also the only form of this that says what to go and fix.
+  echo "note: $donor holds no vendor/browser-server/runtime.lock.json, so there" >&2
+  echo "  is no runtime to copy from it. Starting without a browser or a vault." >&2
   donor=""
 fi
 
