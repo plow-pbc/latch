@@ -9,7 +9,7 @@
  * no test, so they are what a stubbed `just` replaces — everything above them
  * is the script's actual work, running for real against real donor checkouts.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,7 +29,6 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const stubBin = path.join(tmp, "bin");
-fs.mkdirSync(stubBin);
 
 /** A checkout carrying this repo's real scripts and the two real pin files. */
 function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
@@ -56,6 +55,7 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
  * visible, and fails the one named in JUST_FAIL. The emptiness guard matters:
  * unset, JUST_FAIL is "" and a bare `just` would otherwise match it.
  */
+fs.mkdirSync(stubBin);
 fs.writeFileSync(
   path.join(stubBin, "just"),
   '#!/bin/sh\necho "stub just $*"\n' +
@@ -63,12 +63,20 @@ fs.writeFileSync(
 );
 fs.chmodSync(path.join(stubBin, "just"), 0o755);
 
+/**
+ * Run setup and hand back everything it said. Both streams, because the notes
+ * it writes when it declines to do something go to stderr and are half of what
+ * it promises; throws with the same text on a non-zero exit.
+ */
 function runSetup(dir: string, donor?: string, failing?: string): string {
-  return execFileSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
+  const r = spawnSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
     cwd: dir,
     encoding: "utf8",
     env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}`, JUST_FAIL: failing ?? "" },
   });
+  const said = `${r.stdout}${r.stderr}`;
+  if (r.status !== 0) throw Object.assign(new Error(said), { stdout: r.stdout, stderr: r.stderr });
+  return said;
 }
 
 /** Run a setup that must refuse, and hand back what it said on the way out. */
@@ -226,12 +234,17 @@ describe("worktree-setup.sh", () => {
     const asking = checkout(parent, "slot0", []);
 
     const out = runSetup(asking, donor, "fetch-browser");
+    const lines = out.split("\n");
 
-    // It was attempted — otherwise this passes just as well when the fetch is
-    // never reached at all, which is the other way to be green here.
-    expect(out.split("\n")).toContain("stub just fetch-browser");
+    // Attempted — otherwise this passes just as well when the fetch is never
+    // reached, which is the other way to be green here.
+    expect(lines).toContain("stub just fetch-browser");
+    // Reported, which is the other half of the name: silence would leave an
+    // owner with an unchecked runtime and no idea it was not checked.
+    expect(out).toMatch(/could not check the copied runtime/);
+    // And not aborted.
+    expect(lines).toContain("stub just build");
     expect(out).toContain("is ready.");
-    expect(out.split("\n")).toContain("stub just build");
   });
 
   it("carries on with no donor when there is nothing nearby to name", () => {
