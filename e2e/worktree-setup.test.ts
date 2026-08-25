@@ -322,13 +322,17 @@ describe("worktree-setup.sh", () => {
     expect(out).toContain(`vendor/${PAYLOADS[0]} already present`);
     expect(out.split("\n")).toContain("stub just fetch-browser");
 
-    // And with --no-donor, where nothing was consulted: the check still runs,
-    // and its failure must not name a source it never had.
-    const { stderr } = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
-    expect(stderr).toMatch(/the runtime in vendor\/ did not check out/);
-    // The class, not two spellings of it: "the copy" got past an earlier
-    // version of this guard, which is what a word-shaped assertion buys you.
-    expect(stderr).not.toMatch(/came from|donor|the copy|copied/);
+    // The failure must not attribute the payloads to a source: the gate arms on
+    // presence, so it is reached with nothing copied. Asserted as SAMENESS
+    // rather than as forbidden words — any provenance claim ("came from X",
+    // "the copy", "cloned from X") reads differently between a run that copied
+    // and one that did not, so identical output is the absence of one. Three
+    // word-shaped versions of this guard each let the next synonym through.
+    const copied = runSetupExpectingFailure(asking, donor, "fetch-browser");
+    const notCopied = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
+
+    expect(copied.stderr).toMatch(/the runtime in vendor\/ did not check out/);
+    expect(notCopied.stderr).toBe(copied.stderr);
   });
 
   // Four ways to arrive with nothing worth checking, one contract: setup

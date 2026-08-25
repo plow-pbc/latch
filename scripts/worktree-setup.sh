@@ -196,13 +196,15 @@ just build
 # have — so a checkout that received camoufox, the largest payload, can still
 # owe that build, the most expensive one. The trade is deliberate: a checkout
 # holding a runtime nothing has looked at is worse than one that took a while,
-# and a checkout holding NO payload is the only case with nothing to complete.
+# and a checkout holding NO payload is the only case with nothing to complete,
+# and so the only one worth skipping for.
 #
 # After install and build so a failure here costs only the validation — the
 # checkout keeps its dependencies and its compiled output either way — and NOT
 # suppressed: this is the only content-aware look at what is in vendor/, and
-# browserRuntime.ts accepts payloads on path existence alone (existsSync on
-# config.json, the vaultwarden binary, server.py). Swallowing it would sign the
+# browserRuntime.ts accepts payloads on path existence alone — camoufox on a
+# config.json, the vault on its binary and web-vault dir, nothing on what is
+# inside any of them. Swallowing this would sign the
 # checkout off as ready over a runtime nothing has checked, which the app would
 # then try to run. `--browser` builds the Python runtime too, so it is the only
 # recipe needed.
