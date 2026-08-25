@@ -32,9 +32,18 @@ donor=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
 # commit answers yes to and setup still refuses. The layouts that resolve to no
 # checkout at all — a bare clone hosting worktrees, --separate-git-dir — fail
 # this too, which is why there is one predicate here and not two.
-[ -n "$donor" ] &&
-  [ "$donor" != "$(pwd -P)" ] &&
-  [ -f "$donor/vendor/browser-server/runtime.lock.json" ] ||
+if [ -z "$donor" ] || [ "$donor" = "$(pwd -P)" ]; then
+  # Run from the main checkout, or from a layout with nothing beside the common
+  # dir. Silent: there is no other checkout to point anyone at.
   donor=""
+elif [ ! -f "$donor/vendor/browser-server/runtime.lock.json" ]; then
+  # Said here because setup cannot say it: it will report no donor and offer
+  # "name one", which is advice this caller structurally cannot take — the hook
+  # exists because Termic's setup hook passes no argument. Without this the log
+  # reads as though no runtime was ever there to copy.
+  echo "note: $donor is where this worktree's runtime would come from, and it" >&2
+  echo "  is not a checkout of this repo. Starting without a browser or a vault." >&2
+  donor=""
+fi
 
 exec scripts/worktree-setup.sh ${donor:+"$donor"}

@@ -27,6 +27,12 @@ const PAYLOADS = (() => {
   if (!m) throw new Error("could not find the payloads= assignment in worktree-setup.sh");
   return m[1].split(" ");
 })();
+/** The file worktree-setup.sh refuses a donor for lacking, read from it. */
+const DONOR_MARKER = (() => {
+  const m = /\[ -f "\$donor\/([^"]+)" \]/.exec(fs.readFileSync(path.join(repo, "scripts/worktree-setup.sh"), "utf8"));
+  if (!m) throw new Error("could not find the donor refusal in worktree-setup.sh");
+  return m[1];
+})();
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -424,15 +430,25 @@ describe("termic-setup.sh", () => {
     expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
   });
 
+  it("vouches on the same file worktree-setup.sh refuses on", () => {
+    // One question asked in two files, and nothing but this binds them:
+    // re-point setup's refusal and the hook goes on vouching for the old one,
+    // handing over a donor setup now refuses — before the install and build.
+    // It pins the path and not the shape, so a condition ADDED to setup's donor
+    // block still owes a case below.
+    expect(fs.readFileSync(path.join(repo, "scripts/termic-setup.sh"), "utf8")).toContain(`$donor/${DONOR_MARKER}`);
+  });
+
   // Two ways the lookup comes back with nothing worth naming, one contract:
   // setup runs WITHOUT a donor, rather than with one it would refuse. A refusal
   // lands before the install and the build, so it would leave the worktree with
   // no dependencies and nothing compiled — worse off than the missing runtime
   // this hook exists to fix, which at least left a built checkout.
-  const noDonor: { why: string; make: (parent: string) => string }[] = [
+  const noDonor: { why: string; make: (parent: string) => string; says?: RegExp }[] = [
     {
       // What git names from inside a plain checkout is that checkout, and
-      // setup refuses a donor that is itself.
+      // setup refuses a donor that is itself. Nothing to report: there is no
+      // other checkout to point anyone at.
       why: "what it resolves to is this checkout",
       make: (parent) => checkout(parent, "slot0", []),
     },
@@ -447,15 +463,22 @@ describe("termic-setup.sh", () => {
         fs.rmSync(path.join(main, "vendor/browser-server/runtime.lock.json"));
         return wt;
       },
+      // And it names the checkout to go and fix, which setup's banner cannot:
+      // that offers "name one", which this caller has no way to do.
+      says: /note: .*\/main is where this worktree's runtime would come from/,
     },
   ];
 
-  it.each(noDonor)("hands setup no donor when $why", ({ make }) => {
+  it.each(noDonor)("hands setup no donor when $why", ({ make, says }) => {
     const parent = fs.mkdtempSync(path.join(tmp, "termic-none-"));
 
-    const { stdout: out } = run(make(parent), "termic-setup.sh");
+    const { stdout: out, stderr } = run(make(parent), "termic-setup.sh");
 
     expect(out).toContain("donor:    none");
+    // Reported only where there is something to report, so the ordinary
+    // main-checkout run stays quiet.
+    if (says) expect(stderr).toMatch(says);
+    else expect(stderr).not.toContain("note:");
     // The whole point of not passing a refused donor: these still happen.
     const lines = out.split("\n");
     expect(lines).toContain("stub just install");
