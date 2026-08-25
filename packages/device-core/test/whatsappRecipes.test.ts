@@ -110,25 +110,24 @@ function makeStore(dir: string): string {
   );
   sqlite([
     store,
-      [
-        "pragma journal_mode=wal;",
-        "create table ZWACHATSESSION (Z_PK integer primary key, ZPARTNERNAME text," +
-          " ZCONTACTJID text, ZLASTMESSAGEDATE integer);",
-        "create table ZWAGROUPMEMBER (Z_PK integer primary key, ZCONTACTNAME text," +
-          " ZMEMBERJID text, ZCHATSESSION integer);",
-        "create table ZWAMESSAGE (ZMESSAGEDATE integer, ZTEXT text, ZCHATSESSION integer," +
-          " ZISFROMME integer, ZGROUPMEMBER integer, ZPUSHNAME text);",
-        // Apostrophes in contact names are ordinary, and the conversation
-        // recipe puts the name inside a quoted SQL literal. On the DIRECT
-        // chat, because a surname the owner types is the path that matters.
-        `insert into ZWACHATSESSION values(1, 'O''Brien', '15551234@s.whatsapp.net', ${at(base + 3600)});`,
-          `insert into ZWACHATSESSION values(2, 'Book Club', '99887@g.us', ${at(base + 5000)});`,
-        `insert into ZWACHATSESSION values(3, 'Wren', '15557777@s.whatsapp.net', ${at(base + 4000)});`,
-        "insert into ZWAGROUPMEMBER values(1, 'Bernard', '15559999@s.whatsapp.net', 2);",
-        ...rows,
-      ].join(" "),
-    ],
-  );
+    [
+      "pragma journal_mode=wal;",
+      "create table ZWACHATSESSION (Z_PK integer primary key, ZPARTNERNAME text," +
+        " ZCONTACTJID text, ZLASTMESSAGEDATE integer);",
+      "create table ZWAGROUPMEMBER (Z_PK integer primary key, ZCONTACTNAME text," +
+        " ZMEMBERJID text, ZCHATSESSION integer);",
+      "create table ZWAMESSAGE (ZMESSAGEDATE integer, ZTEXT text, ZCHATSESSION integer," +
+        " ZISFROMME integer, ZGROUPMEMBER integer, ZPUSHNAME text);",
+      // Apostrophes in contact names are ordinary, and the conversation recipe
+      // puts the name inside a quoted SQL literal. On the DIRECT chat, because
+      // a surname the owner types is the path that matters.
+      `insert into ZWACHATSESSION values(1, 'O''Brien', '15551234@s.whatsapp.net', ${at(base + 3600)});`,
+      `insert into ZWACHATSESSION values(2, 'Book Club', '99887@g.us', ${at(base + 5000)});`,
+      `insert into ZWACHATSESSION values(3, 'Wren', '15557777@s.whatsapp.net', ${at(base + 4000)});`,
+      "insert into ZWAGROUPMEMBER values(1, 'Bernard', '15559999@s.whatsapp.net', 2);",
+      ...rows,
+    ].join(" "),
+  ]);
   return store;
 }
 
