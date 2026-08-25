@@ -1028,6 +1028,29 @@ db.commit()`,
     expect(events.filter((e) => e.event === "browser_session_closed")).toHaveLength(1);
   });
 
+  it("a reset interrupted by the Mac quitting says so, and leaves no browser behind", async () => {
+    // The bail exists because a swap that carries on past a quit starts a
+    // browser nobody will ever close. Both callers hear the same thing, and it
+    // is not "your restart failed" — nothing was restarted.
+    const events: { event: string; fields: { [k: string]: JSONValue } }[] = [];
+    const { sessions, profiles } = signedIn({ audit: (event, fields) => events.push({ event, fields }) });
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
+
+    const reset = sessions.freshProfile(handle);
+    const joiner = sessions.freshProfile(handle);
+    const quit = sessions.closeAll("shutdown");
+    const [r, j] = await Promise.all([reset, joiner, quit]);
+
+    for (const answer of [r, j]) {
+      expect(jv(answer).get("status").str).toBe("error");
+      expect(jv(answer).get("error").str).toBe("this Mac is shutting down");
+    }
+    const ends = events.filter((e) => e.event === "browser_session_closed");
+    expect(ends).toHaveLength(1);
+    expect(ends[0].fields.reason).toBe("shutdown");
+    expect(fs.readdirSync(profiles)).toEqual([]);
+  });
+
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {
     // A swallowed merge failure that also removed the clone would lose the
     // sign-in silently — the exact thing this feature exists to prevent.

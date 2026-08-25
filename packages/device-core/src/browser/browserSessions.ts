@@ -420,8 +420,11 @@ export class BrowserSessions {
       // most likely to be waiting, since slowness is what prompts the retry.
       try {
         await s.resetting;
-      } catch {
-        return { status: "error", error: "browser failed to restart" };
+      } catch (error: unknown) {
+        // The same event, so the same answer as the caller that owned it.
+        return error === QUITTING
+          ? { status: "error", error: "this Mac is shutting down" }
+          : { status: "error", error: "browser failed to restart" };
       }
       return { status: "completed", session: handle, origins: s.origins };
     }
