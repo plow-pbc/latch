@@ -23,7 +23,7 @@ import { VaultServer } from "./browser/vaultServer.js";
 import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
-import { ConnectorClient, ConnectorError } from "./connectors.js";
+import { ConnectorClient, ConnectorError, slackAction } from "./connectors.js";
 import { Executor } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
@@ -393,37 +393,45 @@ export class DeviceAgent {
   }
 
   /**
-   * Run a `tool` capability. Today every one is `slack.<action>`; the prefix is
-   * matched rather than assumed so a second connector is a new prefix and not a
-   * new dispatch site.
+   * Run a `tool` capability: one action out of the connector's closed set,
+   * against the target the capability named.
+   *
+   * **The connector's answer is nested, never spread.** `status` at the top of
+   * what this returns is THIS Mac's own verdict — the MCP layer reads it to
+   * tell a denial from a result — so a Slack body that happened to carry one
+   * would be forging the owner's answer. It rides under `result`, beside a
+   * `status` this Mac wrote, exactly as `executeRead` puts bytes under
+   * `content_base64`.
+   *
+   * **The audit brackets the call**, like exec_start/exec_error: what was
+   * attempted is written before it can have an effect, so a failure on the way
+   * back cannot deny a side effect that already happened at Plow. It records
+   * the action and the target and never the payload — that is message text, and
+   * this log is append-only and read by humans.
    */
   private async executeToolIntent(
     intent: Intent,
-    cap: { tool?: string },
+    cap: { tool?: string; target?: string },
     payload: JSONValue,
   ): Promise<JSONValue> {
-    const name = cap.tool ?? "";
-    if (!name.startsWith("slack.")) {
-      const error = `unknown tool capability: ${name || "(none)"}`;
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error });
-      return { status: "error", error };
-    }
-    if (!this.connectors) {
-      const error = "this Mac is not paired with Plow";
-      this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error });
-      return { status: "error", error };
-    }
-    const action = name.slice("slack.".length);
+    const tool = cap.tool ?? "";
+    const what = { intentId: intent.intentId, tool, target: cap.target ?? "" };
     try {
-      const result =
-        action === "status" ? await this.connectors.status() : await this.connectors.call(action, payload);
-      this.audit.record("tool_call", { intentId: intent.intentId, tool: name });
-      return result;
+      const action = slackAction(tool);
+      if (action === null) throw ConnectorError.unknownAction();
+      const connectors = this.connectors;
+      if (connectors === null) throw ConnectorError.unpaired();
+      this.audit.record("tool_invoked", what);
+      return { status: "completed", result: await connectors.call(action, payload) };
     } catch (e) {
       if (e instanceof ConnectorError) {
-        this.audit.record("tool_error", { intentId: intent.intentId, tool: name, error: e.message });
+        this.audit.record("tool_error", { ...what, error: e.message });
         return { status: "error", error: e.message };
       }
+      // Not a connector failure: a bug in here. It still gets a record — an
+      // intent that ends with neither a result nor an error is the one shape
+      // this log must never have — and the original still escapes, loudly.
+      this.audit.record("tool_error", { ...what, error: "the Slack call failed" });
       throw e;
     }
   }
