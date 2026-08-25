@@ -70,20 +70,17 @@ describe("CloudAgentsClient request contracts", () => {
     timeout.mockRestore();
   });
 
-  it("GETs one agent and the list, and DELETEs by agent_id with bearer auth", async () => {
+  it("GETs the list and DELETEs by agent_id with bearer auth", async () => {
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: resource("active") },
       { status: 200, body: { object: "list", data: [resource("active")], has_more: false } },
       { status: 204 },
     ]);
     const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
 
-    await client.get(CREDENTIAL, "agent_123");
     await client.list(CREDENTIAL);
     await client.delete(CREDENTIAL, "agent_123");
 
     expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
-      ["GET", "https://api.plow.co/v1/agents/cloud/agent_123"],
       ["GET", "https://api.plow.co/v1/agents/cloud"],
       ["DELETE", "https://api.plow.co/v1/agents/cloud/agent_123"],
     ]);
@@ -104,7 +101,7 @@ describe("CloudAgentsClient request contracts", () => {
 describe("CloudAgentsClient polling", () => {
   it("POSTs, publishes the receipt, then polls and publishes until active", async () => {
     const waits: number[] = [];
-    const { fetchImpl } = recordingFetch([
+    const { calls, fetchImpl } = recordingFetch([
       { status: 202, body: resource("provisioning", { created_at: "initial" }) },
       { status: 200, body: resource("provisioning") },
       { status: 200, body: resource("active") },
@@ -114,9 +111,13 @@ describe("CloudAgentsClient polling", () => {
       waits.push(ms);
     });
 
-    const final = await client.createAndPoll(
+    const receipt = await client.create(CREDENTIAL, {
+      chatUid: "cht_123",
+      name: "Kitchen agent",
+    });
+    const final = await client.poll(
       CREDENTIAL,
-      { chatUid: "cht_123", name: "Kitchen agent" },
+      receipt,
       (agent) => transitions.push(`${agent.status}:${agent.createdAt}`),
     );
 
@@ -127,6 +128,11 @@ describe("CloudAgentsClient polling", () => {
       "active:2026-08-24T18:02:11Z",
     ]);
     expect(waits).toEqual([CLOUD_AGENT_POLL_INTERVAL_MS, CLOUD_AGENT_POLL_INTERVAL_MS]);
+    expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
+      ["POST", "https://api.plow.co/v1/agents/cloud"],
+      ["GET", "https://api.plow.co/v1/agents/cloud/agent_123"],
+      ["GET", "https://api.plow.co/v1/agents/cloud/agent_123"],
+    ]);
   });
 
   it("stops and preserves the failure reason when a poll reaches failed", async () => {
@@ -148,25 +154,22 @@ describe("CloudAgentsClient polling", () => {
       const transitions: string[] = [];
       const fetchImpl = async (url: string) => {
         calls.push(url);
-        const isCreate = calls.length === 1;
-        if (!isCreate && abortAt === "get") controller.abort();
-        return new Response(JSON.stringify(resource(isCreate ? "provisioning" : "active")), {
-          status: isCreate ? 202 : 200,
-        });
+        if (abortAt === "get") controller.abort();
+        return new Response(JSON.stringify(resource("active")), { status: 200 });
       };
       const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => {
         if (abortAt === "wait") controller.abort();
       });
 
-      const stopped = client.createAndPoll(
+      const stopped = client.poll(
         CREDENTIAL,
-        { chatUid: "cht_123" },
+        fromWire(resource("provisioning")),
         (agent) => transitions.push(agent.status),
         controller.signal,
       );
 
       await expect(stopped).rejects.toMatchObject({ name: "AbortError" });
-      expect(calls).toHaveLength(abortAt === "get" ? 2 : 1);
+      expect(calls).toHaveLength(abortAt === "get" ? 1 : 0);
       expect(transitions).toEqual(["provisioning"]);
     }
   });
@@ -348,8 +351,12 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
     const { fetchImpl } = recordingFetch([
       { status: 200, body: resource("failed", { failure_reason: `provider echoed ${CREDENTIAL}` }) },
     ]);
-    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
-      .get(CREDENTIAL, "agent_123")
+    const error = await new CloudAgentsClient(
+      "https://api.plow.co",
+      fetchImpl,
+      async () => undefined,
+    )
+      .poll(CREDENTIAL, fromWire(resource("provisioning")))
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(PlowApiError);

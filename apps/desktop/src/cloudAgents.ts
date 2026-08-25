@@ -97,21 +97,6 @@ export class CloudAgentsClient {
     return this.resourceFor(response, deviceCredential);
   }
 
-  async get(
-    deviceCredential: string,
-    agentId: string,
-    signal?: AbortSignal,
-  ): Promise<CloudAgentResource> {
-    const response = await this.request(
-      "GET",
-      `/v1/agents/cloud/${encodeURIComponent(agentId)}`,
-      deviceCredential,
-      undefined,
-      signal,
-    );
-    return this.resourceFor(response, deviceCredential);
-  }
-
   async list(deviceCredential: string): Promise<CloudAgentResource[]> {
     const response = await this.request("GET", "/v1/agents/cloud", deviceCredential);
     if (!response.ok) throw errorFor(response.status, await decodeJson(response), deviceCredential);
@@ -136,19 +121,6 @@ export class CloudAgentsClient {
     }
   }
 
-  /** Create one agent, publish its receipt, then publish every polled state. */
-  async createAndPoll(
-    deviceCredential: string,
-    request: CreateCloudAgentRequest,
-    onTransition?: CloudAgentTransition,
-    signal?: AbortSignal,
-  ): Promise<CloudAgentResource> {
-    signal?.throwIfAborted();
-    const receipt = await this.create(deviceCredential, request);
-    signal?.throwIfAborted();
-    return this.poll(deviceCredential, receipt, onTransition, signal);
-  }
-
   /** Continue an existing receipt until Plow reports `active` or `failed`. */
   async poll(
     deviceCredential: string,
@@ -163,7 +135,14 @@ export class CloudAgentsClient {
     while (!isTerminalCloudAgent(current)) {
       await this.wait(CLOUD_AGENT_POLL_INTERVAL_MS);
       signal?.throwIfAborted();
-      current = await this.get(deviceCredential, current.agentId, signal);
+      const response = await this.request(
+        "GET",
+        `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
+        deviceCredential,
+        undefined,
+        signal,
+      );
+      current = await this.resourceFor(response, deviceCredential);
       signal?.throwIfAborted();
       await onTransition?.(current);
       signal?.throwIfAborted();
