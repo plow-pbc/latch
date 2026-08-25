@@ -144,8 +144,12 @@ if [[ -n "${seeded:-}" ]]; then
     echo "" >&2
     echo "error: the copied runtime did not check out, so this checkout is NOT" >&2
     echo "  ready — its dependencies and build are in place, but the payloads" >&2
-    echo "  that came from $donor have not been validated. Fix the fetch above" >&2
-    echo "  and re-run \`just fetch-browser\`, or set up with --no-donor." >&2
+    echo "  that came from $donor have not been validated." >&2
+    echo "" >&2
+    echo "  Fix whatever the fetch reported and run \`just fetch-browser\` here." >&2
+    echo "  The payloads are already in vendor/, so re-running this script — or" >&2
+    echo "  passing --no-donor — leaves them in place and unchecked; to start" >&2
+    echo "  over, remove them first." >&2
     exit 1
   }
 fi

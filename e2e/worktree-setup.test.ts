@@ -79,10 +79,11 @@ class SetupFailed extends Error implements Ran {
 }
 
 /**
- * Run setup and hand back both streams, separately. The notes it writes when it
- * declines to do something go to stderr and are half of what it promises, so
- * neither stream alone is the whole answer — and merging them would put a note
- * after the line it precedes, and fuse the two at the seam.
+ * Run setup and hand back both streams, separately. It reports on both — the
+ * per-payload notes on stdout, the refusals and the failed-check reason on
+ * stderr — so neither alone is the whole answer, and merging them would order
+ * the two by stream rather than by when they were written, and fuse the last
+ * line of one to the first of the other.
  */
 function runSetup(dir: string, donor?: string, failing?: string): Ran {
   const r = spawnSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
@@ -263,7 +264,11 @@ describe("worktree-setup.sh", () => {
     const { stdout: out } = runSetup(asking, named);
 
     expect(out).toContain(says);
-    if (landed) expect(fs.existsSync(path.join(asking, "vendor", landed))).toBe(true);
+    // The donor's marker, not the directory — the same distinction the copy
+    // case makes, since a nested copy leaves the directory there either way.
+    if (landed) {
+      expect(fs.readFileSync(path.join(asking, "vendor", landed, "payload-marker"), "utf8")).toBe(landed);
+    }
     expect(out).not.toContain("stub just fetch-browser");
     expect(out.split("\n")).toContain("stub just build");
     expect(out).toContain("is ready.");
