@@ -89,7 +89,7 @@ fetch-browser-both:
 
 # Run the real-browser integration tier: real Python runtime + real Camoufox
 # ordering a pizza on a local fixture site through the MCP server on the Mac.
-# Needs `just fetch-browser-runtime fetch-browser` first.
+# Needs `just fetch-browser` first (it builds the Python runtime too).
 test-browser: build
     DOMO_BROWSER_RUNTIME="{{root}}/vendor" \
     DOMO_CAMOUFOX="{{root}}/vendor/camoufox-browser/$(uname -m)" \

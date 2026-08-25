@@ -28,11 +28,8 @@ const PAYLOADS = execFileSync("sh", [path.join(repo, "scripts/runtime-donor.sh")
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-setup-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-/** A `just` that succeeds and says so, so `install`/`build` are inert but visible. */
 const stubBin = path.join(tmp, "bin");
 fs.mkdirSync(stubBin);
-fs.writeFileSync(path.join(stubBin, "just"), '#!/bin/sh\necho "stub just $*"\n');
-fs.chmodSync(path.join(stubBin, "just"), 0o755);
 
 /** A checkout carrying this repo's real scripts and the two real pin files. */
 function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
@@ -54,10 +51,15 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
   return dir;
 }
 
-/** A `just` that fails the recipe named in JUST_FAIL, and succeeds otherwise. */
+/**
+ * A `just` that says what it was asked for, so the real recipes stay inert but
+ * visible, and fails the one named in JUST_FAIL. The emptiness guard matters:
+ * unset, JUST_FAIL is "" and a bare `just` would otherwise match it.
+ */
 fs.writeFileSync(
   path.join(stubBin, "just"),
-  '#!/bin/sh\n[ "$1" = "$JUST_FAIL" ] && { echo "stub just $* FAILED" >&2; exit 1; }\necho "stub just $*"\n',
+  '#!/bin/sh\necho "stub just $*"\n' +
+    '[ -n "$JUST_FAIL" ] && [ "$1" = "$JUST_FAIL" ] && exit 1\nexit 0\n',
 );
 fs.chmodSync(path.join(stubBin, "just"), 0o755);
 
@@ -225,6 +227,9 @@ describe("worktree-setup.sh", () => {
 
     const out = runSetup(asking, donor, "fetch-browser");
 
+    // It was attempted — otherwise this passes just as well when the fetch is
+    // never reached at all, which is the other way to be green here.
+    expect(out.split("\n")).toContain("stub just fetch-browser");
     expect(out).toContain("is ready.");
     expect(out.split("\n")).toContain("stub just build");
   });
