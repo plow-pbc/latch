@@ -557,6 +557,11 @@ function fetchBrowser(arch) {
   // for the whole download+extract, which is exactly what runtime-donor.sh
   // reads to decide a donor is ready. Gone before the work, not after it.
   fs.rmSync(marker, { force: true });
+  // The fused tree too. A per-arch rebuild invalidates it by definition, and
+  // runtime-donor.sh falls back to it whenever no per-arch dir exists — which
+  // is every moment of this function before mkdirSync creates one, on exactly
+  // the --browser-both donor that keeps no per-arch tree.
+  fs.rmSync(path.join(browserDir, "universal", ".sha256"), { force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
   const version = dash === -1 ? fullVersion : fullVersion.slice(0, dash);
