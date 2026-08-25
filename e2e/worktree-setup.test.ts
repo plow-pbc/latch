@@ -48,8 +48,12 @@ function populate(dir: string, payloads: string[]): string {
   fs.mkdirSync(path.join(dir, "vendor", "browser-server"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   for (const s of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", s), path.join(dir, "scripts", s));
-  for (const f of ["runtime.lock.json", "requirements.txt"]) {
-    fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(dir, "vendor/browser-server", f));
+  // The refusal's own file at its own path, read from setup rather than named
+  // here, so re-pointing that refusal carries the fixture with it instead of
+  // leaving the two to agree by luck.
+  for (const f of [...new Set([DONOR_MARKER, "vendor/browser-server/requirements.txt"])]) {
+    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    fs.copyFileSync(path.join(repo, f), path.join(dir, f));
   }
   for (const p of payloads) {
     fs.mkdirSync(path.join(dir, "vendor", p), { recursive: true });
@@ -439,7 +443,7 @@ describe("termic-setup.sh", () => {
     expect(fs.readFileSync(path.join(repo, "scripts/termic-setup.sh"), "utf8")).toContain(`$donor/${DONOR_MARKER}`);
   });
 
-  // Two ways the lookup comes back with nothing worth naming, one contract:
+  // Three ways the lookup comes back with no donor to name, one contract:
   // setup runs WITHOUT a donor, rather than with one it would refuse. A refusal
   // lands before the install and the build, so it would leave the worktree with
   // no dependencies and nothing compiled — worse off than the missing runtime
