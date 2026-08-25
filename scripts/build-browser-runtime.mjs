@@ -557,16 +557,6 @@ function fetchBrowser(arch) {
     log(`camoufox ${arch} up to date`);
     return false;
   }
-  // Stale from here on, and a rebuild is not instant: leaving it says "built"
-  // for the whole download+extract, which is exactly what runtime-donor.sh
-  // reads to decide a donor is ready. Gone before the work, not after it.
-  fs.rmSync(marker, { force: true });
-  // And the fused tree's marker, for the same reason and on the same schedule:
-  // runtime-donor.sh falls back to it whenever this checkout's per-arch tree is
-  // absent, which includes the rm/mkdir below. Only the marker goes here — the
-  // tree itself belongs to whoever rebuilds it, which is the single-arch branch
-  // in the main block, or mergeCamoufoxUniversal() on the --browser-both path.
-  fs.rmSync(universalMarker, { force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
   const version = dash === -1 ? fullVersion : fullVersion.slice(0, dash);
@@ -653,7 +643,6 @@ function mergeCamoufoxUniversal() {
     log("camoufox universal up to date");
     return;
   }
-  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
 
   // The sweep below requires the two per-arch trees to be byte-identical outside
   // Mach-O, so patch both before comparing them: one cached (already patched)
@@ -839,7 +828,6 @@ function fetchVaultServer(arch) {
     log(`vault server ${arch} up to date`);
     return;
   }
-  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
   const srcDir = path.join(downloadsDir, "vaultwarden-src");
   if (!fs.existsSync(path.join(srcDir, ".git"))) {
     fs.rmSync(srcDir, { recursive: true, force: true });
@@ -886,7 +874,6 @@ function fetchVaultWebUi() {
     log("vault web ui up to date");
     return;
   }
-  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
   const tgz = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
   download(asset.url, asset.sha256, tgz);
   log("extracting vault web ui");
@@ -930,7 +917,6 @@ function fetchVaultCli(arch) {
     log(`vault cli ${arch} up to date`);
     return;
   }
-  fs.rmSync(marker, { force: true }); // stale now — see fetchBrowser
   const zipDest = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
   download(asset.url, asset.sha256, zipDest);
   log(`extracting vault cli (${arch})`);

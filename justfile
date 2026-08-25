@@ -16,9 +16,10 @@ root    := justfile_directory()
 worktree := `sh scripts/worktree-name.sh`
 # The normalized branch name of THIS checkout — main or worktree. Every
 # from-source run keeps its state in ~/Library/Application Support under a
-# branch-suffixed folder ("Plow-Latch-<branch>"), so checkouts run side by side
-# and none of them ever touches the packaged install's unsuffixed "Plow-Latch"
-# home. Nothing lands in dotfolders at the top of $HOME.
+# branch-suffixed folder ("Plow-Latch-<branch>"), so checkouts on DIFFERENT
+# branches run side by side and none of them ever touches the packaged
+# install's unsuffixed "Plow-Latch" home. Two on the same branch share it —
+# set DOMO_HOME on one (CLAUDE.md). Nothing lands in dotfolders at $HOME.
 branch := `sh scripts/worktree-name.sh --branch`
 appsupport := env_var('HOME') / "Library" / "Application Support"
 nethome := appsupport / ("Plow-Latch-" + branch)
@@ -206,10 +207,11 @@ serve-updates port="8043":
 # homes (the relay does not support two devices on one credential).
 
 # Launch the desktop app. DOMO_BRANCH picks this checkout's per-branch home
-# (one folder per instance — Electron's own state lives inside it) and brands
-# the app name/tray tooltip with the branch, so from-source runs never collide
-# with each other — or with the packaged install, which runs unbranded from
-# the plain "Plow-Latch" home.
+# (one folder per branch — Electron's own state lives inside it) and brands the
+# app name/tray tooltip with the branch, so runs on different branches never
+# collide with each other, nor with the packaged install, which runs unbranded
+# from the plain "Plow-Latch" home. Same branch in two checkouts is one home:
+# DOMO_HOME below overrides it.
 app: build
     DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" npx electron "{{root}}/apps/desktop"
 

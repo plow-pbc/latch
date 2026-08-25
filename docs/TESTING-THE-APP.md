@@ -154,8 +154,10 @@ DOMO_HOME=/tmp/plow-latch-x just app                    # an explicit home alway
 There is no local default and no flag — you export the URL you want.
 
 `<branch>` is this checkout's normalized branch name (`scripts/worktree-name.sh --branch`), so every
-checkout — main included — has its own home, and none of them is the packaged install's unsuffixed
-`~/Library/Application Support/Plow-Latch`.
+branch — main included — has its own home, and none of them is the packaged install's unsuffixed
+`~/Library/Application Support/Plow-Latch`. The key is the branch, not the directory: two checkouts
+on one branch share a home, and with it one relay credential, identity and audit log. Git enforces
+uniqueness only for linked worktrees, so give one of them `DOMO_HOME` or its own branch.
 
 **Setting the override moves the home too**, to `…/Plow-Latch-<branch>-local`, unless you set `DOMO_HOME`
 yourself. A credential is only valid against the environment that minted it, so a local one landing

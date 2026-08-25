@@ -162,10 +162,12 @@ inherits its donor from the checkout it was made out of; **a plain clone is
 given one**: `./scripts/worktree-setup.sh ~/Hacking/domo-desktop4`. Run with no
 argument it lists the candidates it can see, and `--no-donor` sets up without
 one. It will not pick one for you: a donor's payloads are executed here, outside
-the seatbelt and within reach of this checkout's vault and relay credential, and
-qualification is cheap to forge, so anything able to write one checkout could
-otherwise put code in the next.
-`scripts/runtime-donor.sh` owns that reasoning and what makes a donor usable.
+the seatbelt and within reach of this checkout's vault and relay credential, so
+anything able to write one checkout could otherwise put code in the next.
+`scripts/runtime-donor.sh` owns that reasoning. What it does **not** decide is
+whether the copy is any good — the donor is a cache seed, and setup runs
+`just fetch-browser-runtime fetch-browser` over it afterwards, so a stale or
+half-built payload costs a rebuild rather than a refusal.
 
 Without that runtime there is no browser and no vault, and the app says so at
 startup rather than leaving the Vault tab to report a vault that has not

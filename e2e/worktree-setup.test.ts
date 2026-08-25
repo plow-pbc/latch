@@ -16,7 +16,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "./gitFixture.js";
-import { markBuilt } from "./payloadFixture.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPTS = ["worktree-setup.sh", "runtime-donor.sh", "worktree-name.sh"];
@@ -49,7 +48,6 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
     // Named so a copy that landed a directory deeper is distinguishable from
     // one that landed right — the dir itself exists either way.
     fs.writeFileSync(path.join(dir, "vendor", p, "payload-marker"), p);
-    markBuilt(dir, p);
   }
   git(dir, "init", "-q", "-b", branch ?? "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
@@ -105,6 +103,10 @@ describe("worktree-setup.sh", () => {
     // here", not merely "ours survived a merge into it".
     expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[0], "payload-marker"))).toBe(false);
     expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[1], "junk"))).toBe(false);
+    // The donor was a seed, so the build that owns readiness runs over it —
+    // a good copy makes these no-ops, a stale one costs the rebuild it should.
+    expect(out).toContain("stub just fetch-browser-runtime");
+    expect(out).toContain("stub just fetch-browser");
     expect(out).toContain("stub just install");
     expect(out).toContain("stub just build");
     // The closing hand-off names this checkout's branch and its real home. This
@@ -149,20 +151,21 @@ describe("worktree-setup.sh", () => {
     expect(out).toContain("is ready.");
     // Named as a flag, not adopted as a path.
     expect(fs.existsSync(path.join(asking, "vendor", "python-runtime"))).toBe(false);
+    expect(out).not.toContain("stub just fetch-browser");
   });
 
-  it("refuses a named donor whose runtime is not usable here", () => {
+  it("refuses a named donor that is not a checkout of this repo", () => {
+    // The only thing left to refuse. Whether its payloads are complete is not
+    // asked here — the build below settles that — so the one mistake worth
+    // catching up front is being pointed at the wrong directory entirely.
     const parent = fs.mkdtempSync(path.join(tmp, "baddonor-"));
     const asking = checkout(parent, "slot0", []);
-    // Every payload present, none of it built — the shape a fetch caught in
-    // flight leaves, and the one a human would most plausibly name by mistake.
-    const midFetch = path.join(parent, "slot1");
-    checkout(parent, "slot1", PAYLOADS);
-    fs.rmSync(path.join(midFetch, "vendor/python-runtime/.stamp"));
+    const stranger = path.join(parent, "elsewhere");
+    fs.mkdirSync(stranger, { recursive: true });
 
-    const { stdout, stderr } = runSetupExpectingRefusal(asking, midFetch);
+    const { stdout, stderr } = runSetupExpectingRefusal(asking, stranger);
 
-    expect(stderr).toMatch(/not a usable donor/);
+    expect(stderr).toMatch(/not a checkout of this repo/);
     expect(stdout).not.toContain("stub just");
   });
 
@@ -177,6 +180,9 @@ describe("worktree-setup.sh", () => {
 
     expect(out).toContain("nothing nearby to copy from");
     expect(out).toContain("no vendor/vault-server to clone");
+    // Nothing was copied, so there is no seed to validate — and a fetch from
+    // scratch is a different, much longer errand than setting a checkout up.
+    expect(out).not.toContain("stub just fetch-browser");
     expect(out).toContain("stub just build");
     expect(out).toContain("is ready.");
   });

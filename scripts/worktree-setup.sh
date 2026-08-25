@@ -46,10 +46,7 @@ if [ "$donor" = "--no-donor" ]; then
   refused=1
 elif [ -n "$donor" ]; then
   sh scripts/runtime-donor.sh --check "$donor" || {
-    echo "error: $donor is not a usable donor for this checkout." >&2
-    echo "  It needs vendor/python-runtime built from these pins, and any" >&2
-    echo "  payload it carries finished. Run \`just fetch-browser-runtime" >&2
-    echo "  fetch-browser\` there, or name another." >&2
+    echo "error: $donor is not a checkout of this repo." >&2
     exit 1
   }
   donor=$(cd "$donor" && pwd -P)
@@ -86,10 +83,10 @@ else
   echo "donor:    none — nothing nearby to copy from"
 fi
 
-# The payloads runtime-donor.sh gates on, which owns that list, plus the
-# download cache — a donor without the cache still qualifies, so it is named
-# here and not there. A donor may be carrying only some of these (see the
-# script's fallback), which is why each dir reports for itself below.
+# The payloads a runtime is made of — runtime-donor.sh owns that list — plus the
+# download cache, which is not a payload and so is named here. A donor may be
+# carrying only some of them, which is why each reports for itself below and why
+# the build afterwards is what settles whether the set is complete.
 payloads=$(sh scripts/runtime-donor.sh --payloads)
 
 for payload in $payloads downloads; do
@@ -119,6 +116,17 @@ for payload in $payloads downloads; do
 done
 
 # --- deps + build ----------------------------------------------------------
+# The donor was a cache seed, not an authority: whatever came across is checked
+# here by the build that owns it, whose stamps compare content rather than
+# existence and which repairs exactly what does not match. A good copy makes
+# both of these no-ops; a stale or half-built one costs the rebuild it should.
+# Only when something was copied — with no donor there is nothing to validate,
+# and a fetch from scratch is a different (and much longer) errand.
+if [[ -n "$donor" ]]; then
+  just fetch-browser-runtime
+  just fetch-browser
+fi
+
 just install
 just build
 

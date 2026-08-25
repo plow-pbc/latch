@@ -13,9 +13,12 @@
 #               (issue #164).
 #   --branch    Prints the name in ANY checkout, main included. This keys the
 #               per-branch dev state (app home ~/Library/Application
-#               Support/Plow-Latch-<branch>, Electron userData suffix), so every
-#               from-source run is isolated from every other and from the
-#               packaged install's unsuffixed "Plow-Latch" home.
+#               Support/Plow-Latch-<branch>, Electron userData suffix), which
+#               separates every from-source run from the packaged install's
+#               unsuffixed "Plow-Latch" home — and from every OTHER branch. Two
+#               checkouts on the SAME branch share that home, credential and
+#               all; git guarantees uniqueness only for linked worktrees. Give
+#               one its own DOMO_HOME, or a branch of its own (CLAUDE.md).
 #
 # Normalization: any byte outside [A-Za-z0-9._-] becomes "-", runs collapse,
 # and leading dots/dashes are stripped, so "feature/foo bar" -> "feature-foo-bar".
