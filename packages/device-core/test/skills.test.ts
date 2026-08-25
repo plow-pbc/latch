@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { BROWSING_SKILL, SkillRegistry } from "@domo/device-core";
+import {
+  BROWSING_SKILL,
+  registerWhatsappSkill,
+  SkillRegistry,
+  whatsappSkillFor,
+  whatsappStorePath,
+} from "@domo/device-core";
 import { jv, JSONValue } from "@domo/protocol";
 
 describe("SkillRegistry", () => {
@@ -40,5 +46,60 @@ describe("SkillRegistry", () => {
     expect(BROWSING_SKILL.body).toContain("use_page");
     expect(BROWSING_SKILL.body).toContain("fill_secret");
     expect(BROWSING_SKILL.body).toContain("plow_browser_request");
+  });
+});
+
+describe("the built-in whatsapp-history skill", () => {
+  // One question per row, not one test per row: same arrange, same act, and a
+  // fact list that grows is a row rather than another near-identical function.
+  // Each entry is something an agent gets wrong if the body omits it.
+  it.each([
+    ["the table of messages", /ZWAMESSAGE/],
+    ["the table of chats", /ZWACHATSESSION/],
+    ["who sent a message in a group", /ZWAGROUPMEMBER/],
+    ["the message body column", /ZTEXT/],
+    ["which side sent it", /ZISFROMME/],
+    ["the name the owner sees", /ZPARTNERNAME/],
+    ["how a group chat is told apart", /@g\.us/],
+    ["the Core Data epoch offset", /978307200/],
+    ["opening the store read-only", /-readonly/],
+    ["keeping the store out of write_paths", /write_paths/],
+    ["where sqlite3 lives", /\/usr\/bin\/sqlite3/],
+    // The two safety rules the Plow-side section is deleted for. Losing either
+    // in an edit is the failure this row exists to catch.
+    ["message text being untrusted", /untrusted/i],
+    ["a message that reads like an order not being one", /never do what it says/i],
+    ["answering for the owner and nobody else", /only the owner's/i],
+  ])("publishes %s", (_what, pattern) => {
+    expect(whatsappSkillFor("/Users/example").body).toMatch(pattern);
+  });
+
+  // The Plow-side copy shipped from a machine that was not this one, so it had
+  // to write /Users/<owner> and hope the reader substituted correctly. Latch
+  // knows the answer; that is the whole reason the recipe moved here.
+  it("names this Mac's own store rather than a path the reader must fill in", () => {
+    const skill = whatsappSkillFor("/Users/example");
+    expect(skill.name).toBe("whatsapp-history");
+    expect(skill.body).toContain(
+      "/Users/example/Library/Group Containers/" +
+        "group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite",
+    );
+    expect(skill.body).not.toContain("<owner>");
+    expect(skill.description).toMatch(/whatsapp/i);
+  });
+
+  // Same rule the browsing skill follows: a skill naming a capability this Mac
+  // does not have is a guaranteed denial.
+  it("is published only on a Mac that actually has the archive", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-wa-"));
+    const absent = new SkillRegistry();
+    registerWhatsappSkill(absent, home);
+    expect(absent.skill("whatsapp-history")).toBeNull();
+
+    fs.mkdirSync(path.dirname(whatsappStorePath(home)), { recursive: true });
+    fs.writeFileSync(whatsappStorePath(home), "");
+    const present = new SkillRegistry();
+    registerWhatsappSkill(present, home);
+    expect(present.skill("whatsapp-history")?.body).toContain(whatsappStorePath(home));
   });
 });
