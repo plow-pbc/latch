@@ -145,9 +145,9 @@ just build
 if [[ -n "${have_runtime:-}" ]]; then
   just fetch-browser || {
     echo "" >&2
-    echo "error: the copied runtime did not check out, so this checkout is NOT" >&2
-    echo "  ready — its dependencies and build are in place, but the payloads" >&2
-    echo "  that came from $donor have not been validated." >&2
+    echo "error: the runtime in vendor/ did not check out, so this checkout is" >&2
+    echo "  NOT ready — its dependencies and build are in place, but the" >&2
+    echo "  payloads have not been validated." >&2
     echo "" >&2
     echo "  Fix whatever the fetch reported and run \`just fetch-browser\` here," >&2
     echo "  or remove the payloads from vendor/ to start over. Re-running this" >&2

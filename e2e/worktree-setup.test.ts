@@ -208,7 +208,10 @@ describe("worktree-setup.sh", () => {
     expect(lines).toContain("stub just install");
     expect(lines).toContain("stub just build");
     // And it says so, rather than stopping with only the recipe's own error.
-    expect(stderr).toMatch(/did not check out, so this checkout is NOT/);
+    // Provenance-neutral: the gate fires on a runtime being present, which
+    // includes runs that copied nothing, so the reason must not claim one.
+    expect(stderr).toMatch(/the runtime in vendor\/ did not check out/);
+    expect(stderr).not.toMatch(/came from/);
     expect(stdout).not.toContain("is ready.");
   });
 
