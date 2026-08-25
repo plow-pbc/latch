@@ -15,6 +15,88 @@ import { Skill, SkillRegistry } from "./skills.js";
 
 export const WHATSAPP_SKILL_NAME = "whatsapp-history";
 
+/** The chat name the conversation recipe tells the agent to replace. */
+export const WHATSAPP_CHAT_PLACEHOLDER = "Exact Name From The Query Above";
+
+/**
+ * The SQL this skill teaches, as text an agent runs verbatim.
+ *
+ * Hoisted out of the prose so a test can EXECUTE each one against a real
+ * database instead of grepping the body for a substring. Three defects in a
+ * row here — a reversed sort, a projected sort key, a shell-quoting hole —
+ * were all caught by a reader rather than by the suite, because a test that
+ * asserts a recipe contains some text cannot tell whether the recipe works.
+ * These constants are the fix for that class, not for any one of them.
+ */
+export const WHATSAPP_QUERIES = {
+  /** Match the owner's spelling of a name to a real ZPARTNERNAME. */
+  recentChats: `select ZPARTNERNAME,
+       datetime(ZLASTMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as last_message,
+       case when ZCONTACTJID like '%@g.us' then 'group' else 'direct' end as kind
+  from ZWACHATSESSION
+ where ZLASTMESSAGEDATE is not null
+ order by ZLASTMESSAGEDATE desc
+ limit 40;`,
+
+  /**
+   * The newest 50 messages of one chat, handed back oldest-first.
+   *
+   * The sort happens twice on purpose. Descending on the inside picks the
+   * newest 50; ascending on the outside puts them back in reading order. A
+   * single ascending sort returns the fifty OLDEST messages in the chat.
+   */
+  conversation: `select at, who, text from (
+  select m.ZMESSAGEDATE as ord,
+         datetime(m.ZMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as at,
+         case m.ZISFROMME when 1 then 'me'
+              else coalesce(g.ZCONTACTNAME, m.ZPUSHNAME, s.ZPARTNERNAME) end as who,
+         m.ZTEXT as text
+    from ZWAMESSAGE m
+    join ZWACHATSESSION s on m.ZCHATSESSION = s.Z_PK
+    left join ZWAGROUPMEMBER g on m.ZGROUPMEMBER = g.Z_PK
+   where s.ZPARTNERNAME = '${WHATSAPP_CHAT_PLACEHOLDER}'
+     and m.ZTEXT is not null
+   order by m.ZMESSAGEDATE desc
+   limit 50
+) order by ord;`,
+
+  /** Every chat, for one word. */
+  search: `select s.ZPARTNERNAME as chat,
+       datetime(m.ZMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as at,
+       m.ZTEXT
+  from ZWAMESSAGE m
+  join ZWACHATSESSION s on m.ZCHATSESSION = s.Z_PK
+ where m.ZTEXT like '%dinner%'
+ order by m.ZMESSAGEDATE desc
+ limit 25;`,
+} as const;
+
+/**
+ * The fallback for a WAL store that will not open: copy it somewhere writable,
+ * read the copy, delete the copy.
+ *
+ * Everything variable arrives as a positional parameter, so nothing the caller
+ * supplies is ever parsed as shell. That is not stylistic — every recipe above
+ * contains single quotes ('unixepoch', '%dinner%'), so a template that pasted
+ * the query into the script string would be re-split into words on the one
+ * path the agent only reaches AFTER an error, and read as "the archive really
+ * is unreadable".
+ *
+ * The copy is opened WITHOUT -readonly: a read-only connection will not build
+ * the -shm index it needs, even in a directory it can write, so it fails
+ * exactly as the original did. And it is removed again in the same command —
+ * nothing else deletes a scratch dir (see the Executor), so a copy left behind
+ * is the owner's whole archive duplicated somewhere they never approved.
+ */
+export const WHATSAPP_FALLBACK_SCRIPT =
+  'cp "$1"* . && /usr/bin/sqlite3 -header -csv ./ChatStorage.sqlite "$2"; ' +
+  "rc=$?; rm -f ./ChatStorage.sqlite*; exit $rc";
+
+/** The full argv for that fallback, ready to hand to `plow_run_command`. */
+export function whatsappFallbackArgv(store: string, query: string): string[] {
+  return ["/bin/sh", "-c", WHATSAPP_FALLBACK_SCRIPT, "sh", store, query];
+}
+
 /** The group container WhatsApp Desktop syncs into. */
 export function whatsappStoreDir(home: string): string {
   return path.join(home, "Library/Group Containers/group.net.whatsapp.WhatsApp.shared");
@@ -36,6 +118,13 @@ export function whatsappStorePath(home: string): string {
 export function whatsappSkillFor(home: string): Skill {
   const store = whatsappStorePath(home);
   const dir = whatsappStoreDir(home);
+  // The recipes are stored unindented so a test can run them verbatim; the
+  // body wants them as four-space code blocks.
+  const indented = (sql: string): string =>
+    sql
+      .split("\n")
+      .map((line) => (line.trim() ? "    " + line : line))
+      .join("\n");
   return {
     name: WHATSAPP_SKILL_NAME,
     // Short on purpose. `skills.ts` keeps bodies out of the manifest so a long
@@ -128,45 +217,19 @@ one you are quoting.
 **Which chats, most recent first** — start here when the owner names someone, so you match
 their spelling to a real \`ZPARTNERNAME\`:
 
-    select ZPARTNERNAME,
-           datetime(ZLASTMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as last_message,
-           case when ZCONTACTJID like '%@g.us' then 'group' else 'direct' end as kind
-      from ZWACHATSESSION
-     where ZLASTMESSAGEDATE is not null
-     order by ZLASTMESSAGEDATE desc
-     limit 40;
+${indented(WHATSAPP_QUERIES.recentChats)}
 
 **A conversation — the last 50 messages, oldest first so it reads in order.** \`ZISFROMME\`
 says which side; in a group, the sender is the joined member rather than the chat's name.
-Note the shape: the inner query takes the *newest* 50, the outer one turns them back into
-reading order. Sorting ascending on its own would hand you the fifty oldest messages in the
-chat, from 2016:
+The sort happens twice on purpose: descending on the inside picks the newest 50, ascending
+on the outside puts them back in reading order. One ascending sort would hand you the fifty
+*oldest* messages in the chat instead.
 
-    select at, who, text from (
-      select m.ZMESSAGEDATE as ord,
-             datetime(m.ZMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as at,
-             case m.ZISFROMME when 1 then 'me'
-                  else coalesce(g.ZCONTACTNAME, m.ZPUSHNAME, s.ZPARTNERNAME) end as who,
-             m.ZTEXT as text
-        from ZWAMESSAGE m
-        join ZWACHATSESSION s on m.ZCHATSESSION = s.Z_PK
-        left join ZWAGROUPMEMBER g on m.ZGROUPMEMBER = g.Z_PK
-       where s.ZPARTNERNAME = 'Exact Name From The Query Above'
-         and m.ZTEXT is not null
-       order by m.ZMESSAGEDATE desc
-       limit 50
-    ) order by ord;
+${indented(WHATSAPP_QUERIES.conversation)}
 
 **Search every chat for a word:**
 
-    select s.ZPARTNERNAME as chat,
-           datetime(m.ZMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as at,
-           m.ZTEXT
-      from ZWAMESSAGE m
-      join ZWACHATSESSION s on m.ZCHATSESSION = s.Z_PK
-     where m.ZTEXT like '%dinner%'
-     order by m.ZMESSAGEDATE desc
-     limit 25;
+${indented(WHATSAPP_QUERIES.search)}
 
 \`like\` is case-insensitive for ASCII here and needs no extra setup. Search on the word the
 owner used before you start guessing synonyms, and tell them which chats you looked in.
@@ -174,23 +237,43 @@ owner used before you start guessing synonyms, and tell them which chats you loo
 ## When it does not answer
 
 - **\`Error: in prepare, unable to open database file (14)\` does not mean the file is
-  missing.** The store is a WAL database, and opening one needs a \`-shm\` sibling next to it.
-  When WhatsApp Desktop is not running that sibling may be gone, and creating it means
-  writing the owner's directory, which the sandbox does not allow. This reads as "no
-  database" and gets misreported as "no messages"; it is neither.
+  missing.** The store is a WAL database. Reading one needs a \`-shm\` index beside it, and
+  when WhatsApp Desktop is not running that file may be gone — rebuilding it means writing
+  the owner's directory, which the sandbox does not allow. This reads as "no database" and
+  gets misreported as "no messages"; it is neither.
 
-  Copy it somewhere you may write, and read the copy. The working directory a command
-  starts in is a scratch dir that is yours, so a relative destination is enough:
+  Copy it somewhere you may write, read the copy, delete the copy:
 
-      argv: ["/bin/sh", "-c",
-             "cp '${store}'* . && /usr/bin/sqlite3 -header -csv ./ChatStorage.sqlite '<your query>'"]
+      plow_run_command {
+        argv: ${JSON.stringify(whatsappFallbackArgv(store, "<your query>"), null, 2)
+          .split("\n")
+          .join("\n        ")},
+        read_paths: ["${dir}"],
+        goal: "<the question the owner actually asked, in one line>"
+      }
 
-  Two things about that line. The \`*\` copies the \`-wal\` and \`-shm\` siblings when they exist,
-  which is what makes the copy current rather than stale. And the copy is opened **without**
-  \`-readonly\`: it is a throwaway of your own, so sqlite may create the \`-shm\` it needs beside
-  it. \`-readonly\` is about the owner's archive, and that is what you copied *from* — never
-  the thing you open read-write. Each command gets a fresh scratch dir, so the copy and the
-  query have to be the same call; the dir goes away on its own afterwards.
+  Four things about that call, each of which took a wrong answer to find:
+
+  - **The query goes in as a positional parameter, never inside the script.** Every recipe
+    above contains single quotes — \`'unixepoch'\`, \`'%dinner%'\` — and a query pasted into
+    the script string would be re-split into words by the shell. Substitute your SQL for
+    the last element and change nothing else.
+  - **The \`*\` brings the \`-wal\` along, and that is what makes the copy current.** Recent
+    messages live in the write-ahead log until WhatsApp checkpoints them; copy the main
+    file alone and you get an answer that is quietly out of date. A stale \`-shm\` copied
+    with it is inert — sqlite rebuilds that index from the \`-wal\` on first open.
+  - **The copy is opened WITHOUT \`-readonly\`, and that is deliberate.** Rebuilding the
+    \`-shm\` is a write, so a read-only connection fails on the copy exactly as it failed on
+    the original. The copy is a throwaway of your own; \`-readonly\` is for the owner's
+    archive, which is what you copied *from* and still must never open any other way.
+  - **It deletes the copy on the way out.** That is the owner's entire message history;
+    leaving it lying around is not yours to do. The command runs in a scratch directory
+    when you do not pass \`cwd\` — pass one and the relative paths above land somewhere you
+    probably cannot write, so leave it unset here.
+
+  \`cp\` of a live database is a point-in-time snapshot, not an atomic one. If the copy comes
+  back \`database disk image is malformed\`, WhatsApp was mid-write: run the same call again.
+  Say it is busy rather than that the archive is broken — the archive is fine.
 - **The archive stops where the owner's phone stopped syncing.** WhatsApp Desktop holds
   what it has synced, and a chat cleared on the phone is gone here too. "I cannot find it"
   and "it was never here" are different answers — \`min(ZMESSAGEDATE)\` on that chat tells
