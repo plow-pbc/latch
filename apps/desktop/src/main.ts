@@ -963,7 +963,8 @@ app.whenReady().then(async () => {
       browserRuntime
         ? "[vault] not installed — this runtime has no vault payload. Run `just fetch-browser`."
         : "[browser] no runtime installed — the browser and the vault are off. " +
-            "Run scripts/worktree-setup.sh, or `just fetch-browser`.",
+            "Run `just fetch-browser`, or `scripts/worktree-setup.sh <donor-checkout>` " +
+            "to copy one from a checkout that has it.",
     );
   }
   // Live-refresh the audit view whenever a new event is recorded.

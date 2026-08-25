@@ -208,29 +208,6 @@ describe("worktree-setup.sh", () => {
     expect(out.split("\n")).toContain("stub just fetch-browser");
   });
 
-  it("takes nothing from a neighbour it was not pointed at", () => {
-    // The security posture, and now the whole of it: there is no inference to
-    // go wrong, so this is the case that says so. A complete runtime sits one
-    // directory away and setup does not look at it, because nothing in this
-    // script looks anywhere.
-    const parent = fs.mkdtempSync(path.join(tmp, "unasked-"));
-    checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
-    const asking = checkout(parent, "slot0", []);
-
-    const { stdout: out } = runSetup(asking);
-
-    expect(out).toContain("name one to copy a runtime");
-    expect(out).not.toContain("cloning vendor/");
-    // And says it once: the per-payload notes are for a donor that could not
-    // give a payload, not for a run that asked nobody.
-    expect(out).not.toContain("to clone");
-    for (const p of PAYLOADS) {
-      expect(fs.existsSync(path.join(asking, "vendor", p))).toBe(false);
-    }
-    // And no validation, because there is nothing here to validate.
-    expect(out).not.toContain("stub just fetch-browser");
-  });
-
   it("refuses to be its own donor", () => {
     const parent = fs.mkdtempSync(path.join(tmp, "selfdonor-"));
     const asking = checkout(parent, "slot0", PAYLOADS);
@@ -333,12 +310,16 @@ describe("worktree-setup.sh", () => {
     says: string;
     /** A vendor dir that must still have been copied, where one is. */
     landed?: string;
+    /** Payload dirs that must NOT be here afterwards. */
+    absent?: string[];
+    /** A string the run must not print. */
+    omits?: string;
   }[] = [
     {
       why: "given one that had nothing to give",
-      // A worktree inherits its donor whether or not that checkout ever built a
-      // runtime. Copying nothing is not a reason to fetch ~500 MB and
-      // cargo-build vaultwarden here.
+      // A donor may be named whether or not it ever built a runtime. Copying
+      // nothing is not a reason to fetch ~500 MB and cargo-build vaultwarden
+      // here.
       donor: (parent) => checkout(parent, "slot1", []),
       says: "no vendor/python-runtime to clone",
     },
@@ -357,10 +338,27 @@ describe("worktree-setup.sh", () => {
       // still has to finish — the browser stack is a later errand.
       donor: () => undefined,
       says: "name one to copy a runtime",
+      // Said once. The per-payload notes are for a donor that could not give a
+      // payload, not for a run that asked nobody.
+      omits: "to clone",
+    },
+    {
+      why: "not given one, beside a neighbour that has everything",
+      // The security posture, and now the whole of it: there is no inference
+      // left to go wrong, so this is the case that says so. A complete runtime
+      // sits one directory away and setup does not look at it, because nothing
+      // in this script looks anywhere.
+      donor: (parent) => {
+        checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
+        return undefined;
+      },
+      says: "name one to copy a runtime",
+      absent: PAYLOADS,
+      omits: "to clone",
     },
   ];
 
-  it.each(noSeed)("finishes without a fetch when $why", ({ donor, says, landed }) => {
+  it.each(noSeed)("finishes without a fetch when $why", ({ donor, says, landed, absent, omits }) => {
     const parent = fs.mkdtempSync(path.join(tmp, "noseed-"));
     const named = donor(parent);
     const asking = checkout(parent, "slot0", []);
@@ -368,6 +366,11 @@ describe("worktree-setup.sh", () => {
     const { stdout: out } = runSetup(asking, named);
 
     expect(out).toContain(says);
+    // Said once, and nothing taken that was not offered.
+    if (omits) expect(out).not.toContain(omits);
+    for (const p of absent ?? []) {
+      expect(fs.existsSync(path.join(asking, "vendor", p))).toBe(false);
+    }
     // The donor's marker, not the directory — the same distinction the copy
     // case makes, since a nested copy leaves the directory there either way.
     if (landed) {
