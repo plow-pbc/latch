@@ -95,8 +95,6 @@ contextBridge.exposeInMainWorld("domo", {
   cloudCreate: (chatUid: string, name: string) =>
     ipcRenderer.invoke("cloud:create", chatUid, name),
   cloudDelete: (agentId: string) => ipcRenderer.invoke("cloud:delete", agentId),
-  // Delete then re-create in the same chat; the replacement has a new agent id.
-  cloudRetry: (agentId: string) => ipcRenderer.invoke("cloud:retry", agentId),
   // Apply changes: one agent's local settings. Adversarial review is this app's
   // own reviewer, so it applies at once and reaches no network at all.
   cloudApply: (agentId: string, settings: { adversarialReview: boolean }) =>

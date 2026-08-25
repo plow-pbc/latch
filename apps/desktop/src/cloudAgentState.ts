@@ -24,14 +24,7 @@ import {
 } from "./cloudAgentMapper.js";
 import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
 import { activationChatLabel } from "./onboarding.js";
-import {
-  ApiBaseUrl,
-  FetchLike,
-  PlowApiError,
-  REQUEST_TIMEOUT_MS,
-  normalizeApiBaseUrl,
-  parseActivationChat,
-} from "./plowApi.js";
+import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import { CloudAgentLocalSettings, loadSettings, saveSettings } from "./settings.js";
 
 /**
@@ -179,6 +172,20 @@ export class CloudAgentState {
   private mutations = 0;
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
+  /**
+   * Chat uid -> the agent id whose local settings are waiting to be carried
+   * onto whatever agent turns up in that chat.
+   *
+   * A retry whose replacement create answered nothing may still have COMMITTED:
+   * the agent exists, with an id this process never saw. Deleting the old entry
+   * then would hand the recovered agent no `adversarialReview` at all, and
+   * under global Approve its requests on this Mac would auto-run — the switch
+   * reporting success while doing nothing, for the third time today.
+   *
+   * So the entry is kept, and the chat is remembered. `refreshAgents` is where
+   * the agent finally appears, and where the settings follow it.
+   */
+  private carryByChat = new Map<string, string>();
 
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
@@ -332,10 +339,17 @@ export class CloudAgentState {
 
     const replacement = await this.create(row.chatUid, row.name);
     if (generation !== this.generation) return;
-    // Read at the last possible moment, so what moves is whatever the user
-    // last chose — including a toggle that landed while this was in the air.
-    // A null replacement means the agent is gone with nowhere to carry to.
-    this.moveAgentSettings(id, replacement);
+    if (replacement) {
+      // Read at the last possible moment, so what moves is whatever the user
+      // last chose — including a toggle that landed while this was in the air.
+      this.moveAgentSettings(id, replacement);
+    } else if (this.readAgentSettings(id)) {
+      // No id came back, which is NOT the same as no agent. The create may
+      // have committed and answered nothing, so destroying the entry here
+      // would silently switch review off on an agent that is about to appear.
+      // Keep it, and let the listing say where it goes.
+      this.carryByChat.set(row.chatUid, id);
+    }
     this.publish();
   }
 
@@ -369,6 +383,7 @@ export class CloudAgentState {
   signedOut(): void {
     this.generation += 1;
     this.tearingDown.clear();
+    this.carryByChat.clear();
     // Before the rows go: these polls are authorised with a credential that is
     // no longer this Mac's, so every further request they make is a 401.
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
@@ -441,6 +456,22 @@ export class CloudAgentState {
     })();
   }
 
+  /**
+   * Give a newly-listed agent the settings a lost retry left behind.
+   *
+   * Matched on the chat, because the chat is the only thing that survived: a
+   * replacement has a new `agent_id`, and the whole problem is that this
+   * process never learned it. An agent that already has its own entry is left
+   * alone — it is not the one that went missing.
+   */
+  private claimCarriedSettings(agent: CloudAgentResource): void {
+    const from = this.carryByChat.get(agent.chatUid);
+    if (from === undefined || from === agent.agentId) return;
+    if (this.readAgentSettings(agent.agentId)) return;
+    this.carryByChat.delete(agent.chatUid);
+    this.moveAgentSettings(from, agent.agentId);
+  }
+
   private abortPoll(agentId: string): void {
     const controller = this.polls.get(agentId);
     if (!controller) return;
@@ -478,6 +509,9 @@ export class CloudAgentState {
       }
       this.rows = listed;
       this.agentsError = null;
+      // A retry whose replacement was never identified: the agent it produced
+      // shows up here, and its owner's review setting follows it.
+      for (const agent of agents) this.claimCarriedSettings(agent);
       // `teardown` is not a state an agent rests in — it is a delete that
       // failed provider-side and is waiting to be asked again. Nothing else
       // will ask, so this does, from whichever refresh sees it.
@@ -620,35 +654,12 @@ function messageOf(error: unknown): string {
  * parse and the label are shared with setup rather than written twice.
  */
 export class CloudChatsClient implements CloudChatsApi {
-  private readonly baseUrl: ApiBaseUrl;
-
-  constructor(
-    baseUrl: ApiBaseUrl,
-    private readonly fetchImpl: FetchLike = fetch,
-  ) {
-    this.baseUrl = normalizeApiBaseUrl(baseUrl);
-  }
+  constructor(private readonly api: PlowApi) {}
 
   async list(deviceCredential: string): Promise<CloudChatOption[]> {
-    let response: Response;
-    try {
-      response = await this.fetchImpl(`${this.baseUrl}/v1/chats`, {
-        method: "GET",
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${deviceCredential}`,
-        },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (error) {
-      const name = (error as { name?: unknown })?.name;
-      if (name === "TimeoutError" || name === "AbortError") {
-        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
-      }
-      // A fetch implementation may carry the whole Request, headers included,
-      // in the cause. Only fixed text crosses this boundary.
-      throw new PlowApiError("network", "Couldn't reach Plow.");
-    }
+    const response = await this.api.request("GET", "/v1/chats", {
+      token: deviceCredential,
+    });
 
     if (response.status === 403) {
       // 403 has no screen of its own, so the remedy has to be in the sentence.

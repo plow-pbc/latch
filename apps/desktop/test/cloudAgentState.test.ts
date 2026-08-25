@@ -19,7 +19,7 @@ import {
   CloudChatsClient,
 } from "../src/cloudAgentState.js";
 import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
-import { PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
+import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
@@ -349,6 +349,72 @@ describe("removing and retrying", () => {
     expect(state.state().cloudAgents).toEqual([]);
   });
 
+  it("does not switch review off when a replacement create commits unseen", async () => {
+    // The probe: the POST lands, the answer does not. The agent exists with an
+    // id this process never learned, so deleting the old entry here would hand
+    // it no `adversarialReview` — and under global Approve its requests on
+    // this Mac would auto-run, the switch reporting success while doing
+    // nothing.
+    const home = tempHome();
+    const committed = agent({ agentId: "agent_2", chatUid: "cht_1", status: "running" });
+    let listed: CloudAgentResource[] = [agent({ status: "running" })];
+    const f = fakes({
+      list: async () => listed,
+      create: async () => {
+        // Committed server-side; the response never arrives.
+        listed = [committed];
+        throw new PlowApiError("network", "Couldn't reach Plow.");
+      },
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: true });
+
+    await state.retry("agent_1");
+    await settle();
+
+    // Nothing was destroyed while the outcome was unknown.
+    expect(loadSettings(home).cloudAgentSettings.agent_1?.adversarialReview).toBe(true);
+
+    // And the agent that turns up in that chat inherits it.
+    await state.refresh();
+    await settle();
+
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_2: { adversarialReview: true },
+    });
+    expect(state.state().cloudAgentSettings.agent_2.adversarialReview).toBe(true);
+  });
+
+  it("leaves an agent that has its own settings alone", async () => {
+    const home = tempHome();
+    let listed: CloudAgentResource[] = [agent({ status: "running" })];
+    const f = fakes({
+      list: async () => listed,
+      create: async () => {
+        listed = [
+          agent({ agentId: "agent_2", chatUid: "cht_1", status: "running" }),
+          agent({ agentId: "agent_3", chatUid: "cht_1", status: "running" }),
+        ];
+        throw new PlowApiError("network", "Couldn't reach Plow.");
+      },
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { adversarialReview: true });
+    await state.retry("agent_1");
+    await settle();
+    // A second agent in the same chat that already made its own choice.
+    await state.apply("agent_3", { adversarialReview: false });
+
+    await state.refresh();
+    await settle();
+
+    // The carry lands on the one with nothing, and never overwrites a choice.
+    expect(loadSettings(home).cloudAgentSettings.agent_3).toEqual({ adversarialReview: false });
+    expect(loadSettings(home).cloudAgentSettings.agent_2).toEqual({ adversarialReview: true });
+  });
+
   it("carries a toggle made while the retry was in flight", async () => {
     const home = tempHome();
     const creating = deferred<CloudAgentResource>();
@@ -552,10 +618,13 @@ describe("a cancelled provision", () => {
       return json(200, receipt);
     };
     // The poll parks in `wait`, so the test can abort it mid-flight.
-    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => {
-      waits += 1;
-      return parked.promise;
-    });
+    const client = new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => {
+        waits += 1;
+        return parked.promise;
+      },
+    );
     const home = tempHome();
     const state = new CloudAgentState({
       agents: client,
@@ -683,7 +752,7 @@ describe("a 403 from the real chat endpoint", () => {
         },
         // The REAL client, so this covers the HTTP status handling the fakes
         // elsewhere in this file stand in for.
-        chats: new CloudChatsClient("https://api.plow.co", fetchLike),
+        chats: new CloudChatsClient(new PlowApi("https://api.plow.co", fetchLike)),
         home,
         }),
     };
@@ -740,7 +809,10 @@ describe("CloudChatsClient", () => {
     };
 
     await expect(
-      new CloudChatsClient("https://api.plow.co", fetchImpl).list(CREDENTIAL),
-    ).rejects.toMatchObject({ kind: "network", message: "Couldn't reach Plow." });
+      new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)).list(CREDENTIAL),
+    ).rejects.toMatchObject({
+      kind: "network",
+      message: "Couldn't reach Plow at https://api.plow.co.",
+    });
   });
 });

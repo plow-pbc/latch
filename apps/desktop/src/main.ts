@@ -583,14 +583,6 @@ ipcMain.handle("cloud:delete", async (_e, agentId: string) => {
   await cloudAgents?.remove(agentId);
   return agentsTabState();
 });
-ipcMain.handle("cloud:retry", async (_e, agentId: string) => {
-  await cloudAgents?.retry(agentId);
-  return agentsTabState();
-});
-/**
- * Write one agent's local settings. Local only — it reaches no network at all,
- * so it answers with the new state rather than anything to wait on.
- */
 ipcMain.handle(
   "cloud:apply",
   async (_e, agentId: string, settings: { adversarialReview: boolean }) => {
@@ -1046,12 +1038,13 @@ app.whenReady().then(async () => {
 
   // The cloud-agent group shares the Agents tab's change channel, because it
   // shares the tab's state shape.
+  const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   cloudAgents = new CloudAgentState({
     // Both clients log what they send and what comes back — see wireLog.ts.
     // There is no server-side request log we can read, and during the rollout
     // that account is the only one there is.
-    agents: new CloudAgentsClient(apiBaseUrl, loggingFetch(home)),
-    chats: new CloudChatsClient(apiBaseUrl, loggingFetch(home)),
+    agents: new CloudAgentsClient(cloudApi),
+    chats: new CloudChatsClient(cloudApi),
     home,
     onChange: () => notifyRenderer("connect:changed"),
   });
