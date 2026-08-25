@@ -53,8 +53,8 @@ payloads=$(sh scripts/runtime-donor.sh --payloads) && [[ -n "$payloads" ]] || {
   exit 1
 }
 
-for name in $payloads downloads; do
-  dir="vendor/$name"
+for payload in $payloads downloads; do
+  dir="vendor/$payload"
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -n "$donor" && -d "$donor/$dir" ]]; then
