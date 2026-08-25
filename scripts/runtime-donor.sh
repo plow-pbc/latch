@@ -36,6 +36,11 @@ for candidate in "$(dirname "$common")" "$(dirname "$self")"/*; do
   # under `--browser`. A donor carrying the first would win the search and hand
   # the new checkout a Python runtime with no browser and no vault behind it —
   # the exact state this script exists to prevent.
+  #
+  # worktree-setup.sh copies these four and vendor/downloads, which is a
+  # download cache rather than a payload and so is deliberately not gated on
+  # here — a donor without it is still a good donor. Anything added there that
+  # the app actually needs belongs in this list too.
   for payload in python-runtime camoufox-browser vault-server vault-cli; do
     [ -d "$candidate/vendor/$payload" ] || continue 2
   done
@@ -46,3 +51,8 @@ for candidate in "$(dirname "$common")" "$(dirname "$self")"/*; do
   printf '%s\n' "$candidate"
   exit 0
 done
+
+# Finding nobody is the ordinary answer in a fresh clone, not a failure — and
+# worktree-setup.sh reads this under `set -e`, so leaving the status to whatever
+# the loop happened to end on is a trap for the next guard added above.
+exit 0

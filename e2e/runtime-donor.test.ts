@@ -98,6 +98,15 @@ describe("runtime-donor.sh", () => {
     expect(donorFor(self)).toBe("");
   });
 
+  it("says nothing outside a git repository, rather than failing", () => {
+    // worktree-setup.sh reads this under `set -e`, so the answer for a
+    // directory git knows nothing about has to be an empty success — a
+    // non-zero status here would abort a setup before it installed anything.
+    const parent = fs.mkdtempSync(path.join(tmp, "nogit-"));
+    const self = checkout(parent, "loose", { pins: OURS, payloads: [], git: false });
+    expect(donorFor(self)).toBe("");
+  });
+
   it("still finds the checkout a linked worktree came from, wherever it sits", () => {
     // The original case, and the one sibling-scanning cannot cover: a worktree
     // is placed wherever `git worktree add` was pointed, which is routinely not
