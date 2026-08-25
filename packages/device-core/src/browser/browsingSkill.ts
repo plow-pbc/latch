@@ -83,7 +83,7 @@ profile. It is for a site that blocked you, not for starting over on one that di
 
 \`plow_browser {session, action, ...}\` — actions:
 goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
-url, title, links, forms, tables, pages.
+url, title, links, forms, tables, pages, fresh_profile.
 
 1. \`goto\` a URL → 2. \`wait\` 2–3 s → 3. \`screenshot\` (you receive the image — LOOK at it)
 → 4. decide → 5. \`click\`/\`fill\`/\`scroll\` → 6. screenshot again.

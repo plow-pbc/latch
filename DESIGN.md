@@ -328,11 +328,11 @@ inside a session sticks, and two browsers signed into two different sites both
 keep theirs. Replacing the profile wholesale, which is the obvious version of
 this, would let the last browser to close decide what the user is signed into.
 Ceiling: cookies only, so a site that keeps its session in localStorage still
-signs out with the clone. One deliberate exception, in two reaches: a session
-can inherit nothing and leave nothing — no clone in, no merge out — either
-because the app was launched with `DOMO_BROWSER_FRESH_PROFILE=1` or because the
-session dropped its own profile mid-flight through `plow_browser`'s
-`fresh_profile`. Both exist for the same reason: a site's verdict that you are a
+signs out with the clone. One deliberate exception, reached two ways:
+`DOMO_BROWSER_FRESH_PROFILE=1` means a session never clones in at all, and
+`plow_browser`'s `fresh_profile` means a session throws away the clone it
+started with. Both end the same way — nothing merges out — and both exist for
+the same reason: a site's verdict that you are a
 bot is a cookie like any other, so a clone carries it and the next session
 replays the block instead of retesting it. The per-session reach is the one that
 matters in practice, because a block is only detectable after it lands. Neither

@@ -549,7 +549,8 @@ export const TOOLS: ToolSpec[] = [
     title: "Drive the user's browser",
     description:
       "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
-      "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
+      "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages, " +
+      "fresh_profile. " +
       "'screenshot' returns an image of the page — take one after " +
       "every navigation to see where you are. When a 'click' fails, give it a longer " +
       "'timeout_ms' — never synthesize the click with 'eval', which sites detect. A click " +
