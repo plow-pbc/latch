@@ -269,6 +269,30 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
     expect(calls[0].init.method).toBe("POST");
   });
 
+  it("surfaces the message from a create 404 error envelope", async () => {
+    const detail = "chat 'x' not found.";
+    const { calls, fetchImpl } = recordingFetch([
+      {
+        status: 404,
+        body: {
+          error: {
+            type: "not_found_error",
+            code: "chat_not_found",
+            message: detail,
+          },
+        },
+      },
+    ]);
+
+    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
+      .create(CREDENTIAL, { chatUid: "x" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(String(error)).toBe(`PlowApiError: ${detail}`);
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
+  });
+
   it("never puts a credential echoed by HTTP or fetch into an error string", async () => {
     const echoed = async () =>
       new Response(`{"detail":"rejected Bearer \\u0070low_sk_device_do_not_leak"}`, {
@@ -278,9 +302,15 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
     const transportEcho = async () => {
       throw new Error(`failed request with Authorization: Bearer ${CREDENTIAL}`);
     };
+    const nestedEcho = async () =>
+      new Response(JSON.stringify({ error: { message: `rejected Bearer ${CREDENTIAL}` } }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
 
     for (const client of [
       new CloudAgentsClient("https://api.plow.co", echoed),
+      new CloudAgentsClient("https://api.plow.co", nestedEcho),
       new CloudAgentsClient("https://api.plow.co", transportEcho),
     ]) {
       const error = await client.list(CREDENTIAL).catch((caught: unknown) => caught);

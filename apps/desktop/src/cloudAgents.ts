@@ -257,12 +257,7 @@ function parseResource(
 }
 
 function errorFor(status: number, decoded: unknown, deviceCredential: string): PlowApiError {
-  const detail =
-    isRecord(decoded) &&
-    typeof decoded.detail === "string" &&
-    !echoesCredential(decoded.detail, deviceCredential)
-      ? decoded.detail
-      : "";
+  const detail = errorMessage(decoded, deviceCredential);
   if (status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", status);
   if (status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", status);
   if (status === 503) {
@@ -273,6 +268,17 @@ function errorFor(status: number, decoded: unknown, deviceCredential: string): P
     );
   }
   return new PlowApiError("http", detail || `Plow returned ${status}.`, status);
+}
+
+function errorMessage(decoded: unknown, deviceCredential: string): string {
+  if (!isRecord(decoded)) return "";
+  const message =
+    typeof decoded.detail === "string"
+      ? decoded.detail
+      : isRecord(decoded.error) && typeof decoded.error.message === "string"
+        ? decoded.error.message
+        : "";
+  return echoesCredential(message, deviceCredential) ? "" : message;
 }
 
 function invalidResponse(status: number): PlowApiError {
