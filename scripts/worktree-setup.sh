@@ -205,8 +205,8 @@ if [[ -n "${have_runtime:-}" ]]; then
     echo "error: the runtime in vendor/ did not check out, so this checkout is" >&2
     echo "  NOT ready — its dependencies and build are in place, but the" >&2
     echo "  payloads have not been validated. That may be the payloads, or it" >&2
-    echo "  may be this machine: building what they are missing can want a Rust" >&2
-    echo "  toolchain. The fetch above says which." >&2
+    echo "  may be this machine: building what is missing or out of date can" >&2
+    echo "  want a Rust toolchain. The fetch above says which." >&2
     echo "" >&2
     echo "  Fix whatever the fetch reported and run \`just fetch-browser\` here," >&2
     echo "  or remove the payloads from vendor/ to start over. Re-running this" >&2

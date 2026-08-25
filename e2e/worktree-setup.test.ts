@@ -249,9 +249,11 @@ describe("worktree-setup.sh", () => {
     // but nothing a copy could take. Advertising it would send someone to a
     // checkout that then clones nothing — the filter asks the copy arm's
     // question, not the skip arm's. Only that: the errexit shape that scan used
-    // to have is owned by the noSeed row whose parent holds nothing else, where
-    // the disqualified candidate is structurally last and no name has to argue
-    // for it.
+    // to have is owned by the noSeed row that names no donor at all ("beside a
+    // sibling that is a checkout but has nothing to give") — the discriminator
+    // is returning undefined, not the parent's contents, since the row above it
+    // builds the same fixture and hands it over as a named donor, which never
+    // reaches the scan.
     const notADir = checkout(parent, "slot3", []);
     fs.writeFileSync(path.join(notADir, "vendor", PAYLOADS[0]), "not a directory\n");
     const asking = checkout(parent, "slot0", []);
@@ -324,7 +326,9 @@ describe("worktree-setup.sh", () => {
     // and its failure must not name a source it never had.
     const { stderr } = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
     expect(stderr).toMatch(/the runtime in vendor\/ did not check out/);
-    expect(stderr).not.toMatch(/came from|donor/);
+    // The class, not two spellings of it: "the copy" got past an earlier
+    // version of this guard, which is what a word-shaped assertion buys you.
+    expect(stderr).not.toMatch(/came from|donor|the copy|copied/);
   });
 
   // Four ways to arrive with nothing worth checking, one contract: setup
@@ -368,6 +372,12 @@ describe("worktree-setup.sh", () => {
       // neighbour that qualifies as a checkout but has no runtime, so there is
       // nothing to offer and setup carries on rather than refusing — or, as it
       // did, aborting on the scan's own last test.
+      //
+      // What has to stay true for that second half: this sibling must remain
+      // the last entry the scan REACHES, since every earlier bail ends its
+      // iteration at status 0. A fixture added here that sorts after it and is
+      // not a usable checkout would take the final iteration and quietly end
+      // the coverage.
       donor: (parent) => {
         checkout(parent, "slot1", []);
         return undefined;
