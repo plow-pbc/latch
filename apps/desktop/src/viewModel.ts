@@ -413,8 +413,8 @@ function classifyActivity(
         : { status: "Started over", tone: "amber", category: "failed" };
     }
     // The page's own server refused what the agent asked it to do — ranked
-    // under a crash and a scope block, both stronger claims about the session,
-    // but well above "Browsing".
+    // under a crash, a scope block and a profile reset, all stronger claims
+    // about the session, but well above "Browsing".
     if (events.some((e) => (jv(e).get("failed_requests").arr ?? []).length > 0)) {
       return closed
         ? { status: "Closed · requests refused", tone: "amber", category: "failed" }
@@ -507,6 +507,9 @@ function describeStep(e: JSONValue): AuditStep {
   const ev = jv(e);
   const event = ev.get("event").str ?? "";
   const argv = () => (ev.get("argv").arr ?? []).filter((a): a is string => typeof a === "string").join(" ");
+  /** A list field as the owner reads it, with one answer for an empty one. */
+  const list = (key: string) =>
+    (ev.get(key).arr ?? []).filter((v): v is string => typeof v === "string").join(", ") || "—";
   let text: string;
   let state: StepState = "neutral";
   switch (event) {
@@ -568,11 +571,11 @@ function describeStep(e: JSONValue): AuditStep {
     case "tool_invoked": text = `Tool used: ${ev.get("tool").str ?? ""}`; state = "ok"; break;
     case "tool_error": text = `Tool error: ${ev.get("tool").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
     case "browser_session_opened":
-      text = `Browser session opened — ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ")}`;
+      text = `Browser session opened — ${list("origins")}`;
       state = "ok";
       break;
     case "browser_session_extended":
-      text = `Session widened — origins: ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ") || "—"}; items: ${(ev.get("items").arr ?? []).filter((i): i is string => typeof i === "string").join(", ") || "—"}`;
+      text = `Session widened — origins: ${list("origins")}; items: ${list("items")}`;
       state = "ok";
       break;
     case "browser_cookie_merge_failed":
@@ -629,7 +632,7 @@ function describeStep(e: JSONValue): AuditStep {
       // Says what happened, not why: the event records the reset, and the
       // agent's reason for asking is not something this Mac can vouch for.
       text =
-        `Browser started over on an empty profile — ${(ev.get("origins").arr ?? []).filter((o): o is string => typeof o === "string").join(", ")} — ` +
+        `Browser started over on an empty profile — ${list("origins")} — ` +
         "signed out, and nothing it does now is saved.";
       state = "bad";
       break;

@@ -214,6 +214,13 @@ describe("audit grouping for browser sessions", () => {
       close: [{ event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:09Z" }],
       status: "Closed · started over",
     },
+    // And it stays under a refusal: the cage stopping the agent outranks the
+    // agent deciding to start over. Unpinned, that order drifts back silently.
+    {
+      when: "outranked by a scope block",
+      close: [{ event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:04Z" }],
+      status: "Scope blocked",
+    },
   ])("a session that threw its profile away does not read as ordinary browsing ($when)", ({ close, status }) => {
     // Sign-ins the owner does not get back, same as a failed merge — on
     // purpose rather than by accident, but they filter on the outcome. Green
