@@ -64,34 +64,36 @@ fs.writeFileSync(
 fs.chmodSync(path.join(stubBin, "just"), 0o755);
 
 /**
- * Run setup and hand back everything it said. Both streams, because the notes
- * it writes when it declines to do something go to stderr and are half of what
- * it promises; throws with the same text on a non-zero exit.
+ * Run setup and hand back both streams, separately. The notes it writes when it
+ * declines to do something go to stderr and are half of what it promises, so
+ * neither stream alone is the whole answer — and merging them would put the
+ * note after the "ready" line it precedes, and fuse the two at the seam.
  */
-function runSetup(dir: string, donor?: string, failing?: string): string {
+interface Ran {
+  stdout: string;
+  stderr: string;
+}
+
+function runSetup(dir: string, donor?: string, failing?: string): Ran {
   const r = spawnSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
     cwd: dir,
     encoding: "utf8",
     env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}`, JUST_FAIL: failing ?? "" },
   });
-  const said = `${r.stdout}${r.stderr}`;
-  if (r.status !== 0) throw Object.assign(new Error(said), { stdout: r.stdout, stderr: r.stderr });
-  return said;
+  // A spawn that never happened, or a child killed on maxBuffer, reports here
+  // and leaves both streams null — losing it would surface as a mismatched
+  // assertion on the string "null" rather than as the thing that went wrong.
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw Object.assign(new Error(r.stderr || r.stdout), { stdout: r.stdout, stderr: r.stderr });
+  return { stdout: r.stdout, stderr: r.stderr };
 }
 
 /** Run a setup that must refuse, and hand back what it said on the way out. */
-function runSetupExpectingRefusal(
-  dir: string,
-  donor?: string,
-  failing?: string,
-): { stdout: string; stderr: string } {
+function runSetupExpectingRefusal(dir: string, donor?: string, failing?: string): Ran {
   try {
     runSetup(dir, donor, failing);
   } catch (e) {
-    const err = e as { stdout?: Buffer | string; stderr?: Buffer | string };
-    expect(err.stdout).toBeDefined();
-    expect(err.stderr).toBeDefined();
-    return { stdout: String(err.stdout), stderr: String(err.stderr) };
+    return e as unknown as Ran;
   }
   throw new Error("setup was expected to refuse, and did not");
 }
@@ -110,7 +112,7 @@ describe("worktree-setup.sh", () => {
     fs.mkdirSync(path.join(asking, "vendor", `${PAYLOADS[1]}.partial`), { recursive: true });
     fs.writeFileSync(path.join(asking, "vendor", `${PAYLOADS[1]}.partial`, "junk"), "from a killed run");
 
-    const out = runSetup(asking, donor);
+    const { stdout: out } = runSetup(asking, donor);
 
     // Everything the donor had, at the depth it had it — all but the payload
     // this checkout already carried. Asserting the donor's marker rather than
@@ -237,7 +239,7 @@ describe("worktree-setup.sh", () => {
     const named = donor(parent);
     const asking = checkout(parent, "slot0", []);
 
-    const out = runSetup(asking, named);
+    const { stdout: out } = runSetup(asking, named);
 
     expect(out).toContain(says);
     expect(out).not.toContain("stub just fetch-browser");
