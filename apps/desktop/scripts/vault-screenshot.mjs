@@ -26,6 +26,7 @@ import {
   decryptSummary,
   encryptCipher,
   splitKey,
+  totpCode,
   TYPE_CODE,
 } from "@domo/device-core";
 
@@ -57,6 +58,7 @@ seed({
   name: "Product Hunt",
   username: "daniel@plow.co",
   password: "already-stored",
+  totp: "JBSWY3DPEHPK3PXP",
   // Three, because one site proves nothing about removing the right one.
   urls: ["https://www.producthunt.com", "https://ph.co", "https://api.producthunt.com"],
 });
@@ -80,6 +82,11 @@ async function setUp() {
   ipcMain.handle("vault:item", async (_e, itemId) => decryptItem(ciphers.get(itemId), account));
   ipcMain.handle("vault:reveal", async (_e, itemId, field) =>
     decryptField(ciphers.get(itemId), account, field),
+  );
+  // The digits a stored key is showing, derived here the way the vault derives
+  // them — the key itself never leaves this process, same as in the real app.
+  ipcMain.handle("vault:totp", async (_e, itemId, key) =>
+    totpCode(typeof key === "string" && key.trim() !== "" ? key : decryptField(ciphers.get(itemId), account, "totp")),
   );
   ipcMain.handle("vault:saveItem", async (_e, input) => {
     sentUrls = input.urls ?? null;
@@ -146,6 +153,50 @@ const SCREENS = [
       await clickText(win, "Name, address & contact details");
     },
     expect: ["Name", "First name", "Last name", "Address 1", "ZIP / Postal code", "Social Security number", "Passport number"],
+  },
+  {
+    name: "saved-secret",
+    prepare: async (win) => {
+      await clickText(win, "Product Hunt");
+      await settle(win);
+      // The password and the key sit either side of this window's fold; the
+      // shot is worth nothing if it frames only one of them.
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".vaultui .field.secret")?.scrollIntoView({ block: "start" })`,
+      );
+      await settle(win);
+    },
+    // What a stored secret looks like before anyone asks to see it: the same
+    // bullets the empty boxes draw, in the weight of a value.
+    expect: ["Product Hunt", "Password", "Authenticator key (TOTP)"],
+    after: async (win) => {
+      const boxes = await win.webContents.executeJavaScript(`
+        (() => {
+          const read = (label) => {
+            const field = [...document.querySelectorAll(".vaultui .field")]
+              .find((f) => (f.querySelector("label")?.textContent || "").replace(/[\\s*]+$/, "") === label);
+            const input = field?.querySelector("input");
+            if (!input) return null;
+            return {
+              held: field.classList.contains("held"),
+              placeholder: input.getAttribute("placeholder"),
+              value: input.value,
+              inked: getComputedStyle(input, "::placeholder").color === getComputedStyle(input).color,
+            };
+          };
+          return { password: read("Password"), totp: read("Authenticator key (TOTP)") };
+        })()
+      `);
+      for (const [label, box] of Object.entries(boxes)) {
+        if (!box) throw new Error(`no ${label} box on the opened item`);
+        // A saved secret says so in bullets — no sentence, and no fake value
+        // that a save could write back over the real one.
+        if (!box.held) throw new Error(`${label}: stored secret is not marked held`);
+        if (!/^\u2022+$/.test(box.placeholder ?? "")) throw new Error(`${label}: box reads ${JSON.stringify(box.placeholder)}, wanted bullets`);
+        if (box.value !== "") throw new Error(`${label}: box holds ${JSON.stringify(box.value)}; the mask must never be a value`);
+        if (!box.inked) throw new Error(`${label}: bullets are painted as a hint, not as a value`);
+      }
+    },
   },
   {
     name: "open-login",
