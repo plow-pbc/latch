@@ -30,6 +30,10 @@ const serverDir = path.join(vendorDir, "browser-server");
 const runtimeDir = path.join(vendorDir, "python-runtime");
 const downloadsDir = path.join(vendorDir, "downloads");
 const browserDir = path.join(vendorDir, "camoufox-browser");
+// The fused tree and the marker mergeCamoufoxUniversal() writes when it is
+// complete. Named here because fetchBrowser() invalidates it too.
+const universalDir = path.join(browserDir, "universal");
+const universalMarker = path.join(universalDir, ".sha256");
 const vaultCliDir = path.join(vendorDir, "vault-cli");
 const vaultServerDir = path.join(vendorDir, "vault-server");
 
@@ -557,11 +561,13 @@ function fetchBrowser(arch) {
   // for the whole download+extract, which is exactly what runtime-donor.sh
   // reads to decide a donor is ready. Gone before the work, not after it.
   fs.rmSync(marker, { force: true });
-  // The fused tree too. A per-arch rebuild invalidates it by definition, and
-  // runtime-donor.sh falls back to it whenever no per-arch dir exists — which
-  // is every moment of this function before mkdirSync creates one, on exactly
-  // the --browser-both donor that keeps no per-arch tree.
-  fs.rmSync(path.join(browserDir, "universal", ".sha256"), { force: true });
+  // The fused tree's marker too. It records both arch hashes, so a rebuild
+  // that lands the same bytes would leave it honest — but until this one
+  // finishes there is no way to know that, and runtime-donor.sh falls back to
+  // it whenever no per-arch dir exists, which is every moment of this function
+  // before mkdirSync creates one. That is exactly the --browser-both donor
+  // that kept no per-arch tree. Re-earned on the next merge, not assumed.
+  fs.rmSync(universalMarker, { force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
   const version = dash === -1 ? fullVersion : fullVersion.slice(0, dash);
@@ -636,8 +642,8 @@ function fetchBrowser(arch) {
  *     152.0.4-beta.28).
  */
 function mergeCamoufoxUniversal() {
-  const outRoot = path.join(browserDir, "universal");
-  const marker = path.join(outRoot, ".sha256");
+  const outRoot = universalDir;
+  const marker = universalMarker;
   const markerValue = [
     lock.camoufox.assets.arm64.sha256,
     lock.camoufox.assets.x64.sha256,
