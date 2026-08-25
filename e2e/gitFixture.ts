@@ -27,9 +27,13 @@ const DISCOVERY_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX
  * `process.env` with anything that would point git out of the fixture removed.
  * Pass `root` — the directory the fixtures live in, a real path — and discovery
  * is also stopped from climbing above it, for a TMPDIR that itself sits inside
- * a working tree; some CI images do this. Both halves belong together: one
- * skips the walk, the other bounds it, and a suite shutting only one is still
- * reachable.
+ * a working tree; some CI images do this.
+ *
+ * The deletes are unconditional because those variables answer for another
+ * repository wherever they are set. The bound is only wanted where a lookup may
+ * run somewhere that is NOT itself a fixture repo — the scripts under test,
+ * which is why `git` below passes no root: its cwd is always the repo it is
+ * operating on, so there is no walk to bound.
  *
  * The ceiling is `root`'s PARENT, not `root`. GIT_CEILING_DIRECTORIES stops git
  * chdir-ing UP INTO a listed directory, so listing `root` does nothing for a

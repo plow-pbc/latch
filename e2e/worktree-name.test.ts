@@ -37,6 +37,30 @@ function makeRepo(dir: string): string {
   return repo;
 }
 
+describe("hermeticEnv", () => {
+  it("keeps a repository ABOVE the fixture root out of reach", () => {
+    // The ceiling has to be the root's PARENT. GIT_CEILING_DIRECTORIES stops
+    // git chdir-ing UP INTO a listed directory, so listing the root itself
+    // leaves a lookup that starts AT the root free to check there and then
+    // ascend past a ceiling it never enters. Both spellings behave identically
+    // unless a repository actually sits above the root, which no ordinary
+    // machine provides and which is why the correction had only a comment
+    // holding it — so the outer repository is built here rather than waited for.
+    const outer = path.join(tmp, "outer");
+    const root = path.join(outer, "root");
+    fs.mkdirSync(root, { recursive: true });
+    git(outer, "init", "-q", "-b", "main");
+
+    const said = execFileSync("sh", [script, "--branch"], {
+      cwd: root,
+      encoding: "utf8",
+      env: hermeticEnv(root),
+    }).trim();
+
+    expect(said).toBe("");
+  });
+});
+
 describe("worktree-name.sh", () => {
   it("prints nothing in a main checkout and outside a repo", () => {
     const repo = makeRepo("plain");
