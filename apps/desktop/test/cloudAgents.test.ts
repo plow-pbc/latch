@@ -94,7 +94,9 @@ describe("CloudAgentsClient request contracts", () => {
   });
 
   it("POSTs the reconfigure shape by agent_id with a short request timeout", async () => {
-    const { calls, fetchImpl } = recordingFetch([{ status: 202, body: resource("provisioning") }]);
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 202, body: resource("provisioning", { agent_id: "agent/123" }) },
+    ]);
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const client = new CloudAgentsClient("https://api.plow.co/", fetchImpl);
 
@@ -119,6 +121,22 @@ describe("CloudAgentsClient request contracts", () => {
     });
     expect(timeout).toHaveBeenCalledWith(REQUEST_TIMEOUT_MS);
     timeout.mockRestore();
+  });
+
+  it("rejects a reconfigure receipt for a different agent_id", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 202, body: resource("provisioning", { agent_id: "unexpected_agent" }) },
+    ]);
+    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
+
+    await expect(
+      client.reconfigure(CREDENTIAL, "agent_123", { scopes: ["chats:use"] }),
+    ).rejects.toMatchObject({
+      name: "PlowApiError",
+      kind: "http",
+      status: 202,
+      message: "Plow returned an invalid cloud-agent response.",
+    });
   });
 
   it("treats deleting an already-gone agent as success", async () => {

@@ -109,7 +109,9 @@ export class CloudAgentsClient {
       deviceCredential,
       body,
     );
-    return this.resourceFor(response, deviceCredential);
+    const receipt = await this.resourceFor(response, deviceCredential);
+    if (receipt.agentId !== agentId) throw invalidResponse(response.status);
+    return receipt;
   }
 
   async get(
