@@ -6,8 +6,11 @@
 #   (no args)    the donor's path, or nothing
 #   --payloads   the vendor/ dirs a complete donor carries, one per line. One
 #                owner for the list: worktree-setup.sh copies these (plus its
-#                download cache) and the suite asserts on them, so a payload
-#                added to the build only has to be named here.
+#                download cache) and the suite reads them, so a payload added
+#                to the build only has to be named here. Reading rather than
+#                restating means the suite follows this list wherever it goes,
+#                so it names the two load-bearing members once to catch a list
+#                that loses one.
 #
 # Where to look. A linked worktree shares its git dir with the checkout it was
 # made from, so that one is the obvious donor. A plain clone beside the others

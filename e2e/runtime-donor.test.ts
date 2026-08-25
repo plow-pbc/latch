@@ -33,6 +33,10 @@ function donorFor(cwd: string): string {
  * What a complete donor carries, asked of the script rather than restated: it
  * owns the list, and a payload added to the build should extend what "complete"
  * means here without a second edit.
+ *
+ * Read, not asserted — so the two members this file exists to protect are named
+ * once below. Everything else here compares the list against itself, which a
+ * list that lost an entry would survive.
  */
 const FULL = execFileSync("sh", [script, "--payloads"], { encoding: "utf8" }).trim().split("\n");
 /** What plain `just fetch-browser-runtime` leaves behind. The browser and the
@@ -70,6 +74,16 @@ function checkout(parent: string, spec: Spec): string {
   return dir;
 }
 
+it("gates on the payloads the browser and the vault actually live in", () => {
+  // The rest of the file derives from `payloads()`, so it would follow that
+  // list anywhere — including off a cliff. Dropping vault-server from it would
+  // stop the donor gate requiring it and stop setup copying it, and every case
+  // below would still pass. These two are the point of the script; naming them
+  // once is what makes the derivation safe. A fifth payload needs no edit here.
+  expect(FULL).toContain("vault-server");
+  expect(FULL).toContain("camoufox-browser");
+});
+
 describe("runtime-donor.sh, among siblings", () => {
   // One arrange/act shape — lay out a row of checkouts, ask the first one who
   // its donor is — so the differences between cases stay visible as data.
@@ -94,6 +108,16 @@ describe("runtime-donor.sh, among siblings", () => {
       // Worth taking: it is the slow half of the fetch, it arrives with its
       // stamp, and the copy loop says per dir what did not come across.
       siblings: [{ name: "slot1", payloads: PYTHON_ONLY }],
+      winner: "slot1",
+    },
+    {
+      why: "settles for a browser without a vault, deliberately",
+      // The fallback accepts any pin-matching Python runtime, so this donor is
+      // taken and the checkout gets a working browser and a Vault tab that
+      // says missing. That is the better trade — and it is the state the
+      // startup line's "no vault payload" wording exists for — but it is a
+      // choice, so it is pinned rather than left to fall out of the tiers.
+      siblings: [{ name: "slot1", payloads: FULL.filter((p) => !p.startsWith("vault")) }],
       winner: "slot1",
     },
     {
@@ -162,15 +186,18 @@ describe("runtime-donor.sh, from a linked worktree", () => {
   });
 });
 
-it("says nothing outside a git repository, rather than failing", () => {
-  // worktree-setup.sh reads this under `set -e`, so the answer for a directory
-  // git knows nothing about has to be an empty success — a non-zero status
-  // would abort a setup before it installed anything.
-  const parent = fs.mkdtempSync(path.join(tmp, "nogit-"));
-  const loose = checkout(parent, { name: "loose", payloads: [], git: false });
-  // Assert the premise, or this passes for the wrong reason: a tmpdir that
-  // happens to sit inside a repository would send the script down the ordinary
-  // "in a repo, nothing qualifies" path, which also answers "" with status 0.
-  expect(() => git(loose, "rev-parse", "--show-toplevel")).toThrow();
-  expect(donorFor(loose)).toBe("");
+describe("runtime-donor.sh, outside a repository", () => {
+  it("says nothing, rather than failing", () => {
+    // worktree-setup.sh reads this under `set -e`, so the answer for a
+    // directory git knows nothing about has to be an empty success — a
+    // non-zero status would abort a setup before it installed anything.
+    const parent = fs.mkdtempSync(path.join(tmp, "nogit-"));
+    const loose = checkout(parent, { name: "loose", payloads: [], git: false });
+    // Assert the premise, or this passes for the wrong reason: a tmpdir that
+    // happens to sit inside a repository would send the script down the
+    // ordinary "in a repo, nothing qualifies" path, which also answers "" with
+    // status 0.
+    expect(() => git(loose, "rev-parse", "--show-toplevel")).toThrow();
+    expect(donorFor(loose)).toBe("");
+  });
 });
