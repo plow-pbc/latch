@@ -405,8 +405,10 @@ function classifyActivity(
     }
     // Sign-ins the owner does not get back, same as a failed merge above —
     // that one by accident, this one on purpose, and they filter on outcome.
-    // Ranked under every refusal, though: the cage stopping the agent is a
-    // stronger claim about a session than the agent choosing to start over.
+    // Ranked under the credential and scope cases, though: this Mac refusing
+    // the agent something is a stronger claim about a session than the agent
+    // deciding to start over. The page's own refusals rank below, being the
+    // far side's word rather than ours.
     if (has("browser_profile_reset")) {
       return closed
         ? { status: "Closed · started over", tone: "amber", category: "failed" }
