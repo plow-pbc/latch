@@ -186,32 +186,27 @@ just build
 # what does not match. A good copy makes this a no-op; a stale or half-built one
 # costs the rebuild it should have.
 #
-# Only when some payload is here to check — ANY of them, not the whole set. A
-# partial landing is exactly what wants completing, and the build knows which
-# half is missing.
+# Only when some payload is here to check — ANY of them, not the whole set, and
+# however it got here: copied just now, or already in place from a run before.
+# A partial or stale runtime is exactly what wants completing, and the build
+# knows which part.
 #
-# What that costs is not bounded by how much arrived: completing one payload can
-# mean the whole cold build the rest would have needed — ~200 MB of Python, a
-# 320 MB browser, and a cargo build of vaultwarden that wants a Rust toolchain
-# this machine may not have. A donor handing over only camoufox pays nearly all
-# of it. The trade is deliberate: a checkout holding half a runtime nothing has
-# looked at is worse than one that took a while, and a checkout holding NONE is
-# the only case where there is nothing to complete and so nothing to weigh.
-#
-# After install and build so a failure here costs only the validation — the
-# checkout is left with its dependencies and its compiled output either way —
-# but not suppressed: this is the ONLY content-aware look at what was copied,
-# and browserRuntime.ts accepts payloads on path existence alone, so swallowing
-# it would sign the checkout off as ready over a runtime nothing has checked.
-# `--browser` runs the Python build too, so it is the only recipe needed here.
+# What that costs is not bounded by how much is already here. Whatever is
+# missing or no longer matches its pins gets built, up to and including the
+# cargo build of vaultwarden, which wants a Rust toolchain this machine may not
+# have — so a checkout that received the largest payload can still owe the most
+# expensive one. The trade is deliberate: a checkout holding a runtime nothing
+# has looked at is worse than one that took a while. A checkout holding NO
+# payload is the only case with nothing to complete, and so the only one worth
+# skipping for.
 if [[ -n "${have_runtime:-}" ]]; then
   just fetch-browser || {
     echo "" >&2
     echo "error: the runtime in vendor/ did not check out, so this checkout is" >&2
     echo "  NOT ready — its dependencies and build are in place, but the" >&2
-    echo "  payloads have not been validated. That is either the copy or this" >&2
-    echo "  machine: completing a partial one can want a Rust toolchain, and" >&2
-    echo "  the fetch above says which happened." >&2
+    echo "  payloads have not been validated. That may be the payloads, or it" >&2
+    echo "  may be this machine: building what they are missing can want a Rust" >&2
+    echo "  toolchain. The fetch above says which." >&2
     echo "" >&2
     echo "  Fix whatever the fetch reported and run \`just fetch-browser\` here," >&2
     echo "  or remove the payloads from vendor/ to start over. Re-running this" >&2
