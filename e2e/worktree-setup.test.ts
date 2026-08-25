@@ -248,11 +248,11 @@ describe("worktree-setup.sh", () => {
     // A third whose payload is a regular file: there is something at the path,
     // but nothing a copy could take. Advertising it would send someone to a
     // checkout that then clones nothing — the filter asks the copy arm's
-    // question, not the skip arm's. Named to sort after any plausible slotN
-    // rather than merely declared last: the scan globs the parent, so the last
-    // NAME wins, and this row's other job is the errexit shape that loop used
-    // to have — where a disqualified final entry took the whole setup down.
-    const notADir = checkout(parent, "zz-notadir", []);
+    // question, not the skip arm's. Only that: the errexit shape that scan used
+    // to have is owned by the noSeed row whose parent holds nothing else, where
+    // the disqualified candidate is structurally last and no name has to argue
+    // for it.
+    const notADir = checkout(parent, "slot3", []);
     fs.writeFileSync(path.join(notADir, "vendor", PAYLOADS[0]), "not a directory\n");
     const asking = checkout(parent, "slot0", []);
 
