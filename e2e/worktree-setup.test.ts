@@ -79,6 +79,10 @@ describe("worktree-setup.sh", () => {
     // has to be that this file is still here afterwards.
     fs.mkdirSync(path.join(asking, "vendor", payloads[0]), { recursive: true });
     fs.writeFileSync(path.join(asking, "vendor", payloads[0], "ours"), "keep me");
+    // What a ^C'd run leaves behind. The copy clears its staging dir before
+    // each attempt, so this must not end up inside the payload that lands.
+    fs.mkdirSync(path.join(asking, "vendor", `${payloads[1]}.partial`), { recursive: true });
+    fs.writeFileSync(path.join(asking, "vendor", `${payloads[1]}.partial`, "junk"), "from a killed run");
 
     const out = runSetup(asking);
 
@@ -90,6 +94,7 @@ describe("worktree-setup.sh", () => {
       expect(fs.readFileSync(path.join(asking, "vendor", p, "payload-marker"), "utf8")).toBe(p);
     }
     expect(fs.readFileSync(path.join(asking, "vendor", payloads[0], "ours"), "utf8")).toBe("keep me");
+    expect(fs.existsSync(path.join(asking, "vendor", payloads[1], "junk"))).toBe(false);
     expect(out).toContain(`vendor/${payloads[0]} already present`);
     // The install and build are the point of running setup at all, and the stub
     // is what makes them observable — so assert they were reached.
