@@ -6,6 +6,17 @@ import {
   normalizeApiBaseUrl,
 } from "./plowApi.js";
 
+/**
+ * How long a create may take.
+ *
+ * Longer than everything else here on purpose: prod's create is synchronous
+ * and boots a VM before it answers, so the 15s every other call gets would
+ * time out a request that was going to succeed. It is still nowhere near the
+ * load balancer's 60s idle cut — this buys the VM its boot, not a licence to
+ * block.
+ */
+export const CREATE_REQUEST_TIMEOUT_MS = 30_000;
+
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 
 export type CloudAgentStatus = "provisioning" | "active" | "failed";
@@ -76,7 +87,14 @@ export class CloudAgentsClient {
       ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
     };
 
-    let response = await this.request("POST", "/v1/agents/cloud", deviceCredential, body);
+    let response = await this.request(
+      "POST",
+      "/v1/agents/cloud",
+      deviceCredential,
+      body,
+      undefined,
+      CREATE_REQUEST_TIMEOUT_MS,
+    );
     if (response.status === 409) {
       const failure = await decodeJson(response);
       const staleAgentId = recoverableAgentId(failure);
@@ -91,7 +109,14 @@ export class CloudAgentsClient {
           error instanceof PlowApiError ? error.status : undefined,
         );
       }
-      response = await this.request("POST", "/v1/agents/cloud", deviceCredential, body);
+      response = await this.request(
+        "POST",
+        "/v1/agents/cloud",
+        deviceCredential,
+        body,
+        undefined,
+        CREATE_REQUEST_TIMEOUT_MS,
+      );
     }
 
     return this.resourceFor(response, deviceCredential);
@@ -165,6 +190,7 @@ export class CloudAgentsClient {
     deviceCredential: string,
     body?: unknown,
     signal?: AbortSignal,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
   ): Promise<Response> {
     const headers: Record<string, string> = {
       accept: "application/json",
@@ -172,7 +198,7 @@ export class CloudAgentsClient {
     };
     if (body !== undefined) headers["content-type"] = "application/json";
 
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
     try {
       return await this.fetchImpl(`${this.baseUrl}${path}`, {

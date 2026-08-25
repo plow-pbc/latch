@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CLOUD_AGENT_POLL_INTERVAL_MS,
+  CREATE_REQUEST_TIMEOUT_MS,
   CloudAgentResource,
   CloudAgentsClient,
 } from "../src/cloudAgents.js";
@@ -65,8 +66,30 @@ describe("CloudAgentsClient request contracts", () => {
       provider: "exe:hermes",
       scopes: ["relay:call", "chats:use"],
     });
-    expect(timeout).toHaveBeenCalledWith(REQUEST_TIMEOUT_MS);
-    expect(REQUEST_TIMEOUT_MS).toBeLessThan(60_000);
+    // Create alone gets the longer one: prod boots a VM before it answers.
+    expect(timeout).toHaveBeenCalledWith(CREATE_REQUEST_TIMEOUT_MS);
+    expect(timeout).not.toHaveBeenCalledWith(REQUEST_TIMEOUT_MS);
+    // Still short of the load balancer's 60s idle cut.
+    expect(CREATE_REQUEST_TIMEOUT_MS).toBeLessThan(60_000);
+    expect(CREATE_REQUEST_TIMEOUT_MS).toBeGreaterThan(REQUEST_TIMEOUT_MS);
+    timeout.mockRestore();
+  });
+
+  it("leaves every call but create on the short timeout", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 200, body: { object: "list", data: [], has_more: false } },
+      { status: 204 },
+    ]);
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
+
+    await client.list(CREDENTIAL);
+    await client.delete(CREDENTIAL, "agent_123");
+
+    // Only the synchronous create waits on a VM. Nothing else may hold the
+    // longer window open.
+    expect(timeout).toHaveBeenCalledTimes(2);
+    for (const call of timeout.mock.calls) expect(call[0]).toBe(REQUEST_TIMEOUT_MS);
     timeout.mockRestore();
   });
 
