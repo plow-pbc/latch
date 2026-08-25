@@ -89,8 +89,9 @@ for payload in $payloads downloads; do
     }
     mv "$dir.partial" "$dir"
   elif [ -n "$donor" ]; then
-    # Only when there IS a donor: with none, the banner above already said so
-    # once, and repeating it per payload is five lines saying nothing new.
+    # Only when there IS a donor, so this says what that donor could not give.
+    # With no donor the banner has already said there is nothing to copy from,
+    # and repeating it per payload is five lines carrying one fact.
     echo "note: no $dir to clone — run \`just fetch-browser\` if you need the browser stack"
   fi
   # Present, however it got here — copied just now or already in place, and

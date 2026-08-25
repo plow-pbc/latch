@@ -83,8 +83,8 @@ class SetupFailed extends Error implements Ran {
 
 /**
  * Run setup and hand back both streams, separately. It reports on both — the
- * per-payload notes on stdout, the refusals and the failed-check reason on
- * stderr — so neither alone is the whole answer, and merging them would order
+ * per-payload notes on stdout, the argument errors and the failed-check reason
+ * on stderr — so neither alone is the whole answer, and merging them would order
  * the two by stream rather than by when they were written, and fuse the last
  * line of one to the first of the other.
  */
@@ -96,7 +96,7 @@ function runSetup(dir: string, donor?: string, failing?: string): Ran {
   });
   // A spawn that never happened, or a child killed on maxBuffer: reported here
   // rather than through `status`, and both streams may be null. Raised as
-  // itself, and NOT caught below — a broken environment is not a refusal.
+  // itself, and NOT caught below — a broken environment is not a script exit.
   if (r.error) throw r.error;
   if (r.status !== 0) throw new SetupFailed(r.stdout, r.stderr);
   return { stdout: r.stdout, stderr: r.stderr };
@@ -221,6 +221,9 @@ describe("worktree-setup.sh", () => {
 
     expect(out).toContain("name one to copy a runtime");
     expect(out).not.toContain("cloning vendor/");
+    // And says it once: the per-payload notes are for a donor that could not
+    // give a payload, not for a run that asked nobody.
+    expect(out).not.toContain("to clone");
     for (const p of PAYLOADS) {
       expect(fs.existsSync(path.join(asking, "vendor", p))).toBe(false);
     }
@@ -273,7 +276,7 @@ describe("worktree-setup.sh", () => {
     expect(stdout).not.toContain("is ready.");
   });
 
-  it("checks again on a re-run, over payloads it did not copy this time", () => {
+  it("checks again on a re-run, and blames no donor for what it did not copy", () => {
     // The gate keys on a runtime being present, not on having copied one. Keyed
     // on the copy, a second run would find every payload already there, skip the
     // only content-aware look at them, and sign the checkout off — which is the
@@ -304,7 +307,13 @@ describe("worktree-setup.sh", () => {
     const fresh = checkout(parent, "slot9", []);
     const copied = runSetupExpectingFailure(fresh, donor, "fetch-browser");
     const notCopied = runSetupExpectingFailure(asking, undefined, "fetch-browser");
-    const complaint = (r: Ran) => r.stderr.slice(r.stderr.indexOf("error:"));
+    const complaint = (r: Ran) => {
+      const at = r.stderr.indexOf("error:");
+      // slice(-1) is the last character, which would compare equal for two
+      // runs that both failed some other way and say nothing at all.
+      expect(at).toBeGreaterThanOrEqual(0);
+      return r.stderr.slice(at);
+    };
 
     // The premise: that run has to have copied, or the two sides are the same
     // shape and the comparison says nothing. This is the invariant that broke
