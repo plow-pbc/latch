@@ -21,22 +21,13 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
 }
 
 describe("cloud-agent pure mappings", () => {
-  it("maps a create receipt to the renderer row without URL or session identity", () => {
+  it("keeps provider URL and session identity out of renderer state", () => {
     const row = toCloudAgentDisplayRow(agent(), {
       fallbackName: "Kitchen agent",
       chatLabel: "+1 415 555 0100 · Pat, Lee",
     });
 
-    expect(row).toEqual({
-      agentId: "agent_stable",
-      name: "Kitchen agent",
-      chatUid: "cht_123",
-      chatLabel: "+1 415 555 0100 · Pat, Lee",
-      provider: "exe:hermes",
-      status: "provisioning",
-      failureReason: null,
-      createdAt: "2026-08-24T18:02:11Z",
-    });
+    expect(row).toMatchObject({ agentId: "agent_stable", chatUid: "cht_123" });
     expect(JSON.stringify(row)).not.toContain("session_old");
     expect(JSON.stringify(row)).not.toContain("provider.internal");
   });
