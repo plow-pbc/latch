@@ -97,7 +97,7 @@ describe("hermeticEnv", () => {
     // breaks loudly a line later, while an inherited index lets a fixture's
     // `commit --allow-empty` SUCCEED carrying whatever the outer repository had
     // staged — a fixture that is quietly the wrong thing rather than a missing
-    // one.
+    // one. The fixture has to earn that word: see the blob written below.
     const outer = path.join(tmp, "indexed");
     fs.mkdirSync(outer, { recursive: true });
     git(outer, "init", "-q", "-b", "main");
@@ -107,6 +107,13 @@ describe("hermeticEnv", () => {
     const fresh = path.join(tmp, "fresh-index");
     fs.mkdirSync(fresh, { recursive: true });
     git(fresh, "init", "-q", "-b", "main");
+    // The same bytes, hashed into THIS repo's object database — same content,
+    // same oid, and its own index still empty. Without it the borrowed index
+    // names a blob that lives only in the other repo, `commit` dies building
+    // trees, and the row goes red on the spawn instead of on the assertion —
+    // red for the wrong reason, and proving nothing about the tree.
+    fs.writeFileSync(path.join(fresh, "staged.txt"), "from the outer repo\n");
+    git(fresh, "hash-object", "-w", "staged.txt");
 
     vi.stubEnv("GIT_INDEX_FILE", path.join(outer, ".git", "index"));
     try {
