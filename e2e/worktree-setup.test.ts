@@ -206,6 +206,23 @@ describe("worktree-setup.sh", () => {
     expect(out.split("\n")).toContain("stub just fetch-browser");
   });
 
+  it("clones nothing from a payload the donor holds as a file", () => {
+    // The copy arm's own `-d`, which the filter is aligned against. A donor with
+    // a file where a payload goes has nothing to hand over, and copying it would
+    // put a file where a directory has to be — so it reports and moves on.
+    const parent = fs.mkdtempSync(path.join(tmp, "donorfile-"));
+    const donor = checkout(parent, "slot1", PAYLOADS.slice(1));
+    fs.writeFileSync(path.join(donor, "vendor", PAYLOADS[0]), "not a directory\n");
+    const asking = checkout(parent, "slot0", []);
+
+    const { stdout: out } = runSetup(asking, donor);
+
+    expect(out).toContain(`no vendor/${PAYLOADS[0]} to clone`);
+    expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[0]))).toBe(false);
+    // The rest still came, so this is the one payload being declined.
+    expect(fs.readFileSync(path.join(asking, "vendor", PAYLOADS[1], "payload-marker"), "utf8")).toBe(PAYLOADS[1]);
+  });
+
   it("refuses to be its own donor", () => {
     const parent = fs.mkdtempSync(path.join(tmp, "selfdonor-"));
     const asking = checkout(parent, "slot0", PAYLOADS);
@@ -221,12 +238,14 @@ describe("worktree-setup.sh", () => {
     const neighbour = checkout(parent, "slot1", PAYLOADS);
     // A second neighbour with nothing to give: listing it would send someone to
     // a checkout that saves them nothing, so the list is filtered, not just
-    // enumerated. Named last so it is also the loop's final candidate.
+    // enumerated.
     const barren = checkout(parent, "slot2", []);
     // A third whose payload is a regular file: there is something at the path,
     // but nothing a copy could take. Advertising it would send someone to a
     // checkout that then clones nothing — the filter asks the copy arm's
-    // question, not the skip arm's.
+    // question, not the skip arm's. Named last, so it is also the scan's final
+    // candidate: under the errexit shape this loop used to have, a disqualified
+    // last entry took the whole setup down.
     const notADir = checkout(parent, "slot3", []);
     fs.writeFileSync(path.join(notADir, "vendor", PAYLOADS[0]), "not a directory\n");
     const asking = checkout(parent, "slot0", []);
