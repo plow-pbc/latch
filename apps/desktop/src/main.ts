@@ -43,12 +43,7 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, tabShowsCloudAgents } from "./cloudAgentState.js";
-// THROWAWAY, with the file it imports — see throwawayAgent.ts.
-import {
-  THROWAWAY_AGENT_CAPABILITIES,
-  ThrowawayAgent,
-  throwawayLoggingFetch,
-} from "./throwawayAgent.js";
+import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
@@ -154,7 +149,6 @@ let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
-let throwawayAgent: ThrowawayAgent | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 
@@ -605,26 +599,6 @@ ipcMain.handle(
   },
 );
 
-/**
- * THROWAWAY — the one-button agent card. Three channels, no polling, no list;
- * `throwawayAgent.ts` says why it exists and what replaces it.
- *
- * `create` and `delete` answer with the whole state, like every other screen
- * here, so the card renders from one shape.
- */
-ipcMain.handle("throwaway:get", async () => ({
-  ...(throwawayAgent?.state() ?? null),
-  capabilities: THROWAWAY_AGENT_CAPABILITIES,
-}));
-ipcMain.handle("throwaway:create", async (_e, name: string) => ({
-  ...(await throwawayAgent?.create(name)),
-  capabilities: THROWAWAY_AGENT_CAPABILITIES,
-}));
-ipcMain.handle("throwaway:delete", async () => ({
-  ...(await throwawayAgent?.remove()),
-  capabilities: THROWAWAY_AGENT_CAPABILITIES,
-}));
-
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
  * cloud half is present and empty when the flag is off, so the renderer reads
  * the same fields either way. */
@@ -1070,21 +1044,14 @@ app.whenReady().then(async () => {
     onChange: () => notifyRenderer("connect:changed"),
   });
 
-  // THROWAWAY: one card, one chat, no roster. Shares the Agents tab's change
-  // channel because it sits in that pane.
-  throwawayAgent = new ThrowawayAgent({
-    // Its own client, wrapped in the wire log: the real cloud-agent state
-    // machine's client is untouched and logs nothing.
-    agents: new CloudAgentsClient(apiBaseUrl, throwawayLoggingFetch(home)),
-    home,
-    onChange: () => notifyRenderer("connect:changed"),
-  });
-
   // The cloud-agent group shares the Agents tab's change channel, because it
   // shares the tab's state shape.
   cloudAgents = new CloudAgentState({
-    agents: new CloudAgentsClient(apiBaseUrl),
-    chats: new CloudChatsClient(apiBaseUrl),
+    // Both clients log what they send and what comes back — see wireLog.ts.
+    // There is no server-side request log we can read, and during the rollout
+    // that account is the only one there is.
+    agents: new CloudAgentsClient(apiBaseUrl, loggingFetch(home)),
+    chats: new CloudChatsClient(apiBaseUrl, loggingFetch(home)),
     home,
     onChange: () => notifyRenderer("connect:changed"),
   });

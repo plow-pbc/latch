@@ -102,14 +102,6 @@ contextBridge.exposeInMainWorld("domo", {
   cloudApply: (agentId: string, settings: { adversarialReview: boolean }) =>
     ipcRenderer.invoke("cloud:apply", agentId, settings),
 
-  // THROWAWAY — the one-button agent card, until the real endpoints deploy.
-  // Every call answers with the whole state, so the card renders from one
-  // shape. `throwawayCreate` does not return until the agent exists: prod's
-  // create is synchronous, and there is no progress to report.
-  throwawayGet: () => ipcRenderer.invoke("throwaway:get"),
-  throwawayCreate: (name: string) => ipcRenderer.invoke("throwaway:create", name),
-  throwawayDelete: () => ipcRenderer.invoke("throwaway:delete"),
-
   // Any web page the app links to (client connector cards, Settings' Support
   // section). A KEY, not a URL: main owns the table of what may be opened.
   openExternal: (key: string) => ipcRenderer.invoke("external:open", key),
