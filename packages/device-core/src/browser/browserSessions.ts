@@ -439,10 +439,14 @@ export class BrowserSessions {
       const headed = s.host.headed;
       await s.host.shutdown();
       this.dropSessionDirs(s.profile);
-      // Nothing to come back to: a close or an app quit landed while the old
+      // Nothing to come back to: the app started quitting while the old
       // browser was going down, so starting a new one would leave a Firefox
-      // and a profile belonging to a session nobody holds.
-      if (!this.sessions.has(handle) || this.quitting) return;
+      // and a profile belonging to a session nobody holds. Thrown rather than
+      // returned — answering "completed" here would tell the agent it has a
+      // clean browser when it has no browser at all.
+      // (A close cannot reach this: close() waits on the swap, and the only
+      // other deleter, noteCrash, is unreachable with both hosts' hooks off.)
+      if (this.quitting) throw new Error("this Mac is shutting down");
       // The new browser is on one blank page. Left stale, the session stays
       // locked out against a URL that no longer exists, shows the owner's
       // viewer a page it is not on, and audits its first navigation as a
@@ -657,7 +661,17 @@ export class BrowserSessions {
     // its way to starting a browser, which would then be running with a
     // profile on disk and nobody left to close either. The swap checks for
     // that on the far side too; this is the half that does not race.
-    if (s.resetting) await s.resetting.catch(() => {});
+    if (s.resetting) {
+      await s.resetting.catch(() => {});
+      // Re-checked, because what the gate above guards can change across this
+      // await: a swap that fails publishes its own teardown, and every caller
+      // parked here would otherwise resume past a gate it cleared before any
+      // of that was true — two closed lines and two merges for one session.
+      if (s.closing) {
+        await s.closing;
+        return { status: "completed" };
+      }
+    }
     if (s.idleTimer) clearTimeout(s.idleTimer);
     // The claim itself is held until the browser is really down. Releasing it
     // first lets the same credential reopen while Camoufox still has the
