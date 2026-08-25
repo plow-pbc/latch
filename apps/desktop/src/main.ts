@@ -26,6 +26,7 @@ import {
   PolicyDelegate,
   readCredentialsState,
   resolveBrowserRuntime,
+  totpCode,
   VaultItemInput,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
@@ -699,6 +700,16 @@ ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
   return vault.reveal(String(itemId), field);
 });
 
+// The six digits an item's authenticator key is showing now, for the owner's
+// own eyes. `key` previews what is being TYPED, before there is an item to ask
+// about — which is the only way to tell a good paste from a bad one on sight.
+ipcMain.handle("vault:totp", async (_e, itemId: string, key?: string) => {
+  if (typeof key === "string" && key.trim() !== "") return totpCode(key);
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.totp(String(itemId));
+});
+
 ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
@@ -972,6 +983,10 @@ app.whenReady().then(async () => {
     hostName(),
     approvals,
     resolveBrowserRuntime(process.resourcesPath),
+    // The owner's real home, resolved here because this is the only caller that
+    // knows it. `home` above is the app's own (branch-suffixed in a from-source
+    // run); this is where WhatsApp and everything else of theirs actually lives.
+    os.homedir(),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
