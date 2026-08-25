@@ -1,20 +1,28 @@
 /**
  * The owner's Slack, as Latch tools.
  *
- * Every call is a `tool` capability naming one action — `slack.messages.list`
- * — and nothing else. The arguments ride the intent payload rather than the
- * capability, so an always-allow rule matches on "may read Slack messages"
- * rather than on one particular channel and limit; message text in a rule key
- * would mean no rule ever matched twice.
+ * Every call is a `tool` capability naming one action out of the connector's
+ * closed set — `slack.messages.list` — **and the target it acts on**. The
+ * target is the workspace, and the channel when there is one; the arguments
+ * that are content, not scope, ride the intent payload.
+ *
+ * That split is `fs.write`'s, and for its reason: a write capability carries
+ * the path and never the bytes. So an "always allow" here is an always-allow on
+ * the channel the owner actually saw, two channels are two rules, and message
+ * text — which would make every rule key unique, and would put a stranger's
+ * words inside a rule — never enters the key.
+ *
+ * The device answers `{status, result}` and the connector's own body is the
+ * `result`: `status` is this Mac's verdict, and Slack does not get to write it.
+ * Unwrapped here, so the agent still sees exactly what the connector returned.
  *
  * Slack's own token stays server-side at Plow. These tools carry the device's
  * Plow credential and nothing else.
  */
-import { JSONValue, jv } from "@domo/protocol";
-import { decideAndRun, GOAL, ToolError, ToolSpec } from "./toolKit.js";
-
-/** Build the capability for one Slack action. */
-const slackCap = (action: string) => [{ kind: "tool" as const, tool: `slack.${action}` }];
+import { Capability, JSONValue, jv } from "@domo/protocol";
+import type { SlackAction } from "@domo/device-core";
+import { Progress } from "./deferred.js";
+import { decideAndRun, GOAL, ToolContext, ToolError, ToolSpec } from "./toolKit.js";
 
 /** Pull the named string, or fail before any intent exists. */
 function required(args: JSONValue, name: string): string {
@@ -34,6 +42,47 @@ function body(args: JSONValue, keys: string[]): JSONValue {
   return out as JSONValue;
 }
 
+/**
+ * The capability for one action: what it does, and what it does it to.
+ *
+ * The target is the scope path Slack itself is organised by — the workspace,
+ * then the channel inside it — so the rule the owner creates is the sentence
+ * they read in the dialog. An action with neither (`status`, an
+ * account-less search) names no scope, which is honest: it is not confined to
+ * one.
+ */
+function slackCapability(action: SlackAction, args: JSONValue): Capability {
+  const a = jv(args);
+  const scope = [a.get("account").str, a.get("channel_id").str].filter(
+    (part): part is string => part !== null && part !== "",
+  );
+  return {
+    kind: "tool",
+    tool: `slack.${action}`,
+    target: scope.length > 0 ? scope.join("/") : undefined,
+  };
+}
+
+/** Decide on one Slack action, then hand back the connector's own answer. */
+async function runSlack(
+  ctx: ToolContext,
+  progress: Progress,
+  request: string,
+  action: SlackAction,
+  args: JSONValue,
+  bodyKeys: string[],
+): Promise<JSONValue> {
+  const response = await decideAndRun(
+    ctx,
+    progress,
+    request,
+    jv(args).get("goal").str ?? undefined,
+    [slackCapability(action, args)],
+    body(args, bodyKeys),
+  );
+  return jv(response).get("result").value ?? null;
+}
+
 const ACCOUNT = {
   type: "string",
   description: "Slack workspace/team id, from plow_slack_status",
@@ -50,11 +99,7 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     deferrable: true,
     async run(args, ctx, progress) {
-      return decideAndRun(
-        ctx, progress, "check Slack connection",
-        jv(args).get("goal").str ?? undefined,
-        slackCap("status"), null,
-      );
+      return runSlack(ctx, progress, "check Slack connection", "status", args, []);
     },
   },
   {
@@ -71,11 +116,10 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       required(args, "account");
-      return decideAndRun(
-        ctx, progress, "list Slack channels",
-        jv(args).get("goal").str ?? undefined,
-        slackCap("channels.list"), body(args, ["account", "limit"]),
-      );
+      return runSlack(ctx, progress, "list Slack channels", "channels.list", args, [
+        "account",
+        "limit",
+      ]);
     },
   },
   {
@@ -92,11 +136,7 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       required(args, "account");
-      return decideAndRun(
-        ctx, progress, "list Slack users",
-        jv(args).get("goal").str ?? undefined,
-        slackCap("users.list"), body(args, ["account", "limit"]),
-      );
+      return runSlack(ctx, progress, "list Slack users", "users.list", args, ["account", "limit"]);
     },
   },
   {
@@ -122,11 +162,12 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     async run(args, ctx, progress) {
       required(args, "account");
       required(args, "channel_id");
-      return decideAndRun(
-        ctx, progress, "read Slack messages",
-        jv(args).get("goal").str ?? undefined,
-        slackCap("messages.list"), body(args, ["account", "channel_id", "limit", "cursor"]),
-      );
+      return runSlack(ctx, progress, "read Slack messages", "messages.list", args, [
+        "account",
+        "channel_id",
+        "limit",
+        "cursor",
+      ]);
     },
   },
   {
@@ -150,11 +191,11 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       required(args, "query");
-      return decideAndRun(
-        ctx, progress, "search Slack",
-        jv(args).get("goal").str ?? undefined,
-        slackCap("messages.search"), body(args, ["query", "account", "limit"]),
-      );
+      return runSlack(ctx, progress, "search Slack", "messages.search", args, [
+        "query",
+        "account",
+        "limit",
+      ]);
     },
   },
 ];
