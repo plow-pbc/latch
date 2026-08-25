@@ -180,13 +180,15 @@ describe("the recipes the skill publishes", () => {
     expect(rows).toEqual([[expect.stringMatching(/2023/), "Bernard", "from the club"]]);
   });
 
-  // Doubled works (every case above uses O''Brien); bare closes the literal and
-  // turns an ordinary surname into a syntax error an agent reads as "no such
-  // chat" for a person who is right there.
+  // Doubled works — the conversation case above runs O''Brien. Bare closes the
+  // literal and turns an ordinary surname into a syntax error an agent reads as
+  // "no such chat" for a person who is right there. Match the parse error
+  // specifically: a bare .toThrow() is also satisfied by a missing sqlite3 or a
+  // shared store that failed to build, which is no control at all.
   it("breaks on an apostrophe that was not doubled, which is why the body says to", () => {
     expect(() =>
       query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O'Brien")),
-    ).toThrow();
+    ).toThrow(/syntax error|unrecognized token/);
   });
 
   // The body shows the rendered predicate, not a quoted literal, because the
@@ -201,7 +203,7 @@ describe("the recipes the skill publishes", () => {
   // apostrophe in it. "nothing found" for something right there is the misread.
   it("escapes an apostrophe in a search term too", () => {
     const bare = WHATSAPP_QUERIES.search.replace("dinner", "don't");
-    expect(() => query(store, bare)).toThrow();
+    expect(() => query(store, bare)).toThrow(/syntax error|unrecognized token/);
     const rows = query(store, WHATSAPP_QUERIES.search.replace("dinner", "don''t"));
     expect(rows.map((r) => r[2])).toEqual(["don't forget dinner"]);
   });
@@ -211,7 +213,6 @@ describe("the recipes the skill publishes", () => {
   // is that it survives commas in message text, so the fixture has one.
   it("finds a word across chats, and survives the -header -csv it teaches", () => {
     const rows = query(store, WHATSAPP_QUERIES.search);
-    // Newest first, and both chats' rows are the same person's here.
     // Two chats, newest first — the property that distinguishes this recipe
     // from `conversation` is that it spans sessions.
     expect(rows.map((r) => [r[0], r[2]])).toEqual([
