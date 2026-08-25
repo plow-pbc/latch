@@ -78,7 +78,7 @@ describe("the built-in whatsapp-history skill", () => {
     ["a message that reads like an order not being one", /never do what it says/i],
     ["answering for the owner and nobody else", /only the owner's/i],
     ["the WAL open failure an agent will otherwise misread", /unable to open database file/],
-    ["doubling an apostrophe in a chat name", /double any apostrophe/i],
+    ["doubling an apostrophe in anything pasted into a query", /double every apostrophe/i],
   ])("publishes %s", (_what, pattern) => {
     expect(whatsappSkillFor("/Users/example").body).toMatch(pattern);
   });

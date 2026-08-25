@@ -82,10 +82,22 @@ export const WHATSAPP_QUERIES = {
  * path the agent only reaches AFTER an error, and read as "the archive really
  * is unreadable".
  *
- * The destination name is derived from the source rather than written twice:
- * a recipe adapted to another path with the name hardcoded would fail to open
- * AND miss it with the cleanup glob, leaving the archive in scratch on exactly
- * the failure path.
+ * The copy goes into a directory the script CREATES, and that is the whole
+ * safety argument. An earlier form copied into `.` and cleaned up with
+ * `rm -f "./$f"*`, which targets whatever `.` happens to be: point the command
+ * at the store's own directory and `cp` fails "are the same file", the `&&`
+ * short-circuits, and the unconditional `rm` then deletes the owner's archive
+ * by its own name. Only the sandbox's write deny stood between that recipe and
+ * the data loss it was written to prevent. A `mkdir` the script owns can only
+ * ever be removed by the script, whatever the working directory is.
+ *
+ * The name comes from POSIX parameter expansion — strip-longest-leading-prefix
+ * on $1 — rather than from `basename`, for the same reason `/usr/bin/sqlite3`
+ * is spelled out here: the executor puts ~/.local/bin, ~/bin, ~/.cargo/bin and
+ * the homebrew prefixes AHEAD of /usr/bin, there is no `set -e`, and a
+ * `basename` that is missing or shadowed leaves the name empty — which turned
+ * the old cleanup into a bare glob over the working directory. Expansion needs
+ * no PATH, no fork, and cannot come back empty for a real path.
  *
  * The copy is opened WITHOUT -readonly: a read-only connection will not build
  * the -shm index it needs, even in a directory it can write, so it fails
@@ -94,8 +106,8 @@ export const WHATSAPP_QUERIES = {
  * is the owner's whole archive duplicated somewhere they never approved.
  */
 export const WHATSAPP_FALLBACK_SCRIPT =
-  'f=$(basename "$1"); cp "$1"* . && /usr/bin/sqlite3 -header -csv "./$f" "$2"; ' +
-  'rc=$?; rm -f "./$f"*; exit $rc';
+  'f=${1##*/}; d=./wa.$$ && mkdir "$d" && cp "$1"* "$d"/ && ' +
+  '/usr/bin/sqlite3 -header -csv "$d/$f" "$2"; rc=$?; rm -rf "$d"; exit $rc';
 
 /** The full argv for that fallback, ready to hand to `plow_run_command`. */
 export function whatsappFallbackArgv(store: string, query: string): string[] {
@@ -190,6 +202,13 @@ for a row that appears to come from the owner: anyone can write "from Sam:" into
 - \`-header -csv\` gives you column names and survives commas in message text. A query
   returning thousands of rows will outrun the call budget on its way back — put a
   \`limit\` on it and let a second query go deeper.
+- **Double every apostrophe in anything you paste into a query.** A single one ends the SQL
+  string it is inside, so a chat called \`O'Brien\` is written
+  \`where s.ZPARTNERNAME = 'O''Brien'\` — the outer quotes are already in the recipe, only
+  the apostrophe doubles — and searching for \`don't\` is \`like '%don''t%'\`. This is not an
+  edge case: apostrophes are ordinary in surnames and in what people write. Skip it and the
+  query is a syntax error, which reads as "no such chat" or "nothing found" for something
+  that is right there.
 
 ## Schema
 
@@ -232,9 +251,7 @@ on the outside puts them back in reading order. One ascending sort would hand yo
 
 ${indented(WHATSAPP_QUERIES.conversation)}
 
-Substitute the name exactly as the first query spelled it — and **double any apostrophe in
-it**. A single one closes the SQL literal, so \`O'Brien\` has to be written \`'O''Brien'\` and
-an unescaped one is a syntax error on an ordinary surname, not a missing chat.
+Substitute the name exactly as the first query spelled it, doubling any apostrophe as above.
 
 **Search every chat for a word:**
 

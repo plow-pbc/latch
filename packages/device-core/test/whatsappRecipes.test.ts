@@ -23,6 +23,7 @@ import {
   WHATSAPP_CHAT_PLACEHOLDER,
   WHATSAPP_QUERIES,
   whatsappFallbackArgv,
+  whatsappSkillFor,
 } from "@domo/device-core";
 
 const SQLITE = "/usr/bin/sqlite3";
@@ -76,7 +77,17 @@ function makeStore(dir: string): string {
   // Sixty messages, oldest first, so "msg 60" is the newest thing said.
   for (let i = 1; i <= 60; i++) {
     // A comma, because the body claims -csv survives one in message text.
-    const text = i === 7 ? "what about dinner, tomorrow" : `msg ${i}`;
+    // An apostrophe on another, because the escaping rule governs the search
+    // recipe's `like` just as much as the conversation recipe's name slot.
+    const text =
+      i === 7
+        ? "what about dinner, tomorrow"
+        : // Doubled here for the same reason the skill tells the agent to
+          // double it: this insert is a query too, and a bare apostrophe ends
+          // the literal. The row's actual text has one apostrophe.
+          i === 9
+          ? "don''t forget dinner"
+          : `msg ${i}`;
     rows.push(
       "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME) values(" +
         `${at(base + i * 60)}, '${text}', 1, ${i % 2});`,
@@ -169,21 +180,44 @@ describe("the recipes the skill publishes", () => {
     ).toThrow();
   });
 
+  // The body shows the rendered predicate, not a quoted literal, because the
+  // placeholder already sits inside quotes: substituting 'O''Brien' whole
+  // yields = ''O''Brien'', which lexes as an empty string then a bare token.
+  // Pin the reading the body prints.
+  it("means the name, not the literal — the recipe's own quotes stay put", () => {
+    const rendered = WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O''Brien");
+    expect(rendered).toContain("s.ZPARTNERNAME = 'O''Brien'");
+    expect(whatsappSkillFor("/Users/example").body).toContain("s.ZPARTNERNAME = 'O''Brien'");
+    expect(query(store, rendered).length).toBe(50);
+  });
+
+  // Same rule, the other interpolation site: a word the owner used that has an
+  // apostrophe in it. "nothing found" for something right there is the misread.
+  it("escapes an apostrophe in a search term too", () => {
+    const bare = WHATSAPP_QUERIES.search.replace("dinner", "don't");
+    expect(() => query(store, bare)).toThrow();
+    const rows = query(store, WHATSAPP_QUERIES.search.replace("dinner", "don''t"));
+    expect(rows.map((r) => r[2])).toEqual(["don't forget dinner"]);
+  });
+
   // One case, both renderings. The parsing helper reads with -list; the skill
   // teaches -header -csv, and an agent runs THAT — and the body's claim for it
   // is that it survives commas in message text, so the fixture has one.
   it("finds a word across chats, and survives the -header -csv it teaches", () => {
     const rows = query(store, WHATSAPP_QUERIES.search);
-    expect(rows.length).toBe(1);
-    expect(rows[0][0]).toBe("O'Brien");
-    expect(rows[0][2]).toBe("what about dinner, tomorrow");
+    // Newest first, and both chats' rows are the same person's here.
+    expect(rows.map((r) => r[2])).toEqual(["don't forget dinner", "what about dinner, tomorrow"]);
+    expect(new Set(rows.map((r) => r[0]))).toEqual(new Set(["O'Brien"]));
 
     const csv = sqlite(["-readonly", "-header", "-csv", store, WHATSAPP_QUERIES.search]).trim();
     const [header, ...rest] = csv.split("\n");
     expect(header).toBe("chat,at,ZTEXT");
     // The comma is inside the quoted cell, not a fourth column — and csv
-    // quotes the apostrophe cell too, so neither reaches the reader as syntax.
-    expect(rest).toEqual(['"O\'Brien","2023-11-14 22:20:20","what about dinner, tomorrow"']);
+    // quotes the apostrophe cells too, so neither reaches the reader as syntax.
+    expect(rest).toEqual([
+      '"O\'Brien","2023-11-14 22:22:20","don\'t forget dinner"',
+      '"O\'Brien","2023-11-14 22:20:20","what about dinner, tomorrow"',
+    ]);
   });
 });
 
@@ -224,6 +258,25 @@ describe("the fallback for a store that will not open", () => {
     // The owner's whole message history was in that directory a moment ago.
     // Nothing else on this Mac deletes a scratch dir, so the command must.
     expect(fs.readdirSync(scratch)).toEqual([]);
+  });
+
+  // The failure this script was rewritten to make impossible. An earlier form
+  // copied into `.` and cleaned up with `rm -f "./$f"*`: pointed at the store's
+  // own directory, the cp fails "are the same file", the && short-circuits, and
+  // the unconditional rm then deletes the archive by its own name. Only the
+  // sandbox's write deny stood in the way, and this test does not have one.
+  it("cannot delete the archive even when pointed at its own directory", () => {
+    const dir = tempDir();
+    const s = makeStore(dir);
+    const before = fs.readdirSync(dir).sort();
+    const argv = whatsappFallbackArgv(s, "select count(*) from ZWAMESSAGE;");
+    try {
+      execFileSync(argv[0], argv.slice(1), { cwd: dir, encoding: "utf8", stdio: "pipe" });
+    } catch {
+      /* it may well fail here — what matters is what it leaves behind */
+    }
+    expect(fs.readdirSync(dir).sort()).toEqual(before);
+    expect(fs.existsSync(s)).toBe(true);
   });
 
   it("reads what is still in the write-ahead log, not just the checkpointed file", () => {
