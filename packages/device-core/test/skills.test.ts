@@ -97,9 +97,11 @@ describe("the built-in whatsapp-history skill", () => {
     }
     // Rendered into the body as a JSON argv, so it arrives escaped.
     expect(body).toContain(JSON.stringify(WHATSAPP_FALLBACK_SCRIPT));
-    // And the conversation recipe still carries a placeholder to substitute —
-    // the body tells the agent to replace it, so it has to be there to replace.
-    expect(body).toContain(WHATSAPP_CHAT_PLACEHOLDER);
+    // The PREDICATE, not just the token: the loop above pins only each recipe's
+    // first line, so asserting the placeholder appears somewhere would stay
+    // green if the conversation filter went back to a name and the placeholder
+    // survived in prose — the exact regression this guards.
+    expect(body).toContain(`s.Z_PK = ${WHATSAPP_CHAT_PLACEHOLDER}`);
   });
 
   // The Plow-side copy shipped from a machine that was not this one, so it had
