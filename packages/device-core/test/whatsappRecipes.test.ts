@@ -87,9 +87,8 @@ function makeStore(dir: string): string {
     "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME, ZGROUPMEMBER)" +
       ` values(${at(base + 5000)}, 'from the club', 2, 0, 1);`,
   );
-  sqlite(
-    [
-      store,
+  sqlite([
+    store,
       [
         "pragma journal_mode=wal;",
         "create table ZWACHATSESSION (Z_PK integer primary key, ZPARTNERNAME text," +
@@ -98,10 +97,11 @@ function makeStore(dir: string): string {
           " ZMEMBERJID text, ZCHATSESSION integer);",
         "create table ZWAMESSAGE (ZMESSAGEDATE integer, ZTEXT text, ZCHATSESSION integer," +
           " ZISFROMME integer, ZGROUPMEMBER integer, ZPUSHNAME text);",
-        `insert into ZWACHATSESSION values(1, 'Alice', '15551234@s.whatsapp.net', ${at(base + 3600)});`,
-          // Apostrophes in contact names are ordinary, and the conversation
-        // recipe puts the name inside a quoted SQL literal.
-        `insert into ZWACHATSESSION values(2, 'O''Brien', '99887@g.us', ${at(base + 5000)});`,
+        // Apostrophes in contact names are ordinary, and the conversation
+        // recipe puts the name inside a quoted SQL literal. On the DIRECT
+        // chat, because a surname the owner types is the path that matters.
+        `insert into ZWACHATSESSION values(1, 'O''Brien', '15551234@s.whatsapp.net', ${at(base + 3600)});`,
+          `insert into ZWACHATSESSION values(2, 'Book Club', '99887@g.us', ${at(base + 5000)});`,
         "insert into ZWAGROUPMEMBER values(1, 'Bernard', '15559999@s.whatsapp.net', 2);",
         ...rows,
       ].join(" "),
@@ -129,7 +129,7 @@ afterAll(() => cleanup(storeDir));
 describe("the recipes the skill publishes", () => {
   it("lists chats newest first, and says which are groups", () => {
     const rows = query(store, WHATSAPP_QUERIES.recentChats);
-    expect(rows.map((r) => r[0])).toEqual(["O'Brien", "Alice"]);
+    expect(rows.map((r) => r[0])).toEqual(["Book Club", "O'Brien"]);
     expect(rows.map((r) => r[2])).toEqual(["group", "direct"]);
     // The date column is the whole reason 978307200 is in the query: a wrong
     // offset here shows up as a year in the 1980s or the 2050s.
@@ -140,7 +140,7 @@ describe("the recipes the skill publishes", () => {
   // FIRST, and a single ascending sort returns the fifty OLDEST messages. Both
   // read as plausible SQL; only the rows tell you which one you wrote.
   it("hands back the newest fifty messages, oldest first", () => {
-    const rows = query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "Alice"));
+    const rows = query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O''Brien"));
     expect(rows.length).toBe(50);
     // Sixty messages, the newest fifty are 11..60, and they read in order.
     expect(rows[0][2]).toBe("msg 11");
@@ -149,19 +149,20 @@ describe("the recipes the skill publishes", () => {
     // in every row beside the formatted timestamp.
     expect(rows[0].length).toBe(3);
     // ZISFROMME picks the side, and it is not always the same side.
-    expect(new Set(rows.map((r) => r[1]))).toEqual(new Set(["me", "Alice"]));
+    expect(new Set(rows.map((r) => r[1]))).toEqual(new Set(["me", "O'Brien"]));
   });
 
   it("names the group member as the sender, not the group", () => {
-    // Doubled, as the body tells the agent to: a bare apostrophe closes the
-    // literal and the query becomes a syntax error on a perfectly normal name.
     const rows = query(
       store,
-      WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O''Brien"),
+      WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "Book Club"),
     );
     expect(rows).toEqual([[expect.stringMatching(/2023/), "Bernard", "from the club"]]);
   });
 
+  // Doubled works (every case above uses O''Brien); bare closes the literal and
+  // turns an ordinary surname into a syntax error an agent reads as "no such
+  // chat" for a person who is right there.
   it("breaks on an apostrophe that was not doubled, which is why the body says to", () => {
     expect(() =>
       query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O'Brien")),
@@ -174,14 +175,15 @@ describe("the recipes the skill publishes", () => {
   it("finds a word across chats, and survives the -header -csv it teaches", () => {
     const rows = query(store, WHATSAPP_QUERIES.search);
     expect(rows.length).toBe(1);
-    expect(rows[0][0]).toBe("Alice");
+    expect(rows[0][0]).toBe("O'Brien");
     expect(rows[0][2]).toBe("what about dinner, tomorrow");
 
     const csv = sqlite(["-readonly", "-header", "-csv", store, WHATSAPP_QUERIES.search]).trim();
     const [header, ...rest] = csv.split("\n");
     expect(header).toBe("chat,at,ZTEXT");
-    // The comma is inside the quoted cell, not a fourth column.
-    expect(rest).toEqual(['Alice,"2023-11-14 22:20:20","what about dinner, tomorrow"']);
+    // The comma is inside the quoted cell, not a fourth column — and csv
+    // quotes the apostrophe cell too, so neither reaches the reader as syntax.
+    expect(rest).toEqual(['"O\'Brien","2023-11-14 22:20:20","what about dinner, tomorrow"']);
   });
 });
 
