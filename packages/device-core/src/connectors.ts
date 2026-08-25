@@ -58,7 +58,14 @@ export function makeConnectorClient(opts: {
       // the header we must never surface.
       throw new ConnectorError(`Plow returned ${response.status} for ${path}`);
     }
-    return (await response.json()) as JSONValue;
+    try {
+      return (await response.json()) as JSONValue;
+    } catch {
+      // Same rule as the !response.ok branch, and for the same reason: a
+      // malformed body must not reach the message, and neither should the
+      // parser's own error text — V8 embeds a snippet of the body in it.
+      throw new ConnectorError(`Plow returned an unparsable response for ${path}`);
+    }
   };
 
   return {

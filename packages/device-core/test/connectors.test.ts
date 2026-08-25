@@ -34,4 +34,48 @@ describe("ConnectorClient", () => {
       expect(e.message).toContain("403");
     });
   });
+
+  it("refuses before any network call when the credential is missing", async () => {
+    let called = false;
+    const client = makeConnectorClient({
+      apiBaseUrl: "https://api.example.com",
+      credential: () => "   ",
+      fetchImpl: async () => {
+        called = true;
+        return new Response(JSON.stringify({}), { status: 200 });
+      },
+    });
+
+    await expect(client.call("channels.list", {})).rejects.toThrow(ConnectorError);
+    expect(called).toBe(false);
+  });
+
+  it("wraps a network failure in a ConnectorError without the credential", async () => {
+    const client = makeConnectorClient({
+      apiBaseUrl: "https://api.example.com",
+      credential: () => "super-secret-cred",
+      fetchImpl: async () => {
+        throw new Error("getaddrinfo ENOTFOUND api.example.com");
+      },
+    });
+
+    await expect(client.call("channels.list", {})).rejects.toThrow(ConnectorError);
+    await client.call("channels.list", {}).catch((e: Error) => {
+      expect(e.message).not.toContain("super-secret-cred");
+    });
+  });
+
+  it("surfaces an unparsable 200 body as a ConnectorError, not a raw SyntaxError", async () => {
+    const client = makeConnectorClient({
+      apiBaseUrl: "https://api.example.com",
+      credential: () => "super-secret-cred",
+      fetchImpl: async () => new Response("not json", { status: 200 }),
+    });
+
+    await expect(client.call("channels.list", {})).rejects.toThrow(ConnectorError);
+    await client.call("channels.list", {}).catch((e: Error) => {
+      expect(e.message).not.toContain("not json");
+      expect(e.message).not.toContain("super-secret-cred");
+    });
+  });
 });
