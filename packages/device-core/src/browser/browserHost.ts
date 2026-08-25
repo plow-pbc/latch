@@ -39,6 +39,8 @@ export interface BrowserHostConfig {
    * every browser is signed in wherever they are, and merges what it signed
    * into back on close. Unset means sessions start on an empty profile. */
   seedProfile?: string;
+  /** App-level default for a session's `fresh`: no seed in, no merge out. */
+  freshProfile?: boolean;
   /** Argv that reconciles a session's cookies into the user's, before its
    * three paths: the user's profile, the session's clone, and the baseline
    * that clone started from. Comes from the runtime, so a machine pointed at

@@ -37,6 +37,13 @@ interface Session {
   /** The profile directory this session holds while it lives. */
   profile: string;
   /**
+   * This session inherits nothing and leaves nothing: no clone of the owner's
+   * profile on the way in, no merge on the way out. One owner for both halves,
+   * because they are one decision — a session that started on a site's block
+   * must not hand that block to the next one.
+   */
+  fresh: boolean;
+  /**
    * What the audit calls this session.
    *
    * The handle is a capability now — whoever holds it can drive the browser —
@@ -260,12 +267,16 @@ export class BrowserSessions {
     // On close what it signed into is merged back into the original, and the
     // clone goes. This Mac is one person's; every browser on it is theirs.
     const profile = `session-${digest(handle)}`;
-    const host = this.newHost(profile);
+    // ...unless this Mac was launched to reproduce a bot block, in which case
+    // every session on it starts and ends owning nothing.
+    const fresh = this.browser.freshProfile === true;
+    const host = this.newHost(profile, fresh);
     // A browser that dies takes its own session with it, and nobody else's.
     host.onCrash = () => this.noteCrash(handle);
     const session: Session = {
       handle,
       host,
+      fresh,
       profile,
       auditId: digest(handle),
       idleTimer: null,
@@ -372,8 +383,8 @@ export class BrowserSessions {
   }
 
   /** A browser on this session's own clone of the user's profile. */
-  private newHost(profile: string): BrowserHost {
-    if (this.browser.profileDir) this.seedProfile(path.join(this.browser.profileDir, profile));
+  private newHost(profile: string, fresh: boolean): BrowserHost {
+    if (this.browser.profileDir) this.seedProfile(path.join(this.browser.profileDir, profile), fresh);
     return new BrowserHost({
       ...this.browser,
       screenshotsDir: path.join(this.browser.screenshotsDir, profile),
@@ -394,9 +405,9 @@ export class BrowserSessions {
    * The user's own profile is never opened by a browser — only cloned from,
    * and merged into on close (see mergeAndRelease).
    */
-  private seedProfile(dir: string): void {
+  private seedProfile(dir: string, fresh: boolean): void {
     if (fs.existsSync(dir)) return;
-    const seed = this.browser.seedProfile;
+    const seed = fresh ? undefined : this.browser.seedProfile;
     if (!seed || !fs.existsSync(seed)) {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       return;
@@ -447,6 +458,11 @@ export class BrowserSessions {
   private async mergeAndRelease(s: Session): Promise<void> {
     if (!this.browser.profileDir) return;
     const dir = path.join(this.browser.profileDir, s.profile);
+    // Nothing to carry back, by the session's own decision.
+    if (s.fresh) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    }
     try {
       await this.mergeCookies(dir);
     } catch (error: unknown) {
