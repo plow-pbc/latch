@@ -4,7 +4,7 @@
  * credential broker standing in for the bundled seed_vault_broker.
  *
  * Opt-in: skipped unless DOMO_BROWSER_RUNTIME and DOMO_CAMOUFOX are set (run via
- * `just test-browser` after `just fetch-browser-runtime fetch-browser`).
+ * `just test-browser` after `just fetch-browser`).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import crypto from "node:crypto";
