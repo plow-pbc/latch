@@ -28,6 +28,22 @@ export type IntentDecision = Decision | { decision: Decision; source?: string };
 /** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
   decideIntent(intent: Intent): Promise<IntentDecision>;
+  /**
+   * May a stored always-allow rule answer this intent on its own?
+   *
+   * A rule is a decision the human made once and cached, and the engine
+   * short-circuits to it before this delegate is ever asked. That is right
+   * until something OUTSIDE the rule has to be consulted per request — an
+   * agent the owner has switched adversarial review on for, whose whole point
+   * is that a reviewer sees every operation. Without this hook the cached
+   * "always allow" outranks the review, and the switch reports success while
+   * doing nothing.
+   *
+   * Optional: a delegate that does not implement it keeps the plain behaviour.
+   * Answering false does not deny — it sends the intent down the normal path,
+   * where the delegate decides as it would have the first time.
+   */
+  mayGrantFromStoredRule?(intent: Intent): boolean | Promise<boolean>;
 }
 
 export class PolicyEngine {
@@ -63,7 +79,7 @@ export class PolicyEngine {
 
   async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
     const key = intentRuleKey(intent);
-    if (this.rules.has(key)) {
+    if (this.rules.has(key) && (await mayGrantFromStoredRule(intent, delegate))) {
       return makeGrant(intent, "always_allow", "rule");
     }
     const result = await delegate.decideIntent(intent);
@@ -74,6 +90,23 @@ export class PolicyEngine {
       this.persist();
     }
     return makeGrant(intent, decision, source);
+  }
+}
+
+/**
+ * Ask the delegate whether a cached rule may still answer for itself.
+ *
+ * FAILS CLOSED on a throwing guard: a veto that errors must not read as
+ * permission, or the bypass this exists to close comes back the moment the
+ * guard is the thing that broke. Closed here means "ask properly", not "deny" —
+ * the intent goes down the normal decision path.
+ */
+async function mayGrantFromStoredRule(intent: Intent, delegate: PolicyDelegate): Promise<boolean> {
+  if (!delegate.mayGrantFromStoredRule) return true;
+  try {
+    return await delegate.mayGrantFromStoredRule(intent);
+  } catch {
+    return false;
   }
 }
 

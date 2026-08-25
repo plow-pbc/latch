@@ -83,6 +83,23 @@ export function agentReviewRequired(
   return settings.cloudAgentSettings?.[agentId]?.adversarialReview === true;
 }
 
+/**
+ * May a stored always-allow rule answer for this agent on its own?
+ *
+ * No, exactly when the owner has switched adversarial review on for it. A rule
+ * is one human decision cached and replayed, and the policy engine replays it
+ * before any delegate is consulted — so without this the review switch is
+ * bypassed by every operation the human ever pressed "always allow" on, which
+ * is the same "control that reports success and does nothing" as the bug it was
+ * written to fix.
+ *
+ * Refusing here is not a denial. It routes the intent down the normal path,
+ * where `decideIntent` runs the review and global deny still denies first.
+ */
+export function storedRuleMayGrant(settings: Settings, agentId: string): boolean {
+  return !agentReviewRequired(settings, agentId);
+}
+
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;

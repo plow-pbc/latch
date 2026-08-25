@@ -51,7 +51,12 @@ import {
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
-import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
+import {
+  ApprovalDecision,
+  decideIntent,
+  ReviewHint,
+  storedRuleMayGrant,
+} from "./reviewPolicy.js";
 import {
   isSignedIn,
   readAgentPurpose,
@@ -161,6 +166,15 @@ let updates: UpdateController | null = null;
  * click.
  */
 class ElectronPolicy implements PolicyDelegate {
+  /**
+   * A cached "always allow" cannot stand in for a review the owner requires of
+   * this agent. The rule itself is left alone — it still applies to every other
+   * agent, and to this one if the switch goes off again.
+   */
+  mayGrantFromStoredRule(intent: Intent): boolean {
+    return storedRuleMayGrant(loadSettings(home), intent.agentId);
+  }
+
   // The branching itself lives in reviewPolicy.ts so it is testable without a
   // display; this only supplies the Electron-shaped pieces.
   async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
