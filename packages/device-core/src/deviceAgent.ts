@@ -28,6 +28,7 @@ import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
+import { registerWhatsappSkill } from "./whatsappSkill.js";
 
 /**
  * A delegate that denies because the adversarial reviewer could not run for
@@ -135,6 +136,10 @@ export class DeviceAgent {
     this.executor = new Executor(path.join(home, "device/scratch"));
     this.skills = new SkillRegistry();
     this.skills.loadDir(path.join(home, "device/skills"));
+    // The owner's real home, not `home` — this skill describes where WhatsApp
+    // put their messages on this Mac, and `home` is a DOMO_HOME that a test
+    // points at a throwaway root.
+    registerWhatsappSkill(this.skills, os.homedir());
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
