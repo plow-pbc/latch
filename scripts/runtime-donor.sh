@@ -50,15 +50,16 @@ unfinished() {
   case $2 in
     python-runtime) [ ! -f "$1/vendor/python-runtime/.stamp" ] ;;
     # Whichever tree camoufoxIn() would pick, and only that one. It tries this
-    # arch first and the fused universal tree second, so a per-arch tree that
-    # exists at all is the one the recipient will load — and asking only that
+    # arch first and the fused universal tree second, keying on config.json —
+    # so a per-arch tree far enough along to have one is what the recipient
+    # will load, and an empty leftover dir is not. Asking only that
     # SOME marker is present lets a stale universal/.sha256 from an earlier
     # --browser-both excuse a per-arch tree still mid-extract. fetchBrowser()
     # writes config.json early and .sha256 last with a network fetch between,
     # so that window is minutes wide and what it hands over is a browser
     # missing its addon.
     camoufox-browser)
-      if [ -e "$1/vendor/camoufox-browser/$arch" ]; then
+      if [ -f "$1/vendor/camoufox-browser/$arch/config.json" ]; then
         [ ! -f "$1/vendor/camoufox-browser/$arch/.sha256" ]
       else
         [ ! -f "$1/vendor/camoufox-browser/universal/.sha256" ]

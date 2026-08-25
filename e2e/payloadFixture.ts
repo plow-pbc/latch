@@ -16,6 +16,16 @@ import path from "node:path";
 /** The arch whose trees this machine can actually run — see browserRuntime.ts. */
 export const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
 
+/**
+ * Files a payload's build writes BEFORE its marker — the ones that make a tree
+ * look inhabited while it is still being filled in. camoufoxIn() keys on
+ * config.json, so a per-arch tree carrying one is the tree it will pick,
+ * finished or not.
+ */
+export const CONTENTS: Record<string, string[]> = {
+  "camoufox-browser": [`${ARCH}/config.json`],
+};
+
 /** Every file that must exist before a payload counts as built, under its dir. */
 export const MARKERS: Record<string, string[]> = {
   "python-runtime": [".stamp"],
@@ -31,7 +41,13 @@ export function writeMarker(checkout: string, relative: string): void {
   fs.writeFileSync(at, "built\n");
 }
 
-/** Mark a payload finished. Nothing happens for one that carries no marker. */
+/** The files a build leaves behind before its marker — an in-flight payload. */
+export function markStarted(checkout: string, payload: string): void {
+  for (const f of CONTENTS[payload] ?? []) writeMarker(checkout, path.join(payload, f));
+}
+
+/** Mark a payload finished: what a started one has, plus its markers. */
 export function markBuilt(checkout: string, payload: string): void {
+  markStarted(checkout, payload);
   for (const marker of MARKERS[payload] ?? []) writeMarker(checkout, path.join(payload, marker));
 }

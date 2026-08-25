@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "./gitFixture.js";
-import { ARCH, markBuilt, writeMarker } from "./payloadFixture.js";
+import { ARCH, markBuilt, markStarted, writeMarker } from "./payloadFixture.js";
 
 const script = fileURLToPath(new URL("../scripts/runtime-donor.sh", import.meta.url));
 
@@ -68,7 +68,8 @@ function checkout(parent: string, spec: Spec): string {
   fs.writeFileSync(path.join(dir, "vendor/browser-server/requirements.txt"), spec.reqs ?? OUR_REQS);
   for (const payload of spec.payloads) {
     fs.mkdirSync(path.join(dir, "vendor", payload), { recursive: true });
-    if (payload !== spec.unfinished) markBuilt(dir, payload);
+    if (payload === spec.unfinished) markStarted(dir, payload);
+    else markBuilt(dir, payload);
   }
   if (spec.withoutMarker) fs.rmSync(path.join(dir, "vendor", spec.withoutMarker));
   if (spec.withoutPayloadDir) {
@@ -197,7 +198,6 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
         name: "d",
         payloads: FULL,
         withoutPayloadDir: `camoufox-browser/${ARCH}`,
-        withoutMarker: `camoufox-browser/${ARCH}/.sha256`,
         alsoMarker: "camoufox-browser/universal/.sha256",
       },
       usable: true,
