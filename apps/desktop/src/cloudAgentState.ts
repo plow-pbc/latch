@@ -798,15 +798,30 @@ function chosen(value: boolean | null | undefined): boolean | null {
 }
 
 /**
- * Did Plow itself say no?
+ * Did Plow itself REFUSE this?
  *
- * A `PlowApiError` carrying a status is an answer from the server: the request
- * arrived and was refused, so the agent is unchanged. One without a status
- * never got an answer at all — a timeout, a dropped connection — and says
- * nothing about whether the request landed.
+ * The only outcome that leaves the agent provably unchanged: a non-2xx answer
+ * from the server. The request arrived, it was rejected, nothing happened.
+ *
+ * A status alone is not enough, and reading it as enough was a stale-memory bug
+ * of its own. The client also raises a status-bearing error when an ACCEPTED
+ * 2xx response is malformed or names the wrong agent — the request landed, and
+ * what it did is exactly as unknown as a timeout's. That joins the uncertain
+ * cases, where the remembered permissions are forgotten rather than kept.
+ *
+ * An error with no status never got an answer at all.
  */
 function declaredByServer(error: unknown): boolean {
-  return error instanceof PlowApiError && typeof error.status === "number";
+  if (!(error instanceof PlowApiError) || typeof error.status !== "number") return false;
+  // The client tags which of the two an error is. Read structurally rather than
+  // through its exported predicate only because that tag is still landing; this
+  // becomes a plain `isCloudAgentRefusal(error)` once it has.
+  const tagged = (error as { responseKind?: unknown }).responseKind;
+  if (tagged === "refusal") return true;
+  if (typeof tagged === "string") return false;
+  // Untagged: the status range says the same thing, because an unusable
+  // receipt carries the 2xx it arrived on.
+  return error.status < 200 || error.status >= 300;
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */

@@ -1154,6 +1154,128 @@ describe("Apply changes", () => {
     expect(entry.inference).toBeUndefined();
   });
 
+  it("forgets the permissions when an accepted 2xx receipt is unusable", async () => {
+    const home = tempHome();
+    let fail = false;
+    const f = fakes({
+      list: async () => [agent()],
+      reconfigure: async () => {
+        // What the client raises for a 202 whose body it cannot parse. The
+        // request was ACCEPTED — the reconfigure may well have applied — so
+        // this is as unknown as a timeout, not a refusal.
+        if (fail) {
+          throw new PlowApiError("http", "Plow returned an invalid cloud-agent response.", 202);
+        }
+        return agent({ status: "active" });
+      },
+      poll: settlesOn(agent({ status: "active" })),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    await settle();
+    expect(loadSettings(home).cloudAgentSettings.agent_1.relay).toBe(true);
+
+    fail = true;
+    await state.apply("agent_1", { relay: false, inference: false, adversarialReview: false });
+    await settle();
+
+    const entry = loadSettings(home).cloudAgentSettings.agent_1;
+    expect(entry.relay).toBeUndefined();
+    expect(entry.inference).toBeUndefined();
+    expect(state.state().cloudSaveError?.agentId).toBe("agent_1");
+  });
+
+  it("forgets the permissions when a 2xx receipt names a different agent", async () => {
+    const home = tempHome();
+    let fail = false;
+    const f = fakes({
+      list: async () => [agent()],
+      reconfigure: async () => {
+        // The client refuses a receipt whose agent_id is not the one it asked
+        // about. Same door, same conclusion: accepted, outcome unknown.
+        if (fail) {
+          throw new PlowApiError("http", "Plow returned an invalid cloud-agent response.", 200);
+        }
+        return agent({ status: "active" });
+      },
+      poll: settlesOn(agent({ status: "active" })),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    await settle();
+
+    fail = true;
+    await state.apply("agent_1", { relay: false, inference: false, adversarialReview: false });
+    await settle();
+
+    expect(loadSettings(home).cloudAgentSettings.agent_1.relay).toBeUndefined();
+  });
+
+  it("forgets the permissions when the client tags a receipt it could not use", async () => {
+    const home = tempHome();
+    let fail = false;
+    const f = fakes({
+      list: async () => [agent()],
+      reconfigure: async () => {
+        if (fail) {
+          // Tagged at the source rather than inferred from the status: the
+          // client says it accepted the answer and could not use it.
+          const error = new PlowApiError("http", "Plow returned an invalid response.", 409);
+          Object.assign(error, { responseKind: "invalid-2xx-receipt" });
+          throw error;
+        }
+        return agent({ status: "active" });
+      },
+      poll: settlesOn(agent({ status: "active" })),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    await settle();
+
+    fail = true;
+    await state.apply("agent_1", { relay: false, inference: false, adversarialReview: false });
+    await settle();
+
+    // The tag wins over the status it happens to carry.
+    expect(loadSettings(home).cloudAgentSettings.agent_1.relay).toBeUndefined();
+  });
+
+  it("keeps the permissions when the tag says the request was refused", async () => {
+    const home = tempHome();
+    let fail = false;
+    const f = fakes({
+      list: async () => [agent()],
+      reconfigure: async () => {
+        if (fail) {
+          // The other half of the tag: the client says this never got past
+          // being rejected, so the agent is unchanged.
+          const error = new PlowApiError("http", "Plow returned 500.", 500);
+          Object.assign(error, { responseKind: "refusal" });
+          throw error;
+        }
+        return agent({ status: "active" });
+      },
+      poll: settlesOn(agent({ status: "active" })),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: false, adversarialReview: false });
+    await settle();
+
+    fail = true;
+    await state.apply("agent_1", { relay: false, inference: true, adversarialReview: false });
+    await settle();
+
+    // The tag is what decides; the status it happens to carry does not.
+    expect(loadSettings(home).cloudAgentSettings.agent_1).toMatchObject({
+      relay: true,
+      inference: false,
+    });
+  });
+
   it("keeps the permissions when Plow itself declares the change refused", async () => {
     const home = tempHome();
     let fail = false;
