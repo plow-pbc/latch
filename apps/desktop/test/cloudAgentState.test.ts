@@ -753,29 +753,22 @@ describe("the local settings write", () => {
     expect(loadSettings(home).cloudAgentSettings.agent_1).toEqual({ adversarialReview: true });
   });
 
-  it("leaves a remembered permission pair alone rather than dropping it", async () => {
+  it("does not carry a remembered permission pair forward", async () => {
     const home = tempHome();
     const settings = loadSettings(home);
-    // The shape is inert now, but a home written by an earlier build still
-    // carries it and this write must not quietly discard it.
+    // What an older build wrote here, when the app still tried to track what an
+    // agent may do.
     settings.cloudAgentSettings.agent_1 = {
       adversarialReview: false,
-      relay: true,
-      inference: false,
-    };
+      ...({ relay: true, inference: false } as Record<string, unknown>),
+    } as { adversarialReview: boolean };
     saveSettings(home, settings);
     const state = build(home, fakes({ list: async () => [agent()] }));
-    // Listed, so the agent has a row — and the entry is still found by its
-    // agent id and by nothing else about it.
     await state.refresh();
 
     await state.apply("agent_1", { adversarialReview: true });
 
-    expect(loadSettings(home).cloudAgentSettings.agent_1).toEqual({
-      adversarialReview: true,
-      relay: true,
-      inference: false,
-    });
+    expect(loadSettings(home).cloudAgentSettings.agent_1).toEqual({ adversarialReview: true });
   });
 
   it("keys on the agent id, so a session_id rotation cannot reset it", async () => {

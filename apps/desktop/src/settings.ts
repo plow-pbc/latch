@@ -38,21 +38,6 @@ export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
  */
 export interface CloudAgentLocalSettings {
   adversarialReview: boolean;
-  /**
-   * What the last successful reconfigure asked for — relay access and whether
-   * the agent may spend inference.
-   *
-   * **Absent means unknown, and unknown means ask the server.** They are here
-   * only so a save that changed nothing about the agent's permissions can skip
-   * a reconfigure, which mints a new credential and restarts the machine. A
-   * missing pair is therefore the safe state, not a broken one: the save goes
-   * through, and the answer fills them in.
-   *
-   * Never authority. Plow decides what the agent may do; this only remembers
-   * what we last asked for.
-   */
-  relay?: boolean;
-  inference?: boolean;
 }
 
 export interface Settings {
@@ -166,13 +151,11 @@ function normalizeCloudAgentSettings(raw: unknown): Record<string, CloudAgentLoc
   const out: Record<string, CloudAgentLocalSettings> = {};
   for (const [agentId, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!agentId || !value || typeof value !== "object") continue;
-    const entry = value as Record<string, unknown>;
+    // Rebuilt rather than copied, so nothing an older build wrote here — a
+    // remembered permission pair, from when this app tried to track what an
+    // agent may do — survives a load.
     out[agentId] = {
-      adversarialReview: entry.adversarialReview === true,
-      // Only a real boolean counts. Anything else is not an answer, and an
-      // unknown permission has to be re-applied rather than assumed.
-      ...(typeof entry.relay === "boolean" ? { relay: entry.relay } : {}),
-      ...(typeof entry.inference === "boolean" ? { inference: entry.inference } : {}),
+      adversarialReview: (value as Record<string, unknown>).adversarialReview === true,
     };
   }
   return out;

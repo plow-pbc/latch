@@ -361,23 +361,18 @@ export class CloudAgentState {
    * there is nothing to wait for and nothing that can fail.
    *
    * The panel's two permission controls used to ride along here and go through
-   * a reconfigure. They are gone until an endpoint can report what an agent
-   * actually may do — the list rows carry no scopes, so a permission control
-   * could only ever have shown what this Mac last asked for, which is a second
-   * and non-authoritative source of truth about the agent.
+   * a reconfigure. They are gone, and so is the pair this file remembered for
+   * them, until an endpoint can report what an agent actually may do — the list
+   * rows carry no scopes, so a permission control could only ever have shown
+   * what this Mac last asked for, which is a second and non-authoritative
+   * source of truth about the agent.
    */
   async apply(agentId: string, settings: { adversarialReview: boolean }): Promise<void> {
     if (!this.deps.enabled) return;
     const id = (agentId ?? "").trim();
     if (!id) return;
 
-    // Spread over what is stored: `settings.ts` still carries the remembered
-    // permission pair, inert, and writing this must not quietly drop it.
-    const stored = this.readAgentSettings(id);
-    this.writeAgentSettings(id, {
-      ...stored,
-      adversarialReview: settings?.adversarialReview === true,
-    });
+    this.writeAgentSettings(id, { adversarialReview: settings?.adversarialReview === true });
     this.publish();
   }
 
