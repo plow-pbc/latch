@@ -28,7 +28,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-checkout=$(sh scripts/worktree-name.sh --branch)
+checkout=$(sh scripts/worktree-name.sh --branch) || {
+  echo "error: worktree-name.sh failed" >&2
+  exit 1
+}
 
 # --- browser runtime: clone it from a checkout that already has one --------
 # Which one, and why that one, is runtime-donor.sh's whole job; empty means

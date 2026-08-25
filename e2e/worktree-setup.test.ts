@@ -53,6 +53,20 @@ function runSetup(dir: string): string {
   });
 }
 
+/** Run a setup that must refuse, and hand back what it said on the way out. */
+function runSetupExpectingRefusal(dir: string): { stdout: string; stderr: string } {
+  try {
+    runSetup(dir);
+  } catch (e) {
+    const err = e as { stdout?: Buffer | string; stderr?: Buffer | string };
+    // Absent streams would make the assertions below vacuous, so require them.
+    expect(err.stdout).toBeDefined();
+    expect(err.stderr).toBeDefined();
+    return { stdout: String(err.stdout), stderr: String(err.stderr) };
+  }
+  throw new Error("setup was expected to refuse, and did not");
+}
+
 describe("worktree-setup.sh", () => {
   it("copies the donor's payloads and signs off with this checkout's own name", () => {
     const parent = fs.mkdtempSync(path.join(tmp, "run-"));
@@ -109,9 +123,9 @@ describe("worktree-setup.sh", () => {
   it.each([
     {
       how: "the payload list names nothing",
-      // Fails only for --payloads, so it is that guard being tested and not
-      // the donor lookup one line above it.
-      stub: '#!/bin/sh\n[ "$1" = "--payloads" ] && exit 0\nexit 0\n',
+      // Succeeds silently either way: no donor is an ordinary answer, an empty
+      // payload list is not, so only the second guard should fire.
+      stub: "#!/bin/sh\nexit 0\n",
       says: /failed or named nothing/,
     },
     {
@@ -129,17 +143,11 @@ describe("worktree-setup.sh", () => {
     const asking = checkout(parent, "slot0", []);
     fs.writeFileSync(path.join(asking, "scripts", "runtime-donor.sh"), stub);
 
-    let thrown: { stdout?: Buffer | string } | undefined;
-    expect(() => {
-      try {
-        runSetup(asking);
-      } catch (e) {
-        thrown = e as { stdout?: Buffer | string };
-        throw e;
-      }
-    }).toThrow(says);
+    const { stdout, stderr } = runSetupExpectingRefusal(asking);
+
+    expect(stderr).toMatch(says);
     // Stopping is only half of it: the point is stopping BEFORE the work, so
     // nobody watches a build succeed on a checkout that copied nothing.
-    expect(String(thrown?.stdout ?? "")).not.toContain("stub just");
+    expect(stdout).not.toContain("stub just");
   });
 });

@@ -1,7 +1,8 @@
 /**
- * Git, as the script suites need it: identity supplied and signing off, so a
- * fixture repo builds the same way on a machine whose developer has commit
- * signing, a global hooks path, or a different `init.defaultBranch` configured.
+ * Git, as the script suites need it: identity supplied, signing off, and no
+ * hooks, so a fixture repo builds the same way whatever the developer running
+ * the suite has configured globally. Callers pass `-b` themselves, so
+ * `init.defaultBranch` needs nothing here.
  *
  * Shared because all three of them build fixture checkouts, and a future guard
  * added here — another `-c` to neutralise some ambient config — has to arrive
@@ -12,7 +13,22 @@ import { execFileSync } from "node:child_process";
 export function git(cwd: string, ...args: string[]): string {
   return execFileSync(
     "git",
-    ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args],
+    [
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "user.name=t",
+      "-c",
+      "commit.gpgsign=false",
+      // Emptied, not pointed somewhere harmless: a global hooks path is a real
+      // configuration here, and without this every throwaway fixture commit
+      // fires whatever the developer has installed — on this machine, the code
+      // reviewer, queueing reviews of temp directories that no longer exist by
+      // the time it looks.
+      "-c",
+      "core.hooksPath=",
+      ...args,
+    ],
     { cwd, encoding: "utf8" },
   );
 }
