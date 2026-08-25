@@ -32,8 +32,13 @@ checkout=$(sh scripts/worktree-name.sh --branch)
 
 # --- browser runtime: clone it from a checkout that already has one --------
 # Which one, and why that one, is runtime-donor.sh's whole job; empty means
-# nothing nearby qualifies.
-donor=$(sh scripts/runtime-donor.sh)
+# nothing nearby qualifies, which is the ordinary answer and not an error. A
+# non-zero exit is, and errexit would take it without printing anything — so it
+# reports, the same way the payload list below does.
+donor=$(sh scripts/runtime-donor.sh) || {
+  echo "error: runtime-donor.sh failed" >&2
+  exit 1
+}
 
 echo "checkout: $checkout"
 echo "donor:    ${donor:-none nearby has a runtime built from these pins}"

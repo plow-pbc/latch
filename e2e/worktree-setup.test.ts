@@ -70,6 +70,11 @@ describe("worktree-setup.sh", () => {
       .split("\n");
     checkout(parent, "slot1", [...payloads, "downloads"]);
     const asking = checkout(parent, "slot0", [], "feature/vault-fix");
+    // One payload already built here. The branch that leaves it alone guards a
+    // ~500 MB tree from being overwritten by a donor's copy of it, so the proof
+    // has to be that this file is still here afterwards.
+    fs.mkdirSync(path.join(asking, "vendor", payloads[0]), { recursive: true });
+    fs.writeFileSync(path.join(asking, "vendor", payloads[0], "ours"), "keep me");
 
     const out = runSetup(asking);
 
@@ -77,6 +82,12 @@ describe("worktree-setup.sh", () => {
     for (const p of [...payloads, "downloads"]) {
       expect(fs.existsSync(path.join(asking, "vendor", p))).toBe(true);
     }
+    expect(fs.readFileSync(path.join(asking, "vendor", payloads[0], "ours"), "utf8")).toBe("keep me");
+    expect(out).toContain(`vendor/${payloads[0]} already present`);
+    // The install and build are the point of running setup at all, and the stub
+    // is what makes them observable — so assert they were reached.
+    expect(out).toContain("stub just install");
+    expect(out).toContain("stub just build");
     // The closing hand-off names this checkout's branch and its real home. This
     // is the line the shadowing bug corrupted, and it is what the owner copies.
     expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
@@ -97,13 +108,34 @@ describe("worktree-setup.sh", () => {
     expect(out).toContain("is ready.");
   });
 
-  it("refuses to go on when the payload list comes back empty", () => {
-    const parent = fs.mkdtempSync(path.join(tmp, "nopayloads-"));
+  // Every way the donor script can let setup down. All of them would otherwise
+  // be taken by errexit, which exits without printing, so the owner would see
+  // the run stop with nothing saying what stopped it — and an empty payload
+  // list would not even stop it: the copy loop would do nothing and setup would
+  // install, build, and report success over it.
+  it.each([
+    {
+      how: "the payload list names nothing",
+      // Fails only for --payloads, so it is that guard being tested and not
+      // the donor lookup one line above it.
+      stub: '#!/bin/sh\n[ "$1" = "--payloads" ] && exit 0\nexit 0\n',
+      says: /failed or named nothing/,
+    },
+    {
+      how: "the payload list fails outright",
+      stub: '#!/bin/sh\n[ "$1" = "--payloads" ] && exit 3\nexit 0\n',
+      says: /failed or named nothing/,
+    },
+    {
+      how: "the donor lookup fails outright",
+      stub: '#!/bin/sh\n[ "$1" = "--payloads" ] && exit 0\nexit 4\n',
+      says: /runtime-donor\.sh failed/,
+    },
+  ])("stops and says so when $how", ({ stub, says }) => {
+    const parent = fs.mkdtempSync(path.join(tmp, "brokendonor-"));
     const asking = checkout(parent, "slot0", []);
-    // The guard's whole purpose: an empty list would make the copy loop a
-    // no-op, and the script would still install, build, and report success.
-    fs.writeFileSync(path.join(asking, "scripts", "runtime-donor.sh"), "#!/bin/sh\nexit 0\n");
+    fs.writeFileSync(path.join(asking, "scripts", "runtime-donor.sh"), stub);
 
-    expect(() => runSetup(asking)).toThrow(/failed or named nothing/);
+    expect(() => runSetup(asking)).toThrow(says);
   });
 });
