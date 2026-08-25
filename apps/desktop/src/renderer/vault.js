@@ -316,10 +316,19 @@ function vfield(spec, ctx) {
      the box (masked, with the eye), and an empty one read "Not set". This app
      never hands a secret back to the window, so both states rendered as the
      same blank box — which is how a key that WAS saved read as dropped.
-     Her distinction, kept, with what we are allowed to show: a saved key is
-     evidenced by the live code beneath it, and the box says only what typing
-     into it would do. An existing item with no key gets her word. */
-  if (held) input.setAttribute("placeholder", "Saved — type to replace it");
+     Her distinction, kept, in her own alphabet: a stored secret shows the same
+     bullets every secret box in this form already shows — the password's
+     "••••••••••••", the card number's groups, the CVV's three — painted as
+     text rather than as a hint (vault.css, .field.held). A sentence in the box
+     said the same thing in a language the rest of the form does not speak.
+     A box that already draws its own bullets keeps them, whatever it groups
+     them with — a stored card number still reads in its four groups, a social
+     security number in its "•••-••-••••". The rest get a fixed run: the value
+     never reaches this window, so its true length is not ours to show — this
+     is an is-set light and nothing more, and the live code beneath a key is
+     what proves the stored value still works.
+     An existing item with no secret gets her word. */
+  if (held) input.setAttribute("placeholder", /^[•\s-]+$/.test(spec.placeholder ?? "") ? spec.placeholder : "••••••••••••");
   else if (spec.secret && ctx.saved) input.setAttribute("placeholder", "Not set");
   // Built before the buttons so the eye and the code button can drive it.
   const code = spec.totp ? vtotp(input, ctx, held) : null;
@@ -368,7 +377,7 @@ function vfield(spec, ctx) {
     ? el("label", { text: spec.label + " " }, spec.required ? [el("span", { class: "req", text: "*" })] : [])
     : null;
   const hint = spec.hint ? el("span", { class: "gen-hint" }, [icon("generate", { class: "vico", strokeWidth: "1.8" }), el("span", { text: " " + spec.hint })]) : null;
-  return el("div", { class: "field" + (spec.secret ? " secret" : "") + (spec.half ? "" : " span2") },
+  return el("div", { class: "field" + (spec.secret ? " secret" : "") + (held ? " held" : "") + (spec.half ? "" : " span2") },
     [label, el("div", { class: "inwrap" }, [input, ...buttons]), code?.node, hint].filter(Boolean));
 }
 
