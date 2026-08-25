@@ -58,7 +58,7 @@ export function capabilityDisplay(c: Capability): string {
     case "network":
       return c.allowed ? "Network: allowed" : "Network: denied";
     case "tool":
-      return `Tool: ${c.tool ?? "?"}`;
+      return `Slack: ${(c.tool ?? "?").replace(/^slack\./, "")}`;
     case "browser":
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":

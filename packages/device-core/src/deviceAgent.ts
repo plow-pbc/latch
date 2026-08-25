@@ -23,6 +23,7 @@ import { VaultServer } from "./browser/vaultServer.js";
 import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
+import { ConnectorClient, ConnectorError } from "./connectors.js";
 import { Executor } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
@@ -138,6 +139,13 @@ export class DeviceAgent {
      * and a manifest that does not depend on the machine running the suite.
      */
     ownerHome: string = home,
+    /**
+     * How `tool` capabilities reach Plow's connector API. Null on a Mac that
+     * has not paired, and in every test that does not exercise connectors —
+     * the executor says so rather than throwing, so a misconfigured install
+     * produces an approval-dialog sentence instead of a stack trace.
+     */
+    private readonly connectors: ConnectorClient | null = null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
@@ -373,6 +381,8 @@ export class DeviceAgent {
     if (intent.capabilities.some((c) => c.kind === "browser" || c.kind === "credential")) {
       return this.executeBrowserIntent(intent, payload);
     }
+    const tool = intent.capabilities.find((c) => c.kind === "tool");
+    if (tool) return this.executeToolIntent(tool, payload);
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
@@ -380,6 +390,33 @@ export class DeviceAgent {
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
     if (read) return this.executeRead(intent, read);
     return { status: "error", error: "no executable capability in intent" };
+  }
+
+  /**
+   * Run a `tool` capability. Today every one is `slack.<action>`; the prefix is
+   * matched rather than assumed so a second connector is a new prefix and not a
+   * new dispatch site.
+   */
+  private async executeToolIntent(
+    cap: { tool?: string },
+    payload: JSONValue,
+  ): Promise<JSONValue> {
+    const name = cap.tool ?? "";
+    if (!name.startsWith("slack.")) {
+      return { status: "error", error: `unknown tool capability: ${name || "(none)"}` };
+    }
+    if (!this.connectors) {
+      return { status: "error", error: "this Mac is not paired with Plow" };
+    }
+    const action = name.slice("slack.".length);
+    try {
+      return action === "status"
+        ? await this.connectors.status()
+        : await this.connectors.call(action, payload);
+    } catch (e) {
+      if (e instanceof ConnectorError) return { status: "error", error: e.message };
+      throw e;
+    }
   }
 
   private async executeRead(intent: Intent, cap: { paths?: string[] }): Promise<JSONValue> {
