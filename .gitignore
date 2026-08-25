@@ -20,3 +20,4 @@ vendor/vault-server/
 
 # a stray bw run once defaulted its app data here
 Library/
+vendor/*.partial/

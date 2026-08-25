@@ -30,7 +30,9 @@
 # flag on the build script and synthetic stamps through both suites — not worth
 # it while the failure is a version mismatch that surfaces on use rather than a
 # silent wrong answer. What IS caught: a donor pinning something else entirely,
-# and (via the stamp's existence) one interrupted mid-fetch.
+# and — via the one stamp — a python build that never finished. The `--browser`
+# payloads carry their own markers and are checked only for existence, so a
+# neighbour interrupted during THAT pass can still qualify.
 payloads() {
   printf '%s\n' python-runtime camoufox-browser vault-server vault-cli
 }

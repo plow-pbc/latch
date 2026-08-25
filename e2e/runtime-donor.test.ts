@@ -133,9 +133,11 @@ describe("runtime-donor.sh, among siblings", () => {
     },
     {
       why: "passes over a sibling still in the middle of its fetch",
-      // The dirs are all there — extraction creates them first — and only the
-      // stamp says whether anything finished writing into them.
-      siblings: [{ name: "slot1", payloads: FULL, stamped: false }],
+      // The Python build runs first and stamps itself when it finishes, so an
+      // unstamped python-runtime with nothing else beside it is what a fetch
+      // caught in its first pass actually looks like — and the tier that would
+      // otherwise take a Python-only donor has to refuse this one.
+      siblings: [{ name: "slot1", payloads: PYTHON_ONLY, stamped: false }],
       winner: "",
     },
     {

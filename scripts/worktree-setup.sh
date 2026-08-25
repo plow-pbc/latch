@@ -12,9 +12,10 @@
 # Nothing here is worktree-specific except where the donor is found, and that
 # now falls back to the siblings.
 #
-# Per-checkout isolation is handled by the justfile and the app, keyed on the
-# normalized branch name (scripts/worktree-name.sh) — for EVERY checkout, the
-# main one included; only the packaged install uses the unsuffixed defaults:
+# State is keyed on the normalized BRANCH name (scripts/worktree-name.sh) — for
+# EVERY checkout, the main one included; only the packaged install uses the
+# unsuffixed defaults. Two plain clones on one branch therefore share all of it
+# (see CLAUDE.md); only a linked worktree is guaranteed a branch to itself:
 #
 #   app home          ~/Library/Application Support/Plow-Latch-<branch>
 #   local-relay home  ~/Library/Application Support/Plow-Latch-<branch>-local
@@ -42,12 +43,7 @@ echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
 # download cache — a donor without the cache still qualifies, so it is named
 # here and not there. A donor may be carrying only some of these (see the
 # script's fallback), which is why each dir reports for itself below.
-#
-# errexit covers a non-zero exit; an EMPTY list it cannot see, and that one
-# would make the loop below a silent no-op that still reports the checkout
-# ready. One line of the shell's own fail-fast idiom, rather than a harness.
 payloads=$(sh scripts/runtime-donor.sh --payloads)
-: "${payloads:?runtime-donor.sh --payloads named nothing}"
 
 for payload in $payloads downloads; do
   dir="vendor/$payload"
@@ -60,9 +56,15 @@ for payload in $payloads downloads; do
     # `already present` arm above preserves forever — setup would report the
     # checkout ready over a runtime that is missing most of itself. rename(2)
     # is atomic, so the destination either does not exist or is complete.
-    rm -rf "$dir.partial"
     # -c uses APFS clonefile; fall back to a plain copy on other filesystems.
-    cp -Rpc "$donor/$dir" "$dir.partial" 2>/dev/null || cp -Rp "$donor/$dir" "$dir.partial"
+    # Cleared before EACH attempt: on a non-APFS volume the clone copy fails
+    # part-written, and a fallback into what it left behind nests the payload a
+    # directory deeper instead of replacing it.
+    rm -rf "$dir.partial"
+    cp -Rpc "$donor/$dir" "$dir.partial" 2>/dev/null || {
+      rm -rf "$dir.partial"
+      cp -Rp "$donor/$dir" "$dir.partial"
+    }
     mv "$dir.partial" "$dir"
   else
     echo "note: no $dir to clone — run \`just fetch-browser-runtime fetch-browser\` if you need the browser stack"
