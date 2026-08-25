@@ -262,6 +262,13 @@ owner used before you start guessing synonyms, and tell them which chats you loo
 
 ## When it does not answer
 
+- **A denial is an answer, and it is not "there are no messages".** This Mac may refuse the
+  request — the owner said no, or their standing policy did. That is a decision about
+  whether *you* should be reading their messages right now, not a fact about the archive.
+  Say you were not permitted to read it and stop; do not retry the same request with the
+  goal reworded to sound more routine. The goal is what the owner reads when deciding, so
+  rewording it to get a yes is lying to them. If the refusal looks wrong, the person to
+  take it up with is the owner.
 - **\`Error: in prepare, unable to open database file (14)\` does not mean the file is
   missing.** The store is a WAL database. Reading one needs a \`-shm\` index beside it, and
   when WhatsApp Desktop is not running that file may be gone — rebuilding it means writing
