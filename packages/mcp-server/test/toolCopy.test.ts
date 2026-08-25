@@ -294,6 +294,11 @@ describe("every tool says what kind of tool it is", () => {
         "plow_list_skills",
         "plow_read_file",
         "plow_read_skill",
+        "plow_slack_channels",
+        "plow_slack_messages",
+        "plow_slack_search",
+        "plow_slack_status",
+        "plow_slack_users",
         // list/describe only, and no tool here returns a vault value.
         "plow_vault",
       ],
@@ -301,7 +306,17 @@ describe("every tool says what kind of tool it is", () => {
     {
       hint: "openWorldHint" as const,
       what: "reach the open internet",
-      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_command"],
+      tools: [
+        "plow_browser",
+        "plow_browser_open",
+        "plow_browser_request",
+        "plow_run_command",
+        "plow_slack_channels",
+        "plow_slack_messages",
+        "plow_slack_search",
+        "plow_slack_status",
+        "plow_slack_users",
+      ],
     },
   ])("the tools that $what are exactly the ones marked $hint", async ({ hint, tools }) => {
     const marked = (await listed(makeServer()))

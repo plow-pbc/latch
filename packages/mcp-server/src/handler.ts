@@ -26,11 +26,25 @@ import { JobOwners } from "./jobs.js";
 import {
   AgentIdentity,
   MACOS_TOOLING,
-  TOOLS,
+  TOOLS as CORE_TOOLS,
   ToolContext,
+  ToolSpec,
   toolBlocks,
   toolContent,
 } from "./tools.js";
+import { SLACK_READ_TOOLS } from "./slackTools.js";
+
+/**
+ * The full served surface: the Mac-local tools plus the owner's Slack.
+ *
+ * Composed here, not inside tools.ts, on purpose — slackTools.ts imports
+ * `decideAndRun`/`GOAL` from tools.ts, so tools.ts importing back from
+ * slackTools.ts would be a circular module dependency (each side needing a
+ * value the other hasn't finished initializing yet, a real crash at import
+ * time, not a style preference). handler.ts already sits downstream of both,
+ * so it is the seam that can combine them without creating a cycle.
+ */
+const TOOLS: ToolSpec[] = [...CORE_TOOLS, ...SLACK_READ_TOOLS];
 
 /** The MCP revision this server speaks, and the only one it will speak. */
 export const PROTOCOL_REVISION = "2026-07-28";

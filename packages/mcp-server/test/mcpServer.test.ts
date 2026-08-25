@@ -92,6 +92,11 @@ describe("the reduced tool surface (§4.5)", () => {
       "plow_read_file",
       "plow_read_skill",
       "plow_run_command",
+      "plow_slack_channels",
+      "plow_slack_messages",
+      "plow_slack_search",
+      "plow_slack_status",
+      "plow_slack_users",
       "plow_vault",
       "plow_write_file",
     ]);

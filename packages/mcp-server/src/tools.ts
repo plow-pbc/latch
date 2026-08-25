@@ -112,7 +112,7 @@ const resolveAll = (paths: string[]): Promise<string[]> => Promise.all(paths.map
  * policy → approval → sandbox, mapping the device's answer onto §4.3's
  * vocabulary: a refusal is `denied`, anything else that went wrong is `failed`.
  */
-async function decideAndRun(
+export async function decideAndRun(
   ctx: ToolContext,
   progress: Progress,
   request: string,
@@ -155,7 +155,7 @@ async function decideAndRun(
  * "explain well and you get more access". The enforceable bound is the
  * capability set.
  */
-const GOAL = {
+export const GOAL = {
   type: "string",
   description:
     "Why you need this, in one line. The user reads exactly this when deciding whether to approve.",
