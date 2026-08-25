@@ -22,7 +22,11 @@ import {
   CloudChatsClient,
   resolveCloudAgentsEnabled,
 } from "../src/cloudAgentState.js";
-import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
+import {
+  CloudAgentResource,
+  CloudAgentResponseError,
+  CloudAgentsClient,
+} from "../src/cloudAgents.js";
 import { PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
@@ -956,7 +960,8 @@ describe("Apply changes", () => {
     const f = fakes({
       list: async () => [agent()],
       reconfigure: async () => {
-        if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+        // A refusal: the request arrived and was rejected.
+        if (fail) throw new CloudAgentResponseError("http", "Plow returned 500.", 500, false);
         return agent({ status: "active" });
       },
       poll: settlesOn(agent({ status: "active" })),
@@ -1013,7 +1018,8 @@ describe("Apply changes", () => {
     const f = fakes({
       list: async () => [agent()],
       reconfigure: async () => {
-        if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+        // A refusal: the request arrived and was rejected.
+        if (fail) throw new CloudAgentResponseError("http", "Plow returned 500.", 500, false);
         return agent({ status: "active" });
       },
       poll: settlesOn(agent({ status: "active" })),
@@ -1164,7 +1170,12 @@ describe("Apply changes", () => {
         // request was ACCEPTED — the reconfigure may well have applied — so
         // this is as unknown as a timeout, not a refusal.
         if (fail) {
-          throw new PlowApiError("http", "Plow returned an invalid cloud-agent response.", 202);
+          throw new CloudAgentResponseError(
+            "http",
+            "Plow returned an invalid cloud-agent response.",
+            202,
+            true,
+          );
         }
         return agent({ status: "active" });
       },
@@ -1195,7 +1206,12 @@ describe("Apply changes", () => {
         // The client refuses a receipt whose agent_id is not the one it asked
         // about. Same door, same conclusion: accepted, outcome unknown.
         if (fail) {
-          throw new PlowApiError("http", "Plow returned an invalid cloud-agent response.", 200);
+          throw new CloudAgentResponseError(
+            "http",
+            "Plow returned an invalid cloud-agent response.",
+            200,
+            true,
+          );
         }
         return agent({ status: "active" });
       },
@@ -1221,10 +1237,15 @@ describe("Apply changes", () => {
       reconfigure: async () => {
         if (fail) {
           // Tagged at the source rather than inferred from the status: the
-          // client says it accepted the answer and could not use it.
-          const error = new PlowApiError("http", "Plow returned an invalid response.", 409);
-          Object.assign(error, { responseKind: "invalid-2xx-receipt" });
-          throw error;
+          // client says it accepted the answer and could not use it. The 409
+          // it carries would read as a refusal to anything guessing from the
+          // status alone.
+          throw new CloudAgentResponseError(
+            "http",
+            "Plow returned an invalid response.",
+            409,
+            true,
+          );
         }
         return agent({ status: "active" });
       },
@@ -1243,6 +1264,36 @@ describe("Apply changes", () => {
     expect(loadSettings(home).cloudAgentSettings.agent_1.relay).toBeUndefined();
   });
 
+  it("treats an unclassified failure as uncertain, not as a refusal", async () => {
+    const home = tempHome();
+    let fail = false;
+    const f = fakes({
+      list: async () => [agent()],
+      reconfigure: async () => {
+        // Not the client's own error type, so nothing classified it. It carries
+        // a status a range check would have read as a refusal — but only the
+        // client knows whether a request landed, and an unclassified failure
+        // must not be the one that keeps a permission on screen.
+        if (fail) throw new PlowApiError("http", "Plow returned 500.", 500);
+        return agent({ status: "active" });
+      },
+      poll: settlesOn(agent({ status: "active" })),
+    });
+    const state = build(home, f);
+    await state.refresh();
+    await state.apply("agent_1", { relay: true, inference: true, adversarialReview: false });
+    await settle();
+    expect(loadSettings(home).cloudAgentSettings.agent_1.relay).toBe(true);
+
+    fail = true;
+    await state.apply("agent_1", { relay: false, inference: false, adversarialReview: false });
+    await settle();
+
+    const entry = loadSettings(home).cloudAgentSettings.agent_1;
+    expect(entry.relay).toBeUndefined();
+    expect(entry.inference).toBeUndefined();
+  });
+
   it("keeps the permissions when the tag says the request was refused", async () => {
     const home = tempHome();
     let fail = false;
@@ -1252,9 +1303,7 @@ describe("Apply changes", () => {
         if (fail) {
           // The other half of the tag: the client says this never got past
           // being rejected, so the agent is unchanged.
-          const error = new PlowApiError("http", "Plow returned 500.", 500);
-          Object.assign(error, { responseKind: "refusal" });
-          throw error;
+          throw new CloudAgentResponseError("http", "Plow returned 500.", 500, false);
         }
         return agent({ status: "active" });
       },
@@ -1282,9 +1331,9 @@ describe("Apply changes", () => {
     const f = fakes({
       list: async () => [agent()],
       reconfigure: async () => {
-        // A status: the request arrived and was refused, so the agent is
+        // A refusal: the request arrived and was rejected, so the agent is
         // unchanged and what is remembered about it is still true.
-        if (fail) throw new PlowApiError("http", "Plow returned 409.", 409);
+        if (fail) throw new CloudAgentResponseError("http", "Plow returned 409.", 409, false);
         return agent({ status: "active" });
       },
       poll: settlesOn(agent({ status: "active" })),

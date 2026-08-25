@@ -22,7 +22,11 @@ import {
   CloudAgentDisplayRow,
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
-import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
+import {
+  CloudAgentResource,
+  CreateCloudAgentRequest,
+  isCloudAgentRefusal,
+} from "./cloudAgents.js";
 import { activationChatLabel } from "./onboarding.js";
 import {
   ApiBaseUrl,
@@ -800,28 +804,20 @@ function chosen(value: boolean | null | undefined): boolean | null {
 /**
  * Did Plow itself REFUSE this?
  *
- * The only outcome that leaves the agent provably unchanged: a non-2xx answer
- * from the server. The request arrived, it was rejected, nothing happened.
+ * The only outcome that leaves the agent provably unchanged: the client says
+ * the request arrived and was rejected, so nothing happened and what is
+ * remembered about the agent is still true.
  *
- * A status alone is not enough, and reading it as enough was a stale-memory bug
- * of its own. The client also raises a status-bearing error when an ACCEPTED
- * 2xx response is malformed or names the wrong agent — the request landed, and
- * what it did is exactly as unknown as a timeout's. That joins the uncertain
- * cases, where the remembered permissions are forgotten rather than kept.
- *
- * An error with no status never got an answer at all.
+ * Everything else is uncertain, and that is the safe direction. A timeout never
+ * got an answer. An accepted 2xx whose receipt is malformed or names the wrong
+ * agent DID land — what it then did is exactly as unknown as the timeout's, and
+ * reading it as a refusal because it carried a status was a stale-memory bug of
+ * its own. An error from somewhere that classified nothing falls here too,
+ * which is why there is no status-range guess left to make: an unclassified
+ * failure must not be the one that keeps a permission on screen.
  */
 function declaredByServer(error: unknown): boolean {
-  if (!(error instanceof PlowApiError) || typeof error.status !== "number") return false;
-  // The client tags which of the two an error is. Read structurally rather than
-  // through its exported predicate only because that tag is still landing; this
-  // becomes a plain `isCloudAgentRefusal(error)` once it has.
-  const tagged = (error as { responseKind?: unknown }).responseKind;
-  if (tagged === "refusal") return true;
-  if (typeof tagged === "string") return false;
-  // Untagged: the status range says the same thing, because an unusable
-  // receipt carries the 2xx it arrived on.
-  return error.status < 200 || error.status >= 300;
+  return isCloudAgentRefusal(error);
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */
