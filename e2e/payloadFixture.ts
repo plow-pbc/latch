@@ -18,9 +18,10 @@ export const ARCH = os.arch() === "arm64" ? "arm64" : "x86_64";
 
 /**
  * Files a payload's build writes BEFORE its marker — the ones that make a tree
- * look inhabited while it is still being filled in. camoufoxIn() keys on
- * config.json, so a per-arch tree carrying one is the tree it will pick,
- * finished or not.
+ * look inhabited while it is still being filled in. fetchBrowser() writes
+ * camoufox's config.json after the extraction and before the addon it fetches
+ * over the network, so a tree holding one is past the slow half and still
+ * unfinished.
  */
 export const CONTENTS: Record<string, string[]> = {
   "camoufox-browser": [`${ARCH}/config.json`],

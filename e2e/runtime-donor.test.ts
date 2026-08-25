@@ -203,7 +203,21 @@ describe("runtime-donor.sh --check vets the one it is handed", () => {
       usable: true,
     },
     {
-      why: "refuses a mid-extract Camoufox that an older universal tree excuses",
+      why: "refuses a Camoufox still extracting, whatever sits beside it",
+      // The earlier half of the same window: the per-arch tree has been made
+      // and `ditto` is still filling it, so there is no config.json yet and a
+      // finished universal tree next door must not answer for it.
+      spec: {
+        name: "d",
+        payloads: FULL,
+        unfinished: "camoufox-browser",
+        withoutPayloadDir: `camoufox-browser/${ARCH}/config.json`,
+        alsoMarker: "camoufox-browser/universal/.sha256",
+      },
+      usable: false,
+    },
+    {
+      why: "refuses a Camoufox fetching its addon that an older universal tree excuses",
       // The gap a bare "some marker exists" check leaves open. The per-arch
       // tree is half-written and the universal one beside it is finished and
       // stale — and camoufoxIn() PREFERS the per-arch tree, so this is the

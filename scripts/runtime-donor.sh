@@ -49,17 +49,21 @@ arch=$(uname -m)
 unfinished() {
   case $2 in
     python-runtime) [ ! -f "$1/vendor/python-runtime/.stamp" ] ;;
-    # Whichever tree camoufoxIn() would pick, and only that one. It tries this
-    # arch first and the fused universal tree second, keying on config.json —
-    # so a per-arch tree far enough along to have one is what the recipient
-    # will load, and an empty leftover dir is not. Asking only that
-    # SOME marker is present lets a stale universal/.sha256 from an earlier
-    # --browser-both excuse a per-arch tree still mid-extract. fetchBrowser()
-    # writes config.json early and .sha256 last with a network fetch between,
-    # so that window is minutes wide and what it hands over is a browser
-    # missing its addon.
+    # Whichever tree camoufoxIn() would pick — judged more strictly than it
+    # judges, deliberately. fetchBrowser() rms the per-arch tree, extracts into
+    # it (minutes), writes config.json, fetches an addon over the network, and
+    # only then writes .sha256. So a per-arch directory that EXISTS at all is
+    # somewhere inside that window unless it carries its own marker, and asking
+    # after config.json instead would wave the extraction half straight
+    # through. The cost is refusing a donor whose stray empty <arch>/ dir
+    # camoufoxIn() would have skipped past to universal — cheap, since the
+    # answer is to name another donor or delete the stray. The other direction
+    # copies a half-built browser, and the recipient keeps it. camoufoxIn() has
+    # a third candidate, the payload dir itself, which nothing the build script
+    # produces ever leaves — a donor in that shape is refused too, and that is
+    # the same trade.
     camoufox-browser)
-      if [ -f "$1/vendor/camoufox-browser/$arch/config.json" ]; then
+      if [ -e "$1/vendor/camoufox-browser/$arch" ]; then
         [ ! -f "$1/vendor/camoufox-browser/$arch/.sha256" ]
       else
         [ ! -f "$1/vendor/camoufox-browser/universal/.sha256" ]
