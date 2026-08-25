@@ -45,8 +45,11 @@ export function servesCertificate(port: number, certPath: string, timeoutMs = 1_
       sock.destroy();
       resolve(ok);
     };
+    // No SNI: it names a host, and an IP is not one — Node 26 throws on the IP
+    // that Node 24 only deprecated. Identity falls to `host`, which the cert
+    // this mints covers as an IP SAN.
     const sock = tls.connect(
-      { host: "127.0.0.1", port, ca, servername: "127.0.0.1", timeout: timeoutMs },
+      { host: "127.0.0.1", port, ca, timeout: timeoutMs },
       () => done(sock.authorized),
     );
     sock.once("error", () => done(false));
