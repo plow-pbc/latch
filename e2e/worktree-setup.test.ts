@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { git } from "./gitFixture.js";
+import { git, hermeticEnv } from "./gitFixture.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPTS = ["worktree-setup.sh", "worktree-name.sh", "termic-setup.sh"];
@@ -118,20 +118,16 @@ function run(dir: string, script: string, args: string[] = [], failing?: string)
     cwd: dir,
     encoding: "utf8",
     env: {
-      ...process.env,
+      // Same neutralisation the fixtures are built under — these scripts run
+      // git themselves, so it has to hold on this side too.
+      ...hermeticEnv(),
       PATH: `${stubBin}:${process.env.PATH}`,
       JUST_FAIL: failing ?? "",
-      // Ambient config neutralised the way gitFixture neutralises the rest of
-      // it, so the row that needs no repository above it fails as "the fixture
-      // is not what this needs" rather than as a lookup regression. Two ways in
-      // and both are shut: a TMPDIR pointed inside a working tree, which some
-      // CI images do, and the variables that skip discovery altogether — a
-      // suite run from inside a git hook or `rebase --exec` carries them, and
-      // this machine installs a post-commit hook. Node drops `undefined`.
+      // And the walk itself is bounded, for a TMPDIR pointed inside a working
+      // tree — some CI images do this. The row that needs no repository above
+      // it then fails as "the fixture is not what this needs" rather than as a
+      // lookup regression.
       GIT_CEILING_DIRECTORIES: fs.realpathSync(tmp),
-      GIT_DIR: undefined,
-      GIT_WORK_TREE: undefined,
-      GIT_COMMON_DIR: undefined,
     },
   });
   // A spawn that never happened, or a child killed on maxBuffer: reported here

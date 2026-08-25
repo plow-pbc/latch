@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { git } from "./gitFixture.js";
+import { git, hermeticEnv } from "./gitFixture.js";
 
 const script = fileURLToPath(new URL("../scripts/worktree-name.sh", import.meta.url));
 
@@ -18,7 +18,11 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-wt-"));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 function nameIn(cwd: string, ...args: string[]): string {
-  return execFileSync("sh", [script, ...args], { cwd, encoding: "utf8" }).trim();
+  // The script asks git where it is, so it needs the same neutralised
+  // environment the fixtures are built under — GIT_DIR and friends would
+  // otherwise answer for the outer repository and every case here would
+  // read the wrong checkout.
+  return execFileSync("sh", [script, ...args], { cwd, encoding: "utf8", env: hermeticEnv() }).trim();
 }
 
 function makeRepo(dir: string): string {

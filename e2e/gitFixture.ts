@@ -10,6 +10,23 @@
  */
 import { execFileSync } from "node:child_process";
 
+/**
+ * The variables git exports to every hook it runs — and to `rebase --exec` and
+ * `bisect run`. They do not bound repository discovery, they REPLACE it, so a
+ * suite run from inside a hook (this machine puts one on every commit) builds
+ * its fixtures against the outer repository instead of the temp directory: a
+ * `git init` that inits nothing, a commit that lands elsewhere. `-c` cannot
+ * reach them, since they are environment rather than config.
+ */
+const DISCOVERY_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"];
+
+/** `process.env` with anything that would point git out of the fixture removed. */
+export function hermeticEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const v of DISCOVERY_VARS) delete env[v];
+  return env;
+}
+
 export function git(cwd: string, ...args: string[]): string {
   return execFileSync(
     "git",
@@ -29,6 +46,6 @@ export function git(cwd: string, ...args: string[]): string {
       "core.hooksPath=",
       ...args,
     ],
-    { cwd, encoding: "utf8" },
+    { cwd, encoding: "utf8", env: hermeticEnv() },
   );
 }
