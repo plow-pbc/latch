@@ -9,6 +9,7 @@ import {
   HeadlessPolicy,
   registerWhatsappSkill,
   SkillRegistry,
+  WHATSAPP_CHAT_PLACEHOLDER,
   WHATSAPP_FALLBACK_SCRIPT,
   WHATSAPP_QUERIES,
   whatsappSkillFor,
@@ -81,6 +82,7 @@ describe("the built-in whatsapp-history skill", () => {
     ["that a refusal is not the same as an empty archive", /a denial is an answer/i],
     ["not retrying a refusal with a reworded goal", /rewording it to get a yes/i],
     ["doubling an apostrophe in anything pasted into a query", /double every apostrophe/i],
+    ["that a display name is not a stable key", /names are not\s+unique/i],
   ])("publishes %s", (_what, pattern) => {
     expect(whatsappSkillFor("/Users/example").body).toMatch(pattern);
   });

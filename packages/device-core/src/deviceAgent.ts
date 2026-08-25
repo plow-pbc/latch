@@ -129,8 +129,15 @@ export class DeviceAgent {
     name: string,
     private readonly delegate: PolicyDelegate,
     browserRuntime?: ResolvedBrowserRuntime | null,
-    /** The owner's real home — where their apps put their data. Not DOMO_HOME. */
-    ownerHome: string = os.homedir(),
+    /**
+     * The owner's real home — where their apps put their data, which is NOT
+     * `home` (a DOMO_HOME a test points at a throwaway root). Defaults to
+     * `home` rather than `os.homedir()` so nothing in here reads ambient OS
+     * state: the desktop app is the only caller that knows the real one, and
+     * it passes it. A test or a non-desktop caller gets its own isolated root
+     * and a manifest that does not depend on the machine running the suite.
+     */
+    ownerHome: string = home,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));

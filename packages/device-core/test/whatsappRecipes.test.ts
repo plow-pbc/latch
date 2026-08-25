@@ -107,6 +107,10 @@ function makeStore(dir: string): string {
     "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME)" +
       ` values(${at(base + 4000)}, 'don''t forget dinner', 3, 0);`,
   );
+  rows.push(
+    "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME)" +
+      ` values(${at(base + 3000)}, 'the other Wren', 4, 0);`,
+  );
   sqlite([
     store,
     [
@@ -123,6 +127,9 @@ function makeStore(dir: string): string {
       `insert into ZWACHATSESSION values(1, 'O''Brien', '15551234@s.whatsapp.net', ${at(base + 3600)});`,
       `insert into ZWACHATSESSION values(2, 'Book Club', '99887@g.us', ${at(base + 5000)});`,
       `insert into ZWACHATSESSION values(3, 'Wren', '15557777@s.whatsapp.net', ${at(base + 4000)});`,
+      // A SECOND chat with the same display name — the collision the chat_id
+      // key exists to survive. 13 such names sit in the real store.
+      `insert into ZWACHATSESSION values(4, 'Wren', '15558888@s.whatsapp.net', ${at(base + 3000)});`,
       "insert into ZWAGROUPMEMBER values(1, 'Bernard', '15559999@s.whatsapp.net', 2);",
       ...rows,
     ].join(" "),
@@ -149,18 +156,25 @@ afterAll(() => cleanup(storeDir));
 describe("the recipes the skill publishes", () => {
   it("lists chats newest first, and says which are groups", () => {
     const rows = query(store, WHATSAPP_QUERIES.recentChats);
-    expect(rows.map((r) => r[0])).toEqual(["Book Club", "Wren", "O'Brien"]);
-    expect(rows.map((r) => r[2])).toEqual(["group", "direct", "direct"]);
+    // chat_id first: it is the key the conversation recipe filters on, and the
+    // reason it exists is that names are NOT unique.
+    expect(rows.map((r) => [r[0], r[1]])).toEqual([
+      ["2", "Book Club"],
+      ["3", "Wren"],
+      ["1", "O'Brien"],
+      ["4", "Wren"],
+    ]);
+    expect(rows.map((r) => r[3])).toEqual(["group", "direct", "direct", "direct"]);
     // The date column is the whole reason 978307200 is in the query: a wrong
     // offset here shows up as a year in the 1980s or the 2050s.
-    expect(rows[2][1]).toBe("2023-11-14 23:13:20");
+    expect(rows[2][2]).toBe("2023-11-14 23:13:20");
   });
 
   // The bug this catches: `order by ... desc limit 50` alone returns the newest
   // FIRST, and a single ascending sort returns the fifty OLDEST messages. Both
   // read as plausible SQL; only the rows tell you which one you wrote.
   it("hands back the newest fifty messages, oldest first", () => {
-    const rows = query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O''Brien"));
+    const rows = query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "1"));
     expect(rows.length).toBe(50);
     // Sixty messages, the newest fifty are 11..60, and they read in order.
     expect(rows[0][2]).toBe("msg 11");
@@ -172,40 +186,20 @@ describe("the recipes the skill publishes", () => {
     expect(new Set(rows.map((r) => r[1]))).toEqual(new Set(["me", "O'Brien"]));
   });
 
+  // The bug the chat_id key exists for: 13 names in the real store are shared
+  // by two or three sessions, and filtering on the name merges them into one
+  // transcript the owner reads as a single conversation.
+  it("keeps two chats that share a display name apart", () => {
+    const rows = query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "4"));
+    expect(rows.map((r) => r[2])).toEqual(["the other Wren"]);
+  });
+
   it("names the group member as the sender, not the group", () => {
     const rows = query(
       store,
-      WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "Book Club"),
+      WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "2"),
     );
     expect(rows).toEqual([[expect.stringMatching(/2023/), "Bernard", "from the club"]]);
-  });
-
-  // Doubled works — the conversation case above runs O''Brien. Bare closes the
-  // literal and turns an ordinary surname into a syntax error an agent reads as
-  // "no such chat" for a person who is right there. Match the parse error
-  // specifically: a bare .toThrow() is also satisfied by a missing sqlite3 or a
-  // shared store that failed to build, which is no control at all.
-  it("breaks on an apostrophe that was not doubled, which is why the body says to", () => {
-    expect(() =>
-      query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "O'Brien")),
-    ).toThrow(/syntax error/);
-  });
-
-  // The body shows the rendered predicate, not a quoted literal, because the
-  // placeholder already sits inside quotes: substituting 'O''Brien' whole
-  // yields = ''O''Brien'', which lexes as an empty string then a bare token.
-  // Pin the reading the body prints.
-  it("means the name, not the literal — the recipe's own quotes stay put", () => {
-    expect(whatsappSkillFor("/Users/example").body).toContain("s.ZPARTNERNAME = 'O''Brien'");
-  });
-
-  // Same rule, the other interpolation site: a word the owner used that has an
-  // apostrophe in it. "nothing found" for something right there is the misread.
-  it("escapes an apostrophe in a search term too", () => {
-    const bare = WHATSAPP_QUERIES.search.replace("dinner", "don't");
-    expect(() => query(store, bare)).toThrow(/syntax error/);
-    const rows = query(store, WHATSAPP_QUERIES.search.replace("dinner", "don''t"));
-    expect(rows.map((r) => r[2])).toEqual(["don't forget dinner"]);
   });
 
   // One case, both renderings. The parsing helper reads with -list; the skill
@@ -219,6 +213,15 @@ describe("the recipes the skill publishes", () => {
       ["Wren", "don't forget dinner"],
       ["O'Brien", "what about dinner, tomorrow"],
     ]);
+
+    // Same escaping rule, the other interpolation site: a search term with an
+    // apostrophe. "nothing found" for a word right there is the misread.
+    expect(() => query(store, WHATSAPP_QUERIES.search.replace("dinner", "don't"))).toThrow(
+      /syntax error/,
+    );
+    expect(
+      query(store, WHATSAPP_QUERIES.search.replace("dinner", "don''t")).map((r) => r[2]),
+    ).toEqual(["don't forget dinner"]);
 
     const csv = sqlite(["-readonly", "-header", "-csv", store, WHATSAPP_QUERIES.search]).trim();
     const [header, ...rest] = csv.split("\n");
@@ -242,16 +245,13 @@ describe("the fallback for a store that will not open", () => {
     return { store: s, dir };
   }
 
-  it("reproduces the failure it exists for", () => {
+  it("answers anyway, and leaves no copy of the archive behind", () => {
     const { store: s } = quiescentStore();
-    // Not an empty result — an error, which is why it gets misreported.
+    // The failure this exists for — an error, not an empty result, which is
+    // why it gets misreported as "no messages".
     expect(() => query(s, "select count(*) from ZWAMESSAGE;")).toThrow(
       /unable to open database file/,
     );
-  });
-
-  it("answers anyway, and leaves no copy of the archive behind", () => {
-    const { store: s } = quiescentStore();
     const scratch = tempDir();
     // The query carries the single quotes every recipe has: a fallback that
     // pasted it into the script string would be re-split into words here.
@@ -261,7 +261,7 @@ describe("the fallback for a store that will not open", () => {
       scratch,
     );
     expect(out).toContain("2023-11-");
-    expect(out.trim().split("\n").pop()).toMatch(/,62$/);
+    expect(out.trim().split("\n").pop()).toMatch(/,63$/);
     // The owner's whole message history was in that directory a moment ago.
     // Nothing else on this Mac deletes a scratch dir, so the command must.
     expect(fs.readdirSync(scratch)).toEqual([]);

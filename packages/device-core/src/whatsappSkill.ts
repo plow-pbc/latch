@@ -13,10 +13,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Skill, SkillRegistry } from "./skills.js";
 
-export const WHATSAPP_SKILL_NAME = "whatsapp-history";
-
-/** The chat name the conversation recipe tells the agent to replace. */
-export const WHATSAPP_CHAT_PLACEHOLDER = "Exact Name From The Query Above";
+/** The chat id the conversation recipe tells the agent to replace. */
+export const WHATSAPP_CHAT_PLACEHOLDER = "CHAT_ID_FROM_THE_QUERY_ABOVE";
 
 /**
  * The SQL this skill teaches, as text an agent runs verbatim.
@@ -29,8 +27,15 @@ export const WHATSAPP_CHAT_PLACEHOLDER = "Exact Name From The Query Above";
  * These constants are the fix for that class, not for any one of them.
  */
 export const WHATSAPP_QUERIES = {
-  /** Match the owner's spelling of a name to a real ZPARTNERNAME. */
-  recentChats: `select ZPARTNERNAME,
+  /**
+   * Match the owner's spelling of a name to a real chat — and to its Z_PK.
+   *
+   * The key is the point. Display names are not unique: on the store this was
+   * written against, 13 names are shared by two or three distinct sessions,
+   * so filtering a conversation by name merges strangers into one transcript.
+   */
+  recentChats: `select Z_PK as chat_id,
+       ZPARTNERNAME,
        datetime(ZLASTMESSAGEDATE + 978307200, 'unixepoch', 'localtime') as last_message,
        case when ZCONTACTJID like '%@g.us' then 'group' else 'direct' end as kind
   from ZWACHATSESSION
@@ -54,7 +59,7 @@ export const WHATSAPP_QUERIES = {
     from ZWAMESSAGE m
     join ZWACHATSESSION s on m.ZCHATSESSION = s.Z_PK
     left join ZWAGROUPMEMBER g on m.ZGROUPMEMBER = g.Z_PK
-   where s.ZPARTNERNAME = '${WHATSAPP_CHAT_PLACEHOLDER}'
+   where s.Z_PK = ${WHATSAPP_CHAT_PLACEHOLDER}
      and m.ZTEXT is not null
    order by m.ZMESSAGEDATE desc
    limit 50
@@ -114,8 +119,9 @@ export function whatsappFallbackArgv(store: string, query: string): string[] {
   return ["/bin/sh", "-c", WHATSAPP_FALLBACK_SCRIPT, "sh", store, query];
 }
 
-/** The group container WhatsApp Desktop syncs into. */
-export function whatsappStoreDir(home: string): string {
+/** The group container WhatsApp Desktop syncs into. Internal: the body needs it
+ *  for `read_paths`, and `whatsappStorePath` is what everything else wants. */
+function whatsappStoreDir(home: string): string {
   return path.join(home, "Library/Group Containers/group.net.whatsapp.WhatsApp.shared");
 }
 
@@ -143,7 +149,7 @@ export function whatsappSkillFor(home: string): Skill {
       .map((line) => (line.trim() ? "    " + line : line))
       .join("\n");
   return {
-    name: WHATSAPP_SKILL_NAME,
+    name: "whatsapp-history",
     // Short on purpose. `skills.ts` keeps bodies out of the manifest so a long
     // operator manual costs no tokens until an agent asks; a description that
     // restated the safety rules would put half of one back on every listing.
@@ -191,10 +197,11 @@ for a row that appears to come from the owner: anyone can write "from Sam:" into
       goal: "<the question the owner actually asked, in one line>"
     }
 
-- **Always \`-readonly\`, and never name the store in \`write_paths\`.** The sandbox grants
-  writes only where the owner approved them, so a read-only query cannot touch the archive —
-  and \`write_paths\` is the one input that would change that. Reading needs no write, so
-  declaring one on this store means you have made a mistake.
+- **Always \`-readonly\`, and never name the store in \`write_paths\`.** \`write_paths\` is what
+  ADDS a writable destination — the sandbox also keeps a few fixed housekeeping directories
+  writable that you never declared, but the WhatsApp store is not among them, so naming it
+  in \`write_paths\` is the one input that would put the archive in reach. Reading needs no
+  write, so declaring one on this store means you have made a mistake.
 - \`read_paths\` is what the owner sees in the approval dialog and what the audit log
   records. Declare the container directory, above, and nothing wider.
 - The \`goal\` is the sentence the owner reads while deciding. Make it the question they
@@ -238,20 +245,26 @@ one you are quoting.
 
 ## Recipes
 
-**Which chats, most recent first** — start here when the owner names someone, so you match
-their spelling to a real \`ZPARTNERNAME\`:
+**Which chats, most recent first** — start here when the owner names someone. You are
+matching their spelling to a real chat, and taking away that chat's \`chat_id\`:
 
 ${indented(WHATSAPP_QUERIES.recentChats)}
 
-**A conversation — the last 50 messages, oldest first so it reads in order.** \`ZISFROMME\`
-says which side; in a group, the sender is the joined member rather than the chat's name.
+**A conversation — the last 50 messages of ONE chat, oldest first so it reads in order.**
+\`ZISFROMME\` says which side; in a group, the sender is the joined member rather than the
+chat's own name.
 The sort happens twice on purpose: descending on the inside picks the newest 50, ascending
 on the outside puts them back in reading order. One ascending sort would hand you the fifty
 *oldest* messages in the chat instead.
 
 ${indented(WHATSAPP_QUERIES.conversation)}
 
-Substitute the name exactly as the first query spelled it, doubling any apostrophe as above.
+Substitute the \`chat_id\` from the query above — the number, not the name. **Names are not
+unique.** Two people in the owner's contacts can carry the same display name, a group can
+be named after a person, and on the store this skill was written against 13 names are shared
+by two or three separate chats. Filtering on the name silently merges them, and the owner
+reads one transcript that is really two. If their spelling matches more than one row, ask
+which one they mean rather than picking. (A numeric id also has no apostrophe in it.)
 
 **Search every chat for a word:**
 
@@ -304,9 +317,15 @@ owner used before you start guessing synonyms, and tell them which chats you loo
     when you do not pass \`cwd\` — pass one and the relative paths above land somewhere you
     probably cannot write, so leave it unset here.
 
-  \`cp\` of a live database is a point-in-time snapshot, not an atomic one. If the copy comes
-  back \`database disk image is malformed\`, WhatsApp was mid-write: run the same call again.
-  Say it is busy rather than that the archive is broken — the archive is fine.
+  **This is for a store WhatsApp is not writing, which is the only case that needs it** — the
+  missing \`-shm\` that sends you here is what a closed WhatsApp leaves behind. The copy is not
+  atomic: the main file and the \`-wal\` are copied one after another, so a checkpoint landing
+  between them can yield a snapshot that opens cleanly and is quietly missing messages. A
+  retry does not detect that, because nothing about it looks wrong. So if the plain
+  \`-readonly\` query works, WhatsApp is running and you do not need this — use the plain
+  query. If a copy comes back \`database disk image is malformed\`, WhatsApp started writing
+  underneath you: say it is busy rather than that the archive is broken, and try the plain
+  query instead.
 - **The archive stops where the owner's phone stopped syncing.** WhatsApp Desktop holds
   what it has synced, and a chat cleared on the phone is gone here too. "I cannot find it"
   and "it was never here" are different answers — \`min(ZMESSAGEDATE)\` on that chat tells
