@@ -281,7 +281,11 @@ function invalidResponse(status: number): PlowApiError {
 
 function recoverableAgentId(decoded: unknown): string | null {
   if (!isRecord(decoded) || typeof decoded.detail !== "string") return null;
-  return decoded.detail.match(/DELETE \/v1\/agents\/cloud\/([A-Za-z0-9_-]+)/)?.[1] ?? null;
+  return (
+    decoded.detail.match(
+      /^This chat has an unfinished cloud agent \(([A-Za-z0-9_-]+)\)\. Delete it with DELETE \/v1\/agents\/cloud\/\1 and provision again\.$/,
+    )?.[1] ?? null
+  );
 }
 
 function echoesCredential(text: string, credential: string): boolean {

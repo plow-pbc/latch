@@ -239,6 +239,20 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
     expect(calls[0].init.body).toBe(calls[2].init.body);
   });
 
+  it("does not delete a live agent named by a provider-switch 409", async () => {
+    const liveId = "live_agent_789";
+    const detail = `This chat already has a hermes agent (${liveId}). Delete it with DELETE /v1/agents/cloud/${liveId} before provisioning a codex one.`;
+    const { calls, fetchImpl } = recordingFetch([{ status: 409, body: { detail } }]);
+
+    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
+      .create(CREDENTIAL, { chatUid: "cht_123", provider: "exe:codex" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(String(error)).toBe(`PlowApiError: ${detail}`);
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
+  });
+
   it.each([
     "Another create is already in flight.",
     "This account has no messaging address.",
