@@ -555,7 +555,7 @@ function fetchBrowser(arch) {
   const markerValue = `${asset.sha256}:${PRUNE_VERSION}`;
   if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === markerValue) {
     log(`camoufox ${arch} up to date`);
-    return;
+    return false;
   }
   // Stale from here on, and a rebuild is not instant: leaving it says "built"
   // for the whole download+extract, which is exactly what runtime-donor.sh
@@ -617,6 +617,7 @@ function fetchBrowser(arch) {
 
   fs.writeFileSync(marker, markerValue);
   log(`camoufox ${arch} install ready at ${installRoot}`);
+  return true;
 }
 
 /**
@@ -980,14 +981,15 @@ try {
       mergeCamoufoxUniversal();
       builtArches.push("universal");
     } else {
-      fetchBrowser(hostArch);
       // The fused tree is not per-arch state, so it is invalidated here rather
-      // than inside the per-arch fetch. camoufoxIn() resolves on config.json
-      // and never reads .sha256, so a stale universal/ left standing keeps
-      // answering whenever the host's tree is absent — and on this path
-      // nothing rebuilds it, since mergeCamoufoxUniversal() only runs above.
-      // After the fetch: an interrupted one leaves the old browser runnable.
-      fs.rmSync(universalDir, { recursive: true, force: true });
+      // than inside the per-arch fetch — and only when that fetch actually
+      // rebuilt, since a cache hit leaves the fused tree as valid as it found
+      // it. When it did: camoufoxIn() resolves on config.json and never reads
+      // .sha256, so a stale universal/ left standing keeps answering whenever
+      // the host's tree is absent, and nothing on this path rebuilds it —
+      // mergeCamoufoxUniversal() owns it on the other. After the fetch, so an
+      // interrupted one leaves the old browser runnable.
+      if (fetchBrowser(hostArch)) fs.rmSync(universalDir, { recursive: true, force: true });
       builtArches.push(hostArch);
     }
   }
