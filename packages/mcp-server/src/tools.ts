@@ -568,7 +568,12 @@ export const TOOLS: ToolSpec[] = [
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page), and 'failed_requests' when the " +
       "page's own requests came back refused — a 401, 403 or 429 there is why an action that " +
-      "reported success changed nothing, so read it before retrying.",
+      "reported success changed nothing, so read it before retrying. " +
+      "When a site has decided you are a bot — a wall, a challenge that never passes, a login " +
+      "that refuses a password you know is right — 'fresh_profile' retries on a browser it has " +
+      "never seen: that verdict is a cookie, so opening another session replays it instead. It " +
+      "signs this session out of everything and keeps whatever it does next out of the owner's " +
+      "profile, so use it for a site that blocked you, not to start over on one that did not.",
     inputSchema: {
       type: "object",
       required: ["session", "action"],
@@ -579,6 +584,7 @@ export const TOOLS: ToolSpec[] = [
           enum: [
             "goto", "click", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
             "screenshot", "text", "url", "title", "links", "forms", "tables", "pages",
+            "fresh_profile",
           ],
         },
         url: { type: "string", description: "goto: target URL (within approved origins)" },

@@ -915,6 +915,31 @@ db.commit()`,
     expect(signedInto(seed, true)).toEqual(["first.example=new-token"]);
   });
 
+  it("retries on a browser the site has never seen, and the block goes nowhere", async () => {
+    // The only moment a block is detectable is after it has happened, so the
+    // session that hit it is the one that has to shed it — and what it sheds
+    // must not be merged, because the thing being escaped is in there.
+    const events: string[] = [];
+    const { sessions, seed, profiles } = signedIn({ audit: (event) => events.push(event) });
+    const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;
+    cookieStore(path.join(only(profiles), "cookies.sqlite"), ["blocked.example"], 50);
+
+    await sessions.freshProfile(handle);
+
+    // Same session, on a profile that has met nobody.
+    expect(fs.existsSync(path.join(only(profiles), "cookies.sqlite"))).toBe(false);
+    expect(events).toContain("browser_profile_reset");
+
+    // What it does from here stays here too. A profile with no baseline has
+    // nothing to tell the merge what this session changed, so carrying it back
+    // would push the whole clean jar over the owner's — including whatever the
+    // site that just blocked them decided to set on the second look.
+    cookieStore(path.join(only(profiles), "cookies.sqlite"), ["retried.example"], 90);
+    await sessions.close(handle, "agent");
+    expect(signedInto(seed)).toEqual(["his.example"]);
+    expect(fs.readdirSync(profiles)).toEqual([]);
+  });
+
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {
     // A swallowed merge failure that also removed the clone would lose the
     // sign-in silently — the exact thing this feature exists to prevent.

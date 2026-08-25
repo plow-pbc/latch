@@ -326,6 +326,7 @@ export class BrowserSessions {
         session: session.auditId,
         origins: session.origins,
         headed: host.headed,
+        fresh: session.fresh,
       });
     } catch (error: unknown) {
       // A running browser with no session and no audit line is precisely the
@@ -380,6 +381,42 @@ export class BrowserSessions {
       origins: s.origins,
       items: itemList,
     };
+  }
+
+  /**
+   * Drop this session's profile and carry on with the same handle.
+   *
+   * A site's verdict that you are a bot is an ordinary cookie, so it outlives
+   * the session that earned it — and it is only detectable AFTER it has been
+   * earned, which is why this is an action rather than something chosen at
+   * open. Nothing is merged: what this profile holds is the thing being
+   * escaped, and the whole point is that it reaches neither the owner's
+   * profile nor the next session. It grants nothing, so it asks nobody; the
+   * owner's log is where it shows up.
+   */
+  async freshProfile(handle: string): Promise<JSONValue> {
+    const s = this.sessions.get(handle);
+    if (!s) return { status: "error", error: "unknown session" };
+    // A session on its way out has already published its teardown; swapping a
+    // browser under it would leave one running that nobody will close.
+    if (s.closing) return { status: "error", error: "session is closing" };
+    // The shutdown below is deliberate. Left armed, the old host's crash hook
+    // would read it as a death and finalize the session we are reviving.
+    s.host.onCrash = undefined;
+    const headed = s.host.headed;
+    await s.host.shutdown();
+    if (this.browser.profileDir) {
+      fs.rmSync(path.join(this.browser.profileDir, s.profile), { recursive: true, force: true });
+    }
+    // Both halves, before the new browser exists: the close path must not
+    // merge this session back either, whichever way it ends.
+    s.fresh = true;
+    s.host = this.newHost(s.profile, true);
+    s.host.onCrash = () => this.noteCrash(handle);
+    await s.host.ensureReady(headed);
+    this.audit("browser_profile_reset", { session: s.auditId, origins: s.origins });
+    s.lastActivity = Date.now();
+    return { status: "completed", session: handle, origins: s.origins };
   }
 
   /** A browser on this session's own clone of the user's profile. */

@@ -516,8 +516,14 @@ export class DeviceAgent {
     if (!this.browserSessions) {
       return { status: "error", error: "no browser runtime installed on this device" };
     }
-    if (jv(params).get("action").str === "close") {
+    const action = jv(params).get("action").str;
+    if (action === "close") {
       return this.browserSessions.close(session, "agent");
+    }
+    // Both of these are the session's own lifecycle rather than something the
+    // page does, so neither reaches the browser server.
+    if (action === "fresh_profile") {
+      return this.browserSessions.freshProfile(session);
     }
     return this.browserSessions.command(session, params);
   }

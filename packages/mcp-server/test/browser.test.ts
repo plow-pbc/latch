@@ -262,6 +262,23 @@ describe("browser tools (fake runtime)", () => {
     expect(fs.readdirSync(profiles)).toEqual([]);
   });
 
+  it("fresh_profile reaches the session through the tool, and the session survives it", async () => {
+    // The device-level test proves what the reset does; this proves an agent
+    // can actually ask for it. The action enum is validated by the SDK before
+    // any handler runs, so a missing entry fails here and nowhere else — and
+    // the session has to still be usable afterwards, which is the whole point
+    // of resetting in place instead of opening another one.
+    const { server } = makeServer();
+    const session = await open(server, ["pizza.example"]);
+
+    const reset = await act(server, session, "fresh_profile");
+    expect(reset.isError, JSON.stringify(reset.payload)).toBe(false);
+    expect(reset.payload.session).toBe(session);
+
+    const after = await act(server, session, "goto", { url: "https://pizza.example/" });
+    expect(after.isError, JSON.stringify(after.payload)).toBe(false);
+  });
+
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {
     const { server, device } = makeServer(new HeadlessPolicy({ intent: "always_allow" }));
     const runOnce = async () => {
