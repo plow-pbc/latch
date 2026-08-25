@@ -599,15 +599,6 @@ function fetchBrowser(arch) {
     path.join(installRoot, "config.json"),
     JSON.stringify({ active_version: `browsers/${repo}/${folder}` }),
   );
-  // The fused tree, at the first moment its replacement is selectable — the
-  // line above is what camoufoxIn() resolves on, and it never reads .sha256,
-  // so a fused tree left standing would keep answering whenever no per-arch
-  // tree exists, and on the single-arch path nothing comes back to rebuild it.
-  // Here rather than earlier so an interrupted fetch leaves a working browser:
-  // installRoot has to go before the extract because it IS the dir extracted
-  // into, but universalDir is a sibling with no such constraint. The donor gate
-  // is unaffected either way — its marker went before the download.
-  fs.rmSync(universalDir, { recursive: true, force: true });
   fs.writeFileSync(path.join(installRoot, ".0.5_FLAG"), "");
 
   // Pre-bundle the default addon (uBlock Origin): camoufox downloads it at
@@ -990,6 +981,13 @@ try {
       builtArches.push("universal");
     } else {
       fetchBrowser(hostArch);
+      // The fused tree is not per-arch state, so it is invalidated here rather
+      // than inside the per-arch fetch. camoufoxIn() resolves on config.json
+      // and never reads .sha256, so a stale universal/ left standing keeps
+      // answering whenever the host's tree is absent — and on this path
+      // nothing rebuilds it, since mergeCamoufoxUniversal() only runs above.
+      // After the fetch: an interrupted one leaves the old browser runnable.
+      fs.rmSync(universalDir, { recursive: true, force: true });
       builtArches.push(hostArch);
     }
   }
