@@ -188,9 +188,15 @@ just build
 #
 # Only when some payload is here to check — ANY of them, not the whole set. A
 # partial landing is exactly what wants completing, and the build knows which
-# half is missing. A checkout with none is the case this skips: starting a cold
-# build there is ~200 MB of Python, a 320 MB browser and a cargo build of
-# vaultwarden, needing a Rust toolchain that setting a checkout up never has.
+# half is missing.
+#
+# What that costs is not bounded by how much arrived: completing one payload can
+# mean the whole cold build the rest would have needed — ~200 MB of Python, a
+# 320 MB browser, and a cargo build of vaultwarden that wants a Rust toolchain
+# this machine may not have. A donor handing over only camoufox pays nearly all
+# of it. The trade is deliberate: a checkout holding half a runtime nothing has
+# looked at is worse than one that took a while, and a checkout holding NONE is
+# the only case where there is nothing to complete and so nothing to weigh.
 #
 # After install and build so a failure here costs only the validation — the
 # checkout is left with its dependencies and its compiled output either way —
@@ -203,7 +209,9 @@ if [[ -n "${have_runtime:-}" ]]; then
     echo "" >&2
     echo "error: the runtime in vendor/ did not check out, so this checkout is" >&2
     echo "  NOT ready — its dependencies and build are in place, but the" >&2
-    echo "  payloads have not been validated." >&2
+    echo "  payloads have not been validated. That is either the copy or this" >&2
+    echo "  machine: completing a partial one can want a Rust toolchain, and" >&2
+    echo "  the fetch above says which happened." >&2
     echo "" >&2
     echo "  Fix whatever the fetch reported and run \`just fetch-browser\` here," >&2
     echo "  or remove the payloads from vendor/ to start over. Re-running this" >&2
