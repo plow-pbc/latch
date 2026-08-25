@@ -216,9 +216,9 @@ describe("audit grouping for browser sessions", () => {
     },
     // And it stays under a refusal: the cage stopping the agent outranks the
     // agent deciding to start over. Unpinned, that order drifts back silently.
-    // Both directions, because the comment that used to argue this drifted
-    // four rounds running. What this Mac refused the agent outranks the agent
-    // starting over; what the far side refused does not.
+    // Both directions, because one alone lets the block slide the other way:
+    // what this Mac refused the agent outranks the agent starting over, and
+    // what the far side refused does not.
     {
       when: "outranked by a scope block",
       close: [{ event: "browser_scope_violation", session: "S", action: "text", origin: "paypal.com", ts: "2026-08-10T10:00:04Z" }],

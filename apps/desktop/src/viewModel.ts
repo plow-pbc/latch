@@ -405,9 +405,9 @@ function classifyActivity(
     }
     // Sign-ins the owner does not get back — deliberately, unlike the failed
     // merge, but they filter on the outcome. Where it sits in this chain is
-    // pinned by tests rather than argued here: four rounds of review went into
-    // rewriting an enumeration of the neighbouring cases, and each correction
-    // drifted against a different one. The order is behaviour, so it is a test.
+    // behaviour, so it lives in browserViewModel.test.ts ("threw its profile
+    // away") rather than in a comment here enumerating its neighbours, which
+    // went stale every time one of them moved.
     if (has("browser_profile_reset")) {
       return closed
         ? { status: "Closed · started over", tone: "amber", category: "failed" }
