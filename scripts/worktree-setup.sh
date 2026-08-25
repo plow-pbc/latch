@@ -120,12 +120,7 @@ else
       echo "  without a runtime. Nearby checkouts with one to copy:" >&2
       # One path per line, unsplit: a checkout directory may contain spaces.
       printf '%s\n' "$candidates" | while IFS= read -r candidate; do
-        # `if`, for the reason the scan above uses one: this is the last command
-        # of the loop, the loop is the right half of a pipeline, and pipefail
-        # would hand a false test straight to errexit.
-        if [ -n "$candidate" ]; then
-          echo "    $candidate" >&2
-        fi
+        echo "    $candidate" >&2
       done
       exit 1
     fi

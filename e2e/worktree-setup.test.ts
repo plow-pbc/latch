@@ -43,6 +43,7 @@ function stage(dir: string): void {
   }
 }
 
+/** A staged checkout on its own branch, carrying whichever payloads it has. */
 function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
   const dir = path.join(parent, name);
   stage(dir);
@@ -185,6 +186,21 @@ describe("worktree-setup.sh", () => {
 
     expect(out).toContain(`donor:    ${fs.realpathSync(main)}`);
     expect(fs.readFileSync(path.join(wt, "vendor", PAYLOADS[0], "payload-marker"), "utf8")).toBe(PAYLOADS[0]);
+  });
+
+  it("counts a payload that is present as anything, not only as a directory", () => {
+    // The skip arm and the check gate both ask `-e`. When they disagreed, a
+    // payload present as a regular file was left alone as "already present" and
+    // then not counted as something to validate — present for one purpose and
+    // absent for the other. --no-donor so nothing can set it from the side.
+    const parent = fs.mkdtempSync(path.join(tmp, "notadir-"));
+    const asking = checkout(parent, "slot0", []);
+    for (const p of PAYLOADS) fs.writeFileSync(path.join(asking, "vendor", p), "not a directory\n");
+
+    const { stdout: out } = runSetup(asking, "--no-donor");
+
+    expect(out).toContain(`vendor/${PAYLOADS[0]} already present`);
+    expect(out.split("\n")).toContain("stub just fetch-browser");
   });
 
   it("refuses to be its own donor", () => {
