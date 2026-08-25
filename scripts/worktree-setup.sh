@@ -31,29 +31,9 @@ cd "$(dirname "$0")/.."
 name=$(sh scripts/worktree-name.sh --branch)
 
 # --- browser runtime: clone it from a checkout that already has one --------
-#
-# Which checkout? A linked worktree shares its git dir with the one it was made
-# from, so that is the obvious donor. A plain clone beside the others shares
-# nothing — its git-common-dir is its own — so there is nobody to ask but the
-# siblings themselves.
-#
-# Whichever it is, the donor has to have been built from OUR pins. A runtime is
-# only valid for the lock file it was built from (build-browser-runtime.mjs
-# stamps it with exactly these two files), and a runtime copied across a pin
-# change is the quiet kind of broken: every path still resolves, the wrong
-# versions run.
-self=$(pwd -P)
-donor=""
-for candidate in "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" ../*; do
-  [[ -d "$candidate" ]] || continue
-  candidate=$(cd "$candidate" && pwd -P)
-  [[ "$candidate" != "$self" ]] || continue
-  [[ -d "$candidate/vendor/python-runtime" ]] || continue
-  cmp -s "$candidate/vendor/browser-server/runtime.lock.json" vendor/browser-server/runtime.lock.json || continue
-  cmp -s "$candidate/vendor/browser-server/requirements.txt" vendor/browser-server/requirements.txt || continue
-  donor=$candidate
-  break
-done
+# Which one, and why that one, is runtime-donor.sh's whole job; empty means
+# nothing nearby qualifies.
+donor=$(sh scripts/runtime-donor.sh)
 
 echo "checkout: $name"
 echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
