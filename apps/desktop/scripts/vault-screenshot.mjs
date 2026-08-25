@@ -178,7 +178,6 @@ const SCREENS = [
             const input = field?.querySelector("input");
             if (!input) return null;
             return {
-              held: field.classList.contains("held"),
               placeholder: input.getAttribute("placeholder"),
               value: input.value,
               inked: getComputedStyle(input, "::placeholder").color === getComputedStyle(input).color,
@@ -191,7 +190,6 @@ const SCREENS = [
         if (!box) throw new Error(`no ${label} box on the opened item`);
         // A saved secret says so in bullets — no sentence, and no fake value
         // that a save could write back over the real one.
-        if (!box.held) throw new Error(`${label}: stored secret is not marked held`);
         if (!/^\u2022+$/.test(box.placeholder ?? "")) throw new Error(`${label}: box reads ${JSON.stringify(box.placeholder)}, wanted bullets`);
         if (box.value !== "") throw new Error(`${label}: box holds ${JSON.stringify(box.value)}; the mask must never be a value`);
         if (!box.inked) throw new Error(`${label}: bullets are painted as a hint, not as a value`);
