@@ -133,12 +133,14 @@ just build
 # browser and a cargo build of vaultwarden, needing a Rust toolchain that
 # setting a checkout up has never needed.
 #
-# And after the build, reporting rather than aborting: everything above is what
-# makes this checkout work, and a network flake or a missing toolchain must not
-# leave it with no node_modules and nothing compiled. `--browser` runs the
-# Python build too, so it is the only recipe needed here.
+# After install and build so a failure here costs only the validation — the
+# checkout is left with its dependencies and its compiled output either way —
+# but not suppressed: this is the ONLY content-aware look at what was copied,
+# and browserRuntime.ts accepts payloads on path existence alone, so swallowing
+# it would sign the checkout off as ready over a runtime nothing has checked.
+# `--browser` runs the Python build too, so it is the only recipe needed here.
 if [[ -n "${seeded:-}" ]]; then
-  just fetch-browser || echo "note: could not check the copied runtime — run \`just fetch-browser\` when you can" >&2
+  just fetch-browser
 fi
 
 echo ""

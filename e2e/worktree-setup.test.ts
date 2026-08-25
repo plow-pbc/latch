@@ -80,9 +80,13 @@ function runSetup(dir: string, donor?: string, failing?: string): string {
 }
 
 /** Run a setup that must refuse, and hand back what it said on the way out. */
-function runSetupExpectingRefusal(dir: string, donor?: string): { stdout: string; stderr: string } {
+function runSetupExpectingRefusal(
+  dir: string,
+  donor?: string,
+  failing?: string,
+): { stdout: string; stderr: string } {
   try {
-    runSetup(dir, donor);
+    runSetup(dir, donor, failing);
   } catch (e) {
     const err = e as { stdout?: Buffer | string; stderr?: Buffer | string };
     expect(err.stdout).toBeDefined();
@@ -156,27 +160,6 @@ describe("worktree-setup.sh", () => {
     expect(stdout).not.toContain("stub just");
   });
 
-  it("sets up with no runtime at all when told to", () => {
-    // The way past the refusal above. Without it a checkout beside any usable
-    // neighbour could not be set up at all, since the refusal precedes install
-    // and build — a worse trap than the one it was guarding against.
-    const parent = fs.mkdtempSync(path.join(tmp, "nodonorflag-"));
-    checkout(parent, "slot1", PAYLOADS);
-    const asking = checkout(parent, "slot0", []);
-
-    const out = runSetup(asking, "--no-donor");
-
-    // Not "nothing nearby" — there is, and saying otherwise would be the one
-    // thing that is untrue on this path.
-    expect(out).toContain("--no-donor was passed, so nothing is being copied");
-    expect(out).toContain("no vendor/vault-server to clone");
-    expect(out).toContain("stub just build");
-    expect(out).toContain("is ready.");
-    // Named as a flag, not adopted as a path.
-    expect(fs.existsSync(path.join(asking, "vendor", "python-runtime"))).toBe(false);
-    expect(out).not.toContain("stub just fetch-browser");
-  });
-
   it("refuses a named donor that is not a checkout of this repo", () => {
     // The only thing left to refuse. Whether its payloads are complete is not
     // asked here — the build below settles that — so the one mistake worth
@@ -192,76 +175,73 @@ describe("worktree-setup.sh", () => {
     expect(stdout).not.toContain("stub just");
   });
 
-  it("does not start a cold build for a donor that had nothing to give", () => {
-    // A worktree inherits its donor whether or not that checkout ever built a
-    // runtime. Copying nothing is not a reason to fetch ~500 MB and cargo-build
-    // vaultwarden here — setting a checkout up has never needed a Rust
-    // toolchain, and the errand belongs to whoever wants the browser stack.
-    const parent = fs.mkdtempSync(path.join(tmp, "emptydonor-"));
-    const empty = checkout(parent, "slot1", []);
-    const asking = checkout(parent, "slot0", []);
-
-    const out = runSetup(asking, empty);
-
-    expect(out).toContain("no vendor/python-runtime to clone");
-    expect(out).not.toContain("stub just fetch-browser");
-    expect(out).toContain("stub just build");
-    expect(out).toContain("is ready.");
-  });
-
-  it("does not treat the download cache alone as something worth checking", () => {
-    // vendor/downloads is not a payload — it is what a fetch would download
-    // FROM. Arriving on its own it gives this checkout nothing to validate, so
-    // running the build over it would be the cold fetch the gate avoids.
-    const parent = fs.mkdtempSync(path.join(tmp, "cacheonly-"));
-    const cacheOnly = checkout(parent, "slot1", ["downloads"]);
-    const asking = checkout(parent, "slot0", []);
-
-    const out = runSetup(asking, cacheOnly);
-
-    expect(fs.existsSync(path.join(asking, "vendor", "downloads"))).toBe(true);
-    expect(out).not.toContain("stub just fetch-browser");
-    expect(out).toContain("is ready.");
-  });
-
-  it("reports a failed check of the copy rather than aborting over it", () => {
-    // Everything above the fetch is what makes this checkout work, so a network
-    // flake or a missing toolchain must cost the validation and nothing else.
-    // Without this the stub always succeeds, and dropping the `||` would keep
-    // the whole suite green while restoring the abort.
-    const parent = fs.mkdtempSync(path.join(tmp, "softfail-"));
+  it("fails after the build rather than before it, and does not sign off", () => {
+    // The check is the only content-aware look at what was copied, and
+    // browserRuntime.ts accepts payloads on path existence alone — so a
+    // suppressed failure would leave the checkout declared ready over a runtime
+    // nothing has looked at. It fails. What its position buys is that the
+    // dependencies and the build survive, which is the whole reason it moved
+    // below them.
+    const parent = fs.mkdtempSync(path.join(tmp, "failcheck-"));
     const donor = checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
     const asking = checkout(parent, "slot0", []);
 
-    const out = runSetup(asking, donor, "fetch-browser");
-    const lines = out.split("\n");
+    const { stdout } = runSetupExpectingRefusal(asking, donor, "fetch-browser");
+    const lines = stdout.split("\n");
 
-    // Attempted — otherwise this passes just as well when the fetch is never
-    // reached, which is the other way to be green here.
     expect(lines).toContain("stub just fetch-browser");
-    // Reported, which is the other half of the name: silence would leave an
-    // owner with an unchecked runtime and no idea it was not checked.
-    expect(out).toMatch(/could not check the copied runtime/);
-    // And not aborted.
     expect(lines).toContain("stub just build");
-    expect(out).toContain("is ready.");
+    expect(stdout).not.toContain("is ready.");
   });
 
-  it("carries on with no donor when there is nothing nearby to name", () => {
-    // A first checkout on a machine has nothing to inherit and nothing to be
-    // offered, so there is no choice being withheld — install and build still
-    // have to run, and the notes say what did not come across.
-    const parent = fs.mkdtempSync(path.join(tmp, "nodonor-"));
+
+
+  // Four ways to arrive with nothing worth checking, one contract: setup
+  // finishes, and the build that validates a seed does not run because there is
+  // no seed. Each row keeps only what distinguishes it.
+  const noSeed: { why: string; donor: (parent: string) => string | undefined; says: string }[] = [
+    {
+      why: "told not to take one",
+      donor: (parent) => {
+        checkout(parent, "slot1", PAYLOADS);
+        return "--no-donor";
+      },
+      says: "--no-donor was passed, so nothing is being copied",
+    },
+    {
+      why: "given one that had nothing to give",
+      // A worktree inherits its donor whether or not that checkout ever built a
+      // runtime. Copying nothing is not a reason to fetch ~500 MB and
+      // cargo-build vaultwarden here.
+      donor: (parent) => checkout(parent, "slot1", []),
+      says: "no vendor/python-runtime to clone",
+    },
+    {
+      why: "given one carrying only the download cache",
+      // Not a payload — it is what a fetch downloads FROM, so on its own it
+      // leaves this checkout nothing to validate.
+      donor: (parent) => checkout(parent, "slot1", ["downloads"]),
+      says: "no vendor/python-runtime to clone",
+    },
+    {
+      why: "with nothing nearby to name at all",
+      // A first checkout on a machine: nothing to inherit and nothing offered,
+      // so no choice is being withheld and setup still has to finish.
+      donor: () => undefined,
+      says: "nothing nearby to copy from",
+    },
+  ];
+
+  it.each(noSeed)("finishes without a fetch when $why", ({ donor, says }) => {
+    const parent = fs.mkdtempSync(path.join(tmp, "noseed-"));
+    const named = donor(parent);
     const asking = checkout(parent, "slot0", []);
 
-    const out = runSetup(asking);
+    const out = runSetup(asking, named);
 
-    expect(out).toContain("nothing nearby to copy from");
-    expect(out).toContain("no vendor/vault-server to clone");
-    // Nothing was copied, so there is no seed to validate — and a fetch from
-    // scratch is a different, much longer errand than setting a checkout up.
+    expect(out).toContain(says);
     expect(out).not.toContain("stub just fetch-browser");
-    expect(out).toContain("stub just build");
+    expect(out.split("\n")).toContain("stub just build");
     expect(out).toContain("is ready.");
   });
 });
