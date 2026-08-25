@@ -27,6 +27,7 @@ const PAYLOADS = (() => {
   if (!m) throw new Error("could not find the payloads= assignment in worktree-setup.sh");
   return m[1].split(" ");
 })();
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** The file worktree-setup.sh refuses a donor for lacking, read from it. */
 const DONOR_MARKER = (() => {
   const m = /\[ -f "\$donor\/([^"]+)" \]/.exec(fs.readFileSync(path.join(repo, "scripts/worktree-setup.sh"), "utf8"));
@@ -45,16 +46,20 @@ const stubBin = path.join(tmp, "bin");
  * and populated afterwards, not initialised.
  */
 function populate(dir: string, payloads: string[]): string {
-  fs.mkdirSync(path.join(dir, "vendor", "browser-server"), { recursive: true });
+  // vendor/ itself, and not the marker's directory below — setup copies each
+  // payload into vendor/, and a checkout carrying none of them would otherwise
+  // have nowhere to put the first one. It stays whatever path the refusal moves
+  // to, which is why it is not folded into the mkdir under it.
+  fs.mkdirSync(path.join(dir, "vendor"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   for (const s of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", s), path.join(dir, "scripts", s));
   // The refusal's own file at its own path, read from setup rather than named
   // here, so re-pointing that refusal carries the fixture with it instead of
-  // leaving the two to agree by luck.
-  for (const f of [...new Set([DONOR_MARKER, "vendor/browser-server/requirements.txt"])]) {
-    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
-    fs.copyFileSync(path.join(repo, f), path.join(dir, f));
-  }
+  // leaving the two to agree by luck. It is the only file a checkout needs:
+  // everything else under vendor/browser-server is read by the runtime build,
+  // which is behind the `just` these runs stub out.
+  fs.mkdirSync(path.dirname(path.join(dir, DONOR_MARKER)), { recursive: true });
+  fs.copyFileSync(path.join(repo, DONOR_MARKER), path.join(dir, DONOR_MARKER));
   for (const p of payloads) {
     fs.mkdirSync(path.join(dir, "vendor", p), { recursive: true });
     // Named so a copy that landed a directory deeper is distinguishable from
@@ -117,11 +122,16 @@ function run(dir: string, script: string, args: string[] = [], failing?: string)
       PATH: `${stubBin}:${process.env.PATH}`,
       JUST_FAIL: failing ?? "",
       // Ambient config neutralised the way gitFixture neutralises the rest of
-      // it: a TMPDIR pointed inside a working tree — some CI images do this —
-      // would otherwise let discovery climb out of the fixture, and the row
-      // that needs no repository above it would fail as a lookup regression
-      // rather than as the fixture not being what it needs.
+      // it, so the row that needs no repository above it fails as "the fixture
+      // is not what this needs" rather than as a lookup regression. Two ways in
+      // and both are shut: a TMPDIR pointed inside a working tree, which some
+      // CI images do, and the variables that skip discovery altogether — a
+      // suite run from inside a git hook or `rebase --exec` carries them, and
+      // this machine installs a post-commit hook. Node drops `undefined`.
       GIT_CEILING_DIRECTORIES: fs.realpathSync(tmp),
+      GIT_DIR: undefined,
+      GIT_WORK_TREE: undefined,
+      GIT_COMMON_DIR: undefined,
     },
   });
   // A spawn that never happened, or a child killed on maxBuffer: reported here
@@ -489,7 +499,7 @@ describe("termic-setup.sh", () => {
       // that offers "name one", which this caller has no way to do. The whole
       // sentence, because half of it was the claim that was wrong: this donor
       // IS a checkout of this repo, and what is true of it is the missing file.
-      says: /^note: \S+\/main holds no vendor\/browser-server\/runtime\.lock\.json, so there\n {2}is no runtime/m,
+      says: new RegExp(`^note: .+/main holds no ${escapeRe(DONOR_MARKER)}, so there\\n {2}is no runtime`, "m"),
     },
     {
       // Nothing for the lookup to answer with, and the redirect that keeps
