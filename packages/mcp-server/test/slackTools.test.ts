@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { JSONValue } from "@domo/protocol";
 import { Progress } from "../src/deferred.js";
-import { ToolContext } from "../src/tools.js";
+import { ToolContext } from "../src/toolKit.js";
 import { SLACK_READ_TOOLS } from "../src/slackTools.js";
 
 /**

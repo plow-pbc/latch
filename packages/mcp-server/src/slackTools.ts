@@ -11,7 +11,7 @@
  * Plow credential and nothing else.
  */
 import { JSONValue, jv } from "@domo/protocol";
-import { decideAndRun, GOAL, ToolError, ToolSpec } from "./tools.js";
+import { decideAndRun, GOAL, ToolError, ToolSpec } from "./toolKit.js";
 
 /** Build the capability for one Slack action. */
 const slackCap = (action: string) => [{ kind: "tool" as const, tool: `slack.${action}` }];
