@@ -126,14 +126,6 @@ async function setUp() {
   ipcMain.handle("cloud:delete", async (_e, agentId) => {
     cloudFixture = { ...cloudFixture, cloudAgents: cloudFixture.cloudAgents.filter((a) => a.agentId !== agentId) };
   });
-  ipcMain.handle("cloud:retry", async (_e, agentId) => {
-    cloudFixture = {
-      ...cloudFixture,
-      cloudAgents: cloudFixture.cloudAgents.map((a) => a.agentId === agentId
-        ? { ...a, status: "provisioning", failureReason: null }
-        : a),
-    };
-  });
   ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
     const previous = cloudFixture.cloudAgentSettings[agentId];
     cloudFixture = {

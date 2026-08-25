@@ -98,7 +98,7 @@ let cloudProbe = {
     cag_probe: { relay: true, inference: false, adversarialReview: false },
   },
 };
-const cloudCalls = { create: [], delete: [], retry: [], apply: [] };
+const cloudCalls = { create: [], delete: [], apply: [] };
 let releaseCloudCreate = null;
 let cloudCreatePending = false;
 
@@ -125,7 +125,6 @@ ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
   cloudCreatePending = false;
 });
 ipcMain.handle("cloud:delete", async (_e, agentId) => cloudCalls.delete.push(agentId));
-ipcMain.handle("cloud:retry", async (_e, agentId) => cloudCalls.retry.push(agentId));
 ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
   cloudCalls.apply.push({ agentId, settings });
   const previous = cloudProbe.cloudAgentSettings[agentId];
