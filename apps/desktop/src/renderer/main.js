@@ -871,7 +871,9 @@ function openCloudSettings(trigger, agent, state, redraw) {
   const controls = [relay, inference, review];
   let isUpdating = false;
   const syncControls = () => {
-    const incompleteChoice = touched.relay !== touched.inference;
+    const relayChosen = touched.relay && (!permissionsKnown || relay.checked !== previous.relay);
+    const inferenceChosen = touched.inference && (!permissionsKnown || inference.checked !== previous.inference);
+    const incompleteChoice = relayChosen !== inferenceChosen;
     for (const control of controls) control.disabled = isUpdating;
     cancel.disabled = false;
     apply.disabled = isUpdating || incompleteChoice;
@@ -936,10 +938,15 @@ function openCloudSettings(trigger, agent, state, redraw) {
     saveError.hidden = true;
     submitted = true;
     setUpdating(true);
+    const permissionValue = (name, input) => {
+      if (!touched[name]) return null;
+      if (permissionsKnown && input.checked === previous[name]) return null;
+      return input.checked;
+    };
     try {
       await window.domo.cloudApply(agent.agentId, {
-        relay: touched.relay ? relay.checked : null,
-        inference: touched.inference ? inference.checked : null,
+        relay: permissionValue("relay", relay),
+        inference: permissionValue("inference", inference),
         adversarialReview: review.checked,
       });
     } catch {
