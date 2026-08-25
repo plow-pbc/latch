@@ -5,7 +5,11 @@
  * without Electron because the logic is pure.
  */
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
+import { DeviceAgent, HeadlessPolicy } from "@domo/device-core";
 import { activityMatches, approvalViewModel, auditActivities } from "../src/viewModel.js";
 
 function intentOf(overrides: Partial<Intent> = {}): Intent {
@@ -245,5 +249,47 @@ describe("auditActivities (grouping)", () => {
       { event: "browser_stopped", ts: "2026-08-18T12:01:00Z" },
     ]);
     expect(acts).toHaveLength(0);
+  });
+});
+
+/**
+ * Event names are a contract between two packages with nothing shared but the
+ * string, so the only test that can catch them drifting apart is one that runs
+ * the producer and reads the consumer. `tool_call` passed every test either
+ * side owned, and rendered in the timeline as the literal "tool_call".
+ */
+describe("the audit names the device writes are the names this reads", () => {
+  it("a Slack tool call reads as a used tool, not as a raw event name", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "latch-viewmodel-"));
+    try {
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        new HeadlessPolicy({ intent: "allow_once" }),
+        null,
+        undefined,
+        { call: async () => ({ messages: [] }) },
+      );
+      const intent = makeIntent({
+        agentId: "agent-1",
+        agentDisplay: "Agent",
+        deviceId: device.identity.deviceId,
+        request: "read Slack messages",
+        capabilities: [{ kind: "tool", tool: "slack.messages.list", target: "T1/C1" }],
+        sessionId: "s1",
+      });
+      await device.handleIntent(intent, { account: "T1", channel_id: "C1" });
+
+      const [activity] = auditActivities(device.audit.entries());
+      const lines = activity.timeline.map((s) => s.text);
+      expect(lines).toContain("Tool used: slack.messages.list");
+      expect(activity.kind).toBe("command");
+      expect(activity.capabilities).toContain("Slack: messages.list in T1/C1");
+      // An event this file does not know falls through to `default: text =
+      // event` — the raw name, shown to the owner as if it were a sentence.
+      expect(lines.filter((l) => l.startsWith("tool_"))).toEqual([]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
