@@ -82,6 +82,11 @@ export const WHATSAPP_QUERIES = {
  * path the agent only reaches AFTER an error, and read as "the archive really
  * is unreadable".
  *
+ * The destination name is derived from the source rather than written twice:
+ * a recipe adapted to another path with the name hardcoded would fail to open
+ * AND miss it with the cleanup glob, leaving the archive in scratch on exactly
+ * the failure path.
+ *
  * The copy is opened WITHOUT -readonly: a read-only connection will not build
  * the -shm index it needs, even in a directory it can write, so it fails
  * exactly as the original did. And it is removed again in the same command —
@@ -89,8 +94,8 @@ export const WHATSAPP_QUERIES = {
  * is the owner's whole archive duplicated somewhere they never approved.
  */
 export const WHATSAPP_FALLBACK_SCRIPT =
-  'cp "$1"* . && /usr/bin/sqlite3 -header -csv ./ChatStorage.sqlite "$2"; ' +
-  "rc=$?; rm -f ./ChatStorage.sqlite*; exit $rc";
+  'f=$(basename "$1"); cp "$1"* . && /usr/bin/sqlite3 -header -csv "./$f" "$2"; ' +
+  'rc=$?; rm -f "./$f"*; exit $rc';
 
 /** The full argv for that fallback, ready to hand to `plow_run_command`. */
 export function whatsappFallbackArgv(store: string, query: string): string[] {

@@ -7,8 +7,14 @@
  * body contains this substring" cannot tell a working query from a broken one.
  * Every test here builds a WhatsApp-shaped database, runs the exact text the
  * agent is handed, and asserts on the rows that come back.
+ *
+ * What this does NOT cover, so nobody reads more into a green run than is
+ * there: the schema below is one this file invents. It matches a live
+ * `pragma table_info` dump of a real ChatStorage.sqlite, but a column the real
+ * store renames tomorrow is green here and broken on a Mac. The SQL semantics
+ * are executed; the column NAMES are still only as good as that dump.
  */
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -40,6 +46,10 @@ function tempDir(): string {
 function query(store: string, sql: string): string[][] {
   const out = execFileSync(SQLITE, ["-readonly", "-list", store, sql], {
     encoding: "utf8",
+    // 'localtime' in the recipes means the machine's zone; without pinning it
+    // here, a run east of UTC+3 renders the next day and the suite fails on
+    // geography rather than on a defect.
+    env: { ...process.env, TZ: "UTC" },
   }).trim();
   return out === "" ? [] : out.split("\n").map((line) => line.split("|"));
 }
@@ -90,17 +100,21 @@ function makeStore(dir: string): string {
   return store;
 }
 
+/** Shared across the read-only cases; held apart from the per-test dirs. */
 let store = "";
+let storeDir = "";
 beforeAll(() => {
-  store = makeStore(tempDir());
+  storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-wa-store-"));
+  store = makeStore(storeDir);
 });
 
-afterEach(() => {
-  for (const d of dirs.splice(1)) {
-    fs.chmodSync(d, 0o755);
-    fs.rmSync(d, { recursive: true, force: true });
-  }
-});
+const cleanup = (d: string): void => {
+  // quiescentStore() drops write permission to reproduce the real failure.
+  fs.chmodSync(d, 0o755);
+  fs.rmSync(d, { recursive: true, force: true });
+};
+afterEach(() => dirs.splice(0).forEach(cleanup));
+afterAll(() => cleanup(storeDir));
 
 describe("the recipes the skill publishes", () => {
   it("lists chats newest first, and says which are groups", () => {
@@ -109,7 +123,7 @@ describe("the recipes the skill publishes", () => {
     expect(rows.map((r) => r[2])).toEqual(["group", "direct"]);
     // The date column is the whole reason 978307200 is in the query: a wrong
     // offset here shows up as a year in the 1980s or the 2050s.
-    expect(rows[1][1]).toMatch(/^"?2023-11-14/);
+    expect(rows[1][1]).toBe("2023-11-14 23:13:20");
   });
 
   // The bug this catches: `order by ... desc limit 50` alone returns the newest
@@ -131,6 +145,21 @@ describe("the recipes the skill publishes", () => {
   it("names the group member as the sender, not the group", () => {
     const rows = query(store, WHATSAPP_QUERIES.conversation.replace(WHATSAPP_CHAT_PLACEHOLDER, "Book Club"));
     expect(rows).toEqual([[expect.stringMatching(/2023/), "Bernard", "from the club"]]);
+  });
+
+  // The helper above reads with -list because it has to parse the output. The
+  // skill teaches -header -csv, and an agent runs THAT — so run it once, on
+  // the recipe most likely to contain a comma, and check the header arrives
+  // and the quoting holds.
+  it("survives the -header -csv the skill actually teaches", () => {
+    const out = execFileSync(
+      SQLITE,
+      ["-readonly", "-header", "-csv", store, WHATSAPP_QUERIES.search],
+      { encoding: "utf8", env: { ...process.env, TZ: "UTC" } },
+    ).trim();
+    const [header, ...rest] = out.split("\n");
+    expect(header).toBe("chat,at,ZTEXT");
+    expect(rest).toEqual(['Alice,"2023-11-14 22:20:20","what about dinner tomorrow"']);
   });
 
   it("finds a word across chats", () => {
