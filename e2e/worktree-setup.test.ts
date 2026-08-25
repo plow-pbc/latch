@@ -18,7 +18,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { git } from "./gitFixture.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
-const SCRIPTS = ["worktree-setup.sh", "worktree-name.sh"];
+const SCRIPTS = ["worktree-setup.sh", "worktree-name.sh", "termic-setup.sh"];
 /** The vendor dirs a runtime is made of, as the script under test names them. */
 const PAYLOADS = (() => {
   const m = /^payloads="([^"]+)"$/m.exec(fs.readFileSync(path.join(repo, "scripts/worktree-setup.sh"), "utf8"));
@@ -71,25 +71,26 @@ interface Ran {
   stderr: string;
 }
 
-/** What runSetup throws when the script exits non-zero — its own streams. */
+/** What a run throws when the script exits non-zero — its own streams. */
 class SetupFailed extends Error implements Ran {
   constructor(
+    script: string,
     readonly stdout: string,
     readonly stderr: string,
   ) {
-    super(`worktree-setup.sh exited non-zero.\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`);
+    super(`${script} exited non-zero.\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`);
   }
 }
 
 /**
- * Run setup and hand back both streams, separately. It reports on both — the
- * per-payload notes on stdout, the argument errors and the failed-check reason
- * on stderr — so neither alone is the whole answer, and merging them would order
- * the two by stream rather than by when they were written, and fuse the last
- * line of one to the first of the other.
+ * Run one of the scripts under test and hand back both streams, separately.
+ * They report on both — the per-payload notes on stdout, the argument errors
+ * and the failed-check reason on stderr — so neither alone is the whole answer,
+ * and merging them would order the two by stream rather than by when they were
+ * written, and fuse the last line of one to the first of the other.
  */
-function runSetup(dir: string, donor?: string, failing?: string): Ran {
-  const r = spawnSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
+function run(dir: string, script: string, args: string[] = [], failing?: string): Ran {
+  const r = spawnSync("bash", [path.join(dir, "scripts", script), ...args], {
     cwd: dir,
     encoding: "utf8",
     env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}`, JUST_FAIL: failing ?? "" },
@@ -98,8 +99,12 @@ function runSetup(dir: string, donor?: string, failing?: string): Ran {
   // rather than through `status`, and both streams may be null. Raised as
   // itself, and NOT caught below — a broken environment is not a script exit.
   if (r.error) throw r.error;
-  if (r.status !== 0) throw new SetupFailed(r.stdout, r.stderr);
+  if (r.status !== 0) throw new SetupFailed(script, r.stdout, r.stderr);
   return { stdout: r.stdout, stderr: r.stderr };
+}
+
+function runSetup(dir: string, donor?: string, failing?: string): Ran {
+  return run(dir, "worktree-setup.sh", donor ? [donor] : [], failing);
 }
 
 /** Run a setup that must exit non-zero, and hand back what it said on the way. */
@@ -377,6 +382,34 @@ describe("worktree-setup.sh", () => {
     }
     expect(out).not.toContain("stub just fetch-browser");
     expect(out.split("\n")).toContain("stub just build");
+    expect(out).toContain("is ready.");
+  });
+});
+
+describe("termic-setup.sh", () => {
+  it("hands setup no donor rather than one it would refuse", () => {
+    // The hook names a donor for a caller that cannot pass an argument, so the
+    // only thing it can get wrong is naming a bad one — and a bad one is not
+    // survivable: setup refuses it, and every refusal lands BEFORE the install
+    // and the build, so the worktree would come out with no dependencies and
+    // nothing compiled. That is worse than the missing runtime the hook exists
+    // to fix, which at least left a built checkout. No donor is the supported
+    // outcome, so anything it cannot vouch for has to arrive as none.
+    //
+    // This is the case a plain checkout can produce: what git names from inside
+    // one is that checkout itself, which setup refuses as its own donor. The
+    // layouts that resolve to a directory that is no checkout at all — a bare
+    // clone hosting worktrees, --separate-git-dir — take the same branch out.
+    const parent = fs.mkdtempSync(path.join(tmp, "termic-"));
+    const asking = checkout(parent, "slot0", []);
+
+    const { stdout: out } = run(asking, "termic-setup.sh");
+
+    expect(out).toContain("donor:    none");
+    // The whole point of not passing a refused donor: these still happen.
+    const lines = out.split("\n");
+    expect(lines).toContain("stub just install");
+    expect(lines).toContain("stub just build");
     expect(out).toContain("is ready.");
   });
 });

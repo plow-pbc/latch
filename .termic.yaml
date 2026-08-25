@@ -1,9 +1,9 @@
 version: 1
 scripts:
-  # Runs in a worktree Termic has just created, so the donor is the checkout it
-  # was made out of — which git records. worktree-setup.sh never infers one (see
-  # its donor block), so the caller that knows the answer is the one that says it.
-  setup: scripts/worktree-setup.sh "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+  # worktree-setup.sh with a donor named for it — it never infers one (see its
+  # donor block), and a Termic worktree without one starts with no browser and
+  # no vault. The hook works out which checkout that is; the reasoning is there.
+  setup: scripts/termic-setup.sh
   run: just app
   archive: scripts/worktree-cleanup.sh
   preview_url: ''
