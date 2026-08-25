@@ -109,7 +109,11 @@ describe("worktree-setup.sh", () => {
     // good copy makes this a no-op, a stale one costs the rebuild it should.
     // After install and build, so a flake there cannot leave the checkout
     // without node_modules.
-    expect(out.indexOf("stub just fetch-browser")).toBeGreaterThan(out.indexOf("stub just build"));
+    // Whole lines: "stub just fetch-browser-runtime" would satisfy a substring
+    // match, and that recipe is not the one this asserts.
+    const lines = out.split("\n");
+    expect(lines).toContain("stub just fetch-browser");
+    expect(lines.indexOf("stub just fetch-browser")).toBeGreaterThan(lines.indexOf("stub just build"));
     // The closing hand-off names this checkout's branch and its real home. This
     // is the line the shadowing bug corrupted, and it is what the owner copies.
     expect(out).toContain("Checkout 'feature-vault-fix' is ready.");

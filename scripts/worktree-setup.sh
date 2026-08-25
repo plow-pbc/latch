@@ -64,7 +64,7 @@ else
       # say what is true of both rather than guessing which.
       echo "error: this checkout has no donor to inherit, and will not adopt a" >&2
       echo "  neighbour on its own. Name one, or pass --no-donor to set up" >&2
-      echo "  without a runtime. Nearby checkouts built from these pins:" >&2
+      echo "  without a runtime. Nearby checkouts with one to copy:" >&2
       # One path per line, unsplit: a checkout directory may contain spaces.
       printf '%s\n' "$candidates" | while IFS= read -r candidate; do
         [ -n "$candidate" ] && echo "    $candidate" >&2

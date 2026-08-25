@@ -30,11 +30,10 @@ const serverDir = path.join(vendorDir, "browser-server");
 const runtimeDir = path.join(vendorDir, "python-runtime");
 const downloadsDir = path.join(vendorDir, "downloads");
 const browserDir = path.join(vendorDir, "camoufox-browser");
-// The fused tree mergeCamoufoxUniversal() builds, and the marker it writes when
-// that is complete. Named here because the single-arch path invalidates the
-// tree — nothing else rebuilds it there.
+// The fused tree mergeCamoufoxUniversal() builds. Named out here because the
+// single-arch branch in the main block invalidates it — nothing rebuilds it
+// on that path, so it must not be left resolvable.
 const universalDir = path.join(browserDir, "universal");
-const universalMarker = path.join(universalDir, ".sha256");
 const vaultCliDir = path.join(vendorDir, "vault-cli");
 const vaultServerDir = path.join(vendorDir, "vault-server");
 
@@ -634,7 +633,7 @@ function fetchBrowser(arch) {
  */
 function mergeCamoufoxUniversal() {
   const outRoot = universalDir;
-  const marker = universalMarker;
+  const marker = path.join(outRoot, ".sha256");
   const markerValue = [
     lock.camoufox.assets.arm64.sha256,
     lock.camoufox.assets.x64.sha256,
