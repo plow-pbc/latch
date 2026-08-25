@@ -1142,7 +1142,8 @@ async function renderAgents() {
       mode === "adversarial" && !hasKey
         ? `The AI Reviewer has no credential${remedy} ` +
           "Until then it denies anything it is asked to decide — requests already " +
-          "covered by an always-allow rule keep running."
+          "covered by an always-allow rule keep running, unless the agent has its own " +
+          "AI Reviewer switched on."
         : "";
     // The suggestion is only ever shown in Ask mode, and only by a reviewer
     // that can run. Dead rather than hidden: a checkbox that vanished would
@@ -1179,7 +1180,12 @@ async function renderAgents() {
         "Any request a rule doesn't already cover opens an approval window. " +
         `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
     } else if (mode === "approve") {
-      modeHintLine.textContent = "Every request is allowed without asking you and without review.";
+      // "Every request" was true until a cloud agent could carry its own
+      // reviewer. Saying it still would describe the one case the switch exists
+      // to create as though the switch did nothing.
+      modeHintLine.textContent =
+        "Every request is allowed without asking you and without review — except from an " +
+        "agent with its own AI Reviewer switched on, which is reviewed every time.";
     } else if (mode === "deny") {
       modeHintLine.textContent =
         "Any request a rule doesn't already cover is refused without asking you.";
@@ -1215,7 +1221,8 @@ async function renderAgents() {
     group(
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip this — manage those in Rules. Anything the AI Reviewer " +
+        "by an always-allow rule skip this — unless the agent has its own AI Reviewer switched " +
+        "on, which is reviewed every time — manage those in Rules. Anything the AI Reviewer " +
         "sees — the request, the paths asked for, the agent's identity, its goal and plan, the " +
         "capabilities it asked for, its recent activity on this Mac, and what you say agents " +
         "are for — is sent to Plow to be judged, and billed to your account; nothing from " +
