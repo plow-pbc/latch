@@ -35,6 +35,11 @@ export interface CreateCloudAgentRequest {
   scopes?: string[];
 }
 
+export interface ReconfigureCloudAgentRequest {
+  scopes?: string[];
+  chatUid?: string;
+}
+
 export type CloudAgentTransition = (
   agent: CloudAgentResource,
 ) => void | Promise<void>;
@@ -89,6 +94,24 @@ export class CloudAgentsClient {
     return this.resourceFor(response, deviceCredential);
   }
 
+  async reconfigure(
+    deviceCredential: string,
+    agentId: string,
+    request: ReconfigureCloudAgentRequest,
+  ): Promise<CloudAgentResource> {
+    const body = {
+      ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
+      ...(request.chatUid === undefined ? {} : { chat_uid: request.chatUid }),
+    };
+    const response = await this.request(
+      "POST",
+      `/v1/agents/cloud/${encodeURIComponent(agentId)}/reconfigure`,
+      deviceCredential,
+      body,
+    );
+    return this.resourceFor(response, deviceCredential);
+  }
+
   async get(
     deviceCredential: string,
     agentId: string,
@@ -137,6 +160,20 @@ export class CloudAgentsClient {
   ): Promise<CloudAgentResource> {
     signal?.throwIfAborted();
     const receipt = await this.create(deviceCredential, request);
+    signal?.throwIfAborted();
+    return this.poll(deviceCredential, receipt, onTransition, signal);
+  }
+
+  /** Reconfigure one agent, publish its receipt, then publish every polled state. */
+  async reconfigureAndPoll(
+    deviceCredential: string,
+    agentId: string,
+    request: ReconfigureCloudAgentRequest,
+    onTransition?: CloudAgentTransition,
+    signal?: AbortSignal,
+  ): Promise<CloudAgentResource> {
+    signal?.throwIfAborted();
+    const receipt = await this.reconfigure(deviceCredential, agentId, request);
     signal?.throwIfAborted();
     return this.poll(deviceCredential, receipt, onTransition, signal);
   }
