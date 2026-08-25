@@ -20,3 +20,5 @@ export * from "./executor.js";
 export * from "./fileOps.js";
 export * from "./identity.js";
 export * from "./policyEngine.js";
+export { makeConnectorClient, ConnectorError, CONNECTOR_TIMEOUT_MS } from "./connectors.js";
+export type { ConnectorClient, FetchLike } from "./connectors.js";
