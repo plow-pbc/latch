@@ -28,14 +28,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-name=$(sh scripts/worktree-name.sh --branch)
+checkout=$(sh scripts/worktree-name.sh --branch)
 
 # --- browser runtime: clone it from a checkout that already has one --------
 # Which one, and why that one, is runtime-donor.sh's whole job; empty means
 # nothing nearby qualifies.
 donor=$(sh scripts/runtime-donor.sh)
 
-echo "checkout: $name"
+echo "checkout: $checkout"
 echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
 
 # The payloads runtime-donor.sh gates on, which owns that list, plus the
@@ -71,8 +71,8 @@ just install
 just build
 
 echo ""
-echo "Checkout '$name' is ready."
+echo "Checkout '$checkout' is ready."
 echo "  run the suite:   just test"
-echo "  launch the app:  just app     (state in \"~/Library/Application Support/Plow-Latch-$name\";"
+echo "  launch the app:  just app     (state in \"~/Library/Application Support/Plow-Latch-$checkout\";"
 echo "                                 first launch opens sign-in — this"
 echo "                                 checkout needs its own relay credential)"
