@@ -60,10 +60,11 @@ describe("cloud-agent pure mappings", () => {
     expect(JSON.stringify(row)).not.toContain(sessionId);
   });
 
-  it("recognizes only active and failed as terminal", () => {
+  it("keeps provisioning non-terminal and treats every returned status as terminal", () => {
     expect(isTerminalCloudAgent(agent({ status: "provisioning" }))).toBe(false);
-    expect(isTerminalCloudAgent(agent({ status: "active" }))).toBe(true);
-    expect(isTerminalCloudAgent(agent({ status: "failed" }))).toBe(true);
+    expect(isTerminalCloudAgent(agent({ status: "running" }))).toBe(true);
+    expect(isTerminalCloudAgent(agent({ status: "teardown" }))).toBe(true);
+    expect(isTerminalCloudAgent(agent({ status: "provider_verifying" }))).toBe(true);
   });
 
   it("joins KeyInfo by stable agent_id even after session_id rotates", () => {

@@ -20,7 +20,7 @@ function resource(
     provider: "exe:hermes",
     name: "Kitchen agent",
     status,
-    failure_reason: status === "failed" ? "VM did not start" : null,
+    failure_reason: null,
     created_at: "2026-08-24T18:02:11Z",
     session_id: "session_rotates",
     ...overrides,
@@ -75,7 +75,7 @@ describe("CloudAgentsClient request contracts", () => {
     timeout.mockRestore();
   });
 
-  it("accepts the synchronous create shape as active with an unknown creation time", async () => {
+  it("accepts the synchronous create shape as running with an unknown creation time", async () => {
     const synchronousBody = {
       agent_id: "c2ea74c38219be7cd617bef46149ab68",
       chat_uid: "cht_EhdlO6AUM_XbR_PzQqdWAw",
@@ -92,7 +92,7 @@ describe("CloudAgentsClient request contracts", () => {
     expect(created).toMatchObject({
       agentId: "c2ea74c38219be7cd617bef46149ab68",
       chatUid: "cht_EhdlO6AUM_XbR_PzQqdWAw",
-      status: "active",
+      status: "running",
       createdAt: null,
     });
 
@@ -133,7 +133,7 @@ describe("CloudAgentsClient request contracts", () => {
 
   it("GETs the list and DELETEs by agent_id with bearer auth", async () => {
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: { object: "list", data: [resource("active")], has_more: false } },
+      { status: 200, body: { object: "list", data: [resource("running")], has_more: false } },
       { status: 204 },
     ]);
     const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
@@ -154,12 +154,12 @@ describe("CloudAgentsClient request contracts", () => {
   it("accepts both bare and enveloped list responses", async () => {
     const { fetchImpl } = recordingFetch([
       { status: 200, body: [] },
-      { status: 200, body: { object: "list", data: [resource("active")], has_more: false } },
+      { status: 200, body: { object: "list", data: [resource("running")], has_more: false } },
     ]);
     const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
 
     await expect(client.list(CREDENTIAL)).resolves.toEqual([]);
-    await expect(client.list(CREDENTIAL)).resolves.toEqual([fromWire(resource("active"))]);
+    await expect(client.list(CREDENTIAL)).resolves.toEqual([fromWire(resource("running"))]);
   });
 
   it("treats deleting an already-gone agent as success", async () => {
@@ -171,12 +171,12 @@ describe("CloudAgentsClient request contracts", () => {
 });
 
 describe("CloudAgentsClient polling", () => {
-  it("POSTs, publishes the receipt, then polls and publishes until active", async () => {
+  it("POSTs, publishes the receipt, then polls and publishes until running", async () => {
     const waits: number[] = [];
     const { calls, fetchImpl } = recordingFetch([
       { status: 202, body: resource("provisioning", { created_at: "initial" }) },
       { status: 200, body: resource("provisioning") },
-      { status: 200, body: resource("active") },
+      { status: 200, body: resource("running") },
     ]);
     const transitions: string[] = [];
     const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async (ms) => {
@@ -193,11 +193,11 @@ describe("CloudAgentsClient polling", () => {
       (agent) => transitions.push(`${agent.status}:${agent.createdAt}`),
     );
 
-    expect(final.status).toBe("active");
+    expect(final.status).toBe("running");
     expect(transitions).toEqual([
       "provisioning:initial",
       "provisioning:2026-08-24T18:02:11Z",
-      "active:2026-08-24T18:02:11Z",
+      "running:2026-08-24T18:02:11Z",
     ]);
     expect(waits).toEqual([CLOUD_AGENT_POLL_INTERVAL_MS, CLOUD_AGENT_POLL_INTERVAL_MS]);
     expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
@@ -207,15 +207,27 @@ describe("CloudAgentsClient polling", () => {
     ]);
   });
 
-  it("stops and preserves the failure reason when a poll reaches failed", async () => {
+  it("stops when a poll reaches teardown", async () => {
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: resource("failed", { failure_reason: "Provider timed out" }) },
+      { status: 200, body: resource("teardown") },
     ]);
     const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => undefined);
 
     const final = await client.poll(CREDENTIAL, fromWire(resource("provisioning")));
 
-    expect(final).toMatchObject({ status: "failed", failureReason: "Provider timed out" });
+    expect(final).toMatchObject({ status: "teardown" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("preserves an unknown status from a valid 200 and treats it as terminal", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: resource("provider_verifying") },
+    ]);
+    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => undefined);
+
+    const final = await client.poll(CREDENTIAL, fromWire(resource("provisioning")));
+
+    expect(final.status).toBe("provider_verifying");
     expect(calls).toHaveLength(1);
   });
 
@@ -227,7 +239,7 @@ describe("CloudAgentsClient polling", () => {
       const fetchImpl = async (url: string) => {
         calls.push(url);
         if (abortAt === "get") controller.abort();
-        return new Response(JSON.stringify(resource("active")), { status: 200 });
+        return new Response(JSON.stringify(resource("running")), { status: 200 });
       };
       const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => {
         if (abortAt === "wait") controller.abort();
@@ -264,7 +276,7 @@ describe("CloudAgentsClient polling", () => {
           "abort",
           () =>
             queueMicrotask(() =>
-              resolve(new Response(JSON.stringify(resource("active")), { status: 200 })),
+              resolve(new Response(JSON.stringify(resource("running")), { status: 200 })),
             ),
           { once: true },
         );
@@ -297,7 +309,7 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
           detail: `This chat has an unfinished cloud agent (${staleId}). Delete it with DELETE /v1/agents/cloud/${staleId} and provision again.`,
         },
       },
-      { status: 200, body: resource("failed", { agent_id: staleId }) },
+      { status: 200, body: resource("running", { agent_id: staleId }) },
       { status: 202, body: resource("provisioning", { agent_id: "replacement" }) },
     ]);
     const created = await new CloudAgentsClient("https://api.plow.co", fetchImpl).create(
@@ -421,7 +433,7 @@ describe("CloudAgentsClient recovery and credential boundary", () => {
 
   it("rejects a successful resource that repeats the credential in a display field", async () => {
     const { fetchImpl } = recordingFetch([
-      { status: 200, body: resource("failed", { failure_reason: `provider echoed ${CREDENTIAL}` }) },
+      { status: 200, body: resource("running", { failure_reason: `provider echoed ${CREDENTIAL}` }) },
     ]);
     const error = await new CloudAgentsClient(
       "https://api.plow.co",

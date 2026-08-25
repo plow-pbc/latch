@@ -19,7 +19,11 @@ export const CREATE_REQUEST_TIMEOUT_MS = 30_000;
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 
-export type CloudAgentStatus = "provisioning" | "active" | "failed";
+export type CloudAgentStatus =
+  | "provisioning"
+  | "running"
+  | "teardown"
+  | (string & {});
 
 /**
  * Server truth for one cloud agent. The read endpoint adds `name` and
@@ -57,7 +61,7 @@ const defaultWait: Wait = (milliseconds) =>
 
 /** Is this the last resource the provisioning loop needs to publish? */
 export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">): boolean {
-  return agent.status === "active" || agent.status === "failed";
+  return agent.status !== "provisioning";
 }
 
 /**
@@ -151,7 +155,7 @@ export class CloudAgentsClient {
     }
   }
 
-  /** Continue an existing receipt until Plow reports `active` or `failed`. */
+  /** Continue an existing receipt until Plow leaves `provisioning`. */
   async poll(
     deviceCredential: string,
     receipt: CloudAgentResource,
@@ -244,10 +248,7 @@ function parseResource(
     !isRecord(decoded) ||
     typeof decoded.agent_id !== "string" ||
     typeof decoded.chat_uid !== "string" ||
-    (decoded.status !== undefined &&
-      decoded.status !== "provisioning" &&
-      decoded.status !== "active" &&
-      decoded.status !== "failed") ||
+    (decoded.status !== undefined && typeof decoded.status !== "string") ||
     (decoded.created_at !== undefined && typeof decoded.created_at !== "string")
   ) {
     throw invalidResponse(statusCode);
@@ -261,7 +262,7 @@ function parseResource(
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
     name: optionalString(decoded.name),
-    status: decoded.status ?? "active",
+    status: decoded.status ?? "running",
     failureReason: optionalString(decoded.failure_reason),
     createdAt: optionalString(decoded.created_at),
     sessionId: optionalString(decoded.session_id),
