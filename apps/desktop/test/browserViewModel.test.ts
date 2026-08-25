@@ -205,7 +205,16 @@ describe("audit grouping for browser sessions", () => {
     expect(closeRow.text).toBe(closeText);
   });
 
-  it("a session that threw its profile away does not read as ordinary browsing", () => {
+  it.each([
+    // The open arm is the one the pane is watched for: the agent is still
+    // working, and this is where the owner learns their sign-ins are gone.
+    { when: "still open", close: [] as Record<string, unknown>[], status: "Started over" },
+    {
+      when: "closed",
+      close: [{ event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:09Z" }],
+      status: "Closed · started over",
+    },
+  ])("a session that threw its profile away does not read as ordinary browsing ($when)", ({ close, status }) => {
     // Sign-ins the owner does not get back, same as a failed merge — on
     // purpose rather than by accident, but they filter on the outcome. Green
     // here would hide the one destructive thing a session does on its own
@@ -214,9 +223,9 @@ describe("audit grouping for browser sessions", () => {
     const acts = auditActivities([
       { event: "browser_session_opened", session: "S", origins: ["costco.com"], ts: "2026-08-10T10:00:00Z" },
       { event: "browser_profile_reset", session: "S", origins: ["costco.com"], ts: "2026-08-10T10:00:03Z" },
-      { event: "browser_session_closed", session: "S", reason: "agent", ts: "2026-08-10T10:00:09Z" },
+      ...close,
     ]);
-    expect(acts[0]!.status).toBe("Closed · started over");
+    expect(acts[0]!.status).toBe(status);
     expect(acts[0]!.tone).toBe("amber");
     expect(acts[0]!.category).toBe("failed");
     const row = acts[0]!.timeline.find((t) => t.text.includes("started over"))!;

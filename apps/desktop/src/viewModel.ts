@@ -380,15 +380,6 @@ function classifyActivity(
     if (has("browser_cookie_merge_failed")) {
       return { status: "Closed · sign-ins not saved", tone: "amber", category: "failed" };
     }
-    // Ranked right under it, and for the same reason: sign-ins the owner does
-    // not get back. That one was an accident and this one is on purpose, but
-    // the owner filters on outcome, and a session that threw its profile away
-    // must not sit in the list looking like ordinary browsing.
-    if (has("browser_profile_reset")) {
-      return closed
-        ? { status: "Closed · started over", tone: "amber", category: "failed" }
-        : { status: "Started over", tone: "amber", category: "failed" };
-    }
     if (has("credential_fill_failed")) {
       return closed
         ? { status: "Closed · fill failed", tone: "amber", category: "failed" }
@@ -411,6 +402,15 @@ function classifyActivity(
       return closed
         ? { status: "Closed · scope blocks", tone: "amber", category: "failed" }
         : { status: "Scope blocked", tone: "amber", category: "failed" };
+    }
+    // Sign-ins the owner does not get back, same as a failed merge above —
+    // that one by accident, this one on purpose, and they filter on outcome.
+    // Ranked under every refusal, though: the cage stopping the agent is a
+    // stronger claim about a session than the agent choosing to start over.
+    if (has("browser_profile_reset")) {
+      return closed
+        ? { status: "Closed · started over", tone: "amber", category: "failed" }
+        : { status: "Started over", tone: "amber", category: "failed" };
     }
     // The page's own server refused what the agent asked it to do — ranked
     // under a crash and a scope block, both stronger claims about the session,
