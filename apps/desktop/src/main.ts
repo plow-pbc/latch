@@ -902,6 +902,10 @@ app.whenReady().then(async () => {
     hostName(),
     approvals,
     resolveBrowserRuntime(process.resourcesPath),
+    // The owner's real home, resolved here because this is the only caller that
+    // knows it. `home` above is the app's own (branch-suffixed in a from-source
+    // run); this is where WhatsApp and everything else of theirs actually lives.
+    os.homedir(),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
