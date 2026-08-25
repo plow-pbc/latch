@@ -20,9 +20,13 @@ afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 function nameIn(cwd: string, ...args: string[]): string {
   // The script asks git where it is, so it needs the same neutralised
   // environment the fixtures are built under — GIT_DIR and friends would
-  // otherwise answer for the outer repository and every case here would
-  // read the wrong checkout.
-  return execFileSync("sh", [script, ...args], { cwd, encoding: "utf8", env: hermeticEnv() }).trim();
+  // otherwise answer for the outer repository, and the cases that expect no
+  // repository at all would find one above the temp directory.
+  return execFileSync("sh", [script, ...args], {
+    cwd,
+    encoding: "utf8",
+    env: hermeticEnv(fs.realpathSync(tmp)),
+  }).trim();
 }
 
 function makeRepo(dir: string): string {

@@ -5,10 +5,13 @@
  * `init.defaultBranch` needs nothing here.
  *
  * Shared because all three of them build fixture checkouts, and a future guard
- * added here — another `-c` to neutralise some ambient config — has to arrive
- * in one place rather than be remembered in three.
+ * added here has to arrive in one place rather than be remembered in three.
+ * Not only `-c`: the sharpest ambient configuration is ENVIRONMENT, which `-c`
+ * cannot reach at all — see `hermeticEnv` below, which exists because a suite
+ * run from inside a git hook was building its fixtures in the outer repo.
  */
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 /**
  * The variables git exports to every hook it runs — and to `rebase --exec` and
@@ -20,10 +23,25 @@ import { execFileSync } from "node:child_process";
  */
 const DISCOVERY_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"];
 
-/** `process.env` with anything that would point git out of the fixture removed. */
-export function hermeticEnv(): NodeJS.ProcessEnv {
+/**
+ * `process.env` with anything that would point git out of the fixture removed.
+ * Pass `root` — the directory the fixtures live in, a real path — and discovery
+ * is also stopped from climbing above it, for a TMPDIR that itself sits inside
+ * a working tree; some CI images do this. Both halves belong together: one
+ * skips the walk, the other bounds it, and a suite shutting only one is still
+ * reachable.
+ *
+ * The ceiling is `root`'s PARENT, not `root`. GIT_CEILING_DIRECTORIES stops git
+ * chdir-ing UP INTO a listed directory, so listing `root` does nothing for a
+ * lookup that starts at `root` itself — it checks there, then ascends past a
+ * ceiling it never enters. Owned here rather than left to callers, because that
+ * is the shape of the mistake: it looks right and holds for every case that
+ * starts one directory down.
+ */
+export function hermeticEnv(root?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const v of DISCOVERY_VARS) delete env[v];
+  if (root) env.GIT_CEILING_DIRECTORIES = path.dirname(root);
   return env;
 }
 

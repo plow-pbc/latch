@@ -119,15 +119,12 @@ function run(dir: string, script: string, args: string[] = [], failing?: string)
     encoding: "utf8",
     env: {
       // Same neutralisation the fixtures are built under — these scripts run
-      // git themselves, so it has to hold on this side too.
-      ...hermeticEnv(),
+      // git themselves, so it has to hold on this side too. The row that needs
+      // no repository above it then fails as "the fixture is not what this
+      // needs" rather than as a lookup regression.
+      ...hermeticEnv(fs.realpathSync(tmp)),
       PATH: `${stubBin}:${process.env.PATH}`,
       JUST_FAIL: failing ?? "",
-      // And the walk itself is bounded, for a TMPDIR pointed inside a working
-      // tree — some CI images do this. The row that needs no repository above
-      // it then fails as "the fixture is not what this needs" rather than as a
-      // lookup regression.
-      GIT_CEILING_DIRECTORIES: fs.realpathSync(tmp),
     },
   });
   // A spawn that never happened, or a child killed on maxBuffer: reported here
