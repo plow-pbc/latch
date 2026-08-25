@@ -625,11 +625,12 @@ export class CloudChatsClient implements CloudChatsApi {
     }
 
     if (response.status === 403) {
-      // 403 has no screen of its own any more, so the remedy has to be in the
-      // sentence: this credential was minted before `chats:use` existed.
+      // A 403 does not say whether the credential or the deployment lacks the
+      // required scope. State the limitation, then offer the one local remedy
+      // as something to try rather than claiming it will fix the server.
       throw new PlowApiError(
         "forbidden",
-        "This Mac signed in before chat access existed. Re-activate it to list chats.",
+        "This Mac cannot list chats yet. Try re-activating it, then try again.",
         403,
       );
     }

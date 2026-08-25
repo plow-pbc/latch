@@ -325,7 +325,7 @@ describe("refresh", () => {
         chats: async () => {
           throw new PlowApiError(
             "forbidden",
-            "This Mac signed in before chat access existed. Re-activate it to list chats.",
+            "This Mac cannot list chats yet. Try re-activating it, then try again.",
             403,
           );
         },
@@ -341,7 +341,7 @@ describe("refresh", () => {
     expect(shown.cloudChatsLoaded).toBe(false);
     expect(shown.cloudAgentsError).toBeNull();
     expect(shown.cloudChatsError).toBe(
-      "This Mac signed in before chat access existed. Re-activate it to list chats.",
+      "This Mac cannot list chats yet. Try re-activating it, then try again.",
     );
     expect(shown.cloudAgents).toHaveLength(1);
   });
@@ -1187,7 +1187,7 @@ describe("a 403 from the real chat endpoint", () => {
     const shown = state.state();
     expect(shown.cloudChatsLoaded).toBe(false);
     expect(shown.cloudChatsError).toBe(
-      "This Mac signed in before chat access existed. Re-activate it to list chats.",
+      "This Mac cannot list chats yet. Try re-activating it, then try again.",
     );
     expect(shown.cloudChats).toEqual([]);
     // The agent list is fine, and must not be blamed for this.
@@ -1216,7 +1216,7 @@ describe("a 403 from the real chat endpoint", () => {
     expect(state.state()).toMatchObject({
       cloudAgentsError: "Plow returned 405.",
       cloudChatsError:
-        "This Mac signed in before chat access existed. Re-activate it to list chats.",
+        "This Mac cannot list chats yet. Try re-activating it, then try again.",
       cloudChatsLoaded: false,
     });
   });
@@ -1285,7 +1285,7 @@ describe("CloudChatsClient", () => {
     timeout.mockRestore();
   });
 
-  it("says what to do about a 403, since it has no screen of its own", async () => {
+  it("states the 403 limitation without claiming to know its cause", async () => {
     const { fetchImpl } = recordingFetch({ status: 403, body: { detail: "missing scope" } });
 
     await expect(
@@ -1293,7 +1293,7 @@ describe("CloudChatsClient", () => {
     ).rejects.toMatchObject({
       kind: "forbidden",
       status: 403,
-      message: "This Mac signed in before chat access existed. Re-activate it to list chats.",
+      message: "This Mac cannot list chats yet. Try re-activating it, then try again.",
     });
   });
 

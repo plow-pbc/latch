@@ -697,7 +697,7 @@ app.whenReady().then(async () => {
   cloudProbe = {
     ...cloudProbe,
     cloudAgentsError: "Method Not Allowed",
-    cloudChatsError: "This Mac signed in before chat access existed. Re-activate it to list chats.",
+    cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
@@ -706,7 +706,9 @@ app.whenReady().then(async () => {
     const setup = document.querySelector(".cloud-toolbar button");
     setup.click();
     return {
-      chatErrorVisible: document.body.innerText.includes("This Mac signed in before chat access existed. Re-activate it to list chats."),
+      chatErrorVisible: document.body.innerText.includes(
+        "This Mac cannot list chats yet. Try re-activating it, then try again.",
+      ),
       rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
       transportCopy: document.body.innerText.includes("Plow couldn't complete that request. Try again."),
       setupDisabled: setup.disabled === true,
