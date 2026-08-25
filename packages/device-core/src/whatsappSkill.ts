@@ -232,6 +232,10 @@ on the outside puts them back in reading order. One ascending sort would hand yo
 
 ${indented(WHATSAPP_QUERIES.conversation)}
 
+Substitute the name exactly as the first query spelled it — and **double any apostrophe in
+it**. A single one closes the SQL literal, so \`O'Brien\` has to be written \`'O''Brien'\` and
+an unescaped one is a syntax error on an ordinary surname, not a missing chat.
+
 **Search every chat for a word:**
 
 ${indented(WHATSAPP_QUERIES.search)}
