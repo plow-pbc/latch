@@ -1,6 +1,6 @@
 #!/bin/bash
-# scripts/worktree-setup.sh [donor-checkout | --no-donor] — everything needed to
-# make a second checkout buildable and runnable alongside the ones already here:
+# scripts/worktree-setup.sh [donor-checkout] — everything needed to make a
+# second checkout buildable and runnable alongside the ones already here:
 #
 #   1. copies the gitignored browser runtime (Python + Camoufox + download
 #      cache + vault server/CLI payloads, ~500 MB+) from a checkout that
@@ -9,10 +9,9 @@
 #   2. installs workspace dependencies and builds everything
 #
 # Works in any checkout — a linked worktree or a plain clone beside the others.
-# A worktree inherits its donor from the checkout it was made out of; a plain
-# clone inherits nothing and is given one, because a donor's payloads get
-# executed here (the reasoning is beside the donor block below). Run it with no
-# argument and it will list the candidates it can see.
+# Name a donor to copy a runtime from it; run it bare and there is none, and the
+# browser stack is fetched later by whoever wants it. Nothing is inferred: the
+# reasoning is beside the donor block below.
 #
 # State is keyed on the normalized BRANCH name (scripts/worktree-name.sh) — for
 # EVERY checkout, the main one included; only the packaged install uses the
@@ -39,109 +38,34 @@ self=$(pwd -P)
 # it is what a fetch downloads FROM, so it is copied but never counted.
 payloads="python-runtime camoufox-browser vault-server vault-cli"
 
-# A checkout of this repo, and not this one. Nothing about its payloads — a
-# directory with none copies nothing, and the build below fills it in.
-usable() {
-  [ "$1" != "$self" ] || return 1
-  [ -f "$1/vendor/browser-server/runtime.lock.json" ] || return 1
-}
-
 # --- browser runtime: copy it from the donor -------------------------------
 #
-# Who may hand this checkout a runtime, which is the one part of this that
-# cannot be delegated. A donor's payloads are executed here — the bundled
-# Python runs the browser server, vaultwarden is spawned — outside the seatbelt
-# and within reach of this checkout's vault and relay credential. So a plain
-# clone is TOLD its donor rather than finding one: scanning whatever sits
-# nearby would let anything able to write ONE checkout put code in the next,
-# and a checkout is an ordinary thing to hand an agent. A linked worktree
-# inherits that trust from the checkout it was made out of; everything else a
-# human names.
+# One way in: you name it, or there is none. A donor's payloads are executed
+# here — the bundled Python runs the browser server, vaultwarden is spawned —
+# outside the seatbelt and within reach of this checkout's vault and relay
+# credential. Which checkout may hand this one a runtime is therefore a decision
+# a human makes, and this script never infers it: inference would need a rule,
+# the rule would need exceptions, and each exception would need a way past it.
 #
 # Whether what arrives is any GOOD is not decided here — see the build below.
 donor=${1:-}
-# An explicit "set up without one" — for a checkout that will fetch its own, or
-# whose neighbours you would rather not copy. Without it a refusal has no way
-# past, and the refusal happens before install and build.
-if [ "$donor" = "--no-donor" ]; then
-  donor=""
-  refused=1
-elif [ -n "$donor" ]; then
+if [ -n "$donor" ]; then
   donor=$(cd "$donor" 2>/dev/null && pwd -P) || {
     echo "error: ${1} is not a directory." >&2
     exit 1
   }
-  if [ "$donor" = "$self" ]; then
+  [ "$donor" != "$self" ] || {
     echo "error: a checkout cannot be its own donor." >&2
     exit 1
-  fi
-  usable "$donor" || {
+  }
+  [ -f "$donor/vendor/browser-server/runtime.lock.json" ] || {
     echo "error: $donor is not a checkout of this repo." >&2
     exit 1
   }
-else
-  # Inheritance, and only inheritance. A linked worktree shares its git dir
-  # with the checkout it was made out of; a plain clone's common dir is its
-  # own, which is why `usable` leaves it with no donor rather than with itself.
-  donor=""
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-  if [ -n "$common" ]; then
-    parent=$(cd "$(dirname "$common")" 2>/dev/null && pwd -P || true)
-    [ -n "$parent" ] && usable "$parent" && donor=$parent
-  fi
-  # Nothing inherited. If something nearby WOULD serve, that is the human's
-  # call to make and not this script's. With nothing nearby either there is
-  # nothing to choose between, so carry on and let the per-payload notes below
-  # say what did not come across.
-  if [ -z "$donor" ]; then
-    # Advice, never a choice: the neighbours a human could name. Listing is
-    # not choosing, which is the whole point of the paragraph above.
-    candidates=$(
-      for candidate in "$(dirname "$self")"/*; do
-        [ -d "$candidate" ] || continue
-        candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
-        usable "$candidate" || continue
-        # Worth naming only if it has something to give — python-runtime, the
-        # payload every runtime has and the slow half to rebuild, taken from the
-        # list rather than spelled again.
-        #
-        # `-d`, matching the arm that COPIES rather than the arm that skips. The
-        # two ask different questions: skipping asks "would a copy clobber
-        # something", where anything present counts, and this asks "is there
-        # something to copy", where a regular file at that path is not. Getting
-        # it wrong advertises a neighbour that then clones nothing.
-        #
-        # An `if` rather than a `&&`: this is the loop's last command, so under
-        # `set -e` a final candidate that does not qualify aborts the setup.
-        if [ -d "$candidate/vendor/${payloads%% *}" ]; then
-          printf '%s\n' "$candidate"
-        fi
-      done
-    )
-    if [ -n "$candidates" ]; then
-      # Two ways to get here — not a linked worktree, or one whose parent
-      # checkout has no usable runtime either — and the answer is the same, so
-      # say what is true of both rather than guessing which.
-      echo "error: this checkout has no donor to inherit, and will not adopt a" >&2
-      echo "  neighbour on its own. Name one, or pass --no-donor to set up" >&2
-      echo "  without a runtime. Nearby checkouts with one to copy:" >&2
-      # One path per line, unsplit: a checkout directory may contain spaces.
-      printf '%s\n' "$candidates" | while IFS= read -r candidate; do
-        echo "    $candidate" >&2
-      done
-      exit 1
-    fi
-  fi
 fi
 
 echo "checkout: $checkout"
-if [ -n "$donor" ]; then
-  echo "donor:    $donor"
-elif [ -n "${refused:-}" ]; then
-  echo "donor:    none — --no-donor was passed, so nothing is being copied"
-else
-  echo "donor:    none — nothing nearby to copy from"
-fi
+echo "donor:    ${donor:-none — name one to copy a runtime instead of fetching it}"
 
 for payload in $payloads downloads; do
   dir="vendor/$payload"
@@ -164,7 +88,9 @@ for payload in $payloads downloads; do
       cp -Rp "$donor/$dir" "$dir.partial"
     }
     mv "$dir.partial" "$dir"
-  else
+  elif [ -n "$donor" ]; then
+    # Only when there IS a donor: with none, the banner above already said so
+    # once, and repeating it per payload is five lines saying nothing new.
     echo "note: no $dir to clone — run \`just fetch-browser\` if you need the browser stack"
   fi
   # Present, however it got here — copied just now or already in place, and

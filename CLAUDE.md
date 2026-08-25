@@ -156,23 +156,20 @@ Use `just` (run `just` to list recipes):
 
 **Checkouts run side by side with main.** In any second checkout — a linked
 worktree or a plain clone beside the others — run `./scripts/worktree-setup.sh`
-to clone the gitignored browser runtime from a checkout that already has one
-(APFS clones, no re-download), then install and build. A linked worktree
-inherits its donor from the checkout it was made out of; **a plain clone is
-given one**: `./scripts/worktree-setup.sh ~/Hacking/domo-desktop4`. Run with no
-argument it lists the candidates it can see, and `--no-donor` sets up without
-one. It will not pick one for you: a donor's payloads are executed here, outside
-the seatbelt and within reach of this checkout's vault and relay credential, so
-anything able to write one checkout could otherwise put code in the next.
-The reasoning sits beside the code that does it. What setup does **not** decide is
-whether the copy is any good — the donor is a cache seed, and setup runs
-`just fetch-browser` over whatever runtime is in `vendor/` — copied just now or
-already there, the download cache alone not counting — once it has installed
-and built, so
-a stale or half-built payload costs a rebuild rather than a refusal. That check
-is not skippable: it is the only look at what arrived, so setup stops rather
-than call a checkout ready over an unvalidated runtime — after installing and
-building, so what it costs is the validation and not the checkout.
+to install and build. Name a checkout to copy the gitignored browser runtime
+from it (APFS clones, no re-download): `./scripts/worktree-setup.sh
+~/Hacking/domo-desktop4`. Run it bare and there is no donor; fetch the browser
+stack later with `just fetch-browser` if you want it.
+
+Nothing is inferred, and there is no way to make it adopt a neighbour: a donor's
+payloads are executed here, outside the seatbelt and within reach of this
+checkout's vault and relay credential, so which checkout may hand this one a
+runtime is a decision you make. What setup does **not** decide is whether the
+copy is any good — the donor is a cache seed, and setup runs `just fetch-browser`
+over whatever runtime is in `vendor/` once it has installed and built, so a
+stale or half-built payload costs a rebuild rather than a refusal. That check is
+not skippable: it is the only look at what is there, so setup stops rather than
+call a checkout ready over an unvalidated runtime.
 
 Without that runtime there is no browser and no vault, and the app says so at
 startup rather than leaving the Vault tab to report a vault that has not

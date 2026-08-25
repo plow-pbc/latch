@@ -33,20 +33,15 @@ afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const stubBin = path.join(tmp, "bin");
 
-/** This repo's real scripts and pin files, in a directory that is to run them. */
-function stage(dir: string): void {
+/** A checkout of this repo on its own branch, carrying whichever payloads it has. */
+function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
+  const dir = path.join(parent, name);
   fs.mkdirSync(path.join(dir, "vendor", "browser-server"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   for (const s of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", s), path.join(dir, "scripts", s));
   for (const f of ["runtime.lock.json", "requirements.txt"]) {
     fs.copyFileSync(path.join(repo, "vendor/browser-server", f), path.join(dir, "vendor/browser-server", f));
   }
-}
-
-/** A staged checkout on its own branch, carrying whichever payloads it has. */
-function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
-  const dir = path.join(parent, name);
-  stage(dir);
   for (const p of payloads) {
     fs.mkdirSync(path.join(dir, "vendor", p), { recursive: true });
     // Named so a copy that landed a directory deeper is distinguishable from
@@ -176,31 +171,16 @@ describe("worktree-setup.sh", () => {
     expect(out).not.toContain("Plow-Latch-downloads");
   });
 
-  it("inherits the checkout a linked worktree was made out of, unasked", () => {
-    // The one donor that needs no naming: a worktree already runs on that
-    // checkout's git dir, so the trust is one it was created with. This is the
-    // other half of the posture — refusing neighbours is not refusing everyone.
-    const main = checkout(fs.mkdtempSync(path.join(tmp, "main-")), "repo", [...PAYLOADS, "downloads"]);
-    const wt = path.join(fs.mkdtempSync(path.join(tmp, "far-")), "wt");
-    git(main, "worktree", "add", "-q", "-b", "feature/inherited", wt);
-    stage(wt);
-
-    const { stdout: out } = runSetup(wt);
-
-    expect(out).toContain(`donor:    ${fs.realpathSync(main)}`);
-    expect(fs.readFileSync(path.join(wt, "vendor", PAYLOADS[0], "payload-marker"), "utf8")).toBe(PAYLOADS[0]);
-  });
-
   it("counts a payload that is present as anything, not only as a directory", () => {
     // The skip arm and the check gate both ask `-e`. When they disagreed, a
     // payload present as a regular file was left alone as "already present" and
     // then not counted as something to validate — present for one purpose and
-    // absent for the other. --no-donor so nothing can set it from the side.
+    // absent for the other. No donor, so nothing can set it from the side.
     const parent = fs.mkdtempSync(path.join(tmp, "notadir-"));
     const asking = checkout(parent, "slot0", []);
     for (const p of PAYLOADS) fs.writeFileSync(path.join(asking, "vendor", p), "not a directory\n");
 
-    const { stdout: out } = runSetup(asking, "--no-donor");
+    const { stdout: out } = runSetup(asking);
 
     expect(out).toContain(`vendor/${PAYLOADS[0]} already present`);
     expect(out.split("\n")).toContain("stub just fetch-browser");
@@ -228,45 +208,31 @@ describe("worktree-setup.sh", () => {
     expect(out.split("\n")).toContain("stub just fetch-browser");
   });
 
+  it("takes nothing from a neighbour it was not pointed at", () => {
+    // The security posture, and now the whole of it: there is no inference to
+    // go wrong, so this is the case that says so. A complete runtime sits one
+    // directory away and setup does not look at it, because nothing in this
+    // script looks anywhere.
+    const parent = fs.mkdtempSync(path.join(tmp, "unasked-"));
+    checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
+    const asking = checkout(parent, "slot0", []);
+
+    const { stdout: out } = runSetup(asking);
+
+    expect(out).toContain("name one to copy a runtime");
+    expect(out).not.toContain("cloning vendor/");
+    for (const p of PAYLOADS) {
+      expect(fs.existsSync(path.join(asking, "vendor", p))).toBe(false);
+    }
+    // And no validation, because there is nothing here to validate.
+    expect(out).not.toContain("stub just fetch-browser");
+  });
+
   it("refuses to be its own donor", () => {
     const parent = fs.mkdtempSync(path.join(tmp, "selfdonor-"));
     const asking = checkout(parent, "slot0", PAYLOADS);
     const { stderr } = runSetupExpectingFailure(asking, asking);
     expect(stderr).toMatch(/cannot be its own donor/);
-  });
-
-  it("refuses to pick a neighbour, and names the ones it can see instead", () => {
-    // The security posture, from the caller's side: a perfectly good neighbour
-    // sits right there and setup still will not take it unasked. It says which
-    // one it would have been, because listing is not choosing.
-    const parent = fs.mkdtempSync(path.join(tmp, "unasked-"));
-    const neighbour = checkout(parent, "slot1", PAYLOADS);
-    // A second neighbour with nothing to give: listing it would send someone to
-    // a checkout that saves them nothing, so the list is filtered, not just
-    // enumerated.
-    const barren = checkout(parent, "slot2", []);
-    // A third whose payload is a regular file: there is something at the path,
-    // but nothing a copy could take. Advertising it would send someone to a
-    // checkout that then clones nothing — the filter asks the copy arm's
-    // question, not the skip arm's. Only that: the errexit shape that scan used
-    // to have is owned by the noSeed row that names no donor at all ("beside a
-    // sibling that is a checkout but has nothing to give") — the discriminator
-    // is returning undefined, not the parent's contents, since the row above it
-    // builds the same fixture and hands it over as a named donor, which never
-    // reaches the scan.
-    const notADir = checkout(parent, "slot3", []);
-    fs.writeFileSync(path.join(notADir, "vendor", PAYLOADS[0]), "not a directory\n");
-    const asking = checkout(parent, "slot0", []);
-
-    const { stdout, stderr } = runSetupExpectingFailure(asking);
-
-    expect(stderr).toMatch(/will not adopt a\s+neighbour on its own/);
-    expect(stderr).toContain(fs.realpathSync(neighbour));
-    expect(stderr).not.toContain(fs.realpathSync(barren));
-    expect(stderr).not.toContain(fs.realpathSync(notADir));
-    // And it stopped before the work, rather than building over a copy it
-    // never made.
-    expect(stdout).not.toContain("stub just");
   });
 
   it("refuses a named donor that is not a checkout of this repo", () => {
@@ -337,7 +303,7 @@ describe("worktree-setup.sh", () => {
     // stderr on a filesystem without clonefile, which is not the message.
     const fresh = checkout(parent, "slot9", []);
     const copied = runSetupExpectingFailure(fresh, donor, "fetch-browser");
-    const notCopied = runSetupExpectingFailure(asking, "--no-donor", "fetch-browser");
+    const notCopied = runSetupExpectingFailure(asking, undefined, "fetch-browser");
     const complaint = (r: Ran) => r.stderr.slice(r.stderr.indexOf("error:"));
 
     // The premise: that run has to have copied, or the two sides are the same
@@ -360,14 +326,6 @@ describe("worktree-setup.sh", () => {
     landed?: string;
   }[] = [
     {
-      why: "told not to take one",
-      donor: (parent) => {
-        checkout(parent, "slot1", PAYLOADS);
-        return "--no-donor";
-      },
-      says: "--no-donor was passed, so nothing is being copied",
-    },
-    {
       why: "given one that had nothing to give",
       // A worktree inherits its donor whether or not that checkout ever built a
       // runtime. Copying nothing is not a reason to fetch ~500 MB and
@@ -385,29 +343,11 @@ describe("worktree-setup.sh", () => {
       landed: "downloads",
     },
     {
-      why: "beside a sibling that is a checkout but has nothing to give",
-      // The other outcome the errexit bug destroyed: no donor to inherit, one
-      // neighbour that qualifies as a checkout but has no runtime, so there is
-      // nothing to offer and setup carries on rather than refusing — or, as it
-      // did, aborting on the scan's own last test.
-      //
-      // What has to stay true for that second half: this sibling must remain
-      // the last entry the scan REACHES, since every earlier bail ends its
-      // iteration at status 0. A fixture added here that sorts after it and is
-      // not a usable checkout would take the final iteration and quietly end
-      // the coverage.
-      donor: (parent) => {
-        checkout(parent, "slot1", []);
-        return undefined;
-      },
-      says: "nothing nearby to copy from",
-    },
-    {
-      why: "with nothing nearby to name at all",
-      // A first checkout on a machine: nothing to inherit and nothing offered,
-      // so no choice is being withheld and setup still has to finish.
+      why: "not given one at all",
+      // The ordinary first run: no donor named, so there is none, and setup
+      // still has to finish — the browser stack is a later errand.
       donor: () => undefined,
-      says: "nothing nearby to copy from",
+      says: "name one to copy a runtime",
     },
   ];
 
