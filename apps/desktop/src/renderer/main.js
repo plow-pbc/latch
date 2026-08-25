@@ -722,9 +722,10 @@ function openCloudModal(trigger, children, focus) {
 }
 
 function cloudStatus(status) {
-  if (status === "active") return { tone: "green", label: "Active" };
-  if (status === "failed") return { tone: "red", label: "Failed" };
-  return { tone: "amber", label: "Provisioning…" };
+  if (status === "running") return { tone: "green", label: "Ready" };
+  if (status === "provisioning") return { tone: "amber", label: "Setting up…" };
+  if (status === "teardown") return { tone: "amber", label: "Removing…" };
+  return { tone: "amber", label: status || "Status unavailable" };
 }
 
 function cloudProvider(provider) {
@@ -769,6 +770,10 @@ function openCloudPicker(trigger, state, redraw) {
     }
     create.disabled = true;
     cancel.disabled = true;
+    create.replaceChildren(
+      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { text: "Setting up…" }),
+    );
     await window.domo.cloudCreate(select.value, name.value.trim());
     closeCloudModal();
     await redraw();
@@ -897,15 +902,6 @@ function cloudAgentRow(agent, state, redraw) {
   const remove = el("button", { class: "btn small danger", text: "Remove" });
   remove.addEventListener("click", () => openCloudRemove(remove, agent, redraw));
   const actions = [settings, remove];
-  if (agent.status === "failed") {
-    const retry = el("button", { class: "btn small", text: "Retry" });
-    retry.addEventListener("click", async () => {
-      retry.disabled = true;
-      await window.domo.cloudRetry(agent.agentId);
-      await redraw();
-    });
-    actions.unshift(retry);
-  }
   const details = [agent.chatLabel, cloudProvider(agent.provider), cloudCreated(agent.createdAt)].filter(Boolean);
   return el("div", { class: `item cloud-agent-row cloud-${agent.status}`, attrs: { "data-cloud-agent-id": agent.agentId } }, [
     el("div", { class: "row cloud-agent-heading" }, [
@@ -920,9 +916,6 @@ function cloudAgentRow(agent, state, redraw) {
           el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
           el("span", { text: "Setting up your agent — this takes a minute or two." }),
         ])
-      : null,
-    agent.status === "failed" && agent.failureReason
-      ? el("p", { class: "cloud-failure", text: agent.failureReason })
       : null,
   ]);
 }

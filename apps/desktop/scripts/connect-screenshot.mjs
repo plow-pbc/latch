@@ -44,7 +44,7 @@ const ACTIVE_AGENT = {
   chatUid: CHAT.uid,
   chatLabel: CHAT.label,
   provider: "anthropic",
-  status: "active",
+  status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
 };
@@ -172,7 +172,7 @@ const SCREENS = [
       cloudAgents: [ACTIVE_AGENT],
     },
     prepare: async () => {},
-    expect: ["Cloud agents", "Household helper", CHAT.label, "Anthropic", "Active", "Settings", "Remove"],
+    expect: ["Cloud agents", "Household helper", CHAT.label, "Anthropic", "Ready", "Settings", "Remove"],
   },
   {
     name: "cloud-picker",
@@ -220,17 +220,17 @@ const SCREENS = [
       cloudAgents: [{ ...ACTIVE_AGENT, status: "provisioning" }],
     },
     prepare: async () => {},
-    expect: ["Household helper", "Provisioning…", "Setting up your agent — this takes a minute or two"],
+    expect: ["Household helper", "Setting up…", "Setting up your agent — this takes a minute or two"],
   },
   {
-    name: "cloud-failed",
+    name: "cloud-teardown",
     cloud: {
       ...CLOUD_READY,
       cloudChats: [CHAT],
-      cloudAgents: [{ ...ACTIVE_AGENT, status: "failed", failureReason: "The provider could not start this agent." }],
+      cloudAgents: [{ ...ACTIVE_AGENT, status: "teardown" }],
     },
     prepare: async () => {},
-    expect: ["Household helper", "Failed", "The provider could not start this agent", "Retry"],
+    expect: ["Household helper", "Removing…"],
   },
   {
     name: "cloud-settings",
@@ -270,7 +270,7 @@ const SCREENS = [
       "Cloud agents could not be refreshed",
       "Plow couldn't complete that request. Try again.",
       "Household helper",
-      "Active",
+      "Ready",
     ],
   },
   {

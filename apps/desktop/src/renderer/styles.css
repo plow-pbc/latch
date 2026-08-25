@@ -620,12 +620,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   .cloud-spinner { animation: none; }
 }
-.item p.cloud-failure {
-  margin-top: 10px; padding: 8px 10px;
-  color: var(--red-fg); background: var(--red-bg);
-  border: 1px solid var(--red-bd); border-radius: var(--radius-sm);
-  overflow-wrap: anywhere;
-}
 .cloud-callout, .cloud-warning {
   padding: 10px 12px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--bg);

@@ -82,7 +82,7 @@ const cloudAgent = {
   chatUid: cloudChat.uid,
   chatLabel: cloudChat.label,
   provider: "anthropic",
-  status: "active",
+  status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
 };
@@ -112,7 +112,13 @@ ipcMain.handle("connect:get", async () => ({
   credential: null,
   ...cloudProbe,
 }));
-ipcMain.handle("cloud:create", async (_e, chatUid, name) => cloudCalls.create.push({ chatUid, name }));
+ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
+  cloudCalls.create.push({ chatUid, name });
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{ ...cloudAgent, chatUid, name: name || "Cloud agent", status: "provisioning" }],
+  };
+});
 ipcMain.handle("cloud:delete", async (_e, agentId) => cloudCalls.delete.push(agentId));
 ipcMain.handle("cloud:retry", async (_e, agentId) => cloudCalls.retry.push(agentId));
 ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
@@ -637,6 +643,45 @@ app.whenReady().then(async () => {
   }})()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
+
+  await win.webContents.executeJavaScript(`document.querySelector(".cloud-toolbar button").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal select")`, "the picker for the create wait");
+  const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
+    const button = [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Set up agent");
+    button.click();
+    return {
+      disabled: button.disabled,
+      spinner: !!button.querySelector(".cloud-spinner"),
+      copy: button.textContent.trim() === "Setting up…",
+    };
+  }})()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the create receipt to close the picker");
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-spinner")`, "the provisioning row spinner");
+  const cloudProvisioning = await win.webContents.executeJavaScript(`(${() => {
+    const row = document.querySelector(".cloud-agent-row");
+    return {
+      status: row?.querySelector(".badge")?.textContent.trim() === "Setting up…",
+      spinner: !!row?.querySelector(".cloud-progress .cloud-spinner"),
+      copy: row?.textContent.includes("Setting up your agent — this takes a minute or two."),
+    };
+  }})()`);
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{ ...cloudAgent, status: "teardown" }],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .badge")?.textContent.trim() === "Removing…"`,
+    "the teardown row copy");
+  const cloudTeardown = await win.webContents.executeJavaScript(`(${() => {
+    const row = document.querySelector(".cloud-agent-row");
+    return {
+      status: row?.querySelector(".badge")?.textContent.trim() === "Removing…",
+      noFailedCopy: !row?.textContent.includes("Failed") && !row?.textContent.includes("Retry"),
+    };
+  }})()`);
 
   cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent] };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -1389,7 +1434,7 @@ app.whenReady().then(async () => {
     cloudRoster.showsName &&
     cloudRoster.showsChat &&
     cloudRoster.showsProvider &&
-    cloudRoster.status === "Active" &&
+    cloudRoster.status === "Ready" &&
     cloudRoster.hasActions &&
     cloudRoster.noCredentialIdentity &&
     cloudPicker.listsEveryChat &&
@@ -1400,6 +1445,14 @@ app.whenReady().then(async () => {
     cloudNewChat.twoRoutes &&
     cloudNewChat.serverNumber &&
     cloudNewChat.groupRoute &&
+    cloudCreateWait.disabled &&
+    cloudCreateWait.spinner &&
+    cloudCreateWait.copy &&
+    cloudProvisioning.status &&
+    cloudProvisioning.spinner &&
+    cloudProvisioning.copy &&
+    cloudTeardown.status &&
+    cloudTeardown.noFailedCopy &&
     cloudSettingsPanel.oneControl &&
     cloudSettingsPanel.storedValue &&
     cloudSettingsPanel.noServerSection &&
@@ -1498,7 +1551,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudSettings, cloudChatFailure, cloudForbidden, cloudServerDetail, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudCreateWait, cloudProvisioning, cloudTeardown, cloudSettingsPanel, cloudSettings, cloudChatFailure, cloudForbidden, cloudServerDetail, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
