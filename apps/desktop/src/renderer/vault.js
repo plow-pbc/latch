@@ -321,13 +321,14 @@ function vfield(spec, ctx) {
      "••••••••••••", the card number's groups, the CVV's three — painted as
      text rather than as a hint (vault.css, .field.held). A sentence in the box
      said the same thing in a language the rest of the form does not speak.
-     A box that already draws its own bullets keeps them, so a stored card
-     number still reads in its four groups. The rest get a fixed run: the value
+     A box that already draws its own bullets keeps them, whatever it groups
+     them with — a stored card number still reads in its four groups, a social
+     security number in its "•••-••-••••". The rest get a fixed run: the value
      never reaches this window, so its true length is not ours to show — this
      is an is-set light and nothing more, and the live code beneath a key is
      what proves the stored value still works.
      An existing item with no secret gets her word. */
-  if (held) input.setAttribute("placeholder", /^[•\s]+$/.test(spec.placeholder ?? "") ? spec.placeholder : "••••••••••••");
+  if (held) input.setAttribute("placeholder", /^[•\s-]+$/.test(spec.placeholder ?? "") ? spec.placeholder : "••••••••••••");
   else if (spec.secret && ctx.saved) input.setAttribute("placeholder", "Not set");
   // Built before the buttons so the eye and the code button can drive it.
   const code = spec.totp ? vtotp(input, ctx, held) : null;
