@@ -101,12 +101,19 @@ else
         [ -d "$candidate" ] || continue
         candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
         usable "$candidate" || continue
-        # Worth naming only if it has something to give — the first payload
-        # stands for that, being the one every runtime has and the slow half to
-        # rebuild. An `if` rather than a `&&`: this is the loop's last command,
-        # so under `set -e` a final candidate that does not qualify would abort
-        # the whole setup.
-        if [ -e "$candidate/vendor/${payloads%% *}" ]; then
+        # Worth naming only if it has something to give — python-runtime, the
+        # payload every runtime has and the slow half to rebuild, taken from the
+        # list rather than spelled again.
+        #
+        # `-d`, matching the arm that COPIES rather than the arm that skips. The
+        # two ask different questions: skipping asks "would a copy clobber
+        # something", where anything present counts, and this asks "is there
+        # something to copy", where a regular file at that path is not. Getting
+        # it wrong advertises a neighbour that then clones nothing.
+        #
+        # An `if` rather than a `&&`: this is the loop's last command, so under
+        # `set -e` a final candidate that does not qualify aborts the setup.
+        if [ -d "$candidate/vendor/${payloads%% *}" ]; then
           printf '%s\n' "$candidate"
         fi
       done

@@ -124,6 +124,9 @@ it("names the payloads the browser and the vault live in", () => {
   // point of copying anything at all, so they are named once, here.
   expect(PAYLOADS).toContain("vault-server");
   expect(PAYLOADS).toContain("camoufox-browser");
+  // First, not merely present: the candidate filter takes the head of this list
+  // as its "has something to give" sentinel, so the order carries meaning.
+  expect(PAYLOADS[0]).toBe("python-runtime");
 });
 
 describe("worktree-setup.sh", () => {
@@ -220,6 +223,12 @@ describe("worktree-setup.sh", () => {
     // a checkout that saves them nothing, so the list is filtered, not just
     // enumerated. Named last so it is also the loop's final candidate.
     const barren = checkout(parent, "slot2", []);
+    // A third whose payload is a regular file: there is something at the path,
+    // but nothing a copy could take. Advertising it would send someone to a
+    // checkout that then clones nothing — the filter asks the copy arm's
+    // question, not the skip arm's.
+    const notADir = checkout(parent, "slot3", []);
+    fs.writeFileSync(path.join(notADir, "vendor", PAYLOADS[0]), "not a directory\n");
     const asking = checkout(parent, "slot0", []);
 
     const { stdout, stderr } = runSetupExpectingFailure(asking);
@@ -227,6 +236,7 @@ describe("worktree-setup.sh", () => {
     expect(stderr).toMatch(/will not adopt a\s+neighbour on its own/);
     expect(stderr).toContain(fs.realpathSync(neighbour));
     expect(stderr).not.toContain(fs.realpathSync(barren));
+    expect(stderr).not.toContain(fs.realpathSync(notADir));
     // And it stopped before the work, rather than building over a copy it
     // never made.
     expect(stdout).not.toContain("stub just");
