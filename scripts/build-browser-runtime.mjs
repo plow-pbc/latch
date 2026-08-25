@@ -577,13 +577,6 @@ function fetchBrowser(arch) {
   download(asset.url, asset.sha256, zipDest);
   log(`extracting camoufox (${arch})`);
   fs.rmSync(installRoot, { recursive: true, force: true });
-  // Now, not before the download: camoufoxIn() resolves on config.json and
-  // never reads .sha256, so a fused tree left standing stays selectable
-  // whenever no per-arch tree exists — and on the single-arch path nothing
-  // ever comes back to rebuild it. Removed here rather than up top for the
-  // reason installRoot is: until the bytes are in hand, an interrupted fetch
-  // should leave a working browser rather than none at all.
-  fs.rmSync(universalDir, { recursive: true, force: true });
   fs.mkdirSync(installPath, { recursive: true });
   run("ditto", ["-x", "-k", zipDest, installPath]); // preserves symlinks + exec bits
 
@@ -606,6 +599,15 @@ function fetchBrowser(arch) {
     path.join(installRoot, "config.json"),
     JSON.stringify({ active_version: `browsers/${repo}/${folder}` }),
   );
+  // The fused tree, at the first moment its replacement is selectable — the
+  // line above is what camoufoxIn() resolves on, and it never reads .sha256,
+  // so a fused tree left standing would keep answering whenever no per-arch
+  // tree exists, and on the single-arch path nothing comes back to rebuild it.
+  // Here rather than earlier so an interrupted fetch leaves a working browser:
+  // installRoot has to go before the extract because it IS the dir extracted
+  // into, but universalDir is a sibling with no such constraint. The donor gate
+  // is unaffected either way — its marker went before the download.
+  fs.rmSync(universalDir, { recursive: true, force: true });
   fs.writeFileSync(path.join(installRoot, ".0.5_FLAG"), "");
 
   // Pre-bundle the default addon (uBlock Origin): camoufox downloads it at
