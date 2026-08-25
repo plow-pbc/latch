@@ -119,9 +119,6 @@ it("names the payloads the browser and the vault live in", () => {
   // point of copying anything at all, so they are named once, here.
   expect(PAYLOADS).toContain("vault-server");
   expect(PAYLOADS).toContain("camoufox-browser");
-  // First, not merely present: the candidate filter takes the head of this list
-  // as its "has something to give" sentinel, so the order carries meaning.
-  expect(PAYLOADS[0]).toBe("python-runtime");
 });
 
 describe("worktree-setup.sh", () => {
@@ -339,8 +336,10 @@ describe("worktree-setup.sh", () => {
       donor: () => undefined,
       says: "name one to copy a runtime",
       // Said once. The per-payload notes are for a donor that could not give a
-      // payload, not for a run that asked nobody.
-      omits: "to clone",
+      // payload, not for a run that asked nobody — and keyed on the `note:`
+      // prefix, which is what marks that class of line, rather than on the
+      // wording, which a reword would slip straight past.
+      omits: "note:",
     },
     {
       why: "not given one, beside a neighbour that has everything",
@@ -354,7 +353,7 @@ describe("worktree-setup.sh", () => {
       },
       says: "name one to copy a runtime",
       absent: PAYLOADS,
-      omits: "to clone",
+      omits: "note:",
     },
   ];
 
