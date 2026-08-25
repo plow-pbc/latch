@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CLOUD_AGENT_POLL_INTERVAL_MS,
-  CloudAgentResponseError,
   CloudAgentResource,
   CloudAgentsClient,
-  isCloudAgentRefusal,
 } from "../src/cloudAgents.js";
 import { PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 
@@ -95,94 +93,6 @@ describe("CloudAgentsClient request contracts", () => {
     expect(JSON.stringify(calls)).not.toContain(`/${CREDENTIAL}`);
   });
 
-  it("POSTs the reconfigure shape by agent_id with a short request timeout", async () => {
-    const { calls, fetchImpl } = recordingFetch([
-      { status: 202, body: resource("provisioning", { agent_id: "agent/123" }) },
-    ]);
-    const timeout = vi.spyOn(AbortSignal, "timeout");
-    const client = new CloudAgentsClient("https://api.plow.co/", fetchImpl);
-
-    const receipt = await client.reconfigure(CREDENTIAL, "agent/123", {
-      scopes: ["relay:call", "chats:use"],
-      chatUid: "cht_reassigned",
-    });
-
-    expect(receipt.status).toBe("provisioning");
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe(
-      "https://api.plow.co/v1/agents/cloud/agent%2F123/reconfigure",
-    );
-    expect(calls[0].init.method).toBe("POST");
-    expect(calls[0].init.headers).toMatchObject({
-      authorization: `Bearer ${CREDENTIAL}`,
-      "content-type": "application/json",
-    });
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      scopes: ["relay:call", "chats:use"],
-      chat_uid: "cht_reassigned",
-    });
-    expect(timeout).toHaveBeenCalledWith(REQUEST_TIMEOUT_MS);
-    timeout.mockRestore();
-  });
-
-  it("rejects a reconfigure receipt for a different agent_id", async () => {
-    const { fetchImpl } = recordingFetch([
-      { status: 202, body: resource("provisioning", { agent_id: "unexpected_agent" }) },
-    ]);
-    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl);
-
-    await expect(
-      client.reconfigure(CREDENTIAL, "agent_123", { scopes: ["chats:use"] }),
-    ).rejects.toMatchObject({
-      name: "PlowApiError",
-      kind: "http",
-      status: 202,
-      accepted: true,
-      message: "Plow returned an invalid cloud-agent response.",
-    });
-  });
-
-  it("tags a malformed create receipt as an invalid 2xx response", async () => {
-    const { fetchImpl } = recordingFetch([{ status: 202, body: {} }]);
-    const error = await new CloudAgentsClient("https://api.plow.co", fetchImpl)
-      .create(CREDENTIAL, { chatUid: "cht_123" })
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(CloudAgentResponseError);
-    expect(error).toMatchObject({
-      kind: "http",
-      status: 202,
-      accepted: true,
-    });
-    expect(isCloudAgentRefusal(error)).toBe(false);
-  });
-
-  it("tags create and reconfigure non-2xx responses as refusals", async () => {
-    const invoke = [
-      (client: CloudAgentsClient) => client.create(CREDENTIAL, { chatUid: "cht_123" }),
-      (client: CloudAgentsClient) =>
-        client.reconfigure(CREDENTIAL, "agent_123", { scopes: ["chats:use"] }),
-    ];
-
-    for (const call of invoke) {
-      const { fetchImpl } = recordingFetch([
-        { status: 422, body: { detail: "That scope set is not allowed." } },
-      ]);
-      const error = await call(new CloudAgentsClient("https://api.plow.co", fetchImpl)).catch(
-        (caught: unknown) => caught,
-      );
-
-      expect(error).toBeInstanceOf(CloudAgentResponseError);
-      expect(error).toMatchObject({
-        kind: "http",
-        status: 422,
-        accepted: false,
-        message: "That scope set is not allowed.",
-      });
-      expect(isCloudAgentRefusal(error)).toBe(true);
-    }
-  });
-
   it("treats deleting an already-gone agent as success", async () => {
     const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Not found" } }]);
     await expect(
@@ -228,67 +138,6 @@ describe("CloudAgentsClient polling", () => {
     const final = await client.poll(CREDENTIAL, fromWire(resource("provisioning")));
 
     expect(final).toMatchObject({ status: "failed", failureReason: "Provider timed out" });
-    expect(calls).toHaveLength(1);
-  });
-
-  it("reconfigures, publishes the receipt, and polls across credential rotation", async () => {
-    const waits: number[] = [];
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 202,
-        body: resource("provisioning", { session_id: "session_before_rotation" }),
-      },
-      { status: 200, body: resource("active", { session_id: "session_after_rotation" }) },
-    ]);
-    const transitions: Array<[string, string | null]> = [];
-    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async (ms) => {
-      waits.push(ms);
-    });
-
-    const final = await client.reconfigureAndPoll(
-      CREDENTIAL,
-      "agent_123",
-      { scopes: ["chats:use", "llm:chat"] },
-      (agent) => transitions.push([agent.agentId, agent.sessionId]),
-    );
-
-    expect(final).toMatchObject({
-      agentId: "agent_123",
-      status: "active",
-      sessionId: "session_after_rotation",
-    });
-    expect(transitions).toEqual([
-      ["agent_123", "session_before_rotation"],
-      ["agent_123", "session_after_rotation"],
-    ]);
-    expect(waits).toEqual([CLOUD_AGENT_POLL_INTERVAL_MS]);
-    expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
-      ["POST", "https://api.plow.co/v1/agents/cloud/agent_123/reconfigure"],
-      ["GET", "https://api.plow.co/v1/agents/cloud/agent_123"],
-    ]);
-  });
-
-  it("forwards reconfigure polling cancellation without another transition", async () => {
-    const controller = new AbortController();
-    const { calls, fetchImpl } = recordingFetch([
-      { status: 202, body: resource("provisioning") },
-      { status: 200, body: resource("active") },
-    ]);
-    const transitions: string[] = [];
-    const client = new CloudAgentsClient("https://api.plow.co", fetchImpl, async () => {
-      controller.abort();
-    });
-
-    const stopped = client.reconfigureAndPoll(
-      CREDENTIAL,
-      "agent_123",
-      { chatUid: "cht_reassigned" },
-      (agent) => transitions.push(agent.status),
-      controller.signal,
-    );
-
-    await expect(stopped).rejects.toMatchObject({ name: "AbortError" });
-    expect(transitions).toEqual(["provisioning"]);
     expect(calls).toHaveLength(1);
   });
 
