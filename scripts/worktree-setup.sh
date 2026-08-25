@@ -110,9 +110,12 @@ for payload in $payloads downloads; do
       cp -Rp "$donor/$dir" "$dir.partial"
     }
     mv "$dir.partial" "$dir"
-    seeded=1
+    # The download cache is not a payload: arriving alone it gives this
+    # checkout nothing to validate, and starting a cold fetch over it is the
+    # errand the gate below exists to avoid.
+    [ "$payload" = downloads ] || seeded=1
   else
-    echo "note: no $dir to clone — run \`just fetch-browser-runtime fetch-browser\` if you need the browser stack"
+    echo "note: no $dir to clone — run \`just fetch-browser\` if you need the browser stack"
   fi
 done
 

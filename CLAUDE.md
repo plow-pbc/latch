@@ -166,8 +166,9 @@ the seatbelt and within reach of this checkout's vault and relay credential, so
 anything able to write one checkout could otherwise put code in the next.
 `scripts/runtime-donor.sh` owns that reasoning. What it does **not** decide is
 whether the copy is any good — the donor is a cache seed, and setup runs
-`just fetch-browser-runtime fetch-browser` over it afterwards, so a stale or
-half-built payload costs a rebuild rather than a refusal.
+`just fetch-browser` over whatever arrived once it has installed and built, so
+a stale or half-built payload costs a rebuild rather than a refusal, and a
+failed fetch leaves a working checkout rather than aborting one.
 
 Without that runtime there is no browser and no vault, and the app says so at
 startup rather than leaving the Vault tab to report a vault that has not

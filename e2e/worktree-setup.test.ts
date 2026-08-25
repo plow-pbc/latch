@@ -54,11 +54,18 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
   return dir;
 }
 
-function runSetup(dir: string, donor?: string): string {
+/** A `just` that fails the recipe named in JUST_FAIL, and succeeds otherwise. */
+fs.writeFileSync(
+  path.join(stubBin, "just"),
+  '#!/bin/sh\n[ "$1" = "$JUST_FAIL" ] && { echo "stub just $* FAILED" >&2; exit 1; }\necho "stub just $*"\n',
+);
+fs.chmodSync(path.join(stubBin, "just"), 0o755);
+
+function runSetup(dir: string, donor?: string, failing?: string): string {
   return execFileSync("bash", [path.join(dir, "scripts", "worktree-setup.sh"), ...(donor ? [donor] : [])], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}` },
+    env: { ...process.env, PATH: `${stubBin}:${process.env.PATH}`, JUST_FAIL: failing ?? "" },
   });
 }
 
@@ -103,15 +110,16 @@ describe("worktree-setup.sh", () => {
     // here", not merely "ours survived a merge into it".
     expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[0], "payload-marker"))).toBe(false);
     expect(fs.existsSync(path.join(asking, "vendor", PAYLOADS[1], "junk"))).toBe(false);
-    expect(out).toContain("stub just install");
-    expect(out).toContain("stub just build");
+    // Whole lines throughout: a substring match on "stub just fetch-browser"
+    // is also satisfied by "stub just fetch-browser-runtime", and on
+    // "stub just build" by nothing here today but as easily tomorrow.
+    const lines = out.split("\n");
+    expect(lines).toContain("stub just install");
+    expect(lines).toContain("stub just build");
     // Something was copied, so the build that owns readiness runs over it — a
     // good copy makes this a no-op, a stale one costs the rebuild it should.
     // After install and build, so a flake there cannot leave the checkout
     // without node_modules.
-    // Whole lines: "stub just fetch-browser-runtime" would satisfy a substring
-    // match, and that recipe is not the one this asserts.
-    const lines = out.split("\n");
     expect(lines).toContain("stub just fetch-browser");
     expect(lines.indexOf("stub just fetch-browser")).toBeGreaterThan(lines.indexOf("stub just build"));
     // The closing hand-off names this checkout's branch and its real home. This
@@ -189,6 +197,36 @@ describe("worktree-setup.sh", () => {
     expect(out).not.toContain("stub just fetch-browser");
     expect(out).toContain("stub just build");
     expect(out).toContain("is ready.");
+  });
+
+  it("does not treat the download cache alone as something worth checking", () => {
+    // vendor/downloads is not a payload — it is what a fetch would download
+    // FROM. Arriving on its own it gives this checkout nothing to validate, so
+    // running the build over it would be the cold fetch the gate avoids.
+    const parent = fs.mkdtempSync(path.join(tmp, "cacheonly-"));
+    const cacheOnly = checkout(parent, "slot1", ["downloads"]);
+    const asking = checkout(parent, "slot0", []);
+
+    const out = runSetup(asking, cacheOnly);
+
+    expect(fs.existsSync(path.join(asking, "vendor", "downloads"))).toBe(true);
+    expect(out).not.toContain("stub just fetch-browser");
+    expect(out).toContain("is ready.");
+  });
+
+  it("reports a failed check of the copy rather than aborting over it", () => {
+    // Everything above the fetch is what makes this checkout work, so a network
+    // flake or a missing toolchain must cost the validation and nothing else.
+    // Without this the stub always succeeds, and dropping the `||` would keep
+    // the whole suite green while restoring the abort.
+    const parent = fs.mkdtempSync(path.join(tmp, "softfail-"));
+    const donor = checkout(parent, "slot1", [...PAYLOADS, "downloads"]);
+    const asking = checkout(parent, "slot0", []);
+
+    const out = runSetup(asking, donor, "fetch-browser");
+
+    expect(out).toContain("is ready.");
+    expect(out.split("\n")).toContain("stub just build");
   });
 
   it("carries on with no donor when there is nothing nearby to name", () => {
