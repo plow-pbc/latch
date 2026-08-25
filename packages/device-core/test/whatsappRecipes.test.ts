@@ -88,9 +88,8 @@ function makeStore(dir: string): string {
   // A comma, because the body claims -csv survives one in message text. The
   // apostrophe message lives in its own chat below, so the search recipe is
   // exercised across sessions rather than within one.
-  const SPECIAL: Record<number, string> = { 7: "what about dinner, tomorrow" };
   for (let i = 1; i <= 60; i++) {
-    const text = SPECIAL[i] ?? `msg ${i}`;
+    const text = i === 7 ? "what about dinner, tomorrow" : `msg ${i}`;
     rows.push(
       "insert into ZWAMESSAGE (ZMESSAGEDATE, ZTEXT, ZCHATSESSION, ZISFROMME) values(" +
         `${at(base + i * 60)}, '${text}', 1, ${i % 2});`,
