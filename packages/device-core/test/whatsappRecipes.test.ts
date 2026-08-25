@@ -234,7 +234,12 @@ describe("the recipes the skill publishes", () => {
   });
 });
 
-describe("the fallback for a store that will not open", () => {
+// These pin the behavior of the Mac's own sqlite3 — the error it gives for a
+// store it cannot open, and what it leaves in the -wal — which other builds
+// of sqlite3 do not share.
+const ON_MAC = process.platform === "darwin";
+
+describe.skipIf(!ON_MAC)("the fallback for a store that will not open", () => {
   /** The real failure: a WAL store with no -shm, in a directory nobody may write. */
   function quiescentStore(): { store: string; dir: string } {
     const dir = tempDir();

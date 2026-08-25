@@ -41,7 +41,12 @@ describe("SBPL profile", () => {
   }
 });
 
-describe("real sandboxed execution", () => {
+// Seatbelt (`sandbox-exec`) is the Mac's own, and these cases run real
+// commands through it; anywhere else they would be asserting against a spawn
+// error rather than the sandbox's behavior.
+const ON_MAC = process.platform === "darwin";
+
+describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
   it("runs a command and captures output", async () => {
     const executor = new Executor(tempDir());
     const result = await executor.run({
