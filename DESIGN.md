@@ -446,8 +446,14 @@ it closes.
 
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`); agents discover them via `plow_list_skills` and read them
-with `plow_read_skill`. The built-in
-`camoufox-browsing` skill is the operator manual for this tool surface.
+with `plow_read_skill`. Two ship built in, and **each registers only when the
+thing it describes is actually here**: `camoufox-browsing`, the operator manual
+for this tool surface, when a browser runtime resolved; `whatsapp-history`, how
+to read the owner's own messages out of WhatsApp Desktop's local store, when
+that store exists. A skill naming a capability this Mac lacks is a guaranteed
+denial, so its absence is the honest answer instead. `whatsapp-history` is also
+why a skill body is built per-machine rather than frozen as a constant: it
+carries the store's resolved path, so no agent has to substitute one.
 
 **Runtime & packaging.** The stack ships inside the app: a relocated
 python.org universal2 Python 3.12 + lipo-merged (delocate) universal
