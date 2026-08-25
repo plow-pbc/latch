@@ -50,7 +50,8 @@ echo "donor:    ${donor:-none nearby has a runtime built from these pins}"
 payloads=$(sh scripts/runtime-donor.sh --payloads)
 [[ -n "$payloads" ]] || { echo "error: runtime-donor.sh --payloads named nothing" >&2; exit 1; }
 
-for dir in $(printf '%s\n' "$payloads" | sed 's|^|vendor/|') vendor/downloads; do
+for name in $payloads downloads; do
+  dir="vendor/$name"
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -n "$donor" && -d "$donor/$dir" ]]; then
