@@ -12,20 +12,29 @@
 # establishes that Termic evaluates that value through a shell — the other hooks
 # are all plain argv — and a shebang needs no such assumption.
 #
-# Anything that is not a usable donor becomes NO donor, which the script
-# supports and which leaves the worktree exactly as a bare setup would. Passing
-# a bad one instead would be REFUSED, and a refusal lands before the install and
-# build, so the worktree would come out with no dependencies and nothing built —
-# worse off than the missing runtime this hook exists to fix.
+# Anything this cannot vouch for becomes NO donor, which the script supports and
+# which leaves the worktree exactly as a bare setup would. Passing a bad one
+# instead would be REFUSED, and a refusal lands before the install and build, so
+# the worktree would come out with no dependencies and nothing built — worse off
+# than the missing runtime this hook exists to fix.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-donor=$(cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" 2>/dev/null && pwd -P) ||
+# On the lookup itself, not on the `cd`: expansions run before redirections, so
+# a `cd` cannot silence the substitution feeding it. Outside a repo this is the
+# stderr there is, and it would land in Termic's setup log.
+donor=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
+  donor=$(cd "$(dirname "$donor")" 2>/dev/null && pwd -P) || donor=""
+
+# worktree-setup.sh's own refusal, asked here. A guard that asks a DIFFERENT
+# question than the refusal it exists to avoid is not a guard: this used to ask
+# whether the donor was a git checkout, which a main checkout parked on an older
+# commit answers yes to and setup still refuses. The layouts that resolve to no
+# checkout at all — a bare clone hosting worktrees, --separate-git-dir — fail
+# this too, which is why there is one predicate here and not two.
+[ -n "$donor" ] &&
+  [ "$donor" != "$(pwd -P)" ] &&
+  [ -f "$donor/vendor/browser-server/runtime.lock.json" ] ||
   donor=""
-# The root of a working tree, and not this one. A bare clone with worktrees
-# beside it leaves the common dir with no checkout around it; run from the main
-# checkout, what it names is that checkout itself. `.git` is a file rather than
-# a directory under --separate-git-dir, and that is still a checkout.
-[ -n "$donor" ] && [ -e "$donor/.git" ] && [ "$donor" != "$(pwd -P)" ] || donor=""
 
 exec scripts/worktree-setup.sh ${donor:+"$donor"}

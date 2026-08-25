@@ -33,9 +33,12 @@ afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const stubBin = path.join(tmp, "bin");
 
-/** A checkout of this repo on its own branch, carrying whichever payloads it has. */
-function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
-  const dir = path.join(parent, name);
+/**
+ * The working-tree contents a checkout of this repo needs for these scripts to
+ * run in it. Separate from `checkout` because a linked worktree is made by git
+ * and populated afterwards, not initialised.
+ */
+function populate(dir: string, payloads: string[]): string {
   fs.mkdirSync(path.join(dir, "vendor", "browser-server"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   for (const s of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", s), path.join(dir, "scripts", s));
@@ -48,6 +51,12 @@ function checkout(parent: string, name: string, payloads: string[], branch?: str
     // one that landed right — the dir itself exists either way.
     fs.writeFileSync(path.join(dir, "vendor", p, "payload-marker"), p);
   }
+  return dir;
+}
+
+/** A checkout of this repo on its own branch, carrying whichever payloads it has. */
+function checkout(parent: string, name: string, payloads: string[], branch?: string): string {
+  const dir = populate(path.join(parent, name), payloads);
   git(dir, "init", "-q", "-b", branch ?? "main");
   git(dir, "commit", "-q", "--allow-empty", "-m", "init");
   return dir;
@@ -387,23 +396,64 @@ describe("worktree-setup.sh", () => {
 });
 
 describe("termic-setup.sh", () => {
-  it("hands setup no donor rather than one it would refuse", () => {
-    // The hook names a donor for a caller that cannot pass an argument, so the
-    // only thing it can get wrong is naming a bad one — and a bad one is not
-    // survivable: setup refuses it, and every refusal lands BEFORE the install
-    // and the build, so the worktree would come out with no dependencies and
-    // nothing compiled. That is worse than the missing runtime the hook exists
-    // to fix, which at least left a built checkout. No donor is the supported
-    // outcome, so anything it cannot vouch for has to arrive as none.
-    //
-    // This is the case a plain checkout can produce: what git names from inside
-    // one is that checkout itself, which setup refuses as its own donor. The
-    // layouts that resolve to a directory that is no checkout at all — a bare
-    // clone hosting worktrees, --separate-git-dir — take the same branch out.
-    const parent = fs.mkdtempSync(path.join(tmp, "termic-"));
-    const asking = checkout(parent, "slot0", []);
+  /** A main checkout carrying `payloads`, and a linked worktree of it. */
+  function worktreeOf(parent: string, payloads: string[]): { main: string; wt: string } {
+    const main = checkout(parent, "main", payloads);
+    const wt = path.join(parent, "wt");
+    // Added before it is populated: git refuses a target that already has
+    // anything in it.
+    git(main, "worktree", "add", "-q", "-b", "feature/vault-fix", wt);
+    return { main, wt: populate(wt, []) };
+  }
 
-    const { stdout: out } = run(asking, "termic-setup.sh");
+  it("names the main checkout, so a worktree of it comes up with a runtime", () => {
+    // The hook's whole reason for existing. Termic's setup takes no argument,
+    // so without this the worktree it just made starts with no browser and no
+    // vault — which is what 579d8ea was fixing.
+    const parent = fs.mkdtempSync(path.join(tmp, "termic-wt-"));
+    const { main, wt } = worktreeOf(parent, [...PAYLOADS, "downloads"]);
+
+    const { stdout: out } = run(wt, "termic-setup.sh");
+
+    expect(out).toContain(`donor:    ${fs.realpathSync(main)}`);
+    // The donor's marker, not the directory — a copy nested inside its own
+    // staging dir leaves the directory there either way.
+    for (const p of [...PAYLOADS, "downloads"]) {
+      expect(fs.readFileSync(path.join(wt, "vendor", p, "payload-marker"), "utf8")).toBe(p);
+    }
+    expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
+  });
+
+  // Two ways the lookup comes back with nothing worth naming, one contract:
+  // setup runs WITHOUT a donor, rather than with one it would refuse. A refusal
+  // lands before the install and the build, so it would leave the worktree with
+  // no dependencies and nothing compiled — worse off than the missing runtime
+  // this hook exists to fix, which at least left a built checkout.
+  const noDonor: { why: string; make: (parent: string) => string }[] = [
+    {
+      // What git names from inside a plain checkout is that checkout, and
+      // setup refuses a donor that is itself.
+      why: "what it resolves to is this checkout",
+      make: (parent) => checkout(parent, "slot0", []),
+    },
+    {
+      // The guard has to ask setup's question, not a neighbouring one. This
+      // main checkout is a perfectly good git checkout — a `.git` test passes
+      // it — and setup still refuses it. So do the layouts that resolve to no
+      // checkout at all: a bare clone hosting worktrees, --separate-git-dir.
+      why: "what it resolves to is not a checkout of this repo",
+      make: (parent) => {
+        const { main, wt } = worktreeOf(parent, PAYLOADS);
+        fs.rmSync(path.join(main, "vendor/browser-server/runtime.lock.json"));
+        return wt;
+      },
+    },
+  ];
+
+  it.each(noDonor)("hands setup no donor when $why", ({ make }) => {
+    const parent = fs.mkdtempSync(path.join(tmp, "termic-none-"));
+
+    const { stdout: out } = run(make(parent), "termic-setup.sh");
 
     expect(out).toContain("donor:    none");
     // The whole point of not passing a refused donor: these still happen.
