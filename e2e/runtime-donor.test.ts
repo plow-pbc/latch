@@ -46,7 +46,6 @@ const OURS = '{"python":"3.12"}';
 const THEIRS = '{"python":"3.11"}';
 const OUR_REQS = "camoufox==1\n";
 
-
 interface Spec {
   name: string;
   payloads: string[];

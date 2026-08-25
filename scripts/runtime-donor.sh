@@ -49,8 +49,10 @@ arch=$(uname -m)
 unfinished() {
   case $2 in
     python-runtime) [ ! -f "$1/vendor/python-runtime/.stamp" ] ;;
-    # Per-arch, or the lipo-fused universal tree: camoufoxIn() takes either, so
-    # a donor needs one of the two and it does not matter which.
+    # camoufoxIn() tries this arch first, then the fused universal tree, and
+    # runs whichever it finds — so the gate needs one of the two present, and
+    # which one only decides what the recipient ends up running. A donor
+    # holding neither carries no browser this machine can start.
     camoufox-browser)
       [ ! -f "$1/vendor/camoufox-browser/$arch/.sha256" ] &&
         [ ! -f "$1/vendor/camoufox-browser/universal/.sha256" ] ;;

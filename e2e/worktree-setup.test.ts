@@ -143,7 +143,7 @@ describe("worktree-setup.sh", () => {
 
     // Not "nothing nearby" — there is, and saying otherwise would be the one
     // thing that is untrue on this path.
-    expect(out).toContain("asked for, so nothing is being copied");
+    expect(out).toContain("--no-donor was passed, so nothing is being copied");
     expect(out).toContain("no vendor/vault-server to clone");
     expect(out).toContain("stub just build");
     expect(out).toContain("is ready.");

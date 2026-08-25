@@ -81,7 +81,7 @@ echo "checkout: $checkout"
 if [ -n "$donor" ]; then
   echo "donor:    $donor"
 elif [ -n "${refused:-}" ]; then
-  echo "donor:    none — asked for, so nothing is being copied"
+  echo "donor:    none — --no-donor was passed, so nothing is being copied"
 else
   echo "donor:    none — nothing nearby to copy from"
 fi
