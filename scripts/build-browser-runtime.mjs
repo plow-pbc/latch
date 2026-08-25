@@ -570,7 +570,13 @@ function fetchBrowser(arch) {
   // which costs a re-fuse (minutes of lipo/ditto) when the fused tree was in
   // fact still good. Worth it: the alternative is handing a recipient a
   // half-built browser it would then keep.
-  fs.rmSync(universalMarker, { force: true });
+  //
+  // The tree, not just its marker, and for the same reason the per-arch tree
+  // below is removed rather than written over: camoufoxIn() resolves on
+  // config.json and never reads .sha256, so a fused tree left standing is a
+  // live candidate the moment no per-arch dir exists — which, on the
+  // single-arch path, nothing would ever come back to rebuild.
+  fs.rmSync(universalDir, { recursive: true, force: true });
   const [repo, fullVersion] = lock.camoufox.browserVersion.split("/");
   const dash = fullVersion.indexOf("-");
   const version = dash === -1 ? fullVersion : fullVersion.slice(0, dash);
