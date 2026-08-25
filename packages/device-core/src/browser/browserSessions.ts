@@ -303,9 +303,7 @@ export class BrowserSessions {
       }
       // Thrown away, never handed back: this clone never browsed, and the
       // browser that held it is only now down.
-      if (this.browser.profileDir) {
-        fs.rmSync(path.join(this.browser.profileDir, profile), { recursive: true, force: true });
-      }
+      this.dropSessionDirs(profile);
     };
 
     // Warm the browser now. plow_browser_open is deferrable, so a cold Camoufox
@@ -410,9 +408,19 @@ export class BrowserSessions {
     // A second caller joins the first rather than racing it, and gets the same
     // answer: one reset happened, and the session is on a clean profile.
     if (s.resetting) {
-      await s.resetting;
+      // Both callers get the same answer about the same event. Bare, the
+      // rejection would surface as a thrown error to one and an error object
+      // to the other — and a failing swap is exactly when a second caller is
+      // most likely to be waiting, since slowness is what prompts the retry.
+      try {
+        await s.resetting;
+      } catch {
+        return { status: "error", error: "browser failed to restart" };
+      }
       return { status: "completed", session: handle, origins: s.origins };
     }
+    // The swap takes ~30s and the idle clock is still running on it.
+    s.lastActivity = Date.now();
     // Before the destructive step, the same order extend() uses: the owner's
     // log must not be missing the line for a session that stopped owning
     // anything, and after a failed reset there may be no session left to write
@@ -420,17 +428,21 @@ export class BrowserSessions {
     this.audit("browser_profile_reset", { session: s.auditId, origins: s.origins });
 
     const swap = (async () => {
+      // First, before anything that can throw: from the moment a reset is
+      // asked for, this profile must not reach the owner's — and the failure
+      // path finalizes, which would otherwise merge the very thing being
+      // escaped. A decision, not a consequence of the teardown succeeding.
+      s.fresh = true;
       // The shutdown is deliberate; left armed, the old host's crash hook would
       // read it as a death and finalize the session we are reviving.
       s.host.onCrash = undefined;
       const headed = s.host.headed;
       await s.host.shutdown();
-      for (const dir of this.sessionDirs(s.profile)) {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-      // Both halves, before the new browser exists: the close path must not
-      // merge this session back either, whichever way it ends.
-      s.fresh = true;
+      this.dropSessionDirs(s.profile);
+      // Nothing to come back to: a close or an app quit landed while the old
+      // browser was going down, so starting a new one would leave a Firefox
+      // and a profile belonging to a session nobody holds.
+      if (!this.sessions.has(handle) || this.quitting) return;
       // The new browser is on one blank page. Left stale, the session stays
       // locked out against a URL that no longer exists, shows the owner's
       // viewer a page it is not on, and audits its first navigation as a
@@ -461,16 +473,17 @@ export class BrowserSessions {
   }
 
   /**
-   * Everything this session wrote that a site could recognise it by, which is
-   * everything named after its profile: the profile itself and the isolated
-   * HOME the browser process caches into. Screenshots are the owner's record
-   * of what was done for them, not the site's view of who they are, and stay.
+   * Drop everything this session wrote that a site could recognise it by: the
+   * profile and the isolated HOME the browser process caches into, both named
+   * after it. One owner, because every path that ends a session's hold on a
+   * profile — close, a rolled-back open, a reset — has to drop the same set;
+   * the HOME was being left behind by all of them. Screenshots are the owner's
+   * record of what was done for them, not the site's view of who they are.
    */
-  private sessionDirs(profile: string): string[] {
-    return [
-      ...(this.browser.profileDir ? [path.join(this.browser.profileDir, profile)] : []),
-      ...(this.browser.isolatedHome ? [path.join(this.browser.isolatedHome, profile)] : []),
-    ];
+  private dropSessionDirs(profile: string): void {
+    for (const root of [this.browser.profileDir, this.browser.isolatedHome]) {
+      if (root) fs.rmSync(path.join(root, profile), { recursive: true, force: true });
+    }
   }
 
   /** A browser on this session's own clone of the user's profile. */
@@ -551,7 +564,7 @@ export class BrowserSessions {
     const dir = path.join(this.browser.profileDir, s.profile);
     // Nothing to carry back, by the session's own decision.
     if (s.fresh) {
-      fs.rmSync(dir, { recursive: true, force: true });
+      this.dropSessionDirs(s.profile);
       return;
     }
     try {
@@ -569,7 +582,7 @@ export class BrowserSessions {
       });
       return;
     }
-    fs.rmSync(dir, { recursive: true, force: true });
+    this.dropSessionDirs(s.profile);
   }
 
   /** The merge itself: sqlite, on the interpreter this runtime already ships. */
@@ -639,6 +652,12 @@ export class BrowserSessions {
       await s.closing;
       return { status: "completed" };
     }
+    // The symmetric wait to the one freshProfile gives `closing`. Tearing down
+    // mid-swap deletes this session from the map while the swap is still on
+    // its way to starting a browser, which would then be running with a
+    // profile on disk and nobody left to close either. The swap checks for
+    // that on the far side too; this is the half that does not race.
+    if (s.resetting) await s.resetting.catch(() => {});
     if (s.idleTimer) clearTimeout(s.idleTimer);
     // The claim itself is held until the browser is really down. Releasing it
     // first lets the same credential reopen while Camoufox still has the
