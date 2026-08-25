@@ -37,7 +37,7 @@ export function toCloudAgentDisplayRow(
     provider: scrub(agent.provider ?? ""),
     status: agent.status,
     failureReason: agent.failureReason === null ? null : scrub(agent.failureReason),
-    createdAt: scrub(agent.createdAt),
+    createdAt: agent.createdAt === null ? "" : scrub(agent.createdAt),
   };
 }
 

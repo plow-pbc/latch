@@ -260,7 +260,7 @@ export class ThrowawayAgent {
       writeStore(this.deps.home, {
         agentId: created.agentId,
         provider: created.provider ?? "",
-        createdAt: created.createdAt,
+        createdAt: created.createdAt ?? "",
         status: created.status,
       });
     } catch (error) {

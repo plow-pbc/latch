@@ -75,6 +75,44 @@ describe("CloudAgentsClient request contracts", () => {
     timeout.mockRestore();
   });
 
+  it("accepts the synchronous create shape as active with an unknown creation time", async () => {
+    const synchronousBody = {
+      agent_id: "c2ea74c38219be7cd617bef46149ab68",
+      chat_uid: "cht_EhdlO6AUM_XbR_PzQqdWAw",
+      url: "https://plow-agent-c2ea74c38219be7cd617bef46149ab68.exe.xyz",
+      provider: "exe:hermes",
+    };
+    const { fetchImpl } = recordingFetch([{ status: 200, body: synchronousBody }]);
+
+    const created = await new CloudAgentsClient("https://api.plow.co", fetchImpl).create(
+      CREDENTIAL,
+      { chatUid: "cht_EhdlO6AUM_XbR_PzQqdWAw", provider: "exe:hermes" },
+    );
+
+    expect(created).toMatchObject({
+      agentId: "c2ea74c38219be7cd617bef46149ab68",
+      chatUid: "cht_EhdlO6AUM_XbR_PzQqdWAw",
+      status: "active",
+      createdAt: null,
+    });
+
+    const missingId = { ...synchronousBody, agent_id: undefined };
+    const invalid = recordingFetch([{ status: 200, body: missingId }]);
+    await expect(
+      new CloudAgentsClient("https://api.plow.co", invalid.fetchImpl).create(CREDENTIAL, {
+        chatUid: "cht_123",
+      }),
+    ).rejects.toMatchObject({ message: "Plow returned an invalid cloud-agent response." });
+
+    const missingChatUid = { ...synchronousBody, chat_uid: undefined };
+    const invalidChat = recordingFetch([{ status: 200, body: missingChatUid }]);
+    await expect(
+      new CloudAgentsClient("https://api.plow.co", invalidChat.fetchImpl).create(CREDENTIAL, {
+        chatUid: "cht_123",
+      }),
+    ).rejects.toMatchObject({ message: "Plow returned an invalid cloud-agent response." });
+  });
+
   it("leaves every call but create on the short timeout", async () => {
     const { fetchImpl } = recordingFetch([
       { status: 200, body: { object: "list", data: [], has_more: false } },
@@ -397,7 +435,7 @@ function fromWire(value: Record<string, unknown>): CloudAgentResource {
     name: typeof value.name === "string" ? value.name : null,
     status: value.status as CloudAgentResource["status"],
     failureReason: typeof value.failure_reason === "string" ? value.failure_reason : null,
-    createdAt: String(value.created_at),
+    createdAt: typeof value.created_at === "string" ? value.created_at : null,
     sessionId: typeof value.session_id === "string" ? value.session_id : null,
   };
 }

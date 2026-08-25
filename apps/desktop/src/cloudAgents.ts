@@ -34,7 +34,7 @@ export interface CloudAgentResource {
   name: string | null;
   status: CloudAgentStatus;
   failureReason: string | null;
-  createdAt: string;
+  createdAt: string | null;
   /** Credential identity only. Never use this as the agent's identity. */
   sessionId: string | null;
 }
@@ -239,8 +239,11 @@ function parseResource(
     !isRecord(decoded) ||
     typeof decoded.agent_id !== "string" ||
     typeof decoded.chat_uid !== "string" ||
-    (decoded.status !== "provisioning" && decoded.status !== "active" && decoded.status !== "failed") ||
-    typeof decoded.created_at !== "string"
+    (decoded.status !== undefined &&
+      decoded.status !== "provisioning" &&
+      decoded.status !== "active" &&
+      decoded.status !== "failed") ||
+    (decoded.created_at !== undefined && typeof decoded.created_at !== "string")
   ) {
     throw invalidResponse(statusCode);
   }
@@ -253,9 +256,9 @@ function parseResource(
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
     name: optionalString(decoded.name),
-    status: decoded.status,
+    status: decoded.status ?? "active",
     failureReason: optionalString(decoded.failure_reason),
-    createdAt: decoded.created_at,
+    createdAt: optionalString(decoded.created_at),
     sessionId: optionalString(decoded.session_id),
   };
 
