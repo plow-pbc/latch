@@ -3,7 +3,6 @@
    textContent (never innerHTML), so nothing on the wire can inject markup. */
 
 import {
-  APPROVAL_MODES,
   PURPOSE_CAVEATS,
   PURPOSE_LABEL,
   PURPOSE_PLACEHOLDER,
@@ -470,6 +469,50 @@ function group(title, desc, body) {
     disclosure, not app state, and nothing outside this window cares. */
 let staticOpen = false;
 
+/** The one modal shell mounted outside the inert application chrome. */
+let activeModal = null;
+
+function closeModal(modal) {
+  if (!modal || modal !== activeModal) return;
+  document.removeEventListener("keydown", modal.onKeydown, true);
+  modal.backdrop.remove();
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.removeAttribute("inert");
+  }
+  activeModal = null;
+  if (modal.trigger?.isConnected) modal.trigger.focus();
+}
+
+function openModal(trigger, { children = [], className = "", focus, canDismiss, onDismiss }) {
+  if (activeModal) return null;
+  const panel = el("div", {
+    class: `modal${className ? ` ${className}` : ""}`,
+    attrs: { role: "dialog", "aria-modal": "true" },
+  }, children);
+  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
+  const dismiss = () => {
+    if (canDismiss && !canDismiss()) return;
+    onDismiss();
+  };
+  const onKeydown = (e) => {
+    if (e.key !== "Escape" || (canDismiss && !canDismiss())) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onDismiss();
+  };
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) dismiss();
+  });
+  document.addEventListener("keydown", onKeydown, true);
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.setAttribute("inert", "");
+  }
+  document.body.appendChild(backdrop);
+  activeModal = { backdrop, panel, trigger, onKeydown };
+  (focus ?? panel.querySelector("button, input, select"))?.focus();
+  return activeModal;
+}
+
 /**
  * The static-credential modal, while it is up.
  *
@@ -486,15 +529,8 @@ let staticModal = null;
 /** Everything the modal switched off, switched back on. */
 function closeStaticModal() {
   if (!staticModal) return;
-  const { backdrop, trigger, onKeydown } = staticModal;
-  document.removeEventListener("keydown", onKeydown, true);
-  backdrop.remove();
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
-    node.removeAttribute("inert");
-  }
+  closeModal(staticModal);
   staticModal = null;
-  // Focus goes back where it came from, not to the top of the document.
-  if (trigger && trigger.isConnected) trigger.focus();
 }
 
 /**
@@ -511,32 +547,19 @@ function closeStaticModal() {
  * polite name.
  */
 function openStaticModal(trigger, redraw) {
-  if (staticModal) return;
-  const panel = el("div", { class: "modal", attrs: { role: "dialog", "aria-modal": "true" } });
-  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
   const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
-  const onKeydown = (e) => {
-    // Esc closes the form. It does NOT close a displayed credential.
-    if (e.key !== "Escape" || staticModal?.holdingCredential) return;
-    e.preventDefault();
-    e.stopPropagation();
-    staticOpen = false;
-    closeStaticModal();
-    redraw();
-  };
-  backdrop.addEventListener("mousedown", (e) => {
-    if (e.target !== backdrop || staticModal?.holdingCredential) return;
-    staticOpen = false;
-    closeStaticModal();
-    redraw();
+  const shell = openModal(trigger, {
+    focus: nameInput,
+    // Esc and the backdrop close the form, but not a displayed credential.
+    canDismiss: () => !staticModal?.holdingCredential,
+    onDismiss: () => {
+      staticOpen = false;
+      closeStaticModal();
+      redraw();
+    },
   });
-  document.addEventListener("keydown", onKeydown, true);
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
-    node.setAttribute("inert", "");
-  }
-  document.body.appendChild(backdrop);
-  staticModal = { backdrop, panel, nameInput, trigger, onKeydown, kind: null, holdingCredential: false };
-  nameInput.focus();
+  if (!shell) return;
+  staticModal = Object.assign(shell, { nameInput, kind: null, holdingCredential: false });
 }
 
 /**
@@ -681,38 +704,21 @@ let cloudModal = null;
 
 function closeCloudModal() {
   if (!cloudModal) return;
-  const { backdrop, trigger, onKeydown } = cloudModal;
-  document.removeEventListener("keydown", onKeydown, true);
-  backdrop.remove();
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
-    node.removeAttribute("inert");
-  }
+  closeModal(cloudModal);
   cloudModal = null;
-  if (trigger?.isConnected) trigger.focus();
 }
 
 /** A modal for an ordinary, reversible cloud action. */
 function openCloudModal(trigger, children, focus) {
-  if (cloudModal || staticModal) return null;
-  const panel = el("div", { class: "modal cloud-modal", attrs: { role: "dialog", "aria-modal": "true" } }, children);
-  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
-  const onKeydown = (e) => {
-    if (e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    closeCloudModal();
-  };
-  backdrop.addEventListener("mousedown", (e) => {
-    if (e.target === backdrop) closeCloudModal();
+  const shell = openModal(trigger, {
+    children,
+    className: "cloud-modal",
+    focus,
+    onDismiss: closeCloudModal,
   });
-  document.addEventListener("keydown", onKeydown, true);
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
-    node.setAttribute("inert", "");
-  }
-  document.body.appendChild(backdrop);
-  cloudModal = { backdrop, panel, trigger, onKeydown };
-  (focus ?? panel.querySelector("button, input, select"))?.focus();
-  return panel;
+  if (!shell) return null;
+  cloudModal = shell;
+  return shell.panel;
 }
 
 function cloudStatus(status) {
@@ -1031,24 +1037,15 @@ let agentsMounted = null;
 async function renderAgents() {
   const connectBox = el("div");
   const cloudBox = el("div");
-  let cloudGroup = null;
+  const cloudGroup = group(
+    "Cloud agents",
+    "AI assistants that live in a chat and run in the cloud — never on this Mac.",
+    [cloudBox],
+  );
   const refreshConnect = async () => {
     const s = await window.domo.connectGet();
     connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
-    if (s?.cloudEnabled) {
-      cloudBox.replaceChildren(...cloudNodes(s, refreshConnect));
-      if (!cloudGroup) {
-        cloudGroup = group(
-          "Cloud agents",
-          "AI assistants that live in a chat and run in the cloud — never on this Mac.",
-          [cloudBox],
-        );
-        document.querySelector("#view .panel.agents")?.prepend(cloudGroup);
-      }
-    } else if (cloudGroup) {
-      cloudGroup.remove();
-      cloudGroup = null;
-    }
+    cloudBox.replaceChildren(...(s ? cloudNodes(s, refreshConnect) : []));
     if (s) syncStaticModal(s, refreshConnect);
     return s;
   };
@@ -1120,7 +1117,7 @@ async function renderAgents() {
     const suggestOn = mode === "ask" && hasKey;
     suggestCheck.disabled = !suggestOn;
     suggestLabel.classList.toggle("disabled", !suggestOn);
-    modeChips.replaceChildren(...APPROVAL_MODES.map(({ value, label }) => {
+    const chip = (value, label) => {
       const chip = el("span", {
         class: "chip" + (mode === value ? " active" : ""),
       }, [el("span", { text: label })]);
@@ -1133,20 +1130,33 @@ async function renderAgents() {
         renderApprovals();
       });
       return chip;
-    }));
-    // One lookup, and the row answers both questions. A stored value the app
-    // no longer offers falls back to the first mode rather than a blank card.
-    const active = APPROVAL_MODES.find((m) => m.value === mode) ?? APPROVAL_MODES[0];
-    purposeBlock.hidden = !active.showsPurpose;
+    };
+    modeChips.replaceChildren(
+      chip("ask", "Ask me every time"),
+      chip("adversarial", "AI Reviewer decides"),
+      chip("approve", "Approve everything"),
+      chip("deny", "Deny everything"),
+    );
+    purposeBlock.hidden = mode !== "adversarial";
     // Ask mode's hint points at the checkbox below it. With no credential that
     // checkbox is dead, so pointing at it is an instruction that cannot be
     // followed — say what is actually true instead.
-    modeHintLine.textContent =
-      mode === "ask" && !hasKey
-        ? "Any request a rule doesn't already cover opens an approval window. " +
-          `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`
-        : active.hint;
-    modeHintLine.hidden = active.showsPurpose;
+    if (mode === "ask" && !hasKey) {
+      modeHintLine.textContent =
+        "Any request a rule doesn't already cover opens an approval window. " +
+        `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
+    } else if (mode === "approve") {
+      modeHintLine.textContent = "Every request is allowed without asking you and without review.";
+    } else if (mode === "deny") {
+      modeHintLine.textContent =
+        "Any request a rule doesn't already cover is refused without asking you.";
+    } else {
+      // Unknown stored values keep the card useful by falling back to Ask.
+      modeHintLine.textContent = mode === "adversarial" ? "" :
+        "Any request a rule doesn't already cover opens an approval window. " +
+        "The AI Reviewer can still suggest an answer — turn that on below.";
+    }
+    modeHintLine.hidden = mode === "adversarial";
   };
   renderApprovals();
 

@@ -94,7 +94,6 @@ let cloudProbe = {
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
   cloudSendTo: "+1 (415) 555-0199",
-  cloudEnabled: true,
   cloudAgentSettings: {
     cag_probe: { relay: true, inference: false, adversarialReview: false },
   },
@@ -571,7 +570,11 @@ app.whenReady().then(async () => {
 
   // The warning is specific to the first agent on a chat. Remove the fixture
   // row, remount the pane, and open the picker through the exposed control.
-  cloudProbe = { ...cloudProbe, cloudAgents: [] };
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudChats: [cloudChat, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
+  };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector(".cloud-toolbar button")`, "the cloud-agent setup action");
@@ -580,7 +583,8 @@ app.whenReady().then(async () => {
   const cloudPicker = await win.webContents.executeJavaScript(`(${() => {
     const modal = document.querySelector(".cloud-modal");
     return {
-      listsEveryChat: [...modal.querySelectorAll("option")].map((o) => o.textContent.trim()).join(",") === "+1 (415) 555-0142 · Alex, Sam,New chat…",
+      listsEveryChat: [...modal.querySelectorAll("option")].map((o) => o.textContent.trim()).join(",") ===
+        "+1 (415) 555-0142 · Alex, Sam,+1 (415) 555-0188 · Family group,New chat…",
       warnsIrreversible: modal.textContent.includes("Removing the agent later will not restore them"),
       labelsOptionalName: modal.textContent.includes("Name (optional)"),
     };
@@ -708,6 +712,7 @@ app.whenReady().then(async () => {
       setupDisabled: setup.disabled === true,
       pickerBlocked: !document.querySelector(".cloud-modal"),
       keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+      notEmptyState: !document.querySelector(".cloud-empty"),
     };
   }})()`);
 
@@ -1413,6 +1418,7 @@ app.whenReady().then(async () => {
     cloudForbidden.setupDisabled &&
     cloudForbidden.pickerBlocked &&
     cloudForbidden.keepsRoster &&
+    cloudForbidden.notEmptyState &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     cloudEmpty.literal &&
