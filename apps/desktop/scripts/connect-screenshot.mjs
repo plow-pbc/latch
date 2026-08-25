@@ -51,9 +51,9 @@ const ACTIVE_AGENT = {
 const CLOUD_OFF = {
   cloudAgents: [],
   cloudAgentsError: null,
+  cloudChatsError: null,
   cloudActionError: null,
   cloudChats: [],
-  cloudChatsForbidden: false,
   cloudChatsLoaded: false,
   cloudSendTo: null,
   cloudEnabled: false,
@@ -277,25 +277,41 @@ const SCREENS = [
     ],
   },
   {
-    name: "cloud-chat-error",
+    name: "cloud-chat-forbidden",
     cloud: {
       ...CLOUD_READY,
       cloudAgents: [ACTIVE_AGENT],
-      cloudAgentsError: "Couldn't reach Plow.",
+      cloudAgentsError: "Method Not Allowed",
+      cloudChatsError: "This Mac signed in before chat access existed. Re-activate it to list chats.",
       cloudChats: [],
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
-      const correct = await win.webContents.executeJavaScript(`(() => ({
-        hasError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
-        keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
-        noEmptyState: !document.querySelector(".cloud-empty"),
-      }))()`);
-      if (!correct.hasError || !correct.keepsRoster || !correct.noEmptyState) {
-        throw new Error(`wrong failed-chat-list render: ${JSON.stringify(correct)}`);
+      const correct = await win.webContents.executeJavaScript(`(() => {
+        const setup = document.querySelector(".cloud-toolbar button");
+        setup.click();
+        return {
+          chatError: document.body.innerText.includes("This Mac signed in before chat access existed. Re-activate it to list chats."),
+          transportCopy: document.body.innerText.includes("Plow couldn't complete that request. Try again."),
+          noRawReason: !document.body.innerText.includes("Method Not Allowed"),
+          setupDisabled: setup.disabled,
+          noPicker: !document.querySelector(".cloud-modal"),
+          keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+          noEmptyState: !document.querySelector(".cloud-empty"),
+        };
+      })()`);
+      if (Object.values(correct).some((value) => !value)) {
+        throw new Error(`wrong forbidden-chat-list render: ${JSON.stringify(correct)}`);
       }
     },
-    expect: ["Cloud agents could not be refreshed", "Couldn't reach Plow", "Household helper", "Active"],
+    expect: [
+      "Chats could not be loaded",
+      "This Mac signed in before chat access existed. Re-activate it to list chats.",
+      "Cloud agents could not be refreshed",
+      "Plow couldn't complete that request. Try again.",
+      "Household helper",
+      "Active",
+    ],
   },
   {
     name: "cloud-empty",

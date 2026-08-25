@@ -89,9 +89,9 @@ const cloudAgent = {
 let cloudProbe = {
   cloudAgents: [cloudAgent],
   cloudAgentsError: null,
+  cloudChatsError: null,
   cloudActionError: null,
   cloudChats: [cloudChat],
-  cloudChatsForbidden: false,
   cloudChatsLoaded: true,
   cloudSendTo: "+1 (415) 555-0199",
   cloudEnabled: true,
@@ -675,9 +675,9 @@ app.whenReady().then(async () => {
   cloudProbe = {
     ...cloudProbe,
     cloudAgents: [cloudAgent],
-    cloudAgentsError: "Couldn't reach Plow.",
+    cloudAgentsError: null,
+    cloudChatsError: "Couldn't reach Plow.",
     cloudChats: [],
-    cloudChatsForbidden: false,
     cloudChatsLoaded: false,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -685,29 +685,53 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-error")`, "the failed chat-list banner");
   const cloudChatFailure = await win.webContents.executeJavaScript(`(${() => ({
     showsError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
+    setupDisabled: document.querySelector(".cloud-toolbar button")?.disabled === true,
     notEmptyState: !document.querySelector(".cloud-empty"),
     keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
   })})()`);
 
   cloudProbe = {
     ...cloudProbe,
-    cloudAgentsError: "This Mac isn't allowed to list chats.",
-    cloudChatsForbidden: true,
+    cloudAgentsError: "Method Not Allowed",
+    cloudChatsError: "This Mac signed in before chat access existed. Re-activate it to list chats.",
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector(".cloud-error")`, "the 403 chat-list banner");
-  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => ({
-    ordinaryError: document.querySelector(".cloud-error")?.textContent.includes("This Mac isn't allowed to list chats"),
-    noSpecialState: !document.querySelector(".cloud-forbidden") && !document.body.innerText.includes("Re-activate to access chats"),
-    keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => {
+    const setup = document.querySelector(".cloud-toolbar button");
+    setup.click();
+    return {
+      chatErrorVisible: document.body.innerText.includes("This Mac signed in before chat access existed. Re-activate it to list chats."),
+      rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
+      transportCopy: document.body.innerText.includes("Plow couldn't complete that request. Try again."),
+      setupDisabled: setup.disabled === true,
+      pickerBlocked: !document.querySelector(".cloud-modal"),
+      keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+    };
+  }})()`);
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentsError: "Cloud capacity is full for this account.",
+    cloudChatsError: null,
+    cloudChats: [cloudChat],
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.body.innerText.includes("Cloud capacity is full for this account.")`,
+    "the server-authored cloud error detail");
+  const cloudServerDetail = await win.webContents.executeJavaScript(`(${() => ({
+    preserved: document.body.innerText.includes("Cloud capacity is full for this account."),
+    notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
   })})()`);
 
   cloudProbe = {
     ...cloudProbe,
     cloudAgents: [],
     cloudAgentsError: null,
-    cloudChatsForbidden: false,
+    cloudChatsError: null,
     cloudChatsLoaded: true,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -724,7 +748,8 @@ app.whenReady().then(async () => {
     ...cloudProbe,
     cloudAgents: [cloudAgent],
     cloudChats: [cloudChat],
-    cloudChatsForbidden: false,
+    cloudAgentsError: null,
+    cloudChatsError: null,
     cloudChatsLoaded: true,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -1379,11 +1404,17 @@ app.whenReady().then(async () => {
     cloudSettings.exactSettings &&
     cloudSettings.persisted &&
     cloudChatFailure.showsError &&
+    cloudChatFailure.setupDisabled &&
     cloudChatFailure.notEmptyState &&
     cloudChatFailure.keepsRoster &&
-    cloudForbidden.ordinaryError &&
-    cloudForbidden.noSpecialState &&
+    cloudForbidden.chatErrorVisible &&
+    cloudForbidden.rawReasonHidden &&
+    cloudForbidden.transportCopy &&
+    cloudForbidden.setupDisabled &&
+    cloudForbidden.pickerBlocked &&
     cloudForbidden.keepsRoster &&
+    cloudServerDetail.preserved &&
+    cloudServerDetail.notReplaced &&
     cloudEmpty.literal &&
     cloudEmpty.noNumber &&
     cloudEmpty.noExplanation &&
@@ -1459,7 +1490,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudSettings, cloudChatFailure, cloudForbidden, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudPicker, cloudModalGuard, cloudNewChat, cloudSettingsPanel, cloudSettings, cloudChatFailure, cloudForbidden, cloudServerDetail, cloudEmpty, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

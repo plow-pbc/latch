@@ -928,11 +928,38 @@ function cloudAgentList(state, redraw) {
   ));
 }
 
-function cloudErrorBanner(message) {
+const cloudHttpReasons = new Set([
+  "bad request",
+  "unauthorized",
+  "forbidden",
+  "not found",
+  "method not allowed",
+  "not acceptable",
+  "request timeout",
+  "conflict",
+  "gone",
+  "unprocessable entity",
+  "too many requests",
+  "internal server error",
+  "not implemented",
+  "bad gateway",
+  "service unavailable",
+  "gateway timeout",
+]);
+
+function cloudErrorCopy(message) {
+  const reason = String(message ?? "").trim().replace(/[.!]$/, "").toLowerCase();
+  if (cloudHttpReasons.has(reason) || /^(?:plow returned|http(?: error)?) \d{3}$/.test(reason)) {
+    return "Plow couldn't complete that request. Try again.";
+  }
+  return message;
+}
+
+function cloudErrorBanner(message, title = "Cloud agents could not be refreshed") {
   if (!message) return null;
   return el("div", { class: "cloud-callout cloud-error" }, [
-    el("div", { class: "cloud-callout-title", text: "Cloud agents could not be refreshed" }),
-    el("p", { class: "faint", text: message }),
+    el("div", { class: "cloud-callout-title", text: title }),
+    el("p", { class: "faint", text: cloudErrorCopy(message) }),
   ]);
 }
 
@@ -940,6 +967,7 @@ function cloudNodes(state, redraw) {
   const action = el("div", { class: "row cloud-toolbar" });
   const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
   action.append(el("div", { class: "spacer" }), add);
+  add.disabled = !state.cloudChatsLoaded;
 
   add.addEventListener("click", () => openCloudPicker(add, state, redraw));
 
@@ -947,18 +975,20 @@ function cloudNodes(state, redraw) {
   // and after a failed one. Neither says the account has no chats. Keep any
   // known agents and the failure that explains why setup is unavailable.
   if (!state.cloudChatsLoaded) {
-    const listError = state.cloudAgentsError ||
-      (state.cloudChatsForbidden ? "Chats could not be loaded." : null);
     const body = [action];
-    if (listError) body.push(cloudErrorBanner(listError));
+    if (state.cloudChatsError) {
+      body.push(cloudErrorBanner(state.cloudChatsError, "Chats could not be loaded"));
+    }
     else body.push(el("div", { class: "cloud-progress cloud-loading" }, [
           el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
           el("span", { text: "Loading chats…" }),
         ]));
+    const refreshError = cloudErrorBanner(state.cloudAgentsError);
+    if (refreshError) body.push(refreshError);
     if (state.cloudActionError) {
       body.push(el("div", { class: "cloud-callout cloud-error" }, [
         el("div", { class: "cloud-callout-title", text: "That change did not finish" }),
-        el("p", { class: "faint", text: state.cloudActionError }),
+        el("p", { class: "faint", text: cloudErrorCopy(state.cloudActionError) }),
       ]));
     }
     const roster = cloudAgentList(state, redraw);
@@ -972,7 +1002,7 @@ function cloudNodes(state, redraw) {
   if (state.cloudActionError) {
     body.push(el("div", { class: "cloud-callout cloud-error" }, [
       el("div", { class: "cloud-callout-title", text: "That change did not finish" }),
-      el("p", { class: "faint", text: state.cloudActionError }),
+      el("p", { class: "faint", text: cloudErrorCopy(state.cloudActionError) }),
     ]));
   }
   const roster = cloudAgentList(state, redraw);
