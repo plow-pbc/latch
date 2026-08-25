@@ -650,11 +650,21 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cloud-route p { margin: 4px 0 0; }
 .cloud-route .btn { margin-top: 10px; }
 .cloud-route .cloud-route-number { color: var(--fg); }
-.cloud-setting { align-items: flex-start; margin-top: 2px; }
+.cloud-settings-section { margin-top: 14px; }
+.cloud-settings-section + .cloud-settings-section {
+  padding-top: 14px; border-top: 1px solid var(--border);
+}
+.cloud-setting { align-items: flex-start; margin-top: 0; }
+.cloud-setting + .cloud-setting { margin-top: 12px; }
 .cloud-setting input { margin-top: 2px; }
 .cloud-setting-title, .cloud-setting-copy { display: block; }
 .cloud-setting-title { font-weight: 600; color: var(--fg); margin-bottom: 2px; }
-.cloud-local-note { margin: 12px 0 0; }
+.cloud-restart-note, .cloud-local-note { margin: 10px 0 0; }
+.cloud-restart-note {
+  padding: 8px 10px; border: 1px solid var(--amber-bd);
+  border-radius: var(--radius-sm); background: var(--amber-bg);
+}
+.cloud-save-error { margin-top: 14px; }
 
 /* ---------- Static-credential modal ----------
    Plain DOM over the pane, which is `inert` while this is up. The panel reuses

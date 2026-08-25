@@ -58,6 +58,8 @@ const CLOUD_OFF = {
   cloudSendTo: null,
   cloudEnabled: false,
   cloudAgentSettings: {},
+  cloudSaving: null,
+  cloudSaveError: null,
 };
 const CLOUD_READY = {
   ...CLOUD_OFF,
@@ -126,7 +128,14 @@ async function setUp() {
         : a),
     };
   });
-  ipcMain.handle("cloud:settingsSet", async () => {});
+  ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
+    cloudFixture = {
+      ...cloudFixture,
+      cloudAgentSettings: { ...cloudFixture.cloudAgentSettings, [agentId]: settings },
+      cloudSaving: null,
+      cloudSaveError: null,
+    };
+  });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("settings:getInference", async () => readInference(home));
   ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
@@ -238,6 +247,9 @@ const SCREENS = [
       ...CLOUD_READY,
       cloudChats: [CHAT],
       cloudAgents: [ACTIVE_AGENT],
+      cloudAgentSettings: {
+        [ACTIVE_AGENT.agentId]: { relay: true, inference: false, adversarialReview: true },
+      },
     },
     prepare: async (win) => {
       await clickCloudRowButton(win, "Settings");
@@ -245,8 +257,67 @@ const SCREENS = [
     },
     expect: [
       "Household helper settings",
+      "Relay access",
+      "May spend inference",
       "Adversarial review",
-      "applies without restarting your agent",
+      "Your agent will restart briefly",
+      "without restarting your agent",
+      "Apply changes",
+    ],
+  },
+  {
+    name: "cloud-settings-updating",
+    cloud: {
+      ...CLOUD_READY,
+      cloudChats: [CHAT],
+      cloudAgents: [ACTIVE_AGENT],
+      cloudAgentSettings: {
+        [ACTIVE_AGENT.agentId]: { relay: true, inference: false, adversarialReview: true },
+      },
+      cloudSaving: ACTIVE_AGENT.agentId,
+    },
+    prepare: async (win) => {
+      await clickCloudRowButton(win, "Settings");
+      await waitFor(win, `[...document.querySelectorAll(".cloud-modal button")].some((b) => b.textContent.trim() === "Updating agent…")`,
+        "the updating cloud-agent settings panel");
+      const disabled = await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll(".cloud-modal input")].every((input) => input.disabled)`,
+      );
+      if (!disabled) throw new Error("cloud settings remained editable while updating");
+    },
+    expect: ["Household helper settings", "Relay access", "May spend inference", "Adversarial review", "Updating agent…"],
+  },
+  {
+    name: "cloud-settings-failed",
+    cloud: {
+      ...CLOUD_READY,
+      cloudChats: [CHAT],
+      cloudAgents: [ACTIVE_AGENT],
+      cloudAgentSettings: {
+        [ACTIVE_AGENT.agentId]: { relay: false, inference: true, adversarialReview: false },
+      },
+      cloudSaveError: "Plow could not update this agent.",
+    },
+    prepare: async (win) => {
+      await clickCloudRowButton(win, "Settings");
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-save-error:not([hidden])")`,
+        "the failed cloud-agent settings panel");
+      const state = await win.webContents.executeJavaScript(`(() => {
+        const checks = [...document.querySelectorAll(".cloud-modal input[type=checkbox]")];
+        return {
+          keptAgent: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+          keptSettings: checks[0]?.checked === false && checks[1]?.checked === true && checks[2]?.checked === false,
+          editable: checks.every((input) => !input.disabled),
+        };
+      })()`);
+      if (!state.keptAgent || !state.keptSettings || !state.editable) {
+        throw new Error(`failed settings state was not preserved: ${JSON.stringify(state)}`);
+      }
+    },
+    expect: [
+      "Household helper settings",
+      "Agent settings were not changed",
+      "Plow could not update this agent",
       "Apply changes",
     ],
   },
