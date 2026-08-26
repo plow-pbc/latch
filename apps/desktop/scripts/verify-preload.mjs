@@ -776,6 +776,8 @@ app.whenReady().then(async () => {
       // word this rename retired is nowhere on screen.
       noAdversarialWord: !/adversarial/i.test(pane.innerText),
       noHintLineTakingItsPlace: !pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
+      noFalseReviewerInputs: !pane.innerText.includes("goal and plan") &&
+        !pane.innerText.includes("recent activity on this Mac"),
       // The suggestions checkbox came here from Settings when that pane's
       // reviewer section went away. In this mode nobody is being asked, so
       // there is no suggestion to show: on screen, and dead.
@@ -849,7 +851,7 @@ app.whenReady().then(async () => {
       // suggestion this mode asks for, so the disclosure has to name it in the
       // mode that hides the field. This is the state where an enumeration that
       // stopped at the agent-derived items would read as complete and be wrong.
-      stillDisclosesPurposeIsSent: pane.innerText.includes("what you say agents are for"),
+      stillDisclosesPurposeIsSent: pane.innerText.includes("the purpose you wrote for it"),
       // …and the card still says what this mode does.
       showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
       // The hint used to send people to Settings for the suggestions toggle.
@@ -1415,6 +1417,7 @@ app.whenReady().then(async () => {
     approvalsReviewer.saysItMayApprove &&
     approvalsReviewer.noAdversarialWord &&
     approvalsReviewer.noHintLineTakingItsPlace &&
+    approvalsReviewer.noFalseReviewerInputs &&
     approvalsReviewer.hasSuggestionsCheckbox &&
     approvalsReviewer.suggestionsDeadInReviewerMode &&
     purposeRoundTrip.stored &&

@@ -1222,11 +1222,10 @@ async function renderAgents() {
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
         "by an always-allow rule skip this — unless the agent has its own AI Reviewer switched " +
-        "on, which is reviewed every time — manage those in Rules. Anything the AI Reviewer " +
-        "sees — the request, the paths asked for, the agent's identity, its goal and plan, the " +
-        "capabilities it asked for, its recent activity on this Mac, and what you say agents " +
-        "are for — is sent to Plow to be judged, and billed to your account; nothing from " +
-        "other agents goes with it.",
+        "on, which is reviewed every time — manage those in Rules. The reviewer sees which " +
+        "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
+        "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
+        "agent hasn't asked for.",
       [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
     ),
   ]));

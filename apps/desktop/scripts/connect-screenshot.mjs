@@ -316,6 +316,8 @@ const SCREENS = [
       // Approvals moved onto this tab with the clients it governs.
       "Approvals",
       "What happens when an agent asks to do something on this Mac.",
+      "The reviewer sees which agent is asking, what it's asking to do, the exact bounds it would get, and the purpose you wrote for it.",
+      "It never sees your files, your history on this Mac, or anything the agent hasn't asked for.",
       "AI Reviewer decides",
       "What are agents for?",
       // The purpose describes the errand, and an errand widens the job as
