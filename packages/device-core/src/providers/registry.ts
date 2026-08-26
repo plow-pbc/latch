@@ -61,8 +61,17 @@ export interface VendoredProvider {
    * of minting a live token and spending it on a usage error.
    */
   readonly refuse: (argv: readonly string[]) => string | null;
+  /**
+   * How an agent learns to drive this CLI. Published only when the binary is
+   * staged, and carried on the row so the provider's name has ONE spelling —
+   * a rename here cannot silently unpublish a skill registered under a
+   * literal somewhere else.
+   */
+  readonly skill: Skill;
 }
 
+import type { Skill } from "../skills.js";
+import { GOG_SKILL } from "./gogSkill.js";
 import { reservedFlagIn } from "./gogFlags.js";
 import { gogLeaf, GogArgvError, isKnownCommandPath } from "./gogLeaf.js";
 
@@ -85,6 +94,7 @@ const GOG: VendoredProvider = {
   mintPrefix: "/v1/connectors/gmail/",
   tokenEnv: "GOG_ACCESS_TOKEN",
   belt: ["--no-input", "--wrap-untrusted"],
+  skill: GOG_SKILL,
   refuse: (argv) => {
     const rest = argv.slice(1);
     const reserved = reservedFlagIn(rest);
@@ -117,7 +127,7 @@ const GOG: VendoredProvider = {
   },
 };
 
-const PROVIDERS: readonly VendoredProvider[] = [GOG];
+export const PROVIDERS: readonly VendoredProvider[] = [GOG];
 
 /**
  * The provider an argv invokes, or null when it invokes none.

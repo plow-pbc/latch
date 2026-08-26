@@ -23,8 +23,8 @@ export class GogArgvError extends Error {}
 const LEAVES: ReadonlySet<string> = new Set(GOG_LEAVES);
 
 /**
- * Whether `words` name a command path this Mac can reach — a whole leaf, or a
- * group that has leaves under it.
+ * Whether `words` name a command path this Mac can reach — a whole leaf, a
+ * group that has leaves under it, or the top level.
  *
  * What `--help` is allowed against. Without the prefix half, `gog gmail --help`
  * would be refused (a group is not a leaf); without the known half, appending

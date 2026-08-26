@@ -12,7 +12,7 @@
  * object* owns where an intent's contents go.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
-import { needsToken, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
+import { needsToken, PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type Minter } from "./providers/mint.js";
 import os from "node:os";
 import fs from "node:fs";
@@ -26,7 +26,6 @@ import { VaultServer } from "./browser/vaultServer.js";
 import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
-import { GOG_SKILL } from "./providers/gogSkill.js";
 import { ExecResult, Executor, REAPED_MESSAGE } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
@@ -195,8 +194,9 @@ export class DeviceAgent {
     // Registered only when the CLI it documents is actually staged: a skill
     // for a binary this Mac does not have teaches an agent commands the exec
     // path refuses unconditionally. The SAME predicate that gate uses — two
-    // sites answering one question two ways is what produces that gap.
-    if (this.hasStaged("gog")) this.skills.register(GOG_SKILL);
+    // sites answering one question two ways is what produces that gap — and
+    // driven off the registry, so a provider's name has one spelling.
+    for (const p of PROVIDERS) if (this.hasStaged(p.command)) this.skills.register(p.skill);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -474,10 +474,6 @@ export class DeviceAgent {
   }
 
   /**
-   * The environment a vendored provider's child runs with: its token, and
-   * nothing else.
-   */
-  /**
    * Whether this Mac actually ships the named CLI.
    *
    * Per-provider rather than "is anything staged": the day a second row joins
@@ -488,6 +484,10 @@ export class DeviceAgent {
     return this.vendorDirs.some((d) => fs.existsSync(path.join(d, command)));
   }
 
+  /**
+   * The environment a vendored provider's child runs with: its token, and
+   * nothing else.
+   */
   private async mintFor(provider: VendoredProvider): Promise<Record<string, string>> {
     if (this.minter === null) throw MintError.unpaired();
     return { [provider.tokenEnv]: await this.minter.mint(provider) };

@@ -14,11 +14,17 @@ import { DeviceAgent, HeadlessPolicy, MintError, type Minter } from "@domo/devic
 
 const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
 /**
- * Both ends of the token, because a leak is rarely the whole thing: an
- * end-truncated diagnostic keeps the head, and a "token ending …xY7" style one
- * keeps the tail. Checking only the full value catches neither.
+ * Neither end of the token appears in `text`.
+ *
+ * Both ends, because a leak is rarely the whole value: an end-truncated
+ * diagnostic keeps the head and a "token ending …xY7" style one keeps the
+ * tail, and checking only the full string catches neither.
  */
-const TOKEN_FRAGMENTS = [TOKEN.slice(0, 12), TOKEN.slice(-12)];
+function expectNoToken(text: string): void {
+  for (const fragment of [TOKEN.slice(0, 12), TOKEN.slice(-12)]) {
+    expect(text).not.toContain(fragment);
+  }
+}
 const cleanups: (() => void)[] = [];
 
 function tmp(): string {
@@ -141,13 +147,10 @@ describe("a vendored provider through the exec path", () => {
     // Whatever was thrown, the token reaches neither the agent NOR the
     // append-only log. The audit half matters at least as much: an error
     // string there outlives the token and travels wherever the log travels.
-    // No `?? ""` — this is the assertion standing between a thrown body and
-    // the agent, so a shape change should fail it loudly rather than pass it
-    // vacuously against an empty string.
-    for (const fragment of TOKEN_FRAGMENTS) {
-      expect(jv(response).get("error").str).not.toContain(fragment);
-      expect(JSON.stringify(d.audit.entries())).not.toContain(fragment);
-    }
+    expectNoToken(jv(response).get("error").str ?? "no error, which is itself a failure");
+    // The log's own BYTES, not a parsed-and-re-encoded view of them: entries()
+    // silently drops malformed lines, and what travels is audit.ndjson.
+    expectNoToken(fs.readFileSync(d.audit.file, "utf8"));
     expectNeverSpawned(d);
   });
 
@@ -185,6 +188,13 @@ describe("a vendored provider through the exec path", () => {
     // A skill for a binary this Mac does not have would teach an agent to run
     // commands that cannot work.
     expect(device(okMinter(), []).skills.manifest().map((s) => s.name)).not.toContain(
+      "google-workspace",
+    );
+    // The input that discriminates per-provider staging from "is anything
+    // staged": a non-empty vendor dir with no gog in it, which is what a Mac
+    // with only some OTHER provider staged looks like. Both cases above pass
+    // under the old global check too.
+    expect(device(okMinter(), [tmp()]).skills.manifest().map((s) => s.name)).not.toContain(
       "google-workspace",
     );
   });

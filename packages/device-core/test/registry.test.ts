@@ -116,10 +116,16 @@ describe("needsToken", () => {
     // a real search and correctly needs a token. The help predicate requires
     // the words before it to be plain, which "--" is not.
     { argv: ["gog", "gmail", "search", "--", "-h"], refused: false, token: true },
-    { argv: ["gog", "drive", "files", "list", "--help"], refused: true, token: false },
-    { argv: ["gog", "gmail", "serach", "--help"], refused: true, token: false },
+    // needsToken is only ever consulted after refuse passes, so these carry
+    // the real value rather than one the guard below hides: an unknown path
+    // is not a help invocation, so both are true.
+    { argv: ["gog", "drive", "files", "list", "--help"], refused: true, token: true },
+    { argv: ["gog", "gmail", "serach", "--help"], refused: true, token: true },
   ])("gate and mint agree on $argv", ({ argv, refused, token }) => {
     expect(gog.refuse(argv) !== null).toBe(refused);
-    if (!refused) expect(needsToken(argv)).toBe(token);
+    // Total, not guarded: a row that states the opposite of the truth is the
+    // claims-more-than-the-code shape, in the one place a reader looks for the
+    // contract.
+    expect(needsToken(argv)).toBe(token);
   });
 });

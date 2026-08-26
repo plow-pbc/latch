@@ -51,8 +51,9 @@ Useful starting points:
 Each element is one argument. There is no shell here, so nothing is quoted or
 word-split: a query with spaces is a single element, exactly as written.
 
-Run \`["gog","gmail","--help"]\` (or any group) for the rest; the binary is the
-authority, not this page. Help runs without minting a token.
+Run \`["gog","--help"]\` for the top level and \`["gog","gmail","--help"]\` (or any
+group) for the rest; the binary is the authority, not this page. Help runs
+without minting a token.
 
 ## Rules that are enforced, not advice
 
