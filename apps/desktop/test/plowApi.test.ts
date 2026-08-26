@@ -457,21 +457,6 @@ describe("PlowApi", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("does not copy an API-key credential from an HTTP error into its message", async () => {
-    const credential = "plow_device_do_not_leak";
-    const { fetchImpl } = recordingFetch([
-      { status: 403, body: { detail: `Not permitted for Bearer ${credential}` } },
-    ]);
-
-    const error = await new PlowApi("https://api.plow.co", fetchImpl)
-      .listApiKeys(credential)
-      .catch((caught) => caught as Error);
-
-    expect(error).toBeInstanceOf(PlowApiError);
-    expect(error.message).toBe("Not permitted.");
-    expect(error.message).not.toContain(credential);
-  });
-
   /**
    * Every encoding of the credential, and the plain sentence that carries
    * none — all four answer with the status fallback, because an authenticated
@@ -497,6 +482,7 @@ describe("PlowApi", () => {
       .listApiKeys(credential)
       .catch((caught) => caught as Error);
 
+    expect(error).toBeInstanceOf(PlowApiError);
     expect(error.message).toBe("Not permitted.");
     expect(error.message).not.toContain(credential.slice(0, 10));
   });

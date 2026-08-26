@@ -4,8 +4,7 @@
  * one everyday testing never enters.
  */
 import { describe, expect, it } from "vitest";
-import { sectionRoster } from "../src/rosterSections.js";
-import { agentRosterRows } from "../src/agentRoster.js";
+import { sectionRoster, removalRouteFor } from "../src/rosterSections.js";
 import type { KeyInfo } from "../src/plowApi.js";
 
 function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
@@ -43,8 +42,13 @@ describe("which section a credential belongs in", () => {
       key({ id: 3, scopes: ["*:*"] }),
     ]);
 
-    expect(sections.mcp.map((row) => row.id)).toEqual([1]);
-    expect(sections.other.map((row) => row.id)).toEqual([2, 3]);
+    expect(sections.mcp.map(({ id, kind }) => ({ id, kind }))).toEqual([
+      { id: 1, kind: "Agent" },
+    ]);
+    expect(sections.other.map(({ id, kind }) => ({ id, kind }))).toEqual([
+      { id: 2, kind: "Plow web login" },
+      { id: 3, kind: "Legacy — full access" },
+    ]);
   });
 
   it("counts revoked credentials rather than listing them", () => {
@@ -59,11 +63,6 @@ describe("which section a credential belongs in", () => {
   });
 
   it("places every row it is given, whatever kind it turns out to be", () => {
-    // `agentRosterRows` is widening to return non-relay credentials too, with a
-    // new kind for them. An unknown kind must land in Other sessions rather
-    // than vanish — an account with ninety credentials should show ninety.
-    // Asserted against what the roster module actually returns, so this holds
-    // before and after that change.
     const keys = [
       key({ id: 1, agent_id: "agent_1" }),
       key({ id: 2, scopes: ["relay:call"] }),
@@ -74,9 +73,15 @@ describe("which section a credential belongs in", () => {
     const sections = sectionRoster(keys);
 
     const placed = [...sections.cloud, ...sections.mcp, ...sections.other].map((row) => row.id);
-    expect(placed.sort()).toEqual(agentRosterRows(keys).map((row) => row.id).sort());
-    // Nothing is counted twice either.
+    expect(placed.sort()).toEqual([1, 2, 3, 4, 5]);
     expect(new Set(placed).size).toBe(placed.length);
+    expect(sections.other.filter((row) => [4, 5].includes(row.id)).map((row) => row.kind)).toEqual([
+      "Session",
+      "Session",
+    ]);
+    expect(JSON.stringify(sections)).not.toMatch(
+      /key_prefix|plow_sk_abc123|scopes|relay:call|tokens_used/,
+    );
   });
 });
 

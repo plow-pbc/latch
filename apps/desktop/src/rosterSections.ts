@@ -1,20 +1,27 @@
 /**
  * The Agents screen's three sections, derived from the account's credentials.
  *
- * `agentRoster.ts` says what a credential IS — its kind, from the scopes Plow
- * granted it. This says where it BELONGS on screen, which is a different
- * question and a newer one: `AgentRosterKind` predates cloud agents entirely,
- * so a row's kind alone can no longer place it.
- *
  * Kept out of the renderer deliberately. The classification decides which
  * removal call a row gets, and a row misplaced here is a live cloud agent
  * removed by the wrong endpoint — that is a decision for tested code, not for
  * a template.
  */
-import { AgentRosterRow, agentRosterRows } from "./agentRoster.js";
 import type { KeyInfo } from "./plowApi.js";
 
-export interface RosterSectionRow extends AgentRosterRow {
+export type AgentRosterKind =
+  | "Agent"
+  | "Plow web login"
+  | "Legacy — full access"
+  | "Session";
+
+export interface RosterSectionRow {
+  id: number;
+  name: string | null;
+  kind: AgentRosterKind;
+  createdAt: string | null;
+  lastSeenAt: string | null;
+  agentId: string | null;
+  chatUids: string[];
   /**
    * This Mac's own device credential.
    *
@@ -77,6 +84,13 @@ function newestFirst(a: string | null, b: string | null): number {
   return 0;
 }
 
+function rosterKind(scopes: readonly string[]): AgentRosterKind {
+  if (scopes.includes("relay:call")) return "Agent";
+  if (scopes.includes("relay:*")) return "Plow web login";
+  if (scopes.includes("*:*")) return "Legacy — full access";
+  return "Session";
+}
+
 /**
  * Split the account's credentials into the three sections the screen shows.
  *
@@ -89,11 +103,8 @@ export function sectionRoster(
   keys: readonly KeyInfo[],
   options: { deviceCredential?: string } = {},
 ): RosterSections {
-  const byId = new Map(keys.map((key) => [key.id, key] as const));
   const credential = (options.deviceCredential ?? "").trim();
   const sections: RosterSections = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
-
-  for (const key of keys) if (!key.is_active) sections.revokedHidden += 1;
 
   // Exactly one row is this Mac, or none is. Two rows matching means the match
   // is not identifying anything, and marking both would warn about revoking a
@@ -104,13 +115,21 @@ export function sectionRoster(
   );
   const thisMacId = candidates.length === 1 ? candidates[0].id : null;
 
-  for (const row of agentRosterRows(keys)) {
-    // Revoked rows are counted, never listed — decided here rather than
-    // assumed of `agentRosterRows`, whose job is what a credential IS, not what
-    // this screen shows. It returns them now precisely so this layer can make
-    // that call.
-    if (!row.isActive) continue;
-    const placed: RosterSectionRow = { ...row, isThisMac: row.id === thisMacId };
+  for (const key of keys) {
+    if (!key.is_active) {
+      sections.revokedHidden += 1;
+      continue;
+    }
+    const placed: RosterSectionRow = {
+      id: key.id,
+      name: key.name,
+      kind: rosterKind(key.scopes),
+      createdAt: key.created_at,
+      lastSeenAt: key.last_seen_at,
+      agentId: key.agent_id,
+      chatUids: key.chat_uids,
+      isThisMac: key.id === thisMacId,
+    };
     if (placed.agentId !== null) sections.cloud.push(placed);
     else if (placed.kind === "Agent") sections.mcp.push(placed);
     else sections.other.push(placed);
