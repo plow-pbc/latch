@@ -20,14 +20,14 @@ const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
  * diagnostic keeps the head and a "token ending …xY7" style one keeps the
  * tail, and checking only the full string catches neither.
  */
-function expectNoToken(text: string): void {
+function expectNoToken(text: string, sink: string): void {
   for (const [end, fragment] of [
     ["head", TOKEN.slice(0, 12)],
     ["tail", TOKEN.slice(-12)],
   ] as const) {
     // Named, so a failure says WHICH end leaked rather than quoting an opaque
     // fragment at whoever has to fix it.
-    expect(text, `token ${end} leaked`).not.toContain(fragment);
+    expect(text, `token ${end} leaked into the ${sink}`).not.toContain(fragment);
   }
 }
 const cleanups: (() => void)[] = [];
@@ -156,10 +156,10 @@ describe("a vendored provider through the exec path", () => {
     // which is the shape removed a round ago and re-added by the fallback.
     const message = jv(response).get("error").str;
     expect(typeof message).toBe("string");
-    expectNoToken(message!);
+    expectNoToken(message!, "response");
     // The log's own BYTES, not a parsed-and-re-encoded view of them: entries()
     // silently drops malformed lines, and what travels is audit.ndjson.
-    expectNoToken(fs.readFileSync(d.audit.file, "utf8"));
+    expectNoToken(fs.readFileSync(d.audit.file, "utf8"), "audit log");
     expectNeverSpawned(d);
   });
 
