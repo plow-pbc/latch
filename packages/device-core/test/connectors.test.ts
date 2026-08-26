@@ -188,6 +188,11 @@ describe("ConnectorClient", () => {
     // "in any encoding", so matching the literal alone is a screen the caller
     // walks straight past.
     ["Base64", (c: string) => ({ echo: Buffer.from(c, "utf8").toString("base64") })],
+    // The alignment case: `"Bearer "` is seven bytes, so the token starts at
+    // offset 1 (mod 3) and Base64 emits a different character stream than the
+    // token encoded on its own. Two of three alignments were missed.
+    ["Base64 of an envelope containing it", (c: string) => ({ echo: Buffer.from(`Bearer ${c}`, "utf8").toString("base64") })],
+    ["Base64 of an envelope at the third alignment", (c: string) => ({ echo: Buffer.from(`xx${c}`, "utf8").toString("base64") })],
     [
       "Base64url",
       (c: string) => ({

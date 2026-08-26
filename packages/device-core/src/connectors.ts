@@ -97,8 +97,52 @@ export function slackAction(tool: string): SlackAction | null {
 const SECRET_HEAD = 10;
 
 /**
- * Whether `text` discloses `secret` — whole, or as a leading fragment when
- * `headLength` is given.
+ * Every string form of `secret` a response could carry it in.
+ *
+ * The literal, plus Base64 at all three byte alignments. Alignment matters
+ * because Base64 encodes three bytes to four characters: a server that
+ * encodes the token *standing alone* emits one character stream, and one that
+ * encodes an envelope containing it — a reflected `Authorization: Bearer
+ * <cred>` dump, where the seven bytes of `"Bearer "` leave the token at offset
+ * 1 (mod 3) — emits a completely different one. Checking only the aligned form
+ * misses two alignments out of three, which is a decodable credential reaching
+ * the agent through the screen meant to stop it.
+ *
+ * Each alignment drops the characters that encode the padding prefix and the
+ * trailing partial group, leaving the run that is stable wherever the token
+ * sits. `REVIEW.md` puts a credential reaching the renderer "in any encoding"
+ * in the carve-out; this is what "any" costs.
+ *
+ * Derived once per credential rather than per node: `carriesCredential` walks
+ * an arbitrary-size decoded response — a `messages.list` body runs to
+ * thousands of nodes — and the forms depend only on the secret.
+ */
+export function secretForms(secret: string): string[] {
+  const trimmed = secret.trim();
+  if (trimmed.length < SECRET_HEAD) return [];
+  const forms = [trimmed];
+  const raw = Buffer.from(trimmed, "utf8");
+  for (let r = 0; r < 3; r++) {
+    const b64 = Buffer.concat([Buffer.alloc(r), raw]).toString("base64").replace(/=+$/, "");
+    const core = b64.slice(Math.ceil((r * 4) / 3), b64.length - 4);
+    if (core.length >= SECRET_HEAD) {
+      forms.push(core, core.replace(/\+/g, "-").replace(/\//g, "_"));
+    }
+  }
+  return forms;
+}
+
+/** Whether `text` carries any of `forms`, whole or as a leading fragment. */
+function textCarries(text: string, forms: string[]): boolean {
+  for (const form of forms) {
+    if (text.includes(form)) return true;
+    if (form.length > SECRET_HEAD && text.includes(form.slice(0, SECRET_HEAD))) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether `text` discloses `secret`, in any form `secretForms` knows.
  *
  * One predicate, two sinks: the desktop's adversarial reviewer screens model
  * output with it, and the connector screens decoded responses with it. They
@@ -108,19 +152,7 @@ const SECRET_HEAD = 10;
  * a handful of characters matches ordinary prose.
  */
 export function echoesSecret(text: string, secret: string): boolean {
-  const trimmed = secret.trim();
-  if (trimmed.length < SECRET_HEAD) return false;
-  // Literal, and the two encodings a token plausibly arrives in when a server
-  // reflects it into JSON. `REVIEW.md` puts a credential reaching the renderer
-  // "in any encoding" in the carve-out, and a Base64 echo is one an agent can
-  // simply decode — matching only the literal is a screen the caller can walk
-  // straight past.
-  const b64 = Buffer.from(trimmed, "utf8").toString("base64");
-  for (const form of [trimmed, b64, b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")]) {
-    if (text.includes(form)) return true;
-    if (form.length > SECRET_HEAD && text.includes(form.slice(0, SECRET_HEAD))) return true;
-  }
-  return false;
+  return textCarries(text, secretForms(secret));
 }
 
 /**
@@ -187,17 +219,16 @@ export class ConnectorError extends Error {
  * Walks leaves rather than testing `JSON.stringify`, so an escaped or
  * split-across-fields occurrence is caught the same way a plain one is.
  */
-function carriesCredential(value: JSONValue, credential: string): boolean {
-  if (typeof value === "string") return echoesSecret(value, credential);
-  if (Array.isArray(value)) return value.some((v) => carriesCredential(v, credential));
+function carriesCredential(value: JSONValue, forms: string[]): boolean {
+  if (typeof value === "string") return textCarries(value, forms);
+  if (Array.isArray(value)) return value.some((v) => carriesCredential(v, forms));
   if (value !== null && typeof value === "object") {
     // KEYS as well as values. A reflected-request or debug envelope maps the
     // token TO metadata — `{"tokens":{"<credential>":{"remaining":5}}}` — so a
     // value-only walk skips half the string positions in the decoded body, and
     // this check's whole premise is that it is complete.
     return Object.entries(value).some(
-      ([k, v]) =>
-        echoesSecret(k, credential) || carriesCredential(v as JSONValue, credential),
+      ([k, v]) => textCarries(k, forms) || carriesCredential(v as JSONValue, forms),
     );
   }
   return false;
@@ -266,7 +297,8 @@ export function makeConnectorClient(opts: {
         // the body in it.
         throw ConnectorError.unreadable(action);
       }
-      if (carriesCredential(decoded, credential)) throw ConnectorError.echoedCredential(action);
+      if (carriesCredential(decoded, secretForms(credential)))
+        throw ConnectorError.echoedCredential(action);
       return decoded;
     },
   };
