@@ -193,8 +193,19 @@ class OutputBuffer {
     // to the agent and written to the audit log.
     if (this.exitCode !== null) return;
     this.exitCode = exitCode;
-    for (const w of this.waiters) w();
+    // Taken and cleared before any of them runs, and each one isolated: one
+    // waiter is `run`'s own, the rest come through the public `onExit`, and a
+    // registrant that throws must not cost the run its answer — nor the ones
+    // behind it theirs. Closing a run out is not a waiter's to skip.
+    const waiters = this.waiters;
     this.waiters = [];
+    for (const w of waiters) {
+      try {
+        w();
+      } catch {
+        // A registrant's failure is its own; it is not the run's.
+      }
+    }
   }
 
   snapshot(since: number): {
@@ -327,7 +338,7 @@ export class Executor {
     // keeps "the command finished" from meaning "and nothing it started is
     // still around", which is not this Mac's promise to keep and was three
     // rounds of holes in one predicate when the reaper tried to keep it.
-    let reaper: ReturnType<typeof setTimeout>;
+    let reaper: ReturnType<typeof setTimeout> | undefined;
     // Settling CLOSES the capture, on every path into it. A run that has been
     // answered must stop growing, and the read ends of its pipes must not stay
     // attached for the life of the app because something the command left
@@ -338,15 +349,11 @@ export class Executor {
       // Answered first, closed second, both in one synchronous breath: nothing
       // can append between the two statements, and everything downstream that
       // asks "is this run still open?" — `abandon`'s kill above all — gets the
-      // right answer for anything the destroys themselves emit. `finally`
-      // because `finish` runs the `onExit` waiters, which are a public seam:
-      // closing the capture is not theirs to skip by throwing.
-      try {
-        buffer.finish(code);
-      } finally {
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-      }
+      // right answer for anything the destroys themselves emit. No `try` here:
+      // `finish` isolates its own waiters, so it cannot throw past this point.
+      buffer.finish(code);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
     };
     child.on("error", () => settle(-1));
     child.on("exit", (code, signal) => {
@@ -397,8 +404,12 @@ export class Executor {
     // applied, neither of which anyone rolls back. A read-only run has no
     // such half-state, which is also the shape the observed failure had — a
     // `sqlite3 -readonly` blocked on a consent prompt. So the timer arms for
-    // those alone, and a wedged run with side-effect capability stays the
-    // owner's to end, as it was before any of this.
+    // those alone.
+    //
+    // Say plainly what that costs, because there is no cancel affordance to
+    // soften it: a wedged run with side-effect capability stays alive and
+    // untracked, its `exec_start` unpaired, until someone kills the process
+    // from a terminal. Issue #178 is the owner-facing way to end a run.
     //
     // SIGKILL rather than a polite SIGTERM —
     // it is wedged in a kernel call with nothing to clean up, and a handler
@@ -407,13 +418,14 @@ export class Executor {
     // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
     // does NOT exec, so one signal kills the shell and leaves the wedged
     // descendant alive.
-    const reapable = args.writePaths.length === 0 && !args.network;
-    reaper = setTimeout(() => {
-      if (!reapable || buffer.exitCode !== null || buffer.produced) return;
-      buffer.reaped = true;
-      abandon(-1);
-    }, this.reapAfterMs);
-    reaper.unref?.();
+    if (args.writePaths.length === 0 && !args.network) {
+      reaper = setTimeout(() => {
+        if (buffer.exitCode !== null || buffer.produced) return;
+        buffer.reaped = true;
+        abandon(-1);
+      }, this.reapAfterMs);
+      reaper.unref?.();
+    }
 
     // Optional throughout: a spawn that never got as far as its stdio — the
     // fd exhaustion this reaper exists to make rarer — leaves these null and

@@ -368,8 +368,10 @@ export const TOOLS: ToolSpec[] = [
       "Fetch incremental output of a command still running from plow_run_command. " +
       "Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, " +
       "not a handle from plow_get_result. " +
-      "A command that produces nothing and never exits is eventually killed by this Mac: the " +
-      "reply then carries an 'error' saying so, which is for the user to hear.",
+      "A read-only command that produces nothing and never exits is eventually killed by this Mac: " +
+      "the reply then carries an 'error' saying so, which is for the user to hear. One approved to " +
+      "write or to use the network is not — it could be mid-work — so polling will not resolve on " +
+      "its own; tell the user, who is the only one who can end it.",
     inputSchema: {
       type: "object",
       required: ["handle"],

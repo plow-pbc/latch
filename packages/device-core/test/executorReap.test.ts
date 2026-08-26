@@ -234,6 +234,36 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
   });
 });
 
+describe.skipIf(!ON_MAC)("a run closing out", () => {
+  it("is not a waiter's to skip by throwing", async () => {
+    const dir = tempDir();
+    const executor = new Executor(path.join(dir, "scratch"), 60_000);
+    const started = await executor.run({
+      argv: ["/bin/echo", "hi"],
+      cwd: dir,
+      readPaths: [dir],
+      writePaths: [],
+      network: false,
+      waitMs: 0,
+    });
+
+    // `onExit` is public, so a registrant that throws is reachable — and it
+    // must cost neither the run its outcome nor the registrants behind it.
+    let second = false;
+    executor.onExit(started.handle, () => {
+      throw new Error("a registrant's problem");
+    });
+    executor.onExit(started.handle, () => {
+      second = true;
+    });
+
+    const ended = await settle(executor, started.handle);
+    expect(second).toBe(true);
+    expect(ended.exitCode).toBe(0);
+    expect(ended.output.toString()).toContain("hi");
+  });
+});
+
 describe.skipIf(!ON_MAC)("the audit record of a reaped run", () => {
   it("closes the run out once, marked reaped", async () => {
     const home = tempDir();
