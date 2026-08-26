@@ -192,7 +192,7 @@ class OutputBuffer {
   private length = 0;
   exitCode: number | null = null;
   reaped = false;
-  private waiters: (() => void)[] = [];
+  private waiters: ((exitCode: number) => void)[] = [];
 
   append(chunk: Buffer): void {
     this.chunks.push(chunk);
@@ -210,13 +210,15 @@ class OutputBuffer {
     // to the agent and written to the audit log.
     if (this.exitCode !== null) return;
     this.exitCode = exitCode;
-    // Taken and cleared before any of them runs: one waiter is `run`'s own,
+    // The outcome is handed to each waiter rather than read back off the
+    // buffer, so no branch of this seam is in a position to invent one. Taken
+    // and cleared before any of them runs: one waiter is `run`'s own,
     // the rest come through the public `onExit`, and a registrant that throws
     // must not cost the run its answer — nor the ones behind it theirs.
     // Closing a run out is not a waiter's to skip.
     const waiters = this.waiters;
     this.waiters = [];
-    for (const w of waiters) invoke(w);
+    for (const w of waiters) invoke(() => w(exitCode));
   }
 
   snapshot(since: number): {
@@ -256,7 +258,7 @@ class OutputBuffer {
       invoke(() => cb(code, this.reaped));
       return;
     }
-    this.waiters.push(() => cb(this.exitCode ?? -1, this.reaped));
+    this.waiters.push((code) => cb(code, this.reaped));
   }
 }
 
