@@ -97,7 +97,18 @@ export function capabilityDisplay(c: Capability): string {
     case "browser":
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":
+      // A rule saved before the metadata capability was removed can still be
+      // sitting in rules.json, and `access` no longer types that shape.
+      // Nothing requests it any more, so it grants nothing — but the owner
+      // reviewing stored grants must read back what they actually approved,
+      // not see it relabelled as a credential-fill grant they never gave.
+      if (c.access !== "fill") return "Credentials: a shape no longer requested (grants nothing)";
       return `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
+    default:
+      // rules.json is parsed and cast without validation, so a stored
+      // capability can carry a kind outside the current union. Naming it is
+      // worth more to someone deciding whether to revoke than `undefined`.
+      return (c as Capability).kind;
   }
 }
 

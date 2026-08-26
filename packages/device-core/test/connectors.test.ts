@@ -177,6 +177,9 @@ describe("ConnectorClient", () => {
     ["a top-level string", (c: string) => ({ debug: c })],
     ["a nested object", (c: string) => ({ echo: { request: { authorization: `Bearer ${c}` } } })],
     ["inside an array", (c: string) => ({ messages: [{ text: `token was ${c}` }] })],
+    // The shape the key-walk exists for: a reflected-request or debug envelope
+    // maps the token TO metadata, so it never appears in a value at all.
+    ["an object key", (c: string) => ({ tokens: { [c]: { remaining: 5 } } })],
   ])("discards a 200 that echoes the credential in %s", async (_name, shape) => {
     const credential = "cred-super-secret";
     const client = makeConnectorClient({
