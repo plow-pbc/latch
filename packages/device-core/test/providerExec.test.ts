@@ -21,8 +21,13 @@ const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
  * tail, and checking only the full string catches neither.
  */
 function expectNoToken(text: string): void {
-  for (const fragment of [TOKEN.slice(0, 12), TOKEN.slice(-12)]) {
-    expect(text).not.toContain(fragment);
+  for (const [end, fragment] of [
+    ["head", TOKEN.slice(0, 12)],
+    ["tail", TOKEN.slice(-12)],
+  ] as const) {
+    // Named, so a failure says WHICH end leaked rather than quoting an opaque
+    // fragment at whoever has to fix it.
+    expect(text, `token ${end} leaked`).not.toContain(fragment);
   }
 }
 const cleanups: (() => void)[] = [];
@@ -147,7 +152,11 @@ describe("a vendored provider through the exec path", () => {
     // Whatever was thrown, the token reaches neither the agent NOR the
     // append-only log. The audit half matters at least as much: an error
     // string there outlives the token and travels wherever the log travels.
-    expectNoToken(jv(response).get("error").str ?? "no error, which is itself a failure");
+    // No coalesce: a sentinel contains no token, so it would pass vacuously —
+    // which is the shape removed a round ago and re-added by the fallback.
+    const message = jv(response).get("error").str;
+    expect(typeof message).toBe("string");
+    expectNoToken(message!);
     // The log's own BYTES, not a parsed-and-re-encoded view of them: entries()
     // silently drops malformed lines, and what travels is audit.ndjson.
     expectNoToken(fs.readFileSync(d.audit.file, "utf8"));

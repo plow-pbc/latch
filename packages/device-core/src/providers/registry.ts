@@ -20,6 +20,10 @@
  */
 
 /** What one vendored CLI needs in order to run. */
+import type { Skill } from "../skills.js";
+import { reservedFlagIn } from "./gogFlags.js";
+import { GOG_SKILL } from "./gogSkill.js";
+
 export interface VendoredProvider {
   /** `argv[0]`, and the binary's name inside its vendor directory. */
   readonly command: string;
@@ -70,9 +74,6 @@ export interface VendoredProvider {
   readonly skill: Skill;
 }
 
-import type { Skill } from "../skills.js";
-import { GOG_SKILL } from "./gogSkill.js";
-import { reservedFlagIn } from "./gogFlags.js";
 import { gogLeaf, GogArgvError, isKnownCommandPath } from "./gogLeaf.js";
 
 /** `<known command path> --help`, and nothing else. */
