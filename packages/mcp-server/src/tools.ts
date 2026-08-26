@@ -21,12 +21,6 @@ import { decideAndRun, GOAL, ToolError, ToolSpec } from "./toolKit.js";
 import type { AgentIdentity, ToolContext } from "./toolKit.js";
 import { SLACK_READ_TOOLS, SLACK_WRITE_TOOLS } from "./slackTools.js";
 
-// Re-exported for existing importers of tools.ts — the primitives now live in
-// toolKit.ts (see its header comment for why), but nothing outside this
-// package needs to know that.
-export { decideAndRun, GOAL, ToolError };
-export type { AgentIdentity, ToolContext, ToolSpec };
-
 const strings = (value: JSONValue[] | null): string[] =>
   (value ?? []).filter((v): v is string => typeof v === "string");
 

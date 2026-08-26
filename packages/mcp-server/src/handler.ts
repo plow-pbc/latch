@@ -23,14 +23,8 @@ import { JSONValue } from "@domo/protocol";
 import { DeviceAgent, LIVE_WEB_ROUTING } from "@domo/device-core";
 import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
-import {
-  AgentIdentity,
-  MACOS_TOOLING,
-  TOOLS,
-  ToolContext,
-  toolBlocks,
-  toolContent,
-} from "./tools.js";
+import { AgentIdentity, ToolContext } from "./toolKit.js";
+import { MACOS_TOOLING, TOOLS, toolBlocks, toolContent } from "./tools.js";
 
 /** The MCP revision this server speaks, and the only one it will speak. */
 export const PROTOCOL_REVISION = "2026-07-28";
