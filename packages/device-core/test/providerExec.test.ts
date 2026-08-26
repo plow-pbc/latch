@@ -13,6 +13,12 @@ import { JSONValue, jv, makeIntent } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy, MintError, type Minter } from "@domo/device-core";
 
 const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
+/**
+ * Both ends of the token, because a leak is rarely the whole thing: an
+ * end-truncated diagnostic keeps the head, and a "token ending …xY7" style one
+ * keeps the tail. Checking only the full value catches neither.
+ */
+const TOKEN_FRAGMENTS = [TOKEN.slice(0, 12), TOKEN.slice(-12)];
 const cleanups: (() => void)[] = [];
 
 function tmp(): string {
@@ -135,8 +141,13 @@ describe("a vendored provider through the exec path", () => {
     // Whatever was thrown, the token reaches neither the agent NOR the
     // append-only log. The audit half matters at least as much: an error
     // string there outlives the token and travels wherever the log travels.
-    expect(jv(response).get("error").str ?? "").not.toContain(TOKEN.slice(0, 12));
-    expect(JSON.stringify(d.audit.entries())).not.toContain(TOKEN.slice(0, 12));
+    // No `?? ""` — this is the assertion standing between a thrown body and
+    // the agent, so a shape change should fail it loudly rather than pass it
+    // vacuously against an empty string.
+    for (const fragment of TOKEN_FRAGMENTS) {
+      expect(jv(response).get("error").str).not.toContain(fragment);
+      expect(JSON.stringify(d.audit.entries())).not.toContain(fragment);
+    }
     expectNeverSpawned(d);
   });
 
