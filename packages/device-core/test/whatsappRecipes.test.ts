@@ -267,7 +267,8 @@ describe.skipIf(!ON_MAC)("the fallback for a store that will not open", () => {
     expect(out).toContain("2023-11-");
     expect(out.trim().split("\n").pop()).toMatch(/,63$/);
     // The owner's whole message history was in that directory a moment ago.
-    // Nothing else on this Mac deletes a scratch dir, so the command must.
+    // Nothing on this Mac deletes a scratch dir on a normal exit — only the
+    // Executor's reaper, and only when it fires — so the command must.
     expect(fs.readdirSync(scratch)).toEqual([]);
   });
 

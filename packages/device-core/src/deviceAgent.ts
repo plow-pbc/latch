@@ -24,7 +24,7 @@ import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { ConnectorClient, ConnectorError, slackAction } from "./connectors.js";
-import { Executor } from "./executor.js";
+import { ExecResult, Executor, REAPED_MESSAGE } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
@@ -105,6 +105,27 @@ const EXPLAINED_DENIALS: Record<string, string> = {
     "not a refusal. Try again to raise a fresh request; any prompt still on the " +
     "user's screen from the first attempt is expired and does nothing",
 };
+
+/**
+ * One shape for a run, whether it is answering the call that started it or a
+ * later `plow_get_output` poll. Written once because the two used to be
+ * written twice and had already drifted: only the polling path told the agent
+ * a run had been killed.
+ *
+ * A reaped run ends with no output and a signal exit — indistinguishable,
+ * without `error`, from a command that genuinely produced nothing. The agent
+ * holding the job is the one who has to tell the user, so it is told here.
+ */
+function runPayload(result: ExecResult): { [k: string]: JSONValue } {
+  const payload: { [k: string]: JSONValue } = {
+    status: result.running ? "running" : "completed",
+    output: result.output.toString("utf8"),
+    output_length: result.outputLength,
+  };
+  if (result.exitCode !== null) payload.exit_code = result.exitCode;
+  if (result.reaped) payload.error = REAPED_MESSAGE;
+  return payload;
+}
 
 export class DeviceAgent {
   readonly identity: DeviceIdentity;
@@ -511,12 +532,13 @@ export class DeviceAgent {
         this.audit.record("exec_end", {
           intentId: intent.intentId,
           exit_code: result.exitCode ?? -1,
+          ...(result.reaped ? { reaped: true } : {}),
         });
       } else {
         // A deferred run's end is recorded when it actually ends, keyed to the
         // intent — never from the polling path, which may run many times or
         // not at all.
-        this.executor.onExit(result.handle, (exitCode) => {
+        this.executor.onExit(result.handle, (exitCode, reaped) => {
           // Fires from the child's exit event, possibly mid-shutdown; a failed
           // append must not become an uncaught exception in the event loop.
           try {
@@ -524,6 +546,10 @@ export class DeviceAgent {
               intentId: intent.intentId,
               handle: result.handle,
               exit_code: exitCode,
+              // A run this Mac killed is not a command that failed, and the
+              // log is where that difference has to survive: the unpaired
+              // exec_start was the only tell this failure ever had.
+              ...(reaped ? { reaped: true } : {}),
             });
           } catch (error) {
             // Nowhere durable left to write it — the durable sink is what
@@ -532,14 +558,7 @@ export class DeviceAgent {
           }
         });
       }
-      const response: { [k: string]: JSONValue } = {
-        status: result.running ? "running" : "completed",
-        handle: result.handle,
-        output: result.output.toString("utf8"),
-        output_length: result.outputLength,
-      };
-      if (result.exitCode !== null) response.exit_code = result.exitCode;
-      return response;
+      return { ...runPayload(result), handle: result.handle };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.audit.record("exec_error", { intentId: intent.intentId, error: message });
@@ -596,13 +615,6 @@ export class DeviceAgent {
   }
 
   getOutput(handle: string, since = 0): JSONValue {
-    const result = this.executor.output(handle, since);
-    const response: { [k: string]: JSONValue } = {
-      status: result.running ? "running" : "completed",
-      output: result.output.toString("utf8"),
-      output_length: result.outputLength,
-    };
-    if (result.exitCode !== null) response.exit_code = result.exitCode;
-    return response;
+    return runPayload(this.executor.output(handle, since));
   }
 }

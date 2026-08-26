@@ -335,6 +335,11 @@ input.text, textarea.text {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 8px 10px; outline: none;
 }
+select.text {
+  width: 100%; font: inherit; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 10px; outline: none;
+}
 textarea.text { min-height: 70px; resize: vertical; }
 .field { margin-bottom: 10px; }
 .field label { display: block; color: var(--muted); margin-bottom: 4px; }
@@ -550,8 +555,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 
 /* ---- Connect an MCP client ------------------------------------------------
-   The Agents pane, which carries `.settings` alongside `.agents` because it
-   reuses the same group card — so every rule here stays scoped under it.
+   Agents and Rules carry `.settings` because they reuse the same group card —
+   so every rule here stays scoped under that shared furniture.
 
    `styles.css` had no spacing tokens (only --radius/--shadow/colours), so this
    pane defines a small 8px scale of its own rather than inventing global ones
@@ -604,6 +609,66 @@ textarea.text { min-height: 70px; resize: vertical; }
   color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
 }
 .settings .connect .linkbtn:hover { color: var(--fg); }
+
+/* ---------- Cloud agents ----------
+   Nested rows deliberately reuse `.item`; these rules make the outer group
+   the container and the inner cards the roster. */
+.cloud-toolbar { margin: 0 0 12px; }
+.cloud-agent-list { display: flex; flex-direction: column; gap: 10px; }
+.settings .cloud-agent-row {
+  margin: 0; padding: 12px 14px; box-shadow: none; background: var(--bg);
+}
+.cloud-agent-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.cloud-agent-heading { align-items: flex-start; }
+.cloud-agent-actions { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.item p.cloud-agent-meta { margin-top: 5px; color: var(--muted); }
+.cloud-progress {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; color: var(--muted); font-size: 12px;
+}
+.cloud-loading { margin: 4px 0 12px; }
+.cloud-spinner {
+  width: 13px; height: 13px; flex: none; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--blue-fg);
+  animation: cloud-spin 0.8s linear infinite;
+}
+.btn.primary .cloud-spinner {
+  border-color: rgba(255, 255, 255, 0.45); border-top-color: white;
+}
+@keyframes cloud-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .cloud-spinner { animation: none; }
+}
+.cloud-callout, .cloud-warning {
+  padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg);
+}
+.cloud-callout + .cloud-callout, .cloud-callout + .cloud-agent-list { margin-top: 10px; }
+.cloud-callout-title, .cloud-warning-title { font-weight: 600; }
+.cloud-callout p, .cloud-warning p { margin-top: 4px; }
+.cloud-callout .btn { margin-top: 10px; }
+.cloud-error { border-color: var(--red-bd); background: var(--red-bg); }
+.cloud-error .cloud-callout-title { color: var(--red-fg); }
+.cloud-empty { padding: 24px 16px 8px; }
+
+.cloud-modal .field { margin-bottom: 12px; }
+.cloud-modal .cloud-warning { margin-top: 4px; border-color: var(--amber-bd); background: var(--amber-bg); }
+.cloud-modal-actions { margin-top: 18px; }
+.cloud-route {
+  padding: 11px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg);
+}
+.cloud-route + .cloud-route { margin-top: 10px; }
+.cloud-route-title { font-weight: 600; }
+.cloud-route p { margin: 4px 0 0; }
+.cloud-route .btn { margin-top: 10px; }
+.cloud-route .cloud-route-number { color: var(--fg); }
+.cloud-local-settings { margin-top: 14px; }
+.cloud-setting { align-items: flex-start; margin-top: 0; }
+.cloud-setting input { margin-top: 2px; }
+.cloud-setting-title, .cloud-setting-copy { display: block; }
+.cloud-setting-title { font-weight: 600; color: var(--fg); margin-bottom: 2px; }
+.cloud-local-note { margin: 10px 0 0; }
 
 /* ---------- Static-credential modal ----------
    Plain DOM over the pane, which is `inert` while this is up. The panel reuses

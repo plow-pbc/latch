@@ -16,7 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
 import { adversarialReview } from "../src/adversarialAgent.js";
 import type { ReviewArgs, ReviewFailureCause, Verdict } from "../src/adversarialAgent.js";
-import { DENIAL_SOURCE_NO_REVIEWER } from "@domo/device-core";
+import { DENIAL_SOURCE_NO_REVIEWER, PolicyEngine } from "@domo/device-core";
+import type { PolicyDelegate } from "@domo/device-core";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Settings } from "../src/settings.js";
 import { auditActivities, decidedByLabel } from "../src/viewModel.js";
 import {
@@ -24,6 +28,7 @@ import {
   decideIntent,
   inferenceStatus,
   reviewerAvailable,
+  storedRuleMayGrant,
 } from "../src/reviewPolicy.js";
 import { REVIEWER_MODEL } from "../src/adversarialAgent.js";
 
@@ -208,6 +213,237 @@ describe("decideIntent — modes that never reach the reviewer", () => {
     expect(await h.run()).toEqual({ decision: "deny", source: "policy" });
     expect(h.review).not.toHaveBeenCalled();
     expect(h.openApproval).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The per-agent switch, which was a promise nothing kept: the settings panel
+ * offered "Adversarial review" for one cloud agent, and under global Approve
+ * every request from it was auto-allowed without a review ever running.
+ *
+ * It can only ever ADD a review. Deny still denies, and Ask still asks — a
+ * review the owner wanted is not a reason to stop putting the human in front
+ * of it.
+ */
+describe("decideIntent — per-agent adversarial review", () => {
+  /** Review switched on for the agent the harness's intent comes from. */
+  const forAgent = (over: Partial<Settings> = {}) =>
+    settings({
+      approvalMode: "approve",
+      relayCredential: PLOW_CREDENTIAL,
+      cloudAgentSettings: { "agent-1": { adversarialReview: true } },
+      ...over,
+    });
+
+  it("reviews under Approve instead of auto-allowing, and honours the verdict", async () => {
+    const h = harness(forAgent(), { verdict: "allow" });
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "adversarial" });
+    expect(h.review).toHaveBeenCalledTimes(1);
+    // Approve shows no dialog, so the reviewer is the only decider there is.
+    expect(h.openApproval).not.toHaveBeenCalled();
+    expect(h.reviewCalls[0].humanAvailable).toBe(false);
+  });
+
+  it("lets that review DENY what Approve would have allowed", async () => {
+    const h = harness(forAgent(), { verdict: "deny" });
+    expect(await h.run()).toEqual({ decision: "deny", source: "adversarial" });
+  });
+
+  it("denies rather than auto-allowing when the reviewer cannot run", async () => {
+    // The fail-closed half. Auto-approving here would hand the agent exactly
+    // the access the switch was turned on to gate.
+    const h = harness(forAgent({ relayCredential: "" }));
+    expect(await h.run()).toEqual({ decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("denies when the review reaches no verdict", async () => {
+    const h = harness(forAgent(), { verdict: "ask", cause: "unavailable" });
+    expect((await h.run()).decision).toBe("deny");
+  });
+
+  it("leaves another agent's requests on the auto-allow path", async () => {
+    // The switch is keyed on `agentId` — the isolation key — so it says nothing
+    // about anyone else's requests.
+    const h = harness(
+      forAgent({ cloudAgentSettings: { "agent-2": { adversarialReview: true } } }),
+    );
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("treats the switch turned OFF as no switch at all", async () => {
+    const h = harness(forAgent({ cloudAgentSettings: { "agent-1": { adversarialReview: false } } }));
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("does not override global Deny", async () => {
+    const h = harness(forAgent({ approvalMode: "deny" }));
+    expect(await h.run()).toEqual({ decision: "deny", source: "policy" });
+    expect(h.review).not.toHaveBeenCalled();
+  });
+
+  it("does not take the dialog away under global Ask", async () => {
+    const h = harness(forAgent({ approvalMode: "ask" }), { decision: "allow_once" });
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
+    expect(h.openApproval).toHaveBeenCalledTimes(1);
+    // Still a hint, not a decider: the human was always the one answering.
+    expect(h.reviewCalls[0].humanAvailable).toBe(true);
+  });
+
+  it("survives a settings file with no cloud-agent map at all", async () => {
+    const h = harness(settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }));
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
+  });
+});
+
+/**
+ * The bypass: a stored always-allow rule is replayed by `PolicyEngine.decide`
+ * BEFORE the delegate is consulted at all, so an agent with review switched on
+ * auto-ran anything the human had ever pressed "always allow" on. Same class as
+ * the bug the switch was written to fix — a control that reports success and
+ * does nothing — and not visible from `decideIntent` alone, because the engine
+ * never reaches it.
+ *
+ * Pinned against the REAL `PolicyEngine` with a real rule on disk. A fake
+ * engine here would only assert that the test agrees with itself.
+ */
+describe("a stored rule cannot stand in for a required review", () => {
+  let rulesDir: string;
+  let engine: PolicyEngine;
+
+  /** The delegate the app installs, minus Electron: it answers with the review
+   * policy and vetoes rule replay exactly where `ElectronPolicy` does. */
+  const delegate = (s: Settings, answer: () => Promise<Verdict>): PolicyDelegate & {
+    calls: number;
+  } => {
+    const d = {
+      calls: 0,
+      mayGrantFromStoredRule: (i: Intent) => storedRuleMayGrant(s, i.agentId),
+      async decideIntent(i: Intent) {
+        d.calls += 1;
+        return decideIntent(i, {
+          settings: s,
+          apiBaseUrl: "https://api.plow.co",
+          auditEntries: () => [],
+          record: () => {},
+          review: async () => ({ verdict: await answer(), reason: "because" }),
+          openApproval: async () => "deny" as const,
+        });
+      },
+    };
+    return d;
+  };
+
+  const reviewed = (over: Partial<Settings> = {}) =>
+    settings({
+      approvalMode: "approve",
+      relayCredential: PLOW_CREDENTIAL,
+      cloudAgentSettings: { "agent-1": { adversarialReview: true } },
+      ...over,
+    });
+
+  /** Store an always-allow rule for the harness intent by making one. */
+  const storeRule = async () => {
+    const first: PolicyDelegate = { decideIntent: async () => "always_allow" as const };
+    const grant = await engine.decide(intent(), first);
+    expect(grant.decision).toBe("always_allow");
+    expect(engine.allRules()).toHaveLength(1);
+  };
+
+  beforeEach(() => {
+    rulesDir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-rules-"));
+    engine = new PolicyEngine(path.join(rulesDir, "rules.json"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(rulesDir, { recursive: true, force: true });
+  });
+
+  it("replays the rule for an agent with no review switched on", async () => {
+    // The behaviour that must survive the fix: rules still work.
+    await storeRule();
+    const d = delegate(settings({ approvalMode: "approve" }), async () => "allow");
+    const grant = await engine.decide(intent(), d);
+
+    expect(grant.decision).toBe("always_allow");
+    expect(grant.source).toBe("rule");
+    expect(d.calls).toBe(0);
+  });
+
+  it("THE BYPASS: does not replay it for an agent whose review is required", async () => {
+    await storeRule();
+    const d = delegate(reviewed(), async () => "allow");
+    const grant = await engine.decide(intent(), d);
+
+    // The reviewer ran, and its verdict — not the cached click — is the answer.
+    expect(d.calls).toBe(1);
+    expect(grant.source).toBe("adversarial");
+  });
+
+  it("lets that review DENY what the stored rule would have allowed", async () => {
+    await storeRule();
+    const d = delegate(reviewed(), async () => "deny");
+    const grant = await engine.decide(intent(), d);
+
+    expect(grant.decision).toBe("deny");
+    expect(grant.source).toBe("adversarial");
+  });
+
+  it("leaves the rule itself on disk — it is not a revocation", async () => {
+    await storeRule();
+    await engine.decide(intent(), delegate(reviewed(), async () => "allow"));
+
+    // The switch changes who answers, not what the human once chose. Turn it
+    // off and the rule applies again.
+    expect(engine.allRules()).toHaveLength(1);
+    const after = await engine.decide(intent(), delegate(settings(), async () => "allow"));
+    expect(after.source).toBe("rule");
+  });
+
+  it("keeps global deny in front of the rule and the review alike", async () => {
+    await storeRule();
+    const d = delegate(reviewed({ approvalMode: "deny" }), async () => "allow");
+    const grant = await engine.decide(intent(), d);
+
+    expect(grant.decision).toBe("deny");
+    expect(grant.source).toBe("policy");
+  });
+
+  it("fails closed when the veto itself throws", async () => {
+    // A guard that errors must not read as permission, or the bypass returns
+    // the moment the guard is the thing that broke.
+    await storeRule();
+    const d = delegate(reviewed(), async () => "deny");
+    const grant = await engine.decide(intent(), {
+      ...d,
+      mayGrantFromStoredRule: () => {
+        throw new Error("settings unreadable");
+      },
+    });
+
+    expect(grant.source).not.toBe("rule");
+    expect(grant.decision).toBe("deny");
+  });
+
+  it("keeps the plain behaviour for a delegate with no veto at all", async () => {
+    await storeRule();
+    const grant = await engine.decide(intent(), {
+      decideIntent: async () => "deny" as const,
+    });
+
+    expect(grant.source).toBe("rule");
+  });
+});
+
+describe("storedRuleMayGrant", () => {
+  it("is the review switch, inverted, and keyed on the agent", () => {
+    const on = settings({ cloudAgentSettings: { "agent-1": { adversarialReview: true } } });
+    expect(storedRuleMayGrant(on, "agent-1")).toBe(false);
+    // Another agent's switch says nothing about this one.
+    expect(storedRuleMayGrant(on, "agent-2")).toBe(true);
+    expect(storedRuleMayGrant(settings(), "agent-1")).toBe(true);
   });
 });
 

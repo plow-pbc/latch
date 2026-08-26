@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld("domo", {
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),
+  // Sign out. Also the "Sign out and re-activate" button on the chat-list
+  // error: signing out IS re-activating, because main tears the window down
+  // and opens setup in its place. One channel, because it is one behaviour —
+  // a second name for it would be a second thing to keep in step.
   relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
   onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
@@ -87,6 +91,18 @@ contextBridge.exposeInMainWorld("domo", {
   connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
+
+  // Cloud agents (same tab, same state shape, same change channel). Exactly
+  // four calls, and none of them is a poll: provisioning is watched in the main
+  // process, and the renderer just re-reads when told the state changed.
+  // `cloudCreate` answers as soon as the row is on screen in `provisioning`.
+  cloudCreate: (chatUid: string, name: string) =>
+    ipcRenderer.invoke("cloud:create", chatUid, name),
+  cloudDelete: (agentId: string) => ipcRenderer.invoke("cloud:delete", agentId),
+  // Apply changes: one agent's local settings. Adversarial review is this app's
+  // own reviewer, so it applies at once and reaches no network at all.
+  cloudApply: (agentId: string, settings: { adversarialReview: boolean }) =>
+    ipcRenderer.invoke("cloud:apply", agentId, settings),
 
   // Any web page the app links to (client connector cards, Settings' Support
   // section). A KEY, not a URL: main owns the table of what may be opened.

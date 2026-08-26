@@ -139,7 +139,10 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
   explains why. WHETHER it runs is decided in precedence order by
   `packages/device-core/src/policyEngine.ts`, whose stored always-allow rule
-  short-circuits first, and then `apps/desktop/src/reviewPolicy.ts`. What *is*
+  short-circuits first *unless the delegate vetoes it* — a cached approval may
+  not stand in for a review the owner requires of that agent — and then
+  `apps/desktop/src/reviewPolicy.ts`, where a per-agent review requirement also
+  turns global Approve into a reviewed mode for that agent alone. What *is*
   signed is the **Grant**: the device's Ed25519 signature over canonical JSON
   (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
@@ -194,9 +197,10 @@ set:
 - `file-write*` stays scoped: the approved write paths + the scratch dir + a
   small set of tool "housekeeping" dirs under home (`~/Library/Caches`,
   `~/.cache`, `~/.config`, `~/.local/state`, `~/.npm`) so incidental cache/config
-  writes don't break tools. Writes to arbitrary or system locations are denied —
-  write confinement (plus network gating and per-command human approval) is the
-  enforced protection.
+  writes don't break tools — except a run that may be reaped for going silent,
+  which gets none of them (`SANDBOX-BOUNDARY.md` §1). Writes to arbitrary or
+  system locations are denied — write confinement (plus network gating and
+  per-command human approval) is the enforced protection.
 - `network*` allowed only if declared and approved
 - children inherit the profile (`process-exec` allowed)
 

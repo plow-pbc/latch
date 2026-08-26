@@ -23,6 +23,16 @@ function warnsOfConnectedAccountWrite(c: Capability): boolean {
   return action === null || SLACK_WRITE_ACTIONS.has(action);
 }
 
+/**
+ * Why a run this Mac killed was killed, in the owner's words. Every site that
+ * renders it supplies its own verb, so the phrase carries none: the badge and
+ * the timeline line for one run must agree without repeating each other.
+ *
+ * It names the cause because the owner is the only person who can answer the
+ * permission prompt that usually causes it.
+ */
+const REAPED_REASON = "no output — a permission prompt may be waiting";
+
 export interface ApprovalViewModel {
   intentId: string;
   agentDisplay: string;
@@ -388,6 +398,12 @@ function classifyActivity(
     }
     const ee = entry("exec_end");
     if (ee) {
+      // A run this Mac killed is not a command that failed, and the owner is
+      // the one person who can clear what usually wedges it — an unanswered
+      // permission prompt. "failed (exit -1)" would hide that from them.
+      if (jv(ee).get("reaped").bool === true) {
+        return { status: `${base} · killed (${REAPED_REASON})`, tone: "amber", category: "failed" };
+      }
       const code = jv(ee).get("exit_code").int ?? -1;
       if (code !== 0) {
         return { status: `${base} · failed (exit ${code})`, tone: "amber", category: "failed" };
@@ -453,6 +469,9 @@ function classifyActivity(
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");
   if (ee) {
+    if (jv(ee).get("reaped").bool === true) {
+      return { status: `Killed — ${REAPED_REASON}`, tone: "amber", category: "failed" };
+    }
     const code = jv(ee).get("exit_code").int ?? -1;
     return code === 0
       ? { status: "Finished", tone: "green", category: "approved" }
@@ -575,7 +594,12 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     case "exec_start": text = `Run started: ${argv()}`; break;
     case "exec_end":
-      text = `Run finished (exit ${ev.get("exit_code").int ?? -1})`;
+      // The badge on this same run says it was killed; the line the owner
+      // opens to find out why must not contradict it.
+      text =
+        ev.get("reaped").bool === true
+          ? `Run killed — ${REAPED_REASON}`
+          : `Run finished (exit ${ev.get("exit_code").int ?? -1})`;
       state = ev.get("exit_code").int === 0 ? "ok" : "bad";
       break;
     case "exec_error": text = `Run error: ${ev.get("error").str ?? ""}`; state = "bad"; break;

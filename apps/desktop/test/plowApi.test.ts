@@ -5,6 +5,7 @@ import {
   PlowApi,
   REQUEST_TIMEOUT_MS,
   PlowApiError,
+  parseActivationChat,
   relaySocketUrl,
   resolveApiBaseUrl,
 } from "../src/plowApi.js";
@@ -209,7 +210,13 @@ describe("PlowApi", () => {
     const activation = await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac");
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "This Mac" });
+    // `provision_chat` is what makes the account have a chat at all: without it
+    // the server hands back the managed phone, which is not a pool line, so the
+    // activation text creates no chat and there is no second way to make one.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      name: "This Mac",
+      provision_chat: true,
+    });
     // Unauthenticated by design — this is how an account that does not exist yet
     // gets created.
     expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
@@ -229,13 +236,141 @@ describe("PlowApi", () => {
     });
     expect(
       await api([{ status: 200, body: { status: "verified", token: "plow_sess" } }]).redeemActivation("s"),
-    ).toEqual({ status: "verified", token: "plow_sess" });
+    ).toEqual({ status: "verified", token: "plow_sess", chat: null });
     // A second redeem after hand-off: `token` is absent, not null. Normalised
     // to null here so callers have one shape to check.
     expect(await api([{ status: 200, body: { status: "verified" } }]).redeemActivation("s")).toEqual({
       status: "verified",
       token: null,
+      chat: null,
     });
+  });
+
+  it("does not blame the SMS provider when activation 503s with no line to assign", async () => {
+    // Asking for a chat makes this endpoint assign a pool line, so an exhausted
+    // pool 503s here — the same status the OTP calls use for "texts are down".
+    // The OTP sentence would send the user to wait on the wrong thing.
+    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
+    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
+      .createActivation("This Mac")
+      .catch((e) => e)) as PlowApiError;
+
+    expect(error.kind).toBe("provider_unavailable");
+    expect(error.message).toBe("Plow couldn't start setup right now. Try again in a minute.");
+    expect(error.message).not.toContain("text messages");
+  });
+
+  it("still prefers the server's own reason for that 503", async () => {
+    // The server knows which 503 this was; we are guessing.
+    const { fetchImpl } = recordingFetch([
+      { status: 503, body: { detail: "No phone lines are available." } },
+    ]);
+    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
+      .createActivation("This Mac")
+      .catch((e) => e)) as PlowApiError;
+
+    expect(error.message).toBe("No phone lines are available.");
+  });
+
+  it("leaves the OTP 503 saying what it has always said", async () => {
+    // The override is one call's, not a change to what 503 means everywhere.
+    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
+    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
+      .requestOtp("+15551110000")
+      .catch((e) => e)) as PlowApiError;
+
+    expect(error.message).toBe("Plow can't send text messages right now.");
+  });
+
+  it("keeps the chat the verified redeem carries — it is answered exactly once", async () => {
+    const { fetchImpl } = recordingFetch([
+      {
+        status: 200,
+        body: {
+          status: "verified",
+          token: "plow_sess",
+          // The REAL ChatResource. Two traps in it: the chat's own
+          // `provider_key` is the provider's THREAD ID, not a number, and the
+          // phone number lives on the agent participant's `line`.
+          chat: {
+            uid: "cht_D7hfWNK",
+            object: "chat",
+            status: "active",
+            provider_key: "chat_5",
+            failure_reason: null,
+            created_at: "2026-08-24T18:02:11Z",
+            participants: [
+              {
+                type: "agent",
+                uid: "cpt_agent",
+                object: "chat_participant",
+                line: { uid: "lin_7", provider_type: "linq", provider_key: "+15559876543" },
+              },
+              {
+                type: "member",
+                uid: "cpt_ada",
+                object: "chat_participant",
+                status: "active",
+                display_name: "Ada Lovelace",
+                provider_type: "linq",
+                provider_key: "+15551230000",
+                verified_at: "2026-08-24T18:02:11Z",
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    const result = await new PlowApi("https://api.plow.co", fetchImpl).redeemActivation("s");
+
+    expect(result).toEqual({
+      status: "verified",
+      token: "plow_sess",
+      chat: {
+        uid: "cht_D7hfWNK",
+        status: "active",
+        // The number, off the agent's line — NOT "chat_5".
+        line: "+15559876543",
+        createdAt: "2026-08-24T18:02:11Z",
+        // Members only: the agent participant is not a human in the chat.
+        participants: [{ displayName: "Ada Lovelace", providerKey: "+15551230000" }],
+      },
+    });
+    // The thread id is not carried at all, so no screen can show it as a
+    // number by mistake.
+    expect(JSON.stringify(result)).not.toContain("chat_5");
+  });
+
+  it("reads a chat that arrives with fields missing rather than losing the sign-in", () => {
+    // This is display data on the last screen of setup; a shape we did not
+    // expect must never throw away a login that has already succeeded.
+    expect(parseActivationChat({ uid: "cht_x" })).toEqual({
+      uid: "cht_x",
+      status: "",
+      line: null,
+      participants: [],
+      createdAt: "",
+    });
+    // An untyped or unknown participant is neither the agent nor a member: no
+    // line comes off it, and it is not shown as a person.
+    expect(
+      parseActivationChat({ uid: "cht_x", participants: [null, 7, {}, { type: "ghost" }] }),
+    ).toEqual({ uid: "cht_x", status: "", line: null, participants: [], createdAt: "" });
+    // An agent participant with no line at all is still not the thread id.
+    expect(
+      parseActivationChat({ uid: "cht_x", provider_key: "chat_5", participants: [{ type: "agent" }] })
+        ?.line,
+    ).toBeNull();
+    expect(
+      parseActivationChat({
+        uid: "cht_x",
+        participants: [{ type: "member", provider_key: "+15551230000" }],
+      })?.participants,
+    ).toEqual([{ displayName: "", providerKey: "+15551230000" }]);
+    // No uid is no chat: there would be nothing to join on later.
+    expect(parseActivationChat({ status: "active" })).toBeNull();
+    expect(parseActivationChat(undefined)).toBeNull();
+    expect(parseActivationChat("cht_x")).toBeNull();
   });
 
   it("gives an expired activation its own kind, so the app can offer a fresh code", async () => {

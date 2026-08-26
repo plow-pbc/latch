@@ -86,10 +86,14 @@ export const SandboxProfile = {
     const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
       (p) => home + "/" + p,
     );
-    const writable = [args.scratch, ...args.writePaths, ...housekeeping].map((p) =>
-      canonicalize(p),
+    // A run that may be killed for going silent gets nothing persistent to
+    // write, because it can be shot mid-write and nobody rolls that back. The
+    // reads it loses with them are covered by the broad home grant above,
+    // wherever those five resolve under home.
+    const writable = [args.scratch, ...args.writePaths].concat(
+      isReapable(args) ? [] : housekeeping,
     );
-    for (const p of writable) {
+    for (const p of writable.map((p) => canonicalize(p))) {
       lines.push(`(allow file-write* (subpath ${quote(p)}))`);
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
     }
@@ -108,32 +112,117 @@ export const SandboxProfile = {
 
 export class ExecutorError extends Error {}
 
+/**
+ * Whether a run may be killed for going silent — and, because it is the same
+ * question, whether it may be given anywhere persistent to write.
+ *
+ * Both callers derive it from the run's own capabilities rather than being
+ * told: a profile that could be built "reapable" for a run the timer will
+ * never touch, or the reverse, is a contradiction neither could detect.
+ */
+function isReapable(args: { writePaths: string[]; network: boolean }): boolean {
+  return args.writePaths.length === 0 && !args.network;
+}
+
+/**
+ * How long a run that has produced NOTHING may stay alive before it is killed.
+ *
+ * macOS blocks — it does not refuse — an unconsented open of another app's
+ * data: the child parks in `__guarded_open_np` waiting on a consent decision,
+ * and on a Mac whose owner is not sitting in front of it nobody ever answers.
+ * Nothing here used to end such a run, so the job answered `running` for the
+ * life of the app while an agent polled it, and the process leaked with it.
+ *
+ * The bound has three halves and needs all of them. A ceiling alone would kill
+ * honest long work: output handles never expire, so a build still running
+ * after an hour is retrievable and must survive. `has produced no output`
+ * separates those — a child that has written nothing at all by now is not
+ * about to start. And the run must have been approved for neither writes nor
+ * network, because those are the runs that can be silently mid-work here, and
+ * a truncated copy or a half-applied remote call is worse than the wait.
+ *
+ * Nothing here reads CPU or idle time: this Mac legitimately runs
+ * near-zero-CPU silent commands (an `ssh` waiting on a remote host), so
+ * idleness is not evidence of anything.
+ *
+ * Fifteen minutes is a chosen literal, not a number computed from another:
+ * long enough that a slow-but-real command is never the one being killed,
+ * short enough that a wedged one is reported rather than waited on forever.
+ */
+const REAP_AFTER_MS = 15 * 60_000;
+
+/**
+ * How long output already in flight has to arrive once the command has exited.
+ *
+ * Normally `close` follows `exit` immediately and this never fires. It exists
+ * for the run whose backgrounded job inherited the stdout pipe and is still
+ * holding it: the command is over, so the job settles on this instead of
+ * waiting on a pipe nobody is going to close. Settling closes the pipes, so a
+ * background job still writing to them is broken by that — which is why
+ * `plow_run_command` tells an agent to redirect anything meant to outlive its
+ * command.
+ */
+const STDIO_DRAIN_MS = 250;
+
+/**
+ * What the agent is told about a run this Mac killed. It leads with the fact,
+ * and names the cause that produces this shape — a permission prompt nobody
+ * answered — as the likely one rather than the certain one, because from here
+ * a blocked open and a genuinely mute command look identical.
+ */
+export const REAPED_MESSAGE =
+  "killed by this Mac: the command produced no output and never exited. " +
+  "The usual cause is a macOS permission prompt waiting for the Mac's owner to " +
+  "answer it — reading another app's data needs a grant this app may not have " +
+  "yet. Tell the user; re-running will block the same way until they grant it.";
+
 export interface ExecResult {
   handle: string;
   running: boolean;
   exitCode: number | null;
   output: Buffer;
   outputLength: number;
+  /** True when this Mac killed the run rather than the command ending. */
+  reaped: boolean;
 }
 
 class OutputBuffer {
   private chunks: Buffer[] = [];
   private length = 0;
   exitCode: number | null = null;
-  private waiters: (() => void)[] = [];
+  reaped = false;
+  private waiters: ((exitCode: number) => void)[] = [];
 
   append(chunk: Buffer): void {
     this.chunks.push(chunk);
     this.length += chunk.length;
   }
 
-  finish(exitCode: number): void {
-    this.exitCode = exitCode;
-    for (const w of this.waiters) w();
-    this.waiters = [];
+  /** Whether the command has written anything at all — the reaper's guard. */
+  get produced(): boolean {
+    return this.length > 0;
   }
 
-  snapshot(since: number): { output: Buffer; total: number; running: boolean; exitCode: number | null } {
+  finish(exitCode: number): void {
+    // Once only. The reaper settles a run without waiting for `close`, so a
+    // straggler's later `close` must not rewrite an outcome already reported
+    // to the agent and written to the audit log.
+    if (this.exitCode !== null) return;
+    this.exitCode = exitCode;
+    // The outcome is handed to each waiter rather than read back off the
+    // buffer, so no branch of this seam is in a position to invent one.
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const w of waiters) w(exitCode);
+  }
+
+  snapshot(since: number): {
+    output: Buffer;
+    total: number;
+    running: boolean;
+    exitCode: number | null;
+    reaped: boolean;
+  } {
     const all = Buffer.concat(this.chunks);
     const start = Math.min(Math.max(since, 0), all.length);
     return {
@@ -141,6 +230,7 @@ class OutputBuffer {
       total: all.length,
       running: this.exitCode === null,
       exitCode: this.exitCode,
+      reaped: this.reaped,
     };
   }
 
@@ -157,13 +247,24 @@ class OutputBuffer {
     });
   }
 
-  onExit(cb: (exitCode: number) => void): void {
+  onExit(cb: (exitCode: number, reaped: boolean) => void): void {
     if (this.exitCode !== null) {
-      cb(this.exitCode);
+      cb(this.exitCode, this.reaped);
       return;
     }
-    this.waiters.push(() => cb(this.exitCode ?? -1));
+    this.waiters.push((code) => cb(code, this.reaped));
   }
+}
+
+/** The one place a buffer snapshot becomes the result callers see. */
+function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "handle"> {
+  return {
+    running: snap.running,
+    exitCode: snap.exitCode,
+    output: snap.output,
+    outputLength: snap.total,
+    reaped: snap.reaped,
+  };
 }
 
 /**
@@ -173,7 +274,11 @@ class OutputBuffer {
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
 
-  constructor(public readonly scratchRoot: string) {
+  constructor(
+    public readonly scratchRoot: string,
+    /** Overridden only by tests, which cannot wait out the real window. */
+    private readonly reapAfterMs: number = REAP_AFTER_MS,
+  ) {
     fs.mkdirSync(scratchRoot, { recursive: true });
   }
 
@@ -222,27 +327,168 @@ export class Executor {
         LANG: "en_US.UTF-8",
       },
       stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, purely so the reaper below can take the whole
+      // run. `sandbox-exec` execs into the approved argv, and that argv is
+      // routinely a shell: `/bin/sh -c 'a && b'` does NOT exec, so signalling
+      // one pid kills the shell and leaves the wedged descendant holding the
+      // stdout pipe — which is the bug, not the fix.
+      //
+      // This is `setsid`, so a run also leaves the app's session and stops
+      // receiving its terminal signals — a Ctrl-C on `just app` no longer
+      // reaches one. Accepted knowingly: nothing here has ever killed live
+      // children at quit (the packaged app has no terminal to signal it), so
+      // the sweep that would is its own change, not a side effect of this one.
+      detached: true,
     });
-    child.stdout.on("data", (chunk: Buffer) => buffer.append(chunk));
-    child.stderr.on("data", (chunk: Buffer) => buffer.append(chunk));
-    child.on("error", () => buffer.finish(-1));
-    child.on("close", (code, signal) => {
-      buffer.finish(code ?? (signal ? -1 : 0));
+    // A run ends when its COMMAND ends. `close` says something else — every
+    // stdio pipe closed too — and a job the command backgrounded inherits
+    // those pipes and can hold them open forever. Settling on `exit` is what
+    // keeps "the command finished" from meaning "and nothing it started is
+    // still around", which is not this Mac's promise to keep and was three
+    // rounds of holes in one predicate when the reaper tried to keep it.
+    let reaper: ReturnType<typeof setTimeout> | undefined;
+    // Settling CLOSES the capture, on every path into it. A run that has been
+    // answered must stop growing, and the read ends of its pipes must not stay
+    // attached for the life of the app because something the command left
+    // behind is still holding the write ends. That the capture closes is why
+    // nothing downstream needs a guard against late output.
+    const settle = (code: number) => {
+      clearTimeout(reaper);
+      // Answered first, closed second, both in one synchronous breath: nothing
+      // can append between the two statements, and everything downstream that
+      // asks "is this run still open?" — `abandon`'s kill above all — gets the
+      // right answer for anything the destroys themselves emit. `finally`
+      // because `finish` runs the `onExit` waiters: closing the capture is not
+      // theirs to skip by throwing.
+      try {
+        buffer.finish(code);
+      } finally {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
+    };
+    child.on("error", () => settle(-1));
+    child.on("exit", (code, signal) => {
+      const outcome = code ?? (signal ? -1 : 0);
+      // Output already written may still be in flight, so the usual `close`
+      // remains the settling event — with a deadline, because a straggler
+      // holding a pipe must not hold the agent with it. Output not delivered
+      // by then is dropped: this deadline is the end of the run.
+      const drain = setTimeout(() => settle(outcome), STDIO_DRAIN_MS);
+      drain.unref?.();
+      child.on("close", () => {
+        clearTimeout(drain);
+        settle(outcome);
+      });
     });
 
-    await buffer.waitForExit(Math.max(args.waitMs, 0));
-    const snap = buffer.snapshot(0);
-    return {
-      handle,
-      running: snap.running,
-      exitCode: snap.exitCode,
-      output: snap.output,
-      outputLength: snap.total,
+    // Ending a run early ends its PROCESS too. Both paths that do it — the
+    // reaper, and a capture that broke — answer the caller and disarm the
+    // reaper as they go, so a run left alive on either would be alive,
+    // unkillable and untracked: exactly what this whole change is against.
+    //
+    // The kill applies only while the run is still open, which makes this as
+    // idempotent as the `settle` it ends with. After a run is answered its
+    // group is not ours to signal: the pid may have been reaped and its pgid
+    // reused, and a job that redirected both streams is one this Mac has
+    // promised will outlive the run that started it.
+    //
+    // That guard shares the stream-error handler's untested status — the only
+    // caller that reaches here after a run is answered — so the survivor test
+    // in `executorReap.test.ts` pins the promise, not this line.
+    const abandon = (code: number) => {
+      if (buffer.exitCode === null && child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // Already gone, or a group that no longer exists. Settling is what
+          // the caller is owed either way.
+        }
+      }
+      settle(code);
     };
+
+    // What is left for the reaper is the one case `exit` cannot answer: a
+    // command that never ends at all — and only where killing it can cost
+    // nothing. A run that was approved to write or to reach the network can
+    // be silently mid-work at the deadline: killing a large copy truncates
+    // its destination, and killing a series of remote calls leaves them half
+    // applied, neither of which anyone rolls back.
+    //
+    // What makes the other runs safe to kill is NOT that they declared no
+    // writes — that alone was never enough, since every profile used to hand
+    // out the housekeeping grant. It is that `isReapable` decided the profile
+    // too: a run this timer can fire on was given nowhere persistent to write,
+    // and the scratch it does have is deleted below. The two must stay one
+    // decision. It is also the shape the observed failure had — a
+    // `sqlite3 -readonly` blocked on a consent prompt.
+    //
+    // Say plainly what that costs, because there is no cancel affordance to
+    // soften it: a wedged run with side-effect capability stays alive and
+    // untracked, its `exec_start` unpaired, until someone kills the process
+    // from a terminal. Issue #178 is the owner-facing way to end a run.
+    //
+    // SIGKILL rather than a polite SIGTERM —
+    // it is wedged in a kernel call with nothing to clean up, and a handler
+    // that never gets scheduled would only leave the same process on the
+    // table. The group, not the pid, because `sandbox-exec` execs into the
+    // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
+    // does NOT exec, so one signal kills the shell and leaves the wedged
+    // descendant alive.
+    if (isReapable(args)) {
+      reaper = setTimeout(() => {
+        if (buffer.exitCode !== null || buffer.produced) return;
+        buffer.reaped = true;
+        // `abandon` can only throw through an `onExit` waiter and the sole
+        // registrant catches its own, so the `finally` is here to make the
+        // deletion unskippable rather than because a throw is expected.
+        try {
+          abandon(-1);
+        } finally {
+          // The run is dead and its output is already in memory. Its scratch is
+          // the one place it could have left half of something — `TMPDIR` points
+          // there and it is the only writable path a reapable run has — so the
+          // half goes with it.
+          //
+          // Async, and with retries. Scratch holds whatever the run was
+          // writing, which is unbounded (the WhatsApp fallback copies an entire
+          // archive through here), and a synchronous walk over that would stall
+          // every other run's budget timer, the relay socket and the approval
+          // window — the same reason file operations in this codebase are async
+          // and size-capped. `maxRetries` is for the descendant still writing
+          // as we walk: `kill` returns before the group is gone, and `force`
+          // covers ENOENT, not the ENOTEMPTY of a file created mid-walk. The
+          // empty callback is the last resort — a scratch that outlives its run
+          // is issue #153's standing state, and nothing here waits on it.
+          fs.rm(scratch, { recursive: true, force: true, maxRetries: 3 }, () => {});
+        }
+      }, this.reapAfterMs);
+      reaper.unref?.();
+    }
+
+    // Optional throughout: a spawn that never got as far as its stdio — the
+    // fd exhaustion this reaper exists to make rarer — leaves these null and
+    // emits `error` on the next tick, where a throw is nobody's to catch.
+    for (const stream of [child.stdout, child.stderr]) {
+      stream?.on("data", (chunk: Buffer) => buffer.append(chunk));
+      // A pipe error ENDS the run rather than being swallowed: the stream is
+      // auto-destroyed either way, so capture has stopped, and reporting the
+      // command's own `exit 0` over a silently truncated answer is the worse
+      // of the two. It goes through `abandon` because answering the caller
+      // disarms the reaper, and a wedged command that outlived its own
+      // capture is precisely what must not survive that.
+      //
+      // Deliberately untested: reaching it needs a seam for injecting a
+      // stream error, and this is not worth an injectable spawn.
+      stream?.on("error", () => abandon(-1));
+    }
+
+    await buffer.waitForExit(Math.max(args.waitMs, 0));
+    return { handle, ...shape(buffer.snapshot(0)) };
   }
 
   /** Invoke cb when the run exits — immediately if it already has. */
-  onExit(handle: string, cb: (exitCode: number) => void): void {
+  onExit(handle: string, cb: (exitCode: number, reaped: boolean) => void): void {
     const buffer = this.buffers.get(handle);
     if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
     buffer.onExit(cb);
@@ -251,13 +497,6 @@ export class Executor {
   output(handle: string, since: number): ExecResult {
     const buffer = this.buffers.get(handle);
     if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
-    const snap = buffer.snapshot(since);
-    return {
-      handle,
-      running: snap.running,
-      exitCode: snap.exitCode,
-      output: snap.output,
-      outputLength: snap.total,
-    };
+    return { handle, ...shape(buffer.snapshot(since)) };
   }
 }

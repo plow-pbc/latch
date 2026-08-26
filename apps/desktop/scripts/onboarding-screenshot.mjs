@@ -37,6 +37,7 @@ const base = {
   busy: false,
   codeExpiresAt: null,
   activation: null,
+  chat: null,
   activationStale: false,
   accountUid: "u_7Qk2p9",
   mcpUrl: MCP_URL,
@@ -58,6 +59,9 @@ const SCREENS = [
       // a 200, no SMS, and total silence on both channels.
       `Plow Activate: ${DISPLAY_CODE}`,
       SEND_TO,
+      // The line is assigned per activation; the wrong Plow number activates
+      // and silently provisions no chat.
+      "This number is picked for this setup",
       // Whoever texts the code gets the account, and the server cannot tell.
       "This code is a credential",
       "don't share it or post a screenshot",
@@ -122,8 +126,21 @@ const SCREENS = [
     // main window exists for the first time. Connecting an MCP client is NOT
     // here — it is per-client and repeatable, so it lives in the main window.
     name: "connected",
-    state: { ...base, step: "connected" },
-    expect: ["This Mac is connected", "u_7Qk2p9", "under Agents", "Continue"],
+    state: {
+      ...base,
+      step: "connected",
+      chat: { uid: "cht_D7hfWNK", label: "+1 555 987 6543 · Ada Lovelace" },
+    },
+    expect: [
+      "This Mac is connected",
+      "u_7Qk2p9",
+      "under Agents",
+      // The chat activation created. A cloud agent has nowhere to live without
+      // it, so setup ends by showing it exists.
+      "Your chat",
+      "+1 555 987 6543 · Ada Lovelace",
+      "Continue",
+    ],
     expectFocus: "Continue",
   },
 ];

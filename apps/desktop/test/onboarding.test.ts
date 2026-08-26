@@ -6,10 +6,11 @@ import {
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
+  activationChatLabel,
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
-import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
+import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
@@ -18,6 +19,20 @@ const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
+
+/** The chat a `provision_chat` activation creates, as `parseActivationChat`
+ * hands it over: the assigned pool line, and the person who texted it. */
+const CHAT: ActivationChat = {
+  uid: "cht_D7hfWNK",
+  status: "active",
+  line: "+15559876543",
+  createdAt: "2026-08-24T18:02:11Z",
+  participants: [{ displayName: "Ada Lovelace", providerKey: "+15551230000" }],
+};
+
+type FakeRedeem =
+  | { status: "pending" }
+  | { status: "verified"; token: string | null; chat?: ActivationChat | null };
 
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
@@ -29,8 +44,10 @@ class FakePlow {
 
   /** Activations minted, newest last — one per `POST /v1/auth/activate`. */
   activations: string[] = [];
-  /** Redeem answers, consumed in order; the last one repeats forever. */
-  redeems: Array<ActivationRedeem | PlowApiError> = [{ status: "pending" }];
+  /** Redeem answers, consumed in order; the last one repeats forever. `chat`
+   * is optional here and defaults to none, so a test only names it when the
+   * chat is what it is about. */
+  redeems: Array<FakeRedeem | PlowApiError> = [{ status: "pending" }];
   redeemCalls: string[] = [];
 
   api(): PlowApi {
@@ -65,7 +82,8 @@ class FakePlow {
     this.redeemCalls.push(secret);
     const next = this.redeems.length > 1 ? this.redeems.shift()! : this.redeems[0];
     if (next instanceof PlowApiError) throw next;
-    return next;
+    if (next.status === "pending") return next;
+    return { status: "verified", token: next.token, chat: next.chat ?? null };
   }
 
   async requestOtp(phone: string): Promise<void> {
@@ -181,6 +199,156 @@ describe("activation — the path a brand-new user takes", () => {
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
+  });
+
+  it("keeps the chat the redeem carried, and shows the number the server assigned", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+
+    const shown = await onboarding.begin();
+    // The screen shows the line THIS activation was assigned. The chat is only
+    // provisioned if the code lands on that line, so a number chosen here would
+    // sign the user in and silently create nothing.
+    expect(shown.activation?.sendTo).toBe("+15550001111");
+    await settle();
+
+    // Read once and kept: the redeem hands the chat back exactly once, so a
+    // later window has no way to ask for it again.
+    const settings = loadSettings(home);
+    expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
+    expect(settings.provisionedChatLabel).toBe("+15559876543 · Ada Lovelace");
+    expect(onboarding.state().chat).toEqual({
+      uid: "cht_D7hfWNK",
+      label: "+15559876543 · Ada Lovelace",
+    });
+    // A fresh window on the same home still knows about it.
+    expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
+  });
+
+  it("leaves a stored chat alone when a redeem carries none", async () => {
+    // "This redeem carried no chat" is not "the account has no chat": the
+    // phone-code path never carries one, and neither does a redeem from a Plow
+    // that predates chats. Blanking on that answer would erase a chat the
+    // account really has, and nothing can re-read the redeem to get it back.
+    const seeded = loadSettings(home);
+    seeded.provisionedChatUid = "cht_ALREADY";
+    seeded.provisionedChatLabel = "+15559876543 · Ada Lovelace";
+    saveSettings(home, seeded);
+
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(loadSettings(home).provisionedChatUid).toBe("cht_ALREADY");
+    expect(onboarding.state().chat?.uid).toBe("cht_ALREADY");
+  });
+
+  it("keeps the number the server told the user to text, verbatim", async () => {
+    // A pool line is assigned per activation and no call answers "which line is
+    // mine", so the completed activation is the only place it ever appears. The
+    // cloud-agents screen tells a chatless account to text it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+    const shown = await onboarding.begin();
+    await settle();
+
+    expect(loadSettings(home).activationSendTo).toBe(shown.activation?.sendTo);
+    expect(loadSettings(home).activationSendTo).toBe("+15550001111");
+  });
+
+  it("stores no number at all when the sign-in never had an activation", async () => {
+    // The phone-code path is texted no number, so there is none to remember —
+    // and an empty field must stay empty rather than be filled with a guess.
+    const onboarding = build();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(loadSettings(home).activationSendTo).toBe("");
+  });
+
+  it("leaves a stored number alone when a sign-in has no activation to name one", async () => {
+    // "This sign-in had no activation" is not "there is no line": the number
+    // came from the activation that made this account's chat, and the redeem
+    // that carried it cannot be asked twice. Blanking it here would leave the
+    // cloud-agents screen with nothing to tell the user to text.
+    const seeded = loadSettings(home);
+    seeded.activationSendTo = "+15559876543";
+    saveSettings(home, seeded);
+
+    const onboarding = build();
+    await onboarding.requestCode("+15551110000");
+    await onboarding.submitCode("12345678");
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(loadSettings(home).activationSendTo).toBe("+15559876543");
+  });
+
+  it("has no chat to show on a Mac whose activation never made one", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(onboarding.state().chat).toBeNull();
+  });
+
+  it("labels a chat off the wire with the phone number, never the thread id", () => {
+    // The bug this pins: the chat's own `provider_key` is the provider's THREAD
+    // ID ("chat_5"), and the number lives on the agent participant's line.
+    // Reading the wrong one put an opaque id where the user looks for something
+    // to text. Parsed from the real shape rather than a hand-made
+    // `ActivationChat`, because the two halves are only wrong together.
+    const chat = parseActivationChat({
+      uid: "cht_D7hfWNK",
+      object: "chat",
+      status: "active",
+      provider_key: "chat_5",
+      created_at: "2026-08-24T18:02:11Z",
+      participants: [
+        {
+          type: "agent",
+          uid: "cpt_agent",
+          line: { uid: "lin_7", provider_type: "linq", provider_key: "+15559876543" },
+        },
+        {
+          type: "member",
+          uid: "cpt_ada",
+          status: "active",
+          display_name: "Ada Lovelace",
+          provider_key: "+15551230000",
+        },
+      ],
+    })!;
+
+    const label = activationChatLabel(chat);
+    expect(label).toBe("+15559876543 · Ada Lovelace");
+    expect(label).not.toContain("chat_5");
+  });
+
+  it("names a chat by its line and its members — a chat has no title", () => {
+    expect(activationChatLabel(CHAT)).toBe("+15559876543 · Ada Lovelace");
+    // A member whose address IS the line is not said twice.
+    expect(
+      activationChatLabel({
+        ...CHAT,
+        participants: [...CHAT.participants, { displayName: "", providerKey: "+15559876543" }],
+      }),
+    ).toBe("+15559876543 · Ada Lovelace");
+    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+15559876543");
+    // A member with no name is still identified by the number we do have.
+    expect(
+      activationChatLabel({
+        ...CHAT,
+        line: null,
+        participants: [{ displayName: "  ", providerKey: "+15551230000" }],
+      }),
+    ).toBe("+15551230000");
+    // Nothing to say but the uid beats an empty line on the last setup screen.
+    expect(activationChatLabel({ ...CHAT, line: null, participants: [] })).toBe("cht_D7hfWNK");
   });
 
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
@@ -706,6 +874,25 @@ describe("signing out", () => {
     plow.redeems = [{ status: "pending" }];
     return onboarding;
   }
+
+  it("forgets the chat too — the next sign-in may be a different account", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    expect(loadSettings(home).provisionedChatUid).toBe("cht_D7hfWNK");
+
+    signOutOfPlow(home);
+
+    // Leaving it would name a chat this Mac can no longer reach on the setup
+    // screen of whatever account signs in next.
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).provisionedChatLabel).toBe("");
+    // The line goes with it: it belongs to the activation of the account just
+    // left, and the next account gets its own.
+    expect(loadSettings(home).activationSendTo).toBe("");
+    expect(onboarding.reset().chat).toBeNull();
+  });
 
   it("the reported path: signing out leaves a window that is NOT connected", async () => {
     // The instance outlives the sign-out, and the constructor is the only other

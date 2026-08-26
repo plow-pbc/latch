@@ -116,9 +116,51 @@ export interface Activation {
   displayCode: string;
   /** A SECRET: it is the poll credential. Never rendered, never logged. */
   activationSecret: string;
-  /** Per-environment config — the managed phone, or the assigned chat line.
-   * Render what the API returned; a hardcoded number is wrong somewhere. */
+  /**
+   * The pool line this activation was assigned. **Render this and nothing
+   * else.** The chat is provisioned only if the code arrives *on the assigned
+   * line*, so texting the right code to a number the app picked activates the
+   * account and silently provisions no chat — a failure with no symptom until
+   * the cloud-agent screen has nothing to point at.
+   */
   sendTo: string;
+}
+
+/**
+ * One HUMAN member of the provisioned chat.
+ *
+ * `participants[]` on the wire is discriminated — the agent participant is a
+ * different shape and carries no `display_name` — so this covers `type:
+ * "member"` only.
+ */
+export interface ActivationChatParticipant {
+  displayName: string;
+  /** The member's own address — a phone number, when the server has one. */
+  providerKey: string | null;
+}
+
+/**
+ * The chat the activation created.
+ *
+ * A chat has no title and no last-activity field, so what identifies it to a
+ * human is the number it runs on plus its members' names. Nothing here is a
+ * secret: it is the same data `GET /v1/chats` hands back, and the renderer may
+ * see it.
+ *
+ * **The chat's top-level `provider_key` is deliberately not read.** It is the
+ * provider's own thread id — "chat_5" and the like — not a phone number, and a
+ * field that is never parsed is a field no screen can accidentally show as one.
+ * The number lives on the agent participant's `line`.
+ */
+export interface ActivationChat {
+  uid: string;
+  /** `pending` until the member verifies; `active` after. */
+  status: string;
+  /** The number the chat runs on: the pool line the user texted. */
+  line: string | null;
+  /** Members only — the humans in the chat. */
+  participants: ActivationChatParticipant[];
+  createdAt: string;
 }
 
 /**
@@ -131,27 +173,84 @@ export interface Activation {
  */
 export type ActivationRedeem =
   | { status: "pending" }
-  | { status: "verified"; token: string | null };
+  | { status: "verified"; token: string | null; chat: ActivationChat | null };
+
+/**
+ * Read the chat out of a verified redeem, tolerating a server that sends less
+ * than we expect.
+ *
+ * Defensive on purpose: this is display data on the last screen of setup, and a
+ * field arriving in an unexpected shape must not throw away a sign-in that has
+ * already succeeded. Anything unreadable becomes `null` — "no chat to show" —
+ * never an error.
+ */
+export function parseActivationChat(raw: unknown): ActivationChat | null {
+  if (!raw || typeof raw !== "object") return null;
+  const chat = raw as Record<string, unknown>;
+  const uid = typeof chat.uid === "string" ? chat.uid : "";
+  if (!uid) return null;
+  const all = Array.isArray(chat.participants)
+    ? chat.participants.filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
+    : [];
+  // The number the chat runs on is the AGENT participant's line, not the
+  // chat's own `provider_key` — that one is the provider's thread id.
+  const agent = all.find((p) => p.type === "agent");
+  const line = (agent?.line ?? null) as Record<string, unknown> | null;
+  const participants = all
+    .filter((p) => p.type === "member")
+    .map((p) => ({
+      displayName: typeof p.display_name === "string" ? p.display_name : "",
+      providerKey: typeof p.provider_key === "string" ? p.provider_key : null,
+    }));
+  return {
+    uid,
+    status: typeof chat.status === "string" ? chat.status : "",
+    line: line && typeof line.provider_key === "string" ? line.provider_key : null,
+    participants,
+    createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
+  };
+}
 
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export class PlowApi {
+  readonly baseUrl: ApiBaseUrl;
+
   constructor(
-    readonly baseUrl: ApiBaseUrl,
+    baseUrl: ApiBaseUrl,
     private readonly fetchImpl: FetchLike = fetch,
-  ) {}
+  ) {
+    this.baseUrl = normalizeApiBaseUrl(baseUrl);
+  }
 
   /**
    * Start an activation: the server mints a code, the user texts it, and the
    * account is created from that text. Outbound, so it works for a phone number
    * that has never touched Plow and cannot be used to probe who has an account.
+   *
+   * `provision_chat` is what makes the account have a chat at all. Without it
+   * the server falls back to the managed phone, which is not a pool line, so
+   * the text activates and creates nothing — and a 1:1 sent to a pool line with
+   * no chat behind it is dropped, so there is no second way in later. With it,
+   * a pool line is assigned, comes back as `send_to`, and the webhook
+   * provisions the chat when the code lands there.
    */
   async createActivation(name: string): Promise<Activation> {
     const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
       "POST",
       "/v1/auth/activate",
-      { body: { name } },
+      {
+        body: { name, provision_chat: true },
+        // 503 means something else here than it does on the OTP calls. Asking
+        // for a chat makes this endpoint assign a pool line, and an exhausted
+        // pool answers 503 — nothing to do with the SMS provider. The shared
+        // fallback would tell the user their texts are down and send them to
+        // wait on the wrong thing, so this call brings its own sentence. Only
+        // the fallback: a server that wrote a `detail` still wins, because it
+        // knows which 503 this was and we are guessing.
+        unavailableMessage: "Plow couldn't start setup right now. Try again in a minute.",
+      },
     );
     return {
       displayCode: data.display_code,
@@ -164,14 +263,20 @@ export class PlowApi {
    * Has the text arrived yet? `410` means the code expired *without* being
    * completed — the server honours a completion that raced past the deadline,
    * so a 410 is authoritative and a local clock is not.
+   *
+   * The verified answer also carries the chat the activation provisioned. Like
+   * the token it is read exactly once, so it is kept here rather than parsed
+   * away: a second redeem cannot get it back.
    */
   async redeemActivation(activationSecret: string): Promise<ActivationRedeem> {
-    const data = await this.call<{ status: string; token?: string }>(
+    const data = await this.call<{ status: string; token?: string; chat?: unknown }>(
       "POST",
       "/v1/auth/activate/redeem",
       { body: { activation_secret: activationSecret } },
     );
-    if (data.status === "verified") return { status: "verified", token: data.token ?? null };
+    if (data.status === "verified") {
+      return { status: "verified", token: data.token ?? null, chat: parseActivationChat(data.chat) };
+    }
     return { status: "pending" };
   }
 
@@ -304,11 +409,11 @@ export class PlowApi {
   private async call<T>(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown } = {},
+    opts: { token?: string; body?: unknown; unavailableMessage?: string } = {},
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 
-    if (!response.ok) throw await this.errorFor(response);
+    if (!response.ok) throw await this.errorFor(response, opts.unavailableMessage);
     if (response.status === 204) return undefined as T;
     try {
       return (await response.json()) as T;
@@ -323,25 +428,44 @@ export class PlowApi {
    * written here rather than forwarded. Returns the response whatever its
    * status — deciding what a status *means* belongs to the caller.
    */
-  private async request(
+  async request(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown; signal?: AbortSignal } = {},
+    opts: {
+      token?: string;
+      body?: unknown;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      callerAbortIsLifecycle?: boolean;
+    } = {},
   ): Promise<Response> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (opts.body !== undefined) headers["content-type"] = "application/json";
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+
+    // A caller-owned signal remains its whole budget unless the endpoint also
+    // supplies a request timeout. Cloud-agent polling needs both: sign-out or
+    // removal must cancel it, and one stuck GET must still end after 15s.
+    const timeout =
+      opts.timeoutMs !== undefined || !opts.signal
+        ? AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS)
+        : null;
+    const signal =
+      opts.signal && timeout
+        ? AbortSignal.any([opts.signal, timeout])
+        : (opts.signal ?? timeout ?? undefined);
 
     try {
       return await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        // No caller may wait forever. A caller that owns a budget passes its
-        // own signal; everyone else gets REQUEST_TIMEOUT_MS.
-        signal: opts.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal,
       });
     } catch (error) {
+      // Lifecycle cancellation is not a transport failure. Only endpoints
+      // whose owner can distinguish it opt into preserving the abort reason.
+      if (opts.callerAbortIsLifecycle) opts.signal?.throwIfAborted();
       // The cause carries a hostname at most, but it is not ours to vouch for,
       // so the message is written here rather than forwarded.
       //
@@ -357,7 +481,13 @@ export class PlowApi {
     }
   }
 
-  private async errorFor(response: Response): Promise<PlowApiError> {
+  /**
+   * `unavailableMessage` replaces the 503 fallback for one call. A 503 means
+   * whatever the endpoint that sent it means by it, and only the caller knows
+   * that; the default reads as "the SMS provider is down" because that is what
+   * it is on the OTP calls, which are most of them.
+   */
+  private async errorFor(response: Response, unavailableMessage?: string): Promise<PlowApiError> {
     // `detail` is the FastAPI convention. It is server-authored and never
     // echoes a request header, so it is safe to surface.
     let detail = "";
@@ -375,7 +505,7 @@ export class PlowApi {
     if (response.status === 503) {
       return new PlowApiError(
         "provider_unavailable",
-        detail || "Plow can't send text messages right now.",
+        detail || unavailableMessage || "Plow can't send text messages right now.",
         503,
       );
     }

@@ -17,7 +17,7 @@
  * user is meant to read: the activation display code. The activation *secret*
  * and the device credential never appear in it at all.
  */
-import { PlowApi, PlowApiError } from "./plowApi.js";
+import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
@@ -82,6 +82,54 @@ export interface OnboardingActivation {
   pollUntil: number;
 }
 
+/**
+ * The chat the activation provisioned, as the screen says it.
+ *
+ * A chat has no title, so the label is its line number and its members' names —
+ * see `activationChatLabel`. `uid` is what everything else joins on.
+ */
+export interface OnboardingChat {
+  uid: string;
+  label: string;
+}
+
+/**
+ * The chat activation provisioned, as the app remembers it.
+ *
+ * One reading of one persisted record. It was two — this screen's and the
+ * cloud-agent picker's — with different ideas about whitespace and a blank
+ * label, so the same Mac could show a chat here and a bare uid there.
+ *
+ * `null` on a Mac that activated before `provision_chat`, which is why nothing
+ * may treat its absence as "this account has no chats". The label falls back to
+ * the uid because a chat with neither a line nor members is still a real chat,
+ * and an empty row is worse than an ugly one.
+ */
+export function storedActivationChat(settings: Settings): OnboardingChat | null {
+  const uid = settings.provisionedChatUid.trim();
+  if (!uid) return null;
+  return { uid, label: settings.provisionedChatLabel.trim() || uid };
+}
+
+/**
+ * How a human recognises a chat that has no name: the number it runs on, then
+ * who is in it. The number is the agent participant's line — never the chat's
+ * own `provider_key`, which is the provider's thread id and would put "chat_5"
+ * where the user is looking for something to text.
+ *
+ * Both halves are optional in the data, so this never returns an empty string —
+ * a chat with neither is still identified by its uid, which is ugly but true,
+ * and beats a blank line on the last screen of setup.
+ */
+export function activationChatLabel(chat: ActivationChat): string {
+  const line = (chat.line ?? "").trim();
+  const names = chat.participants
+    .map((p) => p.displayName.trim() || (p.providerKey ?? "").trim())
+    .filter((name) => name && name !== line);
+  const parts = [line, ...names].filter(Boolean);
+  return parts.length ? parts.join(" · ") : chat.uid;
+}
+
 export interface OnboardingState {
   step: OnboardingStep;
   phone: string;
@@ -92,6 +140,9 @@ export interface OnboardingState {
   /** Epoch ms the entered OTP code stops working. */
   codeExpiresAt: number | null;
   activation: OnboardingActivation | null;
+  /** The chat the account now has, or null on a Mac activated before there was
+   * one. Display data — no secret, and nothing here is authoritative. */
+  chat: OnboardingChat | null;
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
@@ -156,6 +207,7 @@ export class Onboarding {
       busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
+      chat: storedActivationChat(settings),
       activationStale: this.activationStale,
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
@@ -269,7 +321,7 @@ export class Onboarding {
       this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
       return true;
     }
-    await this.finishWithSession(result.token);
+    await this.finishWithSession(result.token, result.chat);
     return true;
   }
 
@@ -371,7 +423,7 @@ export class Onboarding {
         !this.settings().relayCredential.trim()
       ) {
         this.cancelPolling();
-        await this.run(() => this.finishWithSession(result.token as string));
+        await this.run(() => this.finishWithSession(result.token as string, result.chat));
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -550,7 +602,10 @@ export class Onboarding {
    * cleanup to get wrong: `mintDeviceCredential` retires the session
    * server-side, in the same transaction as the mint.
    */
-  private async finishWithSession(sessionToken: string): Promise<void> {
+  private async finishWithSession(
+    sessionToken: string,
+    chat: ActivationChat | null = null,
+  ): Promise<void> {
     const info = await this.deps.api.relayInfo(sessionToken);
     const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
 
@@ -560,6 +615,24 @@ export class Onboarding {
     settings.relayCredential = minted.token;
     settings.accountUid = info.uid;
     settings.mcpUrl = info.mcpUrl;
+    // Kept, not read and dropped: the redeem that carried it answers once, so
+    // this is the only moment the app ever sees the chat it just created. A
+    // sign-in with no chat — the phone-code path, or a Mac activated before
+    // `provision_chat` — leaves whatever was there alone rather than blanking
+    // it, because "this redeem carried no chat" is not "the account has none".
+    if (chat) {
+      settings.provisionedChatUid = chat.uid;
+      settings.provisionedChatLabel = activationChatLabel(chat);
+    }
+    // The line this activation was assigned, kept for the same reason as the
+    // chat: nothing on the account can be asked for it later. The server's
+    // value verbatim — the cloud-agents screen tells a chatless account to text
+    // it, and a number we made up there would be texted into the void.
+    //
+    // Written on the way in, so it is the line that actually completed. The
+    // phone-code path has no activation and leaves it alone.
+    const sendTo = this.activation?.sendTo?.trim();
+    if (sendTo) settings.activationSendTo = sendTo;
     this.save(settings);
 
     // The activation is spent: drop the code and the secret rather than leave
