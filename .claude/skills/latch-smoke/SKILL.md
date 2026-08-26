@@ -111,7 +111,16 @@ install, and `Plow-Latch-<branch>` for a from-source run
 ```bash
 NONCE="<value printed by Send>"
 HOME_DIR="${HOME_DIR:-$HOME/Library/Application Support/Plow-Latch}"
-SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson";
+# Every audit line carries an ISO `ts`, so "since we started" is a real bound
+# rather than a guess at how many lines an install writes.
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%S)
+SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson"; SINCE="'"$SINCE"'";
+# Read the intentId out of one JSON line. Once, not three times.
+intent_id() { python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null; }
+# Every id lookup is anchored to the FIELD: an unanchored match finds the id
+# anywhere on a line, and a second unanchored grep can satisfy its condition on
+# a different record entirely.
+lines_for() { grep -F "\"intentId\":\"$1\"" "$LOG" 2>/dev/null; }
 for i in $(seq 1 24); do
   # exec_start ONLY. intent_received records capabilityDisplay, which for a
   # process.exec includes the argv — so it carries the nonce too, and it is
@@ -121,17 +130,17 @@ for i in $(seq 1 24); do
   LINE=$(grep "$NONCE" "$LOG" 2>/dev/null | grep -m1 "\"event\":\"exec_start\"") || true
   # A denial is written immediately after policy.decide, so there is nothing to
   # wait for — report it now rather than burning the full window.
-  DENY=$(grep "$NONCE" "$LOG" 2>/dev/null | head -1 \
-         | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null)
-  if [ -n "$DENY" ] && grep "$DENY" "$LOG" | grep -q "\"decision\":\"deny\""; then
-    grep "$DENY" "$LOG" | grep "intent_decision" | head -1
+  DENY=$(grep "$NONCE" "$LOG" 2>/dev/null | head -1 | intent_id)
+  DECISION=$([ -n "$DENY" ] && lines_for "$DENY" | grep -F "\"event\":\"intent_decision\"" | head -1)
+  if printf %s "$DECISION" | grep -q "\"decision\":\"deny\""; then
+    printf "%s\n" "$DECISION"
     echo "DENIED - the owner refused it. The relay and the device both worked."
     exit 1
   fi
   if [ -n "$LINE" ]; then
     echo "$LINE"
     ID=$(printf %s "$LINE" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))")
-    [ -n "$ID" ] && grep "$ID" "$LOG" | grep -E "\"event\":\"exec_(end|error)\"" | head -1
+    [ -n "$ID" ] && lines_for "$ID" | grep -E "\"event\":\"exec_(end|error)\"" | head -1
     exit 0
   fi
   sleep 5
@@ -144,9 +153,16 @@ ANY=$(grep "$NONCE" "$LOG" 2>/dev/null | tail -2) || true
 if [ -n "$ANY" ]; then
   echo "$ANY"
   ID=$(printf %s "$ANY" | head -1 | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null)
-  # intent_decision is what names a denial.
-  [ -n "$ID" ] && grep "$ID" "$LOG" | grep "intent_decision" | head -1
-  echo "TIMEOUT - reached this Mac, never executed: waiting on the approval dialog"
+  # Re-run the deny check rather than asserting the outcome: the early exit
+  # only evaluates at the top of an iteration, so a decision written during the
+  # final sleep lands here.
+  D=$([ -n "$ID" ] && lines_for "$ID" | grep -F "\"event\":\"intent_decision\"" | head -1)
+  [ -n "$D" ] && printf "%s\n" "$D"
+  if printf %s "$D" | grep -q "\"decision\":\"deny\""; then
+    echo "DENIED - decided in the last few seconds."
+  else
+    echo "TIMEOUT - reached this Mac, never executed: waiting on the approval dialog"
+  fi
 else
   # Three causes, and only one of them is "never arrived". See the echo below,
   # which is the copy that has to be right - do not restate it here.
@@ -156,17 +172,25 @@ else
   echo "     refused argument) - writes NO audit line; the Send output says so"
   echo "  3. rejected at validate (wrong device / expired / replayed nonce) -"
   echo "     writes intent_rejected, WITHOUT the nonce:"
-  # Only what was written while we were waiting: an intent_rejected from hours
-  # ago is not this call, and presenting one as the cause is worse than saying
-  # nothing. The loop runs ~2 min, so the tail is a generous bound on it.
-  tail -50 "$LOG" 2>/dev/null | grep "intent_rejected" | tail -2
+  # Only what was written since we started. An intent_rejected from hours ago
+  # is not this call, and presenting one as the cause is worse than printing
+  # nothing — a line count would not have bounded that, a timestamp does.
+  REJ=$(python3 -c "
+import json,sys
+since=sys.argv[1]
+for line in open(sys.argv[2], errors=\"replace\"):
+    try: e=json.loads(line)
+    except ValueError: continue
+    if e.get(\"event\")==\"intent_rejected\" and e.get(\"ts\",\"\")>=since: print(line.rstrip())
+" "$SINCE" "$LOG" 2>/dev/null | tail -2)
+  if [ -n "$REJ" ]; then echo "$REJ"; else echo "     (none since this call started - cause 3 ruled out)"; fi
 fi
 exit 1'
 bash -c "$SCRIPT"                                                   # local install
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
 
-Three outcomes, and each exits differently:
+Three outcomes; only success exits 0:
 
 | Output | Exit | Means |
 |---|---|---|
@@ -177,12 +201,8 @@ Three outcomes, and each exits differently:
 An `exec_start` with no `exec_end` means the run is still going or was reaped;
 an `exec_error` names why it failed.
 
-On timeout it distinguishes the two failures, because they send you to
-different places: the nonce reaching `intent_received` means the relay and the
-device both worked and the call is at the approval dialog (it quotes the
-`intent_decision` line, which is what names a denial), while the nonce being
-absent entirely means it never arrived — wrong install, wrong credential, or a
-dead socket.
+The line that splits the two `TIMEOUT` variants is `intent_received`: its
+presence means the call reached this Mac.
 
 ## Smoke-testing the gog provider specifically
 
