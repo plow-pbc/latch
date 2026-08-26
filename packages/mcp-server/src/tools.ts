@@ -272,7 +272,9 @@ export const TOOLS: ToolSpec[] = [
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
       "If the command is still running when the wait elapses you get a job handle for plow_get_output. " +
       "A command that has produced no output at all after 15 minutes is killed and reported as such — " +
-      "so if long silent work is expected, have it print progress. "  +
+      "so if long silent work is expected, have it print progress. " +
+      "A run ends when the command itself exits: anything it leaves running in the background keeps " +
+      "running, but its output is not captured and no handle tracks it. "  +
       "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
       "plow_get_result, and the ready payload is the plow_run_command result — including its job handle.",
     inputSchema: {

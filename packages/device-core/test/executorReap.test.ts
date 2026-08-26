@@ -156,7 +156,6 @@ describe("a run that produces nothing and never exits", () => {
 
   it("ends when the command ends, not when a job it backgrounded lets go", async () => {
     const dir = tempDir();
-    const fifo = blockingPipe(dir);
     const executor = new Executor(path.join(dir, "scratch"), 60_000);
 
     // The shell exits at once; the job it backgrounded inherits stdout and
@@ -164,29 +163,33 @@ describe("a run that produces nothing and never exits", () => {
     // `close` would answer `running` until something reaped it — fifteen
     // minutes for a command that finished immediately, or forever once it had
     // printed a line. What the owner approved has ended; the job says so.
+    // The straggler speaks AFTER the command is gone, which is the only way to
+    // tell the settled job from one still quietly capturing: it holds the
+    // stdout pipe, sleeps past the drain, then writes and exits.
+    const marker = `stray-${path.basename(dir)}`;
     const started = await executor.run({
-      argv: ["/bin/sh", "-c", `echo started; /bin/cat ${JSON.stringify(fifo)} & exit 0`],
+      argv: ["/bin/sh", "-c", `echo started; (sleep 1; echo ${marker}) & exit 0`],
       cwd: dir,
       readPaths: [dir],
       writePaths: [],
       network: false,
-      waitMs: 2_000,
+      waitMs: 3_000,
     });
-    cleanups.push(() => killAll(fifo));
+    cleanups.push(() => killAll(marker));
     expect(started.running).toBe(false);
     expect(started.exitCode).toBe(0);
     // Its command ended on its own, so nothing here killed it.
     expect(started.reaped).toBe(false);
     expect(started.output.toString()).toContain("started");
 
-    // The straggler eventually lets go, and its late `close` must not rewrite
-    // an outcome the agent and the audit log already have.
-    killAll(fifo);
-    await until(() => alive(fifo).length === 0);
-    await new Promise((r) => setTimeout(r, 200));
+    // Whatever the straggler writes, and whatever its late `close` says, the
+    // outcome the agent and the audit log already have does not move.
+    await until(() => alive(marker).length === 0, 4_000);
+    await new Promise((r) => setTimeout(r, 250));
     const after = executor.output(started.handle, 0);
     expect(after.exitCode).toBe(0);
     expect(after.reaped).toBe(false);
+    expect(after.output.toString()).not.toContain(marker);
     expect(after.outputLength).toBe(started.outputLength);
   });
 });

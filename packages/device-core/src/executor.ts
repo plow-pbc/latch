@@ -137,7 +137,10 @@ export const REAP_AFTER_MS = 15 * 60_000;
  * Normally `close` follows `exit` immediately and this never fires. It exists
  * for the run whose backgrounded job inherited the stdout pipe and is still
  * holding it: the command is over, so the job settles on this instead of
- * waiting on a pipe nobody is going to close.
+ * waiting on a pipe nobody is going to close. What that job writes afterwards
+ * is not captured — the run ended with its command — and `plow_run_command`
+ * says so, because an agent polling for a background server's logs would
+ * otherwise read an empty tail as the whole answer.
  */
 export const STDIO_DRAIN_MS = 250;
 
@@ -333,8 +336,18 @@ export class Executor {
       const outcome = code ?? (signal ? -1 : 0);
       // Output already written may still be in flight, so the usual `close`
       // remains the settling event — with a deadline, because a straggler
-      // holding a pipe must not hold the agent with it.
-      const drain = setTimeout(() => settle(outcome), STDIO_DRAIN_MS);
+      // holding a pipe must not hold the agent with it. On that deadline the
+      // capture is CLOSED rather than left racing: take what the streams still
+      // hold, then destroy them, so nothing is half-read and no run leaves a
+      // pair of pipes and a `data` listener behind for the life of the app.
+      const drain = setTimeout(() => {
+        for (const stream of [child.stdout, child.stderr]) {
+          const rest: unknown = stream.read();
+          if (Buffer.isBuffer(rest)) buffer.append(rest);
+          stream.destroy();
+        }
+        settle(outcome);
+      }, STDIO_DRAIN_MS);
       drain.unref?.();
       child.on("close", () => {
         clearTimeout(drain);
