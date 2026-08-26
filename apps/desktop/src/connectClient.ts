@@ -118,6 +118,16 @@ export class ConnectClient {
   private roster: RosterSections = EMPTY_ROSTER;
   private rosterError: string | null = null;
   private removeError: string | null = null;
+  /**
+   * Which roster read is the newest. Bumped per read, not per account.
+   *
+   * `generation` only moves on sign-out, so two reads in one session share one
+   * and neither can tell it has been overtaken. A tab-selection refresh landing
+   * after a removal's refresh then restores its own pre-delete snapshot, and a
+   * credential the user just revoked is back on screen marked active — a lie
+   * about who can reach the account, which is the one thing this list is for.
+   */
+  private rosterReads = 0;
 
   constructor(private readonly deps: ConnectClientDeps) {}
 
@@ -155,13 +165,17 @@ export class ConnectClient {
     }
 
     const generation = this.generation;
+    const read = ++this.rosterReads;
     try {
       const keys = await this.deps.api.listApiKeys(credential);
-      if (generation !== this.generation) return this.state();
+      // A superseded read describes the account as it was. Landing late must
+      // never undo a newer answer — least of all by restoring a session the
+      // newer one saw revoked.
+      if (generation !== this.generation || read !== this.rosterReads) return this.state();
       this.roster = sectionRoster(keys, { deviceCredential: credential });
       this.rosterError = null;
     } catch (error) {
-      if (generation !== this.generation) return this.state();
+      if (generation !== this.generation || read !== this.rosterReads) return this.state();
       // The rows already on screen stay: a stale list with a banner beats an
       // empty one that reads as "nothing can reach this account".
       this.rosterError = messageOf(error);
@@ -287,6 +301,8 @@ export class ConnectClient {
     this.roster = EMPTY_ROSTER;
     this.rosterError = null;
     this.removeError = null;
+    // Nothing in flight belongs to the next account either.
+    this.rosterReads += 1;
     this.credential = null;
     this.message = "";
     this.busy = false;

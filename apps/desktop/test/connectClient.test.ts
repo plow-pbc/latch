@@ -35,6 +35,8 @@ class FakePlow {
   fails: PlowApiError | null = null;
   /** What `listApiKeys` will answer with. */
   keys: KeyInfo[] = [];
+  /** Hold one list open, so a test can land reads out of order. */
+  listGate: (() => Promise<KeyInfo[]> | null) | null = null;
   /** Every key revoke that was actually issued, in order. */
   revoked: number[] = [];
   /** Set to hold every mint open until `release()`, the way a slow API does. */
@@ -46,6 +48,8 @@ class FakePlow {
   }
 
   async listApiKeys(_token: string): Promise<KeyInfo[]> {
+    const held = this.listGate?.();
+    if (held) return held;
     if (this.fails) throw this.fails;
     return this.keys;
   }
@@ -85,6 +89,23 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+/** A promise a test finishes by hand, to land reads out of order. */
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 /** Every cloud-agent removal the roster routed, in order. */
 let agentDeletes: string[];
 /** How many times the roster asked this Mac to sign out. */
@@ -423,6 +444,43 @@ describe("removing a roster row", () => {
     expect(plow.revoked).toEqual(expected.revoked);
     expect(agentDeletes).toEqual(expected.deleted);
     expect(signOuts).toBe(expected.signOuts);
+  });
+
+  /**
+   * A read that has been overtaken says nothing about now, however it ends.
+   *
+   * The removal's own refresh is the newest answer; a tab-selection refresh
+   * still in the air describes the account before the delete. Letting it land
+   * puts a revoked session back on screen marked active — a lie about who can
+   * reach the account.
+   */
+  it.each([
+    ["failure", (d: Deferred<KeyInfo[]>) => d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
+    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, agent_id: null })])],
+  ])("a late %s never displaces the newer roster read", async (_ending, finish) => {
+    signIn();
+    const stale = deferred<KeyInfo[]>();
+    let first = true;
+    plow.listGate = () => {
+      if (!first) return null;
+      first = false;
+      return stale.promise;
+    };
+    plow.keys = [];
+    const client = build();
+
+    const overtaken = client.refreshRoster();
+    await client.refreshRoster();
+
+    finish(stale);
+    await overtaken;
+
+    // The newer read said the account is empty, and it stays empty — with no
+    // banner from the overtaken one either, which would report a failure that
+    // has already been superseded by a good answer.
+    expect(client.state().roster.mcp).toEqual([]);
+    expect(client.state().roster.other).toEqual([]);
+    expect(client.state().rosterError).toBeNull();
   });
 
   it("keeps the row when the removal fails", async () => {
