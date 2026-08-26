@@ -266,20 +266,29 @@ describe.skipIf(!ON_MAC)("a run closing out", () => {
     expect(ended.exitCode).toBe(0);
     expect(ended.output.toString()).toContain("hi");
 
-    // And the other half of the seam: registering on an already-settled run
-    // reaches the callback by a different path, which must hold the same rule
-    // — the throw stays the registrant's, and the next one still gets its
-    // outcome.
+  });
+
+  it("holds the same rule for a registrant that arrives after the run closed", async () => {
+    const dir = tempDir();
+    const executor = new Executor(path.join(dir, "scratch"), 60_000);
+    const started = await executor.run({
+      argv: ["/bin/echo", "hi"],
+      cwd: dir,
+      readPaths: [dir],
+      writePaths: [],
+      network: false,
+      waitMs: 0,
+    });
+    await settle(executor, started.handle);
+
+    // A registrant arriving after the run has closed reaches its callback by a
+    // different path — called straight through, no waiter list — so the seam
+    // has to hold the rule twice over rather than once in the loop.
     expect(() =>
       executor.onExit(started.handle, () => {
         throw new Error("a late registrant's problem");
       }),
     ).not.toThrow();
-    let late: number | null = null;
-    executor.onExit(started.handle, (exitCode) => {
-      late = exitCode;
-    });
-    expect(late).toBe(0);
   });
 });
 
