@@ -732,9 +732,9 @@ app.whenReady().then(async () => {
 
   // Re-selecting the tab you are on is deliberately a no-op, so each of these
   // leaves and comes back to make the pane re-read the stub. Going away is
-  // AWAITED — `selectTab` does not await the render it starts, and `renderAgents`
-  // has no is-this-still-my-tab guard, so hopping through it would let a late
-  // replaceChildren land on top of the pane being asserted. The hop-out waits
+  // AWAITED — `selectTab` does not await the render it starts, and `renderRules`
+  // (like `renderAgents`) has no is-this-still-my-tab guard, so its late
+  // replaceChildren would land on top of the pane being asserted. The hop-out waits
   // for the RULES pane rather than for the vault pane to disappear: on the
   // first entry there is no vault pane to lose, so that wait would pass
   // immediately and prove nothing about the render still in flight. The marker
@@ -796,24 +796,28 @@ app.whenReady().then(async () => {
 
   // The reject path — a different branch of renderVault from every status, and
   // the sentence carries errText straight into what the owner reads.
+  //
+  // Electron logs a main-process error and stack for the throw below on every
+  // run. That is inherent to making `invoke` reject, and it is noise rather
+  // than a verdict: `errors` collects renderer console messages only.
   vaultItemsThrows = true;
-  let vaultFailed;
-  try {
-    await showVault(`document.body.innerText.includes("Could not read the vault")`, "the failed read to render");
-    vaultFailed = await js(() => {
-      const text = document.body.innerText;
-      return {
-        saysItCouldNotRead: text.includes("Could not read the vault"),
-        carriesTheReason: text.includes("the vault did not answer"),
-        // Not a diagnosis of a vault it never reached.
-        doesNotClaimEmpty: !text.includes("has not started yet"),
-      };
-    });
-  } finally {
-    // The only latch here — the reply switches above are each overwritten by
-    // the next probe, and `waitFor` times out by design.
-    vaultItemsThrows = false;
-  }
+  await showVault(`document.body.innerText.includes("Could not read the vault")`, "the failed read to render");
+  const vaultFailed = await js(() => {
+    const text = document.body.innerText;
+    return {
+      saysItCouldNotRead: text.includes("Could not read the vault: the vault did not answer"),
+      // The transformation errText exists for. A throw arrives wrapped as
+      // "Error invoking remote method 'vault:items': Error: <sentence>", and
+      // the owner should read the sentence rather than the plumbing — so
+      // matching the sentence alone would pass whether or not it was stripped.
+      stripsThePlumbing: !text.includes("invoking remote method") && !text.includes("vault:items"),
+      // Not a diagnosis of a vault it never reached.
+      doesNotClaimEmpty: !text.includes("has not started yet"),
+    };
+  });
+  // No restore: nothing between here and app.exit catches, so a rejection above
+  // leaves through the top-level handler and the flag has no next reader.
+  vaultItemsThrows = false;
 
   // Unsaved edits must not vanish without a word. The vault is the only screen
   // that holds a form open behind a Save button, so it is the only one where
@@ -1183,7 +1187,7 @@ app.whenReady().then(async () => {
     vaultMissing.reassures &&
     vaultMissing.noLockedNote &&
     vaultFailed.saysItCouldNotRead &&
-    vaultFailed.carriesTheReason &&
+    vaultFailed.stripsThePlumbing &&
     vaultFailed.doesNotClaimEmpty &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
