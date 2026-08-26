@@ -402,6 +402,75 @@ describe("PlowApi", () => {
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
     expect(minted.token).toBe("plow_agenttok");
   });
+
+  it("lists API keys and revokes one by id with bearer credentials", async () => {
+    const credential = "plow_device_do_not_leak";
+    const keys = [
+      {
+        id: 17,
+        key_prefix: "agentkey",
+        name: "Claude Code",
+        scopes: ["relay:call"],
+        tokens_used: 12,
+        is_active: true,
+        last_seen_at: "2026-08-17T12:00:00+00:00",
+        created_at: "2026-08-16T12:00:00+00:00",
+        agent_id: "agent_123",
+        chat_uids: ["cht_123"],
+      },
+    ];
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: keys },
+      { status: 200, body: { status: "revoked", id: 17 } },
+    ]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.listApiKeys(credential)).resolves.toEqual(keys);
+    await expect(api.revokeApiKey(credential, 17)).resolves.toEqual({
+      status: "revoked",
+      id: 17,
+    });
+
+    expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
+      ["GET", "https://api.plow.co/v1/api-keys"],
+      ["DELETE", "https://api.plow.co/v1/api-keys/17"],
+    ]);
+    expect(
+      calls.every(
+        ({ init }) =>
+          (init.headers as Record<string, string>).authorization === `Bearer ${credential}`,
+      ),
+    ).toBe(true);
+    expect(calls.every(({ url }) => !url.includes(credential))).toBe(true);
+  });
+
+  it("rejects a path-shaped API key id without making a request", async () => {
+    const { calls, fetchImpl } = recordingFetch([]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(
+      api.revokeApiKey(
+        "plow_device_do_not_leak",
+        "17/../relay/devices/self/revoke" as unknown as number,
+      ),
+    ).rejects.toMatchObject({ message: "Invalid API key id." });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not copy an API-key credential from an HTTP error into its message", async () => {
+    const credential = "plow_device_do_not_leak";
+    const { fetchImpl } = recordingFetch([
+      { status: 403, body: { detail: `Not permitted for Bearer ${credential}` } },
+    ]);
+
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .listApiKeys(credential)
+      .catch((caught) => caught as Error);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(error.message).toBe("Not permitted.");
+    expect(error.message).not.toContain(credential);
+  });
 });
 
 /**
