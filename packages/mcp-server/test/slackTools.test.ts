@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Capability, JSONValue, RuleKey } from "@domo/protocol";
+import { Capability, JSONValue, jv, RuleKey } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy } from "@domo/device-core";
 import { DeniedError, Progress } from "../src/deferred.js";
 import { ToolContext, ToolSpec } from "../src/toolKit.js";
@@ -58,6 +58,7 @@ function fakeProgress(): Progress {
 }
 
 const messages = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_messages")!;
+const search = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_search")!;
 const send = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_send")!;
 const update = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_update")!;
 const openDm = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_open_dm")!;
@@ -147,6 +148,25 @@ describe("Slack read tools", () => {
     await expect(
       messages.run({ account: "T1" }, fakeCtx(() => ({})), fakeProgress()),
     ).rejects.toThrow(/channel_id/);
+  });
+
+  // Search was the one tool whose scope key was optional. A capability with no
+  // target names no workspace, so a single "always allow" on it would cover
+  // every query, in every workspace this Mac ever connects, forever.
+  it("cannot build an untargeted search — the workspace is required", async () => {
+    expect(jv(search.inputSchema).get("required").value).toContain("account");
+    await expect(
+      search.run(
+        { query: "salary review" },
+        fakeCtx(() => {
+          throw new Error("should not build an intent");
+        }),
+        fakeProgress(),
+      ),
+    ).rejects.toThrow(/account/);
+    expect(await capabilitiesOf({ account: "T1", query: "salary review" }, search)).toEqual([
+      { kind: "tool", tool: "slack.messages.search", target: "T1" },
+    ]);
   });
 
   // §4.3's verdicts are THIS Mac's: `denied` is the owner refusing, `rejected`

@@ -47,9 +47,10 @@ function body(args: JSONValue, keys: string[]): JSONValue {
  *
  * The target is the scope path Slack itself is organised by — the workspace,
  * then the channel or person inside it — so the rule the owner creates is the
- * sentence they read in the dialog. An action with none of these (`status`,
- * an account-less search) names no scope, which is honest: it is not confined
- * to one.
+ * sentence they read in the dialog. `status` alone names no scope, which is
+ * honest: it asks which workspaces exist and so is confined to none. Every
+ * other action requires an `account`, because a capability with no target is
+ * an always-allow on every workspace this Mac will ever connect.
  *
  * `user_id` scopes `conversations.open` the same way `channel_id` scopes
  * everything else: opening a DM sends nothing, but an "always allow" that
@@ -186,10 +187,10 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
       "quote only what answers the question.",
     inputSchema: {
       type: "object",
-      required: ["query"],
+      required: ["account", "query"],
       properties: {
-        query: { type: "string" },
         account: ACCOUNT,
+        query: { type: "string" },
         limit: { type: "integer", default: 20 },
         goal: GOAL,
       },
@@ -198,10 +199,11 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     deferrable: true,
     async run(args, ctx, progress) {
+      required(args, "account");
       required(args, "query");
       return runSlack(ctx, progress, "search Slack", "messages.search", args, [
-        "query",
         "account",
+        "query",
         "limit",
       ]);
     },
