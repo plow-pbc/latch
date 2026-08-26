@@ -90,6 +90,7 @@ let cloudProbe = {
   cloudAgents: [cloudAgent],
   cloudAgentsError: null,
   cloudChatsError: null,
+  cloudChatsNeedReactivation: false,
   cloudActionError: null,
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
@@ -672,6 +673,7 @@ app.whenReady().then(async () => {
     cloudAgents: [cloudAgent],
     cloudAgentsError: null,
     cloudChatsError: "Couldn't reach Plow.",
+    cloudChatsNeedReactivation: false,
     cloudChats: [],
     cloudChatsLoaded: false,
   };
@@ -683,12 +685,15 @@ app.whenReady().then(async () => {
     setupDisabled: document.querySelector(".cloud-toolbar button")?.disabled === true,
     notEmptyState: !document.querySelector(".cloud-empty"),
     keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+    noDestructiveRecovery: ![...document.querySelectorAll(".cloud-error button")]
+      .some((button) => button.textContent.trim() === "Sign out and re-activate"),
   })})()`);
 
   cloudProbe = {
     ...cloudProbe,
     cloudAgentsError: "Method Not Allowed",
     cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
+    cloudChatsNeedReactivation: true,
     cloudChats: [cloudChat],
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -700,6 +705,8 @@ app.whenReady().then(async () => {
     return {
       rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
       setupEnabled: setup.disabled === false,
+      offersReactivation: [...document.querySelectorAll(".cloud-error button")]
+        .some((button) => button.textContent.trim() === "Sign out and re-activate"),
       notEmptyState: !document.querySelector(".cloud-empty"),
     };
   }})()`);
@@ -766,6 +773,9 @@ app.whenReady().then(async () => {
   const approvalsReviewer = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
     const field = pane.querySelector("textarea.text");
+    const description = [...pane.querySelectorAll(".group-title")]
+      .find((title) => title.textContent.trim() === "Approvals")
+      ?.parentElement?.querySelector(".group-desc")?.textContent ?? "";
     return {
       chipLabels: [...pane.querySelectorAll(".chips .chip")].map((c) => c.textContent.trim()),
       inRulesPane: !!pane.querySelector(".panel.rules"),
@@ -775,6 +785,8 @@ app.whenReady().then(async () => {
         "You have no business with anything else on this computer — no files, no other sites.",
       ) ?? false,
       labelled: pane.innerText.includes("What are agents for?"),
+      perAgentCopyDefersToMode: description.includes("when this mode still applies"),
+      noUniversalReviewClaim: !description.includes("reviewed every time"),
       // The purpose is the ERRAND, and an errand widens as readily as it
       // narrows: an owner who writes "Manage my SSH keys" has just made those
       // keys the job. This probe used to pin the opposite claim — that the
@@ -1388,8 +1400,10 @@ app.whenReady().then(async () => {
     cloudChatFailure.setupDisabled &&
     cloudChatFailure.notEmptyState &&
     cloudChatFailure.keepsRoster &&
+    cloudChatFailure.noDestructiveRecovery &&
     cloudForbidden.rawReasonHidden &&
     cloudForbidden.setupEnabled &&
+    cloudForbidden.offersReactivation &&
     cloudForbidden.offersActivationChat &&
     cloudForbidden.reactivatesThroughSignOut &&
     cloudForbidden.notEmptyState &&
@@ -1429,6 +1443,8 @@ app.whenReady().then(async () => {
     approvalsReviewer.showsStoredPurpose &&
     approvalsReviewer.purposeExampleHasBoundary &&
     approvalsReviewer.labelled &&
+    approvalsReviewer.perAgentCopyDefersToMode &&
+    approvalsReviewer.noUniversalReviewClaim &&
     approvalsReviewer.saysItCanWiden &&
     approvalsReviewer.noOnlyNarrowsClaim &&
     approvalsReviewer.saysItMayApprove &&

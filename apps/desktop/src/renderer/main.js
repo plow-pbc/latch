@@ -527,8 +527,8 @@ async function renderRules() {
     group(
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip this — unless the agent has its own AI Reviewer switched " +
-        "on, which is reviewed every time — manage those below. The reviewer sees which " +
+        "by an always-allow rule skip the mode below — unless the agent has its own AI Reviewer " +
+        "switched on, when this mode still applies. Manage those rules below. The reviewer sees which " +
         "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
         "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
         "agent hasn't asked for.",
@@ -1141,9 +1141,11 @@ function cloudErrorBanner(message, title = "Cloud agents could not be refreshed"
   ]);
 }
 
-function cloudChatsErrorBanner(message) {
-  const reactivate = el("button", { class: "btn", text: "Sign out and re-activate" });
-  reactivate.addEventListener("click", async () => {
+function cloudChatsErrorBanner(message, needsReactivation) {
+  const reactivate = needsReactivation
+    ? el("button", { class: "btn", text: "Sign out and re-activate" })
+    : null;
+  reactivate?.addEventListener("click", async () => {
     reactivate.disabled = true;
     await window.domo.relaySignOut();
   });
@@ -1168,7 +1170,10 @@ function cloudNodes(state, redraw) {
   if (!state.cloudChatsLoaded) {
     const body = [action];
     if (state.cloudChatsError) {
-      body.push(cloudChatsErrorBanner(state.cloudChatsError));
+      body.push(cloudChatsErrorBanner(
+        state.cloudChatsError,
+        state.cloudChatsNeedReactivation === true,
+      ));
     }
     else body.push(el("div", { class: "cloud-progress cloud-loading" }, [
           el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
