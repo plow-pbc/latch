@@ -94,6 +94,9 @@ describe("a vendored provider through the exec path", () => {
     const response = await run(d, ["gog", "gmail", "search", "q", "--wrap-untrusted=false"]);
     expect(jv(response).get("status").str).toBe("error");
     expect(mint).not.toHaveBeenCalled();
+    const events = d.audit.entries().map((e) => jv(e).get("event").str);
+    expect(events).toContain("exec_error");
+    expect(events).not.toContain("exec_start");
   });
 
   it("reports a failed mint without spawning, and names no token", async () => {
@@ -116,6 +119,11 @@ describe("a vendored provider through the exec path", () => {
     const response = await run(d, ["gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toMatch(/not installed/);
     expect(mint).not.toHaveBeenCalled();
+    // The audit is the oracle: refused, recorded as refused, and never
+    // started. An exec_start here would mean something ran.
+    const events = d.audit.entries().map((e) => jv(e).get("event").str);
+    expect(events).toContain("exec_error");
+    expect(events).not.toContain("exec_start");
   });
 
   it("runs --help without minting a token", async () => {
