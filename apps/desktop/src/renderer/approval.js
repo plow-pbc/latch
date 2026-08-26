@@ -81,6 +81,7 @@ async function render() {
   if (v.writesFiles) warnings.push("writes files");
   if (v.needsNetwork) warnings.push("uses the network");
   if (v.usesBrowser) warnings.push("browses the web as you");
+  if (v.usesConnectedAccount) warnings.push("acts in your connected accounts as you, off this Mac");
   if (v.fillsCredentials) warnings.push("types saved credentials into those sites");
 
   // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"

@@ -39,11 +39,35 @@ describe("approvalViewModel", () => {
     expect(vm.runsCommand).toBe(true);
     expect(vm.writesFiles).toBe(true);
     expect(vm.needsNetwork).toBe(false);
+    expect(vm.usesConnectedAccount).toBe(false);
     expect(vm.capabilities.map((c) => c.display)).toEqual([
       "Run: /bin/sh -c df -h (in /tmp)",
       "Network: denied",
       "Write: /tmp",
     ]);
+  });
+
+  // The card's ⚠ line renders only when one of these five flags is set
+  // (renderer/approval.js). A `tool` capability matched none of them, so a
+  // Slack send — irreversible, off this Mac, read by other people as the
+  // owner — carried no warning at all, while `plow_write_file` to a scratch
+  // file warned "writes files".
+  it("warns on a Slack send: nothing else on the card would have", () => {
+    const vm = approvalViewModel(
+      intentOf({
+        request: "send a Slack message to C1: ship it",
+        capabilities: [{ kind: "tool", tool: "slack.messages.send", target: "T1/C1" }],
+      }),
+    );
+    expect(vm.usesConnectedAccount).toBe(true);
+    expect([
+      vm.runsCommand,
+      vm.writesFiles,
+      vm.needsNetwork,
+      vm.usesBrowser,
+      vm.fillsCredentials,
+    ]).toEqual([false, false, false, false, false]);
+    expect(vm.capabilities.map((c) => c.display)).toEqual(["Slack: messages.send in T1/C1"]);
   });
 
   it("flags network when a network capability is allowed", () => {
