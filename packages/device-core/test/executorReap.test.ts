@@ -119,20 +119,24 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     await until(() => alive(fifo).length === 0);
   });
 
-  it("leaves a run that was approved to write alone, however silent", async () => {
+  // Same wedged shape as the reaped cases, one capability apart — and both
+  // capabilities, because either alone makes a run un-reapable: it could be
+  // silently mid-work, and a truncated file or a half-applied remote call is
+  // worse than the wait.
+  it.each([
+    { name: "write", writePaths: true, network: false },
+    { name: "network", writePaths: false, network: true },
+  ])("leaves a silent run approved for $name alone", async ({ writePaths, network }) => {
     const dir = tempDir();
     const fifo = blockingPipe(dir);
     const executor = new Executor(path.join(dir, "scratch"), 300);
 
-    // Same wedged shape as the reaped cases, one capability apart. A run that
-    // may write could be silently mid-work at the deadline, and a truncated
-    // destination is worse than the wait — so this one is the owner's to end.
     const started = await executor.run({
       argv: ["/bin/cat", fifo],
       cwd: dir,
       readPaths: [dir],
-      writePaths: [dir],
-      network: false,
+      writePaths: writePaths ? [dir] : [],
+      network,
       waitMs: 50,
     });
     cleanups.push(() => killAll(fifo));

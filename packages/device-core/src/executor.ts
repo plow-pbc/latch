@@ -170,6 +170,23 @@ export interface ExecResult {
   reaped: boolean;
 }
 
+/**
+ * Run one registrant's callback without letting it cost anyone else theirs.
+ *
+ * `onExit` is public and reaches this two ways — queued while the run is
+ * open, called straight through once it has ended — so the isolation lives
+ * here rather than at either call site, where the seam would hold the rule on
+ * one path and break it on the other. Reported rather than swallowed: this is
+ * a bug in the registrant, and one nobody would otherwise see.
+ */
+function invoke(w: () => void): void {
+  try {
+    w();
+  } catch (error) {
+    console.error("[exec] an onExit registrant threw:", error);
+  }
+}
+
 class OutputBuffer {
   private chunks: Buffer[] = [];
   private length = 0;
@@ -193,19 +210,13 @@ class OutputBuffer {
     // to the agent and written to the audit log.
     if (this.exitCode !== null) return;
     this.exitCode = exitCode;
-    // Taken and cleared before any of them runs, and each one isolated: one
-    // waiter is `run`'s own, the rest come through the public `onExit`, and a
-    // registrant that throws must not cost the run its answer — nor the ones
-    // behind it theirs. Closing a run out is not a waiter's to skip.
+    // Taken and cleared before any of them runs: one waiter is `run`'s own,
+    // the rest come through the public `onExit`, and a registrant that throws
+    // must not cost the run its answer — nor the ones behind it theirs.
+    // Closing a run out is not a waiter's to skip.
     const waiters = this.waiters;
     this.waiters = [];
-    for (const w of waiters) {
-      try {
-        w();
-      } catch {
-        // A registrant's failure is its own; it is not the run's.
-      }
-    }
+    for (const w of waiters) invoke(w);
   }
 
   snapshot(since: number): {
@@ -241,7 +252,7 @@ class OutputBuffer {
 
   onExit(cb: (exitCode: number, reaped: boolean) => void): void {
     if (this.exitCode !== null) {
-      cb(this.exitCode, this.reaped);
+      invoke(() => cb(this.exitCode ?? -1, this.reaped));
       return;
     }
     this.waiters.push(() => cb(this.exitCode ?? -1, this.reaped));
