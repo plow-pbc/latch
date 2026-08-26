@@ -12,6 +12,8 @@
  * object* owns where an intent's contents go.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import { vendoredProvider, type VendoredProvider } from "./providers/registry.js";
+import { MintError, type Minter } from "./providers/mint.js";
 import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -159,6 +161,21 @@ export class DeviceAgent {
      * and a manifest that does not depend on the machine running the suite.
      */
     ownerHome: string = home,
+    /**
+     * How a vendored provider CLI is authorised. Null in a test that does not
+     * exercise one, and on a Mac that has never paired — the exec path reports
+     * that rather than throwing, so an unpaired Mac gets a sentence in the
+     * approval dialog instead of a stack trace.
+     */
+    private readonly minter: Minter | null = null,
+    /**
+     * Which connected account a provider's token is minted for.
+     *
+     * One account per Mac today, read from settings rather than from the
+     * agent: it is the one place the mailbox is chosen, and an account flag in
+     * agent-supplied argv cannot redirect a call whose token is already bound.
+     */
+    private readonly providerAccount: string | null = null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
@@ -450,6 +467,25 @@ export class DeviceAgent {
     }
   }
 
+  /**
+   * The environment a vendored provider's child runs with.
+   *
+   * The account rides the environment for the same reason the token does, and
+   * because it is the one place the mailbox is chosen — an account flag in the
+   * agent's argv cannot redirect the call, because the token is already bound
+   * to whoever it was minted for.
+   */
+  private async mintFor(
+    provider: VendoredProvider,
+    argv: readonly string[],
+  ): Promise<Record<string, string>> {
+    if (this.minter === null) throw MintError.unpaired();
+    const account = this.providerAccount;
+    if (account === null || account.trim() === "") throw MintError.noToken(provider.command);
+    const token = await this.minter.mint(provider, account.trim());
+    return { [provider.tokenEnv]: token, [provider.accountEnv]: account.trim() };
+  }
+
   private async executeCommand(
     intent: Intent,
     exec: { argv?: string[]; cwd?: string },
@@ -461,15 +497,40 @@ export class DeviceAgent {
     // wait_ms is delivery detail, not an approved capability, so it rides in
     // the payload rather than the approved capability set.
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
-    this.audit.record("exec_start", { intentId: intent.intentId, argv: exec.argv ?? [] });
+    const argv = exec.argv ?? [];
+
+    // A vendored provider CLI gets its token minted into the child's
+    // environment. Everything below this is the ordinary exec path — the
+    // capability the owner approved is the argv, the sandbox profile and the
+    // audit are unchanged, and `tools/list` never grew a tool for it.
+    const provider = vendoredProvider(argv);
+    let env: Record<string, string> | undefined;
+    let belted = argv;
+    if (provider !== null) {
+      try {
+        env = await this.mintFor(provider, argv);
+      } catch (e) {
+        const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
+        this.audit.record("exec_error", { intentId: intent.intentId, error: message });
+        return { status: "error", error: message };
+      }
+      // The belt goes in front of the command path, where the CLI accepts
+      // globals. It is not in the approved argv deliberately: the owner
+      // approved the command they read, and these only ever narrow it — the
+      // same reason the sandbox profile is not in the argv either.
+      belted = [argv[0]!, ...provider.belt, ...argv.slice(1)];
+    }
+
+    this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
-        argv: exec.argv ?? [],
+        argv: belted,
         cwd: exec.cwd,
         readPaths,
         writePaths,
         network,
         waitMs,
+        env,
       });
       if (!result.running) {
         this.audit.record("exec_end", {

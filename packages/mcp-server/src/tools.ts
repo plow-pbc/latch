@@ -30,6 +30,7 @@ import {
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
+  vendoredProvider,
 } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
@@ -326,6 +327,17 @@ export const TOOLS: ToolSpec[] = [
       if (!argvValues || argvValues.length === 0) throw new ToolError("missing 'argv'");
       const argv = strings(argvValues);
       if (argv.length !== argvValues.length) throw new ToolError("argv must be strings");
+
+      // A vendored provider CLI refuses some argv outright — an argument that
+      // would disarm its safety flags or read a local file into an outbound
+      // message, or a command the bundled binary does not have. Checked HERE,
+      // before an intent exists, because a card the owner approves mints a
+      // live provider token: nobody should be asked to authorise a call this
+      // Mac was always going to refuse. The device checks again; it is the
+      // chokepoint and cannot rely on this caller.
+      const provider = vendoredProvider(argv);
+      const refusal = provider?.refuse(argv) ?? null;
+      if (refusal !== null) throw new ToolError(refusal);
 
       // Resolve every declared path before it becomes the bound the human
       // approves and the sandbox enforces.

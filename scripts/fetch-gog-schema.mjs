@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+/**
+ * Regenerate packages/device-core/src/providers/gogLeaves.ts from the pinned gog.
+ *
+ * The output is NOT an allowlist — every Gmail/Calendar leaf gog ships is in
+ * it. It exists so a typo fails on this Mac instead of spending a minted token
+ * on a usage error, and so a pin bump that renames a command fails a test
+ * rather than a user.
+ *
+ * Groups outside gmail/calendar are omitted because the minted token carries
+ * only gmail.readonly, gmail.modify, calendar.readonly and calendar.events —
+ * everything else 403s at Google, and failing here says so in one line.
+ *
+ * After a pin bump, re-run the --readonly checks recorded in the design spec:
+ * that guard's behaviour is verified per version, never assumed across them.
+ *
+ * Usage: node scripts/fetch-gog-schema.mjs /path/to/gog
+ */
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+
+const gog = process.argv[2];
+if (!gog) {
+  console.error("usage: node scripts/fetch-gog-schema.mjs /path/to/gog");
+  process.exit(2);
+}
+
+const doc = JSON.parse(
+  execFileSync(gog, ["--no-input", "schema", "--json"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }),
+);
+
+const leaves = [];
+const walk = (node, path) => {
+  const here = node.name ? [...path, node.name] : path;
+  const subs = node.subcommands ?? [];
+  if (subs.length === 0) {
+    if (here.length > 0) leaves.push(here.join("."));
+    return;
+  }
+  for (const s of subs) walk(s, here);
+};
+for (const group of doc.command?.subcommands ?? []) {
+  if (group.name === "gmail" || group.name === "calendar") walk(group, []);
+}
+leaves.sort();
+
+// Fail at generation time, loudly, rather than writing a file that LOOKS valid.
+// If a pin bump renames `command` or `subcommands`, `leaves` comes out empty —
+// and the runtime effect of that is every gog call refused, discovered by a
+// user rather than here.
+if (!doc.build) throw new Error("gog schema carried no build string — has the schema shape changed?");
+const FLOOR = 80; // 101 at 0.36.0; a real shrink past this is a decision, not a parse accident
+if (leaves.length < FLOOR) {
+  throw new Error(`only ${leaves.length} gmail/calendar leaves found, expected at least ${FLOOR}`);
+}
+// Longest-prefix resolution in leaf.ts is unambiguous only while no leaf is a
+// dotted prefix of another. If a bump ever ships both `a.b` and `a.b.c`, then
+// `a b <positional c>` would resolve to `a.b.c` while gog runs `a b` — the
+// capability, rule key, card and audit record would all name a different
+// command than the one that executes, and the two can differ in write posture.
+const shadowed = leaves.find((a) => leaves.some((b) => b !== a && b.startsWith(`${a}.`)));
+if (shadowed) {
+  throw new Error(`"${shadowed}" is a dotted prefix of another leaf — leaf.ts cannot resolve both`);
+}
+
+// kong can mint a second long spelling for a boolean flag, `--no-<name>`, and
+// one of those would disarm a belt flag while matching neither the reserved set
+// nor either rule in reservedFlags.ts. Zero flags are negatable at 0.36.0;
+// asserting it here means a pin bump that changes that fails the generator,
+// instead of waiting on someone to remember to re-run the probe by hand.
+const negatable = [];
+let flagsSeen = 0;
+const flagWalk = (node, path) => {
+  const here = node.name ? [...path, node.name] : path;
+  for (const f of node.flags ?? []) {
+    flagsSeen++;
+    if (f.negated) negatable.push(`${here.join(".")} --${f.name}`);
+  }
+  for (const s of node.subcommands ?? []) flagWalk(s, here);
+};
+for (const f of doc.command?.flags ?? []) {
+  flagsSeen++;
+  if (f.negated) negatable.push(`(global) --${f.name}`);
+}
+for (const group of doc.command?.subcommands ?? []) {
+  if (group.name === "gmail" || group.name === "calendar") flagWalk(group, []);
+}
+// The check above is worthless if it never saw a flag, so this floor catches a
+// rename of `flags`. It does NOT catch a rename of `negated` — that would leave
+// the count intact and certify zero negatable flags from a key nothing reads —
+// which is why reservedFlags.ts keeps the hand probe written down as the thing
+// to re-run on a pin bump rather than treating this as a full replacement.
+// 3031 flags at 0.36.0.
+const FLAG_FLOOR = 500;
+if (flagsSeen < FLAG_FLOOR) {
+  throw new Error(
+    `only ${flagsSeen} flags parsed, expected at least ${FLAG_FLOOR} — has the schema's flag shape changed?`,
+  );
+}
+if (negatable.length > 0) {
+  throw new Error(
+    `negatable flags found, which reservedFlags.ts cannot see: ${negatable.join(", ")}. ` +
+      `Canonicalise --no-X to --X there before regenerating.`,
+  );
+}
+
+// Emitted as TypeScript, not JSON: `resolveJsonModule` is off across this
+// workspace, and a .json under `rootDir` would not be copied into `dist`, so
+// the packaged app would resolve nothing. A .ts file compiles like any other
+// source and stays diffable in review.
+const body = [
+  "// GENERATED by scripts/fetch-gog-schema.mjs — do not edit by hand.",
+  "//",
+  "// Every Gmail/Calendar leaf the pinned gog ships. NOT an allowlist: this is",
+  "// what makes a typo fail here instead of spending a minted token on a usage",
+  "// error, and what makes a pin bump that renames a command fail a test rather",
+  "// than a user. Other groups are absent because the minted token's four scopes",
+  "// do not reach them — they would 403 at Google.",
+  "",
+  `export const GOG_VERSION = ${JSON.stringify(doc.build)};`,
+  "",
+  "export const GOG_LEAVES: readonly string[] = [",
+  ...leaves.map((l) => `  ${JSON.stringify(l)},`),
+  "];",
+  "",
+].join("\n");
+writeFileSync(new URL("../packages/device-core/src/providers/gogLeaves.ts", import.meta.url), body);
+console.log(`${leaves.length} gmail/calendar leaves written from ${doc.build}`);
