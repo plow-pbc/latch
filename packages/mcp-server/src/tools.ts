@@ -271,6 +271,15 @@ export const TOOLS: ToolSpec[] = [
       "write access is granted from them. They are NOT the full extent of what the command can " +
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
       "If the command is still running when the wait elapses you get a job handle for plow_get_output. " +
+      "A command that declares neither write_paths nor network can be killed if it has produced no " +
+      "output at all after 15 minutes — so if long silent work is expected, have it print progress — " +
+      "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
+      "when it is killed. Declare a write path (or " +
+      "network) and it is never killed that way, because it could be mid-work and a truncated file " +
+      "is worse than the wait. " +
+      "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
+      "left running in the background will normally be killed by its next write unless it redirects " +
+      "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
       "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
       "plow_get_result, and the ready payload is the plow_run_command result — including its job handle.",
     inputSchema: {
@@ -360,7 +369,11 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Fetch incremental output of a command still running from plow_run_command. " +
       "Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, " +
-      "not a handle from plow_get_result.",
+      "not a handle from plow_get_result. " +
+      "A read-only command that produces nothing and never exits is eventually killed by this Mac: " +
+      "the reply then carries an 'error' saying so, which is for the user to hear. One approved to " +
+      "write or to use the network is not — it could be mid-work — so polling will not resolve on " +
+      "its own; tell the user, who is the only one who can end it.",
     inputSchema: {
       type: "object",
       required: ["handle"],
