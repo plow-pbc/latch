@@ -132,8 +132,11 @@ describe("a vendored provider through the exec path", () => {
     const d = device(make(), [vendorDir()]);
     const response = await run(d, ["gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toMatch(expected);
-    // Whatever was thrown, the token is not in what comes back.
+    // Whatever was thrown, the token reaches neither the agent NOR the
+    // append-only log. The audit half matters at least as much: an error
+    // string there outlives the token and travels wherever the log travels.
     expect(jv(response).get("error").str ?? "").not.toContain(TOKEN.slice(0, 12));
+    expect(JSON.stringify(d.audit.entries())).not.toContain(TOKEN.slice(0, 12));
     expectNeverSpawned(d);
   });
 
