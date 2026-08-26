@@ -292,12 +292,17 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     // the pre-relay shape, kept because the audit log is append-only and old
     // entries are still on disk.
     agentDisplay: value("intent_received", "agent_name") ?? value("access_request", "display"),
-    // Not from `intent_received`: an intent's goal is unverified agent prose on
-    // an unbounded field, so the device stops at the approval surface and never
-    // writes it (see `durableIntentText`). These two still carry real text — an
-    // access request's stated goals and a spawned agent's — and are what the
-    // Goal row and the search key are fed from now.
-    goal: value("access_request", "goals") ?? value("agent_spawned", "goal"),
+    // `intent_received` is LAST, not absent. The device stopped writing a goal
+    // there — it is unverified agent prose on an unbounded field, so it stays
+    // on the approval surface — but the log is append-only and every entry
+    // written before that change still carries one, which for a browser
+    // session is the row's only "why". `durableIntentText` omits the key
+    // rather than blanking it, so `value()` is null for new entries and the
+    // legacy term falls through. Same policy as `agentDisplay` above.
+    goal:
+      value("access_request", "goals") ??
+      value("agent_spawned", "goal") ??
+      value("intent_received", "goal"),
     intentId: jv(events[0]).get("intentId").str,
     exitCode: entry("exec_end") ? jv(entry("exec_end")!).get("exit_code").int : null,
     // Every request in this row, not just the first: a session that was

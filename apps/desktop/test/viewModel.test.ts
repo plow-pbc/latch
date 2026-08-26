@@ -172,6 +172,8 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.status).toBe("Granted");
     expect(acts[0]!.kind).toBe("access");
     expect(acts[0]!.timeline).toHaveLength(2);
+    // First term of the goal chain, and the row's only "why".
+    expect(acts[0]!.goal).toBe("help");
   });
 
   it("separates distinct operations, drops device_started, orders newest first", () => {
@@ -210,9 +212,27 @@ describe("auditActivities (grouping)", () => {
     expect(blocked[0]!.category).toBe("failed");
   });
 
-  // `goal` stays in the search key — it is still fed by access_request and
-  // agent_spawned — but no longer by `intent_received`, which the device stopped
-  // writing it to, so a command run has none to match on.
+  // Every surviving term of the goal chain, and its order. Without these,
+  // replacing the whole expression with `goal: null` leaves the suite green.
+  it("resolves a goal from a spawned agent", () => {
+    const [a] = auditActivities([
+      { event: "agent_spawned", intentId: "i9", agent: "agentB", goal: "water the plants", ts: "2026-08-09T12:00:00Z" },
+    ]);
+    expect(a!.goal).toBe("water the plants");
+    expect(activityMatches(a!, "plants")).toBe(true);
+  });
+
+  // The device stopped writing this field, but the log is append-only: an entry
+  // written before that change still has to render its "why".
+  it("still reads a goal from a legacy intent_received", () => {
+    const [a] = auditActivities([
+      { event: "intent_received", intentId: "i8", request: "browse: dominos.com", goal: "Order dinner", agent: "agentC", capabilities: ["Browse: dominos.com"], ts: "2026-08-09T12:00:00Z" },
+    ]);
+    expect(a!.goal).toBe("Order dinner");
+  });
+
+  // `goal` stays in the search key — no longer fed by a NEW `intent_received`,
+  // which the device stopped writing it to, so a fresh command run has none.
   it("search matches across title, command, and agent", () => {
     const a = auditActivities(commandRun)[0]!;
     expect(activityMatches(a, "df")).toBe(true);
