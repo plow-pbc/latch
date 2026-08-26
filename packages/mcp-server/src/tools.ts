@@ -274,8 +274,8 @@ export const TOOLS: ToolSpec[] = [
       "A command that has produced no output at all after 15 minutes is killed and reported as such — " +
       "so if long silent work is expected, have it print progress. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
-      "left running in the background is killed by its next write unless it redirects (`>log 2>&1`), " +
-      "its output is not captured, and no handle tracks it. "  +
+      "left running in the background will normally be killed by its next write unless it redirects " +
+      "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
       "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
       "plow_get_result, and the ready payload is the plow_run_command result — including its job handle.",
     inputSchema: {

@@ -331,8 +331,8 @@ export class Executor {
     // nothing downstream needs a guard against late output.
     const settle = (code: number) => {
       clearTimeout(reaper);
-      child.stdout.destroy();
-      child.stderr.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       buffer.finish(code);
     };
     child.on("error", () => settle(-1));
@@ -373,13 +373,18 @@ export class Executor {
     }, this.reapAfterMs);
     reaper.unref?.();
 
-    child.stdout.on("data", (chunk: Buffer) => buffer.append(chunk));
-    child.stderr.on("data", (chunk: Buffer) => buffer.append(chunk));
-    // A pipe error would otherwise be an unhandled stream `error` — which
-    // throws, and in the Electron main process that is the app going down
-    // over a child's broken pipe. The run's own outcome says what happened.
-    child.stdout.on("error", () => {});
-    child.stderr.on("error", () => {});
+    // Optional throughout: a spawn that never got as far as its stdio — the
+    // fd exhaustion this reaper exists to make rarer — leaves these null and
+    // emits `error` on the next tick, where a throw is nobody's to catch.
+    for (const stream of [child.stdout, child.stderr]) {
+      stream?.on("data", (chunk: Buffer) => buffer.append(chunk));
+      // A pipe error ENDS the run rather than being swallowed: the stream is
+      // auto-destroyed either way, so capture has stopped, and reporting the
+      // command's own `exit 0` over a silently truncated answer is the worse
+      // of the two. After settling this is a no-op — `settle` is idempotent —
+      // which is what makes one handler right for both.
+      stream?.on("error", () => settle(-1));
+    }
 
     await buffer.waitForExit(Math.max(args.waitMs, 0));
     return { handle, ...shape(buffer.snapshot(0)) };
