@@ -238,43 +238,102 @@ describe("refresh", () => {
 });
 
 describe("the activation chat fallback", () => {
-  it("offers to re-activate only when the credential was refused", async () => {
-    const refused = build(
+  it("does not let a slow failure undo a newer success", async () => {
+    // Two refreshes in one session share a generation, so neither could tell
+    // it had been overtaken. A late failure then replaced a good list with the
+    // cached fallback and an error banner — degrading the fallback on an
+    // account whose chats had just been read fine.
+    const slow = deferred<CloudChatOption[]>();
+    let first = true;
+    const state = build(
       tempHome(),
       fakes({
         chats: async () => {
-          throw new PlowApiError("forbidden", "This Mac cannot list chats yet.", 403);
+          if (first) {
+            first = false;
+            return slow.promise;
+          }
+          return CHATS;
         },
       }),
     );
-    await refused.refresh();
 
-    expect(refused.state().cloudChatsNeedReactivation).toBe(true);
+    const stale = state.refresh();
+    await state.refresh();
+    expect(state.state().cloudChatsLoaded).toBe(true);
+
+    slow.reject(new PlowApiError("network", "Couldn't reach Plow."));
+    await stale;
+    await settle();
+
+    expect(state.state()).toMatchObject({
+      cloudChats: CHATS,
+      cloudChatsLoaded: true,
+      cloudChatsError: null,
+    });
   });
 
-  it("never offers to re-activate over a blip", async () => {
-    // Following that button wipes the credential AND the cached activation
-    // chat — the fallback that keeps setup working when the list is down. For
-    // a timeout or a 5xx it costs a re-activation over SMS and fixes nothing.
-    for (const error of [
-      new PlowApiError("network", "Couldn't reach Plow."),
-      new PlowApiError("http", "Plow returned 500.", 500),
-      new PlowApiError("provider_unavailable", "Unavailable right now.", 503),
-    ]) {
-      const state = build(
-        tempHome(),
-        fakes({
-          chats: async () => {
-            throw error;
-          },
-        }),
-      );
-      await state.refresh();
+  it("does not let a slow success overwrite a newer one", async () => {
+    // The same overtaking in the other direction: a stale answer is stale even
+    // when it succeeded, and the picker would show chats the account no longer
+    // has.
+    const slow = deferred<CloudChatOption[]>();
+    let first = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          if (first) {
+            first = false;
+            return slow.promise;
+          }
+          return [{ uid: "cht_2", label: "+15550188 · Family" }];
+        },
+      }),
+    );
 
-      expect(state.state().cloudChatsNeedReactivation).toBe(false);
-      // And the fallback is still there to be used.
-      expect(state.state().cloudChats).toHaveLength(1);
-    }
+    const stale = state.refresh();
+    await state.refresh();
+
+    slow.resolve(CHATS);
+    await stale;
+    await settle();
+
+    expect(state.state().cloudChats).toEqual([{ uid: "cht_2", label: "+15550188 · Family" }]);
+  });
+
+  /**
+   * Every `PlowApiErrorKind` the chat list can raise, and whether re-activating
+   * is the remedy. One table, because the answer is per-kind and a case with no
+   * row is a kind nobody decided about — `unauthorized` was exactly that, and
+   * it is one of the two arms the fix keys on.
+   *
+   * Following the prompt wipes the credential AND the cached activation chat,
+   * which is the fallback keeping setup usable while the list is down. Offering
+   * it for a blip costs a re-activation over SMS and fixes nothing.
+   */
+  it.each([
+    ["forbidden", new PlowApiError("forbidden", "This Mac cannot list chats yet.", 403), true],
+    ["unauthorized", new PlowApiError("unauthorized", "Not authorized.", 401), true],
+    ["network", new PlowApiError("network", "Couldn't reach Plow."), false],
+    ["http 5xx", new PlowApiError("http", "Plow returned 500.", 500), false],
+    ["provider_unavailable", new PlowApiError("provider_unavailable", "Unavailable.", 503), false],
+    ["expired", new PlowApiError("expired", "That code expired.", 410), false],
+  ])("re-activation prompt for %s: %s", async (_kind, error, expected) => {
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          throw error;
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    expect(state.state().cloudChatsNeedReactivation).toBe(expected);
+    // Whatever the kind, the fallback is there to be used.
+    expect(state.state().cloudChats).toHaveLength(1);
   });
 
   it("clears the prompt once the chats come back", async () => {

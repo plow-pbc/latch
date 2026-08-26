@@ -161,6 +161,16 @@ export class CloudAgentState {
    */
   private chatsError: string | null = null;
   private chatsNeedReactivation = false;
+  /**
+   * Which chat refresh is the newest. Bumped per read, not per account.
+   *
+   * `generation` only moves on sign-out, so two refreshes in the same session
+   * share one and neither can tell it has been overtaken. A slow FAILURE
+   * landing after a fast success then replaces a good chat list with the
+   * cached fallback and an error banner — degrading the very fallback this
+   * exists to provide, on an account whose chats we had just read fine.
+   */
+  private chatReads = 0;
   private actionError: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
@@ -332,6 +342,8 @@ export class CloudAgentState {
     this.chatsLoaded = false;
     this.chatsError = null;
     this.chatsNeedReactivation = false;
+    // Nothing in flight belongs to the next account either.
+    this.chatReads += 1;
     this.agentsError = null;
     this.actionError = null;
     this.publish();
@@ -448,9 +460,10 @@ export class CloudAgentState {
   }
 
   private async refreshChats(credential: string, generation: number): Promise<void> {
+    const read = ++this.chatReads;
     try {
       const chats = await this.deps.chats.list(credential);
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || read !== this.chatReads) return;
       this.chats = chats;
       // Only here: the one place a list actually came back. An empty answer is
       // still an answer, and it is the only one the empty state may render.
@@ -460,7 +473,10 @@ export class CloudAgentState {
       // Labels arrive with the chats, so rows resolve theirs on this pass.
       this.relabelRows();
     } catch (error) {
-      if (generation !== this.generation) return;
+      // A superseded read says nothing about now. Landing late must never undo
+      // a newer answer, and a failure undoing a success is the expensive
+      // direction of that.
+      if (generation !== this.generation || read !== this.chatReads) return;
       // Whatever went wrong, the account's chats are unknown, and the screen
       // must not read that as "you have no chats" — which is why `chatsLoaded`
       // and the error travel together, and why the roster stays where it is.
