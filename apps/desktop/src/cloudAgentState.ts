@@ -25,7 +25,7 @@ import {
 import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
 import { activationChatLabel, storedActivationChat } from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
-import { CloudAgentLocalSettings, loadSettings, saveSettings } from "./settings.js";
+import { loadSettings } from "./settings.js";
 
 /**
  * The provider every cloud agent is created on.
@@ -96,11 +96,6 @@ export interface CloudAgentsUiState {
    * and the empty state falls back to re-activate copy.
    */
   cloudSendTo: string | null;
-  /**
-   * Local per-agent settings, keyed on the same `agent_id` as the rows. Not
-   * part of a row because it is ours, not Plow's: a row is server truth.
-   */
-  cloudAgentSettings: Record<string, CloudAgentLocalSettings>;
 }
 
 /** The slice of `CloudAgentsClient` this state needs. */
@@ -206,7 +201,6 @@ export class CloudAgentState {
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
-      cloudAgentSettings: settings.cloudAgentSettings,
     };
   }
 
@@ -296,9 +290,6 @@ export class CloudAgentState {
     this.mutations += 1;
     this.rows.delete(id);
     this.pending.delete(id);
-    // The agent is gone for good, so its local settings have nothing left to
-    // apply to. Keeping them would grow the file forever with dead ids.
-    this.writeAgentSettings(id, null);
     this.publish();
     await this.refresh();
   }
@@ -374,8 +365,6 @@ export class CloudAgentState {
         this.mutations += 1;
         this.rows.delete(agentId);
         this.pending.delete(agentId);
-        // Gone for good now, so its local settings have nothing left to apply to.
-        this.moveAgentSettings(agentId, null);
         this.publish();
       } catch {
         // Still in teardown. The next refresh will find it and try again.
@@ -495,31 +484,6 @@ export class CloudAgentState {
       const label = this.chats.find((chat) => chat.uid === row.chatUid)?.label;
       if (label && label !== row.chatLabel) this.rows.set(agentId, { ...row, chatLabel: label });
     }
-  }
-
-  /**
-   * Move one agent's local settings onto its replacement, or drop them.
-   *
-   * One load and one save, so the read and the two writes cannot be split by
-   * anything: whatever is on disk when this runs is what moves. `toId` of
-   * `null` — a retry whose replacement never came — deletes the entry, because
-   * an id no row will ever carry again can never be read.
-   */
-  private moveAgentSettings(fromId: string, toId: string | null): void {
-    const settings = loadSettings(this.deps.home);
-    if (!(fromId in settings.cloudAgentSettings)) return;
-    const carried = settings.cloudAgentSettings[fromId];
-    delete settings.cloudAgentSettings[fromId];
-    if (toId) settings.cloudAgentSettings[toId] = carried;
-    saveSettings(this.deps.home, settings);
-  }
-
-  private writeAgentSettings(agentId: string, value: CloudAgentLocalSettings | null): void {
-    const settings = loadSettings(this.deps.home);
-    if (value) settings.cloudAgentSettings[agentId] = value;
-    else if (!(agentId in settings.cloudAgentSettings)) return;
-    else delete settings.cloudAgentSettings[agentId];
-    saveSettings(this.deps.home, settings);
   }
 
   private credential(): string {

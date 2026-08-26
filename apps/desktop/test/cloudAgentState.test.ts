@@ -21,6 +21,7 @@ import {
 import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
 import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
+import { deferred } from "./deferred.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
 const SESSION = "session_rotates_and_is_never_the_identity";
@@ -70,17 +71,6 @@ const CHATS: CloudChatOption[] = [{ uid: "cht_1", label: "+15550100 · Ada" }];
  * turn after the call that cancelled it returns. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-/** A deferred, so a test can hold a poll open and look at the screen. */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 interface Fakes {
@@ -173,7 +163,6 @@ describe("before anything has been read", () => {
       cloudChatsLoaded: false,
       cloudChatsNeedReactivation: false,
       cloudSendTo: null,
-      cloudAgentSettings: {},
     });
   });
 });

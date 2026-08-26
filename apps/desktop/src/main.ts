@@ -159,12 +159,12 @@ let updates: UpdateController | null = null;
  */
 class ElectronPolicy implements PolicyDelegate {
   /**
-   * A cached "always allow" cannot stand in for a review the owner requires of
-   * this agent. The rule itself is left alone — it still applies to every other
-   * agent, and to this one if the switch goes off again.
+   * A cached "always allow" cannot stand in for the reviewer when the mode
+   * hands the decision to it. The rule itself is left alone — it applies again
+   * as soon as the mode is one that lets a rule answer.
    */
-  mayGrantFromStoredRule(intent: Intent): boolean {
-    return storedRuleMayGrant(loadSettings(home), intent.agentId);
+  mayGrantFromStoredRule(): boolean {
+    return storedRuleMayGrant(loadSettings(home));
   }
 
   // The branching itself lives in reviewPolicy.ts so it is testable without a
@@ -601,6 +601,11 @@ ipcMain.handle("connect:dismiss", async () => {
  */
 ipcMain.handle("cloud:create", async (_e, chatUid: string, name: string) => {
   await cloudAgents?.create(chatUid, name);
+  // The new agent's credential row comes from the separately fetched roster,
+  // which knows nothing about a create. Without this the screen shows the agent
+  // with no row behind it, so Remove is disabled until the user leaves the tab
+  // and comes back.
+  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
