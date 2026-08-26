@@ -192,10 +192,11 @@ export class DeviceAgent {
     // same start-time answer `browserRuntime` gives, so installing WhatsApp
     // while the app is running needs a restart to publish the skill.
     registerWhatsappSkill(this.skills, ownerHome);
-    // Registered only when a provider CLI is actually staged: a skill for a
-    // binary this Mac does not have would teach an agent to run commands that
-    // cannot work. Sampled once at construction, like the two skills above.
-    if (this.vendorDirs.length > 0) this.skills.register(GOG_SKILL);
+    // Registered only when the CLI it documents is actually staged: a skill
+    // for a binary this Mac does not have teaches an agent commands the exec
+    // path refuses unconditionally. The SAME predicate that gate uses — two
+    // sites answering one question two ways is what produces that gap.
+    if (this.hasStaged("gog")) this.skills.register(GOG_SKILL);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -476,6 +477,17 @@ export class DeviceAgent {
    * The environment a vendored provider's child runs with: its token, and
    * nothing else.
    */
+  /**
+   * Whether this Mac actually ships the named CLI.
+   *
+   * Per-provider rather than "is anything staged": the day a second row joins
+   * the registry, a Mac with only gog staged would otherwise report the other
+   * as present — publishing its skill and minting for it.
+   */
+  private hasStaged(command: string): boolean {
+    return this.vendorDirs.some((d) => fs.existsSync(path.join(d, command)));
+  }
+
   private async mintFor(provider: VendoredProvider): Promise<Record<string, string>> {
     if (this.minter === null) throw MintError.unpaired();
     return { [provider.tokenEnv]: await this.minter.mint(provider) };
@@ -516,10 +528,7 @@ export class DeviceAgent {
       // their own PATH — unbelted, unrefused, and against their own
       // credentials rather than a minted one. The name is this Mac's to
       // resolve; if it cannot, that is an answer, not a pass.
-      // Per-provider, not a global flag: the day a second row joins the
-      // registry, a Mac with only gog staged would otherwise report the other
-      // as staged too and mint for it — the exact spend this check prevents.
-      if (!this.vendorDirs.some((d) => fs.existsSync(path.join(d, provider.command)))) {
+      if (!this.hasStaged(provider.command)) {
         const error = `${provider.command} is not installed on this Mac`;
         this.audit.record("exec_error", { intentId: intent.intentId, error });
         return { status: "error", error };

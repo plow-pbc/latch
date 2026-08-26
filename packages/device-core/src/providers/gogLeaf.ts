@@ -32,7 +32,11 @@ const LEAVES: ReadonlySet<string> = new Set(GOG_LEAVES);
  * the gate into a scan for one token.
  */
 export function isKnownCommandPath(words: readonly string[]): boolean {
-  if (words.length === 0) return false;
+  // No words is the top level, which is a real place: `gog --help` is the
+  // first thing an agent discovering the surface tries, and it is as inert as
+  // any group help. Refusing it told the agent its SPELLING was wrong, which
+  // is the wrong direction to send someone.
+  if (words.length === 0) return true;
   // A word that already contains a dot is not a command path, for the same
   // reason it is not one in `gogLeaf`: the join would match `gmail.search`
   // against a real leaf name while gog can run no such argv.

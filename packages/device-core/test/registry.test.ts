@@ -98,12 +98,28 @@ describe("needsToken", () => {
     expect(needsToken(["gog", "gmail", "search", "q"])).toBe(true);
   });
 
-  it("agrees with the gate: a command it accepts as real still gets a token", () => {
-    // Two predicates drifted apart once. `--help` as a positional rather than
-    // the last word is a REAL search, and treating it as help ran it with no
-    // minted token — against whatever credentials gog could find instead.
-    const argv = ["gog", "gmail", "search", "--help", "q"];
-    expect(gog.refuse(argv)).toBeNull();
-    expect(needsToken(argv)).toBe(true);
+  // Two predicates drifted apart once, so both are driven from the same rows.
+  // Sameness held by convention is what produced that gap.
+  it.each([
+    { argv: ["gog", "gmail", "search", "q"], refused: false, token: true },
+    { argv: ["gog", "gmail", "--help"], refused: false, token: false },
+    { argv: ["gog", "calendar", "-h"], refused: false, token: false },
+    // Top level: as inert as any group help, and the first thing an agent
+    // discovering the surface tries.
+    { argv: ["gog", "--help"], refused: false, token: false },
+    // Verified against pinned 0.36.0: this PRINTS USAGE — kong takes --help
+    // wherever it appears in the flag stream. So the gate accepts it as a real
+    // command and it gets a token it will not use. Fail-safe, and the cost is
+    // a spent delegation rather than an unauthenticated run.
+    { argv: ["gog", "gmail", "search", "--help", "q"], refused: false, token: true },
+    // After the terminator, -h is a positional — the query itself — so this is
+    // a real search and correctly needs a token. The help predicate requires
+    // the words before it to be plain, which "--" is not.
+    { argv: ["gog", "gmail", "search", "--", "-h"], refused: false, token: true },
+    { argv: ["gog", "drive", "files", "list", "--help"], refused: true, token: false },
+    { argv: ["gog", "gmail", "serach", "--help"], refused: true, token: false },
+  ])("gate and mint agree on $argv", ({ argv, refused, token }) => {
+    expect(gog.refuse(argv) !== null).toBe(refused);
+    if (!refused) expect(needsToken(argv)).toBe(token);
   });
 });
