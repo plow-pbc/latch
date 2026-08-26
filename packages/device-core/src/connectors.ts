@@ -84,16 +84,10 @@ export function slackAction(tool: string): SlackAction | null {
 }
 
 /**
- * How much of a leading fragment still counts as an echo.
- *
- * A partial echo is still an echo: ten characters is what V8 quotes when it
- * reports offending input, and a Plow credential is opaque from its first
- * character, so ten of them already carry the secret.
- *
- * Private and unconditional. It was a caller-supplied `headLength` while two
- * implementations were converging; every production sink passed this same
- * value, so the parameter was an unused mode on an enforcement seam.
- */
+  * How much of a leading fragment still counts as an echo. A partial echo is
+  * still an echo: ten characters is what V8 quotes when it reports offending
+  * input, and a Plow credential is opaque from its first character.
+  */
 const SECRET_HEAD = 10;
 
 /**
@@ -144,12 +138,9 @@ function textCarries(text: string, forms: string[]): boolean {
 /**
  * Whether `text` discloses `secret`, in any form `secretForms` knows.
  *
- * One predicate, two sinks: the desktop's adversarial reviewer screens model
- * output with it, and the connector screens decoded responses with it. They
- * were separate implementations and drifted — the connector's was whole-token
- * only, the weaker rule at the higher-value sink, since that one hands
- * arbitrary JSON straight to a hosted agent. Short secrets are ignored because
- * a handful of characters matches ordinary prose.
+ * One predicate, two sinks — the adversarial reviewer screens model output
+ * with it, the connector screens decoded responses. Short secrets are ignored
+ * because a handful of characters matches ordinary prose.
  */
 export function echoesSecret(text: string, secret: string): boolean {
   return textCarries(text, secretForms(secret));

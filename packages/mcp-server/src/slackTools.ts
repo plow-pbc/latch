@@ -63,13 +63,11 @@ const excerpt = (text: string): string =>
   text.length <= REQUEST_TEXT_MAX ? text : `${text.slice(0, REQUEST_TEXT_MAX)}…`;
 
 /**
- * The longest search query this Mac will act on.
- *
- * The query reaches the request line, a capability chip, the reviewer's
- * prompt, `audit.ndjson` and `rules.json`, and it is the selector that keys a
- * search's always-allow rule. So it is *rejected* past this length rather than
- * truncated: a truncated selector would let two long queries sharing a prefix
- * produce one rule key. Generous, because a real query is nowhere near it.
+ * The longest search query this Mac will act on. It reaches a capability chip,
+ * the reviewer's prompt, `audit.ndjson` and `rules.json`, and it keys the
+ * search's always-allow rule — so past this length it is *rejected*, never
+ * truncated: a truncated selector lets two long queries sharing a prefix
+ * produce one rule key.
  */
 const QUERY_REQUEST_MAX = 2_000;
 
@@ -251,13 +249,7 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
       // Verbatim: for a search the query IS the read scope — the exact
       // analogue of `paths` on an `fs.read` — and it is in no other channel.
       const query = required(args, "query");
-      // Reject, never truncate. The query is now the selector that
-      // distinguishes one search rule from another, so a truncated one would
-      // let two long queries sharing a prefix collapse into a single
-      // always-allow — the exact collision the separate field exists to
-      // prevent. Unbounded, it would also reach a capability chip, the
-      // reviewer's prompt, audit.ndjson and rules.json, none of which this
-      // file leaves unbounded elsewhere.
+      // See QUERY_REQUEST_MAX: rejected, never truncated.
       if (query.length > QUERY_REQUEST_MAX) {
         throw new ToolError(
           `query is ${query.length} characters, over the ${QUERY_REQUEST_MAX}-character limit`,

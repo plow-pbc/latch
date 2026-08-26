@@ -411,14 +411,11 @@ textarea.text { min-height: 70px; resize: vertical; }
   flex-shrink: 0; max-height: 40vh; overflow: auto;
 }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
-/* Everything above the buttons scrolls as ONE region; the buttons never
-   shrink. `min-height: 0` is what lets a flex child actually scroll rather
-   than grow to its content. This replaced a per-block `max-height` on the
-   stated goal and the request line: the card carries device text, agent text
-   and model output, any of them can be long, and bounding them one at a time
-   was a fix per round with the next sibling always still open. The reviewer
-   note is the case that matters — it arrives after `armActions`, so the
-   buttons are live and Return is armed on Allow Once when it lands. */
+/* The narrative scrolls as ONE region; the buttons never shrink.
+   `min-height: 0` is what lets a flex child scroll rather than grow to its
+   content. The reviewer note is the case that earns it — it arrives after
+   `armActions`, so the buttons are already live and Return is armed on Allow
+   Once when it lands. */
 .approve .scroll-region { flex: 1; min-height: 0; overflow: auto; }
 .approve .actions { display: flex; gap: 8px; flex-shrink: 0; }
 .approve .actions .action-slot { flex: 1; position: relative; display: flex; }

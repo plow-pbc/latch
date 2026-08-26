@@ -108,13 +108,11 @@ async function render() {
   const reviewerNote = el("div", { class: "reviewer-note" });
 
   root.replaceChildren(
-    // Only the narrative scrolls. The enforceable block and the buttons are
-    // both pinned, because bounding them one at a time was a fix per round —
-    // the stated goal, then the request line, then the reviewer note — and the
-    // card mixes device text, agent text and model output, any of which can be
-    // long. Pinning `.fine` as well as `.actions` is what keeps the trade
-    // honest: protecting the buttons alone would let an agent bury what it is
-    // asking for beneath its own text while leaving the approve path live.
+    // Only the narrative scrolls; `.fine` and `.actions` are both pinned below.
+    // The card mixes device text, agent text and model output and any of them
+    // can be long, so a per-block bound is a fix per block. Pinning the chips
+    // as well as the buttons is what keeps it honest — protecting the buttons
+    // alone lets an agent bury what it is asking for under its own text.
     el("div", { class: "scroll-region" }, [
       el("div", { class: "who" }, [
         el("span", { class: "name", text: v.agentDisplay }),
