@@ -103,9 +103,12 @@ NONCE="<value printed by Send>"
 HOME_DIR="${HOME_DIR:-$HOME/Library/Application Support/Plow-Latch}"
 SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson";
 for i in $(seq 1 24); do
-  # exec_start records the argv, so the nonce lands there. Its intentId keys
-  # the exec_end that follows, which is the half proving the run finished.
-  LINE=$(grep -m1 "$NONCE" "$LOG" 2>/dev/null) || true
+  # exec_start ONLY. intent_received records capabilityDisplay, which for a
+  # process.exec includes the argv — so it carries the nonce too, and it is
+  # written BEFORE the decision. Matching the nonce alone reports success on a
+  # call the owner denied, which is the exact false positive this gate exists
+  # to prevent. Its intentId keys the exec_end that follows.
+  LINE=$(grep "$NONCE" "$LOG" 2>/dev/null | grep -m1 "\"event\":\"exec_start\"") || true
   if [ -n "$LINE" ]; then
     echo "$LINE"
     ID=$(printf %s "$LINE" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))")
@@ -119,8 +122,13 @@ bash -c "$SCRIPT"                                                   # local inst
 ```
 
 Quote the `exec_start` and `exec_end` lines as the verification. An
-`exec_start` with no `exec_end` means the run is still going or was reaped;
-an `exec_error` names why it failed.
+`exec_start` with no `exec_end` means the run is still going or was reaped; an
+`exec_error` names why it failed.
+
+On timeout it prints whatever DID carry the nonce, which is usually the answer:
+an `intent_received` with no `exec_start` after it means the call reached this
+Mac and the owner denied it or never answered — a working relay and a working
+device, waiting on a human.
 
 ## Smoke-testing the gog provider specifically
 
