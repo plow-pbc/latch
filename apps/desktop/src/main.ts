@@ -586,8 +586,29 @@ ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
 ipcMain.handle("connect:get", async () => agentsTabState());
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
+  // The credential it just minted is a roster row nobody has read yet — the
+  // same gap `cloud:create` had, and the same fix.
+  await connectClient?.refreshRoster();
   return agentsTabState();
 });
+/**
+ * Remove a cloud agent by its own id, with no credential row involved.
+ *
+ * A live agent whose credential has gone inactive has no roster row, and the
+ * screen used to disable Remove for it — a running agent nobody could take
+ * down. Its removal never needed the credential: `DELETE
+ * /v1/agents/cloud/{agent_id}` is keyed on the agent.
+ *
+ * Same lifecycle owner as every other cloud removal, so the poll, the row and
+ * the local state go together; the roster is re-read afterwards because the
+ * credential row, if there was one, is gone with it.
+ */
+ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
+  await cloudAgents?.remove(agentId);
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+
 /**
  * Remove one roster row. Which call that means is the state's decision, not
  * the renderer's — see `rosterSections.ts`.

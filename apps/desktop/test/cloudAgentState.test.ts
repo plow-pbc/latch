@@ -226,6 +226,39 @@ describe("refresh", () => {
 
 });
 
+describe("a superseded agent-list read", () => {
+  it.each([
+    ["failure", (d: ReturnType<typeof deferred<CloudAgentResource[]>>) =>
+      d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
+    ["success", (d: ReturnType<typeof deferred<CloudAgentResource[]>>) =>
+      d.resolve([agent({ agentId: "agent_stale" })])],
+  ])("a late %s never displaces the newer read", async (_ending, finish) => {
+    const stale = deferred<CloudAgentResource[]>();
+    let first = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => {
+          if (!first) return [agent({ agentId: "agent_newest" })];
+          first = false;
+          return stale.promise;
+        },
+      }),
+    );
+
+    const overtaken = state.refresh();
+    await state.refresh();
+
+    finish(stale);
+    await overtaken;
+
+    // The newest read is the account as it is. An overtaken one describes it
+    // as it was, and a stale failure would put a banner over a good answer.
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_newest"]);
+    expect(state.state().cloudAgentsError).toBeNull();
+  });
+});
+
 describe("the numbers a chat can be messaged on", () => {
   /** What `GET /v1/chats` returns for a chat with an agent and two humans. */
   const chatRow = {

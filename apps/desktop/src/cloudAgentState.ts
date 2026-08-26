@@ -181,6 +181,15 @@ export class CloudAgentState {
    * exists to provide, on an account whose chats we had just read fine.
    */
   private chatReads = 0;
+  /**
+   * Which agent-list read is the newest. The same guard as `chatReads`, for the
+   * same reason: `generation` moves on sign-out alone, so two reads in one
+   * session cannot tell which of them is stale.
+   *
+   * The fourth counter of this shape in this codebase. That is a smell, and the
+   * consolidation is deliberately not being done here — see the note on the PR.
+   */
+  private agentReads = 0;
   private actionError: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
@@ -327,6 +336,7 @@ export class CloudAgentState {
     this.chatsNeedReactivation = false;
     // Nothing in flight belongs to the next account either.
     this.chatReads += 1;
+    this.agentReads += 1;
     this.agentsError = null;
     this.actionError = null;
     this.publish();
@@ -401,9 +411,10 @@ export class CloudAgentState {
     generation: number,
     mutations: number,
   ): Promise<void> {
+    const read = ++this.agentReads;
     try {
       const agents = await this.deps.agents.list(credential);
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || read !== this.agentReads) return;
       // A create or a delete happened while this listing was in the air. It is
       // older than what the user just did, and applying it would put a deleted
       // agent back on screen. The mutation's own refresh follows it.
@@ -433,7 +444,9 @@ export class CloudAgentState {
         if (isTeardown(agent.status)) this.retryTeardown(credential, agent.agentId, generation);
       }
     } catch (error) {
-      if (generation !== this.generation) return;
+      // A superseded read says nothing about now, and a stale failure putting a
+      // banner over a newer good answer is the expensive direction of that.
+      if (generation !== this.generation || read !== this.agentReads) return;
       // The rows already on screen are kept: stale truth with a banner beats an
       // empty roster that reads as "you have no agents".
       this.agentsError = messageOf(error);

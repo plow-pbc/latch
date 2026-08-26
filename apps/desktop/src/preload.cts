@@ -94,6 +94,10 @@ contextBridge.exposeInMainWorld("domo", {
   // The renderer says WHICH row; main decides which call that row needs, because
   // getting it wrong leaves a live agent nobody can reach.
   rosterRemove: (id: number) => ipcRenderer.invoke("roster:remove", id),
+  // Remove a cloud agent by its own id. For the agent whose credential row is
+  // missing — an inactive credential on a still-running agent — where there is
+  // no roster row to name and none is needed.
+  cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Cloud agents (same tab, same state shape, same change channel). Exactly

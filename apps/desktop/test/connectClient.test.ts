@@ -467,6 +467,21 @@ describe("removing a roster row", () => {
     expect(client.state().rosterError).toBeNull();
   });
 
+  it("refreshes the roster after minting a credential", async () => {
+    signIn();
+    plow.keys = [];
+    const client = build();
+    await client.refreshRoster();
+    plow.keys = [key({ id: 5, name: "Claude Code" })];
+
+    await client.createCredential("Claude Code");
+    await client.refreshRoster();
+
+    // The mint IS a new roster row. Without a re-read the credential the user
+    // just made is absent from the list it belongs in.
+    expect(client.state().roster.mcp.map((row) => row.id)).toEqual([5]);
+  });
+
   it("keeps the row when the removal fails", async () => {
     signIn();
     plow.keys = [key({ id: 9, agent_id: "agent_9" })];
