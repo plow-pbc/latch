@@ -90,26 +90,45 @@ src_electron="$main_root/$electron_dir"
 electron_version() {
   node -e "process.stdout.write(require(require('path').resolve('$1', 'package.json')).version)" 2>/dev/null || true
 }
-if [[ ! -d "$electron_dir" ]]; then
-  echo "note: $electron_dir is absent — skipping (nothing depends on it in this checkout?)"
-elif [[ -s "$electron_dir/path.txt" ]] && [[ -x "$electron_dir/dist/$(cat "$electron_dir/path.txt")" ]]; then
+# Resolve it the way the app will. `node_modules/.bin/electron` is a symlink
+# that exists whether or not the binary does, so checking it proves nothing;
+# `require("electron")` is the path that actually throws at launch.
+electron_bin() {
+  node -p 'require("electron")' 2>/dev/null || true
+}
+electron_ready() {
+  local bin
+  bin=$(electron_bin)
+  [[ -n "$bin" && -x "$bin" ]]
+}
+
+if electron_ready; then
   echo "electron already installed — leaving it alone"
+elif [[ ! -d "$electron_dir" ]]; then
+  echo "note: $electron_dir is absent — nothing to clone into" >&2
 elif [[ ! -f "$src_electron/path.txt" ]]; then
-  echo "note: $src_electron has no path.txt either — skipping (run \`npm rebuild electron\` with postinstall scripts allowed)"
+  echo "note: $src_electron has no path.txt — nothing to clone from" >&2
 elif [[ "$(electron_version "$electron_dir")" != "$(electron_version "$src_electron")" ]]; then
-  echo "note: main checkout has electron $(electron_version "$src_electron"), this one wants $(electron_version "$electron_dir") — skipping"
+  echo "note: main checkout has electron $(electron_version "$src_electron"), this one wants $(electron_version "$electron_dir")" >&2
 else
   echo "cloning $electron_dir/dist from the main checkout…"
   rm -rf "$electron_dir/dist"
   cp -Rpc "$src_electron/dist" "$electron_dir/dist" 2>/dev/null || cp -Rp "$src_electron/dist" "$electron_dir/dist"
   cp -p "$src_electron/path.txt" "$electron_dir/path.txt"
-  # Resolve it the way the app will. `node_modules/.bin/electron` is a symlink
-  # that exists whether or not the binary does, so checking it proves nothing;
-  # `require("electron")` is the path that actually throws.
-  electron_bin=$(node -p 'require("electron")')
-  [[ -x "$electron_bin" ]] || { echo "error: require(\"electron\") resolved to $electron_bin, which is not executable" >&2; exit 1; }
-  echo "electron ready: $electron_bin"
 fi
+
+# ONE verdict, from the thing the app actually does, rather than three branches
+# that each print a note and carry on. Every one of those reasons — no package,
+# no payload to copy, a version that does not match — ends in the same place:
+# `just app` throws "Electron failed to install correctly" long after this
+# script said the worktree was ready. Say it here instead, and stop.
+if ! electron_ready; then
+  echo "error: require(\"electron\") does not resolve to a runnable binary in this worktree." >&2
+  echo "       Clone one from a checkout that has it, or reinstall electron with its" >&2
+  echo "       postinstall allowed (\`npm rebuild electron\`), then run this again." >&2
+  exit 1
+fi
+echo "electron ready: $(electron_bin)"
 
 # --- build -----------------------------------------------------------------
 just build
