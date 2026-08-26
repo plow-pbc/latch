@@ -729,28 +729,6 @@ app.whenReady().then(async () => {
   const agentsOpenShot = process.env.AGENTS_OPEN_OUT ?? "/tmp/agents-open.png";
   await captureAfterPaint(win, agentsOpenShot);
 
-  // The vault's honest failure state: locked is not empty, and the screen has to
-  // say so — the old copy sent people to debug a server that was running fine.
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
-  await waitFor(win, `document.querySelector("#view .empty")`, "the vault pane to render");
-  const vaultLocked = await win.webContents.executeJavaScript(`(${() => {
-    const text = document.body.innerText;
-    return {
-      saysCannotUnlock: text.includes("can't unlock its vault account"),
-      doesNotClaimEmpty: !text.includes("has not started yet"),
-      explains: text.includes("The account file is present but cannot be opened"),
-      // `undecryptable` covers a wrong key AND a damaged file. The copy must not
-      // pick one and state it as fact.
-      hedgesTheCause: text.includes("Usually that means") && text.includes("damaged"),
-      // The copy must NOT promise a recovery that does not exist: an account
-      // that cannot be decrypted cannot be signed in with either.
-      promisesNoFakeRecovery: !text.includes("Signing in again"),
-      saysNothingDeleted: text.includes("Nothing has been deleted"),
-    };
-  }})()`);
-  const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
-  await captureAfterPaint(win, vaultShot);
-
   // Re-selecting the tab you are on is deliberately a no-op, so each of these
   // leaves and comes back to make the pane re-read the stub. Going away is
   // AWAITED — `selectTab` does not await the render it starts, and `renderAgents`
@@ -787,6 +765,34 @@ app.whenReady().then(async () => {
           saysNoOtherHeadline: ${JSON.stringify(HEADLINES)}.filter((h) => h !== mine).every((h) => !t.includes(h)),
         }; })()`);
   const also = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
+
+  // The vault's honest failure state: locked is not empty, and the screen has to
+  // say so — the old copy sent people to debug a server that was running fine.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
+  await waitFor(win, `document.querySelector("#view .empty")`, "the vault pane to render");
+  const vaultLocked = {
+    // The state whose mis-rendering started this history, and the last one
+    // outside the shared exclusion: it asserted the absence of "has not started
+    // yet" and not of "no vault installed", so a regression that printed the
+    // missing-vault headline on the locked pane passed the gate.
+    ...(await saysOnly(HEADLINES[1])),
+    ...(await also(() => {
+      const text = document.body.innerText;
+      return {
+        explains: text.includes("The account file is present but cannot be opened"),
+        // `undecryptable` covers a wrong key AND a damaged file. The copy must
+        // not pick one and state it as fact.
+        hedgesTheCause: text.includes("Usually that means") && text.includes("damaged"),
+        // The copy must NOT promise a recovery that does not exist: an account
+        // that cannot be decrypted cannot be signed in with either.
+        promisesNoFakeRecovery: !text.includes("Signing in again"),
+        saysNothingDeleted: text.includes("Nothing has been deleted"),
+      };
+    })),
+  };
+  const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
+  await captureAfterPaint(win, vaultShot);
+
 
   // The state this whole change exists to produce, and the one nothing used to
   // render: a build with no vault installed.
@@ -848,11 +854,16 @@ app.whenReady().then(async () => {
   // entirely and writes into the list instead — so none of the states above
   // exercise it, and it renders a sentence none of them can produce.
   vaultItemsThrows = true;
-  await showVault(`document.body.innerText.includes("Could not read the vault")`, "the vault failure to render");
-  const vaultFailure = {
-    ...(await saysOnly("Could not read the vault")),
-  };
-  vaultItemsThrows = false;
+  let vaultFailure;
+  try {
+    await showVault(`document.body.innerText.includes("Could not read the vault")`, "the vault failure to render");
+    vaultFailure = await saysOnly("Could not read the vault");
+  } finally {
+    // The only latch in this block — every other switch is overwritten by the
+    // next probe. `waitFor` times out by design, and a stub left rejecting
+    // would surface as the outer catch rather than as this probe.
+    vaultItemsThrows = false;
+  }
 
   // Unsaved edits must not vanish without a word. The vault is the only screen
   // that holds a form open behind a Save button, so it is the only one where
@@ -1216,18 +1227,13 @@ app.whenReady().then(async () => {
     vaultUnsaved.noDialogUnderInert &&
     vaultUnsaved.closeAnsweredAfterSave &&
     vaultUnsaved.noOrphanedDialog &&
-    vaultLocked.saysCannotUnlock &&
-    vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&
     vaultLocked.hedgesTheCause &&
     vaultLocked.promisesNoFakeRecovery &&
     vaultLocked.saysNothingDeleted &&
-    vaultMissing.saysNoVaultInstalled &&
-    vaultMissing.doesNotClaimEmpty &&
-    vaultMissing.doesNotClaimLocked &&
     vaultMissing.reassures &&
     vaultMissing.noLockedNote &&
-    [vaultMissing, vaultStarting, vaultNoStorage, vaultUnknown, vaultFailure]
+    [vaultLocked, vaultMissing, vaultStarting, vaultNoStorage, vaultUnknown, vaultFailure]
       .every((v) => v.saysIts && v.saysNoOtherHeadline) &&
     vaultNoStorage.saysNoSecureStorage &&
     vaultNoStorage.blamesNoKeychain &&
