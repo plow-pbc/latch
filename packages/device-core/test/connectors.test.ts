@@ -74,6 +74,9 @@ describe("ConnectorClient", () => {
     { what: "a fragment that truncates the path", action: "channels.list#/../relay/agents" },
     { what: "an action nobody defined", action: "messages.delete" },
     { what: "no action at all", action: "" },
+    { what: "a prototype property masquerading as an action", action: "constructor" },
+    { what: "the prototype itself", action: "__proto__" },
+    { what: "an inherited Object method", action: "toString" },
   ])("refuses $what before any request exists", async ({ action }) => {
     let called = false;
     const client = makeConnectorClient({

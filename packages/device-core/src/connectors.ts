@@ -142,8 +142,8 @@ export function makeConnectorClient(opts: {
       // A caller that got here with something that is not an action came from
       // outside the type system (untyped JS, a wire value). There is no route
       // to build, so there is no request.
+      if (!Object.hasOwn(SLACK_ACTIONS, action)) throw ConnectorError.unknownAction();
       const route = SLACK_ACTIONS[action];
-      if (route === undefined) throw ConnectorError.unknownAction();
       const credential = opts.credential().trim();
       if (!credential) throw ConnectorError.unpaired();
 
