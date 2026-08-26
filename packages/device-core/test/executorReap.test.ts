@@ -192,6 +192,29 @@ describe("a run that produces nothing and never exits", () => {
     expect(after.output.toString()).not.toContain(marker);
     expect(after.outputLength).toBe(started.outputLength);
   });
+
+  it("leaves a backgrounded job that redirected its output running", async () => {
+    const dir = tempDir();
+    const executor = new Executor(path.join(dir, "scratch"), 60_000);
+
+    // The other half of the contract `plow_run_command` states: a job that
+    // redirects both streams is not holding the run's pipes, so nothing this
+    // Mac does to end the run reaches it.
+    const marker = `survivor-${path.basename(dir)}`;
+    const started = await executor.run({
+      argv: ["/bin/sh", "-c", `echo started; (sleep 5; echo ${marker}) >/dev/null 2>&1 & exit 0`],
+      cwd: dir,
+      readPaths: [dir],
+      writePaths: [],
+      network: false,
+      waitMs: 3_000,
+    });
+    cleanups.push(() => killAll(marker));
+    expect(started.running).toBe(false);
+    expect(started.exitCode).toBe(0);
+    expect(started.reaped).toBe(false);
+    expect(alive(marker).length).toBeGreaterThan(0);
+  });
 });
 
 describe("the audit record of a reaped run", () => {

@@ -354,8 +354,14 @@ export class Executor {
     // reaper, and a capture that broke — answer the caller and disarm the
     // reaper as they go, so a run left alive on either would be alive,
     // unkillable and untracked: exactly what this whole change is against.
+    //
+    // The kill applies only while the run is still open, which makes this as
+    // idempotent as the `settle` it ends with. After a run is answered its
+    // group is not ours to signal: the pid may have been reaped and its pgid
+    // reused, and a job that redirected both streams is one this Mac has
+    // promised will outlive the run that started it.
     const abandon = (code: number) => {
-      if (child.pid !== undefined) {
+      if (buffer.exitCode === null && child.pid !== undefined) {
         try {
           process.kill(-child.pid, "SIGKILL");
         } catch {
