@@ -11,7 +11,14 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import {
+  capabilityDisplay,
+  durableIntentText,
+  Intent,
+  intentIsExpired,
+  JSONValue,
+  jv,
+} from "@domo/protocol";
 import os from "node:os";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -127,19 +134,6 @@ function runPayload(result: ExecResult): { [k: string]: JSONValue } {
   return payload;
 }
 
-/**
- * The request line as the audit may keep it.
- *
- * `Intent.request` is display copy for the approver and may carry the
- * operation's content. For a `tool` capability that content is the owner's
- * message text, so the durable record takes the capability's own description —
- * action and target — instead. Every other kind passes through: an exec's argv
- * and a file op's path ARE the operation, not data inside it.
- */
-function auditableRequest(intent: Intent): string {
-  const tool = intent.capabilities.find((c) => c.kind === "tool");
-  return tool ? capabilityDisplay(tool) : intent.request;
-}
 
 export class DeviceAgent {
   readonly identity: DeviceIdentity;
@@ -388,8 +382,7 @@ export class DeviceAgent {
       // what was authorised; the content stays on the approval surface and out
       // of the durable record, the same split `file_read` makes by recording a
       // path and never the bytes.
-      request: auditableRequest(intent),
-      goal: intent.goal ?? "",
+      ...durableIntentText(intent),
       capabilities: intent.capabilities.map(capabilityDisplay),
     });
 

@@ -10,6 +10,7 @@
  * attesting to its own decision.
  */
 import crypto from "node:crypto";
+import { capabilityDisplay } from "./capability.js";
 import { Capability, normalizedCapability, RuleKey } from "./capability.js";
 import { canonicalBytes, isoNow, JSONValue } from "./json.js";
 import { KeyPair } from "./identity.js";
@@ -126,4 +127,36 @@ export function makeAlwaysAllowRule(intent: Intent): AlwaysAllowRule {
     capabilities: intent.capabilities.map(normalizedCapability),
     createdAt: isoNow(),
   };
+}
+
+/**
+ * What of an intent's free text may become durable.
+ *
+ * `request` and `goal` are display copy for the approver and both may carry
+ * the operation's content — for a `tool` capability that content is the
+ * owner's message text, and `goal` is the agent's own prose about the errand,
+ * which describes it just as readily. Anything persisted takes the
+ * capability's description instead: the action and the target, which is what
+ * was authorised.
+ *
+ * Every other kind passes through. An exec's argv and a file op's path ARE the
+ * operation rather than data inside it, and an audit that omitted them would
+ * say nothing.
+ *
+ * One helper, every persisting site — `intent_received` here and the approval
+ * store's record — because sanitising them one at a time is how the second one
+ * gets missed. The live approval dialog reads `intent` directly and is
+ * unaffected: the approver still sees the excerpt.
+ *
+ * KNOWN GAP, deliberately not closed here: when adversarial review is on, the
+ * reviewer is shown the un-redacted request (it has to be) and its free-text
+ * `reason` is persisted as `adversarial_review_result`. A verdict that quotes
+ * what it judged puts that text back in the log. Screening model prose against
+ * an excerpt is not something a helper can do honestly, so it is named rather
+ * than half-solved.
+ */
+export function durableIntentText(intent: Intent): { request: string; goal: string } {
+  const tool = intent.capabilities.find((c) => c.kind === "tool");
+  if (!tool) return { request: intent.request, goal: intent.goal ?? "" };
+  return { request: capabilityDisplay(tool), goal: "" };
 }

@@ -25,12 +25,14 @@ function run(
   payload: JSONValue,
   target?: string,
   request = "use slack",
+  goal?: string,
 ): Promise<JSONValue> {
   const intent = makeIntent({
     agentId: "a1",
     agentDisplay: "Agent",
     deviceId: device.identity.deviceId,
     request,
+    goal,
     capabilities: [{ kind: "tool", tool, target }],
     sessionId: "s1",
   });
@@ -149,6 +151,9 @@ describe("tool capability execution", () => {
       { account: "T1", channel_id: "C1", text: "the launch codes" },
       "T1/C1",
       'send a Slack message to C1: "the launch codes"',
+      // The agent's own prose about the errand describes the content just as
+      // readily as the request line does, and it rides the same record.
+      'send "the launch codes" to the ops channel',
     );
 
     const log = JSON.stringify(device.audit.entries());

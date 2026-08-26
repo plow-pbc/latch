@@ -36,7 +36,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Decision, Intent, capabilityDisplay } from "@domo/protocol";
+import { durableIntentText, Decision, Intent, capabilityDisplay } from "@domo/protocol";
 import { IntentDecision, PolicyDelegate } from "./policyEngine.js";
 
 /** Same fifteen minutes as a deferred handle — §4.3 uses one window. */
@@ -216,8 +216,10 @@ export class ApprovalStore implements PolicyDelegate {
       intentId: intent.intentId,
       agentId: intent.agentId,
       agentName: intent.agentDisplay,
-      request: intent.request,
-      goal: intent.goal ?? "",
+      // Redacted for a `tool` intent, the same rule the audit applies: this
+      // record outlives the decision (`reapStale` rewrites, nothing deletes),
+      // so it is a durable holder of content in the same sense the log is.
+      ...durableIntentText(intent),
       capabilities: intent.capabilities.map(capabilityDisplay),
       createdAt: iso(started),
       expiresAt: iso(started + this.ttlMs),
