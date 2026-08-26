@@ -21,6 +21,9 @@ async function rejection(call: () => Promise<unknown>): Promise<Error> {
   return caught as Error;
 }
 
+/** In scope for every failure below, and in none of their messages. */
+const CREDENTIAL = "super-secret-cred";
+
 describe("ConnectorClient", () => {
   it("posts the action to the connector route with a bearer header", async () => {
     const seen: { url: string; init: RequestInit }[] = [];
@@ -90,19 +93,6 @@ describe("ConnectorClient", () => {
     expect(error.message).toBe(ConnectorError.unknownAction().message);
   });
 
-  it("never puts the credential in the error message", async () => {
-    const client = makeConnectorClient({
-      apiBaseUrl: "https://api.example.com",
-      credential: () => "super-secret-cred",
-      fetchImpl: async () => new Response("nope", { status: 403 }),
-    });
-
-    const error = await rejection(() => client.call("channels.list", {}));
-    expect(error).toBeInstanceOf(ConnectorError);
-    expect(error.message).not.toContain("super-secret-cred");
-    expect(error.message).toContain("403");
-  });
-
   it("refuses before any network call when the credential is missing", async () => {
     let called = false;
     const client = makeConnectorClient({
@@ -119,51 +109,54 @@ describe("ConnectorClient", () => {
     expect(called).toBe(false);
   });
 
-  // A fetch implementation is injectable, so its message is foreign text —
-  // the same rule the parse branch below already kept, applied where it was
-  // being broken.
-  it("classifies a transport failure instead of forwarding its message", async () => {
+  // Four ways a call fails holding foreign text — an injected fetch's error, an
+  // abort, a status body, a body the parser choked on — and the credential is
+  // in scope at all four. None of it reaches the message: `ConnectorError`'s
+  // constructor is private and every factory composes from a fixed vocabulary.
+  // `says` is what each one is told apart BY, because they send someone to fix
+  // different things: offline, Plow gone quiet, Plow refusing, Plow babbling.
+  it.each([
+    {
+      what: "a transport failure",
+      fetchImpl: async () => {
+        throw new Error(`getaddrinfo ENOTFOUND api.example.com ${CREDENTIAL}`);
+      },
+      says: "could not reach Plow",
+      never: ["ENOTFOUND", "did not answer in time"],
+    },
+    {
+      what: "a timeout",
+      fetchImpl: async () => {
+        throw Object.assign(new Error(`The operation was aborted for ${CREDENTIAL}`), {
+          name: "TimeoutError",
+        });
+      },
+      says: "did not answer in time",
+      never: ["aborted", "could not reach Plow"],
+    },
+    {
+      what: "a refusal",
+      fetchImpl: async () => new Response(`nope ${CREDENTIAL}`, { status: 403 }),
+      says: "403",
+      never: ["nope"],
+    },
+    {
+      what: "an unparsable 200 body",
+      fetchImpl: async () => new Response(`not json ${CREDENTIAL}`, { status: 200 }),
+      says: "an unreadable response",
+      never: ["not json"],
+    },
+  ])("classifies $what instead of forwarding its text", async ({ fetchImpl, says, never }) => {
     const client = makeConnectorClient({
       apiBaseUrl: "https://api.example.com",
-      credential: () => "super-secret-cred",
-      fetchImpl: async () => {
-        throw new Error("getaddrinfo ENOTFOUND api.example.com super-secret-cred");
-      },
+      credential: () => CREDENTIAL,
+      fetchImpl,
     });
 
     const error = await rejection(() => client.call("channels.list", {}));
     expect(error).toBeInstanceOf(ConnectorError);
-    expect(error.message).not.toContain("super-secret-cred");
-    expect(error.message).not.toContain("ENOTFOUND");
-    expect(error.message).toContain("could not reach Plow");
-  });
-
-  // Told apart because they send someone to fix different things: one is "you
-  // are offline", the other is "Plow took it and went quiet".
-  it("tells a timeout apart from an unreachable Plow", async () => {
-    const client = makeConnectorClient({
-      apiBaseUrl: "https://api.example.com",
-      credential: () => "cred-123",
-      fetchImpl: async () => {
-        throw Object.assign(new Error("The operation was aborted"), { name: "TimeoutError" });
-      },
-    });
-
-    const error = await rejection(() => client.call("messages.list", {}));
-    expect(error).toBeInstanceOf(ConnectorError);
-    expect(error.message).toContain("did not answer in time");
-  });
-
-  it("surfaces an unparsable 200 body as a ConnectorError, not a raw SyntaxError", async () => {
-    const client = makeConnectorClient({
-      apiBaseUrl: "https://api.example.com",
-      credential: () => "super-secret-cred",
-      fetchImpl: async () => new Response("not json", { status: 200 }),
-    });
-
-    const error = await rejection(() => client.call("channels.list", {}));
-    expect(error).toBeInstanceOf(ConnectorError);
-    expect(error.message).not.toContain("not json");
-    expect(error.message).not.toContain("super-secret-cred");
+    expect(error.message).toContain(says);
+    expect(error.message).not.toContain(CREDENTIAL);
+    for (const foreign of never) expect(error.message).not.toContain(foreign);
   });
 });

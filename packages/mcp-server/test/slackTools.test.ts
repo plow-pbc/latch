@@ -10,10 +10,9 @@ import { SLACK_READ_TOOLS, SLACK_WRITE_TOOLS } from "../src/slackTools.js";
 
 /**
  * A `ToolContext` whose device's `handleIntent` is stubbed to capture the
- * capability set and payload the tool built, rather than a real `DeviceAgent`
- * — the shape used in mcpServer.test.ts, minus the parts these tools never
- * touch (`decideAndRun` only reads `ctx.device.identity.deviceId` and calls
- * `ctx.device.handleIntent`).
+ * intent the tool built, rather than a real `DeviceAgent` — the shape used in
+ * mcpServer.test.ts, minus the parts these tools never touch (`decideAndRun`
+ * only reads `ctx.device.identity.deviceId` and calls `ctx.device.handleIntent`).
  */
 function fakeCtx(
   handleIntent: (capabilities: unknown[], payload: unknown, request: string) => JSONValue,
@@ -60,20 +59,23 @@ function fakeProgress(): Progress {
 }
 
 const status = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_status")!;
+const messages = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_messages")!;
 const channels = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_channels")!;
 const users = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_users")!;
-const messages = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_messages")!;
 const search = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_search")!;
 const send = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_send")!;
 const update = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_update")!;
 const openDm = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_open_dm")!;
 
-/** The capabilities one call builds. Defaults to `messages`; pass another tool to reuse it. */
-async function capabilitiesOf(args: JSONValue, tool: ToolSpec = messages): Promise<Capability[]> {
-  let seen: Capability[] = [];
-  const ctx = fakeCtx((capabilities) => {
-    seen = capabilities as Capability[];
-    return { status: "completed", result: { messages: [] } };
+/** The intent one call builds: the enforceable half, and what rides beside it. */
+async function intentOf(
+  args: JSONValue,
+  tool: ToolSpec,
+): Promise<{ capabilities: Capability[]; payload: unknown }> {
+  let seen: { capabilities: Capability[]; payload: unknown } = { capabilities: [], payload: null };
+  const ctx = fakeCtx((capabilities, payload) => {
+    seen = { capabilities: capabilities as Capability[], payload };
+    return { status: "completed", result: {} };
   });
   await tool.run(args, ctx, fakeProgress());
   return seen;
@@ -90,107 +92,182 @@ async function requestOf(args: JSONValue, tool: ToolSpec): Promise<string> {
   return request;
 }
 
-const ruleKey = (caps: Capability[]) => RuleKey.compute("agent-1", "device-1", caps);
+const ruleKeyOf = async (args: JSONValue, tool: ToolSpec): Promise<string> =>
+  RuleKey.compute("agent-1", "device-1", (await intentOf(args, tool)).capabilities);
 
-describe("Slack read tools", () => {
-  it("exposes exactly the five read tools, all flagged read-only", () => {
-    expect(SLACK_READ_TOOLS.map((t) => t.name).sort()).toEqual([
-      "plow_slack_channels",
-      "plow_slack_messages",
-      "plow_slack_search",
-      "plow_slack_status",
-      "plow_slack_users",
-    ]);
-    for (const t of SLACK_READ_TOOLS) {
-      expect(t.annotations.readOnlyHint, t.name).toBe(true);
-      expect(t.deferrable, t.name).toBe(true);
+/**
+ * The declared surface, in one table. `readOnlyHint` and `destructiveHint` are
+ * hints for display and routing, never bounds — what a call may actually do is
+ * the capability the owner approved. Editing a message is the one write with
+ * an undo a stranger cannot see coming; the other two either create new
+ * content or read nothing.
+ */
+it("is these eight tools, with these hints", () => {
+  const surface = [...SLACK_READ_TOOLS, ...SLACK_WRITE_TOOLS].map((t) => [
+    t.name,
+    t.annotations.readOnlyHint,
+    t.annotations.destructiveHint,
+    t.deferrable,
+  ]);
+  expect(surface).toEqual([
+    ["plow_slack_status", true, undefined, true],
+    ["plow_slack_channels", true, undefined, true],
+    ["plow_slack_users", true, undefined, true],
+    ["plow_slack_messages", true, undefined, true],
+    ["plow_slack_search", true, undefined, true],
+    ["plow_slack_send", false, false, true],
+    ["plow_slack_update", false, true, true],
+    ["plow_slack_open_dm", false, false, true],
+  ]);
+});
+
+/**
+ * The split this whole module is built on: the capability names the action and
+ * the target it is confined to, and the arguments that are content — not scope
+ * — ride the payload. That is `fs.write`'s split, and for its reason: an
+ * "always allow" is on the channel the owner saw, and message text never
+ * enters a rule key.
+ */
+describe("what one call is confined to", () => {
+  it.each([
+    // No account, no channel: `status` asks which workspaces exist, so it is
+    // confined to none — and says so rather than implying a scope.
+    {
+      name: "plow_slack_status",
+      tool: () => status,
+      args: { goal: "see if Slack is connected" },
+      capability: { kind: "tool", tool: "slack.status" },
+      payload: {},
+    },
+    // `goal` is in the args and not in the payload: only the keys Plow's
+    // endpoint accepts are copied, never the whole arg bag.
+    {
+      name: "plow_slack_messages",
+      tool: () => messages,
+      args: { account: "T1", channel_id: "C1", limit: 5, cursor: "p2", goal: "catch up" },
+      capability: { kind: "tool", tool: "slack.messages.list", target: "T1/C1" },
+      payload: { account: "T1", channel_id: "C1", limit: 5, cursor: "p2" },
+    },
+    // A search names the workspace it searches. It was the one tool whose
+    // scope key was optional, and an untargeted capability would have made a
+    // rule that matched every query in every workspace this Mac connects.
+    {
+      name: "plow_slack_search",
+      tool: () => search,
+      args: { account: "T1", query: "salary review", limit: 5 },
+      capability: { kind: "tool", tool: "slack.messages.search", target: "T1" },
+      payload: { account: "T1", query: "salary review", limit: 5 },
+    },
+    {
+      name: "plow_slack_send",
+      tool: () => send,
+      args: { account: "T1", channel_id: "C1", text: "hi", thread_ts: "1.0" },
+      capability: { kind: "tool", tool: "slack.messages.send", target: "T1/C1" },
+      payload: { account: "T1", channel_id: "C1", text: "hi", thread_ts: "1.0" },
+    },
+    {
+      name: "plow_slack_update",
+      tool: () => update,
+      args: { account: "T1", channel_id: "C1", ts: "1.1", text: "edited" },
+      capability: { kind: "tool", tool: "slack.messages.update", target: "T1/C1" },
+      payload: { account: "T1", channel_id: "C1", ts: "1.1", text: "edited" },
+    },
+    // Scoped to the person, not just the workspace — see slackCapability's
+    // comment on why `user_id` joins the target the way `channel_id` does.
+    {
+      name: "plow_slack_open_dm",
+      tool: () => openDm,
+      args: { account: "T1", user_id: "U1" },
+      capability: { kind: "tool", tool: "slack.conversations.open", target: "T1/U1" },
+      payload: { account: "T1", user_id: "U1" },
+    },
+  ])("$name names its action and target; content rides the payload", async (row) => {
+    expect(await intentOf(row.args, row.tool())).toEqual({
+      capabilities: [row.capability],
+      payload: row.payload,
+    });
+  });
+
+  // What an "always allow" is actually worth: the rule follows the target the
+  // owner saw, whatever is typed into it next, and does not follow the agent
+  // to the next channel, workspace or person.
+  it.each([
+    {
+      name: "a channel read",
+      tool: () => messages,
+      args: { account: "T1", channel_id: "C1", limit: 5 },
+      sameTarget: { account: "T1", channel_id: "C1", limit: 500, cursor: "page2" },
+      elsewhere: [
+        { account: "T1", channel_id: "C2", limit: 5 },
+        { account: "T2", channel_id: "C1", limit: 5 },
+      ],
+    },
+    {
+      name: "a send",
+      tool: () => send,
+      args: { account: "T1", channel_id: "C1", text: "hello" },
+      sameTarget: { account: "T1", channel_id: "C1", text: "a completely different message" },
+      elsewhere: [{ account: "T1", channel_id: "C2", text: "hello" }],
+    },
+    {
+      name: "an opened DM",
+      tool: () => openDm,
+      args: { account: "T1", user_id: "U1" },
+      sameTarget: { account: "T1", user_id: "U1" },
+      elsewhere: [{ account: "T1", user_id: "U2" }],
+    },
+  ])("$name keys its rule on the target, not the content", async (row) => {
+    const key = await ruleKeyOf(row.args, row.tool());
+    expect(await ruleKeyOf(row.sameTarget, row.tool())).toBe(key);
+    for (const other of row.elsewhere) {
+      expect(await ruleKeyOf(other, row.tool())).not.toBe(key);
     }
   });
 
-  it("builds one slack tool capability naming the action and its target", async () => {
-    const seen: { capabilities: unknown[]; payload: unknown }[] = [];
-    const ctx = fakeCtx((capabilities, payload) => {
-      seen.push({ capabilities, payload });
-      return { status: "completed", result: { messages: [] } };
+  // Both layers, because they fail differently: without the schema entry a
+  // client lets the call through to us, and without the guard we would build
+  // an intent whose capability names a scope nobody supplied.
+  it.each([
+    {
+      name: "plow_slack_messages",
+      tool: () => messages,
+      args: { account: "T1" },
+      missing: "channel_id",
+    },
+    { name: "plow_slack_search", tool: () => search, args: { query: "pay" }, missing: "account" },
+    {
+      name: "plow_slack_send",
+      tool: () => send,
+      args: { account: "T1", channel_id: "C1" },
+      missing: "text",
+    },
+    {
+      name: "plow_slack_update",
+      tool: () => update,
+      args: { account: "T1", channel_id: "C1", ts: "1.1" },
+      missing: "text",
+    },
+    { name: "plow_slack_open_dm", tool: () => openDm, args: { account: "T1" }, missing: "user_id" },
+  ])("$name will not build an intent without $missing", async (row) => {
+    expect(jv(row.tool().inputSchema).get("required").value).toContain(row.missing);
+    const ctx = fakeCtx(() => {
+      throw new Error("should not build an intent");
     });
-
-    const out = await messages.run(
-      { account: "T1", channel_id: "C1", limit: 5 },
-      ctx,
-      fakeProgress(),
-    );
-
-    expect(seen[0].capabilities).toEqual([
-      { kind: "tool", tool: "slack.messages.list", target: "T1/C1" },
-    ]);
-    expect(seen[0].payload).toEqual({ account: "T1", channel_id: "C1", limit: 5 });
-    // The connector's body, unwrapped from the device's envelope.
-    expect(out).toEqual({ messages: [] });
+    await expect(row.tool().run(row.args, ctx, fakeProgress())).rejects.toThrow(row.missing);
   });
+});
 
-  it("names no target for an action that is not scoped to one", async () => {
-    const seen: unknown[] = [];
-    const ctx = fakeCtx((capabilities) => {
-      seen.push(capabilities);
-      return { status: "completed", result: {} };
-    });
-    await status.run({}, ctx, fakeProgress());
-
-    expect(seen[0]).toEqual([{ kind: "tool", tool: "slack.status" }]);
-  });
-
-  // What an "always allow" is actually worth. The target is in the capability
-  // and the content is not, so a rule follows the channel the owner saw — and
-  // does not follow the agent to the next one.
-  it("scopes a rule key to the target, and not to the content", async () => {
-    const channel = await capabilitiesOf({ account: "T1", channel_id: "C1", limit: 5 });
-    const sameChannel = await capabilitiesOf({
-      account: "T1",
-      channel_id: "C1",
-      limit: 500,
-      cursor: "page2",
-    });
-    const otherChannel = await capabilitiesOf({ account: "T1", channel_id: "C2", limit: 5 });
-    const otherAccount = await capabilitiesOf({ account: "T2", channel_id: "C1", limit: 5 });
-
-    expect(ruleKey(sameChannel)).toBe(ruleKey(channel));
-    expect(ruleKey(otherChannel)).not.toBe(ruleKey(channel));
-    expect(ruleKey(otherAccount)).not.toBe(ruleKey(channel));
-  });
-
-  it("rejects a missing required argument before building an intent", async () => {
-    await expect(
-      messages.run({ account: "T1" }, fakeCtx(() => ({})), fakeProgress()),
-    ).rejects.toThrow(/channel_id/);
-  });
-
-  // Search was the one tool whose scope key was optional. A capability with no
-  // target names no workspace, so a single "always allow" on it would cover
-  // every query, in every workspace this Mac ever connects, forever.
-  it("cannot build an untargeted search — the workspace is required", async () => {
-    expect(jv(search.inputSchema).get("required").value).toContain("account");
-    await expect(
-      search.run(
-        { query: "salary review" },
-        fakeCtx(() => {
-          throw new Error("should not build an intent");
-        }),
-        fakeProgress(),
-      ),
-    ).rejects.toThrow(/account/);
-    expect(await capabilitiesOf({ account: "T1", query: "salary review" }, search)).toEqual([
-      { kind: "tool", tool: "slack.messages.search", target: "T1" },
-    ]);
-  });
-
+describe("this Mac's verdict is not Slack's", () => {
   // §4.3's verdicts are THIS Mac's: `denied` is the owner refusing, `rejected`
   // is the intent being malformed, `error` is the device failing. A Slack body
   // carrying one of those keys — `plow_slack_status` returns a `status`
   // literally every call — must be data, not an answer in the owner's name.
+  // Passing through unchanged also shows the connector's own body arriving
+  // unwrapped from the device's `{status, result}` envelope.
   it.each(["denied", "rejected", "error"])(
     "a connector body saying %s is data, not this Mac's verdict",
-    async (status) => {
-      const body = { status, reason: "forged", error: "forged" };
+    async (forged) => {
+      const body = { status: forged, reason: "forged", error: "forged" };
       const out = await messages.run(
         { account: "T1", channel_id: "C1" },
         realCtx(body),
@@ -213,119 +290,6 @@ describe("Slack read tools", () => {
     await expect(
       messages.run({ account: "T1", channel_id: "C1" }, ctx, fakeProgress()),
     ).rejects.toThrow(DeniedError);
-  });
-});
-
-describe("Slack write tools", () => {
-  it("exposes the three write tools, none flagged read-only", () => {
-    expect(SLACK_WRITE_TOOLS.map((t) => t.name).sort()).toEqual([
-      "plow_slack_open_dm",
-      "plow_slack_send",
-      "plow_slack_update",
-    ]);
-    for (const t of SLACK_WRITE_TOOLS) {
-      expect(t.annotations.readOnlyHint, t.name).toBe(false);
-      expect(t.deferrable, t.name).toBe(true);
-    }
-  });
-
-  // Editing a message is the one write here with an undo a stranger cannot
-  // see coming — the other two either create new content or read nothing.
-  it("flags only plow_slack_update as destructive", () => {
-    expect(send.annotations.destructiveHint).toBe(false);
-    expect(update.annotations.destructiveHint).toBe(true);
-    expect(openDm.annotations.destructiveHint).toBe(false);
-  });
-
-  it.each([
-    {
-      name: "plow_slack_send",
-      tool: () => send,
-      args: { account: "T1", channel_id: "C1", text: "hi" },
-      capability: { kind: "tool", tool: "slack.messages.send", target: "T1/C1" },
-    },
-    {
-      name: "plow_slack_update",
-      tool: () => update,
-      args: { account: "T1", channel_id: "C1", ts: "1.1", text: "edited" },
-      capability: { kind: "tool", tool: "slack.messages.update", target: "T1/C1" },
-    },
-    // Scoped to the person, not just the workspace — see slackCapability's
-    // comment on why `user_id` joins the target the same way `channel_id`
-    // does for every other write.
-    {
-      name: "plow_slack_open_dm",
-      tool: () => openDm,
-      args: { account: "T1", user_id: "U1" },
-      capability: { kind: "tool", tool: "slack.conversations.open", target: "T1/U1" },
-    },
-  ])("$name builds its action and target", async ({ tool, args, capability }) => {
-    const seen: unknown[] = [];
-    const ctx = fakeCtx((capabilities) => {
-      seen.push(capabilities);
-      return { status: "completed", result: {} };
-    });
-    await tool().run(args, ctx, fakeProgress());
-    expect(seen[0]).toEqual([capability]);
-  });
-
-  // What an "always allow" on a send is actually worth: the target is in the
-  // capability and the text is not, so a rule follows the channel the owner
-  // saw regardless of what gets typed into it next — and does not follow the
-  // agent to a different channel.
-  it("scopes a send's rule key to the channel, not the text", async () => {
-    const first = await capabilitiesOf({ account: "T1", channel_id: "C1", text: "hello" }, send);
-    const reworded = await capabilitiesOf(
-      { account: "T1", channel_id: "C1", text: "a completely different message" },
-      send,
-    );
-    const otherChannel = await capabilitiesOf({ account: "T1", channel_id: "C2", text: "hello" }, send);
-
-    expect(ruleKey(reworded)).toBe(ruleKey(first));
-    expect(ruleKey(otherChannel)).not.toBe(ruleKey(first));
-  });
-
-  // Same guarantee for opening a DM, keyed on the person instead of a channel.
-  it("scopes an open_dm's rule key to the person", async () => {
-    const alice = await capabilitiesOf({ account: "T1", user_id: "U1" }, openDm);
-    const aliceAgain = await capabilitiesOf({ account: "T1", user_id: "U1" }, openDm);
-    const bob = await capabilitiesOf({ account: "T1", user_id: "U2" }, openDm);
-
-    expect(ruleKey(aliceAgain)).toBe(ruleKey(alice));
-    expect(ruleKey(bob)).not.toBe(ruleKey(alice));
-  });
-
-  it.each([
-    { name: "plow_slack_send", tool: () => send, args: { account: "T1", channel_id: "C1" }, missing: /text/ },
-    {
-      name: "plow_slack_update",
-      tool: () => update,
-      args: { account: "T1", channel_id: "C1", ts: "1.1" },
-      missing: /text/,
-    },
-    { name: "plow_slack_open_dm", tool: () => openDm, args: { account: "T1" }, missing: /user_id/ },
-  ])("$name rejects a missing required argument before building an intent", async ({ tool, args, missing }) => {
-    const ctx = fakeCtx(() => {
-      throw new Error("should not build an intent");
-    });
-    await expect(tool().run(args, ctx, fakeProgress())).rejects.toThrow(missing);
-  });
-
-  it("keeps message text out of the capability so a rule can match twice", async () => {
-    const seen: { capabilities: unknown[]; payload: unknown }[] = [];
-    const ctx = fakeCtx((capabilities, payload) => {
-      seen.push({ capabilities, payload });
-      return { status: "completed", result: { ts: "1.2", channel: "C1" } };
-    });
-
-    await send.run({ account: "T1", channel_id: "C1", text: "hello" }, ctx, fakeProgress());
-    await send.run({ account: "T1", channel_id: "C1", text: "different" }, ctx, fakeProgress());
-
-    expect(seen[0].capabilities).toEqual([
-      { kind: "tool", tool: "slack.messages.send", target: "T1/C1" },
-    ]);
-    expect(seen[0].capabilities).toEqual(seen[1].capabilities);
-    expect(seen[0].payload).toMatchObject({ text: "hello" });
   });
 });
 
@@ -370,8 +334,8 @@ describe("the request line", () => {
       request: "edit the Slack message 1.1 in C1 to: never mind",
     },
     { args: { account: "T1", user_id: "U1" }, tool: () => openDm, request: "open a Slack DM: U1" },
-  ])("reads '$request'", async ({ args, tool, request }) => {
-    expect(await requestOf(args, tool())).toBe(request);
+  ])("reads '$request'", async (row) => {
+    expect(await requestOf(row.args, row.tool())).toBe(row.request);
   });
 
   // The capability chips are the enforceable half of the dialog. A message
