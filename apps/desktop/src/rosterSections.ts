@@ -14,6 +14,37 @@ export type AgentRosterKind =
   | "Legacy — full access"
   | "Session";
 
+/**
+ * What a credential may actually do, as three plain booleans.
+ *
+ * Derived here from its real scopes, because the row used to state all three
+ * as literals — so an agent created over SMS straight from the API, which
+ * carries no relay credential, still read "Will reach this Mac". A permission
+ * line that does not read the permissions is a claim, not a description.
+ *
+ * Booleans and never the scopes themselves: the renderer has no business
+ * knowing plow's scope grammar, and a projection cannot leak what it does not
+ * carry.
+ */
+export interface RosterPermissions {
+  /** `chats:use` — reads and replies in the chats it is scoped to. */
+  canReadAndReply: boolean;
+  /** `relay:call` — may ask to run things on this Mac. */
+  canReachMac: boolean;
+  /** `llm:chat` — may spend inference on the account. */
+  canSpendInference: boolean;
+}
+
+/**
+ * Which chats a credential is scoped to.
+ *
+ * `[]` and `["*"]` are opposites and were being read as the same thing: plow
+ * treats an empty list as covering NO chats (`auth.py:120`), so a credential
+ * granted nothing was reading as granted everything. Projected as a word so
+ * the screen cannot make that mistake again by counting.
+ */
+export type ChatAccess = "all" | "none" | "listed";
+
 export interface RosterSectionRow {
   id: number;
   name: string | null;
@@ -22,6 +53,10 @@ export interface RosterSectionRow {
   lastSeenAt: string | null;
   agentId: string | null;
   chatUids: string[];
+  /** How many of `chatUids` to name is the screen's business; whether it is
+   * "all", "none" or a list is not. */
+  chatAccess: ChatAccess;
+  permissions: RosterPermissions;
   /**
    * This Mac's own device credential.
    *
@@ -84,6 +119,34 @@ function newestFirst(a: string | null, b: string | null): number {
   return 0;
 }
 
+/**
+ * Does this credential's scope set cover the one asked about?
+ *
+ * plow's matcher recognises three forms and this must recognise the same
+ * three, or the line understates what a wildcard token can do: the exact
+ * grant, a resource wildcard (`relay:*`), and the global one (`*:*`).
+ */
+function scopeCovers(granted: readonly string[], required: string): boolean {
+  const resource = required.split(":")[0];
+  return granted.some(
+    (scope) => scope === required || scope === `${resource}:*` || scope === "*:*",
+  );
+}
+
+function rosterPermissions(scopes: readonly string[]): RosterPermissions {
+  return {
+    canReadAndReply: scopeCovers(scopes, "chats:use"),
+    canReachMac: scopeCovers(scopes, "relay:call"),
+    canSpendInference: scopeCovers(scopes, "llm:chat"),
+  };
+}
+
+/** `["*"]` is every chat; `[]` is none of them; anything else is the list. */
+function chatAccessOf(chatUids: readonly string[]): ChatAccess {
+  if (chatUids.includes("*")) return "all";
+  return chatUids.length === 0 ? "none" : "listed";
+}
+
 function rosterKind(scopes: readonly string[]): AgentRosterKind {
   if (scopes.includes("relay:call")) return "Agent";
   if (scopes.includes("relay:*")) return "Plow web login";
@@ -128,6 +191,8 @@ export function sectionRoster(
       lastSeenAt: key.last_seen_at,
       agentId: key.agent_id,
       chatUids: key.chat_uids,
+      chatAccess: chatAccessOf(key.chat_uids),
+      permissions: rosterPermissions(key.scopes),
       isThisMac: key.id === thisMacId,
     };
     if (placed.agentId !== null) sections.cloud.push(placed);

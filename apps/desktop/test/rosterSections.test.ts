@@ -36,6 +36,13 @@ function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
   };
 }
 
+/** Every placed row, whichever section it landed in. */
+const allRows = (sections: ReturnType<typeof sectionRoster>) => [
+  ...sections.cloud,
+  ...sections.mcp,
+  ...sections.other,
+];
+
 describe("which section a credential belongs in", () => {
   it("puts a credential with an agent_id in Cloud agents, whatever its scopes", () => {
     const sections = sectionRoster([
@@ -117,6 +124,58 @@ describe("how a row is removed", () => {
     expect(sections.cloud).toHaveLength(3);
     for (const row of sections.cloud) expect(row.agentId).not.toBeNull();
     for (const row of [...sections.mcp, ...sections.other]) expect(row.agentId).toBeNull();
+  });
+});
+
+describe("what a credential may actually do", () => {
+  it.each([
+    ["the exact grant", ["chats:use", "relay:call", "llm:chat"], [true, true, true]],
+    ["nothing at all", [], [false, false, false]],
+    ["chats only", ["chats:use"], [true, false, false]],
+    ["relay only", ["relay:call"], [false, true, false]],
+    ["inference only", ["llm:chat"], [false, false, true]],
+    // plow's matcher recognises resource and global wildcards, so this must
+    // too — reading only exact grants would understate a wildcard token.
+    ["a resource wildcard", ["relay:*"], [false, true, false]],
+    ["the global wildcard", ["*:*"], [true, true, true]],
+    // A neighbouring scope is not this one.
+    ["an unrelated scope", ["vault:read", "chats:write"], [false, false, false]],
+  ])("reads %s", (_shape, scopes, expected) => {
+    const [row] = allRows(sectionRoster([key({ scopes })]));
+
+    expect([
+      row.permissions.canReadAndReply,
+      row.permissions.canReachMac,
+      row.permissions.canSpendInference,
+    ]).toEqual(expected);
+  });
+
+  it("never hands the renderer the scopes themselves", () => {
+    const sections = sectionRoster([key({ scopes: ["*:*", "vault:read"] })]);
+
+    // The projection is the boundary: a screen that cannot see the grammar
+    // cannot get the grammar wrong, and cannot show it either.
+    const marshalled = JSON.stringify(sections);
+    expect(marshalled).not.toContain("*:*");
+    expect(marshalled).not.toContain("vault:read");
+    expect(marshalled).not.toContain("scopes");
+  });
+});
+
+describe("which chats a credential is scoped to", () => {
+  it.each([
+    ["every chat", ["*"], "all"],
+    // plow reads an empty list as covering NO chats (auth.py:120). Counting
+    // this as "all" told the owner a credential granted nothing had everything.
+    ["no chat at all", [], "none"],
+    ["one chat", ["cht_1"], "listed"],
+    ["several", ["cht_1", "cht_2"], "listed"],
+  ])("calls %s %s", (_shape, chat_uids, expected) => {
+    const [row] = allRows(sectionRoster([key({ chat_uids })]));
+
+    expect(row.chatAccess).toBe(expected);
+    // The uids still travel, so the screen can say how many and which.
+    expect(row.chatUids).toEqual(chat_uids);
   });
 });
 
