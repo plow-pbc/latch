@@ -28,17 +28,12 @@ const scripts = fs
   .map((entry) => path.join(entry.parentPath ?? entry.path, entry.name))
   .sort();
 
-const broken = [];
+// Fail on the first one. `node --check` already names the file, the line and
+// the reason on stderr, so this inherits its output rather than capturing it to
+// print a worse copy — and throwing here is the failure, no exit code to
+// assemble by hand.
 for (const file of scripts) {
-  try {
-    execFileSync(process.execPath, ["--check", file], { stdio: "pipe" });
-  } catch (error) {
-    broken.push(`${path.relative(src, file)}\n${String(error.stderr ?? error).trim()}`);
-  }
-}
-if (broken.length) {
-  console.error(`renderer scripts failed to parse (${broken.length}):\n\n${broken.join("\n\n")}`);
-  process.exit(1);
+  execFileSync(process.execPath, ["--check", file], { stdio: "inherit" });
 }
 
 fs.cpSync(src, dest, { recursive: true });
