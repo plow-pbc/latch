@@ -95,18 +95,22 @@ export function sectionRoster(
 
   for (const key of keys) if (!key.is_active) sections.revokedHidden += 1;
 
+  // Exactly one row is this Mac, or none is. Two rows matching means the match
+  // is not identifying anything, and marking both would warn about revoking a
+  // credential that is not ours — on the one row where the warning is the
+  // difference between a revoke and signing this Mac out.
+  const candidates = keys.filter(
+    (key) => key.is_active && isDeviceCredential(key.key_prefix, credential),
+  );
+  const thisMacId = candidates.length === 1 ? candidates[0].id : null;
+
   for (const row of agentRosterRows(keys)) {
-    // Revoked rows are counted, never listed — and that is asserted here rather
-    // than assumed of `agentRosterRows`, whose job is what a credential IS, not
-    // what this screen shows. It has already changed once to widen what it
-    // returns; this must not quietly start listing dead credentials when it
-    // changes again.
-    if (byId.get(row.id)?.is_active === false) continue;
-    const prefix = byId.get(row.id)?.key_prefix ?? null;
-    const placed: RosterSectionRow = {
-      ...row,
-      isThisMac: isDeviceCredential(prefix, credential),
-    };
+    // Revoked rows are counted, never listed — decided here rather than
+    // assumed of `agentRosterRows`, whose job is what a credential IS, not what
+    // this screen shows. It returns them now precisely so this layer can make
+    // that call.
+    if (!row.isActive) continue;
+    const placed: RosterSectionRow = { ...row, isThisMac: row.id === thisMacId };
     if (placed.agentId !== null) sections.cloud.push(placed);
     else if (placed.kind === "Agent") sections.mcp.push(placed);
     else sections.other.push(placed);

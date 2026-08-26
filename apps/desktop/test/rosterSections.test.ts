@@ -116,6 +116,17 @@ describe("this Mac's own credential", () => {
     expect(sections.mcp.find((row) => row.id === 2)?.isThisMac).toBe(false);
   });
 
+  it("marks nothing when two rows would both match", () => {
+    const sections = sectionRoster(
+      [key({ id: 1, key_prefix: "plow_sk_abc123" }), key({ id: 2, key_prefix: "plow_sk_abc123" })],
+      { deviceCredential: "plow_sk_abc123_and_the_rest_of_it" },
+    );
+
+    // Two matches means the match identifies nothing. Warning about revoking a
+    // credential that is not this Mac's is worse than not warning.
+    expect(sections.mcp.every((row) => !row.isThisMac)).toBe(true);
+  });
+
   it("marks nothing when the prefix is absent or too short to mean anything", () => {
     const sections = sectionRoster(
       [key({ id: 1, key_prefix: null }), key({ id: 2, key_prefix: "plow" })],
