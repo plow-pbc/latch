@@ -331,9 +331,13 @@ export class Executor {
     // nothing downstream needs a guard against late output.
     const settle = (code: number) => {
       clearTimeout(reaper);
+      // Answered first, closed second, both in one synchronous breath: nothing
+      // can append between the two statements, and everything downstream that
+      // asks "is this run still open?" — `abandon`'s kill above all — gets the
+      // right answer for anything the destroys themselves emit.
+      buffer.finish(code);
       child.stdout?.destroy();
       child.stderr?.destroy();
-      buffer.finish(code);
     };
     child.on("error", () => settle(-1));
     child.on("exit", (code, signal) => {
@@ -360,6 +364,10 @@ export class Executor {
     // group is not ours to signal: the pid may have been reaped and its pgid
     // reused, and a job that redirected both streams is one this Mac has
     // promised will outlive the run that started it.
+    //
+    // That guard shares the stream-error handler's untested status — the only
+    // caller that reaches here after a run is answered — so the survivor test
+    // in `executorReap.test.ts` pins the promise, not this line.
     const abandon = (code: number) => {
       if (buffer.exitCode === null && child.pid !== undefined) {
         try {
