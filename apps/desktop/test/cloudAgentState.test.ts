@@ -540,38 +540,6 @@ describe("removing", () => {
   });
 });
 
-describe("the local settings write", () => {
-  it("persists the switch and makes NO network call", async () => {
-    const home = tempHome();
-    const f = fakes({ list: async () => [agent()] });
-    const state = build(home, f);
-    await state.refresh();
-    const before = [...f.agents.calls];
-
-    await state.apply("agent_1", { adversarialReview: true });
-
-    // The switch is this app's own reviewer, not a property of the machine
-    // Plow provisioned. Nothing to send, nothing to wait for.
-    expect(f.agents.calls).toEqual(before);
-    expect(loadSettings(home).cloudAgentSettings.agent_1.adversarialReview).toBe(true);
-    expect(state.state().cloudAgentSettings.agent_1.adversarialReview).toBe(true);
-  });
-
-  it("keys on the agent id, so a session_id rotation cannot reset it", async () => {
-    const home = tempHome();
-    let sessionId = "session_before";
-    const state = build(home, fakes({ list: async () => [agent({ sessionId })] }));
-    await state.refresh();
-    await state.apply("agent_1", { adversarialReview: true });
-
-    sessionId = "session_after";
-    await state.refresh();
-
-    expect(state.state().cloudAgentSettings.agent_1.adversarialReview).toBe(true);
-  });
-
-});
-
 describe("the credential boundary", () => {
   it("marshals no credential and no session id, in any field", async () => {
     const state = build(

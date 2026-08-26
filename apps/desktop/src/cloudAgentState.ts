@@ -304,29 +304,6 @@ export class CloudAgentState {
   }
 
   /**
-   * Write this agent's local settings — today, adversarial review and nothing
-   * else.
-   *
-   * **Local only: it never calls Plow.** The switch is this app's own reviewer,
-   * not a property of the machine Plow provisioned, so it applies at once and
-   * there is nothing to wait for and nothing that can fail.
-   *
-   * The panel's two permission controls used to ride along here and go through
-   * a reconfigure. They are gone, and so is the pair this file remembered for
-   * them, until an endpoint can report what an agent actually may do — the list
-   * rows carry no scopes, so a permission control could only ever have shown
-   * what this Mac last asked for, which is a second and non-authoritative
-   * source of truth about the agent.
-   */
-  async apply(agentId: string, settings: { adversarialReview: boolean }): Promise<void> {
-    const id = (agentId ?? "").trim();
-    if (!id) return;
-
-    this.writeAgentSettings(id, { adversarialReview: settings?.adversarialReview === true });
-    this.publish();
-  }
-
-  /**
    * This Mac signed out. Every row, every chat and every poll in flight belongs
    * to the account that just went away.
    */
@@ -518,10 +495,6 @@ export class CloudAgentState {
       const label = this.chats.find((chat) => chat.uid === row.chatUid)?.label;
       if (label && label !== row.chatLabel) this.rows.set(agentId, { ...row, chatLabel: label });
     }
-  }
-
-  private readAgentSettings(agentId: string): CloudAgentLocalSettings | null {
-    return loadSettings(this.deps.home).cloudAgentSettings[agentId] ?? null;
   }
 
   /**

@@ -102,11 +102,6 @@ contextBridge.exposeInMainWorld("domo", {
   // `cloudCreate` answers as soon as the row is on screen in `provisioning`.
   cloudCreate: (chatUid: string, name: string) =>
     ipcRenderer.invoke("cloud:create", chatUid, name),
-  cloudDelete: (agentId: string) => ipcRenderer.invoke("cloud:delete", agentId),
-  // Apply changes: one agent's local settings. Adversarial review is this app's
-  // own reviewer, so it applies at once and reaches no network at all.
-  cloudApply: (agentId: string, settings: { adversarialReview: boolean }) =>
-    ipcRenderer.invoke("cloud:apply", agentId, settings),
 
   // Any web page the app links to (client connector cards, Settings' Support
   // section). A KEY, not a URL: main owns the table of what may be opened.

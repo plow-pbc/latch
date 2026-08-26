@@ -603,18 +603,6 @@ ipcMain.handle("cloud:create", async (_e, chatUid: string, name: string) => {
   await cloudAgents?.create(chatUid, name);
   return agentsTabState();
 });
-ipcMain.handle("cloud:delete", async (_e, agentId: string) => {
-  await cloudAgents?.remove(agentId);
-  return agentsTabState();
-});
-ipcMain.handle(
-  "cloud:apply",
-  async (_e, agentId: string, settings: { adversarialReview: boolean }) => {
-    await cloudAgents?.apply(agentId, settings);
-    return agentsTabState();
-  },
-);
-
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
  * cloud half is present and empty when the flag is off, so the renderer reads
  * the same fields either way. */
