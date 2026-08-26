@@ -31,7 +31,14 @@ export interface RosterSections {
   cloud: RosterSectionRow[];
   /** MCP clients: relay-capable, not an agent. Removal is a key revoke. */
   mcp: RosterSectionRow[];
-  /** Web logins, other Macs, legacy tokens. Removal is a key revoke. */
+  /**
+   * Everything else — web logins, other Macs, legacy tokens, and any
+   * credential with no relay reach at all. Removal is a key revoke.
+   *
+   * Deliberately the default rather than a list of kinds: a kind this file has
+   * never heard of belongs on screen, not silently dropped. An account with
+   * ninety credentials should show ninety.
+   */
   other: RosterSectionRow[];
   /** Revoked credentials, counted rather than listed. */
   revokedHidden: number;
@@ -82,14 +89,20 @@ export function sectionRoster(
   keys: readonly KeyInfo[],
   options: { deviceCredential?: string } = {},
 ): RosterSections {
-  const prefixes = new Map(keys.map((key) => [key.id, key.key_prefix] as const));
+  const byId = new Map(keys.map((key) => [key.id, key] as const));
   const credential = (options.deviceCredential ?? "").trim();
   const sections: RosterSections = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
 
   for (const key of keys) if (!key.is_active) sections.revokedHidden += 1;
 
   for (const row of agentRosterRows(keys)) {
-    const prefix = prefixes.get(row.id) ?? null;
+    // Revoked rows are counted, never listed — and that is asserted here rather
+    // than assumed of `agentRosterRows`, whose job is what a credential IS, not
+    // what this screen shows. It has already changed once to widen what it
+    // returns; this must not quietly start listing dead credentials when it
+    // changes again.
+    if (byId.get(row.id)?.is_active === false) continue;
+    const prefix = byId.get(row.id)?.key_prefix ?? null;
     const placed: RosterSectionRow = {
       ...row,
       isThisMac: isDeviceCredential(prefix, credential),

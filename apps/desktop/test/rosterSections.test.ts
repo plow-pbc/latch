@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { sectionRoster, removalRouteFor } from "../src/rosterSections.js";
+import { agentRosterRows } from "../src/agentRoster.js";
 import type { KeyInfo } from "../src/plowApi.js";
 
 function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
@@ -47,10 +48,35 @@ describe("which section a credential belongs in", () => {
   });
 
   it("counts revoked credentials rather than listing them", () => {
-    const sections = sectionRoster([key({ id: 1 }), key({ id: 2, is_active: false })]);
+    const sections = sectionRoster([
+      key({ id: 1 }),
+      key({ id: 2, is_active: false }),
+      key({ id: 3, is_active: false, agent_id: "agent_3" }),
+    ]);
 
-    expect(sections.revokedHidden).toBe(1);
+    expect(sections.revokedHidden).toBe(2);
     expect([...sections.cloud, ...sections.mcp, ...sections.other].map((r) => r.id)).toEqual([1]);
+  });
+
+  it("places every row it is given, whatever kind it turns out to be", () => {
+    // `agentRosterRows` is widening to return non-relay credentials too, with a
+    // new kind for them. An unknown kind must land in Other sessions rather
+    // than vanish — an account with ninety credentials should show ninety.
+    // Asserted against what the roster module actually returns, so this holds
+    // before and after that change.
+    const keys = [
+      key({ id: 1, agent_id: "agent_1" }),
+      key({ id: 2, scopes: ["relay:call"] }),
+      key({ id: 3, scopes: ["relay:*"] }),
+      key({ id: 4, scopes: ["vault:read"] }),
+      key({ id: 5, scopes: [] }),
+    ];
+    const sections = sectionRoster(keys);
+
+    const placed = [...sections.cloud, ...sections.mcp, ...sections.other].map((row) => row.id);
+    expect(placed.sort()).toEqual(agentRosterRows(keys).map((row) => row.id).sort());
+    // Nothing is counted twice either.
+    expect(new Set(placed).size).toBe(placed.length);
   });
 });
 
