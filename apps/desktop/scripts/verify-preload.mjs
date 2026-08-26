@@ -1083,10 +1083,17 @@ app.whenReady().then(async () => {
       // neither may live inside the scrolling narrative region. Asserted
       // structurally rather than by measuring pixels: this probe runs headless
       // at a fixed size, so a height check would pass for the wrong reason.
-      enforcedBlockPinned: !!fine && !document.querySelector(".scroll-region")?.contains(fine),
-      actionsPinned: !document
-        .querySelector(".scroll-region")
-        ?.contains(document.querySelector(".actions")),
+      // Require the region to EXIST before asserting what is outside it —
+      // `?.contains(...)` yields undefined when it is missing, and `!undefined`
+      // passes, so the absence of the whole layout read as compliance.
+      enforcedBlockPinned:
+        !!document.querySelector(".scroll-region") &&
+        !!fine &&
+        !document.querySelector(".scroll-region").contains(fine),
+      actionsPinned:
+        !!document.querySelector(".scroll-region") &&
+        !!document.querySelector(".actions") &&
+        !document.querySelector(".scroll-region").contains(document.querySelector(".actions")),
       // The note's rule is the file's only child-combinator selector, so a
       // restructure that renests it silently drops its whole style block.
       noteStyleStillApplies:
