@@ -180,6 +180,24 @@ describe("ConnectorClient", () => {
     // The shape the key-walk exists for: a reflected-request or debug envelope
     // maps the token TO metadata, so it never appears in a value at all.
     ["an object key", (c: string) => ({ tokens: { [c]: { remaining: 5 } } })],
+    // A leading fragment is an echo too: ten characters of an opaque
+    // credential already carry it, and a truncated echo is the common real
+    // shape (a debug field, an upstream error quoting the header).
+    ["only a leading fragment", (c: string) => ({ note: `saw ${c.slice(0, 10)}…` })],
+    // Encoded, which an agent simply decodes. REVIEW.md's carve-out says
+    // "in any encoding", so matching the literal alone is a screen the caller
+    // walks straight past.
+    ["Base64", (c: string) => ({ echo: Buffer.from(c, "utf8").toString("base64") })],
+    [
+      "Base64url",
+      (c: string) => ({
+        echo: Buffer.from(c, "utf8")
+          .toString("base64")
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, ""),
+      }),
+    ],
   ])("discards a 200 that echoes the credential in %s", async (_name, shape) => {
     const credential = "cred-super-secret";
     const client = makeConnectorClient({
@@ -202,23 +220,6 @@ describe("ConnectorClient", () => {
     expect(caught?.message).not.toContain(credential);
     expect(caught?.message).not.toContain("Bearer");
     expect(caught?.message).toContain("messages.list");
-  });
-
-  // A LEADING fragment counts as an echo — ten characters of an opaque
-  // credential already carry it, and a truncated echo is the common real shape
-  // (a debug field, an upstream error quoting the header). So the passing case
-  // has to be a body that shares no such prefix, not merely a shorter one.
-  it("flags a 200 that echoes only the credential's leading fragment", async () => {
-    const credential = "cred-super-secret-tail";
-    const client = makeConnectorClient({
-      apiBaseUrl: "https://api.example.com",
-      credential: () => credential,
-      fetchImpl: async () =>
-        new Response(JSON.stringify({ note: `saw ${credential.slice(0, 10)}…` }), { status: 200 }),
-    });
-    await expect(
-      client.call("messages.list", { account: "T1", channel_id: "C1" }),
-    ).rejects.toBeInstanceOf(ConnectorError);
   });
 
   it("returns a 200 whose body shares no fragment of the credential", async () => {

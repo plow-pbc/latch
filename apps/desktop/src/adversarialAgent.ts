@@ -13,7 +13,7 @@
  * the newer `effort` control, and the verdict comes back as structured JSON.
  */
 import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
-import { echoesSecret, SECRET_HEAD } from "@domo/device-core";
+import { echoesSecret } from "@domo/device-core";
 import { ApiBaseUrl, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 
 /**
@@ -266,11 +266,9 @@ function buildPrompt(intent: Intent, humanAvailable: boolean): string {
  * audit.ndjson, checked as it will be written. Narrowing the raw scan again
  * would only have named the next encoding.
  *
- * `headLength` opts into matching a leading fragment as well as the whole
- * token. Both the predicate and that constant now live in `@domo/device-core`
- * beside the connector, which screens decoded responses with the same rule —
- * two copies drifted once already, and the copy at the higher-value sink was
- * the weaker one.
+ * The predicate lives in `@domo/device-core` beside the connector, which
+ * screens decoded responses with the same rule — two copies drifted once
+ * already, and the copy at the higher-value sink was the weaker one.
  */
 
 /**
@@ -536,7 +534,7 @@ export async function adversarialReview(
     // there is. `decision` is an enum the parser already pinned, so `reason` is
     // the entire surface by which the answer can carry anything out of here —
     // and this is the value itself, not a serialisation of it. See echoesSecret.
-    if (echoesSecret(parsed.reason, credential, SECRET_HEAD)) {
+    if (echoesSecret(parsed.reason, credential)) {
       return failedReview("reviewer answer discarded: it repeated a credential");
     }
     return parsed;

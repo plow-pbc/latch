@@ -67,6 +67,8 @@ Reach for these whenever the question is about the live web or about this user's
 
 Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: ${MACOS_TOOLING}.
 
+Some of these reach the user's connected accounts rather than their Mac: the plow_slack_* tools act in their Slack, as them, and other people see what you send. Read freely; before you post or edit, be sure it is what they asked for.
+
 Use your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.
 
 The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.`;
@@ -102,8 +104,8 @@ export const SERVER_IDENTITY = {
   title: "Plow Latch — Mac Desktop Manager",
   description:
     "Operate this person's own Mac: read and write their files, run shell and macOS " +
-    "tooling, and drive a real browser on their own network. Operations stay within " +
-    "the scope the owner approved.",
+    "tooling, and drive a real browser on their own network — and act in the Slack " +
+    "they have connected to Plow. Operations stay within the scope the owner approved.",
   websiteUrl: "https://watchmepivot.com/",
 } as const;
 

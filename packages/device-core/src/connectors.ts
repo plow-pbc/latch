@@ -89,8 +89,12 @@ export function slackAction(tool: string): SlackAction | null {
  * A partial echo is still an echo: ten characters is what V8 quotes when it
  * reports offending input, and a Plow credential is opaque from its first
  * character, so ten of them already carry the secret.
+ *
+ * Private and unconditional. It was a caller-supplied `headLength` while two
+ * implementations were converging; every production sink passed this same
+ * value, so the parameter was an unused mode on an enforcement seam.
  */
-export const SECRET_HEAD = 10;
+const SECRET_HEAD = 10;
 
 /**
  * Whether `text` discloses `secret` — whole, or as a leading fragment when
@@ -103,13 +107,20 @@ export const SECRET_HEAD = 10;
  * arbitrary JSON straight to a hosted agent. Short secrets are ignored because
  * a handful of characters matches ordinary prose.
  */
-export function echoesSecret(text: string, secret: string, headLength = 0): boolean {
+export function echoesSecret(text: string, secret: string): boolean {
   const trimmed = secret.trim();
-  if (trimmed.length < 10) return false;
-  if (text.includes(trimmed)) return true;
-  return (
-    headLength > 0 && trimmed.length > headLength && text.includes(trimmed.slice(0, headLength))
-  );
+  if (trimmed.length < SECRET_HEAD) return false;
+  // Literal, and the two encodings a token plausibly arrives in when a server
+  // reflects it into JSON. `REVIEW.md` puts a credential reaching the renderer
+  // "in any encoding" in the carve-out, and a Base64 echo is one an agent can
+  // simply decode — matching only the literal is a screen the caller can walk
+  // straight past.
+  const b64 = Buffer.from(trimmed, "utf8").toString("base64");
+  for (const form of [trimmed, b64, b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")]) {
+    if (text.includes(form)) return true;
+    if (form.length > SECRET_HEAD && text.includes(form.slice(0, SECRET_HEAD))) return true;
+  }
+  return false;
 }
 
 /**
@@ -177,7 +188,7 @@ export class ConnectorError extends Error {
  * split-across-fields occurrence is caught the same way a plain one is.
  */
 function carriesCredential(value: JSONValue, credential: string): boolean {
-  if (typeof value === "string") return echoesSecret(value, credential, SECRET_HEAD);
+  if (typeof value === "string") return echoesSecret(value, credential);
   if (Array.isArray(value)) return value.some((v) => carriesCredential(v, credential));
   if (value !== null && typeof value === "object") {
     // KEYS as well as values. A reflected-request or debug envelope maps the
@@ -186,7 +197,7 @@ function carriesCredential(value: JSONValue, credential: string): boolean {
     // this check's whole premise is that it is complete.
     return Object.entries(value).some(
       ([k, v]) =>
-        echoesSecret(k, credential, SECRET_HEAD) || carriesCredential(v as JSONValue, credential),
+        echoesSecret(k, credential) || carriesCredential(v as JSONValue, credential),
     );
   }
   return false;

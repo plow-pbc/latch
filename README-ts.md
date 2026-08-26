@@ -101,9 +101,14 @@ POST-only, so there is no session lifecycle and no GET/SSE requirement:
 
 The tool surface is one Mac's, not a fleet's: `plow_read_file`,
 `plow_write_file`, `plow_run_command`, `plow_get_output`, `plow_get_result`,
-`plow_list_skills`, `plow_read_skill`, `plow_vault`, and the four browser tools
+`plow_list_skills`, `plow_read_skill`, `plow_vault`, the four browser tools
 (`plow_browser_open`, `plow_browser_request`, `plow_browser`,
-`plow_browser_close`). No tool takes a `device` argument, and every name is
+`plow_browser_close`), and eight for the owner's Slack — `plow_slack_status`,
+`plow_slack_channels`, `plow_slack_users`, `plow_slack_messages`,
+`plow_slack_search`, `plow_slack_send`, `plow_slack_update`,
+`plow_slack_open_dm`. The Slack ones reach Plow's connector API rather than
+this Mac, so no Slack credential is ever here; they go through the same
+approval gate as everything else. No tool takes a `device` argument, and every name is
 prefixed so it cannot be confused with an agent's own built-ins.
 
 **Paths are resolved before the human sees them.** Every path an agent supplies

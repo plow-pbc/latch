@@ -88,7 +88,9 @@ Design points:
   anything but a single demo tool (`mac_info`), and nothing but a rebuild could
   add to it — while the same job is one `plow_run_command` away. The capability
   kind `tool` survives in the protocol because it is frozen into
-  `fixtures/rulekeys.json`; nothing on this Mac constructs one any more.
+  `fixtures/rulekeys.json`. It has a producer again: the Slack tools build one
+  per call, carrying the action and the target it acts on, so a rule keys on
+  "may post to this channel" rather than on the whole connector.
 - **Skills are the surviving discovery surface.** `plow_list_skills` names what
   this Mac publishes and `plow_read_skill` fetches the body, so a long operator
   manual (`camoufox-browsing`) costs no manifest tokens until an agent asks.
