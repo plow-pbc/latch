@@ -456,9 +456,6 @@ describe("termic-setup.sh", () => {
       // Reachable from any checkout that is its own main: git names this one's
       // own .git, the lockfile is tracked so the marker test would pass, and
       // setup would refuse it as its own donor before installing or building.
-      // Whether Termic can produce this is not something this repo can check —
-      // Termic is not here, and its worktree-only behaviour was inferred from
-      // the archive hook, never verified. One condition beats being wrong.
       why: "what it resolves to is this checkout",
       make: (parent) => checkout(parent, "slot0", []),
       // Silent: no other checkout to name, and the note would be false here —
