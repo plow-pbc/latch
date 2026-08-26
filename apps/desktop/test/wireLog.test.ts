@@ -91,30 +91,36 @@ describe("the wire log", () => {
     expect(fs.readFileSync(wireLogPath(home), "utf8")).not.toContain("session_secret_identity");
   });
 
-  it("scrubs a credential a server echoes back", async () => {
+  it.each([
+    ["the whole credential", { detail: `token ${CREDENTIAL} is not valid` }, CREDENTIAL],
+    [
+      "an arbitrary fragment",
+      { error: { message: `token fragment ${CREDENTIAL.slice(3, 18)} is not valid` } },
+      CREDENTIAL.slice(3, 18),
+    ],
+  ])("drops authenticated server text containing %s", async (_case, body, echoed) => {
     const home = tempHome();
 
-    await loggingFetch(
-      home,
-      answering(400, { detail: `token ${CREDENTIAL} is not valid` }),
-    )("https://api.plow.co/v1/agents/cloud", post());
-
+    await loggingFetch(home, answering(400, body))(
+      "https://api.plow.co/v1/agents/cloud",
+      post(),
+    );
 
     const raw = fs.readFileSync(wireLogPath(home), "utf8");
-    expect(raw).not.toContain(CREDENTIAL);
-    expect(raw).toContain("[redacted]");
+    expect(raw).not.toContain(echoed);
+    expect(lines(home)[0].detail).toBeNull();
   });
 
-  it("keeps the raw answer behind a friendly error", async () => {
+  it("keeps an unauthenticated failure detail", async () => {
     const home = tempHome();
 
     await loggingFetch(
       home,
       answering(503, { detail: "no capacity in region" }),
-    )("https://api.plow.co/v1/agents/cloud", post());
+    )("https://api.plow.co/v1/agents/cloud", { method: "GET" });
 
-    // The user is shown a friendly sentence; the server's own survives here.
     expect(lines(home)[0]).toMatchObject({
+      authorization: "none",
       status: 503,
       detail: "no capacity in region",
     });
