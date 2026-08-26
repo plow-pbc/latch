@@ -168,6 +168,50 @@ describe("ConnectorClient", () => {
     expect(error.message).not.toContain(CREDENTIAL);
     for (const foreign of never) expect(error.message).not.toContain(foreign);
   });
+
+  // REVIEW.md's carve-out: "a secret or credential reaching a log line, an
+  // error string, a URL, the audit log, or the renderer — in any encoding".
+  // The response is arbitrary JSON that a Slack tool hands to a hosted agent,
+  // so a server that echoed the header would disclose the Mac's credential.
+  it.each([
+    ["a top-level string", (c: string) => ({ debug: c })],
+    ["a nested object", (c: string) => ({ echo: { request: { authorization: `Bearer ${c}` } } })],
+    ["inside an array", (c: string) => ({ messages: [{ text: `token was ${c}` }] })],
+  ])("discards a 200 that echoes the credential in %s", async (_name, shape) => {
+    const credential = "cred-super-secret";
+    const client = makeConnectorClient({
+      apiBaseUrl: "https://api.example.com",
+      credential: () => credential,
+      fetchImpl: async () =>
+        new Response(JSON.stringify(shape(credential)), { status: 200 }),
+    });
+
+    let caught: Error | undefined;
+    try {
+      await client.call("messages.list", { account: "T1", channel_id: "C1" });
+      expect.fail("expected the echoed credential to be rejected");
+    } catch (e) {
+      caught = e as Error;
+    }
+
+    expect(caught).toBeInstanceOf(ConnectorError);
+    // Neither the credential nor the body that carried it may reach the message.
+    expect(caught?.message).not.toContain(credential);
+    expect(caught?.message).not.toContain("Bearer");
+    expect(caught?.message).toContain("messages.list");
+  });
+
+  it("returns a 200 whose body merely resembles the credential's neighbourhood", async () => {
+    const client = makeConnectorClient({
+      apiBaseUrl: "https://api.example.com",
+      credential: () => "cred-super-secret",
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ messages: [{ text: "cred-super" }] }), { status: 200 }),
+    });
+    await expect(
+      client.call("messages.list", { account: "T1", channel_id: "C1" }),
+    ).resolves.toEqual({ messages: [{ text: "cred-super" }] });
+  });
 });
 
 /**

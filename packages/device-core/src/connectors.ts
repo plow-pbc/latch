@@ -122,6 +122,38 @@ export class ConnectorError extends Error {
   static unreadable(action: SlackAction): ConnectorError {
     return new ConnectorError(`Plow returned an unreadable response for ${action}`);
   }
+
+  /**
+   * Names neither the credential nor the value that carried it — the whole
+   * point is that this string is safe to log, display and audit.
+   */
+  static echoedCredential(action: SlackAction): ConnectorError {
+    return new ConnectorError(
+      `Plow's answer to ${action} contained this Mac's credential and was discarded`,
+    );
+  }
+}
+
+/**
+ * Whether a decoded response carries the credential anywhere inside it.
+ *
+ * The request sends a bearer credential and the answer is arbitrary JSON that
+ * a tool hands straight to a hosted agent, so a server that ever echoed the
+ * header — in a debug field, a reflected request dump, an error envelope —
+ * would disclose it. `REVIEW.md` puts "a secret or credential reaching a log
+ * line, an error string, a URL, the audit log, or the renderer — in any
+ * encoding" in the carve-out where a check like this is the product, not bloat.
+ *
+ * Walks leaves rather than testing `JSON.stringify`, so an escaped or
+ * split-across-fields occurrence is caught the same way a plain one is.
+ */
+function carriesCredential(value: JSONValue, credential: string): boolean {
+  if (typeof value === "string") return value.includes(credential);
+  if (Array.isArray(value)) return value.some((v) => carriesCredential(v, credential));
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some((v) => carriesCredential(v as JSONValue, credential));
+  }
+  return false;
 }
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -179,13 +211,16 @@ export function makeConnectorClient(opts: {
       // Status only. A body can echo request content, and the request carried
       // the header we must never surface.
       if (!response.ok) throw ConnectorError.httpStatus(action, response.status);
+      let decoded: JSONValue;
       try {
-        return (await response.json()) as JSONValue;
+        decoded = (await response.json()) as JSONValue;
       } catch {
         // The parser's own message is foreign text too — V8 embeds a snippet of
         // the body in it.
         throw ConnectorError.unreadable(action);
       }
+      if (carriesCredential(decoded, credential)) throw ConnectorError.echoedCredential(action);
+      return decoded;
     },
   };
 }
