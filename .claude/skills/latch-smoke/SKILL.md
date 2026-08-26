@@ -116,7 +116,22 @@ for i in $(seq 1 24); do
     exit 0
   fi
   sleep 5
-done; echo "TIMEOUT - no audit line carrying $NONCE"; exit 1'
+done
+# Two different failures, and they send you to different places. The nonce
+# reaching intent_received means the relay and the device both worked and the
+# call is sitting at the approval dialog; the nonce being absent entirely means
+# it never arrived — wrong install, wrong credential, or a dead socket.
+ANY=$(grep "$NONCE" "$LOG" 2>/dev/null | tail -2) || true
+if [ -n "$ANY" ]; then
+  echo "$ANY"
+  ID=$(printf %s "$ANY" | head -1 | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null)
+  # intent_decision is what names a denial.
+  [ -n "$ID" ] && grep "$ID" "$LOG" | grep "intent_decision" | head -1
+  echo "TIMEOUT - reached this Mac, never executed: denied, or waiting on the dialog"
+else
+  echo "TIMEOUT - nothing carrying $NONCE: it never reached this install"
+fi
+exit 1'
 bash -c "$SCRIPT"                                                   # local install
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
@@ -125,10 +140,12 @@ Quote the `exec_start` and `exec_end` lines as the verification. An
 `exec_start` with no `exec_end` means the run is still going or was reaped; an
 `exec_error` names why it failed.
 
-On timeout it prints whatever DID carry the nonce, which is usually the answer:
-an `intent_received` with no `exec_start` after it means the call reached this
-Mac and the owner denied it or never answered — a working relay and a working
-device, waiting on a human.
+On timeout it distinguishes the two failures, because they send you to
+different places: the nonce reaching `intent_received` means the relay and the
+device both worked and the call is at the approval dialog (it quotes the
+`intent_decision` line, which is what names a denial), while the nonce being
+absent entirely means it never arrived — wrong install, wrong credential, or a
+dead socket.
 
 ## Smoke-testing the gog provider specifically
 
@@ -156,7 +173,10 @@ four Google scopes and refuses everything else by design.
 - HTTP 401/403 from the relay → the credential is wrong or the device was
   re-paired. Scopes freeze at mint; a Mac paired before a scope grant needs to
   re-activate.
-- Call returns, nothing in the audit log → you are talking to a *different*
-  install than the one whose log you are reading. Check the instance home
-  (branch-suffixed homes are the usual cause).
+- Call returns, and the log carries the nonce but no `exec_start` → it arrived
+  and was denied or is unanswered. Read the `intent_decision` line; this is the
+  approval dialog, not a plumbing problem.
+- Call returns, and *nothing* carries the nonce → you are reading a
+  **different** install's log. Check the instance home (branch-suffixed homes
+  are the usual cause).
 - Approval dialog never answered → expected on an unattended run; see above.
