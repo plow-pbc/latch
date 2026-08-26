@@ -23,7 +23,7 @@ import { VaultServer } from "./browser/vaultServer.js";
 import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
-import { Executor } from "./executor.js";
+import { Executor, REAPED_MESSAGE } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
@@ -459,7 +459,7 @@ export class DeviceAgent {
         // A deferred run's end is recorded when it actually ends, keyed to the
         // intent — never from the polling path, which may run many times or
         // not at all.
-        this.executor.onExit(result.handle, (exitCode) => {
+        this.executor.onExit(result.handle, (exitCode, reaped) => {
           // Fires from the child's exit event, possibly mid-shutdown; a failed
           // append must not become an uncaught exception in the event loop.
           try {
@@ -467,6 +467,10 @@ export class DeviceAgent {
               intentId: intent.intentId,
               handle: result.handle,
               exit_code: exitCode,
+              // A run this Mac killed is not a command that failed, and the
+              // log is where that difference has to survive: the unpaired
+              // exec_start was the only tell this failure ever had.
+              ...(reaped ? { reaped: true } : {}),
             });
           } catch (error) {
             // Nowhere durable left to write it — the durable sink is what
@@ -546,6 +550,10 @@ export class DeviceAgent {
       output_length: result.outputLength,
     };
     if (result.exitCode !== null) response.exit_code = result.exitCode;
+    // A reaped run ends with no output and a signal exit — indistinguishable,
+    // without this, from a command that genuinely produced nothing. The agent
+    // polling the job is the one who has to tell the user, so it is told here.
+    if (result.reaped) response.error = REAPED_MESSAGE;
     return response;
   }
 }

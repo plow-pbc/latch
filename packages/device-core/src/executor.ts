@@ -108,23 +108,66 @@ export const SandboxProfile = {
 
 export class ExecutorError extends Error {}
 
+/**
+ * How long a run that has produced NOTHING may stay alive before it is killed.
+ *
+ * macOS blocks — it does not refuse — an unconsented open of another app's
+ * data: the child parks in `__guarded_open_np` waiting on a consent decision,
+ * and on a Mac whose owner is not sitting in front of it nobody ever answers.
+ * Nothing here used to end such a run, so the job answered `running` for the
+ * life of the app while an agent polled it, and the process leaked with it.
+ *
+ * The bound has two halves and needs both. A ceiling alone would kill honest
+ * long work: output handles never expire, so a build still running after an
+ * hour is retrievable and must survive. `has produced no output` is what
+ * separates the two — a child that has written nothing at all by now is not
+ * about to start. Nothing here reads CPU or idle time: this Mac legitimately
+ * runs near-zero-CPU silent commands (an `ssh` waiting on a remote host), so
+ * idleness is not evidence of anything.
+ *
+ * Fifteen minutes is a chosen literal, not a number computed from another:
+ * long enough that a slow-but-real command is never the one being killed,
+ * short enough that a wedged one is reported rather than waited on forever.
+ */
+export const REAP_AFTER_MS = 15 * 60_000;
+
+/**
+ * What the agent is told about a run this Mac killed. It leads with the fact,
+ * and names the cause that produces this shape — a permission prompt nobody
+ * answered — as the likely one rather than the certain one, because from here
+ * a blocked open and a genuinely mute command look identical.
+ */
+export const REAPED_MESSAGE =
+  "killed by this Mac: the command produced no output and never exited. " +
+  "The usual cause is a macOS permission prompt waiting for the Mac's owner to " +
+  "answer it — reading another app's data needs a grant this app may not have " +
+  "yet. Tell the user; re-running will block the same way until they grant it.";
+
 export interface ExecResult {
   handle: string;
   running: boolean;
   exitCode: number | null;
   output: Buffer;
   outputLength: number;
+  /** True when this Mac killed the run rather than the command ending. */
+  reaped: boolean;
 }
 
 class OutputBuffer {
   private chunks: Buffer[] = [];
   private length = 0;
   exitCode: number | null = null;
+  reaped = false;
   private waiters: (() => void)[] = [];
 
   append(chunk: Buffer): void {
     this.chunks.push(chunk);
     this.length += chunk.length;
+  }
+
+  /** Whether the command has written anything at all — the reaper's guard. */
+  get produced(): boolean {
+    return this.length > 0;
   }
 
   finish(exitCode: number): void {
@@ -133,7 +176,13 @@ class OutputBuffer {
     this.waiters = [];
   }
 
-  snapshot(since: number): { output: Buffer; total: number; running: boolean; exitCode: number | null } {
+  snapshot(since: number): {
+    output: Buffer;
+    total: number;
+    running: boolean;
+    exitCode: number | null;
+    reaped: boolean;
+  } {
     const all = Buffer.concat(this.chunks);
     const start = Math.min(Math.max(since, 0), all.length);
     return {
@@ -141,6 +190,7 @@ class OutputBuffer {
       total: all.length,
       running: this.exitCode === null,
       exitCode: this.exitCode,
+      reaped: this.reaped,
     };
   }
 
@@ -157,13 +207,24 @@ class OutputBuffer {
     });
   }
 
-  onExit(cb: (exitCode: number) => void): void {
+  onExit(cb: (exitCode: number, reaped: boolean) => void): void {
     if (this.exitCode !== null) {
-      cb(this.exitCode);
+      cb(this.exitCode, this.reaped);
       return;
     }
-    this.waiters.push(() => cb(this.exitCode ?? -1));
+    this.waiters.push(() => cb(this.exitCode ?? -1, this.reaped));
   }
+}
+
+/** The one place a buffer snapshot becomes the result callers see. */
+function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "handle"> {
+  return {
+    running: snap.running,
+    exitCode: snap.exitCode,
+    output: snap.output,
+    outputLength: snap.total,
+    reaped: snap.reaped,
+  };
 }
 
 /**
@@ -173,7 +234,11 @@ class OutputBuffer {
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
 
-  constructor(public readonly scratchRoot: string) {
+  constructor(
+    public readonly scratchRoot: string,
+    /** Overridden only by tests, which cannot wait out the real window. */
+    private readonly reapAfterMs: number = REAP_AFTER_MS,
+  ) {
     fs.mkdirSync(scratchRoot, { recursive: true });
   }
 
@@ -223,26 +288,33 @@ export class Executor {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    // SIGKILL rather than a polite SIGTERM: the run being ended here is one
+    // wedged in a kernel call with nothing to clean up, and a handler that
+    // never gets scheduled would only leave the same process on the table.
+    const reaper = setTimeout(() => {
+      if (buffer.exitCode !== null || buffer.produced) return;
+      buffer.reaped = true;
+      child.kill("SIGKILL");
+    }, this.reapAfterMs);
+    reaper.unref?.();
+
     child.stdout.on("data", (chunk: Buffer) => buffer.append(chunk));
     child.stderr.on("data", (chunk: Buffer) => buffer.append(chunk));
-    child.on("error", () => buffer.finish(-1));
+    child.on("error", () => {
+      clearTimeout(reaper);
+      buffer.finish(-1);
+    });
     child.on("close", (code, signal) => {
+      clearTimeout(reaper);
       buffer.finish(code ?? (signal ? -1 : 0));
     });
 
     await buffer.waitForExit(Math.max(args.waitMs, 0));
-    const snap = buffer.snapshot(0);
-    return {
-      handle,
-      running: snap.running,
-      exitCode: snap.exitCode,
-      output: snap.output,
-      outputLength: snap.total,
-    };
+    return { handle, ...shape(buffer.snapshot(0)) };
   }
 
   /** Invoke cb when the run exits — immediately if it already has. */
-  onExit(handle: string, cb: (exitCode: number) => void): void {
+  onExit(handle: string, cb: (exitCode: number, reaped: boolean) => void): void {
     const buffer = this.buffers.get(handle);
     if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
     buffer.onExit(cb);
@@ -251,13 +323,6 @@ export class Executor {
   output(handle: string, since: number): ExecResult {
     const buffer = this.buffers.get(handle);
     if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
-    const snap = buffer.snapshot(since);
-    return {
-      handle,
-      running: snap.running,
-      exitCode: snap.exitCode,
-      output: snap.output,
-      outputLength: snap.total,
-    };
+    return { handle, ...shape(buffer.snapshot(since)) };
   }
 }

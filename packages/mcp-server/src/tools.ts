@@ -360,7 +360,9 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Fetch incremental output of a command still running from plow_run_command. " +
       "Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, " +
-      "not a handle from plow_get_result.",
+      "not a handle from plow_get_result. " +
+      "A command that produces nothing and never exits is eventually killed by this Mac: the " +
+      "reply then carries an 'error' saying so, which is for the user to hear.",
     inputSchema: {
       type: "object",
       required: ["handle"],
