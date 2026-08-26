@@ -111,8 +111,12 @@ describe("what a run that may be killed is allowed to write", () => {
     for (const dir of ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]) {
       expect(networked).toContain(`(allow file-write* (subpath "/h/${dir}"))`);
       expect(reapable).not.toContain(`(allow file-write* (subpath "/h/${dir}"))`);
+      expect(reapable).not.toContain(`(allow file-read* (subpath "/h/${dir}"))`);
     }
     expect(reapable).toContain('(allow file-write* (subpath "/s"))');
+    // What the docs and the comment beside the deletion both rest on: those
+    // five stay READABLE through the broad home grant, not through their own.
+    expect(reapable).toContain('(allow file-read* (subpath "/h"))');
   });
 });
 
