@@ -142,30 +142,20 @@ export function sectionRoster(
 }
 
 /**
- * How many characters of the token plow keeps as its public `key_prefix`, and
- * where they start.
- *
- * Plow stores `token[5:13]` — the eight characters AFTER the `plow_` scheme,
- * not including it. So a prefix never starts the token it came from, and
- * `startsWith` could not match one in production even once. Written as the
- * slice plow takes, so the two can be read against each other.
- */
-const KEY_PREFIX_START = 5;
-const KEY_PREFIX_END = 13;
-
-/**
  * Is this row the credential this Mac holds?
  *
- * Compared against the same slice plow published, not against the start of the
- * token: the prefix omits the `plow_` scheme, so it matches in the middle or
- * not at all.
+ * Plow stores `token[5:13]` as the public `key_prefix` — the eight characters
+ * AFTER the `plow_` scheme, not including it (plow's `api/plow/auth.py`). So a
+ * prefix never starts the token it came from, and comparing with `startsWith`
+ * matched nothing in production while looking right against a hand-written
+ * fixture.
  *
- * Equality against a fixed-width slice is the whole check. It rejects a prefix
- * of any other length on its own — a longer or shorter string cannot equal an
- * eight-character slice — so nothing here guesses at a partial match, and an
- * absent or malformed prefix matches nothing rather than everything.
+ * Equality against that same fixed-width slice is the whole check: a string of
+ * any other length cannot equal it, so nothing here guesses at a partial
+ * match, and an absent or malformed prefix matches nothing rather than
+ * everything.
  */
 function isDeviceCredential(prefix: string | null, credential: string): boolean {
   if (!prefix || !credential) return false;
-  return credential.slice(KEY_PREFIX_START, KEY_PREFIX_END) === prefix;
+  return credential.slice(5, 13) === prefix;
 }

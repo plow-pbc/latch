@@ -145,6 +145,15 @@ describe("this Mac's own credential", () => {
     expect(sections.mcp.every((row) => !row.isThisMac)).toBe(true);
   });
 
+  /**
+   * The shapes a prefix is not.
+   *
+   * Kept even though plow's contract is fixed, because the first two are what
+   * produced the bug: a hand-written prefix WITH the scheme on it matched
+   * `startsWith` in a fixture and could never match in production. Dropping
+   * these because the server will not send them is the assumption that cost
+   * this a release.
+   */
   it.each([
     ["absent", null],
     ["the whole token", "plow_sk_abc123_and_the_rest_of_it"],
