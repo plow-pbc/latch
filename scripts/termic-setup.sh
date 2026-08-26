@@ -3,10 +3,12 @@
 # donor named for it. See CLAUDE.md, which names this as the one caller that
 # chooses a donor for you.
 #
-# worktree-setup.sh never infers one; the caller that knows says it. Termic runs
-# this inside a worktree it has just created, and what git names from in here is
-# the repository's MAIN checkout — NOT "the checkout this was made from": a
-# worktree created from another worktree still resolves to main.
+# worktree-setup.sh never infers one; the caller that knows says it. Termic is
+# expected to run this inside a worktree it has just created — expected, not
+# established: Termic is not installed here and documents nothing, so the
+# guards below assume nothing about where it runs. What git names from inside
+# such a worktree is the repository's MAIN checkout, and NOT "the checkout this
+# was made from": one created from another worktree still resolves to main.
 #
 # A script rather than the expression inline in .termic.yaml because nothing
 # establishes that Termic evaluates that value through a shell — the other hooks

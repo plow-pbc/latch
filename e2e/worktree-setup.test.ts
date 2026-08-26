@@ -133,15 +133,19 @@ function runSetup(dir: string, donor?: string, failing?: string): Ran {
   return run(dir, "worktree-setup.sh", donor ? [donor] : [], failing);
 }
 
-/** Run a setup that must exit non-zero, and hand back what it said on the way. */
-function runSetupExpectingFailure(dir: string, donor?: string, failing?: string): Ran {
+/** Run a script that must exit non-zero, and hand back what it said on the way. */
+function runExpectingFailure(dir: string, script: string, args: string[] = [], failing?: string): Ran {
   try {
-    runSetup(dir, donor, failing);
+    run(dir, script, args, failing);
   } catch (e) {
     if (e instanceof SetupFailed) return e;
     throw e;
   }
-  throw new Error("setup was expected to fail, and did not");
+  throw new Error(`${script} was expected to fail, and did not`);
+}
+
+function runSetupExpectingFailure(dir: string, donor?: string, failing?: string): Ran {
+  return runExpectingFailure(dir, "worktree-setup.sh", donor ? [donor] : [], failing);
 }
 
 it("names the payloads the browser and the vault live in", () => {
@@ -441,51 +445,73 @@ describe("termic-setup.sh", () => {
     expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
   });
 
-  it("hands setup no donor when what it resolves to is this checkout", () => {
-    // Reachable from any checkout that is its own main — git names this one's
-    // own .git, the lockfile is tracked so the marker test would pass, and
-    // setup would refuse it as its own donor before installing or building.
-    // Whether Termic can produce this is not something this repo can check:
-    // Termic is not here, and its worktree-only behaviour was inferred from the
-    // archive hook, not verified. One condition is cheaper than being wrong.
-    const parent = fs.mkdtempSync(path.join(tmp, "termic-self-"));
+  // Two ways the lookup comes back with no donor to name, one contract: setup
+  // runs WITHOUT a donor rather than with one it would refuse. A refusal lands
+  // before the install and the build, so the worktree would come out with no
+  // dependencies and nothing compiled — worse off than the missing runtime this
+  // hook exists to fix. What separates the rows is the fixture and what each
+  // one is entitled to say.
+  const noDonor: { why: string; make: (parent: string) => string; says: RegExp | "" }[] = [
+    {
+      // Reachable from any checkout that is its own main: git names this one's
+      // own .git, the lockfile is tracked so the marker test would pass, and
+      // setup would refuse it as its own donor before installing or building.
+      // Whether Termic can produce this is not something this repo can check —
+      // Termic is not here, and its worktree-only behaviour was inferred from
+      // the archive hook, never verified. One condition beats being wrong.
+      why: "what it resolves to is this checkout",
+      make: (parent) => checkout(parent, "slot0", []),
+      // Silent: no other checkout to name, and the note would be false here —
+      // this one does hold the marker.
+      says: "",
+    },
+    {
+      // A main checkout parked on a commit from before the runtime.
+      why: "the main checkout has no runtime to give",
+      make: (parent) => {
+        const { main, wt } = worktreeOf(parent, PAYLOADS);
+        fs.rmSync(path.join(main, DONOR_MARKER));
+        return wt;
+      },
+      // It names the checkout to go and fix, which setup's banner cannot: that
+      // offers "name one", which this caller has no way to do. The whole
+      // sentence, because half of it was once the claim that was wrong — this
+      // donor IS a checkout of this repo, and the missing file is what is true.
+      says: /^note: .+\/main holds no vendor\/browser-server\/runtime\.lock\.json, so there\n {2}is no runtime/m,
+    },
+  ];
 
-    const { stdout: out, stderr } = run(checkout(parent, "slot0", []), "termic-setup.sh");
-
-    expect(out).toContain("donor:    none");
-    // Silent: there is no other checkout to name, and the note below would be
-    // false here — this one does hold the marker.
-    expect(stderr).toBe("");
-    expect(out.split("\n")).toContain("stub just build");
-    expect(out).toContain("is ready.");
-  });
-
-  it("hands setup no donor when the main checkout has no runtime to give", () => {
-    // The one way the lookup comes back with nothing worth naming that this
-    // hook can actually reach: a main checkout parked on a commit from before
-    // the runtime. It gets NO donor rather than one setup would refuse — a
-    // refusal lands before the install and the build, so the worktree would
-    // come out with no dependencies and nothing compiled, worse off than the
-    // missing runtime this exists to fix.
+  it.each(noDonor)("hands setup no donor when $why", ({ make, says }) => {
     const parent = fs.mkdtempSync(path.join(tmp, "termic-none-"));
-    const { main, wt } = worktreeOf(parent, PAYLOADS);
-    fs.rmSync(path.join(main, DONOR_MARKER));
 
-    const { stdout: out, stderr } = run(wt, "termic-setup.sh");
+    const { stdout: out, stderr } = run(make(parent), "termic-setup.sh");
 
     expect(out).toContain("donor:    none");
-    // It names the checkout to go and fix, which setup's banner cannot: that
-    // offers "name one", which this caller has no way to do. The whole
-    // sentence, because half of it was once the claim that was wrong — this
-    // donor IS a checkout of this repo, and the missing file is what is true.
-    expect(stderr).toMatch(
-      /^note: .+\/main holds no vendor\/browser-server\/runtime\.lock\.json, so there\n {2}is no runtime/m,
-    );
+    if (says) expect(stderr).toMatch(says);
+    else expect(stderr).toBe("");
     expect(stderr).not.toContain("fatal:");
     // The whole point of not passing a refused donor: these still happen.
     const lines = out.split("\n");
     expect(lines).toContain("stub just install");
     expect(lines).toContain("stub just build");
-    expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
+    expect(out).toContain("is ready.");
+  });
+
+  it("stops on git's own failure rather than carrying on with a degraded answer", () => {
+    // Folded into one statement the assignment takes `dirname`'s status, git's
+    // failure goes unseen by `set -e`, and `dirname ""` hands back "." — this
+    // checkout under another name, handed to setup as its donor. Nothing else
+    // here can see the split: every other row runs inside a real repository,
+    // where the lookup succeeds. Reachable with no UI and no human, so it is
+    // testable, so it is tested.
+    const parent = fs.mkdtempSync(path.join(tmp, "termic-norepo-"));
+
+    const { stdout, stderr } = runExpectingFailure(populate(path.join(parent, "loose"), []), "termic-setup.sh");
+
+    expect(stderr).toContain("fatal:");
+    // It stopped there: no install, no build, and not setup's own refusal of a
+    // donor it should never have been handed.
+    expect(stdout).not.toContain("stub just");
+    expect(stderr).not.toContain("its own donor");
   });
 });
