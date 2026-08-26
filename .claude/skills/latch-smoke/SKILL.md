@@ -148,13 +148,15 @@ if [ -n "$ANY" ]; then
   [ -n "$ID" ] && grep "$ID" "$LOG" | grep "intent_decision" | head -1
   echo "TIMEOUT - reached this Mac, never executed: denied, or waiting on the dialog"
 else
-  # Not necessarily "never arrived": a call rejected before an intent exists
-  # (a refused argument, a bad envelope) leaves intent_rejected and no nonce.
-  # The Send step output above discriminates: an HTTP error or isError there
-  # means it arrived and was refused.
-  echo "TIMEOUT - nothing carrying $NONCE. Either it never reached this install"
-  echo "  (wrong install, wrong credential, dead socket), or it was refused"
-  echo "  before an intent existed, which writes NO audit line at all."
+  # Three causes, and only one of them is "never arrived". See the echo below,
+  # which is the copy that has to be right - do not restate it here.
+  echo "TIMEOUT - nothing carrying $NONCE. Three causes:"
+  echo "  1. it never reached this install (wrong install, credential, or socket)"
+  echo "  2. refused in the MCP layer before an intent existed (bad envelope,"
+  echo "     refused argument) - writes NO audit line; the Send output says so"
+  echo "  3. rejected at validate (wrong device / expired / replayed nonce) -"
+  echo "     writes intent_rejected, WITHOUT the nonce:"
+  grep "intent_rejected" "$LOG" 2>/dev/null | tail -2
 fi
 exit 1'
 bash -c "$SCRIPT"                                                   # local install
@@ -201,10 +203,10 @@ four Google scopes and refuses everything else by design.
 - Call returns, and the log carries the nonce but no `exec_start` → it arrived
   and was denied or is unanswered. Read the `intent_decision` line; this is the
   approval dialog, not a plumbing problem.
-- Call returns, and *nothing* carries the nonce → either you are reading a
-  **different** install's log (check the instance home; branch-suffixed homes
-  are the usual cause), or it was refused in the MCP
-  layer before an intent existed — a refused argument, a bad envelope — which
-  writes **no audit line at all**. Only the Send step's own output tells you
-  which: an HTTP error or `isError` there means it arrived and was refused.
+- Call returns, and *nothing* carries the nonce → three possibilities, and the
+  Verify step's timeout branch enumerates them: a **different** install's log
+  (check the instance home — branch-suffixed homes are the usual cause), a
+  refusal in the MCP layer before an intent existed (no audit line at all; only
+  the Send step's output shows it), or a `validate` rejection — wrong device,
+  expired, replayed nonce — which writes `intent_rejected` *without* the nonce.
 - Approval dialog never answered → expected on an unattended run; see above.
