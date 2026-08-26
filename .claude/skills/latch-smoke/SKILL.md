@@ -146,7 +146,7 @@ if [ -n "$ANY" ]; then
   ID=$(printf %s "$ANY" | head -1 | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null)
   # intent_decision is what names a denial.
   [ -n "$ID" ] && grep "$ID" "$LOG" | grep "intent_decision" | head -1
-  echo "TIMEOUT - reached this Mac, never executed: denied, or waiting on the dialog"
+  echo "TIMEOUT - reached this Mac, never executed: waiting on the approval dialog"
 else
   # Three causes, and only one of them is "never arrived". See the echo below,
   # which is the copy that has to be right - do not restate it here.
@@ -156,16 +156,26 @@ else
   echo "     refused argument) - writes NO audit line; the Send output says so"
   echo "  3. rejected at validate (wrong device / expired / replayed nonce) -"
   echo "     writes intent_rejected, WITHOUT the nonce:"
-  grep "intent_rejected" "$LOG" 2>/dev/null | tail -2
+  # Only what was written while we were waiting: an intent_rejected from hours
+  # ago is not this call, and presenting one as the cause is worse than saying
+  # nothing. The loop runs ~2 min, so the tail is a generous bound on it.
+  tail -50 "$LOG" 2>/dev/null | grep "intent_rejected" | tail -2
 fi
 exit 1'
 bash -c "$SCRIPT"                                                   # local install
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
 
-Quote the `exec_start` and `exec_end` lines as the verification. An
-`exec_start` with no `exec_end` means the run is still going or was reaped; an
-`exec_error` names why it failed.
+Three outcomes, and each exits differently:
+
+| Output | Exit | Means |
+|---|---|---|
+| `exec_start` + `exec_end` | 0 | it worked — quote both lines as the verification |
+| `DENIED` + `intent_decision` | 1 | the owner refused; the relay and device both worked. Reported within ~5s, not at the timeout |
+| `TIMEOUT` (two variants) | 1 | arrived and is waiting on the dialog, or never arrived — the branch says which |
+
+An `exec_start` with no `exec_end` means the run is still going or was reaped;
+an `exec_error` names why it failed.
 
 On timeout it distinguishes the two failures, because they send you to
 different places: the nonce reaching `intent_received` means the relay and the
@@ -175,6 +185,10 @@ absent entirely means it never arrived — wrong install, wrong credential, or a
 dead socket.
 
 ## Smoke-testing the gog provider specifically
+
+> **Depends on plow-pbc/latch#183**, which vendors gog and adds `just fetch-gog`.
+> Until that merges there is no `gog` on any install's PATH and this section
+> cannot run — it is here so the two land together.
 
 Same shape, different argv — and it needs `gog` staged and
 `gmail:access-token` in the device's scopes:
@@ -200,9 +214,11 @@ four Google scopes and refuses everything else by design.
 - HTTP 401/403 from the relay → the credential is wrong or the device was
   re-paired. Scopes freeze at mint; a Mac paired before a scope grant needs to
   re-activate.
-- Call returns, and the log carries the nonce but no `exec_start` → it arrived
-  and was denied or is unanswered. Read the `intent_decision` line; this is the
-  approval dialog, not a plumbing problem.
+- `DENIED` → the owner refused it. The relay and the device both worked; this
+  is a product decision, not a fault.
+- Call returns, the log carries the nonce, no `exec_start` and no `DENIED` →
+  it arrived and is sitting unanswered at the approval dialog. Not a plumbing
+  problem.
 - Call returns, and *nothing* carries the nonce → three possibilities, and the
   Verify step's timeout branch enumerates them: a **different** install's log
   (check the instance home — branch-suffixed homes are the usual cause), a
