@@ -12,24 +12,33 @@
 # establishes that Termic evaluates that value through a shell — the other hooks
 # are all plain argv — and a shebang needs no such assumption.
 #
-# Only ever run in a worktree Termic just made, so there is always a repository
-# to ask and the answer is never this checkout. The one thing that IS reachable
-# is a main checkout without the runtime — parked on a commit from before it —
-# and that becomes NO donor rather than one setup will refuse: a refusal lands
-# before the install and the build, so the worktree would come out with no
-# dependencies and nothing compiled, worse off than the missing runtime this
-# hook exists to fix.
+# Anything this cannot vouch for becomes NO donor, which setup supports and
+# which leaves the worktree exactly as a bare setup would. Handing over one it
+# will REFUSE is the outcome worth spending lines on: a refusal lands before the
+# install and the build, so the worktree comes out with no dependencies and
+# nothing compiled — worse off than the missing runtime this hook exists to fix.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-donor=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-if [ -f "$donor/vendor/browser-server/runtime.lock.json" ]; then
-  exec scripts/worktree-setup.sh "$donor"
+# Two statements, so `set -e` sees git's status: in one, the assignment takes
+# `dirname`'s status instead, git's failure is swallowed, and `dirname ""` hands
+# back "." — a donor that is this checkout, wearing another name.
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+donor=$(cd "$(dirname "$common")" && pwd -P)
+
+if [ "$donor" = "$(pwd -P)" ]; then
+  # Run somewhere that is its own main checkout rather than a worktree of one.
+  # Silent: there is no other checkout to point anyone at, and setup would
+  # refuse this one as its own donor.
+  donor=""
+elif [ ! -f "$donor/vendor/browser-server/runtime.lock.json" ]; then
+  # A main checkout parked on a commit from before the runtime. The tested
+  # fact, not setup's wording for it — setup will report no donor and offer
+  # "name one", which this caller structurally cannot do, and naming the file
+  # is the only form of this that says what to go and restore.
+  echo "note: $donor holds no vendor/browser-server/runtime.lock.json, so there" >&2
+  echo "  is no runtime to copy from it. Starting without a browser or a vault." >&2
+  donor=""
 fi
 
-# The tested fact, not setup's wording for it: setup will report no donor and
-# offer "name one", which this caller structurally cannot do. Naming the file is
-# also the only form of this that says what to go and restore.
-echo "note: $donor holds no vendor/browser-server/runtime.lock.json, so there" >&2
-echo "  is no runtime to copy from it. Starting without a browser or a vault." >&2
-exec scripts/worktree-setup.sh
+exec scripts/worktree-setup.sh ${donor:+"$donor"}

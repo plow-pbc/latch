@@ -43,16 +43,15 @@ const stubBin = path.join(tmp, "bin");
 function populate(dir: string, payloads: string[]): string {
   // vendor/ itself, and not the marker's directory below — setup copies each
   // payload into vendor/, and a checkout carrying none of them would otherwise
-  // have nowhere to put the first one. It stays whatever path the refusal moves
-  // to, which is why it is not folded into the mkdir under it.
+  // have nowhere to put the first one.
   fs.mkdirSync(path.join(dir, "vendor"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   for (const s of SCRIPTS) fs.copyFileSync(path.join(repo, "scripts", s), path.join(dir, "scripts", s));
-  // The refusal's own file at its own path, read from setup rather than named
-  // here, so re-pointing that refusal carries the fixture with it instead of
-  // leaving the two to agree by luck. It is the only file a checkout needs:
+  // The refusal's own file, which is the only one a checkout needs here:
   // everything else under vendor/browser-server is read by the runtime build,
-  // which is behind the `just` these runs stub out.
+  // and that is behind the `just` these runs stub out. The path is stated once,
+  // at the top — and every fixture is seeded with it, so re-pointing setup's
+  // refusal makes it refuse every donor in the suite rather than slipping by.
   fs.mkdirSync(path.dirname(path.join(dir, DONOR_MARKER)), { recursive: true });
   fs.copyFileSync(path.join(repo, DONOR_MARKER), path.join(dir, DONOR_MARKER));
   for (const p of payloads) {
@@ -442,6 +441,25 @@ describe("termic-setup.sh", () => {
     expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
   });
 
+  it("hands setup no donor when what it resolves to is this checkout", () => {
+    // Reachable from any checkout that is its own main — git names this one's
+    // own .git, the lockfile is tracked so the marker test would pass, and
+    // setup would refuse it as its own donor before installing or building.
+    // Whether Termic can produce this is not something this repo can check:
+    // Termic is not here, and its worktree-only behaviour was inferred from the
+    // archive hook, not verified. One condition is cheaper than being wrong.
+    const parent = fs.mkdtempSync(path.join(tmp, "termic-self-"));
+
+    const { stdout: out, stderr } = run(checkout(parent, "slot0", []), "termic-setup.sh");
+
+    expect(out).toContain("donor:    none");
+    // Silent: there is no other checkout to name, and the note below would be
+    // false here — this one does hold the marker.
+    expect(stderr).toBe("");
+    expect(out.split("\n")).toContain("stub just build");
+    expect(out).toContain("is ready.");
+  });
+
   it("hands setup no donor when the main checkout has no runtime to give", () => {
     // The one way the lookup comes back with nothing worth naming that this
     // hook can actually reach: a main checkout parked on a commit from before
@@ -468,6 +486,6 @@ describe("termic-setup.sh", () => {
     const lines = out.split("\n");
     expect(lines).toContain("stub just install");
     expect(lines).toContain("stub just build");
-    expect(out).toContain("Checkout \'feature-vault-fix\' is ready.");
+    expect(out).toContain("Checkout 'feature-vault-fix' is ready.");
   });
 });
