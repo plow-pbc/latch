@@ -42,12 +42,12 @@ const post = (extra: Record<string, string> = {}) => ({
 });
 
 describe("the wire log", () => {
-  it("records that a bearer was sent and never what it was", async () => {
+  it("does not inspect or record the authorization header", async () => {
     const home = tempHome();
 
     await loggingFetch(home, answering(200, {}))("https://api.plow.co/v1/chats", post());
 
-    expect(lines(home)[0].authorization).toBe("bearer present");
+    expect(lines(home)[0]).not.toHaveProperty("authorization");
     expect(fs.readFileSync(wireLogPath(home), "utf8")).not.toContain(CREDENTIAL);
   });
 
@@ -77,7 +77,13 @@ describe("the wire log", () => {
     expect(raw).not.toContain("chat_uid");
     // And the request body is gone with it.
     expect(raw).not.toContain("chat_uid");
-    expect(lines(home)[0]).toMatchObject({ method: "POST", status: 200, detail: null });
+    expect(Object.keys(lines(home)[0]).sort()).toEqual([
+      "at",
+      "elapsedMs",
+      "method",
+      "status",
+      "url",
+    ]);
   });
 
   it("keeps a session id out of the file even on a success", async () => {
@@ -91,33 +97,24 @@ describe("the wire log", () => {
     expect(fs.readFileSync(wireLogPath(home), "utf8")).not.toContain("session_secret_identity");
   });
 
-  it("scrubs a credential a server echoes back", async () => {
+  it.each([
+    ["the whole credential", { detail: `token ${CREDENTIAL} is not valid` }, CREDENTIAL],
+    [
+      "an arbitrary fragment",
+      { error: { message: `token fragment ${CREDENTIAL.slice(3, 18)} is not valid` } },
+      CREDENTIAL.slice(3, 18),
+    ],
+  ])("drops authenticated server text containing %s", async (_case, body, echoed) => {
     const home = tempHome();
 
-    await loggingFetch(
-      home,
-      answering(400, { detail: `token ${CREDENTIAL} is not valid` }),
-    )("https://api.plow.co/v1/agents/cloud", post());
-
+    await loggingFetch(home, answering(400, body))(
+      "https://api.plow.co/v1/agents/cloud",
+      post(),
+    );
 
     const raw = fs.readFileSync(wireLogPath(home), "utf8");
-    expect(raw).not.toContain(CREDENTIAL);
-    expect(raw).toContain("[redacted]");
-  });
-
-  it("keeps the raw answer behind a friendly error", async () => {
-    const home = tempHome();
-
-    await loggingFetch(
-      home,
-      answering(503, { detail: "no capacity in region" }),
-    )("https://api.plow.co/v1/agents/cloud", post());
-
-    // The user is shown a friendly sentence; the server's own survives here.
-    expect(lines(home)[0]).toMatchObject({
-      status: 503,
-      detail: "no capacity in region",
-    });
+    expect(raw).not.toContain(echoed);
+    expect(lines(home)[0]).not.toHaveProperty("detail");
   });
 
   it("appends, and leaves the response readable by its caller", async () => {
@@ -128,7 +125,7 @@ describe("the wire log", () => {
     await logging("https://api.plow.co/v1/chats", post());
 
     expect(lines(home)).toHaveLength(2);
-    // The log reads its copy through a clone.
+    // The logger never reads the body.
     expect(await first.json()).toEqual({ ok: true });
   });
 

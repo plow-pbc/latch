@@ -23,9 +23,14 @@ import {
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
 import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
-import { activationChatLabel, storedActivationChat } from "./onboarding.js";
+import {
+  ChatRecipients,
+  activationChatLabel,
+  activationChatRecipients,
+  storedActivationChat,
+} from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
-import { CloudAgentLocalSettings, loadSettings, saveSettings } from "./settings.js";
+import { loadSettings } from "./settings.js";
 
 /**
  * The provider every cloud agent is created on.
@@ -53,6 +58,16 @@ export function tabShowsCloudAgents(tab: string): boolean {
 export interface CloudChatOption {
   uid: string;
   label: string;
+  /**
+   * The numbers a message to this chat goes to, or `null` when we do not know
+   * them.
+   *
+   * Null is a real answer, not a gap to paper over: the fallback chat comes
+   * from settings, which persist a uid and a label and never the participants.
+   * A screen that cannot address the chat must say so rather than send to
+   * whatever it can find in the label.
+   */
+  recipients: ChatRecipients | null;
 }
 
 /**
@@ -96,11 +111,6 @@ export interface CloudAgentsUiState {
    * and the empty state falls back to re-activate copy.
    */
   cloudSendTo: string | null;
-  /**
-   * Local per-agent settings, keyed on the same `agent_id` as the rows. Not
-   * part of a row because it is ours, not Plow's: a row is server truth.
-   */
-  cloudAgentSettings: Record<string, CloudAgentLocalSettings>;
 }
 
 /** The slice of `CloudAgentsClient` this state needs. */
@@ -171,6 +181,15 @@ export class CloudAgentState {
    * exists to provide, on an account whose chats we had just read fine.
    */
   private chatReads = 0;
+  /**
+   * Which agent-list read is the newest. The same guard as `chatReads`, for the
+   * same reason: `generation` moves on sign-out alone, so two reads in one
+   * session cannot tell which of them is stale.
+   *
+   * The fourth counter of this shape in this codebase. That is a smell, and the
+   * consolidation is deliberately not being done here — see the note on the PR.
+   */
+  private agentReads = 0;
   private actionError: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
@@ -206,7 +225,6 @@ export class CloudAgentState {
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
-      cloudAgentSettings: settings.cloudAgentSettings,
     };
   }
 
@@ -296,34 +314,8 @@ export class CloudAgentState {
     this.mutations += 1;
     this.rows.delete(id);
     this.pending.delete(id);
-    // The agent is gone for good, so its local settings have nothing left to
-    // apply to. Keeping them would grow the file forever with dead ids.
-    this.writeAgentSettings(id, null);
     this.publish();
     await this.refresh();
-  }
-
-  /**
-   * Write this agent's local settings — today, adversarial review and nothing
-   * else.
-   *
-   * **Local only: it never calls Plow.** The switch is this app's own reviewer,
-   * not a property of the machine Plow provisioned, so it applies at once and
-   * there is nothing to wait for and nothing that can fail.
-   *
-   * The panel's two permission controls used to ride along here and go through
-   * a reconfigure. They are gone, and so is the pair this file remembered for
-   * them, until an endpoint can report what an agent actually may do — the list
-   * rows carry no scopes, so a permission control could only ever have shown
-   * what this Mac last asked for, which is a second and non-authoritative
-   * source of truth about the agent.
-   */
-  async apply(agentId: string, settings: { adversarialReview: boolean }): Promise<void> {
-    const id = (agentId ?? "").trim();
-    if (!id) return;
-
-    this.writeAgentSettings(id, { adversarialReview: settings?.adversarialReview === true });
-    this.publish();
   }
 
   /**
@@ -344,6 +336,7 @@ export class CloudAgentState {
     this.chatsNeedReactivation = false;
     // Nothing in flight belongs to the next account either.
     this.chatReads += 1;
+    this.agentReads += 1;
     this.agentsError = null;
     this.actionError = null;
     this.publish();
@@ -397,8 +390,6 @@ export class CloudAgentState {
         this.mutations += 1;
         this.rows.delete(agentId);
         this.pending.delete(agentId);
-        // Gone for good now, so its local settings have nothing left to apply to.
-        this.moveAgentSettings(agentId, null);
         this.publish();
       } catch {
         // Still in teardown. The next refresh will find it and try again.
@@ -420,9 +411,10 @@ export class CloudAgentState {
     generation: number,
     mutations: number,
   ): Promise<void> {
+    const read = ++this.agentReads;
     try {
       const agents = await this.deps.agents.list(credential);
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || read !== this.agentReads) return;
       // A create or a delete happened while this listing was in the air. It is
       // older than what the user just did, and applying it would put a deleted
       // agent back on screen. The mutation's own refresh follows it.
@@ -452,7 +444,9 @@ export class CloudAgentState {
         if (isTeardown(agent.status)) this.retryTeardown(credential, agent.agentId, generation);
       }
     } catch (error) {
-      if (generation !== this.generation) return;
+      // A superseded read says nothing about now, and a stale failure putting a
+      // banner over a newer good answer is the expensive direction of that.
+      if (generation !== this.generation || read !== this.agentReads) return;
       // The rows already on screen are kept: stale truth with a banner beats an
       // empty roster that reads as "you have no agents".
       this.agentsError = messageOf(error);
@@ -506,47 +500,31 @@ export class CloudAgentState {
   }
 
   private rowFor(agent: CloudAgentResource, fallbackName?: string): CloudAgentDisplayRow {
-    const chatLabel = this.chats.find((chat) => chat.uid === agent.chatUid)?.label;
+    const chat = this.chats.find((option) => option.uid === agent.chatUid);
     return toCloudAgentDisplayRow(agent, {
-      ...(chatLabel ? { chatLabel } : {}),
+      ...(chat?.label ? { chatLabel: chat.label } : {}),
       ...(fallbackName ? { fallbackName } : {}),
+      recipients: chat?.recipients ?? null,
     });
   }
 
+  /**
+   * Re-resolve what the chat list knows about each row's chat.
+   *
+   * The label and the recipients arrive together and go stale together: a row
+   * built before the chats landed has the uid for a label and no addresses, and
+   * both are fixed from the same lookup. Relabelling one without the other is
+   * how a row could name a chat it could not message.
+   */
   private relabelRows(): void {
     for (const [agentId, row] of this.rows) {
-      const label = this.chats.find((chat) => chat.uid === row.chatUid)?.label;
-      if (label && label !== row.chatLabel) this.rows.set(agentId, { ...row, chatLabel: label });
+      const chat = this.chats.find((option) => option.uid === row.chatUid);
+      if (!chat) continue;
+      const label = chat.label || row.chatLabel;
+      const recipients = chat.recipients ?? null;
+      if (label === row.chatLabel && recipients === row.recipients) continue;
+      this.rows.set(agentId, { ...row, chatLabel: label, recipients });
     }
-  }
-
-  private readAgentSettings(agentId: string): CloudAgentLocalSettings | null {
-    return loadSettings(this.deps.home).cloudAgentSettings[agentId] ?? null;
-  }
-
-  /**
-   * Move one agent's local settings onto its replacement, or drop them.
-   *
-   * One load and one save, so the read and the two writes cannot be split by
-   * anything: whatever is on disk when this runs is what moves. `toId` of
-   * `null` — a retry whose replacement never came — deletes the entry, because
-   * an id no row will ever carry again can never be read.
-   */
-  private moveAgentSettings(fromId: string, toId: string | null): void {
-    const settings = loadSettings(this.deps.home);
-    if (!(fromId in settings.cloudAgentSettings)) return;
-    const carried = settings.cloudAgentSettings[fromId];
-    delete settings.cloudAgentSettings[fromId];
-    if (toId) settings.cloudAgentSettings[toId] = carried;
-    saveSettings(this.deps.home, settings);
-  }
-
-  private writeAgentSettings(agentId: string, value: CloudAgentLocalSettings | null): void {
-    const settings = loadSettings(this.deps.home);
-    if (value) settings.cloudAgentSettings[agentId] = value;
-    else if (!(agentId in settings.cloudAgentSettings)) return;
-    else delete settings.cloudAgentSettings[agentId];
-    saveSettings(this.deps.home, settings);
   }
 
   private credential(): string {
@@ -591,7 +569,9 @@ function isTeardown(status: string): boolean {
  */
 function storedChats(home: string): CloudChatOption[] {
   const chat = storedActivationChat(loadSettings(home));
-  return chat ? [chat] : [];
+  // No recipients: settings keep a uid and a label, never the participants. The
+  // chat is still offered so setup works, but it cannot be messaged.
+  return chat ? [{ ...chat, recipients: null }] : [];
 }
 
 /**
@@ -668,6 +648,10 @@ export class CloudChatsClient implements CloudChatsApi {
     return rows
       .map((raw) => parseActivationChat(raw))
       .filter((chat): chat is NonNullable<typeof chat> => chat !== null)
-      .map((chat) => ({ uid: chat.uid, label: activationChatLabel(chat) }));
+      .map((chat) => ({
+        uid: chat.uid,
+        label: activationChatLabel(chat),
+        recipients: activationChatRecipients(chat),
+      }));
   }
 }

@@ -21,6 +21,7 @@ import {
 import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
 import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
+import { deferred } from "./deferred.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
 const SESSION = "session_rotates_and_is_never_the_identity";
@@ -70,17 +71,6 @@ const CHATS: CloudChatOption[] = [{ uid: "cht_1", label: "+15550100 · Ada" }];
  * turn after the call that cancelled it returns. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-/** A deferred, so a test can hold a poll open and look at the screen. */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 interface Fakes {
@@ -173,7 +163,6 @@ describe("before anything has been read", () => {
       cloudChatsLoaded: false,
       cloudChatsNeedReactivation: false,
       cloudSendTo: null,
-      cloudAgentSettings: {},
     });
   });
 });
@@ -235,6 +224,183 @@ describe("refresh", () => {
     expect(state.state().cloudSendTo).toBe("+15550100");
   });
 
+});
+
+describe("a superseded agent-list read", () => {
+  it.each([
+    ["failure", (d: ReturnType<typeof deferred<CloudAgentResource[]>>) =>
+      d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
+    ["success", (d: ReturnType<typeof deferred<CloudAgentResource[]>>) =>
+      d.resolve([agent({ agentId: "agent_stale" })])],
+  ])("a late %s never displaces the newer read", async (_ending, finish) => {
+    const stale = deferred<CloudAgentResource[]>();
+    let first = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => {
+          if (!first) return [agent({ agentId: "agent_newest" })];
+          first = false;
+          return stale.promise;
+        },
+      }),
+    );
+
+    const overtaken = state.refresh();
+    await state.refresh();
+
+    finish(stale);
+    await overtaken;
+
+    // The newest read is the account as it is. An overtaken one describes it
+    // as it was, and a stale failure would put a banner over a good answer.
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_newest"]);
+    expect(state.state().cloudAgentsError).toBeNull();
+  });
+});
+
+describe("the numbers a chat can be messaged on", () => {
+  /** What `GET /v1/chats` returns for a chat with an agent and two humans. */
+  const chatRow = {
+    uid: "cht_1",
+    status: "active",
+    created_at: "2026-08-20T10:00:00Z",
+    participants: [
+      { type: "agent", line: { provider_key: "+15550100" } },
+      { type: "member", display_name: "Ada", provider_key: "+15550111" },
+      { type: "member", display_name: "Grace", provider_key: "+15550122" },
+    ],
+  };
+
+  it("carries every participant, not only the ones the label shows", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [agent({ chatUid: "cht_1" })],
+        chats: async () => [
+          {
+            uid: "cht_1",
+            label: "+15550100, +15550111, +15550122",
+            recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
+          },
+        ],
+      }),
+    );
+
+    await state.refresh();
+
+    // The label is prose. Reading addresses out of it opened an INCOMPLETE
+    // conversation on any home whose label showed a display name instead of a
+    // number.
+    expect(state.state().cloudAgents[0].recipients).toEqual({
+      line: "+15550100",
+      members: ["+15550111", "+15550122"],
+    });
+  });
+
+  it("gives a freshly created row its numbers without waiting for a refresh", async () => {
+    const held = deferred<CloudAgentResource>();
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [],
+        create: async () => agent({ chatUid: "cht_1", status: "provisioning" }),
+        poll: async () => held.promise,
+        chats: async () => [
+          {
+            uid: "cht_1",
+            label: "+15550100, +15550111",
+            recipients: { line: "+15550100", members: ["+15550111"] },
+          },
+        ],
+      }),
+    );
+    await state.refresh();
+
+    await state.create("cht_1", "Kitchen agent");
+
+    // The row goes on screen the moment the receipt lands, before any further
+    // refresh — so it has to be addressable then, not one round trip later.
+    expect(state.state().cloudAgents[0].recipients).toEqual({
+      line: "+15550100",
+      members: ["+15550111"],
+    });
+    held.resolve(agent({ chatUid: "cht_1" }));
+  });
+
+  it("says it does not know them rather than guessing from the label", async () => {
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [agent({ chatUid: "cht_1" })],
+        chats: async () => {
+          throw new PlowApiError("network", "Couldn't reach Plow.");
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    // The fallback label can be a bare uid, with no digits in it at all. A
+    // screen that scraped this got an empty recipient list and a button that
+    // did nothing; `null` is what lets it disable the button instead.
+    expect(state.state().cloudAgents[0].recipients).toBeNull();
+  });
+
+  it("fills them in on the row when a later chat list answers", async () => {
+    let failing = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => [agent({ chatUid: "cht_1" })],
+        chats: async () => {
+          if (failing) throw new PlowApiError("network", "Couldn't reach Plow.");
+          return [
+            {
+              uid: "cht_1",
+              label: "+15550100 · Ada",
+              recipients: { line: "+15550100", members: ["+15550111"] },
+            },
+          ];
+        },
+      }),
+    );
+    await state.refresh();
+    expect(state.state().cloudAgents[0].recipients).toBeNull();
+
+    failing = false;
+    await state.refresh();
+
+    // The label and the addresses go stale together and are fixed together —
+    // a row must never name a chat it cannot message.
+    expect(state.state().cloudAgents[0].chatLabel).toBe("+15550100 · Ada");
+    expect(state.state().cloudAgents[0].recipients).toEqual({
+      line: "+15550100",
+      members: ["+15550111"],
+    });
+  });
+
+  it("reads them off the wire the same way the label does", async () => {
+    // The REAL client against a real chat payload, so the label and the
+    // addresses are proved to come from the same parse.
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ data: [chatRow] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    const chats = await new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)).list(
+      CREDENTIAL,
+    );
+
+    expect(chats).toEqual([
+      {
+        uid: "cht_1",
+        label: "+15550100, +15550111, +15550122",
+        recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
+      },
+    ]);
+  });
 });
 
 describe("the activation chat fallback", () => {
@@ -540,38 +706,6 @@ describe("removing", () => {
   });
 });
 
-describe("the local settings write", () => {
-  it("persists the switch and makes NO network call", async () => {
-    const home = tempHome();
-    const f = fakes({ list: async () => [agent()] });
-    const state = build(home, f);
-    await state.refresh();
-    const before = [...f.agents.calls];
-
-    await state.apply("agent_1", { adversarialReview: true });
-
-    // The switch is this app's own reviewer, not a property of the machine
-    // Plow provisioned. Nothing to send, nothing to wait for.
-    expect(f.agents.calls).toEqual(before);
-    expect(loadSettings(home).cloudAgentSettings.agent_1.adversarialReview).toBe(true);
-    expect(state.state().cloudAgentSettings.agent_1.adversarialReview).toBe(true);
-  });
-
-  it("keys on the agent id, so a session_id rotation cannot reset it", async () => {
-    const home = tempHome();
-    let sessionId = "session_before";
-    const state = build(home, fakes({ list: async () => [agent({ sessionId })] }));
-    await state.refresh();
-    await state.apply("agent_1", { adversarialReview: true });
-
-    sessionId = "session_after";
-    await state.refresh();
-
-    expect(state.state().cloudAgentSettings.agent_1.adversarialReview).toBe(true);
-  });
-
-});
-
 describe("the credential boundary", () => {
   it("marshals no credential and no session id, in any field", async () => {
     const state = build(
@@ -793,7 +927,11 @@ describe("a 403 from the real chat endpoint", () => {
     );
     // The activation chat, offered so this is not a dead end — but the list
     // itself did not come back, and `cloudChatsLoaded` still says so.
-    expect(shown.cloudChats).toEqual([{ uid: "cht_1", label: "+15550100 · Ada" }]);
+    // The fallback chat, offered so this is not a dead end — with no
+    // recipients, because settings never persisted the participants.
+    expect(shown.cloudChats).toEqual([
+      { uid: "cht_1", label: "+15550100 · Ada", recipients: null },
+    ]);
     // The agent list is fine, and must not be blamed for this.
     expect(shown.cloudAgentsError).toBeNull();
   });

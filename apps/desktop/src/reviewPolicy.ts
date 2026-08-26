@@ -66,38 +66,22 @@ export function reviewerAvailable(settings: Settings): boolean {
 }
 
 /**
- * Has this Mac's owner switched adversarial review on for THIS agent?
+ * May a stored always-allow rule answer on its own?
  *
- * Keyed on `agentId`, the isolation key — never on a session id, which a cloud
- * agent's reconfigure rotates by design, and never on the display name, which
- * is nullable and not unique.
+ * Only under the modes that would let a cached human decision stand. A rule is
+ * one human decision replayed, and the policy engine replays it BEFORE any
+ * delegate is consulted — so a mode that takes the decision away from the
+ * human has to say so here or be bypassed by every operation they ever pressed
+ * "always allow" on.
  *
- * The switch is a promise the settings panel makes, and it only means anything
- * if something reads it: under global Approve every request was auto-allowed,
- * so an owner who turned review on for one agent got no review at all.
+ * Two modes take it away. `adversarial` gives it to the reviewer; `deny`
+ * refuses everything, and a cached allow must not outrank it.
+ *
+ * Refusing here is not itself a denial. It routes the intent down the normal
+ * path, where `decideIntent` runs the review or denies as the mode requires.
  */
-export function agentReviewRequired(
-  settings: Settings,
-  agentId: string,
-): boolean {
-  return settings.cloudAgentSettings?.[agentId]?.adversarialReview === true;
-}
-
-/**
- * May a stored always-allow rule answer for this agent on its own?
- *
- * No, exactly when the owner has switched adversarial review on for it. A rule
- * is one human decision cached and replayed, and the policy engine replays it
- * before any delegate is consulted — so without this the review switch is
- * bypassed by every operation the human ever pressed "always allow" on, which
- * is the same "control that reports success and does nothing" as the bug it was
- * written to fix.
- *
- * Refusing here is not a denial. It routes the intent down the normal path,
- * where `decideIntent` runs the review and global deny still denies first.
- */
-export function storedRuleMayGrant(settings: Settings, agentId: string): boolean {
-  return !agentReviewRequired(settings, agentId);
+export function storedRuleMayGrant(settings: Settings): boolean {
+  return settings.approvalMode !== "adversarial" && settings.approvalMode !== "deny";
 }
 
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
@@ -140,31 +124,20 @@ export async function decideIntent(
 
   if (mode === "deny") return { decision: "deny", source: "policy" };
 
-  /**
-   * Is the reviewer the decider for this intent?
-   *
-   * Two ways in: the global mode says so, or this one agent's own switch does.
-   * The per-agent switch can only ever ADD a review — the global modes that
-   * decide without one keep deciding: `deny` returned above, and `ask` still
-   * puts the human in front of it, because a review the owner asked for is not
-   * a reason to stop asking them.
-   */
-  const reviewDecides =
-    mode === "adversarial" ||
-    (mode === "approve" && agentReviewRequired(settings, intent.agentId));
-
-  // Approve, with nothing asked of the reviewer for this agent: the whole point
-  // of the mode.
-  if (mode === "approve" && !reviewDecides) {
+  /** Is the reviewer the decider for this intent? */
+  // Approve: the whole point of the mode. Above the reviewer, because by here
+  // `deny` has already returned and `ask` still wants the human.
+  if (mode === "approve") {
     return { decision: "allow_once", source: "approve" };
   }
+
+  const reviewDecides = mode === "adversarial";
 
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
   // the request and the final decision.
-  // A review that decides has no human behind it — adversarial mode, or an
-  // agent whose own switch forced one under Approve — and the reviewer is told
-  // so rather than left to infer it from the owner's freeform purpose text. Ask
+  // A review that decides has no human behind it, and the reviewer is told so
+  // rather than left to infer it from the owner's freeform purpose text. Ask
   // mode is the other way round: the dialog is coming either way, so a reviewer
   // that wants to defer is saying something the human will actually see.
   const humanAvailable = !reviewDecides;
@@ -206,9 +179,8 @@ export async function decideIntent(
 
   if (reviewDecides) {
     // No credential is no reviewer, and this intent has no other decider: the
-    // global mode either has no human in it, or is Approve with a review the
-    // owner required. Auto-approving here is exactly the bug — it hands the
-    // agent the access the switch was turned on to gate.
+    // mode that got here has no human in it. Auto-approving would hand the
+    // agent exactly the access the mode exists to gate.
     //
     // Decide this BEFORE `review()`, which opens the timeline with "adversarial
     // agent started" and names the model it is about to use. With no credential

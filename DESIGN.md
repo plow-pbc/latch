@@ -138,11 +138,9 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   the system message. Nothing else does — no goal text, and no audit history:
   `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
   explains why. WHETHER it runs is decided in precedence order by
-  `packages/device-core/src/policyEngine.ts`, whose stored always-allow rule
-  short-circuits first *unless the delegate vetoes it* — a cached approval may
-  not stand in for a review the owner requires of that agent — and then
-  `apps/desktop/src/reviewPolicy.ts`, where a per-agent review requirement also
-  turns global Approve into a reviewed mode for that agent alone. What *is*
+  `packages/device-core/src/policyEngine.ts`: a stored always-allow rule
+  short-circuits Ask and Approve, while global AI Reviewer and Deny modes decide
+  every request. What *is*
   signed is the **Grant**: the device's Ed25519 signature over canonical JSON
   (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.

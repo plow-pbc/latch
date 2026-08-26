@@ -90,6 +90,14 @@ contextBridge.exposeInMainWorld("domo", {
   connectGet: () => ipcRenderer.invoke("connect:get"),
   connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
+  // Remove one roster row — a cloud agent, an MCP client or another session.
+  // The renderer says WHICH row; main decides which call that row needs, because
+  // getting it wrong leaves a live agent nobody can reach.
+  rosterRemove: (id: number) => ipcRenderer.invoke("roster:remove", id),
+  // Remove a cloud agent by its own id. For the agent whose credential row is
+  // missing — an inactive credential on a still-running agent — where there is
+  // no roster row to name and none is needed.
+  cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Cloud agents (same tab, same state shape, same change channel). Exactly
@@ -98,15 +106,10 @@ contextBridge.exposeInMainWorld("domo", {
   // `cloudCreate` answers as soon as the row is on screen in `provisioning`.
   cloudCreate: (chatUid: string, name: string) =>
     ipcRenderer.invoke("cloud:create", chatUid, name),
-  cloudDelete: (agentId: string) => ipcRenderer.invoke("cloud:delete", agentId),
-  // Apply changes: one agent's local settings. Adversarial review is this app's
-  // own reviewer, so it applies at once and reaches no network at all.
-  cloudApply: (agentId: string, settings: { adversarialReview: boolean }) =>
-    ipcRenderer.invoke("cloud:apply", agentId, settings),
 
-  // Any web page the app links to (client connector cards, Settings' Support
-  // section). A KEY, not a URL: main owns the table of what may be opened.
-  openExternal: (key: string) => ipcRenderer.invoke("external:open", key),
+  // Any external destination the app links to. A KEY plus an optional
+  // main-owned record id, never a URL: main decides what may be opened.
+  openExternal: (key: string, detail?: string) => ipcRenderer.invoke("external:open", key, detail),
 
   // Live browser thumbnail (audit detail pane). One whole-state shape per
   // poll; no push channel — the renderer's own interval is the clock.

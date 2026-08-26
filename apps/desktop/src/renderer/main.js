@@ -445,9 +445,7 @@ async function renderRules() {
     modeNote.textContent =
       mode === "adversarial" && !hasKey
         ? `The AI Reviewer has no credential${remedy} ` +
-          "Until then it denies anything it is asked to decide — requests already " +
-          "covered by an always-allow rule keep running, unless the agent has its own " +
-          "AI Reviewer switched on."
+          "Until then it denies every request."
         : "";
     // The suggestion is only ever shown in Ask mode, and only by a reviewer
     // that can run. Dead rather than hidden: a checkbox that vanished would
@@ -484,15 +482,11 @@ async function renderRules() {
         "Any request a rule doesn't already cover opens an approval window. " +
         `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
     } else if (mode === "approve") {
-      // "Every request" was true until a cloud agent could carry its own
-      // reviewer. Saying it still would describe the one case the switch exists
-      // to create as though the switch did nothing.
       modeHintLine.textContent =
-        "Every request is allowed without asking you and without review — except from an " +
-        "agent with its own AI Reviewer switched on, which is reviewed every time.";
+        "Every request is allowed without asking you and without review.";
     } else if (mode === "deny") {
       modeHintLine.textContent =
-        "Any request a rule doesn't already cover is refused without asking you.";
+        "Every request is refused without asking you.";
     } else {
       // Unknown stored values keep the card useful by falling back to Ask.
       modeHintLine.textContent = mode === "adversarial" ? "" :
@@ -527,8 +521,8 @@ async function renderRules() {
     group(
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip the mode below — unless the agent has its own AI Reviewer " +
-        "switched on, when this mode still applies. Manage those rules below. The reviewer sees which " +
+        "by an always-allow rule skip Ask and Approve; AI Reviewer and Deny still apply to every " +
+        "request. Manage those rules below. The reviewer sees which " +
         "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
         "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
         "agent hasn't asked for.",
@@ -779,7 +773,11 @@ function syncStaticModal(s, redraw) {
  * Returns nodes instead of painting the view: it is no longer a screen of its
  * own, and `redraw` repaints only this group rather than the pane around it.
  */
-function connectNodes(s, redraw) {
+function connectNodes(s, redraw, openStatic = (trigger) => {
+  staticOpen = true;
+  openStaticModal(trigger, redraw);
+  redraw();
+}) {
   // Not signed in should be unreachable — the gate means the main window does
   // not exist without a credential — but showing a blank URL would be worse
   // than saying so. Folded in rather than early-returning off the screen: this
@@ -804,9 +802,7 @@ function connectNodes(s, redraw) {
   if (!s.credential) {
     const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
     link.addEventListener("click", () => {
-      staticOpen = true;
-      openStaticModal(link, redraw);
-      redraw();
+      openStatic(link);
     });
     fallback = [el("div", { class: "alt" }, [link])];
   }
@@ -833,6 +829,47 @@ function connectNodes(s, redraw) {
   // this subsection's to disable while it is mid-call.
   for (const b of box.querySelectorAll("button")) if (s.busy) b.disabled = true;
   return [box];
+}
+
+/** The OAuth-first MCP setup flow, kept off the inventory until requested. */
+let mcpModal = null;
+
+function closeMcpModal() {
+  if (!mcpModal) return;
+  closeModal(mcpModal);
+  mcpModal = null;
+}
+
+function syncMcpModal(s, redraw) {
+  if (!mcpModal) return;
+  const cancel = el("button", { class: "btn", text: "Close" });
+  cancel.addEventListener("click", closeMcpModal);
+  const openStatic = () => {
+    const trigger = mcpModal?.trigger;
+    closeMcpModal();
+    staticOpen = true;
+    openStaticModal(trigger, redraw);
+    redraw();
+  };
+  mcpModal.panel.replaceChildren(
+    el("div", { class: "group-title", text: "Connect an MCP client" }),
+    el("p", {
+      class: "faint conn-note",
+      text: "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
+    }),
+    ...connectNodes(s, redraw, openStatic),
+    el("div", { class: "row conn-actions" }, [el("div", { class: "spacer" }), cancel]),
+  );
+}
+
+function openMcpModal(trigger, s, redraw) {
+  const shell = openModal(trigger, {
+    className: "connect-modal settings",
+    onDismiss: closeMcpModal,
+  });
+  if (!shell) return;
+  mcpModal = shell;
+  syncMcpModal(s, redraw);
 }
 
 // ---- Cloud agents ---------------------------------------------------------
@@ -864,17 +901,7 @@ function cloudStatus(status) {
   if (status === "running") return { tone: "green", label: "Ready" };
   if (status === "provisioning") return { tone: "amber", label: "Setting up…" };
   if (status === "teardown") return { tone: "amber", label: "Removing…" };
-  return { tone: "amber", label: status || "Status unavailable" };
-}
-
-function cloudProvider(provider) {
-  if (!provider) return "Provider unavailable";
-  return provider[0].toUpperCase() + provider.slice(1);
-}
-
-function cloudCreated(createdAt) {
-  const date = new Date(createdAt);
-  return Number.isNaN(date.getTime()) ? "" : `Created ${date.toLocaleDateString()}`;
+  return { tone: "amber", label: "Status unavailable" };
 }
 
 const pendingCloudCreates = new Map();
@@ -886,6 +913,21 @@ function visibleCloudAgents(state) {
     ...[...pendingCloudCreates.values()].filter((agent) => !serverChats.has(agent.chatUid)),
     ...state.cloudAgents,
   ];
+}
+
+function verifiedCloudLines(chats) {
+  const seen = new Set();
+  return chats.flatMap((chat) => {
+    const line = chat?.recipients?.line?.trim();
+    const key = cloudPhoneDigits(line);
+    if (!line || !key || seen.has(key)) return [];
+    seen.add(key);
+    return [line];
+  });
+}
+
+function cloudPhoneDigits(number) {
+  return String(number ?? "").replace(/\D/g, "");
 }
 
 function openCloudPicker(trigger, state, redraw) {
@@ -933,6 +975,7 @@ function openCloudPicker(trigger, state, redraw) {
       name: requestedName || "Cloud agent",
       chatUid,
       chatLabel: chat?.label || chatUid,
+      recipients: chat?.recipients ?? null,
       provider: "",
       status: "provisioning",
       failureReason: null,
@@ -967,6 +1010,10 @@ function openCloudPicker(trigger, state, redraw) {
   };
   const showExplainer = () => {
     if (!panel) return;
+    const verifiedLines = verifiedCloudLines(state.cloudChats);
+    const verifiedLineKeys = new Set(verifiedLines.map(cloudPhoneDigits));
+    const sendTo = state.cloudSendTo?.trim() || null;
+    const sendToAlreadyHeld = sendTo && verifiedLineKeys.has(cloudPhoneDigits(sendTo));
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
     const verify = el("button", { class: "btn primary", text: "Verify a new Plow number" });
@@ -974,28 +1021,38 @@ function openCloudPicker(trigger, state, redraw) {
       closeCloudModal();
       await window.domo.onboardingOpen();
     });
-    const number = state.cloudSendTo
+    const number = sendTo
       ? el("p", { class: "cloud-route-number" }, [
           document.createTextNode("Number to text: "),
-          el("span", { class: "mono", text: state.cloudSendTo }),
+          el("span", { class: "mono", text: sendTo }),
         ])
       : null;
-    panel.replaceChildren(
-      el("div", { class: "group-title", text: "Create a new chat" }),
-      el("p", { class: "faint conn-note", text: "There are two ways to make another chat available here." }),
-      el("div", { class: "cloud-route" }, [
+    const routes = [];
+    if (!sendToAlreadyHeld) {
+      routes.push(el("div", { class: "cloud-route" }, [
         el("div", { class: "cloud-route-title", text: "Verify a new Plow number" }),
         el("p", { class: "faint", text: "Run activation again, then text the code to the number Plow provides." }),
         number,
         verify,
-      ]),
-      el("div", { class: "cloud-route" }, [
+      ]));
+    }
+    if (verifiedLines.length) {
+      routes.push(el("div", { class: "cloud-route" }, [
         el("div", { class: "cloud-route-title", text: "Start a group thread" }),
         el("p", {
           class: "faint",
-          text: "Add a verified Plow number to a group thread with other people. The chat appears here once someone speaks.",
+          text: "Add one of these verified Plow numbers to a group thread with other people:",
         }),
-      ]),
+        el("ul", { class: "cloud-route-numbers" }, verifiedLines.map((line) =>
+          el("li", { class: "cloud-route-number mono", text: line })
+        )),
+        el("p", { class: "faint", text: "The chat appears here once someone speaks." }),
+      ]));
+    }
+    panel.replaceChildren(
+      el("div", { class: "group-title", text: "Create a new chat" }),
+      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
+      ...routes,
       el("div", { class: "row cloud-modal-actions" }, [back]),
     );
     back.focus();
@@ -1007,103 +1064,6 @@ function openCloudPicker(trigger, state, redraw) {
   panel = openCloudModal(trigger, pickerChildren, select);
   if (!panel) return;
   syncWarning();
-}
-
-function openCloudSettings(trigger, agent, state, redraw) {
-  const stored = state.cloudAgentSettings?.[agent.agentId];
-  const review = el("input", { attrs: { type: "checkbox" } });
-  review.checked = stored?.adversarialReview === true;
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  cancel.addEventListener("click", closeCloudModal);
-  const apply = el("button", { class: "btn primary", text: "Apply changes" });
-  apply.addEventListener("click", async () => {
-    review.disabled = true;
-    apply.disabled = true;
-    try {
-      await window.domo.cloudApply(agent.agentId, {
-        adversarialReview: review.checked,
-      });
-      closeCloudModal();
-      await redraw();
-    } finally {
-      if (review.isConnected) review.disabled = false;
-      if (apply.isConnected) apply.disabled = false;
-    }
-  });
-  openCloudModal(trigger, [
-    el("div", { class: "group-title", text: `${agent.name} settings` }),
-    el("div", { class: "cloud-local-settings" }, [
-      el("label", { class: "check block cloud-setting" }, [
-        review,
-        el("span", {}, [
-          el("span", { class: "cloud-setting-title", text: "Adversarial review" }),
-          el("span", { class: "faint cloud-setting-copy", text: "Have Latch review this agent's requests before they run on this Mac." }),
-        ]),
-      ]),
-      el("p", { class: "faint cloud-local-note", text: "Stored on this Mac and applies immediately." }),
-    ]),
-    el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), apply]),
-  ], review);
-}
-
-function openCloudRemove(trigger, agent, redraw) {
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  cancel.addEventListener("click", closeCloudModal);
-  const remove = el("button", { class: "btn danger", text: "Remove agent" });
-  remove.addEventListener("click", async () => {
-    remove.disabled = true;
-    cancel.disabled = true;
-    await window.domo.cloudDelete(agent.agentId);
-    closeCloudModal();
-    await redraw();
-  });
-  openCloudModal(trigger, [
-    el("div", { class: "group-title", text: `Remove ${agent.name}?` }),
-    el("p", {
-      class: "faint conn-note",
-      text: "The agent will stop reading and replying in this chat. The chat's previous notification setup cannot be restored.",
-    }),
-    el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), remove]),
-  ], cancel);
-}
-
-function cloudAgentRow(agent, state, redraw) {
-  const status = cloudStatus(agent.status);
-  const settings = el("button", { class: "btn small", text: "Settings" });
-  settings.addEventListener("click", () => openCloudSettings(settings, agent, state, redraw));
-  const remove = el("button", { class: "btn small danger", text: "Remove" });
-  remove.addEventListener("click", () => openCloudRemove(remove, agent, redraw));
-  settings.disabled = !!agent.localPending;
-  remove.disabled = !!agent.localPending;
-  const actions = [settings, remove];
-  const details = [
-    agent.chatLabel,
-    agent.localPending ? null : cloudProvider(agent.provider),
-    cloudCreated(agent.createdAt),
-  ].filter(Boolean);
-  return el("div", { class: `item cloud-agent-row cloud-${agent.status}`, attrs: { "data-cloud-agent-id": agent.agentId } }, [
-    el("div", { class: "row cloud-agent-heading" }, [
-      el("div", { class: "cloud-agent-name", text: agent.name }),
-      badge(status.tone, status.label),
-      el("div", { class: "spacer" }),
-      el("div", { class: "row cloud-agent-actions" }, actions),
-    ]),
-    el("p", { class: "cloud-agent-meta", text: details.join(" · ") }),
-    agent.status === "provisioning"
-      ? el("div", { class: "cloud-progress" }, [
-          el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
-          el("span", { text: "Setting up your agent — this takes a minute or two." }),
-        ])
-      : null,
-  ]);
-}
-
-function cloudAgentList(state, redraw) {
-  const agents = visibleCloudAgents(state);
-  if (!agents.length) return null;
-  return el("div", { class: "cloud-agent-list" }, agents.map((agent) =>
-    cloudAgentRow(agent, state, redraw),
-  ));
 }
 
 const cloudHttpReasons = new Set([
@@ -1156,105 +1116,348 @@ function cloudChatsErrorBanner(message, needsReactivation) {
   ]);
 }
 
-function cloudNodes(state, redraw) {
-  const action = el("div", { class: "row cloud-toolbar" });
-  const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
-  action.append(el("div", { class: "spacer" }), add);
-  add.disabled = !state.cloudChats.length;
+function rosterName(row, fallback) {
+  return row?.name?.trim() || fallback;
+}
 
-  add.addEventListener("click", () => openCloudPicker(add, state, redraw));
+function rosterDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return "today";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
-  // An empty array is also what main exposes before a chat-list attempt lands,
-  // and after a failed one. Neither says the account has no chats. Keep any
-  // known agents and the failure that explains why setup is unavailable.
-  if (!state.cloudChatsLoaded) {
-    const body = [action];
-    if (state.cloudChatsError) {
-      body.push(cloudChatsErrorBanner(
-        state.cloudChatsError,
-        state.cloudChatsNeedReactivation === true,
-      ));
+function rosterAgo(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return rosterDate(value);
+}
+
+function rosterUse(row, verb = "Last used") {
+  const seen = rosterAgo(row?.lastSeenAt);
+  if (seen) return `${verb} ${seen}`;
+  const created = rosterDate(row?.createdAt);
+  return created ? `Never used · Created ${created}` : "Never used";
+}
+
+function rosterChatGrant(chatUids, chatAccess) {
+  const chats = Array.isArray(chatUids) ? chatUids : [];
+  if (chatAccess === "all") return "all chats";
+  if (chatAccess === "none") return "no chats";
+  if (!chats.length) return "no chats";
+  if (chats.length === 1 && chats[0] === "*") return "all chats";
+  return chats.length === 1 ? "1 chat" : `${chats.length} chats`;
+}
+
+function rosterPermissionCopy(row, provisioning = false) {
+  const permissions = [];
+  if (row?.permissions?.canReadAndReply === true) {
+    permissions.push(
+      `${provisioning ? "Will read and reply" : "Reads and replies"} in ${rosterChatGrant(row.chatUids, row.chatAccess)}`,
+    );
+  }
+  if (row?.permissions?.canReachMac === true) {
+    permissions.push(`${provisioning ? "Will reach" : "Can reach"} this Mac`);
+  }
+  if (row?.permissions?.canSpendInference === true) permissions.push("Can spend inference");
+  if (!permissions.length) {
+    permissions.push(row ? "No agent permissions granted." : "No granted permissions known.");
+  }
+  return permissions;
+}
+
+function entityMark(name, client = false) {
+  const words = String(name).trim().split(/\s+/).filter(Boolean);
+  const text = client
+    ? words.slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "?"
+    : (words[0]?.[0] || "?").toUpperCase();
+  return el("span", { class: `entity-mark${client ? " client" : ""}`, text });
+}
+
+function rosterBadge(row) {
+  if (row.isThisMac) return badge("blue", "This Mac");
+  if (row.kind === "Plow web login") return badge("zinc", "Web login");
+  if (row.kind === "Legacy — full access") return badge("amber", "Legacy *:*");
+  if (row.kind === "Session") return badge("zinc", "Session");
+  return null;
+}
+
+function closeRosterConfirm(shell) {
+  if (shell) closeModal(shell);
+}
+
+function openRosterConfirm(row, section, trigger, redraw, cloudAgentId = null) {
+  const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
+  const destructive = section === "cloud" ? "Remove agent" : "Revoke";
+  let title = section === "cloud" ? `Remove ${name}?` : `Revoke ${name}?`;
+  let copy = section === "cloud"
+    ? "The agent will stop reading and replying in its chat. The chat's previous notification setup cannot be restored."
+    : "Any client or session using this credential will stop working.";
+  if (row.isThisMac) {
+    title = "Sign this Mac out?";
+    copy = "Revoking this credential immediately signs this Mac out and stops agents from reaching it.";
+  } else if (row.kind === "Plow web login") {
+    copy = "Revoking this session signs you out of the Plow website.";
+  }
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const confirm = el("button", { class: "btn danger", text: destructive });
+  const note = el("p", { class: "faint modal-note", text: "" });
+  let shell = null;
+  const dismiss = () => closeRosterConfirm(shell);
+  cancel.addEventListener("click", dismiss);
+  confirm.addEventListener("click", async () => {
+    cancel.disabled = true;
+    confirm.disabled = true;
+    note.textContent = section === "cloud" ? "Removing…" : "Revoking…";
+    try {
+      if (cloudAgentId) await window.domo.cloudRemove(cloudAgentId);
+      else await window.domo.rosterRemove(row.id);
+    } finally {
+      dismiss();
+      await redraw();
     }
-    else body.push(el("div", { class: "cloud-progress cloud-loading" }, [
+  });
+  shell = openModal(trigger, {
+    className: row.isThisMac ? "roster-confirm roster-confirm-loud" : "roster-confirm",
+    focus: cancel,
+    onDismiss: dismiss,
+    children: [
+      el("div", { class: "group-title", text: title }),
+      el("p", { class: row.isThisMac ? "warn conn-note" : "conn-note", text: copy }),
+      note,
+      el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), confirm]),
+    ],
+  });
+}
+
+function rosterActions(
+  row,
+  section,
+  redraw,
+  { messageAgentId = null, messageDisabled = false, cloudAgentId = null } = {},
+) {
+  const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
+  const actions = [];
+  if (messageAgentId) {
+    const message = el("button", {
+      class: "btn small message-btn",
+      text: "Message",
+      attrs: { "aria-label": `Message ${name}` },
+    });
+    message.disabled = messageDisabled;
+    message.addEventListener("click", () =>
+      window.domo.openExternal("cloudAgentMessages", messageAgentId));
+    actions.push(message);
+  }
+  const more = el("button", {
+    class: "btn more",
+    text: "⋯",
+    attrs: { "aria-label": `More actions for ${name}` },
+  });
+  const actionLabel = section === "cloud" ? "Remove" : "Revoke";
+  const action = el("button", { text: actionLabel });
+  const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [action]);
+  menu.hidden = true;
+  more.addEventListener("click", (event) => {
+    event.stopPropagation();
+    for (const open of document.querySelectorAll(".more-menu:not([hidden])")) {
+      if (open !== menu) open.hidden = true;
+    }
+    menu.hidden = !menu.hidden;
+  });
+  action.addEventListener("click", () => {
+    menu.hidden = true;
+    openRosterConfirm(row, section, more, redraw, cloudAgentId);
+  });
+  actions.push(more, menu);
+  return el("div", { class: "entity-actions" }, actions);
+}
+
+function cloudContext(agent, row) {
+  const handles = String(agent?.chatLabel ?? "").trim();
+  return [
+    handles ? `Agent ${handles}` : "Agent number unavailable",
+    rosterUse(row ?? { createdAt: agent?.createdAt, lastSeenAt: null }, "Used"),
+  ].filter(Boolean).join(" · ");
+}
+
+function cloudStatusNode(agent) {
+  const status = cloudStatus(agent?.status);
+  if (agent?.status === "provisioning") {
+    return el("span", { class: "status-setting" }, [
+      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { text: status.label }),
+    ]);
+  }
+  if (agent?.status === "teardown") {
+    return el("span", { class: "status-setting status-removing", text: status.label });
+  }
+  return badge(status.tone, status.label);
+}
+
+function cloudEntityRow(row, agent, redraw) {
+  const name = rosterName(row, agent?.name || "Cloud agent");
+  const provisioning = agent?.status === "provisioning";
+  const permissions = rosterPermissionCopy(row, provisioning);
+  return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
+    entityMark(name),
+    el("div", { class: "entity-main" }, [
+      el("div", { class: "entity-top" }, [
+        el("span", { class: "entity-name", text: name }),
+        cloudStatusNode(agent),
+      ]),
+      el("div", { class: "entity-context", text: cloudContext(agent, row) }),
+      el("div", { class: "entity-perms" }, permissions.map((text) => el("span", { text }))),
+    ]),
+    rosterActions(row ?? { name }, "cloud", redraw, {
+      messageAgentId: agent?.agentId ?? row?.agentId,
+      messageDisabled: agent?.status !== "running" || !agent?.recipients?.line?.trim(),
+      cloudAgentId: row ? null : agent?.agentId,
+    }),
+  ]);
+}
+
+function sessionEntityRow(row, section, redraw) {
+  const fallback = section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
+  const name = rosterName(row, fallback);
+  const context = [
+    section === "mcp" ? "MCP client" : row.kind,
+    row.createdAt ? `Created ${rosterDate(row.createdAt) ?? "date unknown"}` : "Created date unknown",
+    row.lastSeenAt ? `Last used ${rosterAgo(row.lastSeenAt) ?? "date unknown"}` : "Never used",
+  ].join(" · ");
+  const permissions = rosterPermissionCopy(row);
+  if (row.kind === "Plow web login") permissions.push("Revoking signs you out of the Plow website");
+  if (row.isThisMac) permissions.push("Revoking signs this Mac out");
+  return el("div", { class: "entity-row" }, [
+    entityMark(name, true),
+    el("div", { class: "entity-main" }, [
+      el("div", { class: "entity-top" }, [
+        el("span", { class: "entity-name", text: name }),
+        rosterBadge(row),
+      ]),
+      el("div", { class: "entity-context", text: context }),
+      el("div", { class: "entity-perms" }, permissions.map((text) =>
+        el("span", {
+          class: text.startsWith("Revoking") ? "signout-warning" : "",
+          text,
+        }),
+      )),
+    ]),
+    rosterActions(row, section, redraw),
+  ]);
+}
+
+function sectionHeader(title, count, unit, action) {
+  return el("div", { class: "list-section-head" }, [
+    el("h2", { text: title }),
+    el("span", { class: "faint", text: `${count} ${unit}${count === 1 ? "" : "s"}` }),
+    el("div", { class: "spacer" }),
+    action,
+  ]);
+}
+
+function cloudSection(s, redraw) {
+  const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
+  add.disabled = !s.cloudChats.length;
+  add.addEventListener("click", () => openCloudPicker(add, s, redraw));
+  const rosterRows = s.roster?.cloud ?? [];
+  const agents = visibleCloudAgents(s);
+  const byAgentId = new Map(agents.map((agent) => [agent.agentId, agent]));
+  const seen = new Set();
+  const rows = rosterRows.map((row) => {
+    seen.add(row.agentId);
+    return cloudEntityRow(row, byAgentId.get(row.agentId), redraw);
+  });
+  for (const agent of agents) {
+    if (!seen.has(agent.agentId)) rows.push(cloudEntityRow(null, agent, redraw));
+  }
+  const notices = [];
+  if (!s.cloudChatsLoaded) {
+    notices.push(s.cloudChatsError
+      ? cloudChatsErrorBanner(
+          s.cloudChatsError,
+          s.cloudChatsNeedReactivation === true,
+        )
+      : el("div", { class: "cloud-progress cloud-loading" }, [
           el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
           el("span", { text: "Loading chats…" }),
         ]));
-    const refreshError = cloudErrorBanner(state.cloudAgentsError);
-    if (refreshError) body.push(refreshError);
-    if (state.cloudActionError) {
-      body.push(el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: "That change did not finish" }),
-        el("p", { class: "faint", text: cloudErrorCopy(state.cloudActionError) }),
-      ]));
-    }
-    const roster = cloudAgentList(state, redraw);
-    if (roster) body.push(roster);
-    return body;
   }
-
-  const body = [action];
-  const refreshError = cloudErrorBanner(state.cloudAgentsError);
-  if (refreshError) body.push(refreshError);
-  if (state.cloudActionError) {
-    body.push(el("div", { class: "cloud-callout cloud-error" }, [
-      el("div", { class: "cloud-callout-title", text: "That change did not finish" }),
-      el("p", { class: "faint", text: cloudErrorCopy(state.cloudActionError) }),
-    ]));
-  }
-  const roster = cloudAgentList(state, redraw);
-  if (roster) {
-    body.push(roster);
-  } else if (!state.cloudAgentsError) {
-    body.push(el("div", { class: "empty cloud-empty", text: "No agents." }));
-  }
-  return body;
+  const refreshError = cloudErrorBanner(s.cloudAgentsError);
+  if (refreshError) notices.push(refreshError);
+  if (s.cloudActionError) notices.push(cloudErrorBanner(s.cloudActionError, "That change did not finish"));
+  return el("section", { class: "list-section" }, [
+    sectionHeader("Cloud agents", rows.length, "agent", add),
+    ...notices,
+    el("div", { class: "entity-list compact-list" }, rows.length
+      ? rows
+      : [el("div", { class: "empty entity-empty", text: "No cloud agents." })]),
+  ]);
 }
-/**
- * The mounted Agents pane, while that tab is up. Holds the one refresh
- * `connect:changed` calls, so a mint or a dismissal redraws the flow and
- * nothing else.
- */
+
+function sessionSection(title, rows, section, s, redraw) {
+  const action = section === "mcp"
+    ? (() => {
+        const add = el("button", { class: "btn small", text: "Connect MCP client" });
+        add.addEventListener("click", () => openMcpModal(add, s, redraw));
+        return add;
+      })()
+    : null;
+  const unit = section === "mcp" ? "client" : "active session";
+  const children = rows.map((row) => sessionEntityRow(row, section, redraw));
+  if (section === "other" && s.roster.revokedHidden > 0) {
+    const count = s.roster.revokedHidden;
+    children.push(el("div", {
+      class: "revoked-summary",
+      text: `${count} revoked session${count === 1 ? "" : "s"} hidden`,
+    }));
+  }
+  return el("section", { class: "list-section" }, [
+    sectionHeader(title, rows.length, unit, action),
+    el("div", { class: "entity-list compact-list" }, children.length
+      ? children
+      : [el("div", { class: "empty entity-empty", text: `No ${title.toLowerCase()}.` })]),
+  ]);
+}
+
+function rosterNotice(s) {
+  if (!s.rosterError && !s.removeError) return null;
+  return el("div", { class: "roster-notices" }, [
+    s.rosterError ? cloudErrorBanner(s.rosterError, "Sessions could not be refreshed") : null,
+    s.removeError ? cloudErrorBanner(s.removeError, "That session was not removed") : null,
+  ]);
+}
+
+/** The mounted Agents pane; its one refresh redraws all three views of state. */
 let agentsMounted = null;
 
-/**
- * The Agents tab — first in the bar, and a place rather than an action.
- *
- * It was a "Connect a client" tab once, and that was the problem: a setup verb
- * makes an odd permanent home. Agents is what has access to this Mac, and
- * giving something access is one thing you do here. The roster of what already
- * has access is meant to join it in this pane once the app can ask for it.
- */
 async function renderAgents() {
-  const connectBox = el("div");
-  const cloudBox = el("div");
-  const cloudGroup = group(
-    "Cloud agents",
-    "AI assistants that live in a chat and run in the cloud — never on this Mac.",
-    [cloudBox],
-  );
+  const panel = el("div", { class: "panel agents agents-roster" });
+  view.replaceChildren(panel);
   const refreshConnect = async () => {
     const s = await window.domo.connectGet();
-    connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
-    cloudBox.replaceChildren(...(s ? cloudNodes(s, refreshConnect) : []));
-    if (s) syncStaticModal(s, refreshConnect);
+    if (!s || !panel.isConnected) return s;
+    panel.replaceChildren(...[
+      rosterNotice(s),
+      cloudSection(s, refreshConnect),
+      sessionSection("MCP clients", s.roster?.mcp ?? [], "mcp", s, refreshConnect),
+      sessionSection("Other sessions", s.roster?.other ?? [], "other", s, refreshConnect),
+    ].filter(Boolean));
+    syncMcpModal(s, refreshConnect);
+    syncStaticModal(s, refreshConnect);
     return s;
   };
-  await refreshConnect();
-
   agentsMounted = { refreshConnect };
-
-  // `settings` alongside `agents` on purpose: the group card, its title and its
-  // description are the same furniture Settings uses, and this pane is one of
-  // those groups that outgrew the pane it was in.
-  view.replaceChildren(el("div", { class: "panel agents settings" }, [
-    cloudGroup,
-    group(
-      // The designer's title and subtitle.
-      "Connect an MCP client",
-      "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
-      [connectBox],
-    ),
-  ]));
+  await refreshConnect();
 }
 
 /** One honest line about the relay link, from what the main process reports. */
@@ -1576,7 +1779,12 @@ async function selectTab(tab) {
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
-  if (tab !== "agents") { staticOpen = false; closeStaticModal(); closeCloudModal(); }
+  if (tab !== "agents") {
+    staticOpen = false;
+    closeStaticModal();
+    closeMcpModal();
+    closeCloudModal();
+  }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
   if (tab !== "agents") agentsMounted = null;
@@ -1602,8 +1810,8 @@ window.domo.onStatusChanged(() => {
   // pane has to re-read — main fires this saying "Settings re-reads what
   // changed", and until now only the header did.
   if (currentTab === "settings") settingsMounted?.refresh();
-  // Signing in or out changes whether the Agents flow has a URL to show at all,
-  // and whether the reviewer shown in Rules can run.
+  // Signing in or out changes the roster, whether MCP setup has a URL, and
+  // whether the reviewer shown in Rules can run.
   if (currentTab === "agents") agentsMounted?.refreshConnect();
   if (currentTab === "rules") rulesMounted?.refreshApprovals();
 });

@@ -27,7 +27,7 @@ const CHAT: ActivationChat = {
   status: "active",
   line: "+15559876543",
   createdAt: "2026-08-24T18:02:11Z",
-  participants: [{ displayName: "Ada Lovelace", providerKey: "+15551230000" }],
+  participants: [{ providerKey: "+15551230000" }],
 };
 
 type FakeRedeem =
@@ -216,10 +216,10 @@ describe("activation — the path a brand-new user takes", () => {
     // later window has no way to ask for it again.
     const settings = loadSettings(home);
     expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
-    expect(settings.provisionedChatLabel).toBe("+15559876543 · Ada Lovelace");
+    expect(settings.provisionedChatLabel).toBe("+15559876543, +15551230000");
     expect(onboarding.state().chat).toEqual({
       uid: "cht_D7hfWNK",
-      label: "+15559876543 · Ada Lovelace",
+      label: "+15559876543, +15551230000",
     });
     // A fresh window on the same home still knows about it.
     expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
@@ -325,26 +325,32 @@ describe("activation — the path a brand-new user takes", () => {
     })!;
 
     const label = activationChatLabel(chat);
-    expect(label).toBe("+15559876543 · Ada Lovelace");
+    expect(label).toBe("+15559876543, +15551230000");
     expect(label).not.toContain("chat_5");
   });
 
-  it("names a chat by its line and its members — a chat has no title", () => {
-    expect(activationChatLabel(CHAT)).toBe("+15559876543 · Ada Lovelace");
+  it("names a chat by its line, owner handle and remaining handles — a chat has no title", () => {
+    expect(activationChatLabel({
+      ...CHAT,
+      participants: [
+        { providerKey: "+15551230000" },
+        { providerKey: "+15557654321" },
+      ],
+    })).toBe("+15559876543, +15551230000, +15557654321");
     // A member whose address IS the line is not said twice.
     expect(
       activationChatLabel({
         ...CHAT,
-        participants: [...CHAT.participants, { displayName: "", providerKey: "+15559876543" }],
+        participants: [...CHAT.participants, { providerKey: "+15559876543" }],
       }),
-    ).toBe("+15559876543 · Ada Lovelace");
+    ).toBe("+15559876543, +15551230000");
     expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+15559876543");
-    // A member with no name is still identified by the number we do have.
+    // A member is identified by the real handle, never a display name.
     expect(
       activationChatLabel({
         ...CHAT,
         line: null,
-        participants: [{ displayName: "  ", providerKey: "+15551230000" }],
+        participants: [{ providerKey: "+15551230000" }],
       }),
     ).toBe("+15551230000");
     // Nothing to say but the uid beats an empty line on the last setup screen.
@@ -1064,4 +1070,3 @@ describe("a sign-out while startRelay is dialling", () => {
     expect(loadSettings(home).relayCredential).toBe("");
   });
 });
-

@@ -43,6 +43,7 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, tabShowsCloudAgents } from "./cloudAgentState.js";
+import { cloudAgentMessagesUrl } from "./cloudAgentMessages.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
@@ -159,12 +160,12 @@ let updates: UpdateController | null = null;
  */
 class ElectronPolicy implements PolicyDelegate {
   /**
-   * A cached "always allow" cannot stand in for a review the owner requires of
-   * this agent. The rule itself is left alone — it still applies to every other
-   * agent, and to this one if the switch goes off again.
+   * A cached "always allow" cannot stand in for the reviewer when the mode
+   * hands the decision to it. The rule itself is left alone — it applies again
+   * as soon as the mode is one that lets a rule answer.
    */
-  mayGrantFromStoredRule(intent: Intent): boolean {
-    return storedRuleMayGrant(loadSettings(home), intent.agentId);
+  mayGrantFromStoredRule(): boolean {
+    return storedRuleMayGrant(loadSettings(home));
   }
 
   // The branching itself lives in reviewPolicy.ts so it is testable without a
@@ -424,7 +425,10 @@ ipcMain.handle("ui:getTab", async () => {
   // a new home, which defaults to Agents, shows an empty cloud group until the
   // user navigates away and back. Not awaited: the read must not wait on the
   // network, and the refresh publishes `connect:changed` when it lands.
-  if (tabShowsCloudAgents(tab)) void cloudAgents?.refresh();
+  if (tabShowsCloudAgents(tab)) {
+    void cloudAgents?.refresh();
+    void connectClient?.refreshRoster();
+  }
   // "connect" was this tab's key before the content went to Settings and came
   // back as "agents". Anyone who left the app on it lands where that content
   // lives now, rather than silently on the default tab.
@@ -438,7 +442,10 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   // looked at; renderer boot (`ui:getTab`) is the other. Not awaited: selecting
   // a tab must never wait on the network, and the refresh publishes
   // `connect:changed` when it lands.
-  if (tabShowsCloudAgents(tab)) void cloudAgents?.refresh();
+  if (tabShowsCloudAgents(tab)) {
+    void cloudAgents?.refresh();
+    void connectClient?.refreshRoster();
+  }
 });
 // The account this Mac is signed into. The CREDENTIAL IS NEVER RETURNED — the
 // renderer only learns whether one is set. It is a secret with no reason to
@@ -487,10 +494,17 @@ function signOut(): void {
   void onboarding?.begin();
 }
 
-// Sign out: retire the credential with Plow, forget it here, and drop the
-// socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
-// cannot reach Plow still signs out locally.
-ipcMain.handle("settings:signOut", async () => {
+/**
+ * Sign out: retire the credential with Plow, forget it here, and drop the
+ * socket. The revoke is best-effort — see `revokeAndSignOut` — so a Mac that
+ * cannot reach Plow still signs out locally.
+ *
+ * Two callers: the Settings button, and the roster's own row for this Mac.
+ * Revoking that row as an ordinary key would leave the credential on disk, the
+ * socket dialled and the window open, all talking to an account that no longer
+ * accepts them.
+ */
+async function signOutThisMac(): Promise<void> {
   // A second click, before the button re-rendered. The first already signed
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
@@ -507,7 +521,9 @@ ipcMain.handle("settings:signOut", async () => {
   signOut();
   await startRelay();
   await revoking;
-});
+}
+
+ipcMain.handle("settings:signOut", async () => signOutThisMac());
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
 // MARK: IPC for "Connect a client" (main window)
@@ -541,6 +557,11 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * sending the person to the switch IS the whole grant flow (see
  * fullDiskAccess.ts), so the deep link belongs in this table like any other
  * page the app may open.
+ *
+ * `cloudAgentMessages` is the dynamic exception: the renderer supplies only
+ * an agent id. Main requires that agent to be running and derives the `sms:`
+ * recipients from its current display row, so the sandboxed page still cannot
+ * choose an arbitrary external URL or phone number.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   account: `${apiBaseUrl}/app/`,
@@ -550,8 +571,10 @@ const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
-ipcMain.handle("external:open", async (_e, key: string) => {
-  const url = EXTERNAL_URLS[key];
+ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
+  const url = key === "cloudAgentMessages"
+    ? cloudAgentMessagesUrl(cloudAgents?.state().cloudAgents ?? [], detail ?? "")
+    : EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
   return true;
@@ -563,8 +586,38 @@ ipcMain.handle("external:open", async (_e, key: string) => {
 ipcMain.handle("connect:get", async () => agentsTabState());
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
+  // The credential it just minted is a roster row nobody has read yet — the
+  // same gap `cloud:create` had, and the same fix.
+  await connectClient?.refreshRoster();
   return agentsTabState();
 });
+/**
+ * Remove a cloud agent by its own id, with no credential row involved.
+ *
+ * A live agent whose credential has gone inactive has no roster row, and the
+ * screen used to disable Remove for it — a running agent nobody could take
+ * down. Its removal never needed the credential: `DELETE
+ * /v1/agents/cloud/{agent_id}` is keyed on the agent.
+ *
+ * Same lifecycle owner as every other cloud removal, so the poll, the row and
+ * the local state go together; the roster is re-read afterwards because the
+ * credential row, if there was one, is gone with it.
+ */
+ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
+  await cloudAgents?.remove(agentId);
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+
+/**
+ * Remove one roster row. Which call that means is the state's decision, not
+ * the renderer's — see `rosterSections.ts`.
+ */
+ipcMain.handle("roster:remove", async (_e, id: number) => {
+  await connectClient?.removeRosterRow(id);
+  return agentsTabState();
+});
+
 ipcMain.handle("connect:dismiss", async () => {
   connectClient?.dismissCredential();
   return agentsTabState();
@@ -577,20 +630,13 @@ ipcMain.handle("connect:dismiss", async () => {
  */
 ipcMain.handle("cloud:create", async (_e, chatUid: string, name: string) => {
   await cloudAgents?.create(chatUid, name);
+  // The new agent's credential row comes from the separately fetched roster,
+  // which knows nothing about a create. Without this the screen shows the agent
+  // with no row behind it, so Remove is disabled until the user leaves the tab
+  // and comes back.
+  await connectClient?.refreshRoster();
   return agentsTabState();
 });
-ipcMain.handle("cloud:delete", async (_e, agentId: string) => {
-  await cloudAgents?.remove(agentId);
-  return agentsTabState();
-});
-ipcMain.handle(
-  "cloud:apply",
-  async (_e, agentId: string, settings: { adversarialReview: boolean }) => {
-    await cloudAgents?.apply(agentId, settings);
-    return agentsTabState();
-  },
-);
-
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
  * cloud half is present and empty when the flag is off, so the renderer reads
  * the same fields either way. */
@@ -1029,21 +1075,32 @@ app.whenReady().then(async () => {
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
 
+  // Built first: the roster's removal routing needs the cloud-agent client,
+  // because a row with an `agent_id` must be deleted as an agent and never
+  // revoked as a key.
+  const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
+
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
+    // Through the state that owns the agent's poll, row and settings — not the
+    // raw client, which would leave all three behind.
+    removeCloudAgent: async (agentId: string) => {
+      await cloudAgents?.remove(agentId);
+    },
+    signOutThisMac,
     onChange: () => notifyRenderer("connect:changed"),
   });
 
   // The cloud-agent group shares the Agents tab's change channel, because it
   // shares the tab's state shape.
-  const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   cloudAgents = new CloudAgentState({
     // Both clients log what they send and what comes back — see wireLog.ts.
     // There is no server-side request log we can read, and during the rollout
     // that account is the only one there is.
-    agents: new CloudAgentsClient(cloudApi),
+    agents: cloudAgentsClient,
     chats: new CloudChatsClient(cloudApi),
     home,
     onChange: () => notifyRenderer("connect:changed"),

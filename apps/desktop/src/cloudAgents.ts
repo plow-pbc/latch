@@ -92,7 +92,7 @@ export class CloudAgentsClient {
     if (response.status === 409) {
       const failure = await decodeJson(response);
       const staleAgentId = recoverableAgentId(failure);
-      if (!staleAgentId) throw errorFor(response.status, failure, deviceCredential);
+      if (!staleAgentId) throw errorFor(response.status);
 
       try {
         await this.delete(deviceCredential, staleAgentId);
@@ -117,7 +117,7 @@ export class CloudAgentsClient {
     const response = await this.api.request("GET", "/v1/agents/cloud", {
       token: deviceCredential,
     });
-    if (!response.ok) throw errorFor(response.status, await decodeJson(response), deviceCredential);
+    if (!response.ok) throw errorFor(response.status);
 
     const decoded = await decodeJson(response);
     const data = Array.isArray(decoded)
@@ -140,7 +140,7 @@ export class CloudAgentsClient {
     // Delete is retry-safe from the app's perspective: a record already gone
     // is the requested outcome even though the API reports it as 404.
     if (!response.ok && response.status !== 404) {
-      throw errorFor(response.status, await decodeJson(response), deviceCredential);
+      throw errorFor(response.status);
     }
   }
 
@@ -180,8 +180,8 @@ export class CloudAgentsClient {
     response: Response,
     deviceCredential: string,
   ): Promise<CloudAgentResource> {
+    if (!response.ok) throw errorFor(response.status);
     const decoded = await decodeJson(response);
-    if (!response.ok) throw errorFor(response.status, decoded, deviceCredential);
     return parseResource(decoded, deviceCredential, response.status);
   }
 
@@ -234,29 +234,17 @@ function parseResource(
   return resource;
 }
 
-function errorFor(status: number, decoded: unknown, deviceCredential: string): PlowApiError {
-  const detail = errorMessage(decoded, deviceCredential);
-  if (status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", status);
-  if (status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", status);
+function errorFor(status: number): PlowApiError {
+  if (status === 401) return new PlowApiError("unauthorized", "Not authorized.", status);
+  if (status === 403) return new PlowApiError("forbidden", "Not permitted.", status);
   if (status === 503) {
     return new PlowApiError(
       "provider_unavailable",
-      detail || "Cloud-agent provisioning is unavailable right now.",
+      "Cloud-agent provisioning is unavailable right now.",
       status,
     );
   }
-  return new PlowApiError("http", detail || `Plow returned ${status}.`, status);
-}
-
-function errorMessage(decoded: unknown, deviceCredential: string): string {
-  if (!isRecord(decoded)) return "";
-  const message =
-    typeof decoded.detail === "string"
-      ? decoded.detail
-      : isRecord(decoded.error) && typeof decoded.error.message === "string"
-        ? decoded.error.message
-        : "";
-  return echoesCredential(message, deviceCredential) ? "" : message;
+  return new PlowApiError("http", `Plow returned ${status}.`, status);
 }
 
 function invalidResponse(status: number): PlowApiError {

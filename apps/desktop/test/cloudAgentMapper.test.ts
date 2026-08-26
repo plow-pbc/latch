@@ -25,9 +25,14 @@ describe("cloud-agent pure mappings", () => {
     const row = toCloudAgentDisplayRow(agent(), {
       fallbackName: "Kitchen agent",
       chatLabel: "+1 415 555 0100 · Pat, Lee",
+      recipients: { line: "+14155550100", members: ["+14155550101"] },
     });
 
-    expect(row).toMatchObject({ agentId: "agent_stable", chatUid: "cht_123" });
+    expect(row).toMatchObject({
+      agentId: "agent_stable",
+      chatUid: "cht_123",
+      recipients: { line: "+14155550100", members: ["+14155550101"] },
+    });
     expect(JSON.stringify(row)).not.toContain("session_old");
     expect(JSON.stringify(row)).not.toContain("provider.internal");
   });
@@ -49,6 +54,10 @@ describe("cloud-agent pure mappings", () => {
 
     expect(row.failureReason).toBe("credential [credential] rejected");
     expect(JSON.stringify(row)).not.toContain(sessionId);
+  });
+
+  it("does not invent transport recipients when chat metadata is unavailable", () => {
+    expect(toCloudAgentDisplayRow(agent()).recipients).toBeNull();
   });
 
   it("keeps provisioning non-terminal and treats every returned status as terminal", () => {

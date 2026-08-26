@@ -111,7 +111,7 @@ describe("CloudAgentsClient destructive actions", () => {
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(PlowApiError);
-    expect(String(error)).toBe(`PlowApiError: ${detail}`);
+    expect(String(error)).toBe("PlowApiError: Plow returned 409.");
     expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
   });
 });
@@ -152,30 +152,18 @@ describe("CloudAgentsClient cancellation", () => {
 });
 
 describe("CloudAgentsClient credential boundary", () => {
-  it("never puts a credential echoed by HTTP or fetch into an error string", async () => {
-    const echoed = async () =>
-      new Response(`{"detail":"rejected Bearer \\u0070low_sk_device_do_not_leak"}`, {
-        status: 403,
-        headers: { "content-type": "application/json" },
-      });
-    const transportEcho = async () => {
-      throw new Error(`failed request with Authorization: Bearer ${CREDENTIAL}`);
-    };
-    const nestedEcho = async () =>
-      new Response(JSON.stringify({ error: { message: `rejected Bearer ${CREDENTIAL}` } }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      });
-
-    for (const client of [
-      new CloudAgentsClient(new PlowApi("https://api.plow.co", echoed)),
-      new CloudAgentsClient(new PlowApi("https://api.plow.co", nestedEcho)),
-      new CloudAgentsClient(new PlowApi("https://api.plow.co", transportEcho)),
-    ]) {
+  it("drops every server-authored error from authenticated calls", async () => {
+    const fragment = CREDENTIAL.slice(3, 18);
+    for (const [status, body, message] of [
+      [403, { detail: `rejected fragment ${fragment}` }, "Not permitted."],
+      [404, { error: { message: `rejected fragment ${fragment}` } }, "Plow returned 404."],
+    ] as const) {
+      const { fetchImpl } = recordingFetch([{ status, body }]);
+      const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
       const error = await client.list(CREDENTIAL).catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(PlowApiError);
-      expect(String(error)).not.toContain(CREDENTIAL);
-      expect(String(error)).not.toContain(CREDENTIAL.slice(0, 10));
+      expect(String(error)).toBe(`PlowApiError: ${message}`);
+      expect(String(error)).not.toContain(fragment);
     }
   });
 

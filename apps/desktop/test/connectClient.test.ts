@@ -12,10 +12,19 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConnectClient, agentConfig } from "../src/connectClient.js";
-import { PlowApi, PlowApiError } from "../src/plowApi.js";
+import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
+import { Deferred, deferred } from "./deferred.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
+
+/**
+ * What plow publishes as `key_prefix`: `token[5:13]`, the eight characters
+ * AFTER the `plow_` scheme. A hand-written prefix with the scheme on the front
+ * made the old `startsWith` match look right here while it never matched in
+ * production.
+ */
+const keyPrefixOf = (token: string) => token.slice(5, 13);
 const CLIENT_TOKEN = "plow_CLIENTtok_shown_once";
 const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
@@ -25,12 +34,30 @@ class FakePlow {
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
+  /** What `listApiKeys` will answer with. */
+  keys: KeyInfo[] = [];
+  /** Hold one list open, so a test can land reads out of order. */
+  listGate: (() => Promise<KeyInfo[]> | null) | null = null;
+  /** Every key revoke that was actually issued, in order. */
+  revoked: number[] = [];
   /** Set to hold every mint open until `release()`, the way a slow API does. */
   private gate: Promise<void> | null = null;
   private open: (() => void) | null = null;
 
   api(): PlowApi {
     return this as unknown as PlowApi;
+  }
+
+  async listApiKeys(_token: string): Promise<KeyInfo[]> {
+    const held = this.listGate?.();
+    if (held) return held;
+    if (this.fails) throw this.fails;
+    return this.keys;
+  }
+
+  async revokeApiKey(_token: string, id: number) {
+    this.revoked.push(id);
+    return { status: "revoked", id };
   }
 
   /** Make mints hang, so a test can act while one is in flight. */
@@ -63,12 +90,23 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
+/** Every cloud-agent removal the roster routed, in order. */
+let agentDeletes: string[];
+/** How many times the roster asked this Mac to sign out. */
+let signOuts: number;
 
-function build(): ConnectClient {
+function build(options: { deleteFails?: boolean } = {}): ConnectClient {
   return new ConnectClient({
     api: plow.api(),
     home,
     isConnected: () => connected,
+    removeCloudAgent: async (agentId: string) => {
+      agentDeletes.push(agentId);
+      if (options.deleteFails) throw new PlowApiError("http", "Plow returned 500.", 500);
+    },
+    signOutThisMac: async () => {
+      signOuts += 1;
+    },
     onChange: () => {
       changes += 1;
     },
@@ -88,6 +126,8 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-connect-"));
   plow = new FakePlow();
   connected = true;
+  agentDeletes = [];
+  signOuts = 0;
   changes = 0;
 });
 
@@ -330,5 +370,127 @@ describe("agentConfig", () => {
       url: MCP_URL,
       headers: { Authorization: "Bearer plow_secret" },
     });
+  });
+});
+
+describe("removing a roster row", () => {
+  /** One active credential, as `GET /v1/api-keys` returns it. */
+  function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
+    return {
+      id: 1,
+      key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"),
+      name: "Kitchen agent",
+      scopes: ["relay:call"],
+      tokens_used: 0,
+      is_active: true,
+      last_seen_at: "2026-08-25T10:00:00Z",
+      created_at: "2026-08-20T10:00:00Z",
+      agent_id: null,
+      chat_uids: [],
+      ...overrides,
+    };
+  }
+
+  /**
+   * Every route a row can take, and the two it must never take instead.
+   *
+   * Each is destructive in its own way when it goes to the wrong place: a key
+   * revoke on a cloud agent leaves the VM running and the webhook firing while
+   * the row disappears from the list; a key revoke on this Mac leaves the
+   * credential on disk, the socket dialled and the window open, all talking to
+   * an account that no longer accepts them.
+   */
+  it.each([
+    [
+      "a cloud agent",
+      () => key({ id: 7, agent_id: "agent_7" }),
+      { revoked: [] as number[], deleted: ["agent_7"], signOuts: 0 },
+    ],
+    [
+      "this Mac",
+      () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
+      { revoked: [] as number[], deleted: [] as string[], signOuts: 1 },
+    ],
+    [
+      "an ordinary credential",
+      () => key({ id: 8, agent_id: null }),
+      { revoked: [8], deleted: [] as string[], signOuts: 0 },
+    ],
+  ])("removes %s down its own route and no other", async (_what, row, expected) => {
+    signIn();
+    const only = row();
+    plow.keys = [only];
+    const client = build();
+    await client.refreshRoster();
+
+    await client.removeRosterRow(only.id);
+
+    expect(plow.revoked).toEqual(expected.revoked);
+    expect(agentDeletes).toEqual(expected.deleted);
+    expect(signOuts).toBe(expected.signOuts);
+  });
+
+  /**
+   * A read that has been overtaken says nothing about now, however it ends.
+   *
+   * The removal's own refresh is the newest answer; a tab-selection refresh
+   * still in the air describes the account before the delete. Letting it land
+   * puts a revoked session back on screen marked active — a lie about who can
+   * reach the account.
+   */
+  it.each([
+    ["failure", (d: Deferred<KeyInfo[]>) => d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
+    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, agent_id: null })])],
+  ])("a late %s never displaces the newer roster read", async (_ending, finish) => {
+    signIn();
+    const stale = deferred<KeyInfo[]>();
+    let first = true;
+    plow.listGate = () => {
+      if (!first) return null;
+      first = false;
+      return stale.promise;
+    };
+    plow.keys = [];
+    const client = build();
+
+    const overtaken = client.refreshRoster();
+    await client.refreshRoster();
+
+    finish(stale);
+    await overtaken;
+
+    // The newer read said the account is empty, and it stays empty — with no
+    // banner from the overtaken one either, which would report a failure that
+    // has already been superseded by a good answer.
+    expect(client.state().roster.mcp).toEqual([]);
+    expect(client.state().roster.other).toEqual([]);
+    expect(client.state().rosterError).toBeNull();
+  });
+
+  it("refreshes the roster after minting a credential", async () => {
+    signIn();
+    plow.keys = [];
+    const client = build();
+    await client.refreshRoster();
+    plow.keys = [key({ id: 5, name: "Claude Code" })];
+
+    await client.createCredential("Claude Code");
+    await client.refreshRoster();
+
+    // The mint IS a new roster row. Without a re-read the credential the user
+    // just made is absent from the list it belongs in.
+    expect(client.state().roster.mcp.map((row) => row.id)).toEqual([5]);
+  });
+
+  it("keeps the row when the removal fails", async () => {
+    signIn();
+    plow.keys = [key({ id: 9, agent_id: "agent_9" })];
+    const client = build({ deleteFails: true });
+    await client.refreshRoster();
+
+    const state = await client.removeRosterRow(9);
+
+    expect(state.removeError).toBe("Plow returned 500.");
+    expect(state.roster.cloud.map((row) => row.id)).toEqual([9]);
   });
 });

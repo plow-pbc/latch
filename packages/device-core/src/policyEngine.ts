@@ -32,12 +32,8 @@ export interface PolicyDelegate {
    * May a stored always-allow rule answer this intent on its own?
    *
    * A rule is a decision the human made once and cached, and the engine
-   * short-circuits to it before this delegate is ever asked. That is right
-   * until something OUTSIDE the rule has to be consulted per request — an
-   * agent the owner has switched adversarial review on for, whose whole point
-   * is that a reviewer sees every operation. Without this hook the cached
-   * "always allow" outranks the review, and the switch reports success while
-   * doing nothing.
+   * short-circuits to it before this delegate is ever asked. A delegate may
+   * veto that replay when the current global policy must decide every request.
    *
    * Optional: a delegate that does not implement it keeps the plain behaviour.
    * Answering false does not deny — it sends the intent down the normal path,
