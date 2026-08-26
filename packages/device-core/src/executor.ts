@@ -132,6 +132,16 @@ export class ExecutorError extends Error {}
 export const REAP_AFTER_MS = 15 * 60_000;
 
 /**
+ * How long output already in flight has to arrive once the command has exited.
+ *
+ * Normally `close` follows `exit` immediately and this never fires. It exists
+ * for the run whose backgrounded job inherited the stdout pipe and is still
+ * holding it: the command is over, so the job settles on this instead of
+ * waiting on a pipe nobody is going to close.
+ */
+export const STDIO_DRAIN_MS = 250;
+
+/**
  * What the agent is told about a run this Mac killed. It leads with the fact,
  * and names the cause that produces this shape — a permission prompt nobody
  * answered — as the likely one rather than the certain one, because from here
@@ -161,6 +171,9 @@ class OutputBuffer {
   private waiters: (() => void)[] = [];
 
   append(chunk: Buffer): void {
+    // Same once-only rule as `finish`: a straggler still holding the pipe must
+    // not grow the output of a job the agent has already been told is over.
+    if (this.exitCode !== null) return;
     this.chunks.push(chunk);
     this.length += chunk.length;
   }
@@ -304,42 +317,56 @@ export class Executor {
       // the sweep that would is its own change, not a side effect of this one.
       detached: true,
     });
-    // SIGKILL rather than a polite SIGTERM: the run being ended here is one
-    // wedged in a kernel call with nothing to clean up, and a handler that
-    // never gets scheduled would only leave the same process on the table.
-    const reaper = setTimeout(() => {
+    // A run ends when its COMMAND ends. `close` says something else — every
+    // stdio pipe closed too — and a job the command backgrounded inherits
+    // those pipes and can hold them open forever. Settling on `exit` is what
+    // keeps "the command finished" from meaning "and nothing it started is
+    // still around", which is not this Mac's promise to keep and was three
+    // rounds of holes in one predicate when the reaper tried to keep it.
+    let reaper: ReturnType<typeof setTimeout>;
+    const settle = (code: number) => {
+      clearTimeout(reaper);
+      buffer.finish(code);
+    };
+    child.on("error", () => settle(-1));
+    child.on("exit", (code, signal) => {
+      const outcome = code ?? (signal ? -1 : 0);
+      // Output already written may still be in flight, so the usual `close`
+      // remains the settling event — with a deadline, because a straggler
+      // holding a pipe must not hold the agent with it.
+      const drain = setTimeout(() => settle(outcome), STDIO_DRAIN_MS);
+      drain.unref?.();
+      child.on("close", () => {
+        clearTimeout(drain);
+        settle(outcome);
+      });
+    });
+
+    // What is left for the reaper is the one case `exit` cannot answer: a
+    // command that never ends at all. SIGKILL rather than a polite SIGTERM —
+    // it is wedged in a kernel call with nothing to clean up, and a handler
+    // that never gets scheduled would only leave the same process on the
+    // table. The group, not the pid, because `sandbox-exec` execs into the
+    // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
+    // does NOT exec, so one signal kills the shell and leaves the wedged
+    // descendant alive.
+    reaper = setTimeout(() => {
       if (buffer.exitCode !== null || buffer.produced) return;
-      // The command itself may have exited while a descendant it backgrounded
-      // holds the stdout pipe open — `close` waits on the pipe, so the job has
-      // still not settled. That is a run to clean up, not one to walk away
-      // from; `ended` only decides what to call it, since a command that ended
-      // on its own is not one this Mac killed.
-      const ended = child.exitCode !== null || child.signalCode !== null;
-      buffer.reaped = !ended;
+      buffer.reaped = true;
       if (child.pid !== undefined) {
         try {
           process.kill(-child.pid, "SIGKILL");
         } catch {
-          // Already gone, or a group that no longer exists. Settling below is
-          // what the caller is owed either way.
+          // Already gone, or a group that no longer exists. Settling is what
+          // the caller is owed either way.
         }
       }
-      // Settle now rather than waiting for `close`. Whatever held those pipes
-      // open must not hold the agent open with them.
-      buffer.finish(child.exitCode ?? -1);
+      settle(-1);
     }, this.reapAfterMs);
     reaper.unref?.();
 
     child.stdout.on("data", (chunk: Buffer) => buffer.append(chunk));
     child.stderr.on("data", (chunk: Buffer) => buffer.append(chunk));
-    child.on("error", () => {
-      clearTimeout(reaper);
-      buffer.finish(-1);
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(reaper);
-      buffer.finish(code ?? (signal ? -1 : 0));
-    });
 
     await buffer.waitForExit(Math.max(args.waitMs, 0));
     return { handle, ...shape(buffer.snapshot(0)) };

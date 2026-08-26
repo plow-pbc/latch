@@ -154,32 +154,40 @@ describe("a run that produces nothing and never exits", () => {
     await until(() => alive(fifo).length === 0);
   });
 
-  it("settles a run whose command exited but whose background job holds the pipes", async () => {
+  it("ends when the command ends, not when a job it backgrounded lets go", async () => {
     const dir = tempDir();
     const fifo = blockingPipe(dir);
-    const executor = new Executor(path.join(dir, "scratch"), 300);
+    const executor = new Executor(path.join(dir, "scratch"), 60_000);
 
-    // The shell exits immediately; the job it backgrounded inherits stdout and
-    // blocks forever. `close` waits on that pipe, so the run never settles on
-    // its own — a second route to #155's forever-`running` job, and one that
-    // "did the child exit?" must not be read as permission to walk away from.
+    // The shell exits at once; the job it backgrounded inherits stdout and
+    // blocks forever. `close` waits on that pipe, so a run that settled on
+    // `close` would answer `running` until something reaped it — fifteen
+    // minutes for a command that finished immediately, or forever once it had
+    // printed a line. What the owner approved has ended; the job says so.
     const started = await executor.run({
-      argv: ["/bin/sh", "-c", `/bin/cat ${JSON.stringify(fifo)} & exit 0`],
+      argv: ["/bin/sh", "-c", `echo started; /bin/cat ${JSON.stringify(fifo)} & exit 0`],
       cwd: dir,
       readPaths: [dir],
       writePaths: [],
       network: false,
-      waitMs: 50,
+      waitMs: 2_000,
     });
     cleanups.push(() => killAll(fifo));
-    expect(started.running).toBe(true);
+    expect(started.running).toBe(false);
+    expect(started.exitCode).toBe(0);
+    // Its command ended on its own, so nothing here killed it.
+    expect(started.reaped).toBe(false);
+    expect(started.output.toString()).toContain("started");
 
-    const ended = await settle(executor, started.handle);
-    // Its own command ended, so this is not a run this Mac killed — but the
-    // strays still go, and the job answers instead of hanging.
-    expect(ended.reaped).toBe(false);
-    expect(ended.exitCode).toBe(0);
+    // The straggler eventually lets go, and its late `close` must not rewrite
+    // an outcome the agent and the audit log already have.
+    killAll(fifo);
     await until(() => alive(fifo).length === 0);
+    await new Promise((r) => setTimeout(r, 200));
+    const after = executor.output(started.handle, 0);
+    expect(after.exitCode).toBe(0);
+    expect(after.reaped).toBe(false);
+    expect(after.outputLength).toBe(started.outputLength);
   });
 });
 
