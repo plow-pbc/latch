@@ -1,4 +1,5 @@
 import { el, icon } from "./dom.js";
+import { vaultEmptyState } from "./vaultEmptyState.js";
 
 /* The Vault tab, built to the design file (vault.html).
    Its own pane, its own file: this screen keeps being redesigned, and it has
@@ -779,48 +780,11 @@ export async function renderVault(view, isCurrent = () => true) {
     ]),
   ]);
 
-  if (!failure && reply.status !== "ready") {
-    // Locked, missing and not-yet-started are three different facts and get
-    // three different words. A vault whose key has moved — a Keychain reset, a
-    // Mac restored from backup — used to render as "has not started yet", which
-    // sent people looking for a server that was running fine; a build with no
-    // runtime rendered the same way, and sent someone looking for a server that
-    // had never been installed.
-    const missing = reply.status === "missing";
-    const locked = reply.status === "locked";
-    // Named, not a fall-through. "Has not started yet" is the sentence this
-    // screen keeps having to be rescued from, so it is the answer to exactly
-    // one status and never the answer to "none of the above" — a fifth outcome
-    // added over in main.ts, or a packaged renderer left behind by one, has to
-    // say something that cannot be mistaken for a diagnosis.
-    const headline = missing
-      ? "This build has no vault installed."
-      : locked
-        ? "This Mac can't unlock its vault account."
-        : reply.status === "starting"
-          ? "The vault has not started yet."
-          : `The vault reported a state this build does not know: ${reply.status}`;
+  const emptyState = vaultEmptyState(reply, failure);
+  if (emptyState) {
     pane.replaceChildren(masthead, el("div", { class: "col" }, [
-      el("div", { class: "empty", text: headline }),
-      // Lead with what is certain and claim no more, the same care the
-      // `undecryptable` note below takes. All this state says is that there is
-      // no vault here; whether the browser runtime around it is missing too, or
-      // merely missing its vault payload, is a distinction this side cannot
-      // make. No remedy either: a packaged install always bundles one, so an
-      // owner reading this has a broken install rather than a recipe to run,
-      // and the from-source case gets the command on the terminal instead.
-      missing
-        ? el("p", { class: "use-note", text: "Nothing is lost — a build that includes the vault will open whatever is already here." })
-        : null,
-      // No invented recovery, and no asserting a cause the code cannot tell
-      // apart: `undecryptable` is one `catch` covering a wrong key AND a
-      // damaged file, so the copy leads with what is certain, names the likely
-      // cause as likely, and gives the remedy — the same either way.
-      locked
-        ? el("p", { class: "use-note", text: reply.reason === "no-storage"
-            ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
-            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
-        : null,
+      el("div", { class: "empty", text: emptyState.headline }),
+      emptyState.note ? el("p", { class: "use-note", text: emptyState.note }) : null,
     ].filter(Boolean)));
     view.replaceChildren(pane);
     return;
