@@ -311,4 +311,40 @@ describe("the stored-rule veto passes through", () => {
     const store = new ApprovalStore(tempDir(), silent);
     expect(await store.mayGrantFromStoredRule(intentFor())).toBe(true);
   });
+
+  // The record outlives the decision — `reapStale` rewrites pending records to
+  // abandoned and nothing deletes them — so it is a durable holder of content
+  // in the same sense `audit.ndjson` is. The mirror of the audit assertion in
+  // connectorIntent.test.ts; without it, reverting the redaction at the store
+  // leaves the suite green.
+  it("does not keep a tool intent's content on disk", async () => {
+    const dir = tempDir();
+    const store = new ApprovalStore(dir, silent);
+    const intent = makeIntent({
+      agentId: "sess_alice",
+      agentDisplay: "Claude Code",
+      deviceId: "device-1",
+      goal: 'send "the launch codes" to the ops channel',
+      request: 'send a Slack message to C1: "the launch codes"',
+      capabilities: [{ kind: "tool", tool: "slack.messages.send", target: "T1/C1" }],
+      sessionId: "s1",
+    });
+
+    void store.decideIntent(intent);
+    const record = await pendingRecord(store);
+
+    // What was authorised, kept.
+    expect(JSON.stringify(record)).toContain("T1/C1");
+    // What was said, not kept — through either free-text field, and not in the
+    // file either, since the record is what lands there.
+    expect(JSON.stringify(record)).not.toContain("the launch codes");
+    // …and not in the files themselves, which is what actually persists.
+    const onDisk = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      .join("");
+    expect(onDisk).toContain("T1/C1");
+    expect(onDisk).not.toContain("the launch codes");
+  });
 });

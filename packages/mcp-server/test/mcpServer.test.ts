@@ -140,7 +140,11 @@ describe("a tool call end to end, in process", () => {
     // The capability set — not the goal text — is what the decision was made on.
     expect(jv(received).get("capabilities").arr).toEqual([`Read: ${canonicalize(file)}`]);
     expect(jv(received).get("agent").str).toBe("agent-1");
-    expect(jv(received).get("goal").str).toBe("check the greeting");
+    // And the goal is not what the record keeps. It is unverified agent prose
+    // on an unbounded field — an agent can put a secret, or a file's bytes, in
+    // the goal of a write — so it stays on the live approval surface, which
+    // reads the intent directly, and out of anything durable.
+    expect(jv(received).get("goal").str).toBe("");
   });
 
   it.skipIf(!ON_MAC)("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
