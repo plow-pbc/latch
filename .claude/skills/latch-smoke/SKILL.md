@@ -37,25 +37,53 @@ A nonce makes the audit line unambiguous — a busy install has other traffic, a
 
 ```bash
 NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
-# Token read from a file, never from argv: argv is world-readable via `ps`.
-TOKEN_FILE="${TOKEN_FILE:?set TOKEN_FILE to a 0600 file holding the bearer token}"
-MCP_URL="${MCP_URL:?set MCP_URL to the install's mcpUrl}"
-python3 - "$NONCE" <<'PY'
+TOKEN_FILE="${TOKEN_FILE:?a 0600 file holding the bearer token}"
+MCP_URL="${MCP_URL:?the install's mcpUrl}"
+python3 - "$NONCE" <<'PYCALL'
 import json, os, sys, urllib.request
-nonce = sys.argv[1]
+
+# The wire shape is NOT generic JSON-RPC. This server validates that the body's
+# method and tool name AGREE with headers declaring them, and every request
+# carries the per-request envelope in params._meta -- modern MCP is per-request,
+# so there is no initialize handshake and no session to open first.
+# packages/mcp-server/test/client.ts is the authority; keep this in step with it,
+# and with PROTOCOL_REVISION in handler.ts.
+REVISION = "2026-07-28"
+nonce, name = sys.argv[1], "plow_run_command"
 token = open(os.environ["TOKEN_FILE"]).read().strip()
+
 body = json.dumps({
     "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-    "params": {"name": "plow_run_command",
-               "arguments": {"argv": ["/bin/echo", nonce],
-                             "goal": "smoke test: prove this Mac executes an approved command"}},
+    "params": {
+        "name": name,
+        "arguments": {
+            "argv": ["/bin/echo", nonce],
+            "goal": "smoke test: prove this Mac executes an approved command",
+        },
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": REVISION,
+            "io.modelcontextprotocol/clientInfo": {"name": "latch-smoke", "version": "1"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        },
+    },
 }).encode()
-req = urllib.request.Request(os.environ["MCP_URL"], data=body, method="POST",
-    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-with urllib.request.urlopen(req, timeout=60) as r:
-    print(r.status, json.load(r).get("result", {}).get("isError", "ok"))
-PY
-echo "NONCE=$NONCE"   # print it — Verify runs in a FRESH shell
+
+req = urllib.request.Request(os.environ["MCP_URL"], data=body, method="POST", headers={
+    "Authorization": "Bearer " + token,
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+    "MCP-Protocol-Version": REVISION,
+    "MCP-Method": "tools/call",
+    "MCP-Name": name,
+})
+with urllib.request.urlopen(req, timeout=90) as r:
+    payload = json.load(r)
+# A JSON-RPC error or isError is a real failure. Neither absence is PROOF of
+# success, though -- that is the audit log.
+print("status", r.status, "| error:", payload.get("error"),
+      "| isError:", payload.get("result", {}).get("isError"))
+PYCALL
+echo "NONCE=$NONCE"   # print it -- Verify runs in a FRESH shell
 ```
 
 **This raises an approval dialog on the target Mac** unless a matching
@@ -75,15 +103,17 @@ NONCE="<value printed by Send>"
 HOME_DIR="${HOME_DIR:-$HOME/Library/Application Support/Plow-Latch}"
 SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson";
 for i in $(seq 1 24); do
-  if grep -q "$NONCE" "$LOG" 2>/dev/null; then
-    grep "$NONCE" "$LOG" | head -3
-    # exec_end is keyed to the intent, so take the id from the start line.
-    ID=$(grep -m1 "$NONCE" "$LOG" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))")
-    grep "$ID" "$LOG" | grep -E "exec_end|exec_error" | head -2
+  # exec_start records the argv, so the nonce lands there. Its intentId keys
+  # the exec_end that follows, which is the half proving the run finished.
+  LINE=$(grep -m1 "$NONCE" "$LOG" 2>/dev/null) || true
+  if [ -n "$LINE" ]; then
+    echo "$LINE"
+    ID=$(printf %s "$LINE" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))")
+    [ -n "$ID" ] && grep "$ID" "$LOG" | grep -E "\"event\":\"exec_(end|error)\"" | head -1
     exit 0
   fi
   sleep 5
-done; echo "TIMEOUT — no audit line carrying $NONCE"; exit 1'
+done; echo "TIMEOUT - no audit line carrying $NONCE"; exit 1'
 bash -c "$SCRIPT"                                                   # local install
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
