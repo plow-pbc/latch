@@ -1178,7 +1178,7 @@ function closeRosterConfirm(shell) {
   if (shell) closeModal(shell);
 }
 
-function openRosterConfirm(row, section, trigger, redraw) {
+function openRosterConfirm(row, section, trigger, redraw, cloudAgentId = null) {
   const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
   const destructive = section === "cloud" ? "Remove agent" : "Revoke";
   let title = section === "cloud" ? `Remove ${name}?` : `Revoke ${name}?`;
@@ -1202,7 +1202,8 @@ function openRosterConfirm(row, section, trigger, redraw) {
     confirm.disabled = true;
     note.textContent = section === "cloud" ? "Removing…" : "Revoking…";
     try {
-      await window.domo.rosterRemove(row.id);
+      if (cloudAgentId) await window.domo.cloudRemove(cloudAgentId);
+      else await window.domo.rosterRemove(row.id);
     } finally {
       dismiss();
       await redraw();
@@ -1225,7 +1226,7 @@ function rosterActions(
   row,
   section,
   redraw,
-  { messageAgentId = null, messageDisabled = false, disabled = false } = {},
+  { messageAgentId = null, messageDisabled = false, cloudAgentId = null } = {},
 ) {
   const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
   const actions = [];
@@ -1245,7 +1246,6 @@ function rosterActions(
     text: "⋯",
     attrs: { "aria-label": `More actions for ${name}` },
   });
-  more.disabled = disabled;
   const actionLabel = section === "cloud" ? "Remove" : "Revoke";
   const action = el("button", { text: actionLabel });
   const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [action]);
@@ -1259,7 +1259,7 @@ function rosterActions(
   });
   action.addEventListener("click", () => {
     menu.hidden = true;
-    openRosterConfirm(row, section, more, redraw);
+    openRosterConfirm(row, section, more, redraw, cloudAgentId);
   });
   actions.push(more, menu);
   return el("div", { class: "entity-actions" }, actions);
@@ -1313,7 +1313,7 @@ function cloudEntityRow(row, agent, redraw) {
     rosterActions(row ?? { name }, "cloud", redraw, {
       messageAgentId: agent?.agentId ?? row?.agentId,
       messageDisabled: agent?.status !== "running" || !agent?.recipients?.line?.trim(),
-      disabled: !row,
+      cloudAgentId: row ? null : agent?.agentId,
     }),
   ]);
 }

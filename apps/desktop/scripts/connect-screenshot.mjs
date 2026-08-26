@@ -168,6 +168,7 @@ const RULES = [
 let cloudFixture = CLOUD_EMPTY;
 let rosterFixture = EMPTY_ROSTER;
 const rosterRemovals = [];
+const cloudRemovals = [];
 let resolveExternalOpen = null;
 let holdCloudCreate = false;
 let releaseCloudCreate = null;
@@ -222,6 +223,10 @@ async function setUp() {
       mcp: rosterFixture.mcp.filter((row) => row.id !== id),
       other: rosterFixture.other.filter((row) => row.id !== id),
     };
+    return state();
+  });
+  ipcMain.handle("cloud:remove", async (_e, agentId) => {
+    cloudRemovals.push(agentId);
     return state();
   });
   ipcMain.handle("external:open", async (_e, key, detail) => {
@@ -358,6 +363,32 @@ const SCREENS = [
       await waitFor(win, `!document.querySelector(".roster-confirm")`, "the removal confirmation to close");
       if (rosterRemovals.length !== before + 1 || rosterRemovals.at(-1) !== 201) {
         throw new Error("cloud-row removal did not use roster:remove with row 201");
+      }
+    },
+  },
+  {
+    name: "cloud-remove-without-roster",
+    cloud: { ...CLOUD_READY, cloudChats: [CHAT], cloudAgents: [ACTIVE_AGENT] },
+    prepare: async (win) => {
+      const disabled = await win.webContents.executeJavaScript(
+        `document.querySelector('button[aria-label="More actions for Household helper"]')?.disabled === true`,
+      );
+      if (disabled) throw new Error("rowless cloud agent overflow was disabled");
+      await clickAria(win, "More actions for Household helper");
+      await clickText(win, "Remove", 0);
+      await waitFor(win, `document.querySelector(".roster-confirm")`, "the rowless cloud removal confirmation");
+    },
+    expect: [
+      "Remove Household helper?",
+      "The agent will stop reading and replying in its chat",
+      "Remove agent",
+    ],
+    after: async (win) => {
+      const before = cloudRemovals.length;
+      await clickText(win, "Remove agent", 0);
+      await waitFor(win, `!document.querySelector(".roster-confirm")`, "the rowless removal confirmation to close");
+      if (cloudRemovals.length !== before + 1 || cloudRemovals.at(-1) !== ACTIVE_AGENT.agentId) {
+        throw new Error("rowless cloud removal did not use cloud:remove with the agent id");
       }
     },
   },
