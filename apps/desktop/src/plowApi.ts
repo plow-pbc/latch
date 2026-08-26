@@ -530,9 +530,13 @@ export class PlowApi {
     unavailableMessage?: string,
     credential?: string,
   ): Promise<PlowApiError> {
-    // `detail` is the FastAPI convention. It is server-authored, but an
-    // authenticated response that repeats its bearer credential is not safe to
-    // surface. Drop the whole detail and use the status-specific fallback.
+    // `detail` is the FastAPI convention, and it is server-authored. On an
+    // AUTHENTICATED call it is dropped outright, whatever it says: a response
+    // that repeats its bearer credential must never reach the screen, and the
+    // rule covers any encoding of it — a prefix, a truncation, a fragment. A
+    // check for the whole token only catches the one encoding we thought of,
+    // and it let the first ten characters through. Nothing here inspects the
+    // value; the decision is made from whether the call carried a credential.
     let detail = "";
     try {
       const body = (await response.json()) as { detail?: unknown };
@@ -540,7 +544,7 @@ export class PlowApi {
     } catch {
       /* a non-JSON body tells us nothing worth showing */
     }
-    if (credential && detail.includes(credential)) detail = "";
+    if (credential) detail = "";
     if (response.status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", 401);
     if (response.status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", 403);
     if (response.status === 410) {

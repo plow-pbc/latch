@@ -471,6 +471,35 @@ describe("PlowApi", () => {
     expect(error.message).toBe("Not permitted.");
     expect(error.message).not.toContain(credential);
   });
+
+  /**
+   * Every encoding of the credential, and the plain sentence that carries
+   * none — all four answer with the status fallback, because an authenticated
+   * call drops the detail without reading it.
+   *
+   * The guard used to match the whole token, so a server echoing the first ten
+   * characters went straight to the screen. CLAUDE.md covers a repeat "in any
+   * encoding", and a prefix is an encoding: the only way to be right about
+   * every one of them is to inspect none of them.
+   */
+  it.each([
+    ["the whole credential", (c: string) => `Not permitted for Bearer ${c}`],
+    ["a ten-character prefix", (c: string) => `Key ${c.slice(0, 10)} is not permitted`],
+    ["a fragment", (c: string) => `token ...${c.slice(4, 14)}... refused`],
+    ["nothing secret at all", () => "Your plan does not include this."],
+  ])("drops an authenticated error's detail when it carries %s", async (_shape, body) => {
+    const credential = "plow_device_do_not_leak";
+    const { fetchImpl } = recordingFetch([
+      { status: 403, body: { detail: body(credential) } },
+    ]);
+
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .listApiKeys(credential)
+      .catch((caught) => caught as Error);
+
+    expect(error.message).toBe("Not permitted.");
+    expect(error.message).not.toContain(credential.slice(0, 10));
+  });
 });
 
 /**
