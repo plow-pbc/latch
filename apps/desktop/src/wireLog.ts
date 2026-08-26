@@ -10,10 +10,16 @@
  * It wraps the `FetchLike` the clients already take, so it adds nothing to
  * their code and can be unwired by deleting one argument at each construction.
  *
- * **The credential never reaches it.** The `Authorization` value is recorded as
- * its presence and nothing more, and it is scrubbed out of the URL and both
- * bodies before anything is written — this file is meant to be pasted into a
- * bug report, so it is the one place a leak would travel furthest.
+ * **It records no bodies.** Method, URL, status, elapsed ms, and a failure's
+ * own `detail` sentence — that is the whole of it. Riding the shared `PlowApi`
+ * means every authenticated chat and agent response passes through here, and
+ * those carry participants' names and phone numbers and session identities.
+ * This file is meant to be pasted into a bug report, which is the worst
+ * possible destination for someone else's phone number.
+ *
+ * **The credential never reaches it either.** The `Authorization` value is
+ * recorded as its presence and nothing more, and it is scrubbed out of the URL
+ * and out of any `detail` before anything is written.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -37,19 +43,13 @@ export function loggingFetch(home: string, inner: FetchLike = fetch): FetchLike 
       url: scrub(url, secret),
       // Presence, never the value.
       authorization: secret ? "bearer present" : "none",
-      requestBody: decodeBody(typeof init?.body === "string" ? init.body : null, secret),
     };
     try {
       const response = await inner(url, init);
-      // `clone()` so the client still gets an unread body.
-      const text = await response
-        .clone()
-        .text()
-        .catch(() => "");
       append(home, {
         ...entry,
         status: response.status,
-        responseBody: decodeBody(text, secret),
+        detail: await errorDetail(response, secret),
         elapsedMs: Date.now() - started,
       });
       return response;
@@ -87,14 +87,34 @@ function bearerOf(headers: HeadersInit | undefined): string {
   return value.replace(/^Bearer\s+/i, "").trim();
 }
 
-/** JSON where it parses, the raw text where it does not — scrubbed either way. */
-function decodeBody(raw: string | null, secret: string): unknown {
-  if (raw === null || raw === "") return null;
-  const cleaned = scrub(raw, secret);
+/**
+ * The server's own sentence about a failure, and nothing else from the body.
+ *
+ * This is the one thing worth keeping out of a response: every shape mismatch
+ * and server failure we chased today showed up in `detail`, and it is written
+ * by the API team for a human to read. A 404 uses a different envelope from
+ * every other error, so both are read.
+ *
+ * Successful bodies are never touched. That is where the chat records live —
+ * participants' names and phone numbers, session identities — and this file is
+ * meant to be pasted into a bug report.
+ */
+async function errorDetail(response: Response, secret: string): Promise<string | null> {
+  if (response.ok) return null;
   try {
-    return JSON.parse(cleaned);
+    // `clone()` so the client still gets an unread body.
+    const decoded: unknown = await response.clone().json();
+    if (!decoded || typeof decoded !== "object") return null;
+    const record = decoded as Record<string, unknown>;
+    if (typeof record.detail === "string") return scrub(record.detail, secret);
+    const wrapped = record.error;
+    if (wrapped && typeof wrapped === "object") {
+      const message = (wrapped as Record<string, unknown>).message;
+      if (typeof message === "string") return scrub(message, secret);
+    }
+    return null;
   } catch {
-    return cleaned;
+    return null;
   }
 }
 

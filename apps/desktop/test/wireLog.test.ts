@@ -51,6 +51,46 @@ describe("the wire log", () => {
     expect(fs.readFileSync(wireLogPath(home), "utf8")).not.toContain(CREDENTIAL);
   });
 
+  it("writes no request or response body, ever", async () => {
+    const home = tempHome();
+    // What `GET /v1/chats` actually returns: other people's names and numbers.
+    const chats = {
+      data: [
+        {
+          uid: "cht_1",
+          participants: [
+            { type: "agent", line: { provider_key: "+15550100" } },
+            { type: "member", display_name: "Ada Lovelace", provider_key: "+15550111" },
+          ],
+        },
+      ],
+    };
+
+    await loggingFetch(home, answering(200, chats))("https://api.plow.co/v1/chats", post());
+
+    const raw = fs.readFileSync(wireLogPath(home), "utf8");
+    // This file is meant to be pasted into a bug report. Someone else's phone
+    // number is the worst thing that could be in it.
+    expect(raw).not.toContain("Ada Lovelace");
+    expect(raw).not.toContain("+15550111");
+    expect(raw).not.toContain("cht_1");
+    expect(raw).not.toContain("chat_uid");
+    // And the request body is gone with it.
+    expect(raw).not.toContain("chat_uid");
+    expect(lines(home)[0]).toMatchObject({ method: "POST", status: 200, detail: null });
+  });
+
+  it("keeps a session id out of the file even on a success", async () => {
+    const home = tempHome();
+
+    await loggingFetch(
+      home,
+      answering(200, { agent_id: "agent_1", session_id: "session_secret_identity" }),
+    )("https://api.plow.co/v1/agents/cloud", post());
+
+    expect(fs.readFileSync(wireLogPath(home), "utf8")).not.toContain("session_secret_identity");
+  });
+
   it("scrubs a credential a server echoes back", async () => {
     const home = tempHome();
 
@@ -58,6 +98,7 @@ describe("the wire log", () => {
       home,
       answering(400, { detail: `token ${CREDENTIAL} is not valid` }),
     )("https://api.plow.co/v1/agents/cloud", post());
+
 
     const raw = fs.readFileSync(wireLogPath(home), "utf8");
     expect(raw).not.toContain(CREDENTIAL);
@@ -72,10 +113,10 @@ describe("the wire log", () => {
       answering(503, { detail: "no capacity in region" }),
     )("https://api.plow.co/v1/agents/cloud", post());
 
-    // The user is shown a sentence; this is where the original survives.
+    // The user is shown a friendly sentence; the server's own survives here.
     expect(lines(home)[0]).toMatchObject({
       status: 503,
-      responseBody: { detail: "no capacity in region" },
+      detail: "no capacity in region",
     });
   });
 
