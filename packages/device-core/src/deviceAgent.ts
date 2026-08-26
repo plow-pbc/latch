@@ -140,10 +140,13 @@ export class DeviceAgent {
      */
     ownerHome: string = home,
     /**
-     * How `tool` capabilities reach Plow's connector API. Null on a Mac that
-     * has not paired, and in every test that does not exercise connectors —
-     * the executor says so rather than throwing, so a misconfigured install
-     * produces an approval-dialog sentence instead of a stack trace.
+     * How `tool` capabilities reach Plow's connector API. `main.ts` always
+     * passes a real client, paired or not — pairing is a credential the
+     * client reads fresh on each call, not a null here — so null is only the
+     * default for a test that does not exercise connectors. The executor
+     * still checks it and says so rather than throwing, so a caller built
+     * without one produces an approval-dialog sentence instead of a stack
+     * trace.
      */
     private readonly connectors: ConnectorClient | null = null,
   ) {
