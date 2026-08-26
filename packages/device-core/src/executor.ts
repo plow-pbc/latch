@@ -88,7 +88,8 @@ export const SandboxProfile = {
     );
     // A run that may be killed for going silent gets nothing persistent to
     // write, because it can be shot mid-write and nobody rolls that back. The
-    // reads it loses with them are covered by the broad home grant above.
+    // reads it loses with them are covered by the broad home grant above,
+    // wherever those five resolve under home.
     const writable = [args.scratch, ...args.writePaths].concat(
       isReapable(args) ? [] : housekeeping,
     );
