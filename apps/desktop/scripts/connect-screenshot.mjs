@@ -40,12 +40,17 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 const CHAT = {
   uid: "chat_groceries",
   label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+  recipients: {
+    line: "+14155550142",
+    members: ["+14155550193", "+16285550112"],
+  },
 };
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
   chatUid: CHAT.uid,
   chatLabel: CHAT.label,
+  recipients: CHAT.recipients,
   provider: "anthropic",
   status: "running",
   failureReason: null,
@@ -56,6 +61,7 @@ const PROVISIONING_AGENT = {
   name: "Trip planner",
   chatUid: "chat_trip",
   chatLabel: "+1 (628) 555-0144, +1 (415) 555-0193",
+  recipients: { line: "+16285550144", members: ["+14155550193"] },
   provider: "anthropic",
   status: "provisioning",
   failureReason: null,
@@ -258,7 +264,11 @@ const SCREENS = [
     roster: ROSTER,
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, { uid: PROVISIONING_AGENT.chatUid, label: PROVISIONING_AGENT.chatLabel }],
+      cloudChats: [CHAT, {
+        uid: PROVISIONING_AGENT.chatUid,
+        label: PROVISIONING_AGENT.chatLabel,
+        recipients: PROVISIONING_AGENT.recipients,
+      }],
       cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
     },
     prepare: async (win) => {
@@ -327,7 +337,11 @@ const SCREENS = [
     roster: ROSTER,
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, { uid: PROVISIONING_AGENT.chatUid, label: PROVISIONING_AGENT.chatLabel }],
+      cloudChats: [CHAT, {
+        uid: PROVISIONING_AGENT.chatUid,
+        label: PROVISIONING_AGENT.chatLabel,
+        recipients: PROVISIONING_AGENT.recipients,
+      }],
       cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
     },
     prepare: async (win) => {
@@ -339,7 +353,11 @@ const SCREENS = [
     name: "cloud-picker",
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
+      cloudChats: [CHAT, {
+        uid: "chat_family",
+        label: "+1 (415) 555-0188 · Family group",
+        recipients: { line: "+14155550188", members: [] },
+      }],
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
@@ -357,7 +375,11 @@ const SCREENS = [
     name: "cloud-new-chat",
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
+      cloudChats: [CHAT, {
+        uid: "chat_family",
+        label: "+1 (415) 555-0188 · Family group",
+        recipients: { line: "+14155550188", members: [] },
+      }],
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
@@ -411,14 +433,19 @@ const SCREENS = [
     name: "cloud-chat-forbidden",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [ACTIVE_AGENT],
+      cloudAgents: [{ ...ACTIVE_AGENT, recipients: null }],
       cloudAgentsError: "Method Not Allowed",
       cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
       cloudChatsNeedReactivation: true,
-      cloudChats: [CHAT],
+      cloudChats: [{ ...CHAT, recipients: null }],
       cloudChatsLoaded: false,
     },
-    prepare: async () => {},
+    prepare: async (win) => {
+      const disabled = await win.webContents.executeJavaScript(
+        `document.querySelector('button[aria-label="Message Household helper"]')?.disabled === true`,
+      );
+      if (!disabled) throw new Error("Message remained enabled without structured recipients");
+    },
     expect: [
       "Chats could not be loaded",
       "This Mac cannot list chats yet. Try re-activating it, then try again.",
@@ -433,10 +460,10 @@ const SCREENS = [
     name: "cloud-chat-fallback-picker",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [ACTIVE_AGENT],
+      cloudAgents: [{ ...ACTIVE_AGENT, recipients: null }],
       cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
       cloudChatsNeedReactivation: true,
-      cloudChats: [CHAT],
+      cloudChats: [{ ...CHAT, recipients: null }],
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
@@ -483,7 +510,7 @@ const SCREENS = [
     expect: [
       "Approvals",
       "What happens when an agent asks to do something on this Mac.",
-      "unless the agent has its own AI Reviewer switched on, when this mode still applies",
+      "AI Reviewer and Deny still apply to every request",
       "The reviewer sees which agent is asking, what it's asking to do, the exact bounds it would get, and the purpose you wrote for it.",
       "It never sees your files, your history on this Mac, or anything the agent hasn't asked for.",
       "AI Reviewer decides",

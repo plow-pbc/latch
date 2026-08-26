@@ -1,6 +1,8 @@
+import type { ChatRecipients } from "./onboarding.js";
+
 interface MessageableCloudAgent {
   agentId: string;
-  chatLabel: string;
+  recipients: ChatRecipients | null;
   status: string;
 }
 
@@ -12,8 +14,8 @@ export function cloudAgentMessagesUrl(
   const agent = agents.find((candidate) => candidate.agentId === agentId);
   if (agent?.status !== "running") return null;
 
-  const recipients = [...agent.chatLabel.matchAll(/\+\d[\d ().-]*\d/g)]
-    .map(([phone]) => `+${phone.slice(1).replace(/\D/g, "")}`)
-    .filter((phone, index, all) => /^\+\d{7,15}$/.test(phone) && all.indexOf(phone) === index);
+  const recipients = [agent.recipients?.line ?? "", ...(agent.recipients?.members ?? [])]
+    .map((recipient) => recipient.trim())
+    .filter((recipient, index, all) => Boolean(recipient) && all.indexOf(recipient) === index);
   return recipients.length ? `sms:${recipients.join(",")}` : null;
 }

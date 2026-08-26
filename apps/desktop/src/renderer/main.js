@@ -445,9 +445,7 @@ async function renderRules() {
     modeNote.textContent =
       mode === "adversarial" && !hasKey
         ? `The AI Reviewer has no credential${remedy} ` +
-          "Until then it denies anything it is asked to decide — requests already " +
-          "covered by an always-allow rule keep running, unless the agent has its own " +
-          "AI Reviewer switched on."
+          "Until then it denies every request."
         : "";
     // The suggestion is only ever shown in Ask mode, and only by a reviewer
     // that can run. Dead rather than hidden: a checkbox that vanished would
@@ -484,12 +482,8 @@ async function renderRules() {
         "Any request a rule doesn't already cover opens an approval window. " +
         `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
     } else if (mode === "approve") {
-      // "Every request" was true until a cloud agent could carry its own
-      // reviewer. Saying it still would describe the one case the switch exists
-      // to create as though the switch did nothing.
       modeHintLine.textContent =
-        "Every request is allowed without asking you and without review — except from an " +
-        "agent with its own AI Reviewer switched on, which is reviewed every time.";
+        "Every request is allowed without asking you and without review.";
     } else if (mode === "deny") {
       modeHintLine.textContent =
         "Any request a rule doesn't already cover is refused without asking you.";
@@ -527,8 +521,8 @@ async function renderRules() {
     group(
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip the mode below — unless the agent has its own AI Reviewer " +
-        "switched on, when this mode still applies. Manage those rules below. The reviewer sees which " +
+        "by an always-allow rule skip Ask and Approve; AI Reviewer and Deny still apply to every " +
+        "request. Manage those rules below. The reviewer sees which " +
         "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
         "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
         "agent hasn't asked for.",
@@ -966,6 +960,7 @@ function openCloudPicker(trigger, state, redraw) {
       name: requestedName || "Cloud agent",
       chatUid,
       chatLabel: chat?.label || chatUid,
+      recipients: chat?.recipients ?? null,
       provider: "",
       status: "provisioning",
       failureReason: null,
@@ -1280,7 +1275,8 @@ function cloudEntityRow(row, agent, redraw) {
     ]),
     rosterActions(row ?? { name }, "cloud", redraw, {
       messageAgentId: agent?.agentId ?? row?.agentId,
-      messageDisabled: agent?.status !== "running",
+      messageDisabled: agent?.status !== "running" || !agent?.recipients ||
+        (!agent.recipients.line && !agent.recipients.members?.length),
       disabled: !row,
     }),
   ]);

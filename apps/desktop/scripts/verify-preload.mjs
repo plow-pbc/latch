@@ -78,12 +78,17 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpos
 const cloudChat = {
   uid: "chat_probe",
   label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+  recipients: {
+    line: "+14155550142",
+    members: ["+14155550193", "+16285550112"],
+  },
 };
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
   chatUid: cloudChat.uid,
   chatLabel: cloudChat.label,
+  recipients: cloudChat.recipients,
   provider: "anthropic",
   status: "running",
   failureReason: null,
@@ -604,7 +609,11 @@ app.whenReady().then(async () => {
   cloudProbe = {
     ...cloudProbe,
     cloudAgents: [],
-    cloudChats: [cloudChat, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
+    cloudChats: [cloudChat, {
+      uid: "chat_family",
+      label: "+1 (415) 555-0188 · Family group",
+      recipients: { line: "+14155550188", members: [] },
+    }],
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
@@ -808,8 +817,11 @@ app.whenReady().then(async () => {
         "You have no business with anything else on this computer — no files, no other sites.",
       ) ?? false,
       labelled: pane.innerText.includes("What are agents for?"),
-      perAgentCopyDefersToMode: description.includes("when this mode still applies"),
-      noUniversalReviewClaim: !description.includes("reviewed every time"),
+      describesGlobalPrecedence: description.includes(
+        "AI Reviewer and Deny still apply to every request",
+      ),
+      noPerAgentSwitch: !description.includes("own AI Reviewer") &&
+        !description.includes("per-agent"),
       // The purpose is the ERRAND, and an errand widens as readily as it
       // narrows: an owner who writes "Manage my SSH keys" has just made those
       // keys the job. This probe used to pin the opposite claim — that the
@@ -1470,8 +1482,8 @@ app.whenReady().then(async () => {
     approvalsReviewer.showsStoredPurpose &&
     approvalsReviewer.purposeExampleHasBoundary &&
     approvalsReviewer.labelled &&
-    approvalsReviewer.perAgentCopyDefersToMode &&
-    approvalsReviewer.noUniversalReviewClaim &&
+    approvalsReviewer.describesGlobalPrecedence &&
+    approvalsReviewer.noPerAgentSwitch &&
     approvalsReviewer.saysItCanWiden &&
     approvalsReviewer.noOnlyNarrowsClaim &&
     approvalsReviewer.saysItMayApprove &&

@@ -5,7 +5,11 @@ import { cloudAgentMessagesUrl } from "../src/cloudAgentMessages.js";
 describe("cloudAgentMessagesUrl", () => {
   const running = {
     agentId: "cag_ready",
-    chatLabel: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+    chatLabel: "chat_groceries",
+    recipients: {
+      line: "+14155550142",
+      members: ["+14155550193", "+16285550112"],
+    },
     status: "running",
   };
 
@@ -17,5 +21,13 @@ describe("cloudAgentMessagesUrl", () => {
 
   it("does not offer a Messages route before the agent is running", () => {
     expect(cloudAgentMessagesUrl([{ ...running, status: "provisioning" }], running.agentId)).toBeNull();
+  });
+
+  it("does not infer recipients from a display label", () => {
+    expect(cloudAgentMessagesUrl([{
+      ...running,
+      chatLabel: "+1 (415) 555-0142 · Household",
+      recipients: null,
+    }], running.agentId)).toBeNull();
   });
 });

@@ -124,13 +124,7 @@ export async function decideIntent(
 
   if (mode === "deny") return { decision: "deny", source: "policy" };
 
-  /**
-   * Is the reviewer the decider for this intent?
-   *
-   * One way in: the global mode says so. There was a per-agent switch as well,
-   * cut before it shipped — permissions are read-only this pass, so nothing
-   * can ask for a review that the mode has not already asked for.
-   */
+  /** Is the reviewer the decider for this intent? */
   // Approve: the whole point of the mode. Above the reviewer, because by here
   // `deny` has already returned and `ask` still wants the human.
   if (mode === "approve") {
@@ -142,9 +136,8 @@ export async function decideIntent(
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
   // the request and the final decision.
-  // A review that decides has no human behind it — adversarial mode, or an
-  // agent whose own switch forced one under Approve — and the reviewer is told
-  // so rather than left to infer it from the owner's freeform purpose text. Ask
+  // A review that decides has no human behind it, and the reviewer is told so
+  // rather than left to infer it from the owner's freeform purpose text. Ask
   // mode is the other way round: the dialog is coming either way, so a reviewer
   // that wants to defer is saying something the human will actually see.
   const humanAvailable = !reviewDecides;
