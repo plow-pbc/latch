@@ -122,7 +122,7 @@ async function render() {
     // the access-request card above already treats stated goals.
     el("div", { class: "goal", text: v.request }),
     v.goal ? el("div", { class: "lbl", text: "Agent's stated goal (unverified)" }) : null,
-    v.goal ? el("div", { class: "faint", text: v.goal }) : null,
+    v.goal ? el("div", { class: "faint stated-goal", text: v.goal }) : null,
     el("div", { class: "fine" }, [
       el("div", { class: "lbl", text: "This will be allowed to (enforced)" }),
       capchips,

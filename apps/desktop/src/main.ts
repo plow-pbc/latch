@@ -19,7 +19,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Intent } from "@domo/protocol";
+import { capabilityDisplay, Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
@@ -394,10 +394,26 @@ ipcMain.handle("audit:clear", async () => {
 // Approvals still awaiting an answer, so the UI can show what is outstanding
 // rather than relying on a window that may have been closed.
 ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
-ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
+/**
+ * Rules with their capabilities already rendered, the way `approvalStore` hands
+ * the approved-capabilities list over.
+ *
+ * The renderer used to hold its own `capText`, which drifted from
+ * `capabilityDisplay` and dropped `target` — so per-target rules (and, once a
+ * search keys on its query, per-query rules) all rendered identically and the
+ * owner could not tell which one the Revoke button belonged to.
+ */
+function renderedRules() {
+  return (device?.policy.allRules() ?? []).map((r) => ({
+    ...r,
+    capabilityText: (r.capabilities ?? []).map(capabilityDisplay),
+  }));
+}
+
+ipcMain.handle("rules:list", async () => renderedRules());
 ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
-  return device?.policy.allRules() ?? [];
+  return renderedRules();
 });
 ipcMain.handle("ui:getTab", async () => {
   const tab = loadSettings(home).selectedTab;

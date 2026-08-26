@@ -13,6 +13,7 @@
  * the newer `effort` control, and the verdict comes back as structured JSON.
  */
 import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
+import { echoesSecret, SECRET_HEAD } from "@domo/device-core";
 import { ApiBaseUrl, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 
 /**
@@ -266,20 +267,11 @@ function buildPrompt(intent: Intent, humanAvailable: boolean): string {
  * would only have named the next encoding.
  *
  * `headLength` opts into matching a leading fragment as well as the whole
- * token, because a partial echo is still an echo — ten characters is what V8
- * quotes when it reports offending input, and a Plow credential is opaque from
- * its first character, so ten of them already carry the secret.
+ * token. Both the predicate and that constant now live in `@domo/device-core`
+ * beside the connector, which screens decoded responses with the same rule —
+ * two copies drifted once already, and the copy at the higher-value sink was
+ * the weaker one.
  */
-const SECRET_HEAD = 10;
-
-function echoesSecret(text: string, secret: string, headLength = 0): boolean {
-  const trimmed = secret.trim();
-  if (trimmed.length < 10) return false;
-  if (text.includes(trimmed)) return true;
-  return (
-    headLength > 0 && trimmed.length > headLength && text.includes(trimmed.slice(0, headLength))
-  );
-}
 
 /**
  * Accept an answer only if it is EXACTLY the shape `verdictSchema` describes.

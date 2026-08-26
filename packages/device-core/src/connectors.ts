@@ -84,6 +84,35 @@ export function slackAction(tool: string): SlackAction | null {
 }
 
 /**
+ * How much of a leading fragment still counts as an echo.
+ *
+ * A partial echo is still an echo: ten characters is what V8 quotes when it
+ * reports offending input, and a Plow credential is opaque from its first
+ * character, so ten of them already carry the secret.
+ */
+export const SECRET_HEAD = 10;
+
+/**
+ * Whether `text` discloses `secret` — whole, or as a leading fragment when
+ * `headLength` is given.
+ *
+ * One predicate, two sinks: the desktop's adversarial reviewer screens model
+ * output with it, and the connector screens decoded responses with it. They
+ * were separate implementations and drifted — the connector's was whole-token
+ * only, the weaker rule at the higher-value sink, since that one hands
+ * arbitrary JSON straight to a hosted agent. Short secrets are ignored because
+ * a handful of characters matches ordinary prose.
+ */
+export function echoesSecret(text: string, secret: string, headLength = 0): boolean {
+  const trimmed = secret.trim();
+  if (trimmed.length < 10) return false;
+  if (text.includes(trimmed)) return true;
+  return (
+    headLength > 0 && trimmed.length > headLength && text.includes(trimmed.slice(0, headLength))
+  );
+}
+
+/**
  * A connector call failed. Every message is safe to display and to log because
  * every message is built here — see the file header.
  */
@@ -148,10 +177,17 @@ export class ConnectorError extends Error {
  * split-across-fields occurrence is caught the same way a plain one is.
  */
 function carriesCredential(value: JSONValue, credential: string): boolean {
-  if (typeof value === "string") return value.includes(credential);
+  if (typeof value === "string") return echoesSecret(value, credential, SECRET_HEAD);
   if (Array.isArray(value)) return value.some((v) => carriesCredential(v, credential));
   if (value !== null && typeof value === "object") {
-    return Object.values(value).some((v) => carriesCredential(v as JSONValue, credential));
+    // KEYS as well as values. A reflected-request or debug envelope maps the
+    // token TO metadata — `{"tokens":{"<credential>":{"remaining":5}}}` — so a
+    // value-only walk skips half the string positions in the decoded body, and
+    // this check's whole premise is that it is complete.
+    return Object.entries(value).some(
+      ([k, v]) =>
+        echoesSecret(k, credential, SECRET_HEAD) || carriesCredential(v as JSONValue, credential),
+    );
   }
   return false;
 }

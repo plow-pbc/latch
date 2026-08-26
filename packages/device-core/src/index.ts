@@ -20,5 +20,12 @@ export * from "./executor.js";
 export * from "./fileOps.js";
 export * from "./identity.js";
 export * from "./policyEngine.js";
-export { makeConnectorClient, ConnectorError, slackAction, SLACK_WRITE_ACTIONS } from "./connectors.js";
+export {
+  makeConnectorClient,
+  ConnectorError,
+  slackAction,
+  SLACK_WRITE_ACTIONS,
+  echoesSecret,
+  SECRET_HEAD,
+} from "./connectors.js";
 export type { ConnectorClient, FetchLike, SlackAction } from "./connectors.js";

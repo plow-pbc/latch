@@ -63,18 +63,15 @@ const excerpt = (text: string): string =>
   text.length <= REQUEST_TEXT_MAX ? text : `${text.slice(0, REQUEST_TEXT_MAX)}…`;
 
 /**
- * A search query rides the request line verbatim (see `plow_slack_search`
- * below) — deliberately, since for a search the query IS the read scope and
- * the reviewer must see it, unlike `text`'s `excerpt()`. This cap is not that
- * kind of summarizing truncation: it exists only to bound a pathological
- * input, so it is generous and it says so when it fires, rather than leaving
- * an ellipsis that reads like it could be part of the query itself.
+ * The longest search query this Mac will act on.
+ *
+ * The query reaches the request line, a capability chip, the reviewer's
+ * prompt, `audit.ndjson` and `rules.json`, and it is the selector that keys a
+ * search's always-allow rule. So it is *rejected* past this length rather than
+ * truncated: a truncated selector would let two long queries sharing a prefix
+ * produce one rule key. Generous, because a real query is nowhere near it.
  */
 const QUERY_REQUEST_MAX = 2_000;
-const boundedQuery = (query: string): string =>
-  query.length <= QUERY_REQUEST_MAX
-    ? query
-    : `${query.slice(0, QUERY_REQUEST_MAX)} […truncated, ${query.length} chars total]`;
 
 /** How much a list or read asked for, when it named a number. */
 function upTo(args: JSONValue): string {
@@ -254,7 +251,19 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
       // Verbatim: for a search the query IS the read scope — the exact
       // analogue of `paths` on an `fs.read` — and it is in no other channel.
       const query = required(args, "query");
-      return runSlack(ctx, progress, `search Slack: ${boundedQuery(query)}`, "messages.search", args, [
+      // Reject, never truncate. The query is now the selector that
+      // distinguishes one search rule from another, so a truncated one would
+      // let two long queries sharing a prefix collapse into a single
+      // always-allow — the exact collision the separate field exists to
+      // prevent. Unbounded, it would also reach a capability chip, the
+      // reviewer's prompt, audit.ndjson and rules.json, none of which this
+      // file leaves unbounded elsewhere.
+      if (query.length > QUERY_REQUEST_MAX) {
+        throw new ToolError(
+          `query is ${query.length} characters, over the ${QUERY_REQUEST_MAX}-character limit`,
+        );
+      }
+      return runSlack(ctx, progress, `search Slack: ${query}`, "messages.search", args, [
         "account",
         "query",
         "limit",

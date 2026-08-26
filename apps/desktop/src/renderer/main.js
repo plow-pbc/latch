@@ -387,7 +387,7 @@ async function renderRules() {
     ? rules.map((r) => {
         const remove = el("button", { class: "btn danger", text: "Revoke Rule" });
         remove.addEventListener("click", async () => { await window.domo.rulesRemove(r.ruleKey); renderRules(); });
-        const caps = (r.capabilities || []).map((c) => el("span", { class: "cap", text: capText(c) }));
+        const caps = (r.capabilityText || []).map((text) => el("span", { class: "cap", text }));
         return el("div", { class: "item" }, [
           el("div", { class: "row" }, [el("h4", { text: r.agentDisplay || r.agentId }), el("div", { class: "spacer" }), remove]),
           el("div", { class: "capchips" }, caps),
@@ -829,25 +829,6 @@ function relayStatusText(relay) {
   return relay.connected ? "Connected." : "Not connected — retrying.";
 }
 
-function capText(c) {
-  switch (c.kind) {
-    case "fs.read": return "read: " + (c.paths || []).join(", ");
-    case "fs.write": return "write: " + (c.paths || []).join(", ");
-    case "process.exec": return "run " + (c.argv || []).join(" ");
-    case "network": return c.allowed ? "network: allowed" : "network: denied";
-    case "tool": return "tool: " + (c.tool || "?");
-    case "browser": return "browse: " + (c.origins || []).join(", ");
-    case "credential":
-      // A rule saved before the metadata capability was removed can still be
-      // sitting in rules.json. Nothing requests that shape any more, so it
-      // grants nothing — but the owner should read back what they actually
-      // approved, not see it relabelled as a fill grant they never gave.
-      return c.access === "metadata"
-        ? "credentials: list names/labels (no longer requested)"
-        : "credentials: fill " + (c.items || []).join(", ");
-    default: return c.kind;
-  }
-}
 
 // ---- Software updates (banner + settings section) ----
 

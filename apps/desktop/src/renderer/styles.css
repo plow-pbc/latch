@@ -392,6 +392,14 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve .who { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .approve .who .name { font-size: 16px; font-weight: 600; }
 .approve .goal { color: var(--muted); margin: 6px 0 14px; }
+/* The agent writes this one, and nothing caps its length before it reaches the
+   card. `.approve` is a 100vh flex column and `body` clips rather than scrolls,
+   so an unbounded block here shrinks `.fine` to its floor and then pushes the
+   Deny / Always Allow / Allow Once row out of the window — leaving the armed
+   Return key, which activates Allow Once, as the only reachable control. Scroll
+   it inside its own bound instead. Same reasoning as `.fine`'s floor, applied
+   to the sibling that floor cannot constrain. */
+.approve .stated-goal { max-height: 4.5em; overflow: auto; }
 .approve .fine {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px; margin-bottom: 14px;

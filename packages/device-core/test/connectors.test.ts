@@ -201,16 +201,33 @@ describe("ConnectorClient", () => {
     expect(caught?.message).toContain("messages.list");
   });
 
-  it("returns a 200 whose body merely resembles the credential's neighbourhood", async () => {
+  // A LEADING fragment counts as an echo — ten characters of an opaque
+  // credential already carry it, and a truncated echo is the common real shape
+  // (a debug field, an upstream error quoting the header). So the passing case
+  // has to be a body that shares no such prefix, not merely a shorter one.
+  it("flags a 200 that echoes only the credential's leading fragment", async () => {
+    const credential = "cred-super-secret-tail";
     const client = makeConnectorClient({
       apiBaseUrl: "https://api.example.com",
-      credential: () => "cred-super-secret",
+      credential: () => credential,
       fetchImpl: async () =>
-        new Response(JSON.stringify({ messages: [{ text: "cred-super" }] }), { status: 200 }),
+        new Response(JSON.stringify({ note: `saw ${credential.slice(0, 10)}…` }), { status: 200 }),
     });
     await expect(
       client.call("messages.list", { account: "T1", channel_id: "C1" }),
-    ).resolves.toEqual({ messages: [{ text: "cred-super" }] });
+    ).rejects.toBeInstanceOf(ConnectorError);
+  });
+
+  it("returns a 200 whose body shares no fragment of the credential", async () => {
+    const client = makeConnectorClient({
+      apiBaseUrl: "https://api.example.com",
+      credential: () => "cred-super-secret-tail",
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ messages: [{ text: "quarterly numbers" }] }), { status: 200 }),
+    });
+    await expect(
+      client.call("messages.list", { account: "T1", channel_id: "C1" }),
+    ).resolves.toEqual({ messages: [{ text: "quarterly numbers" }] });
   });
 });
 
