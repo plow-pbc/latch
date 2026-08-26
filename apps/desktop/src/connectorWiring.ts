@@ -7,22 +7,29 @@
  * display and no device.
  */
 import { makeConnectorClient, type ConnectorClient, type FetchLike } from "@domo/device-core";
+import { loadSettings } from "./settings.js";
 
 /**
  * Build the connector client `DeviceAgent` executes `tool` capabilities
  * through.
  *
- * `credential` is a callback rather than a captured string: `main.ts:806`
- * reads `hasCredential` the same way, and for the same reason — re-pairing
- * has to take effect on the next call, not the next launch. A captured
- * string would keep sending a stale credential until the app quit and
+ * The credential is read out of `home` on every call rather than captured
+ * here: `main.ts` reads `hasCredential` the same way, and for the same reason
+ * — re-pairing has to take effect on the next call, not the next launch. A
+ * captured string would keep sending a stale credential until the app quit and
  * relaunched, which would look like a server problem rather than a
- * not-yet-re-paired Mac.
+ * not-yet-re-paired Mac. That read lives HERE rather than in a callback the
+ * caller supplies, so the thing under test is the wiring the app ships;
+ * `loadSettings` is pure `node:fs`, so it pulls no Electron into the suite.
  */
 export function buildConnectorClient(opts: {
   apiBaseUrl: string;
-  credential: () => string;
+  home: string;
   fetchImpl?: FetchLike;
 }): ConnectorClient {
-  return makeConnectorClient(opts);
+  return makeConnectorClient({
+    apiBaseUrl: opts.apiBaseUrl,
+    credential: () => loadSettings(opts.home).relayCredential,
+    fetchImpl: opts.fetchImpl,
+  });
 }
