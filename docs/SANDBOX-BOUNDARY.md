@@ -39,12 +39,17 @@ exactly the approved capabilities**".
   The comment there gives the reason: *"Broad READ of the user's home so tools installed under it and
   their configs/libraries resolve."*
 
-- **`:77–86`** — five directories under home are made **writable** on every invocation, again
-  regardless of what was declared:
+- **`:77–86`** — five directories under home are made **writable**, regardless of what was
+  declared:
 
   ```
   const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]
   ```
+
+  With one exception, and it is the only place a declaration narrows this profile rather than
+  widening it: a **reapable** run — one that declared no write paths and no network, and so may be
+  killed for going silent (`REAP_AFTER_MS`) — does not get them. A run that can be shot mid-write
+  must have nowhere persistent to write; its scratch, which dies with it, stays writable.
 
 - **`:87–89`** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.

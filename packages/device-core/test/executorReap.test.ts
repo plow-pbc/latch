@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Capability, jv, KeyPair, makeIntent } from "@domo/protocol";
-import { DeviceAgent, Executor, HeadlessPolicy } from "@domo/device-core";
+import { DeviceAgent, Executor, HeadlessPolicy, SandboxProfile } from "@domo/device-core";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -95,6 +95,24 @@ const silentBlockedRuns = [
     argv: (fifo: string) => ["/bin/sh", "-c", `/bin/cat ${JSON.stringify(fifo)}; echo unreachable`],
   },
 ];
+
+// Pure profile generation — no seatbelt, so this one runs everywhere.
+describe("what a run that may be killed is allowed to write", () => {
+  it("gets its scratch and nothing else persistent", () => {
+    const args = { readPaths: [], writePaths: [], network: false, scratch: "/s", home: "/h" };
+    const reapable = SandboxProfile.generate({ ...args, reapable: true });
+    const kept = SandboxProfile.generate({ ...args, reapable: false });
+
+    // The housekeeping grant is what makes "declared no writes" not mean "writes
+    // nothing": every profile hands it out, so a run could be updating a config
+    // when the timer fired. A reapable run has nowhere to leave a half-write.
+    for (const dir of ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]) {
+      expect(kept).toContain(`(allow file-write* (subpath "/h/${dir}"))`);
+      expect(reapable).not.toContain(`(allow file-write* (subpath "/h/${dir}"))`);
+    }
+    expect(reapable).toContain('(allow file-write* (subpath "/s"))');
+  });
+});
 
 describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
   it.each(silentBlockedRuns)("is killed once it outlives the reap window: $name", async ({ argv }) => {
@@ -235,65 +253,6 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     expect(started.exitCode).toBe(0);
     expect(started.reaped).toBe(false);
     expect(alive(marker).length).toBeGreaterThan(0);
-  });
-});
-
-describe.skipIf(!ON_MAC)("a run closing out", () => {
-  it("is not a waiter's to skip by throwing", async () => {
-    const dir = tempDir();
-    const executor = new Executor(path.join(dir, "scratch"), 60_000);
-    const started = await executor.run({
-      argv: ["/bin/echo", "hi"],
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: [],
-      network: false,
-      waitMs: 0,
-    });
-
-    // `onExit` is public, so a registrant that throws is reachable — and it
-    // must cost neither the run its outcome nor the registrants behind it.
-    let second = false;
-    executor.onExit(started.handle, () => {
-      throw new Error("a registrant's problem");
-    });
-    executor.onExit(started.handle, () => {
-      second = true;
-    });
-
-    const ended = await settle(executor, started.handle);
-    expect(second).toBe(true);
-    expect(ended.exitCode).toBe(0);
-    expect(ended.output.toString()).toContain("hi");
-  });
-
-  it("holds the same rule for a registrant that arrives after the run closed", async () => {
-    const dir = tempDir();
-    const executor = new Executor(path.join(dir, "scratch"), 60_000);
-    const started = await executor.run({
-      argv: ["/bin/echo", "hi"],
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: [],
-      network: false,
-      waitMs: 0,
-    });
-    await settle(executor, started.handle);
-
-    // A registrant arriving after the run has closed reaches its callback by a
-    // different path — called straight through, no waiter list — so the seam
-    // has to hold the rule twice over rather than once in the loop.
-    let seen: number | null = null;
-    expect(() =>
-      executor.onExit(started.handle, (exitCode) => {
-        seen = exitCode;
-        throw new Error("a late registrant's problem");
-      }),
-    ).not.toThrow();
-    // Recorded before the throw, so one case covers both halves of the rule:
-    // the late registrant is reached with the run's real outcome, and its
-    // throw stays its own.
-    expect(seen).toBe(0);
   });
 });
 

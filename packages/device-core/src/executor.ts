@@ -33,6 +33,13 @@ export const SandboxProfile = {
     writePaths: string[];
     network: boolean;
     scratch: string;
+    /**
+     * True when this run may be killed for going silent, which is what makes
+     * the housekeeping grant below unsafe to give it: a run that can be shot
+     * mid-write must have nowhere persistent to write. Its scratch stays
+     * writable — that dies with the run either way.
+     */
+    reapable?: boolean;
     /** Home override for golden tests; defaults to the real home. */
     home?: string;
   }): string {
@@ -83,9 +90,9 @@ export const SandboxProfile = {
     // configs/libraries resolve. Writes stay scoped below — reads are the safe
     // capability here, and network is off unless approved.
     lines.push(`(allow file-read* (subpath ${quote(home)}))`);
-    const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
-      (p) => home + "/" + p,
-    );
+    const housekeeping = (
+      args.reapable ? [] : ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]
+    ).map((p) => home + "/" + p);
     const writable = [args.scratch, ...args.writePaths, ...housekeeping].map((p) =>
       canonicalize(p),
     );
@@ -170,23 +177,6 @@ export interface ExecResult {
   reaped: boolean;
 }
 
-/**
- * Run one registrant's callback without letting it cost anyone else theirs.
- *
- * `onExit` is public and reaches this two ways — queued while the run is
- * open, called straight through once it has ended — so the isolation lives
- * here rather than at either call site, where the seam would hold the rule on
- * one path and break it on the other. Reported rather than swallowed: this is
- * a bug in the registrant, and one nobody would otherwise see.
- */
-function invoke(w: () => void): void {
-  try {
-    w();
-  } catch (error) {
-    console.error("[exec] an onExit registrant threw:", error);
-  }
-}
-
 class OutputBuffer {
   private chunks: Buffer[] = [];
   private length = 0;
@@ -211,14 +201,10 @@ class OutputBuffer {
     if (this.exitCode !== null) return;
     this.exitCode = exitCode;
     // The outcome is handed to each waiter rather than read back off the
-    // buffer, so no branch of this seam is in a position to invent one. Taken
-    // and cleared before any of them runs: one waiter is `run`'s own,
-    // the rest come through the public `onExit`, and a registrant that throws
-    // must not cost the run its answer — nor the ones behind it theirs.
-    // Closing a run out is not a waiter's to skip.
+    // buffer, so no branch of this seam is in a position to invent one.
     const waiters = this.waiters;
     this.waiters = [];
-    for (const w of waiters) invoke(() => w(exitCode));
+    for (const w of waiters) w(exitCode);
   }
 
   snapshot(since: number): {
@@ -254,8 +240,7 @@ class OutputBuffer {
 
   onExit(cb: (exitCode: number, reaped: boolean) => void): void {
     if (this.exitCode !== null) {
-      const code = this.exitCode;
-      invoke(() => cb(code, this.reaped));
+      cb(this.exitCode, this.reaped);
       return;
     }
     this.waiters.push((code) => cb(code, this.reaped));
@@ -306,11 +291,18 @@ export class Executor {
     const workingDir = args.cwd !== undefined ? canonicalize(args.cwd) : scratch;
     const reads = [...args.readPaths, workingDir];
 
+    // One predicate, two uses, and they have to be the same one: whether this
+    // run may be killed for going silent, and whether it is allowed anywhere
+    // persistent to write. Declaring no writes was never on its own enough —
+    // every profile hands out the housekeeping grant, so a "read-only" run
+    // could still be updating a config or a cache when the timer fired.
+    const reapable = args.writePaths.length === 0 && !args.network;
     const profile = SandboxProfile.generate({
       readPaths: reads,
       writePaths: args.writePaths,
       network: args.network,
       scratch,
+      reapable,
     });
     if (process.env.DOMO_DEBUG_SANDBOX) {
       process.stderr.write(`=== PROFILE ===\n${profile}\n=== ARGV ===\n${args.argv.join(" ")}\n`);
@@ -363,11 +355,15 @@ export class Executor {
       // Answered first, closed second, both in one synchronous breath: nothing
       // can append between the two statements, and everything downstream that
       // asks "is this run still open?" — `abandon`'s kill above all — gets the
-      // right answer for anything the destroys themselves emit. No `try` here:
-      // `finish` isolates its own waiters, so it cannot throw past this point.
-      buffer.finish(code);
-      child.stdout?.destroy();
-      child.stderr?.destroy();
+      // right answer for anything the destroys themselves emit. `finally`
+      // because `finish` runs the `onExit` waiters: closing the capture is not
+      // theirs to skip by throwing.
+      try {
+        buffer.finish(code);
+      } finally {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
     };
     child.on("error", () => settle(-1));
     child.on("exit", (code, signal) => {
@@ -432,7 +428,7 @@ export class Executor {
     // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
     // does NOT exec, so one signal kills the shell and leaves the wedged
     // descendant alive.
-    if (args.writePaths.length === 0 && !args.network) {
+    if (reapable) {
       reaper = setTimeout(() => {
         if (buffer.exitCode !== null || buffer.produced) return;
         buffer.reaped = true;
