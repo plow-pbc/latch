@@ -350,6 +350,22 @@ export class Executor {
       });
     });
 
+    // Ending a run early ends its PROCESS too. Both paths that do it — the
+    // reaper, and a capture that broke — answer the caller and disarm the
+    // reaper as they go, so a run left alive on either would be alive,
+    // unkillable and untracked: exactly what this whole change is against.
+    const abandon = (code: number) => {
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // Already gone, or a group that no longer exists. Settling is what
+          // the caller is owed either way.
+        }
+      }
+      settle(code);
+    };
+
     // What is left for the reaper is the one case `exit` cannot answer: a
     // command that never ends at all. SIGKILL rather than a polite SIGTERM —
     // it is wedged in a kernel call with nothing to clean up, and a handler
@@ -361,15 +377,7 @@ export class Executor {
     reaper = setTimeout(() => {
       if (buffer.exitCode !== null || buffer.produced) return;
       buffer.reaped = true;
-      if (child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          // Already gone, or a group that no longer exists. Settling is what
-          // the caller is owed either way.
-        }
-      }
-      settle(-1);
+      abandon(-1);
     }, this.reapAfterMs);
     reaper.unref?.();
 
@@ -381,9 +389,13 @@ export class Executor {
       // A pipe error ENDS the run rather than being swallowed: the stream is
       // auto-destroyed either way, so capture has stopped, and reporting the
       // command's own `exit 0` over a silently truncated answer is the worse
-      // of the two. After settling this is a no-op — `settle` is idempotent —
-      // which is what makes one handler right for both.
-      stream?.on("error", () => settle(-1));
+      // of the two. It goes through `abandon` because answering the caller
+      // disarms the reaper, and a wedged command that outlived its own
+      // capture is precisely what must not survive that.
+      //
+      // Deliberately untested: reaching it needs a seam for injecting a
+      // stream error, and this is not worth an injectable spawn.
+      stream?.on("error", () => abandon(-1));
     }
 
     await buffer.waitForExit(Math.max(args.waitMs, 0));
