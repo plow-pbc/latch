@@ -75,8 +75,35 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
-// Connect a client: the same shape `ConnectClient.state()` returns, with no
-// credential minted — the screen this probe renders is the OAuth one.
+const cloudChat = { uid: "chat_probe", label: "+1 (415) 555-0142 · Alex, Sam" };
+const cloudAgent = {
+  agentId: "cag_probe",
+  name: "Household helper",
+  chatUid: cloudChat.uid,
+  chatLabel: cloudChat.label,
+  provider: "anthropic",
+  status: "running",
+  failureReason: null,
+  createdAt: "2026-08-24T18:00:00.000Z",
+};
+let cloudProbe = {
+  cloudAgents: [cloudAgent],
+  cloudAgentsError: null,
+  cloudChatsError: null,
+  cloudActionError: null,
+  cloudChats: [cloudChat],
+  cloudChatsLoaded: true,
+  cloudSendTo: "+1 (415) 555-0199",
+  cloudAgentSettings: {
+    cag_probe: { relay: true, inference: false, adversarialReview: false },
+  },
+};
+const cloudCalls = { create: [], delete: [], apply: [] };
+let releaseCloudCreate = null;
+let cloudCreatePending = false;
+
+// Connect state also carries the cloud-agent display state. It contains no
+// credential, session id or worker URL.
 ipcMain.handle("connect:get", async () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
@@ -85,7 +112,30 @@ ipcMain.handle("connect:get", async () => ({
   busy: false,
   message: "",
   credential: null,
+  ...cloudProbe,
 }));
+ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
+  cloudCalls.create.push({ chatUid, name });
+  cloudCreatePending = true;
+  await new Promise((resolve) => { releaseCloudCreate = resolve; });
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{ ...cloudAgent, chatUid, name: name || "Cloud agent", status: "provisioning" }],
+  };
+  cloudCreatePending = false;
+});
+ipcMain.handle("cloud:delete", async (_e, agentId) => cloudCalls.delete.push(agentId));
+ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
+  cloudCalls.apply.push({ agentId, settings });
+  const previous = cloudProbe.cloudAgentSettings[agentId];
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentSettings: {
+      ...cloudProbe.cloudAgentSettings,
+      [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
+    },
+  };
+});
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -520,6 +570,174 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
+  const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
+    const group = [...document.querySelectorAll("#view .panel.agents > .item")]
+      .find((item) => item.querySelector(":scope > .group-title")?.textContent.trim() === "Cloud agents");
+    return {
+      noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
+    };
+  }})()`);
+
+  // The warning is specific to the first agent on a chat. Remove the fixture
+  // row, remount the pane, and open the picker through the exposed control.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudChats: [cloudChat, { uid: "chat_family", label: "+1 (415) 555-0188 · Family group" }],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-toolbar button")`, "the cloud-agent setup action");
+  await win.webContents.executeJavaScript(`document.querySelector(".cloud-toolbar button").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-warning")`, "the first-agent warning");
+  const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
+    const visibleSelect = document.querySelector(".cloud-modal select");
+    const trigger = document.querySelector(".cloud-toolbar button");
+    const selectPrototype = HTMLSelectElement.prototype;
+    const addEventListener = selectPrototype.addEventListener;
+    let blockedSelect = null;
+    selectPrototype.addEventListener = function (type, ...args) {
+      if (type === "change" && this !== visibleSelect) blockedSelect = this;
+      return addEventListener.call(this, type, ...args);
+    };
+    try {
+      trigger.click();
+    } finally {
+      selectPrototype.addEventListener = addEventListener;
+    }
+    if (!blockedSelect) return { ignored: false, keptOriginal: false };
+    let error = null;
+    const onError = (event) => {
+      error = event.error ?? new Error(event.message);
+      event.preventDefault();
+    };
+    window.addEventListener("error", onError, { once: true });
+    blockedSelect.value = "__new_chat__";
+    blockedSelect.dispatchEvent(new Event("change"));
+    await new Promise((resolve) => setTimeout(resolve));
+    window.removeEventListener("error", onError);
+    return {
+      ignored: error === null,
+      keptOriginal: document.querySelector(".cloud-modal select") === visibleSelect,
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(`(() => {
+    const select = document.querySelector(".cloud-modal select");
+    select.value = "__new_chat__";
+    select.dispatchEvent(new Event("change"));
+  })()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
+
+  await win.webContents.executeJavaScript(`document.querySelector(".cloud-toolbar button").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal select")`, "the picker for the create wait");
+  const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
+    const button = [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Set up agent");
+    button.click();
+    return {
+      disabled: button.disabled,
+      spinner: !!button.querySelector(".cloud-spinner"),
+      copy: button.textContent.trim() === "Setting up…",
+    };
+  }})()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the picker to close during create");
+  await waitFor(win, `document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`, "the pending create row");
+  const cloudCreateTransition = await win.webContents.executeJavaScript(`(${() => ({
+    modalClosed: !document.querySelector(".cloud-modal"),
+    pendingRow: !!document.querySelector('[data-cloud-agent-id^="pending-cloud-"]'),
+  })})()`);
+  cloudCreateTransition.requestPending = cloudCreatePending;
+  releaseCloudCreate();
+  await waitFor(win, `document.querySelector('[data-cloud-agent-id="cag_probe"]')`, "the receipt-backed agent row");
+  cloudCreateTransition.reconciled = await win.webContents.executeJavaScript(
+    `document.querySelectorAll(".cloud-agent-row").length === 1 && !document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`,
+  );
+
+  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the cloud-agent row actions");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel");
+  await win.webContents.executeJavaScript(`(() => {
+    const modal = document.querySelector(".cloud-modal");
+    modal.querySelector(".cloud-local-settings input").click();
+    [...modal.querySelectorAll("button")].find((b) => b.textContent.trim() === "Apply changes").click();
+  })()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the local cloud-agent settings save");
+  const applied = cloudCalls.apply[0];
+  const cloudSettings = {
+    stableId: applied?.agentId === "cag_probe",
+    exactSettings: applied?.settings?.adversarialReview === true &&
+      Object.keys(applied?.settings ?? {}).join(",") === "adversarialReview",
+    persisted: cloudProbe.cloudAgentSettings.cag_probe?.adversarialReview === true,
+  };
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudAgentsError: null,
+    cloudChatsError: "Couldn't reach Plow.",
+    cloudChats: [],
+    cloudChatsLoaded: false,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-error")`, "the failed chat-list banner");
+  const cloudChatFailure = await win.webContents.executeJavaScript(`(${() => ({
+    showsError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
+    setupDisabled: document.querySelector(".cloud-toolbar button")?.disabled === true,
+    notEmptyState: !document.querySelector(".cloud-empty"),
+    keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+  })})()`);
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentsError: "Method Not Allowed",
+    cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-error")`, "the 403 chat-list banner");
+  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => {
+    const setup = document.querySelector(".cloud-toolbar button");
+    setup.click();
+    return {
+      rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
+      setupDisabled: setup.disabled === true,
+      pickerBlocked: !document.querySelector(".cloud-modal"),
+      notEmptyState: !document.querySelector(".cloud-empty"),
+    };
+  }})()`);
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentsError: "Cloud capacity is full for this account.",
+    cloudChatsError: null,
+    cloudChats: [cloudChat],
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.body.innerText.includes("Cloud capacity is full for this account.")`,
+    "the server-authored cloud error detail");
+  const cloudServerDetail = await win.webContents.executeJavaScript(`(${() => ({
+    preserved: document.body.innerText.includes("Cloud capacity is full for this account."),
+    notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
+  })})()`);
+
+  // Restore the roster for the screenshot and the existing Agents-pane probes.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudChats: [cloudChat],
+    cloudAgentsError: null,
+    cloudChatsError: null,
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row")`, "the restored cloud-agent roster");
+
   // The Agents pane gets an image of its own, for the same reason Settings does:
   // every UI change gets one, and this one moved panes.
   const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
@@ -565,6 +783,8 @@ app.whenReady().then(async () => {
       // word this rename retired is nowhere on screen.
       noAdversarialWord: !/adversarial/i.test(pane.innerText),
       noHintLineTakingItsPlace: !pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
+      noFalseReviewerInputs: !pane.innerText.includes("goal and plan") &&
+        !pane.innerText.includes("recent activity on this Mac"),
       // The suggestions checkbox came here from Settings when that pane's
       // reviewer section went away. In this mode nobody is being asked, so
       // there is no suggestion to show: on screen, and dead.
@@ -638,7 +858,7 @@ app.whenReady().then(async () => {
       // suggestion this mode asks for, so the disclosure has to name it in the
       // mode that hides the field. This is the state where an enumeration that
       // stopped at the agent-derived items would read as complete and be wrong.
-      stillDisclosesPurposeIsSent: pane.innerText.includes("what you say agents are for"),
+      stillDisclosesPurposeIsSent: pane.innerText.includes("the purpose you wrote for it"),
       // …and the card still says what this mode does.
       showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
       // The hint used to send people to Settings for the suggestions toggle.
@@ -1219,6 +1439,29 @@ app.whenReady().then(async () => {
     connect.clientCardArrow &&
     connect.clientNameNotBold &&
     connect.noConnectTab &&
+    cloudRoster.noCredentialIdentity &&
+    cloudModalGuard.ignored &&
+    cloudModalGuard.keptOriginal &&
+    cloudCreateWait.disabled &&
+    cloudCreateWait.spinner &&
+    cloudCreateWait.copy &&
+    cloudCreateTransition.modalClosed &&
+    cloudCreateTransition.requestPending &&
+    cloudCreateTransition.pendingRow &&
+    cloudCreateTransition.reconciled &&
+    cloudSettings.stableId &&
+    cloudSettings.exactSettings &&
+    cloudSettings.persisted &&
+    cloudChatFailure.showsError &&
+    cloudChatFailure.setupDisabled &&
+    cloudChatFailure.notEmptyState &&
+    cloudChatFailure.keepsRoster &&
+    cloudForbidden.rawReasonHidden &&
+    cloudForbidden.setupDisabled &&
+    cloudForbidden.pickerBlocked &&
+    cloudForbidden.notEmptyState &&
+    cloudServerDetail.preserved &&
+    cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&
@@ -1258,6 +1501,7 @@ app.whenReady().then(async () => {
     approvalsReviewer.saysItMayApprove &&
     approvalsReviewer.noAdversarialWord &&
     approvalsReviewer.noHintLineTakingItsPlace &&
+    approvalsReviewer.noFalseReviewerInputs &&
     approvalsReviewer.hasSuggestionsCheckbox &&
     approvalsReviewer.suggestionsDeadInReviewerMode &&
     purposeRoundTrip.stored &&
@@ -1291,7 +1535,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultFailed, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudSettings, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultFailed, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

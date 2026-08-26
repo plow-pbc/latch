@@ -710,7 +710,12 @@ describe("the handle is a capability, so the log never carries it", () => {
   });
 });
 
-describe("every browser opens as the user, already signed in", () => {
+// The per-session seed copy is an APFS clone (`/bin/cp -Rc`), so these only
+// assert on a Mac; elsewhere cp rejects the flag before the cookie merge
+// under test is ever reached.
+const ON_MAC = process.platform === "darwin";
+
+describe.skipIf(!ON_MAC)("every browser opens as the user, already signed in", () => {
   const PYTHON = process.env.DOMO_TEST_PYTHON ?? "python3";
   /** The program the app ships and runs for real. */
   const MERGE_SCRIPT = fileURLToPath(

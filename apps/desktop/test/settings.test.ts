@@ -218,3 +218,34 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
   });
 });
+
+describe("per-cloud-agent settings", () => {
+  it("keeps a hand-edited file from becoming a crash on the Agents tab", () => {
+    const home = tempHome();
+    write(
+      home,
+      JSON.stringify({
+        cloudAgentSettings: {
+          agent_ok: { adversarialReview: true },
+          agent_loose: { adversarialReview: "yes" },
+          agent_null: null,
+          agent_scalar: 7,
+        },
+      }),
+    );
+
+    expect(loadSettings(home).cloudAgentSettings).toEqual({
+      agent_ok: { adversarialReview: true },
+      // Anything that is not the boolean it claims to be reads as off.
+      agent_loose: { adversarialReview: false },
+    });
+  });
+
+});
+
+describe("the activation's assigned number", () => {
+  it("is empty until an activation has told us one", () => {
+    expect(loadSettings(tempHome()).activationSendTo).toBe("");
+  });
+
+});

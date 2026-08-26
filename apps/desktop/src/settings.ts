@@ -30,6 +30,16 @@ export interface WindowBounds {
  */
 export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
 
+/**
+ * What this Mac remembers about one cloud agent, on its own.
+ *
+ * Local because nothing on the server knows about it: adversarial review is
+ * this app's reviewer, not a property of the machine Plow provisioned.
+ */
+export interface CloudAgentLocalSettings {
+  adversarialReview: boolean;
+}
+
 export interface Settings {
   /* There is deliberately NO API base URL here. It is baked into the build
    * (`resolveApiBaseUrl`), because a credential is only valid against the
@@ -84,6 +94,47 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
+  /**
+   * The chat this Mac's activation provisioned, kept for display.
+   *
+   * The uid is the join key — the server stays authoritative on what the chat
+   * *is*, and a cloud-agent screen lists chats rather than trusting this. The
+   * label is display text derived at redeem time, cached because the redeem
+   * that carried the chat answers exactly once: re-reading it is impossible, so
+   * a setup window reopened later would otherwise have nothing to show.
+   *
+   * Neither is a secret. Both are empty on a Mac that activated before
+   * `provision_chat`, which is why nothing may treat them as a signal that the
+   * account has no chat.
+   */
+  provisionedChatUid: string;
+  provisionedChatLabel: string;
+  /**
+   * The number this Mac's completed activation told it to text — the server's
+   * assigned pool line, **verbatim**.
+   *
+   * Kept because there is no call that answers "which line is mine": the
+   * relationship exists only inside the activation that created it, so it is
+   * stored here or it is lost. The cloud-agent screen needs it to explain how a
+   * new chat comes to exist.
+   *
+   * NEVER a number chosen here. Empty means we do not know one, and a screen
+   * must say so rather than fill the gap — texting the right code to the wrong
+   * number activates the account and provisions no chat at all.
+   */
+  activationSendTo: string;
+  /**
+   * Local per-cloud-agent settings, keyed on `agent_id`.
+   *
+   * `agent_id` and NEVER `session_id`: reconfiguring an agent mints a fresh
+   * credential by design, so anything stored against the session id silently
+   * resets itself the first time the user changes a permission. The id is
+   * stable for the agent's whole life.
+   *
+   * Entries for agents that no longer exist are dropped when the agent is
+   * removed; nothing here is a secret.
+   */
+  cloudAgentSettings: Record<string, CloudAgentLocalSettings>;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -92,6 +143,22 @@ export interface Settings {
    * A signed-in home from before this field existed is grandfathered on load —
    * see `loadSettings` — for the same reason. */
   launchAtLoginDefaulted: boolean;
+}
+
+/** Keep only well-formed `agent_id` → settings entries; drop the rest. */
+function normalizeCloudAgentSettings(raw: unknown): Record<string, CloudAgentLocalSettings> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, CloudAgentLocalSettings> = {};
+  for (const [agentId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!agentId || !value || typeof value !== "object") continue;
+    // Rebuilt rather than copied, so nothing an older build wrote here — a
+    // remembered permission pair, from when this app tried to track what an
+    // agent may do — survives a load.
+    out[agentId] = {
+      adversarialReview: (value as Record<string, unknown>).adversarialReview === true,
+    };
+  }
+  return out;
 }
 
 function settingsPath(home: string): string {
@@ -107,9 +174,13 @@ export function loadSettings(home: string): Settings {
     approvalMode: "ask",
     showAgentSuggestions: true,
     agentPurpose: "",
+    provisionedChatUid: "",
+    provisionedChatLabel: "",
+    activationSendTo: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     launchAtLoginDefaulted: false,
+    cloudAgentSettings: {},
   };
   let parsed: unknown;
   try {
@@ -130,6 +201,11 @@ export function loadSettings(home: string): Settings {
   delete settings.inferenceProvider;
 
   const loaded = { ...defaults, ...settings };
+  // The spread above copies whatever the file held, and a hand-edited or
+  // truncated file can put a non-object — or a `null` — where a record belongs.
+  // Every reader of this map indexes it, so normalising once here is what keeps
+  // a bad file from being a crash on the Agents tab.
+  loaded.cloudAgentSettings = normalizeCloudAgentSettings(settings.cloudAgentSettings);
   // A signed-in home from before `launchAtLoginDefaulted` existed: its owner's
   // launch-at-login choice predates the default, so reading the absent field as
   // false would let a later re-setup flip the bit on them. Grandfather it as

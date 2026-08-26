@@ -59,8 +59,9 @@ build:
     npx tsc -b
     node apps/desktop/scripts/copy-renderer.mjs
 
-# Run the full test suite.
-test:
+# Run the full test suite. Depends on `install` so a clean checkout — CI, the
+# review bot, a new machine — is one command; it is a ~1s no-op once installed.
+test: install
     npx vitest run
 
 # Just the golden-vector conformance (fast). fixtures/ is the frozen protocol

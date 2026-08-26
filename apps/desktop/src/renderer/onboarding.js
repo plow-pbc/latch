@@ -80,9 +80,15 @@ function sendInstructions(activation) {
     ]),
     el("div", { class: "field" }, [
       el("label", { text: "To" }),
-      // Whatever /v1/auth/activate returned. Per-environment config, and it may
-      // be a pool line rather than the managed number — never hardcoded.
+      // Whatever /v1/auth/activate returned — the pool line assigned to THIS
+      // activation, never a number chosen here. The chat is only created if the
+      // code arrives on that line, so the right code sent to another Plow
+      // number signs in and quietly creates nothing.
       el("div", { class: "faint mono", text: activation.sendTo }),
+      el("div", {
+        class: "faint",
+        text: "This number is picked for this setup — send it there, not to any other Plow number.",
+      }),
     ]),
   ];
 }
@@ -249,6 +255,22 @@ function connectedScreen() {
       el("label", { text: "Account" }),
       el("div", { class: "faint mono", text: state.accountUid || "—" }),
     ]),
+    // A chat has no name, so it is shown by its line and its members. Absent on
+    // a Mac that signed in with a phone code, or one activated before chats
+    // existed — the row is simply not drawn rather than reading "none", which
+    // would claim something about the account this screen cannot know.
+    ...(state.chat
+      ? [
+          el("div", { class: "field" }, [
+            el("label", { text: "Your chat" }),
+            el("div", { class: "faint mono", text: state.chat.label }),
+            el("div", {
+              class: "faint",
+              text: "Messages here are how a cloud agent will reach you.",
+            }),
+          ]),
+        ]
+      : []),
     el("div", { class: "oactions" }, [
       el("div", { class: "spacer" }),
       button("Continue", "btn primary", () => window.domo.onboardingFinish()),
