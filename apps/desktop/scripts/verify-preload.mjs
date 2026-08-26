@@ -745,16 +745,31 @@ app.whenReady().then(async () => {
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
   await captureAfterPaint(win, vaultShot);
 
+  // Re-selecting the tab you are on is deliberately a no-op, so each of these
+  // leaves and comes back to make the pane re-read the stub. Going away is
+  // AWAITED — `selectTab` does not await the render it starts, and `renderAgents`
+  // has no is-this-still-my-tab guard, so hopping through it would let a late
+  // replaceChildren land on top of the pane being asserted. Waiting for the
+  // vault pane to GO proves the other render finished; the marker each caller
+  // passes then proves the right one came back, which `.empty` alone cannot —
+  // every one of these states has an `.empty`.
+  const showVault = async (marker, what) => {
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("rules"); return true; })()`);
+    await waitFor(win, `!document.querySelector(".vaultui")`, "the vault pane to go");
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, marker, what);
+  };
+  const empty = (says) =>
+    `document.querySelector("#view .empty")?.textContent.includes(${JSON.stringify(says)})`;
+
   // The state this whole change exists to produce, and the one nothing used to
   // render: a build with no vault installed. It said "has not started yet",
   // which sent someone looking for a server that had never been installed —
   // the same mistake `locked` above had to be rescued from, and the reason
-  // both checks assert the absence of that sentence rather than only the
-  // presence of their own.
+  // every one of these asserts the absence of the sentences it must not be
+  // confused with, not only the presence of its own.
   vaultItemsReply = { status: "missing" };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
-  await waitFor(win, `document.querySelector("#view .empty")`, "the missing-vault pane to render");
+  await showVault(empty("no vault installed"), "the missing-vault pane to render");
   const vaultMissing = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     return {
@@ -769,8 +784,33 @@ app.whenReady().then(async () => {
       noLockedNote: !text.includes("The account file is present but cannot be opened"),
     };
   }})()`);
-  // Back to locked, which is what the checks below expect to find.
-  vaultItemsReply = { status: "locked", reason: "undecryptable" };
+
+  // "Has not started yet" belongs to exactly one status. It used to be what the
+  // renderer said when it recognised nothing, which is how a build with no
+  // runtime came to claim it.
+  vaultItemsReply = { status: "starting" };
+  await showVault(empty("has not started yet"), "the starting-vault pane to render");
+  const vaultStarting = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    return {
+      saysNotStarted: text.includes("The vault has not started yet."),
+      doesNotClaimMissing: !text.includes("no vault installed"),
+    };
+  }})()`);
+
+  // And a status this build does not know — a fifth outcome added in main.ts, or
+  // a packaged renderer left behind by one. The residual arm exists so that
+  // cannot silently become "has not started yet" again, which is only true if
+  // something drives it.
+  vaultItemsReply = { status: "brandnew" };
+  await showVault(empty("does not know"), "the unknown-status pane to render");
+  const vaultUnknown = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    return {
+      namesTheStatus: text.includes("does not know: brandnew"),
+      doesNotGuess: !text.includes("has not started yet") && !text.includes("no vault installed"),
+    };
+  }})()`);
 
   // Unsaved edits must not vanish without a word. The vault is the only screen
   // that holds a form open behind a Save button, so it is the only one where
@@ -799,7 +839,7 @@ app.whenReady().then(async () => {
     const KEEP = ".vaultui .confirm-overlay .btn.ghost";
     const DISCARD = ".vaultui .confirm-overlay .btn.danger";
 
-    // The pane is already showing the LOCKED vault from the check above, and
+    // The pane is showing the unknown-status vault from the check above, and
     // re-selecting the tab you are on is deliberately a no-op now — so go away
     // and come back to make it re-read the (now populated) stub.
     await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("rules"); return true; })()`);
@@ -1149,6 +1189,10 @@ app.whenReady().then(async () => {
     vaultMissing.doesNotClaimLocked &&
     vaultMissing.reassures &&
     vaultMissing.noLockedNote &&
+    vaultStarting.saysNotStarted &&
+    vaultStarting.doesNotClaimMissing &&
+    vaultUnknown.namesTheStatus &&
+    vaultUnknown.doesNotGuess &&
     modalClosed.gone &&
     modalClosed.paneLive &&
     modalClosed.focusBackOnTrigger &&
@@ -1239,7 +1283,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultStarting, vaultUnknown, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
