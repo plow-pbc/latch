@@ -77,17 +77,22 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
-/** Every cloud-agent delete the roster routed, in order. */
+/** Every cloud-agent removal the roster routed, in order. */
 let agentDeletes: string[];
+/** How many times the roster asked this Mac to sign out. */
+let signOuts: number;
 
 function build(options: { deleteFails?: boolean } = {}): ConnectClient {
   return new ConnectClient({
     api: plow.api(),
     home,
     isConnected: () => connected,
-    deleteCloudAgent: async (_credential, agentId) => {
+    removeCloudAgent: async (agentId: string) => {
       agentDeletes.push(agentId);
       if (options.deleteFails) throw new PlowApiError("http", "Plow returned 500.", 500);
+    },
+    signOutThisMac: async () => {
+      signOuts += 1;
     },
     onChange: () => {
       changes += 1;
@@ -109,6 +114,7 @@ beforeEach(() => {
   plow = new FakePlow();
   connected = true;
   agentDeletes = [];
+  signOuts = 0;
   changes = 0;
 });
 
@@ -385,6 +391,24 @@ describe("removing a roster row", () => {
     // from this list because inactive rows are filtered out.
     expect(plow.revoked).toEqual([]);
     expect(agentDeletes).toEqual(["agent_7"]);
+  });
+
+  it("signs this Mac out instead of revoking its own key", async () => {
+    signIn();
+    // The roster marks exactly one row as this Mac; its prefix is the stored
+    // credential's.
+    plow.keys = [key({ id: 4, key_prefix: DEVICE_TOKEN.slice(0, 12) })];
+    const client = build();
+    await client.refreshRoster();
+
+    await client.removeRosterRow(4);
+
+    // A revoke alone leaves the credential on disk, the socket dialled and the
+    // window open, all talking to an account that no longer accepts them —
+    // while the row promised an immediate sign-out.
+    expect(signOuts).toBe(1);
+    expect(plow.revoked).toEqual([]);
+    expect(agentDeletes).toEqual([]);
   });
 
   it("revokes the key of a row that is not an agent", async () => {

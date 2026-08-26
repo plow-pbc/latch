@@ -4,7 +4,7 @@
  * one everyday testing never enters.
  */
 import { describe, expect, it } from "vitest";
-import { sectionRoster, removalRouteFor } from "../src/rosterSections.js";
+import { sectionRoster } from "../src/rosterSections.js";
 import { agentRosterRows } from "../src/agentRoster.js";
 import type { KeyInfo } from "../src/plowApi.js";
 
@@ -92,16 +92,13 @@ describe("how a row is removed", () => {
       key({ id: 3, agent_id: "agent_3", scopes: ["relay:*"], name: null }),
     ]);
 
+    // The section IS the route: `connectClient.removeRosterRow` reads
+    // `agentId` off the row it finds here, so a row in the wrong section is a
+    // removal down the wrong path. Asserted through the real removal in
+    // connectClient.test.ts; what this pins is the placement it depends on.
     expect(sections.cloud).toHaveLength(3);
-    for (const row of sections.cloud) {
-      expect(row.agentId).not.toBeNull();
-      expect(removalRouteFor(row)).toBe("cloud-agent");
-      expect(removalRouteFor(row)).not.toBe("key-revoke");
-    }
-    // And nothing without an agent_id is ever sent to the agent endpoint.
-    for (const row of [...sections.mcp, ...sections.other]) {
-      expect(removalRouteFor(row)).toBe("key-revoke");
-    }
+    for (const row of sections.cloud) expect(row.agentId).not.toBeNull();
+    for (const row of [...sections.mcp, ...sections.other]) expect(row.agentId).toBeNull();
   });
 });
 

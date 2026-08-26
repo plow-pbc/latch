@@ -74,12 +74,23 @@ export interface ConnectClientDeps {
   home: string;
   isConnected: () => boolean;
   /**
-   * Remove a cloud agent — the machine and its hold on the chat.
+   * Remove a cloud agent, through the state that owns its lifecycle.
    *
-   * Injected rather than reached for, so the one call that must never be a key
-   * revoke is visible in this file's dependencies.
+   * Not the raw client: `CloudAgentState` holds the poll, the row and the local
+   * settings for that agent, and a delete that goes around it leaves all three
+   * alive — the row comes back on the next render as a disabled zombie the
+   * screen cannot remove again.
    */
-  deleteCloudAgent: (deviceCredential: string, agentId: string) => Promise<void>;
+  removeCloudAgent: (agentId: string) => Promise<void>;
+  /**
+   * Sign this Mac out, through the one path that owns that.
+   *
+   * Revoking this Mac's own key only makes the credential invalid on the
+   * server. The stored credential, the relay socket and the window gate all
+   * stay live, so the app keeps running as though signed in while every call
+   * it makes 401s — and the roster promises immediate sign-out.
+   */
+  signOutThisMac: () => Promise<void>;
   onChange?: () => void;
 }
 
@@ -166,6 +177,15 @@ export class ConnectClient {
    * nothing else: the VM keeps running, the chat's webhook keeps firing, and
    * the row vanishes from this list because we filter inactive rows — a live
    * agent that 401s on everything and that nobody can reach to remove.
+   *
+   * **This Mac's own row signs this Mac out** rather than revoking its key.
+   * A revoke alone leaves the credential on disk, the socket dialled and the
+   * window open, all of them talking to an account that no longer accepts
+   * them.
+   *
+   * Neither route is taken directly here. Both belong to code that owns more
+   * state than a key row — the agent's poll and settings, this Mac's session —
+   * and going around either leaves that state behind.
    */
   async removeRosterRow(id: number): Promise<ConnectClientState> {
     this.removeError = null;
@@ -178,7 +198,10 @@ export class ConnectClient {
 
     const generation = this.generation;
     try {
-      if (row.agentId !== null) await this.deps.deleteCloudAgent(credential, row.agentId);
+      // Each route belongs to whoever owns that lifecycle. Only an ordinary
+      // credential is this file's to revoke directly.
+      if (row.isThisMac) await this.deps.signOutThisMac();
+      else if (row.agentId !== null) await this.deps.removeCloudAgent(row.agentId);
       else await this.deps.api.revokeApiKey(credential, id);
     } catch (error) {
       if (generation === this.generation) this.failRemove(messageOf(error));

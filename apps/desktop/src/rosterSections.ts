@@ -128,9 +128,3 @@ function isDeviceCredential(prefix: string | null, credential: string): boolean 
   if (!prefix || !credential) return false;
   return prefix.length >= 6 && credential.startsWith(prefix);
 }
-
-/** How a row is removed. The wrong answer here leaves a running agent that
- * 401s on everything and is gone from the list — see `sectionRoster`. */
-export function removalRouteFor(row: Pick<RosterSectionRow, "agentId">): "cloud-agent" | "key-revoke" {
-  return row.agentId !== null ? "cloud-agent" : "key-revoke";
-}

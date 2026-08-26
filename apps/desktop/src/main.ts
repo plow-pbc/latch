@@ -493,10 +493,17 @@ function signOut(): void {
   void onboarding?.begin();
 }
 
-// Sign out: retire the credential with Plow, forget it here, and drop the
-// socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
-// cannot reach Plow still signs out locally.
-ipcMain.handle("settings:signOut", async () => {
+/**
+ * Sign out: retire the credential with Plow, forget it here, and drop the
+ * socket. The revoke is best-effort — see `revokeAndSignOut` — so a Mac that
+ * cannot reach Plow still signs out locally.
+ *
+ * Two callers: the Settings button, and the roster's own row for this Mac.
+ * Revoking that row as an ordinary key would leave the credential on disk, the
+ * socket dialled and the window open, all talking to an account that no longer
+ * accepts them.
+ */
+async function signOutThisMac(): Promise<void> {
   // A second click, before the button re-rendered. The first already signed
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
@@ -513,7 +520,9 @@ ipcMain.handle("settings:signOut", async () => {
   signOut();
   await startRelay();
   await revoking;
-});
+}
+
+ipcMain.handle("settings:signOut", async () => signOutThisMac());
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
 // MARK: IPC for "Connect a client" (main window)
@@ -1054,7 +1063,12 @@ app.whenReady().then(async () => {
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
-    deleteCloudAgent: (credential, agentId) => cloudAgentsClient.delete(credential, agentId),
+    // Through the state that owns the agent's poll, row and settings — not the
+    // raw client, which would leave all three behind.
+    removeCloudAgent: async (agentId: string) => {
+      await cloudAgents?.remove(agentId);
+    },
+    signOutThisMac,
     onChange: () => notifyRenderer("connect:changed"),
   });
 
