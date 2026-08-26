@@ -106,7 +106,13 @@ ipcMain.handle("updates:get", async () => ({
 // Switchable, because the unsaved-edits checks further down need a vault with
 // something in it — the locked reply above has no list and no forms.
 let vaultItemsReply = { status: "locked", reason: "undecryptable" };
-ipcMain.handle("vault:items", async () => vaultItemsReply);
+// A rejected call is its own outcome — the renderer catches it into `failure`
+// and takes a different path from every status above.
+let vaultItemsThrows = false;
+ipcMain.handle("vault:items", async () => {
+  if (vaultItemsThrows) throw new Error("the vault did not answer");
+  return vaultItemsReply;
+});
 ipcMain.handle("vault:item", async () => ({
   id: "itm1",
   type: "login",
@@ -762,55 +768,91 @@ app.whenReady().then(async () => {
   const empty = (says) =>
     `document.querySelector("#view .empty")?.textContent.includes(${JSON.stringify(says)})`;
 
+  // Every headline this pane can show. Each state asserts its own AND the
+  // absence of all the others, which is the whole history of this screen:
+  // locked rendered as not-started, then a missing runtime rendered as
+  // not-started, and each time the fix was a sentence that another state was
+  // already entitled to. Structural rather than promised in a comment — a new
+  // state added here is excluded from the others by construction.
+  const HEADLINES = [
+    "This build has no vault installed.",
+    "This Mac can't unlock its vault account.",
+    "The vault has not started yet.",
+  ];
+  const saysOnly = (mine) =>
+    win.webContents.executeJavaScript(
+      `(() => { const t = document.body.innerText, mine = ${JSON.stringify(mine)};
+        return {
+          saysIts: t.includes(mine),
+          saysNoOtherHeadline: ${JSON.stringify(HEADLINES)}.filter((h) => h !== mine).every((h) => !t.includes(h)),
+        }; })()`);
+  const also = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
+
   // The state this whole change exists to produce, and the one nothing used to
-  // render: a build with no vault installed. It said "has not started yet",
-  // which sent someone looking for a server that had never been installed —
-  // the same mistake `locked` above had to be rescued from, and the reason
-  // every one of these asserts the absence of the sentences it must not be
-  // confused with, not only the presence of its own.
+  // render: a build with no vault installed.
   vaultItemsReply = { status: "missing" };
   await showVault(empty("no vault installed"), "the missing-vault pane to render");
-  const vaultMissing = await win.webContents.executeJavaScript(`(${() => {
-    const text = document.body.innerText;
-    return {
-      saysNoVaultInstalled: text.includes("This build has no vault installed."),
-      doesNotClaimEmpty: !text.includes("has not started yet"),
-      doesNotClaimLocked: !text.includes("can't unlock its vault account"),
-      // Nothing is lost, and no remedy is offered: a packaged install always
-      // bundles a vault, so an owner reading this has a broken install rather
-      // than a command to run.
-      reassures: text.includes("a build that includes the vault will open whatever is already here"),
-      // The locked copy must not leak into this pane — they are different facts.
-      noLockedNote: !text.includes("The account file is present but cannot be opened"),
-    };
-  }})()`);
+  const vaultMissing = {
+    ...(await saysOnly(HEADLINES[0])),
+    ...(await also(() => {
+      const text = document.body.innerText;
+      return {
+        // Nothing is lost, and no remedy is offered: a packaged install always
+        // bundles a vault, so an owner reading this has a broken install rather
+        // than a command to run.
+        reassures: text.includes("a build that includes the vault will open whatever is already here"),
+        // The locked explanation must not leak in — different facts entirely.
+        noLockedNote: !text.includes("The account file is present but cannot be opened"),
+      };
+    })),
+  };
 
   // "Has not started yet" belongs to exactly one status. It used to be what the
   // renderer said when it recognised nothing, which is how a build with no
   // runtime came to claim it.
   vaultItemsReply = { status: "starting" };
   await showVault(empty("has not started yet"), "the starting-vault pane to render");
-  const vaultStarting = await win.webContents.executeJavaScript(`(${() => {
-    const text = document.body.innerText;
-    return {
-      saysNotStarted: text.includes("The vault has not started yet."),
-      doesNotClaimMissing: !text.includes("no vault installed"),
-    };
-  }})()`);
+  const vaultStarting = await saysOnly(HEADLINES[2]);
 
-  // And a status this build does not know — a fifth outcome added in main.ts, or
-  // a packaged renderer left behind by one. The residual arm exists so that
+  // `locked` carries two reasons and only one of them has ever been rendered.
+  // no-storage is producible and says something completely different — no key
+  // store to open the account with, rather than a key that has moved — so the
+  // copy that must not appear here is the Keychain explanation.
+  vaultItemsReply = { status: "locked", reason: "no-storage" };
+  await showVault(empty("can't unlock"), "the no-storage vault pane to render");
+  const vaultNoStorage = {
+    ...(await saysOnly(HEADLINES[1])),
+    ...(await also(() => {
+      const text = document.body.innerText;
+      return {
+        saysNoSecureStorage: text.includes("this build has no secure storage to open it with"),
+        blamesNoKeychain: !text.includes("Keychain"),
+        promisesNoLoss: text.includes("Nothing is lost"),
+      };
+    })),
+  };
+
+  // A status this build does not know — a fifth outcome added in main.ts, or a
+  // packaged renderer left behind by one. The residual arm exists so that
   // cannot silently become "has not started yet" again, which is only true if
-  // something drives it.
+  // something drives it. No headline of its own, so saysOnly asserts the
+  // absence of all three.
   vaultItemsReply = { status: "brandnew" };
   await showVault(empty("does not know"), "the unknown-status pane to render");
-  const vaultUnknown = await win.webContents.executeJavaScript(`(${() => {
-    const text = document.body.innerText;
-    return {
-      namesTheStatus: text.includes("does not know: brandnew"),
-      doesNotGuess: !text.includes("has not started yet") && !text.includes("no vault installed"),
-    };
-  }})()`);
+  const vaultUnknown = {
+    ...(await saysOnly("does not know: brandnew")),
+  };
+
+  // The fourth outcome of this handler, on a different path: a REJECTED call.
+  // renderVault catches it into `failure`, which skips the status block
+  // entirely and writes into the list instead — so none of the states above
+  // exercise it, and it renders a sentence none of them can produce.
+  vaultItemsThrows = true;
+  await showVault(`document.body.innerText.includes("Could not read the vault")`, "the vault failure to render");
+  const vaultFailure = {
+    ...(await saysOnly("Could not read the vault")),
+  };
+  vaultItemsThrows = false;
 
   // Unsaved edits must not vanish without a word. The vault is the only screen
   // that holds a form open behind a Save button, so it is the only one where
@@ -839,13 +881,9 @@ app.whenReady().then(async () => {
     const KEEP = ".vaultui .confirm-overlay .btn.ghost";
     const DISCARD = ".vaultui .confirm-overlay .btn.danger";
 
-    // The pane is showing the unknown-status vault from the check above, and
-    // re-selecting the tab you are on is deliberately a no-op now — so go away
-    // and come back to make it re-read the (now populated) stub.
-    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("rules"); return true; })()`);
-    await waitFor(win, `!document.querySelector(".vaultui")`, "the vault pane to go");
-    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
-    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list to render");
+    // The stub is populated now, so this comes back to a list rather than to
+    // one of the empty states above.
+    await showVault(`document.querySelector(".vaultui .vitem")`, "the vault list to render");
 
     // An untouched sheet closes without a question.
     await click(".vaultui .btn-primary");
@@ -1189,10 +1227,11 @@ app.whenReady().then(async () => {
     vaultMissing.doesNotClaimLocked &&
     vaultMissing.reassures &&
     vaultMissing.noLockedNote &&
-    vaultStarting.saysNotStarted &&
-    vaultStarting.doesNotClaimMissing &&
-    vaultUnknown.namesTheStatus &&
-    vaultUnknown.doesNotGuess &&
+    [vaultMissing, vaultStarting, vaultNoStorage, vaultUnknown, vaultFailure]
+      .every((v) => v.saysIts && v.saysNoOtherHeadline) &&
+    vaultNoStorage.saysNoSecureStorage &&
+    vaultNoStorage.blamesNoKeychain &&
+    vaultNoStorage.promisesNoLoss &&
     modalClosed.gone &&
     modalClosed.paneLive &&
     modalClosed.focusBackOnTrigger &&
@@ -1283,7 +1322,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultStarting, vaultUnknown, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultStarting, vaultNoStorage, vaultUnknown, vaultFailure, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

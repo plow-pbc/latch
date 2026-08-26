@@ -559,8 +559,8 @@ install always bundles one and its owner has a broken install rather than a
 recipe to run. The remedy is deliberately terminal-only, where the from-source
 run that needs it is the only reader, and it is gated on the vault rather than
 the runtime: they are separate payloads from separate recipes, so gating on
-the runtime would go silent in exactly the state that needs `just
-fetch-browser`.
+the runtime would go silent in exactly the state that needs
+`just fetch-browser`.
 
 ### 11a-ii. A filled secret is masked from what the agent sees
 
