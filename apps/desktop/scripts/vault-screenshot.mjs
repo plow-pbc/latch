@@ -74,9 +74,10 @@ seed({
 async function setUp() {
   // The Vault tab's IPC surface — the same calls main.ts registers, over the
   // same encryption, against items held here instead of behind the vault.
-  ipcMain.handle("vault:items", async () =>
-    [...ciphers.values()].map((c) => decryptSummary(c, account)),
-  );
+  ipcMain.handle("vault:items", async () => ({
+    status: "ready",
+    items: [...ciphers.values()].map((c) => decryptSummary(c, account)),
+  }));
   ipcMain.handle("vault:item", async (_e, itemId) => decryptItem(ciphers.get(itemId), account));
   ipcMain.handle("vault:reveal", async (_e, itemId, field) =>
     decryptField(ciphers.get(itemId), account, field),

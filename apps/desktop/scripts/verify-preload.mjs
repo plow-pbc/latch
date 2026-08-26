@@ -105,7 +105,7 @@ ipcMain.handle("updates:get", async () => ({
 // behind, and it must not be reported as an empty vault.
 // Switchable, because the unsaved-edits checks further down need a vault with
 // something in it — the locked reply above has no list and no forms.
-let vaultItemsReply = { locked: true, reason: "undecryptable" };
+let vaultItemsReply = { status: "locked", reason: "undecryptable" };
 ipcMain.handle("vault:items", async () => vaultItemsReply);
 ipcMain.handle("vault:item", async () => ({
   id: "itm1",
@@ -750,7 +750,7 @@ app.whenReady().then(async () => {
   // leaving can throw typing away — by closing the sheet, by collapsing a row,
   // or by switching tab out from under it.
   const vaultUnsaved = await (async () => {
-    vaultItemsReply = [{ id: "itm1", type: "login", title: "Notion", subtitle: "owner@probe", urls: ["https://notion.so"] }];
+    vaultItemsReply = { status: "ready", items: [{ id: "itm1", type: "login", title: "Notion", subtitle: "owner@probe", urls: ["https://notion.so"] }] };
     const js = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
     const click = (sel) => win.webContents.executeJavaScript(
       `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false; n.click(); return true; })()`);
@@ -997,7 +997,7 @@ app.whenReady().then(async () => {
     ipcMain.removeListener("ui:confirmLeaveReply", onBusyReply);
     const noOrphanedDialog = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
 
-    vaultItemsReply = { locked: true, reason: "undecryptable" };
+    vaultItemsReply = { status: "locked", reason: "undecryptable" };
     return {
       cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
       dirtyRowAsksOnCollapse, rowStaysOpenOnKeep, dirtyBlocksTabSwitch, discardAllowsTabSwitch,

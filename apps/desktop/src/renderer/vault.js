@@ -754,10 +754,10 @@ export async function renderVault(view, isCurrent = () => true) {
   // Everything the vault holds, edited here. This is why the tab exists: the
   // only other way in is the vault's own web page, and reaching it means a
   // browser warning about the certificate the app issued to itself.
-  let items = null;
+  let reply = null;
   let failure = "";
   try {
-    items = await window.domo.vaultItems();
+    reply = await window.domo.vaultItems();
   } catch (err) {
     failure = errText(err);
   }
@@ -779,15 +779,16 @@ export async function renderVault(view, isCurrent = () => true) {
     ]),
   ]);
 
-  if ((items === null || (items && (items.locked || items.missing))) && !failure) {
+  if (!failure && reply.status !== "ready") {
     // Locked, missing and not-yet-started are three different facts and get
     // three different words. A vault whose key has moved — a Keychain reset, a
     // Mac restored from backup — used to render as "has not started yet", which
     // sent people looking for a server that was running fine; a build with no
     // runtime rendered the same way, and sent someone looking for a server that
-    // had never been installed.
-    const locked = !!(items && items.locked);
-    const missing = !!(items && items.missing);
+    // had never been installed. One status decides, so no two of them can be
+    // true at once and none of it is reconstructed here.
+    const missing = reply.status === "missing";
+    const locked = reply.status === "locked";
     pane.replaceChildren(masthead, el("div", { class: "col" }, [
       el("div", { class: "empty", text: missing
         ? "This build has no vault installed."
@@ -809,7 +810,7 @@ export async function renderVault(view, isCurrent = () => true) {
       // damaged file, so the copy leads with what is certain, names the likely
       // cause as likely, and gives the remedy — the same either way.
       locked
-        ? el("p", { class: "use-note", text: items.reason === "no-storage"
+        ? el("p", { class: "use-note", text: reply.reason === "no-storage"
             ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
             : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
         : null,
@@ -825,6 +826,8 @@ export async function renderVault(view, isCurrent = () => true) {
   newBtn.addEventListener("click", () => vsheet(renderVaultIn));
   masthead.appendChild(newBtn);
 
+  // Only "ready" reaches here, and a failure means nothing was read at all.
+  const items = failure ? [] : reply.items;
   const list = el("div", { class: "vlist" });
   if (failure) {
     list.replaceChildren(el("div", { class: "empty", text: "Could not read the vault: " + failure }));

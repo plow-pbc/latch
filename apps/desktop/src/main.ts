@@ -586,6 +586,12 @@ ipcMain.handle("settings:getInference", async () => readInference(home));
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
   const server = device?.vaultServer;
+  // Four outcomes, one shape: the tab is shown exactly one of these and cannot
+  // be handed a combination that means nothing. They used to be an array, a
+  // null and two independent booleans, which left the renderer reconstructing
+  // which fact won — the same shape-sniffing that let a build with no runtime
+  // render as a vault that had not started yet.
+  //
   // Nothing to start, rather than not started yet: no vault was ever installed
   // here. Deliberately says nothing about the browser runtime, which may be
   // absent or merely missing its vault payload — startup tells those two apart
@@ -594,21 +600,21 @@ ipcMain.handle("vault:items", async () => {
   // tab cannot repeat a cause it was never given. "Has not started yet" would
   // tell the owner to wait for something that is never coming — the same
   // mistake the locked case below already had to fix.
-  if (!vault || !server) return { missing: true };
+  if (!vault || !server) return { status: "missing" as const };
   // Locked and empty are different facts and the screen says different words.
   // An account that is on disk and will not open must never be reported as a
   // vault that has not started — that sent people to debug a running server.
   // Read BEFORE starting: a locked account is the very case where the vault's
   // own bootstrap cannot finish, and the explanation has to survive that.
   const locked = readCredentialsState(server.dataDir);
-  if (locked.status === "locked") return { locked: true, reason: locked.reason };
+  if (locked.status === "locked") return { status: "locked" as const, reason: locked.reason };
   // Started, not merely launched: the account is written by the vault's first
   // run, so reading its state before that finishes reports an empty vault.
   await server.start();
-  if (readCredentialsState(server.dataDir).status !== "ok") return null;
+  if (readCredentialsState(server.dataDir).status !== "ok") return { status: "starting" as const };
   // Every type, not only logins: a card and a note are things the owner keeps
   // here too, and the tab is where they are kept.
-  return vault.list();
+  return { status: "ready" as const, items: await vault.list() };
 });
 
 // One item to fill an edit form with — never a secret value; those are asked
