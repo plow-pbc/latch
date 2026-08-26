@@ -11,6 +11,7 @@ apps/desktop/release/
 
 # Design specs live outside the repo (see PR descriptions for rationale)
 docs/superpowers/specs/
+docs/superpowers/plans/
 
 vendor/gog/
 vendor/python-runtime/
