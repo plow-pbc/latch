@@ -150,12 +150,11 @@ if [ -n "$ANY" ]; then
 else
   # Not necessarily "never arrived": a call rejected before an intent exists
   # (a refused argument, a bad envelope) leaves intent_rejected and no nonce.
-  # The Send step's own output discriminates — an HTTP error or isError there
+  # The Send step output above discriminates: an HTTP error or isError there
   # means it arrived and was refused.
   echo "TIMEOUT - nothing carrying $NONCE. Either it never reached this install"
   echo "  (wrong install, wrong credential, dead socket), or it was refused"
-  echo "  before an intent existed — check the Send step's output and:"
-  grep "intent_rejected" "$LOG" 2>/dev/null | tail -2
+  echo "  before an intent existed, which writes NO audit line at all."
 fi
 exit 1'
 bash -c "$SCRIPT"                                                   # local install
@@ -204,7 +203,8 @@ four Google scopes and refuses everything else by design.
   approval dialog, not a plumbing problem.
 - Call returns, and *nothing* carries the nonce → either you are reading a
   **different** install's log (check the instance home; branch-suffixed homes
-  are the usual cause), or it was refused before an intent existed, which
-  leaves `intent_rejected` and no nonce. The Send step's own output tells you
-  which: an HTTP error or `isError` there means it arrived.
+  are the usual cause), or it was refused in the MCP
+  layer before an intent existed — a refused argument, a bad envelope — which
+  writes **no audit line at all**. Only the Send step's own output tells you
+  which: an HTTP error or `isError` there means it arrived and was refused.
 - Approval dialog never answered → expected on an unattended run; see above.
