@@ -19,6 +19,7 @@
  * by launching a window is one nobody tests.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
+import { EMPTY_ROSTER, RosterSections, sectionRoster } from "./rosterSections.js";
 import { loadSettings, Settings } from "./settings.js";
 
 export interface ClientCredential {
@@ -48,12 +49,37 @@ export interface ConnectClientState {
   message: string;
   /** The shown-once credential, present only between minting and dismissal. */
   credential: ClientCredential | null;
+  /**
+   * What can reach this account, in the three sections the screen shows.
+   *
+   * Sectioned here rather than in the renderer because the section decides the
+   * removal call — see `rosterSections.ts`.
+   */
+  roster: RosterSections;
+  /** Why the roster is empty, if it is empty because the read failed. Never a
+   * credential, like every message here. */
+  rosterError: string | null;
+  /**
+   * Why the last removal did not happen.
+   *
+   * Separate from `rosterError` because they are different sentences about
+   * different things: one says the list could not be read, the other says a row
+   * the user asked to remove is still there.
+   */
+  removeError: string | null;
 }
 
 export interface ConnectClientDeps {
   api: PlowApi;
   home: string;
   isConnected: () => boolean;
+  /**
+   * Remove a cloud agent — the machine and its hold on the chat.
+   *
+   * Injected rather than reached for, so the one call that must never be a key
+   * revoke is visible in this file's dependencies.
+   */
+  deleteCloudAgent: (deviceCredential: string, agentId: string) => Promise<void>;
   onChange?: () => void;
 }
 
@@ -76,6 +102,11 @@ export class ConnectClient {
    * belongs to the old one, and its result is dropped rather than shown.
    */
   private generation = 0;
+  /** The last roster read that landed. Survives a failed read: a stale list is
+   * more use than an empty one, and `rosterError` says it is stale. */
+  private roster: RosterSections = EMPTY_ROSTER;
+  private rosterError: string | null = null;
+  private removeError: string | null = null;
 
   constructor(private readonly deps: ConnectClientDeps) {}
 
@@ -89,7 +120,77 @@ export class ConnectClient {
       busy: this.busy,
       message: this.message,
       credential: this.credential,
+      roster: this.roster,
+      rosterError: this.rosterError,
+      removeError: this.removeError,
     };
+  }
+
+  /**
+   * Re-read what can reach this account.
+   *
+   * Called when the Agents tab comes up and after any removal — the moments the
+   * list can have changed. Nothing polls it.
+   */
+  async refreshRoster(): Promise<ConnectClientState> {
+    const settings = this.settings();
+    const credential = settings.relayCredential.trim();
+    if (!credential) {
+      // Not signed in: no authority to ask with, and an empty roster is the
+      // honest answer rather than an error nobody can act on.
+      this.roster = EMPTY_ROSTER;
+      this.rosterError = null;
+      return this.publish();
+    }
+
+    const generation = this.generation;
+    try {
+      const keys = await this.deps.api.listApiKeys(credential);
+      if (generation !== this.generation) return this.state();
+      this.roster = sectionRoster(keys, { deviceCredential: credential });
+      this.rosterError = null;
+    } catch (error) {
+      if (generation !== this.generation) return this.state();
+      // The rows already on screen stay: a stale list with a banner beats an
+      // empty one that reads as "nothing can reach this account".
+      this.rosterError = messageOf(error);
+    }
+    return this.publish();
+  }
+
+  /**
+   * Remove one roster row, by whichever call its section demands.
+   *
+   * **A row with an `agent_id` goes to the cloud-agent endpoint and NEVER to
+   * the key revoke.** Revoking a cloud agent's key flips `is_active` and
+   * nothing else: the VM keeps running, the chat's webhook keeps firing, and
+   * the row vanishes from this list because we filter inactive rows — a live
+   * agent that 401s on everything and that nobody can reach to remove.
+   */
+  async removeRosterRow(id: number): Promise<ConnectClientState> {
+    this.removeError = null;
+    const row = [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
+      (candidate) => candidate.id === id,
+    );
+    if (!row) return this.failRemove("That row is no longer on this screen.");
+    const credential = this.settings().relayCredential.trim();
+    if (!credential) return this.failRemove("This Mac isn't signed in yet.");
+
+    const generation = this.generation;
+    try {
+      if (row.agentId !== null) await this.deps.deleteCloudAgent(credential, row.agentId);
+      else await this.deps.api.revokeApiKey(credential, id);
+    } catch (error) {
+      if (generation === this.generation) this.failRemove(messageOf(error));
+      return this.state();
+    }
+    if (generation !== this.generation) return this.state();
+    return this.refreshRoster();
+  }
+
+  private failRemove(message: string): ConnectClientState {
+    this.removeError = message;
+    return this.publish();
   }
 
   /**
@@ -160,6 +261,9 @@ export class ConnectClient {
    */
   signedOut(): ConnectClientState {
     this.generation += 1;
+    this.roster = EMPTY_ROSTER;
+    this.rosterError = null;
+    this.removeError = null;
     this.credential = null;
     this.message = "";
     this.busy = false;

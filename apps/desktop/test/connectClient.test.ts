@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConnectClient, agentConfig } from "../src/connectClient.js";
-import { PlowApi, PlowApiError } from "../src/plowApi.js";
+import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -25,12 +25,26 @@ class FakePlow {
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
+  /** What `listApiKeys` will answer with. */
+  keys: KeyInfo[] = [];
+  /** Every key revoke that was actually issued, in order. */
+  revoked: number[] = [];
   /** Set to hold every mint open until `release()`, the way a slow API does. */
   private gate: Promise<void> | null = null;
   private open: (() => void) | null = null;
 
   api(): PlowApi {
     return this as unknown as PlowApi;
+  }
+
+  async listApiKeys(_token: string): Promise<KeyInfo[]> {
+    if (this.fails) throw this.fails;
+    return this.keys;
+  }
+
+  async revokeApiKey(_token: string, id: number) {
+    this.revoked.push(id);
+    return { status: "revoked", id };
   }
 
   /** Make mints hang, so a test can act while one is in flight. */
@@ -63,12 +77,18 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
+/** Every cloud-agent delete the roster routed, in order. */
+let agentDeletes: string[];
 
-function build(): ConnectClient {
+function build(options: { deleteFails?: boolean } = {}): ConnectClient {
   return new ConnectClient({
     api: plow.api(),
     home,
     isConnected: () => connected,
+    deleteCloudAgent: async (_credential, agentId) => {
+      agentDeletes.push(agentId);
+      if (options.deleteFails) throw new PlowApiError("http", "Plow returned 500.", 500);
+    },
     onChange: () => {
       changes += 1;
     },
@@ -88,6 +108,7 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-connect-"));
   plow = new FakePlow();
   connected = true;
+  agentDeletes = [];
   changes = 0;
 });
 
@@ -330,5 +351,63 @@ describe("agentConfig", () => {
       url: MCP_URL,
       headers: { Authorization: "Bearer plow_secret" },
     });
+  });
+});
+
+describe("removing a roster row", () => {
+  /** One active credential, as `GET /v1/api-keys` returns it. */
+  function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
+    return {
+      id: 1,
+      key_prefix: "plow_sk_other",
+      name: "Kitchen agent",
+      scopes: ["relay:call"],
+      tokens_used: 0,
+      is_active: true,
+      last_seen_at: "2026-08-25T10:00:00Z",
+      created_at: "2026-08-20T10:00:00Z",
+      agent_id: null,
+      chat_uids: [],
+      ...overrides,
+    };
+  }
+
+  it("NEVER revokes the key of a row that belongs to a cloud agent", async () => {
+    signIn();
+    plow.keys = [key({ id: 7, agent_id: "agent_7" })];
+    const client = build();
+    await client.refreshRoster();
+
+    await client.removeRosterRow(7);
+
+    // The whole point. A key revoke flips `is_active` and nothing else: the VM
+    // keeps running, the chat's webhook keeps firing, and the row disappears
+    // from this list because inactive rows are filtered out.
+    expect(plow.revoked).toEqual([]);
+    expect(agentDeletes).toEqual(["agent_7"]);
+  });
+
+  it("revokes the key of a row that is not an agent", async () => {
+    signIn();
+    plow.keys = [key({ id: 8, agent_id: null })];
+    const client = build();
+    await client.refreshRoster();
+
+    await client.removeRosterRow(8);
+
+    expect(plow.revoked).toEqual([8]);
+    expect(agentDeletes).toEqual([]);
+  });
+
+  it("keeps the row when the removal fails", async () => {
+    signIn();
+    plow.keys = [key({ id: 9, agent_id: "agent_9" })];
+    const client = build({ deleteFails: true });
+    await client.refreshRoster();
+
+    const state = await client.removeRosterRow(9);
+
+    expect(state.removeError).toBe("Plow returned 500.");
+    expect(state.roster.cloud.map((row) => row.id)).toEqual([9]);
   });
 });

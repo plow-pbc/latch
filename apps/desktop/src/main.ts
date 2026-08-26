@@ -424,7 +424,10 @@ ipcMain.handle("ui:getTab", async () => {
   // a new home, which defaults to Agents, shows an empty cloud group until the
   // user navigates away and back. Not awaited: the read must not wait on the
   // network, and the refresh publishes `connect:changed` when it lands.
-  if (tabShowsCloudAgents(tab)) void cloudAgents?.refresh();
+  if (tabShowsCloudAgents(tab)) {
+    void cloudAgents?.refresh();
+    void connectClient?.refreshRoster();
+  }
   // "connect" was this tab's key before the content went to Settings and came
   // back as "agents". Anyone who left the app on it lands where that content
   // lives now, rather than silently on the default tab.
@@ -438,7 +441,10 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   // looked at; renderer boot (`ui:getTab`) is the other. Not awaited: selecting
   // a tab must never wait on the network, and the refresh publishes
   // `connect:changed` when it lands.
-  if (tabShowsCloudAgents(tab)) void cloudAgents?.refresh();
+  if (tabShowsCloudAgents(tab)) {
+    void cloudAgents?.refresh();
+    void connectClient?.refreshRoster();
+  }
 });
 // The account this Mac is signed into. The CREDENTIAL IS NEVER RETURNED — the
 // renderer only learns whether one is set. It is a secret with no reason to
@@ -565,6 +571,15 @@ ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
   return agentsTabState();
 });
+/**
+ * Remove one roster row. Which call that means is the state's decision, not
+ * the renderer's — see `rosterSections.ts`.
+ */
+ipcMain.handle("roster:remove", async (_e, id: number) => {
+  await connectClient?.removeRosterRow(id);
+  return agentsTabState();
+});
+
 ipcMain.handle("connect:dismiss", async () => {
   connectClient?.dismissCredential();
   return agentsTabState();
@@ -1029,21 +1044,27 @@ app.whenReady().then(async () => {
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
 
+  // Built first: the roster's removal routing needs the cloud-agent client,
+  // because a row with an `agent_id` must be deleted as an agent and never
+  // revoked as a key.
+  const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
+
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
+    deleteCloudAgent: (credential, agentId) => cloudAgentsClient.delete(credential, agentId),
     onChange: () => notifyRenderer("connect:changed"),
   });
 
   // The cloud-agent group shares the Agents tab's change channel, because it
   // shares the tab's state shape.
-  const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   cloudAgents = new CloudAgentState({
     // Both clients log what they send and what comes back — see wireLog.ts.
     // There is no server-side request log we can read, and during the rollout
     // that account is the only one there is.
-    agents: new CloudAgentsClient(cloudApi),
+    agents: cloudAgentsClient,
     chats: new CloudChatsClient(cloudApi),
     home,
     onChange: () => notifyRenderer("connect:changed"),

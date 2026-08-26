@@ -90,6 +90,10 @@ contextBridge.exposeInMainWorld("domo", {
   connectGet: () => ipcRenderer.invoke("connect:get"),
   connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
+  // Remove one roster row — a cloud agent, an MCP client or another session.
+  // The renderer says WHICH row; main decides which call that row needs, because
+  // getting it wrong leaves a live agent nobody can reach.
+  rosterRemove: (id: number) => ipcRenderer.invoke("roster:remove", id),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Cloud agents (same tab, same state shape, same change channel). Exactly
