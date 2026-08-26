@@ -805,12 +805,18 @@ app.whenReady().then(async () => {
   const vaultFailed = await js(() => {
     const text = document.body.innerText;
     return {
-      saysItCouldNotRead: text.includes("Could not read the vault: the vault did not answer"),
+      // Two facts, two names: which half regressed should be readable from
+      // which flag failed, and a joined assertion under either name says the
+      // wrong thing about the other.
+      saysItCouldNotRead: text.includes("Could not read the vault"),
+      carriesTheReason: text.includes("Could not read the vault: the vault did not answer"),
       // The transformation errText exists for. A throw arrives wrapped as
       // "Error invoking remote method 'vault:items': Error: <sentence>", and
       // the owner should read the sentence rather than the plumbing — so
       // matching the sentence alone would pass whether or not it was stripped.
-      stripsThePlumbing: !text.includes("invoking remote method") && !text.includes("vault:items"),
+      // One clause: the wrapper always carries the channel name too, so a
+      // second on `vault:items` could never disagree with this one.
+      stripsThePlumbing: !text.includes("invoking remote method"),
       // Not a diagnosis of a vault it never reached.
       doesNotClaimEmpty: !text.includes("has not started yet"),
     };
@@ -1187,6 +1193,7 @@ app.whenReady().then(async () => {
     vaultMissing.reassures &&
     vaultMissing.noLockedNote &&
     vaultFailed.saysItCouldNotRead &&
+    vaultFailed.carriesTheReason &&
     vaultFailed.stripsThePlumbing &&
     vaultFailed.doesNotClaimEmpty &&
     vaultLocked.saysCannotUnlock &&
