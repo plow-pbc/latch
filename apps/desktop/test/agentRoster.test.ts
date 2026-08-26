@@ -19,7 +19,7 @@ function key(overrides: Partial<KeyInfo>): KeyInfo {
 }
 
 describe("agent roster rows", () => {
-  it("keeps routing and chat scope while projecting credential metadata away", () => {
+  it("returns every session with routing and status while projecting credentials away", () => {
     const rows = agentRosterRows([
       key({
         id: 9,
@@ -49,6 +49,7 @@ describe("agent roster rows", () => {
         lastSeenAt: null,
         agentId: "agent_123",
         chatUids: ["cht_123"],
+        isActive: true,
       },
       {
         id: 10,
@@ -58,6 +59,27 @@ describe("agent roster rows", () => {
         lastSeenAt: null,
         agentId: null,
         chatUids: ["*"],
+        isActive: true,
+      },
+      {
+        id: 11,
+        name: "Credential",
+        kind: "Agent",
+        createdAt: null,
+        lastSeenAt: null,
+        agentId: null,
+        chatUids: ["*"],
+        isActive: false,
+      },
+      {
+        id: 12,
+        name: "Credential",
+        kind: "Session",
+        createdAt: null,
+        lastSeenAt: null,
+        agentId: null,
+        chatUids: ["*"],
+        isActive: true,
       },
     ]);
     expect(JSON.stringify(rows)).not.toMatch(/key_prefix|plow_secret_prefix|scopes|tokens_used/);
