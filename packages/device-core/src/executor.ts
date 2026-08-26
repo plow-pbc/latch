@@ -445,23 +445,28 @@ export class Executor {
       reaper = setTimeout(() => {
         if (buffer.exitCode !== null || buffer.produced) return;
         buffer.reaped = true;
+        // `abandon` can only throw through an `onExit` waiter and the sole
+        // registrant catches its own, so the `finally` is here to make the
+        // deletion unskippable rather than because a throw is expected.
         try {
           abandon(-1);
         } finally {
           // The run is dead and its output is already in memory. Its scratch is
           // the one place it could have left half of something — `TMPDIR` points
           // there and it is the only writable path a reapable run has — so the
-          // half goes with it. `finally`, because that promise is the one an
-          // agent was given and the one whose omission is silent.
-          try {
-            fs.rmSync(scratch, { recursive: true, force: true });
-          } catch {
-            // `kill` returns before the group is gone, so a descendant can
-            // still be writing here: `force` covers ENOENT, not the ENOTEMPTY
-            // of a file created mid-walk. Losing that race leaves the scratch
-            // behind, which is issue #153's existing state — while throwing out
-            // of a timer callback would take the whole app down with it.
-          }
+          // half goes with it.
+          //
+          // Async, and with retries. Scratch holds whatever the run was
+          // writing, which is unbounded (the WhatsApp fallback copies an entire
+          // archive through here), and a synchronous walk over that would stall
+          // every other run's budget timer, the relay socket and the approval
+          // window — the same reason file operations in this codebase are async
+          // and size-capped. The retries are for the descendant still writing
+          // as we walk: `kill` returns before the group is gone, and `force`
+          // covers ENOENT, not the ENOTEMPTY of a file created mid-walk. The
+          // empty callback is the last resort — a scratch that outlives its run
+          // is issue #153's standing state, and nothing here waits on it.
+          fs.rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }, () => {});
         }
       }, this.reapAfterMs);
       reaper.unref?.();

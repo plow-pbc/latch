@@ -59,21 +59,34 @@ the audit log, and used to widen the profile beyond the default region.
 
 ### Verified, not assumed
 
-Generated profile for `readPaths: ["/tmp/declared"]`, `writePaths: []`, home overridden to
-`/Users/example` — every line mentioning home:
+Generated profile for `readPaths: ["/tmp/declared"]`, `writePaths: []`, `network: true`, home
+overridden to `/Users/example` — every line mentioning home. Network approved, so this run is not
+reapable and keeps the housekeeping writes:
 
 ```
-(allow file-read*  (subpath "/Users/example"))
+(allow file-read* (subpath "/Users/example"))
 (allow file-write* (subpath "/Users/example/Library/Caches"))
-(allow file-read*  (subpath "/Users/example/Library/Caches"))
+(allow file-read* (subpath "/Users/example/Library/Caches"))
 (allow file-write* (subpath "/Users/example/.cache"))
-(allow file-read*  (subpath "/Users/example/.cache"))
+(allow file-read* (subpath "/Users/example/.cache"))
 (allow file-write* (subpath "/Users/example/.config"))
-(allow file-read*  (subpath "/Users/example/.config"))
+(allow file-read* (subpath "/Users/example/.config"))
 (allow file-write* (subpath "/Users/example/.local/state"))
-(allow file-read*  (subpath "/Users/example/.local/state"))
+(allow file-read* (subpath "/Users/example/.local/state"))
 (allow file-write* (subpath "/Users/example/.npm"))
-(allow file-read*  (subpath "/Users/example/.npm"))
+(allow file-read* (subpath "/Users/example/.npm"))
+```
+
+The same inputs with `network: false` are the exception above — reapable, so the five writes are
+gone and only their reads remain:
+
+```
+(allow file-read* (subpath "/Users/example"))
+(allow file-read* (subpath "/Users/example/Library/Caches"))
+(allow file-read* (subpath "/Users/example/.cache"))
+(allow file-read* (subpath "/Users/example/.config"))
+(allow file-read* (subpath "/Users/example/.local/state"))
+(allow file-read* (subpath "/Users/example/.npm"))
 ```
 
 And live, through the real `Executor` with **`readPaths: []`** — no declared read paths at all:

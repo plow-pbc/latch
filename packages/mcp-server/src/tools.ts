@@ -274,7 +274,7 @@ export const TOOLS: ToolSpec[] = [
       "A command that declares neither write_paths nor network can be killed if it has produced no " +
       "output at all after 15 minutes — so if long silent work is expected, have it print progress — " +
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
-      "if it is killed: nothing it leaves behind can be half-written. Declare a write path (or " +
+      "if it is killed — so a half-written file has nowhere to survive. Declare a write path (or " +
       "network) and it is never killed that way, because it could be mid-work and a truncated file " +
       "is worse than the wait. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +

@@ -197,7 +197,8 @@ set:
 - `file-write*` stays scoped: the approved write paths + the scratch dir + a
   small set of tool "housekeeping" dirs under home (`~/Library/Caches`,
   `~/.cache`, `~/.config`, `~/.local/state`, `~/.npm`) so incidental cache/config
-  writes don't break tools. Writes to arbitrary or system locations are denied —
+  writes don't break tools — except a run that may be reaped for going silent,
+  which gets none of them (`SANDBOX-BOUNDARY.md` §1). Writes to arbitrary or system locations are denied —
   write confinement (plus network gating and per-command human approval) is the
   enforced protection.
 - `network*` allowed only if declared and approved
