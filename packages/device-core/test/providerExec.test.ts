@@ -99,16 +99,22 @@ describe("a vendored provider through the exec path", () => {
     expect(events).not.toContain("exec_start");
   });
 
-  it("reports a failed mint without spawning, and names no token", async () => {
-    const d = device({ mint: async () => { throw MintError.unreachable("gog"); } }, [vendorDir()]);
+  it.each([
+    [
+      "a mint that failed",
+      (): Minter => ({ mint: async () => { throw MintError.unreachable("gog"); } }),
+      /could not reach Plow/,
+    ],
+    ["no minter wired at all", (): Minter | null => null, /not paired/],
+  ])("reports %s without spawning", async (_why, make, expected) => {
+    const d = device(make(), [vendorDir()]);
     const response = await run(d, ["gog", "gmail", "search", "q"]);
-    expect(jv(response).get("status").str).toBe("error");
-    expect(jv(response).get("error").str).toMatch(/could not reach Plow/);
-  });
-
-  it("says the runtime is not paired when no minter is wired", async () => {
-    const d = device(null, [vendorDir()]);
-    expect(jv(await run(d, ["gog", "gmail", "search", "q"])).get("status").str).toBe("error");
+    expect(jv(response).get("error").str).toMatch(expected);
+    // "without spawning" is the claim the name makes; the audit is where it
+    // can be checked.
+    const events = d.audit.entries().map((e) => jv(e).get("event").str);
+    expect(events).toContain("exec_error");
+    expect(events).not.toContain("exec_start");
   });
 
   it("refuses a provider name with nothing staged, instead of running the owner's own binary", async () => {
