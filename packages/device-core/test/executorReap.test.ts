@@ -124,9 +124,9 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
   // silently mid-work, and a truncated file or a half-applied remote call is
   // worse than the wait.
   it.each([
-    { name: "write", writePaths: true, network: false },
-    { name: "network", writePaths: false, network: true },
-  ])("leaves a silent run approved for $name alone", async ({ writePaths, network }) => {
+    { name: "write", write: true, network: false },
+    { name: "network", write: false, network: true },
+  ])("leaves a silent run approved for $name alone", async ({ write, network }) => {
     const dir = tempDir();
     const fifo = blockingPipe(dir);
     const executor = new Executor(path.join(dir, "scratch"), 300);
@@ -135,7 +135,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
       argv: ["/bin/cat", fifo],
       cwd: dir,
       readPaths: [dir],
-      writePaths: writePaths ? [dir] : [],
+      writePaths: write ? [dir] : [],
       network,
       waitMs: 50,
     });
@@ -265,6 +265,21 @@ describe.skipIf(!ON_MAC)("a run closing out", () => {
     expect(second).toBe(true);
     expect(ended.exitCode).toBe(0);
     expect(ended.output.toString()).toContain("hi");
+
+    // And the other half of the seam: registering on an already-settled run
+    // reaches the callback by a different path, which must hold the same rule
+    // — the throw stays the registrant's, and the next one still gets its
+    // outcome.
+    expect(() =>
+      executor.onExit(started.handle, () => {
+        throw new Error("a late registrant's problem");
+      }),
+    ).not.toThrow();
+    let late: number | null = null;
+    executor.onExit(started.handle, (exitCode) => {
+      late = exitCode;
+    });
+    expect(late).toBe(0);
   });
 });
 

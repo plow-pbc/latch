@@ -252,7 +252,8 @@ class OutputBuffer {
 
   onExit(cb: (exitCode: number, reaped: boolean) => void): void {
     if (this.exitCode !== null) {
-      invoke(() => cb(this.exitCode ?? -1, this.reaped));
+      const code = this.exitCode;
+      invoke(() => cb(code, this.reaped));
       return;
     }
     this.waiters.push(() => cb(this.exitCode ?? -1, this.reaped));
