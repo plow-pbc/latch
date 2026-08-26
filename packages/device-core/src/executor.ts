@@ -137,10 +137,10 @@ export const REAP_AFTER_MS = 15 * 60_000;
  * Normally `close` follows `exit` immediately and this never fires. It exists
  * for the run whose backgrounded job inherited the stdout pipe and is still
  * holding it: the command is over, so the job settles on this instead of
- * waiting on a pipe nobody is going to close. What that job writes afterwards
- * is not captured — the run ended with its command — and `plow_run_command`
- * says so, because an agent polling for a background server's logs would
- * otherwise read an empty tail as the whole answer.
+ * waiting on a pipe nobody is going to close. Settling closes the pipes, so a
+ * background job still writing to them is broken by that — which is why
+ * `plow_run_command` tells an agent to redirect anything meant to outlive its
+ * command.
  */
 export const STDIO_DRAIN_MS = 250;
 
@@ -174,9 +174,6 @@ class OutputBuffer {
   private waiters: (() => void)[] = [];
 
   append(chunk: Buffer): void {
-    // Same once-only rule as `finish`: a straggler still holding the pipe must
-    // not grow the output of a job the agent has already been told is over.
-    if (this.exitCode !== null) return;
     this.chunks.push(chunk);
     this.length += chunk.length;
   }
@@ -327,8 +324,15 @@ export class Executor {
     // still around", which is not this Mac's promise to keep and was three
     // rounds of holes in one predicate when the reaper tried to keep it.
     let reaper: ReturnType<typeof setTimeout>;
+    // Settling CLOSES the capture, on every path into it. A run that has been
+    // answered must stop growing, and the read ends of its pipes must not stay
+    // attached for the life of the app because something the command left
+    // behind is still holding the write ends. That the capture closes is why
+    // nothing downstream needs a guard against late output.
     const settle = (code: number) => {
       clearTimeout(reaper);
+      child.stdout.destroy();
+      child.stderr.destroy();
       buffer.finish(code);
     };
     child.on("error", () => settle(-1));
@@ -336,18 +340,9 @@ export class Executor {
       const outcome = code ?? (signal ? -1 : 0);
       // Output already written may still be in flight, so the usual `close`
       // remains the settling event — with a deadline, because a straggler
-      // holding a pipe must not hold the agent with it. On that deadline the
-      // capture is CLOSED rather than left racing: take what the streams still
-      // hold, then destroy them, so nothing is half-read and no run leaves a
-      // pair of pipes and a `data` listener behind for the life of the app.
-      const drain = setTimeout(() => {
-        for (const stream of [child.stdout, child.stderr]) {
-          const rest: unknown = stream.read();
-          if (Buffer.isBuffer(rest)) buffer.append(rest);
-          stream.destroy();
-        }
-        settle(outcome);
-      }, STDIO_DRAIN_MS);
+      // holding a pipe must not hold the agent with it. Output not delivered
+      // by then is dropped: this deadline is the end of the run.
+      const drain = setTimeout(() => settle(outcome), STDIO_DRAIN_MS);
       drain.unref?.();
       child.on("close", () => {
         clearTimeout(drain);
@@ -380,6 +375,11 @@ export class Executor {
 
     child.stdout.on("data", (chunk: Buffer) => buffer.append(chunk));
     child.stderr.on("data", (chunk: Buffer) => buffer.append(chunk));
+    // A pipe error would otherwise be an unhandled stream `error` — which
+    // throws, and in the Electron main process that is the app going down
+    // over a child's broken pipe. The run's own outcome says what happened.
+    child.stdout.on("error", () => {});
+    child.stderr.on("error", () => {});
 
     await buffer.waitForExit(Math.max(args.waitMs, 0));
     return { handle, ...shape(buffer.snapshot(0)) };
