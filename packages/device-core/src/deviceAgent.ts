@@ -15,6 +15,7 @@ import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo
 import { needsToken, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type Minter } from "./providers/mint.js";
 import os from "node:os";
+import fs from "node:fs";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
@@ -515,7 +516,10 @@ export class DeviceAgent {
       // their own PATH — unbelted, unrefused, and against their own
       // credentials rather than a minted one. The name is this Mac's to
       // resolve; if it cannot, that is an answer, not a pass.
-      if (this.vendorDirs.length === 0) {
+      // Per-provider, not a global flag: the day a second row joins the
+      // registry, a Mac with only gog staged would otherwise report the other
+      // as staged too and mint for it — the exact spend this check prevents.
+      if (!this.vendorDirs.some((d) => fs.existsSync(path.join(d, provider.command)))) {
         const error = `${provider.command} is not installed on this Mac`;
         this.audit.record("exec_error", { intentId: intent.intentId, error });
         return { status: "error", error };

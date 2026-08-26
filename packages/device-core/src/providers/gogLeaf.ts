@@ -22,6 +22,25 @@ export class GogArgvError extends Error {}
 
 const LEAVES: ReadonlySet<string> = new Set(GOG_LEAVES);
 
+/**
+ * Whether `words` name a command path this Mac can reach — a whole leaf, or a
+ * group that has leaves under it.
+ *
+ * What `--help` is allowed against. Without the prefix half, `gog gmail --help`
+ * would be refused (a group is not a leaf); without the known half, appending
+ * `--help` to anything at all would walk past the leaf check entirely and turn
+ * the gate into a scan for one token.
+ */
+export function isKnownCommandPath(words: readonly string[]): boolean {
+  if (words.length === 0) return false;
+  // A word that already contains a dot is not a command path, for the same
+  // reason it is not one in `gogLeaf`: the join would match `gmail.search`
+  // against a real leaf name while gog can run no such argv.
+  if (words.some((w) => w.includes("."))) return false;
+  const joined = words.join(".");
+  return LEAVES.has(joined) || GOG_LEAVES.some((l) => l.startsWith(`${joined}.`));
+}
+
 export function gogLeaf(argv: readonly string[]): string {
   // The command path is the leading run of plain words. gog accepts globals
   // on BOTH sides of the path, but this requires the path to come first and

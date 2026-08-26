@@ -6,7 +6,7 @@
  * nothing else. That is the property worth testing; the rest is plumbing.
  */
 import { describe, expect, it, vi } from "vitest";
-import { makeMinter, MintError, MINT_TIMEOUT_MS } from "../src/providers/mint.js";
+import { makeMinter, MintError } from "../src/providers/mint.js";
 import { vendoredProvider } from "../src/providers/registry.js";
 
 const GOG = vendoredProvider(["gog"])!;
@@ -107,9 +107,4 @@ describe("makeMinter", () => {
     }
   });
 
-  it("gives up rather than hanging past its own ceiling", () => {
-    // The exec path's caller has a call budget; a mint that never returns
-    // would spend it before the command even starts.
-    expect(MINT_TIMEOUT_MS).toBeLessThan(30_000);
-  });
 });

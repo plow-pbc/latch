@@ -64,7 +64,15 @@ export interface VendoredProvider {
 }
 
 import { reservedFlagIn } from "./gogFlags.js";
-import { gogLeaf, GogArgvError } from "./gogLeaf.js";
+import { gogLeaf, GogArgvError, isKnownCommandPath } from "./gogLeaf.js";
+
+/** `<known command path> --help`, and nothing else. */
+function isHelpInvocation(rest: readonly string[]): boolean {
+  const last = rest[rest.length - 1];
+  if (last !== "--help" && last !== "-h") return false;
+  const words = rest.slice(0, -1);
+  return words.every((w) => !w.startsWith("-")) && isKnownCommandPath(words);
+}
 
 const GOG: VendoredProvider = {
   command: "gog",
@@ -85,10 +93,20 @@ const GOG: VendoredProvider = {
     }
     // `--help` is how the skill tells an agent to discover the rest of the
     // surface, and it is inert: gog prints usage and exits, with no network
-    // call and nothing mutated. Without this the leaf check refuses
+    // call and nothing mutated. Without an allowance the leaf check refuses
     // `gog gmail --help`, because a group is not a leaf — so the skill would
     // be teaching a command the gate rejects.
-    if (rest.some((a) => a === "--help" || a === "-h")) return null;
+    //
+    // Recognised STRUCTURALLY, not by scanning for the token: the words before
+    // it must themselves name a command path this Mac can reach. A scan would
+    // let `gog drive files list --help` walk past the leaf check entirely, so
+    // appending one flag would have turned the whole gate off.
+    //
+    // `-h` is included because it is verified to be gog's group help at
+    // 0.36.0. gog itself refuses `--help` in a flag's value position
+    // (`--subject --help` → "expected string value"), so that shape needs no
+    // handling here.
+    if (isHelpInvocation(rest)) return null;
     try {
       gogLeaf(rest);
     } catch (e) {

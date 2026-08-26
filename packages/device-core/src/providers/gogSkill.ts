@@ -39,17 +39,20 @@ not as a bug to work around.
 
 Useful starting points:
 
-    gog gmail search 'from:someone newer_than:30d' --json
-    gog gmail get <messageId> --json
-    gog gmail drafts reply <messageId> --body "..."     # draft, for review
-    gog gmail send --to a@b.com --subject "..." --body "..."
-    gog calendar events primary --from 2026-09-01T00:00:00Z --to 2026-09-08T00:00:00Z --json
-    gog calendar freebusy primary --from ... --to ...
-    gog calendar conflicts --from ... --to ...          # overlaps across calendars
-    gog calendar create primary --summary "..." --from ... --to ...
+    ["gog","gmail","search","from:someone newer_than:30d","--json"]
+    ["gog","gmail","get","<messageId>","--json"]
+    ["gog","gmail","drafts","reply","<messageId>","--body","..."]     # draft, for review
+    ["gog","gmail","send","--to","a@b.com","--subject","...","--body","..."]
+    ["gog","calendar","events","primary","--from","2026-09-01T00:00:00Z","--to","2026-09-08T00:00:00Z","--json"]
+    ["gog","calendar","freebusy","primary","--from","...","--to","..."]
+    ["gog","calendar","conflicts","--from","...","--to","..."]        # overlaps across calendars
+    ["gog","calendar","create","primary","--summary","...","--from","...","--to","..."]
 
-Run \`gog <group> --help\` for the rest; the binary is the authority, not this
-page.
+Each element is one argument. There is no shell here, so nothing is quoted or
+word-split: a query with spaces is a single element, exactly as written.
+
+Run \`["gog","gmail","--help"]\` (or any group) for the rest; the binary is the
+authority, not this page. Help runs without minting a token.
 
 ## Rules that are enforced, not advice
 

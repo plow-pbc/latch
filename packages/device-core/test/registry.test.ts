@@ -68,6 +68,17 @@ describe("the gog provider's refusal", () => {
     expect(gog.refuse(["gog", "gmail", "--help", "--home", "/tmp/evil"])).not.toBeNull();
   });
 
+  it.each([
+    ["a group this Mac cannot reach", ["gog", "drive", "files", "list", "--help"]],
+    ["a typo", ["gog", "gmail", "serach", "--help"]],
+    ["the dotted spelling", ["gog", "gmail.search", "--help"]],
+    ["help that is not the last word", ["gog", "gmail", "--help", "search"]],
+  ])("does not let --help walk past the leaf check: %s", (_why, argv) => {
+    // Scanning for the token would have turned the whole gate off for anything
+    // with one flag appended.
+    expect(gog.refuse(argv)).not.toBeNull();
+  });
+
   it("never reports a spelling the caller chose", () => {
     // The reason reaches an error, the approval dialog and the audit log.
     const reason = gog.refuse(["gog", "gmail", "send", "--sneaky-agent-text-file", "/x"])!;
