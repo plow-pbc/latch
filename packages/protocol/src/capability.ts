@@ -104,11 +104,19 @@ export function capabilityDisplay(c: Capability): string {
       // not see it relabelled as a credential-fill grant they never gave.
       if (c.access !== "fill") return "Credentials: a shape no longer requested (grants nothing)";
       return `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
-    default:
+    default: {
       // rules.json is parsed and cast without validation, so a stored
       // capability can carry a kind outside the current union. Naming it is
       // worth more to someone deciding whether to revoke than `undefined`.
+      //
+      // The `never` binding keeps what a bare `default` would have cost: the
+      // switch stays exhaustive to the compiler, so adding an eighth kind
+      // fails the build here until it has a human sentence, instead of
+      // shipping as a bare slug in the "will be allowed to" chips.
+      const _exhaustive: never = c.kind;
+      void _exhaustive;
       return (c as Capability).kind;
+    }
   }
 }
 

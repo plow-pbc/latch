@@ -391,21 +391,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .approve { padding: 18px; display: flex; flex-direction: column; height: 100vh; }
 .approve .who { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .approve .who .name { font-size: 16px; font-weight: 600; }
-/* Scrolls, for the same reason `.stated-goal` below does. This line is
-   device-composed, but a Slack search puts the agent's query in it verbatim
-   (rejected past 2 000 chars, not truncated — a truncated selector would
-   collapse two rule keys), so ~30 wrapped lines can render here legitimately
-   and push the action row past the clipped edge. Also bounds the other long
-   device lines — `run: <argv>`, `read file: <path>` — for free. */
-.approve .goal { color: var(--muted); margin: 6px 0 14px; max-height: 6em; overflow: auto; }
-/* The agent writes this one, and nothing caps its length before it reaches the
-   card. `.approve` is a 100vh flex column and `body` clips rather than scrolls,
-   so an unbounded block here shrinks `.fine` to its floor and then pushes the
-   Deny / Always Allow / Allow Once row out of the window — leaving the armed
-   Return key, which activates Allow Once, as the only reachable control. Scroll
-   it inside its own bound instead. Same reasoning as `.fine`'s floor, applied
-   to the sibling that floor cannot constrain. */
-.approve .stated-goal { max-height: 4.5em; overflow: auto; }
+.approve .goal { color: var(--muted); margin: 6px 0 14px; }
 .approve .fine {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px; margin-bottom: 14px;
@@ -416,7 +402,16 @@ textarea.text { min-height: 70px; resize: vertical; }
   flex: 1; min-height: 120px; overflow: auto;
 }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
-.approve .actions { display: flex; gap: 8px; }
+/* Everything above the buttons scrolls as ONE region; the buttons never
+   shrink. `min-height: 0` is what lets a flex child actually scroll rather
+   than grow to its content. This replaced a per-block `max-height` on the
+   stated goal and the request line: the card carries device text, agent text
+   and model output, any of them can be long, and bounding them one at a time
+   was a fix per round with the next sibling always still open. The reviewer
+   note is the case that matters — it arrives after `armActions`, so the
+   buttons are live and Return is armed on Allow Once when it lands. */
+.approve .scroll-region { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.approve .actions { display: flex; gap: 8px; flex-shrink: 0; }
 .approve .actions .action-slot { flex: 1; position: relative; display: flex; }
 /* The opacity transition makes the arming delay (buttons start disabled for a
    beat so stray input can't land — approval.js) read as deliberate, not lag. */

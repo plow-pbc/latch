@@ -113,4 +113,19 @@ describe("capabilityDisplay", () => {
       "Credentials: fill a1, b2 into approved sites (typed on this Mac; the agent can see the page it types into)",
     );
   });
+
+  // rules.json can still hold a credential rule saved before the metadata
+  // capability was removed. It grants nothing, and the owner reviewing stored
+  // grants must not read it as a fill grant they never gave.
+  it("a credential rule that is not a fill says it grants nothing", () => {
+    expect(capabilityDisplay({ kind: "credential", items: [] })).toBe(
+      "Credentials: a shape no longer requested (grants nothing)",
+    );
+  });
+
+  // rules.json is parsed and cast without validation, so a stored kind can sit
+  // outside the union. Its slug beats `undefined` on the revoke screen.
+  it("an out-of-union kind renders its own slug", () => {
+    expect(capabilityDisplay({ kind: "mail.send" } as unknown as Capability)).toBe("mail.send");
+  });
 });

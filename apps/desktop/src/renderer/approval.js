@@ -108,31 +108,43 @@ async function render() {
   const reviewerNote = el("div", { class: "reviewer-note" });
 
   root.replaceChildren(
-    el("div", { class: "who" }, [
-      el("span", { class: "name", text: v.agentDisplay }),
-      badge("blue", "wants to act"),
+    // ONE scroll region above the action row, rather than a max-height on each
+    // block that might grow. Three separate rounds each bounded one sibling —
+    // the stated goal, the request line, the reviewer note — and a fourth
+    // would have been next, because the card mixes device text, agent text and
+    // model output and any of them can be long. With the region scrolling and
+    // `.actions` refusing to shrink, no sibling's height can push Deny /
+    // Always Allow / Allow Once past the clipped edge, including ones added
+    // later. That matters most for the reviewer note, which is inserted AFTER
+    // armActions has run: the buttons are already live and Return is armed on
+    // Allow Once when it lands.
+    el("div", { class: "scroll-region" }, [
+      el("div", { class: "who" }, [
+        el("span", { class: "name", text: v.agentDisplay }),
+        badge("blue", "wants to act"),
+      ]),
+      el("div", { class: "faint mono", text: v.agentId }),
+      // The device-composed request line, ALWAYS — it is the only description of
+      // this operation the Mac wrote itself, and for a Slack call it carries the
+      // message excerpt or the search query. `goal` is agent-supplied text; when
+      // it displaced this line, an agent could hide what it was asking to send
+      // merely by stating a goal. CLAUDE.md keeps goal text off every decision
+      // path, and the human's approval is one. Shown beside it, labelled, the way
+      // the access-request card above already treats stated goals.
+      el("div", { class: "goal", text: v.request }),
+      v.goal ? el("div", { class: "lbl", text: "Agent's stated goal (unverified)" }) : null,
+      v.goal ? el("div", { class: "faint stated-goal", text: v.goal }) : null,
+      el("div", { class: "fine" }, [
+        el("div", { class: "lbl", text: "This will be allowed to (enforced)" }),
+        capchips,
+        warnings.length
+          ? el("div", { class: "warn", text: "⚠ " + warnings.join(" · ") })
+          : null,
+        v.planContext ? el("div", { class: "lbl", text: "Session context" }) : null,
+        v.planContext ? el("div", { class: "faint", text: v.planContext }) : null,
+      ]),
+      reviewerNote
     ]),
-    el("div", { class: "faint mono", text: v.agentId }),
-    // The device-composed request line, ALWAYS — it is the only description of
-    // this operation the Mac wrote itself, and for a Slack call it carries the
-    // message excerpt or the search query. `goal` is agent-supplied text; when
-    // it displaced this line, an agent could hide what it was asking to send
-    // merely by stating a goal. CLAUDE.md keeps goal text off every decision
-    // path, and the human's approval is one. Shown beside it, labelled, the way
-    // the access-request card above already treats stated goals.
-    el("div", { class: "goal", text: v.request }),
-    v.goal ? el("div", { class: "lbl", text: "Agent's stated goal (unverified)" }) : null,
-    v.goal ? el("div", { class: "faint stated-goal", text: v.goal }) : null,
-    el("div", { class: "fine" }, [
-      el("div", { class: "lbl", text: "This will be allowed to (enforced)" }),
-      capchips,
-      warnings.length
-        ? el("div", { class: "warn", text: "⚠ " + warnings.join(" · ") })
-        : null,
-      v.planContext ? el("div", { class: "lbl", text: "Session context" }) : null,
-      v.planContext ? el("div", { class: "faint", text: v.planContext }) : null,
-    ]),
-    reviewerNote,
     el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
   );
   if (reviewing) document.body.appendChild(reviewing);
