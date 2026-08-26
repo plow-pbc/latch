@@ -172,20 +172,6 @@ export class CloudAgentState {
   private mutations = 0;
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
-  /**
-   * Chat uid -> the agent id whose local settings are waiting to be carried
-   * onto whatever agent turns up in that chat.
-   *
-   * A retry whose replacement create answered nothing may still have COMMITTED:
-   * the agent exists, with an id this process never saw. Deleting the old entry
-   * then would hand the recovered agent no `adversarialReview` at all, and
-   * under global Approve its requests on this Mac would auto-run — the switch
-   * reporting success while doing nothing, for the third time today.
-   *
-   * So the entry is kept, and the chat is remembered. `refreshAgents` is where
-   * the agent finally appears, and where the settings follow it.
-   */
-  private carryByChat = new Map<string, string>();
 
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
@@ -297,63 +283,6 @@ export class CloudAgentState {
   }
 
   /**
-   * Start an agent over: delete it, then create another in the same chat.
-   *
-   * The new agent gets a NEW `agent_id`, so the old one's local settings are
-   * carried across explicitly — otherwise Retry silently resets choices the
-   * user made about an agent they think of as the same one.
-   */
-  async retry(agentId: string): Promise<void> {
-    this.actionError = null;
-    const id = (agentId ?? "").trim();
-    const row = id ? this.rows.get(id) : undefined;
-    if (!row) {
-      this.failAction("That agent is no longer on this screen.");
-      return;
-    }
-    const credential = this.credential();
-    if (!credential) {
-      this.failAction("This Mac isn't signed in yet.");
-      return;
-    }
-
-    const generation = this.generation;
-    // Same order as `remove`, and for the same reason.
-    this.abortPoll(id);
-    try {
-      await this.deps.agents.delete(credential, id);
-    } catch (error) {
-      if (generation === this.generation) this.failAction(messageOf(error));
-      return;
-    }
-    if (generation !== this.generation) return;
-    this.mutations += 1;
-    this.rows.delete(id);
-    this.pending.delete(id);
-    // The row goes, the local settings stay. A retry is two round trips, and
-    // the panel is open across both of them: an entry deleted here would take
-    // a toggle made in the meantime with it, and one snapshotted before them
-    // would overwrite that toggle with a stale value. The entry moves once,
-    // below, when there is somewhere for it to go.
-    this.publish();
-
-    const replacement = await this.create(row.chatUid, row.name);
-    if (generation !== this.generation) return;
-    if (replacement) {
-      // Read at the last possible moment, so what moves is whatever the user
-      // last chose — including a toggle that landed while this was in the air.
-      this.moveAgentSettings(id, replacement);
-    } else if (this.readAgentSettings(id)) {
-      // No id came back, which is NOT the same as no agent. The create may
-      // have committed and answered nothing, so destroying the entry here
-      // would silently switch review off on an agent that is about to appear.
-      // Keep it, and let the listing say where it goes.
-      this.carryByChat.set(row.chatUid, id);
-    }
-    this.publish();
-  }
-
-  /**
    * Write this agent's local settings — today, adversarial review and nothing
    * else.
    *
@@ -383,7 +312,6 @@ export class CloudAgentState {
   signedOut(): void {
     this.generation += 1;
     this.tearingDown.clear();
-    this.carryByChat.clear();
     // Before the rows go: these polls are authorised with a credential that is
     // no longer this Mac's, so every further request they make is a 401.
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
@@ -456,22 +384,6 @@ export class CloudAgentState {
     })();
   }
 
-  /**
-   * Give a newly-listed agent the settings a lost retry left behind.
-   *
-   * Matched on the chat, because the chat is the only thing that survived: a
-   * replacement has a new `agent_id`, and the whole problem is that this
-   * process never learned it. An agent that already has its own entry is left
-   * alone — it is not the one that went missing.
-   */
-  private claimCarriedSettings(agent: CloudAgentResource): void {
-    const from = this.carryByChat.get(agent.chatUid);
-    if (from === undefined || from === agent.agentId) return;
-    if (this.readAgentSettings(agent.agentId)) return;
-    this.carryByChat.delete(agent.chatUid);
-    this.moveAgentSettings(from, agent.agentId);
-  }
-
   private abortPoll(agentId: string): void {
     const controller = this.polls.get(agentId);
     if (!controller) return;
@@ -509,9 +421,6 @@ export class CloudAgentState {
       }
       this.rows = listed;
       this.agentsError = null;
-      // A retry whose replacement was never identified: the agent it produced
-      // shows up here, and its owner's review setting follows it.
-      for (const agent of agents) this.claimCarriedSettings(agent);
       // `teardown` is not a state an agent rests in — it is a delete that
       // failed provider-side and is waiting to be asked again. Nothing else
       // will ask, so this does, from whichever refresh sees it.
