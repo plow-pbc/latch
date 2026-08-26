@@ -9,6 +9,10 @@
  */
 import { Capability, capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
 
+/** The `tool` actions that write to the connected account rather than read
+ * from it — the set that earns the stronger warning on the approval card. */
+const SLACK_WRITE_ACTIONS = new Set(["slack.messages.send", "slack.messages.update", "slack.conversations.open"]);
+
 export interface ApprovalViewModel {
   intentId: string;
   agentDisplay: string;
@@ -25,11 +29,15 @@ export interface ApprovalViewModel {
   runsCommand: boolean;
   usesBrowser: boolean;
   fillsCredentials: boolean;
-  /** A `tool` capability — the owner's connected account, acted on off this
-   * Mac and in their name. Every other flag here warns about something that
-   * happens on the machine; this one is the only irreversible thing other
-   * people read, so it needs its own line on the card. */
-  usesConnectedAccount: boolean;
+  /** A `tool` capability that WRITES — sends, edits, or opens a DM in the
+   * owner's connected account, in their name. Every other flag here warns
+   * about something that happens on the machine; this is the only
+   * irreversible thing other people read, so it gets its own line on the
+   * card. A `tool` capability that only reads (listing channels, users,
+   * messages) does not set this — nothing else on the card would warn on a
+   * write, but a read is not the same risk and does not need the same
+   * banner. */
+  sendsToConnectedAccount: boolean;
   /** browser capability origins, for the card. */
   origins: string[];
   /** credential(fill) items with titles resolved ON-DEVICE (never from the
@@ -82,7 +90,7 @@ export function approvalViewModel(
     runsCommand: caps.some((c) => c.kind === "process.exec"),
     usesBrowser: caps.some((c) => c.kind === "browser"),
     fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
-    usesConnectedAccount: caps.some((c) => c.kind === "tool"),
+    sendsToConnectedAccount: caps.some((c) => c.kind === "tool" && SLACK_WRITE_ACTIONS.has(c.tool ?? "")),
     origins: caps.find((c) => c.kind === "browser")?.origins ?? [],
     credentialItems,
   };

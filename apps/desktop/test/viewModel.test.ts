@@ -39,7 +39,7 @@ describe("approvalViewModel", () => {
     expect(vm.runsCommand).toBe(true);
     expect(vm.writesFiles).toBe(true);
     expect(vm.needsNetwork).toBe(false);
-    expect(vm.usesConnectedAccount).toBe(false);
+    expect(vm.sendsToConnectedAccount).toBe(false);
     expect(vm.capabilities.map((c) => c.display)).toEqual([
       "Run: /bin/sh -c df -h (in /tmp)",
       "Network: denied",
@@ -59,7 +59,7 @@ describe("approvalViewModel", () => {
         capabilities: [{ kind: "tool", tool: "slack.messages.send", target: "T1/C1" }],
       }),
     );
-    expect(vm.usesConnectedAccount).toBe(true);
+    expect(vm.sendsToConnectedAccount).toBe(true);
     expect([
       vm.runsCommand,
       vm.writesFiles,
@@ -68,6 +68,20 @@ describe("approvalViewModel", () => {
       vm.fillsCredentials,
     ]).toEqual([false, false, false, false, false]);
     expect(vm.capabilities.map((c) => c.display)).toEqual(["Slack: messages.send in T1/C1"]);
+  });
+
+  // A read (listing channels) is not the same risk as a send: it doesn't act
+  // as the owner anywhere another person can see it. Firing the same "acts in
+  // your connected accounts" warning on both stops the warning from meaning
+  // anything on the three tools where it matters.
+  it("does not warn on a Slack read", () => {
+    const vm = approvalViewModel(
+      intentOf({
+        request: "list Slack channels",
+        capabilities: [{ kind: "tool", tool: "slack.channels.list", target: "T1" }],
+      }),
+    );
+    expect(vm.sendsToConnectedAccount).toBe(false);
   });
 
   it("flags network when a network capability is allowed", () => {
