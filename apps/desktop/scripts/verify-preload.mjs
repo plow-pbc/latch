@@ -743,6 +743,7 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
     await waitFor(win, marker, what);
   };
+  const js = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
   const empty = (says) =>
     `document.querySelector("#view .empty")?.textContent.includes(${JSON.stringify(says)})`;
 
@@ -752,17 +753,19 @@ app.whenReady().then(async () => {
   // not-started, and each time the fix was a sentence that another state was
   // already entitled to. Structural rather than promised in a comment — a new
   // state added here is excluded from the others by construction.
-  // All five, not the three with fixed wording: the last two are the stable
-  // prefixes of sentences that carry a variable tail. Left out, they are never
-  // excluded from anybody — a regression printing the unknown-status line on
-  // the missing pane would satisfy every probe here.
-  const HEADLINES = [
-    "This build has no vault installed.",
-    "This Mac can't unlock its vault account.",
-    "The vault has not started yet.",
-    "does not know:",
-    "Could not read the vault",
-  ];
+  // Every sentence this pane can print, named rather than positional: each
+  // probe waits for its own and asserts the absence of all the others, so a
+  // state added here is excluded from the rest by construction. All five, not
+  // the three with fixed wording — the last two carry a variable tail, and left
+  // off the list they would never be excluded from anybody.
+  const SAYS = {
+    missing: "This build has no vault installed.",
+    locked: "This Mac can't unlock its vault account.",
+    starting: "The vault has not started yet.",
+    unknown: "does not know:",
+    failed: "Could not read the vault",
+  };
+  const HEADLINES = Object.values(SAYS);
   const saysOnly = (mine) =>
     win.webContents.executeJavaScript(
       `(() => { const t = document.body.innerText, mine = ${JSON.stringify(mine)};
@@ -770,19 +773,19 @@ app.whenReady().then(async () => {
           saysIts: t.includes(mine),
           saysNoOtherHeadline: ${JSON.stringify(HEADLINES)}.filter((h) => h !== mine).every((h) => !t.includes(h)),
         }; })()`);
-  const also = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
+  /** Show the vault freshly and wait for the sentence this state is about. */
+  const vaultSaying = (says, what) => showVault(empty(says), what);
 
   // The vault's honest failure state: locked is not empty, and the screen has to
   // say so — the old copy sent people to debug a server that was running fine.
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
-  await waitFor(win, `document.querySelector("#view .empty")`, "the vault pane to render");
+  await vaultSaying(SAYS.locked, "the locked-vault pane to render");
   const vaultLocked = {
     // The state whose mis-rendering started this history, and the last one
     // outside the shared exclusion: it asserted the absence of "has not started
     // yet" and not of "no vault installed", so a regression that printed the
     // missing-vault headline on the locked pane passed the gate.
-    ...(await saysOnly(HEADLINES[1])),
-    ...(await also(() => {
+    ...(await saysOnly(SAYS.locked)),
+    ...(await js(() => {
       const text = document.body.innerText;
       return {
         explains: text.includes("The account file is present but cannot be opened"),
@@ -799,14 +802,13 @@ app.whenReady().then(async () => {
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
   await captureAfterPaint(win, vaultShot);
 
-
   // The state this whole change exists to produce, and the one nothing used to
   // render: a build with no vault installed.
   vaultItemsReply = { status: "missing" };
-  await showVault(empty("no vault installed"), "the missing-vault pane to render");
+  await vaultSaying(SAYS.missing, "the missing-vault pane to render");
   const vaultMissing = {
-    ...(await saysOnly(HEADLINES[0])),
-    ...(await also(() => {
+    ...(await saysOnly(SAYS.missing)),
+    ...(await js(() => {
       const text = document.body.innerText;
       return {
         // Nothing is lost, and no remedy is offered: a packaged install always
@@ -823,18 +825,18 @@ app.whenReady().then(async () => {
   // renderer said when it recognised nothing, which is how a build with no
   // runtime came to claim it.
   vaultItemsReply = { status: "starting" };
-  await showVault(empty("has not started yet"), "the starting-vault pane to render");
-  const vaultStarting = await saysOnly(HEADLINES[2]);
+  await vaultSaying(SAYS.starting, "the starting-vault pane to render");
+  const vaultStarting = await saysOnly(SAYS.starting);
 
   // `locked` carries two reasons and only one of them has ever been rendered.
   // no-storage is producible and says something completely different — no key
   // store to open the account with, rather than a key that has moved — so the
   // copy that must not appear here is the Keychain explanation.
   vaultItemsReply = { status: "locked", reason: "no-storage" };
-  await showVault(empty("can't unlock"), "the no-storage vault pane to render");
+  await vaultSaying(SAYS.locked, "the no-storage vault pane to render");
   const vaultNoStorage = {
-    ...(await saysOnly(HEADLINES[1])),
-    ...(await also(() => {
+    ...(await saysOnly(SAYS.locked)),
+    ...(await js(() => {
       const text = document.body.innerText;
       return {
         saysNoSecureStorage: text.includes("this build has no secure storage to open it with"),
@@ -850,12 +852,12 @@ app.whenReady().then(async () => {
   // something drives it. No headline of its own, so saysOnly asserts the
   // absence of all three.
   vaultItemsReply = { status: "brandnew" };
-  await showVault(empty("does not know"), "the unknown-status pane to render");
+  await vaultSaying(SAYS.unknown, "the unknown-status pane to render");
   const vaultUnknown = {
-    ...(await saysOnly(HEADLINES[3])),
+    ...(await saysOnly(SAYS.unknown)),
     // The prefix is what the exclusion is keyed on; the status itself is what
     // this arm exists to print, so it is asserted here rather than folded in.
-    ...(await also(() => ({ namesTheStatus: document.body.innerText.includes("does not know: brandnew") }))),
+    ...(await js(() => ({ namesTheStatus: document.body.innerText.includes("does not know: brandnew") }))),
   };
 
   // The fourth outcome of this handler, on a different path: a REJECTED call.
@@ -865,8 +867,14 @@ app.whenReady().then(async () => {
   vaultItemsThrows = true;
   let vaultFailure;
   try {
-    await showVault(`document.body.innerText.includes("Could not read the vault")`, "the vault failure to render");
-    vaultFailure = await saysOnly(HEADLINES[4]);
+    await vaultSaying(SAYS.failed, "the vault failure to render");
+    vaultFailure = {
+      ...(await saysOnly(SAYS.failed)),
+      // The sentence carries errText(err) straight into user-facing copy, and
+      // the stub supplies a distinctive one — the prefix alone would pass over
+      // a concatenation that dropped it.
+      ...(await js(() => ({ carriesTheReason: document.body.innerText.includes("the vault did not answer") }))),
+    };
   } finally {
     // The only latch in this block — every other switch is overwritten by the
     // next probe. `waitFor` times out by design, and a stub left rejecting
@@ -880,7 +888,6 @@ app.whenReady().then(async () => {
   // or by switching tab out from under it.
   const vaultUnsaved = await (async () => {
     vaultItemsReply = { status: "ready", items: [{ id: "itm1", type: "login", title: "Notion", subtitle: "owner@probe", urls: ["https://notion.so"] }] };
-    const js = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
     const click = (sel) => win.webContents.executeJavaScript(
       `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false; n.click(); return true; })()`);
     // A real keystroke, not an assignment: the dirty flag rides the input event.
@@ -1248,6 +1255,7 @@ app.whenReady().then(async () => {
     vaultNoStorage.blamesNoKeychain &&
     vaultNoStorage.promisesNoLoss &&
     vaultUnknown.namesTheStatus &&
+    vaultFailure.carriesTheReason &&
     modalClosed.gone &&
     modalClosed.paneLive &&
     modalClosed.focusBackOnTrigger &&
