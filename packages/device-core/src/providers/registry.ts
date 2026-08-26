@@ -78,12 +78,19 @@ const GOG: VendoredProvider = {
   tokenEnv: "GOG_ACCESS_TOKEN",
   belt: ["--no-input", "--wrap-untrusted"],
   refuse: (argv) => {
-    const reserved = reservedFlagIn(argv.slice(1));
+    const rest = argv.slice(1);
+    const reserved = reservedFlagIn(rest);
     if (reserved !== null) {
       return `${reserved} may not be supplied: it would override this Mac's safety flags`;
     }
+    // `--help` is how the skill tells an agent to discover the rest of the
+    // surface, and it is inert: gog prints usage and exits, with no network
+    // call and nothing mutated. Without this the leaf check refuses
+    // `gog gmail --help`, because a group is not a leaf — so the skill would
+    // be teaching a command the gate rejects.
+    if (rest.some((a) => a === "--help" || a === "-h")) return null;
     try {
-      gogLeaf(argv.slice(1));
+      gogLeaf(rest);
     } catch (e) {
       if (e instanceof GogArgvError) return e.message;
       throw e;
@@ -102,10 +109,23 @@ const PROVIDERS: readonly VendoredProvider[] = [GOG];
  * controls, and honouring a caller-supplied path would let an agent point the
  * mint at a binary of its choosing.
  */
-export function vendoredProvider(argv: readonly string[]): VendoredProvider | null {
+export function vendoredProvider(
+  argv: readonly string[],
+  /**
+   * The vendor directories actually staged on this Mac. A provider whose
+   * binary is absent is NOT a provider: minting for it would spend a real
+   * delegation — a token that has left Plow whether or not anything used it —
+   * on a command that then fails to exec. Omitted by callers that only need
+   * to know whether a name is provider-shaped, such as the tool's pre-intent
+   * refusal, which runs before any token exists.
+   */
+  staged?: readonly string[],
+): VendoredProvider | null {
   const head = argv[0];
   if (head === undefined) return null;
-  return PROVIDERS.find((p) => p.command === head) ?? null;
+  const provider = PROVIDERS.find((p) => p.command === head) ?? null;
+  if (provider === null || staged === undefined) return provider;
+  return staged.length > 0 ? provider : null;
 }
 
 /** Every vendored command name, for the skill and for the tool description. */

@@ -42,6 +42,17 @@ export class MintError extends Error {
   static noToken(provider: string): MintError {
     return new MintError(`Plow did not return a usable token for ${provider}`);
   }
+
+  /**
+   * A 2xx whose body would not parse. Its own sentence because reusing
+   * `httpStatus` here reports "Plow returned 200 authorising gog" — naming the
+   * success as the failure, and hiding that the body was the fault. The
+   * parser's own message is never quoted: V8 embeds a snippet of the input,
+   * and the input is a response that carries a credential.
+   */
+  static unreadable(provider: string): MintError {
+    return new MintError(`Plow's answer authorising ${provider} could not be read`);
+  }
 }
 
 /**
@@ -105,7 +116,7 @@ export function makeMinter(opts: {
       try {
         decoded = (await response.json()) as JSONValue;
       } catch {
-        throw MintError.httpStatus(provider.command, response.status);
+        throw MintError.unreadable(provider.command);
       }
       const token = jv(decoded).get("data").get("access_token").str;
       if (token === null || token.trim() === "") throw MintError.noToken(provider.command);

@@ -3,7 +3,7 @@
  *
  * gog resolves repeated global flags LAST-WINS and accepts them after the
  * command path too. Caller argv reaches gog verbatim, so without this the belt
- * flags in `gogRunner.ts` are decorative — verified live at 0.36.0, appending
+ * flags in `registry.ts` are decorative — verified live at 0.36.0, appending
  * `--readonly=false` to a `gmail send` that is otherwise refused before network
  * dispatch let it reach Google. This module is the gate, not hardening around
  * one.
@@ -84,7 +84,7 @@ function ruleLabelFor(flag: string): string | null {
  * which is one of the closed set above; a RULE match returns a fixed label,
  * because `--<anything>-file` matches whatever the caller spelled and this
  * string reaches an error message, the approval dialog and the append-only
- * audit log. `leaf.ts` refuses to quote argv back for exactly that reason, and
+ * audit log. `gogLeaf.ts` refuses to quote argv back for exactly that reason, and
  * a gate that quoted it here would have reopened the hole one module over.
  *
  * Split on `=` so the joined spellings (`--readonly=false`) are caught

@@ -32,5 +32,14 @@ export function buildMinter(opts: {
  */
 export function vendorDirs(opts: { resourcesDir?: string; repoRoot?: string }): string[] {
   const located = resolveVendoredBinary(opts);
-  return located.path === null ? [] : [path.dirname(located.path)];
+  if (located.path !== null) return [path.dirname(located.path)];
+  // The distinction `resolveVendoredBinary` draws is worth keeping: an
+  // operator who NAMED a path gets told that path is wrong, rather than
+  // "nothing is staged", which would send them to run a fetch they have
+  // already run. Logged rather than thrown — this runs inside the launch
+  // chain, and a stale env var must not be able to take the app down.
+  if (located.problem === "override-missing") {
+    console.error(`[providers] DOMO_GOG names no executable: ${process.env.DOMO_GOG}`);
+  }
+  return [];
 }

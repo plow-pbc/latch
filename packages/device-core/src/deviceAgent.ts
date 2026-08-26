@@ -175,12 +175,12 @@ export class DeviceAgent {
      * and on a Mac with none staged, where every non-provider command still
      * runs and a provider one reports that it is not installed.
      */
-    vendorDirs: readonly string[] = [],
+    private readonly vendorDirs: readonly string[] = [],
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
-    this.executor = new Executor(path.join(home, "device/scratch"), undefined, vendorDirs);
+    this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
     // messages on the real machine, while `home` is a DOMO_HOME a test points
@@ -194,7 +194,7 @@ export class DeviceAgent {
     // Registered only when a provider CLI is actually staged: a skill for a
     // binary this Mac does not have would teach an agent to run commands that
     // cannot work. Sampled once at construction, like the two skills above.
-    if (vendorDirs.length > 0) this.skills.register(GOG_SKILL);
+    if (this.vendorDirs.length > 0) this.skills.register(GOG_SKILL);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -497,7 +497,10 @@ export class DeviceAgent {
     // environment. Everything below this is the ordinary exec path — the
     // capability the owner approved is the argv, the sandbox profile and the
     // audit are unchanged, and `tools/list` never grew a tool for it.
-    const provider = vendoredProvider(argv);
+    // Staged-ness is part of the question: minting for a provider whose
+    // binary is absent spends a real delegation — a token that has left Plow
+    // whether or not anything used it — on a command that then cannot exec.
+    const provider = vendoredProvider(argv, this.vendorDirs);
     let env: Record<string, string> | undefined;
     let belted = argv;
     if (provider !== null) {

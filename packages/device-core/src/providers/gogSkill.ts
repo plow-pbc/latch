@@ -26,10 +26,16 @@ through \`plow_run_command\`, like any other command. There is no Google tool in
 
 ## What you can reach
 
-Gmail and Calendar. **Drive, Docs, Sheets and the rest of gog are not
-connected** — the token carries four Google scopes (gmail.readonly,
-gmail.modify, calendar.readonly, calendar.events) and anything else returns a
-403 from Google.
+Most of Gmail and Calendar. **Drive, Docs, Sheets and the rest of gog are not
+connected at all** — the token carries four Google scopes (gmail.readonly,
+gmail.modify, calendar.readonly, calendar.events), so everything outside those
+two groups returns a 403 from Google.
+
+Inside them the scopes are not total either: \`gmail settings\` (forwarding,
+delegates, filters, send-as, vacation) needs \`gmail.settings.*\`, and calendar
+ACL changes need a sharing scope. Those commands exist in the binary and this
+Mac will let you run them — Google refuses them. Treat a 403 as "not granted",
+not as a bug to work around.
 
 Useful starting points:
 
